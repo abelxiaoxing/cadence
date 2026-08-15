@@ -1,0 +1,16 @@
+# Adapted modules provenance (P-007).
+# Package-shipped professional Agent files are private extension resources,
+# not Pi-discovered Agent resources. Identity is pinned by path/name/SHA-256.
+agents:
+  - path: agents/contract-reviewer.md
+    role: contract-reviewer
+  - path: agents/design-explorer.md
+    role: design-explorer
+  - path: agents/diagnosis-worker.md
+    role: diagnosis-worker
+  - path: agents/implementation-worker.md
+    role: implementation-worker
+reference:
+  attribution: THIRD_PARTY_NOTICES.md
+  license: licenses/pi-subagents-MIT.txt
+  relocated-repo: read-only provenance evidence; no package resolution traverses it

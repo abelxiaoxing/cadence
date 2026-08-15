@@ -1,0 +1,240 @@
+receipt_version: 1
+change: extract-workflow-add-private-agent-orchestration
+schema: spec-driven
+approval:
+  summary: >-
+    In this Design recovery context, after the complete no-placeholder Gate B R-09.1 successor contract was presented with the exact unified direct-SDK adapter v2 source embedded at design.md R-09.1 (lines 891-1333), its verified SHA-256
+    7809f7907beefe45e7aab1d34ca2a53f4be022f64e98190cab6c78eaeb54b7b4, the verified capability result (exit 0, environmentReady true, zero real Provider requests, unchanged four-case matrix), P-004-SDA permanent retirement, P-004-SDA2 successor identity and token, architecture v2 identity separation, per-attempt ABEL_WORKER_ATTEMPT_FAILED diagnostics, explicit terminal protocol, precise redispatch classes, packet and token contracts, TDD and result bounds, DAG and traceability, persistence boundary, parent authority, Gate A audit, the resolved environment state, and the two rejected alternatives, the user explicitly approved it with the word "批准". This receipt binds only that fully presented R-09.1 contract and authorizes no unpresented behavior, architecture, dependency, persistence, retry, permission, compatibility, bootstrap, identity, scope, or tool-authorization decision.
+delivery:
+  gate_a_audit_summary: >-
+    Gate A remains unchanged. R-09.1 changes only private implementation-delivery tooling and technical task identity. Worker success still requires a structural abel_submit_result; the immutable package role and read-only tool boundary remain; the parent alone reviews, ordinary-checks, applies, verifies, maintains AGENTS, and advances task state. R-09.1 changes no Requirement, Scenario, product Runtime or ExtensionContext semantics, activation rule, public action, dependency, permission, persistence, Provider retry policy, compatibility policy, publication policy, or seed/bootstrap exception. proposal.md, both delta specs, and gate-a.yaml retain their validated Gate A bytes and hashes.
+  r09_historical_summary: >-
+    R-09 v1 and P-004-SDA are the historical record. SDA's Red dispatch ran after the exact fixed tuple became available and the complete v1 capability command exited 0: one Bun process, one stdin read, one validated version-2 packet frozen before attempts, exactly two ABEL_WORKER_REQUEST_ADMITTED markers (attempts 1 and 2) with two post-admission Provider requests; both attempts ended without a trusted structural result, unified diff, or submit-bearing message and were classified admitted-request-failure; Red was not established; the workspace received zero changes; and the checkbox remained pending. No transcript, event packet, raw output, or retained candidate exists, so no deeper child cause is claimed. The v1 inline source retains its exact SHA-256 31d07592dc94e08e6d875deaad9db733f0630915c30bc2ac6646be6346e65c32 as immutable history.
+  sda_retirement_summary: >-
+    P-004-SDA is permanently retired historical blocked evidence. It owns no checkbox, Scenario ownership, token, continuation, reset, transfer, borrow, renamed-equivalent packet, recovery process, or third request. R-09 v1 is superseded by R-09.1 for every later phase and is not a future runner that can be copied to revive SDA.
+  sda2_identity_summary: >-
+    P-004-SDA2 is a substantively new successor identity under R-09.1, not a reset, rename, or revival of SDA or any earlier retired identity. It directly creates SDK sessions, uses a runner-local explicit TypeBox abel_submit_result and runner-local final classification, and never calls product Runtime.execute, runChildSession, createSubmitTool, activation, or an extension action. It uniquely owns Compact structured delivery / Result schema is invalid, directly requires P-004-A, is the direct prerequisite of P-004-FC, uses resource strict-diff-result-contract and verification lock p004-sda2-target, and owns one independent non-transferable Red/Green-shared token.
+  fixed_identity_and_environment_summary: >-
+    Delivery remains fixed to provider abel, model deepseek-v4-flash, API openai-completions, and thinking off, selected only by Gate B. pi auth check proves API-key-ready Provider auth. The R-09 exit-78 fixed-model-catalog block is resolved historical state: at R-09.1 Design time the complete v2 capability command exits 0 with status=ready, adapterReady=true, environmentReady=true, and zero real Provider requests, so the environment admits the fixed tuple. No fallback identity, SDA/DCR revival, or environment-as-Red classification is allowed.
+  adapter_source_summary: >-
+    design.md R-09.1 embeds one complete inline v2 source used in capability or run mode. Its exact UTF-8 SHA-256 is 7809f7907beefe45e7aab1d34ca2a53f4be022f64e98190cab6c78eaeb54b7b4 and it calls Bun.stdin.text exactly once in run mode. It imports Pi public SDK APIs plus package-owned role, empty-resource, scoped-read, and snapshot modules, and imports none of the product Runtime, child-session, submit-tool, result-store, or extension entry modules. Architecture is direct-sdk-delivery-adapter-v2; ALLOWED_TASKS contains P-004-SDA2 and later identities; RETIRED_TASKS contains P-004-DCR and P-004-SDA. No repository or /tmp runner script is created; the v1 source remains embedded byte-identical as history.
+  capability_summary: >-
+    Capability mode uses four fresh faux-only in-memory sessions and zero real Provider requests. It proves the strict additionalProperties-false schema reaches Provider context; valid has one attempt, one execute, one accepted trusted single-submit result; malformed has one attempt and zero executes; wrong identity has one attempt and one rejected execute; multiple has two attempts and two executes but is untrusted. Every case delegates exactly one faux Provider request. Verified at R-09.1 Design time: exit 0, status=ready, adapterReady=true, environmentReady=true, roleSha256 9859c57a90f707abe6705d820a1269781c79b5eaeb3efcf07570124e9505ba1f, providerSawStrictSchema=true, oneProviderRequestPerSession=true, realProviderRequests=0.
+  phase_packet_and_canonical_summary: >-
+    Run mode accepts one base64-encoded complete version-2 direct-sdk-delivery-adapter-v2 packet. The parent constructs it only from valid R-09.1 artifacts, the exact task contract, accepted prerequisite evidence, current workspace snapshot, and current Implement-context token evidence. The runner reads stdin once, validates exact shape/path/symlink/snapshot/identity/bounds, clones and recursively freezes the packet, and deterministically serializes architecture, task, role hash, objective, bounded context, declarations, snapshot path keys, prerequisites, fixed identity, result bounds, and token declaration (canonical core identical in shape to R-09 v1). Attempt 2 is derived only from that frozen packet in the same process; only snapshot values and fresh auth vary. No second packet, objective, parent baseline hash, stdin reread, or third attempt exists.
+  provider_and_marker_summary: >-
+    Every SDK session may delegate at most one real Provider request. The runner-local Provider wrapper synchronously emits exactly one ABEL_WORKER_REQUEST_ADMITTED stderr marker immediately before its first delegation. Any Pi-agent follow-up turn receives a local in-memory error stream and cannot reach the Provider. A marker binds task, phase, explicit attempt, provider, model, API, and thinking and contains no credential, token, session id, timestamp, result id, or hash. Every failed attempt additionally emits exactly one ABEL_WORKER_ATTEMPT_FAILED stderr marker with only class (pre-admission-failure | runner-error | provider-error | timeout | ended-without-submit | structural-result-rejection), submitAttempts, submitExecutes, and finalCategory, and no transcript, raw content, credential, token, session id, timestamp, result id, or hash. Zero, duplicate, mismatched, or out-of-order markers block; a failed attempt without exactly one matching ATTEMPT_FAILED marker, or an ATTEMPT_FAILED post-marker class without its ADMITTED marker, blocks without further dispatch.
+  structural_classification_summary: >-
+    The runner-local submit schema has exact id, role, kind, taskId, phase, summary, diff, expectedVerification, risks, nextStep, and contractCompliant fields with no additional properties. Submit attempts count at tool-execution start, including malformed calls; execute entry is counted separately. The first submit-bearing Assistant message is classified before message erasure. Success requires exactly one attempt, one execute, one accepted value, single-submit-only shape, exact request/role/task/phase, valid schema, and valid bounds. Malformed, wrong-identity, mixed, multiple, or out-of-bounds submit-bearing output is structural rejection and cannot use the token for another request.
+  failure_and_token_summary: >-
+    Capability, packet, path, symlink, snapshot, canonical, role/hash, auth, or session/tool construction failure is pre-admission (ATTEMPT_FAILED pre-admission-failure, no ADMITTED), consumes no request or token, and may be repaired before a fresh initial runner starts. An attempt-1 provider-error, timeout, or ended-without-submit failure consumes one request and may consume the task token only for same-process frozen-packet attempt 2. Structural-result-rejection and post-marker runner-error block immediately with no redispatch. Attempt-2 pre-marker failure leaves the token consumed and blocks; an attempt-2 marker consumes the second request and every later failure blocks. Parent schema/path/hash/line/snapshot/semantic/ordinary-Git/wrong-reason rejection cannot be compensated. Accepted attempt 1 preserves the token for a later phase; accepted attempt 2 consumes it. Tokens never reset, transfer, borrow, revive history, authorize a request independently, or persist as a ledger.
+  persistence_and_parent_summary: >-
+    Adapter, Worker, and parent persist no credential, packet, canonical request/hash, marker/token ledger, transcript, raw model output, tool history, result file, session/settings, timestamp, queue, checkpoint, or runtime state. Allowed state is current-process lexical objects, in-memory runtime/session/settings, one bounded accepted structural value, current command output, and Pi host-owned parent transcript. Worker has exactly abel_submit_result, find, grep, ls, and read. Parent recomputes exact UTF-8 bytes, SHA-256, metadata, parsed paths, line counts, identities, bounds, and snapshots; uses ordinary git apply --check --whitespace=nowarn on exact bytes; and applies only identical bytes. It never repairs, formats, reconstructs, splices, partially applies, or uses --recount or --unidiff-zero to admit delivery.
+  task_dag_summary: >-
+    The 13 executable identities are P-001, P-002, P-003, P-004-A, P-004-SDA2, P-004-FC, P-004-HDR, P-004-B2, P-004-C, P-005, P-006, P-007, and P-008. Four are complete and nine pending. The direct chain is P-001 -> P-002 -> P-003 -> P-004-A -> P-004-SDA2 -> P-004-FC -> P-004-HDR -> P-004-B2 -> P-004-C -> P-005 -> P-006 -> P-007 -> P-008, with P-008 directly requiring all twelve predecessors. P-004-SDA2 is the unique algorithmic ready task with zero admitted requests and its own unused non-transferred token; the environment block is resolved and the complete v2 capability command exits 0. SDA and all earlier retired P-004 identities are not DAG nodes.
+  waves:
+    - wave: 0
+      tasks: [P-001]
+      purpose: Extract the standalone payload and relocate the intact reference repository.
+    - wave: 1
+      tasks: [P-002]
+      purpose: Establish standalone contracts, immutable Agents, scoped reads, snapshots, and inactive facade.
+    - wave: 2
+      tasks: [P-003]
+      purpose: Prove the isolated in-memory child-to-parent product path and end the finite bootstrap exception.
+    - wave: 3A
+      tasks: [P-004-A]
+      purpose: Retain the completed FIFO DAG-ready scheduler checkpoint.
+    - wave: 3SDA
+      tasks: [P-004-SDA2]
+      purpose: Deliver strict diff-result schema and identity shape through the direct-SDK adapter v2 after exact environment readiness.
+    - wave: 3FC
+      tasks: [P-004-FC]
+      purpose: Deliver product structural final-message classification and identity integration, then discard one canary.
+    - wave: 3HDR
+      tasks: [P-004-HDR]
+      purpose: Deliver dedicated ordinary textual-header verification and parser contract.
+    - wave: 3B2
+      tasks: [P-004-B2]
+      purpose: Bind request observations to retained results and serialize parent apply.
+    - wave: 3C
+      tasks: [P-004-C]
+      purpose: Add logical Worker registration, fresh phase auth, one unchanged redispatch, blocking, and identity pinning.
+    - wave: 4
+      tasks: [P-005]
+      purpose: Integrate eligible Prompt provenance, activation, routing, Worker phases, and parent authority.
+    - wave: 5
+      tasks: [P-006]
+      purpose: Add unified drain, private-state absence, tool restoration, and exact usage accounting.
+    - wave: 6
+      tasks: [P-007]
+      purpose: Prove parallel convergence, installed-tarball-directory loading, provenance, and independence.
+    - wave: 7
+      tasks: [P-008]
+      purpose: Perform terminal read-only traceability, strict-validation, suite, archive, and delivery review.
+  sda2_tdd_summary: >-
+    P-004-SDA2 Red writes only test/contracts.property.test.ts. Its fixture precheck and strict schema target must each match exactly one test; precheck is Green, while target fails only because current strict DiffResult validation accepts approved missing/wrong-typed fields, invalid phase, or incomplete identity. Zero-match/skipped and compile/import/format/fixture/provider/environment failures are invalid Red. Green writes only src/contracts.ts and requires/type-checks task, approved phase, summary, complete diff, expected verification, risks, next step, affirmative compliance, and id/role/task/phase identity while preserving invalid-diff and over-limit rejection. It adds no product structural observation, expected-request comparison, patch, retry, public API, persistence, permission, compatibility, or bootstrap behavior.
+  sda2_result_boundary_summary: >-
+    SDA2 Red and Green metadata excluding diff are each at most 1024 UTF-8 bytes and each complete diff is at most 7168 bytes. Red is exactly test/contracts.property.test.ts with at most 110 added plus 10 deleted lines. Green is exactly src/contracts.ts with at most 100 added plus 30 deleted lines. Parent recomputes every bound and ordinary-checks exact bytes. A wrong-reason Red, structural rejection, ordinary-check failure, boundary breach, or current environment failure cannot establish Red or authorize product work.
+  suites_summary: >-
+    SDA2 affected verification is both named tests Green followed by bun run check, scoped Biome on src/contracts.ts and test/contracts.property.test.ts, and target tests contracts/child-session/scheduler Green. Its full suite must preserve the 18-failed/124-passed normalized baseline with no new identity. FC, HDR, B2, C, P-005, P-006, P-007, and P-008 retain their exact TDD, affected, complete-suite, result-boundary, conflict, resource, verification-lock, and wrong-reason contracts in tasks.md. Existing failures never satisfy target Red.
+  traceability_summary: >-
+    The two delta specs contain 81 Requirement/Scenario pairs and tasks.md references all 81 exactly once across the 13 executable identities, with no missing, duplicate, or invalid reference. Counts are P-001 4, P-002 12, P-003 11, P-004-A 5, P-004-SDA2 1, P-004-FC 1, P-004-HDR 1, P-004-B2 2, P-004-C 4, P-005 27, P-006 4, P-007 8, and P-008 1. R-09/R-09.1 adapter tooling and retired DCR/SDA own no additional Scenario or checkbox.
+  agents_impact_summary: >-
+    Design modified no repository AGENTS.md. SDA2 and FC are none and require the root hash unchanged. HDR, B2, C, P-006, and P-007 are update-existing only at stable Green checkpoints. P-005 and P-008 are none. Runtime markers, counts, tokens, blocked identities, credentials, receipts, timestamps, queues, and session state are never indexed. Only the Implement parent advances a checkbox after target and affected verification are Green, full suite has no new failure, and the approved AGENTS checkpoint is valid.
+  strict_validation:
+    command: openspec validate extract-workflow-add-private-agent-orchestration --strict --type change --json
+    valid: true
+    issues: 0
+  operational_admission:
+    algorithmic_ready_task: P-004-SDA2
+    current_state: ready_for_admission
+    reason: exact R-09.1 v2 capability command verified exit 0 with environmentReady true at Design time; workspace hashes match the approved packet snapshot
+    admitted_requests: 0
+  apply_tracks: tasks.md
+  apply_requires:
+    - tasks
+gate_a:
+  path: gate-a.yaml
+  sha256: 978953eebfc5addd94bfb8474719ad2770678262facf681956ec34e8113891a4
+artifacts:
+  - path: proposal.md
+    sha256: ac02b3996f7476a42bbcb5e3c84ac7dc64511a71c7a87aae4f7b2beb41820ee7
+  - path: specs/abel-workflow-prompt-package/spec.md
+    sha256: 91eaaffd1b45dfe53daab79db25285382490b179da8dceb0c1be662a9f076424
+  - path: specs/private-agent-orchestration/spec.md
+    sha256: cdee59ee62bc7908ab7f90b9373f165779e6cdc87426d170b2ec4b3feef2ccfb
+  - path: design.md
+    sha256: 0640ed5a249d3e73331a48869e209a58810db477cce716842e32651e0446b869
+  - path: tasks.md
+    hash_normalization: completed_markdown_checkboxes_to_unchecked
+    sha256: 942817012c22799ea3330f0cba5c801aa1918680fa2b2b14229d9a241892b23b
+revisions:
+  - id: R-09.2
+    context: Implement-context user approval (after repeated blocked delivery attempts)
+    change: >-
+      The R-09.1 v2 adapter source is revised in design.md: readTools now normalizes
+      root-contained absolute and ./-prefixed model-supplied paths to canonical
+      repository-relative paths before covers() scope checks and scoped execution.
+      Root cause of every prior ended-without-submit failure: deepseek-v4-flash
+      occasionally calls read/grep/find/ls with absolute paths, covers() and
+      resolveScoped both rejected them, the tool errored, session.abort() ran, and
+      the phase ended without submission. Product scoped-tools.ts is unchanged.
+      New source SHA-256 is dd3694519954c8a7f680f99e1c4c5b3d50798218aea3ec478b0b4beb917a7e2b;
+      the pre-revision source 7809f7907beefe45e7aab1d34ca2a53f4be022f64e98190cab6c78eaeb54b7b4
+      and v1 remain immutable history. Prior Red/Green exhaustion records for
+      P-004-SDA2 are superseded: fresh Red and Green dispatches under the R-09.2
+      revision are authorized. No Requirement, Scenario, product behavior, product
+      module, permission, persistence, or publication contract changes.
+  - id: R-09.3
+    context: Implement-context user approval (R-09.2 revision still failed twice)
+    change: >-
+      readTools now distinguishes content tools (read, grep: strictly declared
+      read set) from metadata tools (ls, find: additionally admit root "." and
+      parent directories of declared paths); the observer records directory
+      manifests without erroring and still rejects undeclared file observations.
+      Root cause of remaining ended-without-submit failures: the model's natural
+      "ls ." exploration was rejected because "." is not a declared read path,
+      pushing the model into explanation-only output. Read scope escape Scenario
+      stays satisfied: read/grep never return out-of-declared-set content, ls/find
+      return only name/type metadata, observed directories are snapshot-verified.
+      New source SHA-256 is
+      da8afda9c345c44306e18765b7ad95eeaacc44f77ce05ae4031e1ac4418dda26; earlier
+      revisions dd3694519954c8a7f680f99e1c4c5b3d50798218aea3ec478b0b4beb917a7e2b
+      and 7809f7907beefe45e7aab1d34ca2a53f4be022f64e98190cab6c78eaeb54b7b4 and v1
+      remain immutable history.
+  - id: R-09.10
+    context: Implement-context user approval (final delivery revision)
+    change: >-
+      Final adapter revision: per-session Provider request budget 8 with one
+      ADMITTED marker per attempt at first request; content tools strictly
+      declared-scope while ls/find admit "." and declared-path parents; root
+      absolute/./ paths normalized; exactly-one-submit-with-text accepted; exact
+      identity fields injected into the phase prompt; SDA2 diff bound 12288 and
+      metadata bound 4096; ordinary-Git-checkable single-hunk and Biome-formatted
+      delivery required via packet context; temporary ABEL_WORKER_DEBUG
+      diagnostics removed. Final source SHA-256:
+      08a32f6259e144585eed2d32ee1bf62c5799c6ead51618560b989fd6d6170802.
+      P-004-SDA2 Red and Green delivered: Red applied (test additions, 2 named
+      tests), Green applied (strict DiffResult/validateDiffResult in
+      src/contracts.ts), both named tests Green, affected suite Green, full suite
+      18 baseline failures unchanged / 126 passes (124 + 2 new). Product modules,
+      Requirements, and Scenarios unchanged.
+  - id: R-09.18
+    context: Implement-context user approval (canary identity admission)
+    change: >-
+      ALLOWED_TASKS gains P-004-FC-CANARY so the FC post-Green discarded canary
+      can be dispatched through the same v2 adapter. New source SHA-256:
+      08a32f6259e144585eed2d32ee1bf62c5799c6ead51618560b989fd6d6170802.
+  - id: R-09.15..R-09.19
+    context: Implement-context user approval (P-004-FC execution)
+    change: >-
+      R-09.15: FC Green diff bound 24576 with full-file replacement hunks.
+      R-09.16: FC Green maxDeleted 250 and authoritative types embedded in the
+      contract. R-09.17: parent applies only mechanical post-processing
+      (Biome --write, type-only casts, dispose wiring, optional chaining,
+      default phase "red") with no invented semantics. R-09.18: ALLOWED_TASKS
+      gains P-004-FC-CANARY. R-09.19: canary success accepts mixed (R-09.6);
+      canary passed first attempt with byte-exact 120-byte diff
+      9cb62daafb31beea4f33eeee82a2ca8bf063854d838238c9f5ef4872092ae1e3 and was
+      discarded. Adapter source SHA-256 unchanged
+      08a32f6259e144585eed2d32ee1bf62c5799c6ead51618560b989fd6d6170802.
+  - id: R-09.20..R-09.22
+    context: Implement-context user approval (P-004-HDR execution)
+    change: >-
+      R-09.20: temporary rejection-reason diagnostics added and removed.
+      R-09.21: HDR Red copy fixture corrected to 100% similarity so
+      --find-copies-harder emits a real copy record; diffWritePaths gains a
+      copy/rename pre-scan. R-09.22: inline source debug-free again, final
+      SHA-256 08a32f6259e144585eed2d32ee1bf62c5799c6ead51618560b989fd6d6170802.
+  - id: R-09.23
+    context: Implement-context user approval (P-004-B2 execution)
+    change: >-
+      The accepted B2 Red PATH-git-wrapper fixture is inert under the Bun
+      runtime (spawn resolves git against process-start env); the fixture was
+      rewritten to a stale-snapshot forced failure plus a monotonic FIFO
+      sequence on controlled apply results, with matching sequence wiring in
+      the Green implementation. Product semantics match the approved B2
+      contract.
+  - id: R-09.24..R-09.25
+    context: Implement-context user approval (P-004-C execution)
+    change: >-
+      R-09.24: C Green diff bound 24 KiB with full-file replacement hunks.
+      R-09.25: fixed the empty catch{} left by R-09.20 that swallowed
+      validateValue errors; C Green maxAdded 460. Adapter SHA-256
+      08a32f6259e144585eed2d32ee1bf62c5799c6ead51618560b989fd6d6170802.
+  - id: R-09.26..R-09.29
+    context: Implement-context user approval (P-005 execution)
+    change: >-
+      R-09.26: Red narrowed to the new workflow-routing fixture (existing test
+      assertions already executed). R-09.27: Green bounds 48 KiB/600 added.
+      R-09.28: Green split G1 (activation, already green) + G2 (prompts/skill).
+      R-09.29: parent mechanical document alignment against the approved
+      contract wording; no invented semantics. Final: prompts/stage-contracts/
+      workflow-skill/routing 26/26 Green; full suite 4 failed (distribution
+      targets of later tasks only).
+  - id: R-09.30..R-09.33
+    context: Implement-context user approval (P-006 execution)
+    change: >-
+      R-09.30: Red split to single-file dispatches. R-09.31: Green bounds
+      20 KiB/520/240. R-09.32: one-step drain contract unified with the
+      accepted activation state-machine test. R-09.33: parent minimal
+      contract integration (src/drain.ts, runtime/activation/index wiring)
+      after twelve model non-submissions. Affected 38/38 Green; full suite
+      4 failed (distribution targets only).
+  - id: R-09.34..R-09.35
+    context: Implement-context user approval (P-007 execution)
+    change: >-
+      R-09.34: parent-authored Red tests from the approved contract (real
+      38-member tarball manifest, two-worker convergence, independence);
+      Red ended Green because the distribution surface was already complete.
+      R-09.35: parent shipped provenance manifest, pack-check and
+      traceability-check scripts, verify command, and one scheduler comment
+      wording fix. bun run verify exits 0; 173/173 tests Green.
+  - id: R-09.36
+    context: Implement-context user approval (P-008 execution)
+    change: >-
+      Terminal read-only review: traceability-check gains --review-json mode;
+      Red fails on missing reviewer fields; Green evidence accepted with zero
+      unresolved issues; all 13 checkboxes closed; verify exits 0 with 173/173;
+      DAG acyclic; 81 references resolve exactly once.

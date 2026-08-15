@@ -1,0 +1,95 @@
+receipt_version: 1
+change: extract-workflow-add-private-agent-orchestration
+schema: spec-driven
+behavior_contract:
+  summary: >-
+    Extract @abel/pi-abel-workflow into the current root as a standalone single-package repository and relocate the complete dirty reference repository intact before product implementation. Permit the relocated repository only as read-only implementation, attribution, license, and provenance evidence; prohibit every standalone product, dependency, import, test, command, symlink, pack, installation, and runtime resolution through either reference path. Preserve the four workflow commands, four bundled Skills, and configuration paths while adding four immutable package-owned read-only professional Agents and one abel_dispatch tool that is registered but inactive by default. Eligible Design, Implement, and Diagnose stages may activate it and lifecycle cleanup restores it to inactive without disturbing unrelated tools. Workers return compact evidence or metadata with complete unified diffs; the parent exclusively owns Gates, result review, exact patch application, command execution, validation, AGENTS, and task state. Compatible work may run concurrently, but each result binds hashes only for files actually read or proposed for writing, so unrelated sibling application does not make it stale and a related file change does. Provider retry is disabled with maxRetries 0, no private cooldown is implemented, and a failed request receives at most one identical mechanical redispatch. Private runs, queues, retained diffs, and child sessions are in-memory only. Tarball acceptance creates and inspects a real archive, installs or unpacks it to an isolated directory, and loads that directory rather than treating the .tgz file as a local Pi package. The package performs no Pi host-version validation or support classification. The MVP uses one bounded seed wave and excludes a general Subagent platform, custom transaction or rollback platform, multi-level budget platform, compatibility platform, permission system, UI, isolation platform, persistence, publication, remote repository, and automatic release system.
+approval:
+  summary: >-
+    The user explicitly approved Gate A with the recommended B-03 retry strategy and stated that subsequent recommended strategies are approved. B-03 means Provider maxRetries is 0, there is no private cooldown or hidden retry, and a failed request may receive at most one mechanical redispatch only when request, role, scope, prerequisites, conflict contract, and write set remain identical apart from refreshed file-snapshot hashes. The approved Gate A contract also selects file-level snapshots over a global workspace revision, registered-but-inactive-by-default dispatch over a hidden tool, installed-or-unpacked tarball-directory loading over direct .tgz loading, evidence-only access to the relocated reference repository, no Pi version validation or compatibility claims, one finite seed bootstrap exception, and a substantially reduced MVP without transaction, budget, or compatibility platforms.
+artifacts:
+  - path: proposal.md
+    sha256: ac02b3996f7476a42bbcb5e3c84ac7dc64511a71c7a87aae4f7b2beb41820ee7
+  - path: specs/abel-workflow-prompt-package/spec.md
+    sha256: 91eaaffd1b45dfe53daab79db25285382490b179da8dceb0c1be662a9f076424
+  - path: specs/private-agent-orchestration/spec.md
+    sha256: cdee59ee62bc7908ab7f90b9373f165779e6cdc87426d170b2ec4b3feef2ccfb
+r092_revision: >-
+  Implement-context user approval (R-09.2): design.md R-09.1 adapter v2 source is
+  revised so readTools normalizes root-contained absolute and ./-prefixed model
+  tool paths to repository-relative paths before scope checks and scoped execution,
+  fixing the repeated ended-without-submit delivery failures (model calls
+  read/grep/find/ls with absolute paths; covers() and resolveScoped rejected them;
+  tool error triggered session.abort(); no submission). Product scoped-tools.ts and
+  every Requirement/Scenario/Gate A product contract are unchanged. Revised source
+  SHA-256: dd3694519954c8a7f680f99e1c4c5b3d50798218aea3ec478b0b4beb917a7e2b.
+  Pre-revision source 7809f7907beefe45e7aab1d34ca2a53f4be022f64e98190cab6c78eaeb54b7b4
+  remains immutable history. Prior P-004-SDA2 Red/Green exhaustion records are
+  superseded; fresh Red and Green dispatches under the R-09.2 revision are authorized.
+r093_revision: >-
+  Implement-context user approval (R-09.3): readTools distinguishes content tools
+  (read/grep strictly declared-scope) from metadata tools (ls/find admit root "."
+  and declared-path parents); observer records directory manifests without erroring
+  and still rejects undeclared file observations. Fixes the remaining
+  ended-without-submit failures caused by rejected "ls ." exploration. Product
+  scoped-tools.ts and every Requirement/Scenario/Gate A product contract are
+  unchanged. Revised source SHA-256:
+  da8afda9c345c44306e18765b7ad95eeaacc44f77ce05ae4031e1ac4418dda26. Earlier
+  revisions dd3694519954c8a7f680f99e1c4c5b3d50798218aea3ec478b0b4beb917a7e2b and
+  7809f7907beefe45e7aab1d34ca2a53f4be022f64e98190cab6c78eaeb54b7b4 remain immutable
+  history.
+r0910_revision: >-
+  Implement-context user approval (R-09.10, final delivery revision): Provider
+  request budget 8 per session with one ADMITTED marker per attempt; ls/find
+  metadata exploration of "." and declared-path parents; content tools strictly
+  declared-scope; absolute/./ path normalization; exactly-one-submit-with-text
+  accepted; identity fields injected into phase prompt; SDA2 bounds 12288/4096;
+  ordinary-Git and Biome delivery requirements; debug diagnostics removed. Final
+  source SHA-256: 08a32f6259e144585eed2d32ee1bf62c5799c6ead51618560b989fd6d6170802.
+  P-004-SDA2 Red+Green delivered and verified (full suite 18 baseline failures
+  unchanged, 126 passes). Product modules, Requirements, and Scenarios unchanged.
+r0918_revision: >-
+  Implement-context user approval (R-09.18): ALLOWED_TASKS adds P-004-FC-CANARY.
+  Final source SHA-256:
+  08a32f6259e144585eed2d32ee1bf62c5799c6ead51618560b989fd6d6170802.
+r0919_revision: >-
+  Implement-context user approval (R-09.15..R-09.19): FC Green bounds/full-file
+  hunks, mechanical parent post-processing only, canary admission, mixed
+  acceptance; canary delivered byte-exact 120-byte diff and was discarded.
+  Adapter SHA-256 unchanged 08a32f6259e144585eed2d32ee1bf62c5799c6ead51618560b989fd6d6170802.
+r0922_revision: >-
+  Implement-context user approval (R-09.20..R-09.22): HDR copy fixture fixed to
+  trigger real copy detection, copy/rename pre-scan added, diagnostics removed.
+  Final source SHA-256
+  08a32f6259e144585eed2d32ee1bf62c5799c6ead51618560b989fd6d6170802.
+r0923_revision: >-
+  Implement-context user approval (R-09.23): B2 serial-apply fixture moved off
+  the inert PATH wrapper to stale-snapshot failure + FIFO sequence assertions;
+  enqueueApply exposes ApplyResult.sequence. Semantics unchanged from the
+  approved contract.
+r0925_revision: >-
+  Implement-context user approval (R-09.24..R-09.25): C Green full-file
+  replacement bounds and the delivery-assignment fix after the empty catch
+  regression. Adapter SHA-256
+  08a32f6259e144585eed2d32ee1bf62c5799c6ead51618560b989fd6d6170802.
+r0929_revision: >-
+  Implement-context user approval (R-09.26..R-09.29): P-005 Red narrowed,
+  Green split and parent-aligned against test assertions; dispatcher code was
+  already correct. Adapter SHA-256 unchanged
+  08a32f6259e144585eed2d32ee1bf62c5799c6ead51618560b989fd6d6170802.
+r0933_revision: >-
+  Implement-context user approval (R-09.30..R-09.33): P-006 drain unified
+  (one idempotent step), drainStage owns results/registry/activation clearing,
+  session_shutdown restores tools. Adapter SHA-256 unchanged
+  08a32f6259e144585eed2d32ee1bf62c5799c6ead51618560b989fd6d6170802.
+r0935_revision: >-
+  Implement-context user approval (R-09.34..R-09.35): P-007 distribution
+  surface proven (38-member pack, two-worker convergence, independence,
+  installed-directory loading, 81-reference traceability map). verify exits 0.
+  Adapter SHA-256 unchanged
+  08a32f6259e144585eed2d32ee1bf62c5799c6ead51618560b989fd6d6170802.
+r0936_revision: >-
+  Implement-context user approval (R-09.36): P-008 read-only review accepted
+  with no unresolved issues; all task checkboxes closed; verify 173/173 Green.
+  Adapter SHA-256 unchanged
+  08a32f6259e144585eed2d32ee1bf62c5799c6ead51618560b989fd6d6170802.

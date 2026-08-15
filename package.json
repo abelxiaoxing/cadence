@@ -1,0 +1,69 @@
+{
+  "name": "@abelxiaoxing/cadence",
+  "version": "1.0.0",
+  "description": "Prompts, skills, and a private orchestration extension exposing the Abel four-stage workflow (/abel-init, /abel-design, /abel-implement, /abel-diagnose) with package-owned professional Agents.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "pi-package",
+    "abel",
+    "workflow",
+    "cadence",
+    "openspec"
+  ],
+  "files": [
+    "prompts",
+    "skills",
+    "config",
+    "src",
+    "agents",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "licenses"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "prompts": [
+      "./prompts/*.md"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "scripts": {
+    "pack:check": "node scripts/pack-check.mjs",
+    "traceability:check": "node scripts/traceability-check.mjs",
+    "verify": "bun run check && bun run lint && bun run test && bun run pack:check",
+    "check": "find skills test scripts -name '*.mjs' -type f -print0 | xargs -0 -r -n1 node --check && tsc --noEmit",
+    "lint": "biome check . && rumdl check .",
+    "test": "vitest run",
+    "test:target": "vitest run",
+    "check:agents": "node scripts/check-agents.mjs"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.16",
+    "@earendil-works/pi-coding-agent": "0.84.1",
+    "@types/node": "^22.15.3",
+    "rumdl": "^0.2.10",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abelxiaoxing/cadence.git"
+  },
+  "homepage": "https://github.com/abelxiaoxing/cadence",
+  "bugs": {
+    "url": "https://github.com/abelxiaoxing/cadence/issues"
+  }
+}

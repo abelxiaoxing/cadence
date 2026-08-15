@@ -1,0 +1,14 @@
+receipt_version: 1
+change: add-prompts-first-abel-workflow-package
+schema: spec-driven
+behavior_contract:
+  summary: >-
+    Preserve affected-suite all-green completion while resolving the task-scope conflict by treating each task's exact affected-suite commands as its dynamic repair boundary. Every reproducible pre-existing failure those commands expose, including a cross-module failure, enters the current task for verified root-cause analysis and minimum repair; environmental or unattributed failures block completion, full-suite-only baseline failures remain outside automatic scope, and any repair requiring a substantive decision returns to Design.
+approval:
+  summary: >-
+    The user selected automatic scope expansion with "选择C", approved the command-defined boundary with "批准 B-02", and explicitly approved the complete corrected behavior contract with "批准 Gate A 修正". The approved correction preserves affected-suite all-green completion, target Red separation, full-suite no-new-failure comparison, no speculative repairs, no unrelated dirty-file edits, and no implicit archive or publish; completed implementation tasks are not retroactively rerun.
+artifacts:
+  - path: proposal.md
+    sha256: 7bfc53a409ac2a94e6333e1ad3279a1e8f8e2d3cf2c02ed32a031b9ad31b2b65
+  - path: specs/abel-workflow-prompt-package/spec.md
+    sha256: dfbf74c4d75f109e2415a79b1ef7b5880e6ed55b5bf96e7347a71ed793ecd16e
