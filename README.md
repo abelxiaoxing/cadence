@@ -17,6 +17,15 @@
 
 ## 安装（Install）
 
+### 在 pi 中快速安装（推荐）
+
+```sh
+$ pi install npm:@abelxiaoxing/cadence
+Installed npm:@abelxiaoxing/cadence
+```
+
+也可以使用 npm 或 bun：
+
 ```sh
 npm install -g @abelxiaoxing/cadence
 # 或使用 bun：bun add -g @abelxiaoxing/cadence
