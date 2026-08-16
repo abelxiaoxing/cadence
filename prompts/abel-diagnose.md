@@ -10,6 +10,7 @@ Read the complete value inside `<abel-request>` without a second whitespace-toke
 $ARGUMENTS
 </abel-request>
 
+<!-- ABEL:PROMPT:abel-diagnose -->
 The request must uniquely identify one or more existing bugs.
 If required input is missing or ambiguous, stop and ask for the missing or disambiguating information instead of guessing.
 

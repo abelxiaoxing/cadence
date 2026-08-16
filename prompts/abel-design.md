@@ -10,6 +10,7 @@ argument-hint: "<requirement> | --change <change_name>"
 $ARGUMENTS
 </abel-request>
 
+<!-- ABEL:PROMPT:abel-design -->
 <!-- ABEL:START -->
 # 不可协商规则（最高优先级）
 

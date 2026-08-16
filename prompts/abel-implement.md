@@ -10,6 +10,7 @@ argument-hint: "<change_name>"
 $ARGUMENTS
 </abel-request>
 
+<!-- ABEL:PROMPT:abel-implement -->
 <!-- ABEL:START -->
 **参数**：从 `<abel-request>` 读取必需的 `<change_name>`。
 
