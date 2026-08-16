@@ -92,6 +92,8 @@ function wrapScopedTools(roots: string[]) {
     );
 }
 
+export type ChildFailureKind = "failed" | "cancelled" | "timed-out";
+
 export async function runChildSession(input: {
   cwd: string;
   modelRuntime: ModelRuntime;
@@ -117,6 +119,7 @@ export async function runChildSession(input: {
   | {
       ok: false;
       error: string;
+      failureKind: ChildFailureKind;
       disposeCount: number;
       classification: SubmitClassification;
     }
@@ -140,10 +143,11 @@ export async function runChildSession(input: {
     input.signal?.addEventListener("abort", forwardCancellation, {
       once: true,
     });
-  const timer = setTimeout(
-    () => abort.abort(new Error("child phase timeout")),
-    input.timeoutMs,
-  );
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    abort.abort(new Error("child phase timeout"));
+  }, input.timeoutMs);
   let session:
     | Awaited<ReturnType<typeof createAgentSession>>["session"]
     | undefined;
@@ -239,6 +243,7 @@ export async function runChildSession(input: {
       return {
         ok: false,
         error: "child did not retain exactly one structural submission",
+        failureKind: "failed",
         disposeCount,
         classification,
       };
@@ -256,6 +261,7 @@ export async function runChildSession(input: {
       return {
         ok: false,
         error: "final assistant message is not one structural submit",
+        failureKind: "failed",
         disposeCount,
         classification,
       };
@@ -272,9 +278,16 @@ export async function runChildSession(input: {
     };
   } catch (error) {
     disposeOnce();
+    const failureKind: ChildFailureKind = timedOut
+      ? "timed-out"
+      : input.signal !== undefined &&
+          (input.signal.aborted || abort.signal.reason === input.signal.reason)
+        ? "cancelled"
+        : "failed";
     return {
       ok: false,
       error: (error as Error).message,
+      failureKind,
       disposeCount,
       classification: classifySession(),
     };

@@ -5,10 +5,23 @@
 // integration; abel-init and ordinary prompts never activate dispatch.
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentToolResult,
+  AgentToolUpdateCallback,
+  ExtensionAPI,
+  ExtensionContext,
+  Theme,
+  ToolRenderResultOptions,
+} from "@earendil-works/pi-coding-agent";
 import { type Activation, activateTool, deactivateTool } from "./activation.ts";
 import { ACTIONS } from "./contracts.ts";
 import { Runtime } from "./runtime.ts";
+import {
+  ACTIVITY_DETAILS_KEY,
+  ActivityController,
+  renderActivityCall,
+  renderActivityResult,
+} from "./subagent-activity.ts";
 
 export const DISPATCH_TOOL = "abel_dispatch";
 
@@ -80,6 +93,7 @@ function activateDispatcher(
 
 export default function register(pi: ExtensionAPI): void {
   const runtime = new Runtime();
+  const activity = new ActivityController();
 
   pi.registerTool({
     name: DISPATCH_TOOL,
@@ -102,26 +116,57 @@ export default function register(pi: ExtensionAPI): void {
       required: ["action"],
     },
     async execute(
-      _toolCallId: string,
+      toolCallId: string,
       params: { action?: string; request?: unknown; resultId?: string },
       signal: AbortSignal | undefined,
-      _onUpdate: unknown,
-      ctx: import("@earendil-works/pi-coding-agent").ExtensionContext,
+      onUpdate: AgentToolUpdateCallback<unknown> | undefined,
+      ctx: ExtensionContext,
     ) {
       const action = typeof params?.action === "string" ? params.action : "";
-      const result = await runtime.execute(action, params, ctx, signal);
+      const validRun =
+        action === "run" && runtime.validateRequest(params.request).ok;
+      const tuiRun = ctx.mode === "tui" && validRun;
+      const result = tuiRun
+        ? await runtime.execute(
+            action,
+            params,
+            ctx,
+            signal,
+            activity.observe(
+              toolCallId,
+              onUpdate as ((result: unknown) => void) | undefined,
+            ),
+          )
+        : await runtime.execute(action, params, ctx, signal);
+      const display = tuiRun
+        ? activity.finalize(toolCallId, result)
+        : undefined;
+      const details = display
+        ? { ...result, [ACTIVITY_DETAILS_KEY]: display }
+        : result;
       if (result.ok) {
         return {
           content: [{ type: "text", text: JSON.stringify(result) }],
-          details: result,
+          details,
           usage: result.usage,
         };
       }
       return {
         content: [{ type: "text", text: result.error }],
-        details: result,
+        details,
         isError: true,
       };
+    },
+    renderCall(args: unknown, theme: Theme, _context: unknown) {
+      return renderActivityCall(args, theme);
+    },
+    renderResult(
+      result: AgentToolResult<unknown>,
+      options: ToolRenderResultOptions,
+      theme: Theme,
+      _context: unknown,
+    ) {
+      return renderActivityResult(result, options, theme);
     },
   } as never);
 
@@ -139,8 +184,10 @@ export default function register(pi: ExtensionAPI): void {
       activateDispatcher(pi, runtime.activation, prompt, event.prompt);
   });
 
-  pi.on("session_start", () => {
+  pi.on("session_start", (_event, ctx) => {
     pendingPrompt = undefined;
+    activity.detach();
+    if (ctx.mode === "tui") activity.attach(ctx.ui);
     // Restore the default: dispatch is inactive unless a verified stage
     // reactivates it through the activation helpers.
     const active = pi.getActiveTools();
@@ -150,7 +197,9 @@ export default function register(pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", async () => {
+    activity.detach();
     await runtime.drain();
+    activity.clear();
     const active = pi.getActiveTools();
     if (active.includes(DISPATCH_TOOL)) {
       pi.setActiveTools(deactivateTool(active, DISPATCH_TOOL));

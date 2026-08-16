@@ -37,6 +37,38 @@ function cancellationError(signal: AbortSignal): { ok: false; error: string } {
   };
 }
 
+export type RunFailureKind = "failed" | "cancelled" | "timed-out";
+export type RuntimeFailureReason =
+  | "subagent failed"
+  | "subagent cancelled"
+  | "phase timed out";
+export type RuntimeActivityState =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "timed-out";
+
+export interface RuntimeActivityEvent {
+  state: RuntimeActivityState;
+  requestId: string;
+  role: string;
+  phase: string;
+  objective: string;
+  sequence: number;
+  failureReason?: RuntimeFailureReason;
+}
+
+export type RuntimeActivityObserver = (
+  event: RuntimeActivityEvent,
+) => void | Promise<void>;
+
+interface ScheduledRunResult {
+  dispatch: DispatchResult;
+  failureKind?: RunFailureKind;
+}
+
 function isSafeBound(snapshot: unknown): snapshot is Bound {
   if (
     typeof snapshot !== "object" ||
@@ -106,6 +138,14 @@ export interface RuntimeOptions {
 
 type RunContext = Pick<ExtensionContext, "cwd" | "model" | "modelRegistry">;
 
+interface StoredRunContext {
+  ctx: RunContext;
+  observer?: RuntimeActivityObserver;
+  sequence: number;
+  runningEmitted: boolean;
+  terminalEmitted: boolean;
+}
+
 export class Runtime {
   readonly activation: Activation;
   readonly limits = LIMITS;
@@ -114,19 +154,27 @@ export class Runtime {
   private applySeq = 0;
   private batchSeq = 0;
   private readonly registry = new WorkerRegistry();
-  private readonly runContexts = new WeakMap<RequestEnvelope, RunContext>();
-  private readonly scheduler: Scheduler<DispatchResult>;
+  private readonly runContexts = new WeakMap<
+    RequestEnvelope,
+    StoredRunContext
+  >();
+  private readonly scheduler: Scheduler<ScheduledRunResult>;
 
   constructor(opts: RuntimeOptions = {}) {
     this.activation = opts.activation ?? new Activation();
     this.scheduler = new Scheduler({
       limit: LIMITS.maxActiveChildSessions,
       execute: async (request, signal) => {
-        const ctx = this.runContexts.get(request);
-        if (!ctx) throw new Error("scheduled run context is unavailable");
-        const result = await this.runScheduled(request, ctx, signal);
-        if (!result.ok) throw new Error(result.error);
-        return result;
+        const context = this.runContexts.get(request);
+        if (!context) throw new Error("scheduled run context is unavailable");
+        this.notify(request, context, "running");
+        const result = await this.runScheduled(request, context.ctx, signal);
+        return {
+          dispatch: result,
+          ...(result.failureKind === undefined
+            ? {}
+            : { failureKind: result.failureKind }),
+        };
       },
     });
   }
@@ -136,6 +184,7 @@ export class Runtime {
     params: { request?: unknown; resultId?: string },
     ctx?: RunContext,
     signal?: AbortSignal,
+    observer?: RuntimeActivityObserver,
   ): Promise<DispatchResult> {
     if (!(ACTIONS as readonly string[]).includes(action)) {
       return { ok: false, error: `unknown action: ${String(action)}` };
@@ -143,7 +192,8 @@ export class Runtime {
     if (!this.activation.isActive()) {
       return { ok: false, notReady: true, error: "dispatcher is not active" };
     }
-    if (action === "run") return this.run(params.request, ctx, signal);
+    if (action === "run")
+      return this.run(params.request, ctx, signal, observer);
     if (action === "apply") {
       if (!ctx || !params.resultId)
         return { ok: false, error: "apply requires context and resultId" };
@@ -188,8 +238,12 @@ export class Runtime {
     envelope: RequestEnvelope,
     ctx: RunContext,
     signal: AbortSignal,
-  ): Promise<DispatchResult> {
-    if (signal.aborted) return cancellationError(signal);
+  ): Promise<DispatchResult & { failureKind?: RunFailureKind }> {
+    if (signal.aborted)
+      return {
+        ...cancellationError(signal),
+        failureKind: "cancelled",
+      };
     let phase: Awaited<ReturnType<typeof runtimeFromContext>>;
     try {
       phase = await runtimeFromContext(ctx, signal);
@@ -199,9 +253,14 @@ export class Runtime {
         error: signal.aborted
           ? cancellationError(signal).error
           : (error as Error).message,
+        failureKind: signal.aborted ? "cancelled" : "failed",
       };
     }
-    if (signal.aborted) return cancellationError(signal);
+    if (signal.aborted)
+      return {
+        ...cancellationError(signal),
+        failureKind: "cancelled",
+      };
     const roots = envelope.roots.map(
       (root) => new URL(root, `file://${ctx.cwd}/`).pathname,
     );
@@ -224,8 +283,12 @@ export class Runtime {
       timeoutMs: LIMITS.phaseTimeoutMs,
       signal,
     });
-    if (signal.aborted) return cancellationError(signal);
-    if (!child.ok) return child;
+    if (signal.aborted)
+      return {
+        ...cancellationError(signal),
+        failureKind: "cancelled",
+      };
+    if (!child.ok) return { ...child, failureKind: child.failureKind };
     if (envelope.output === "evidence") {
       return {
         ok: true,
@@ -259,6 +322,7 @@ export class Runtime {
     request: unknown,
     ctx?: RunContext,
     signal?: AbortSignal,
+    observer?: RuntimeActivityObserver,
   ): Promise<DispatchResult> {
     if (!ctx) return { ok: false, error: "run requires extension context" };
     if (signal?.aborted) return cancellationError(signal);
@@ -276,8 +340,16 @@ export class Runtime {
         resources: [...validation.value.declared.resources],
       },
     };
-    this.runContexts.set(envelope, ctx);
-    const batchId = `runtime-${++this.batchSeq}`;
+    const context: StoredRunContext = {
+      ctx,
+      observer,
+      sequence: ++this.batchSeq,
+      runningEmitted: false,
+      terminalEmitted: false,
+    };
+    this.runContexts.set(envelope, context);
+    this.notify(envelope, context, "queued");
+    const batchId = `runtime-${context.sequence}`;
     const batch = this.scheduler.schedule(batchId, [
       { request: envelope, prerequisites: [] },
     ]);
@@ -291,15 +363,70 @@ export class Runtime {
     try {
       const outcome = await batch.result(envelope.id);
       if (outcome.status === "succeeded" && outcome.value) {
-        return outcome.value;
+        const internalResult = outcome.value.dispatch as DispatchResult & {
+          failureKind?: RunFailureKind;
+        };
+        const { failureKind, ...publicResult } = internalResult;
+        if (publicResult.ok) {
+          this.notify(envelope, context, "completed");
+          return publicResult;
+        }
+        const state: RuntimeActivityState = failureKind ?? "failed";
+        this.notify(envelope, context, state);
+        return publicResult;
       }
-      return {
-        ok: false,
+      const state: RuntimeActivityState =
+        outcome.status === "cancelled" ? "cancelled" : "failed";
+      const terminal = {
+        ok: false as const,
         error: outcome.error ?? `scheduled run ${outcome.status}`,
       };
+      this.notify(envelope, context, state);
+      return terminal;
     } finally {
       signal?.removeEventListener("abort", cancelBatch);
       this.runContexts.delete(envelope);
+    }
+  }
+
+  private notify(
+    envelope: RequestEnvelope,
+    context: StoredRunContext,
+    state: RuntimeActivityState,
+  ): void {
+    if (!context.observer || context.terminalEmitted) return;
+    if (state === "running") {
+      if (context.runningEmitted) return;
+      context.runningEmitted = true;
+    }
+    if (
+      state === "completed" ||
+      state === "failed" ||
+      state === "cancelled" ||
+      state === "timed-out"
+    ) {
+      context.terminalEmitted = true;
+    }
+    const event: RuntimeActivityEvent = {
+      state,
+      requestId: envelope.id,
+      role: envelope.role,
+      phase: envelope.phase,
+      objective: envelope.objective,
+      sequence: context.sequence,
+      ...(state === "cancelled"
+        ? { failureReason: "subagent cancelled" as const }
+        : state === "timed-out"
+          ? { failureReason: "phase timed out" as const }
+          : state === "failed"
+            ? { failureReason: "subagent failed" as const }
+            : {}),
+    };
+    try {
+      const result = context.observer(event);
+      if (result instanceof Promise) void result.catch(() => undefined);
+    } catch {
+      // Presentation observers cannot affect orchestration.
     }
   }
 
@@ -307,14 +434,27 @@ export class Runtime {
     envelope: RequestEnvelope,
     ctx: RunContext,
     signal: AbortSignal,
-  ): Promise<DispatchResult> {
-    if (signal.aborted) return cancellationError(signal);
+  ): Promise<DispatchResult & { failureKind?: RunFailureKind }> {
+    if (signal.aborted)
+      return {
+        ...cancellationError(signal),
+        failureKind: "cancelled",
+      };
     const agent = loadAgentDefinitions().find(
       (item) => item.role === envelope.role,
     );
-    if (!agent) return { ok: false, error: "package Agent role not found" };
+    if (!agent)
+      return {
+        ok: false,
+        error: "package Agent role not found",
+        failureKind: "failed",
+      };
     if (!ctx.model)
-      return { ok: false, error: "run requires a model identity" };
+      return {
+        ok: false,
+        error: "run requires a model identity",
+        failureKind: "failed",
+      };
     const identity = workerIdentity(ctx.model);
     const contract = contractOf(envelope);
     const existing = this.registry.get(envelope.id);
@@ -324,6 +464,7 @@ export class Runtime {
           ok: false,
           error:
             "blocked: logical Worker pinned provider/model identity differs",
+          failureKind: "failed",
         };
       }
       if (!sameContract(existing.contract, contract)) {
@@ -331,12 +472,14 @@ export class Runtime {
           ok: false,
           error:
             "blocked: logical Worker contract changed for a recovery scope",
+          failureKind: "failed",
         };
       }
       if (existing.redispatchUsed) {
         return {
           ok: false,
           error: "blocked: mechanical redispatch is already exhausted",
+          failureKind: "failed",
         };
       }
     } else {
@@ -344,7 +487,11 @@ export class Runtime {
     }
     const pinned = this.registry.get(envelope.id);
     const first = await this.dispatchChild(agent, envelope, ctx, signal);
-    if (signal.aborted) return cancellationError(signal);
+    if (signal.aborted)
+      return {
+        ...cancellationError(signal),
+        failureKind: "cancelled",
+      };
     if (first.ok) {
       if (pinned) pinned.redispatchUsed = false;
       return first;
@@ -353,18 +500,28 @@ export class Runtime {
       return {
         ok: false,
         error: "blocked: mechanical redispatch failed and is exhausted",
+        failureKind: first.failureKind ?? "failed",
       };
     }
     if (!pinned) {
-      return { ok: false, error: "blocked: logical Worker is not pinned" };
+      return {
+        ok: false,
+        error: "blocked: logical Worker is not pinned",
+        failureKind: "failed",
+      };
     }
     pinned.redispatchUsed = true;
     const second = await this.dispatchChild(agent, envelope, ctx, signal);
-    if (signal.aborted) return cancellationError(signal);
+    if (signal.aborted)
+      return {
+        ...cancellationError(signal),
+        failureKind: "cancelled",
+      };
     if (!second.ok) {
       return {
         ok: false,
         error: "blocked: identical mechanical redispatch failed again",
+        failureKind: second.failureKind ?? first.failureKind ?? "failed",
       };
     }
     return second;

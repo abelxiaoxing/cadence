@@ -15,6 +15,12 @@
 
 共享工作流规则统一收录于包内 `abel-workflow` skill。
 
+交互式 TUI 中，经过验证的 `abel_dispatch` run 会显示紧凑的 Subagent 角色、请求、阶段、目标、耗时和状态，并在编辑器上方临时汇总仍在排队或运行的 Agents。
+
+该显示只保留有限的终态摘要；不会显示子会话、工具活动、路径、模型身份、隐藏推理、完整引用或完整 diff。
+
+print、JSON 和 RPC 模式保持原有结果与事件行为不变。
+
 ## 安装（Install）
 
 ### 在 pi 中快速安装（推荐）
@@ -54,7 +60,7 @@ bun run check:agents          # AGENTS 索引校验
 
 ```sh
 bun run verify      # check && lint && test && pack:check（发布前全套校验）
-bun run pack:check  # 真实 tarball 38 成员清单校验
+bun run pack:check  # 真实 tarball 39 成员清单校验
 bun run traceability:check   # 81 条 Requirement/Scenario 引用精确解析
 ```
 

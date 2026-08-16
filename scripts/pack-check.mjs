@@ -51,6 +51,7 @@ const expectedMembers = [
   "package/src/runtime.ts",
   "package/src/scheduler.ts",
   "package/src/scoped-tools.ts",
+  "package/src/subagent-activity.ts",
   "package/src/submit-tool.ts",
   "package/src/worker.ts",
 ].sort();

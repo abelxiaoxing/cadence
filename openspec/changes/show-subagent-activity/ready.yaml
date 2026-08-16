@@ -1,0 +1,43 @@
+receipt_version: 1
+change: show-subagent-activity
+schema: spec-driven
+approval:
+  summary: >-
+    After the complete Gate B contract was presented with decisions T-01 through T-09, the three-task acyclic serial DAG and waves, exact Requirement/Scenario ownership, verification types, Red and affected-suite commands, planned write sets, conflict/resource/verification locks, package and persistence boundaries, and AGENTS impact matrix, the user explicitly approved it with the exact reply "批准 Gate B". Earlier, the user selected the recommended two-line 12-row Widget layout and TUI-only activityDisplay details strategy and stated that subsequent recommended options were approved. This receipt binds only the presented contract and authorizes no unpresented behavior, public controls, persistence, dependency, compatibility, or architecture.
+delivery:
+  implementation_summary: >-
+    Runtime exposes a private request-scoped lifecycle observer after strict validation: queued before scheduling, running inside the Scheduler execute closure after admission, and exactly one typed completed, failed, cancelled, or timed-out terminal event. Observer and display failures cannot affect scheduling, cancellation, timeout, redispatch, usage, result retention, patch application, or drain. Active entries are keyed by Pi toolCallId and ordered by an independent admission sequence.
+  presentation_summary: >-
+    Interactive TUI receives custom inline abel_dispatch rendering and one temporary above-editor Agents Widget. One process-local ActivityController owns one shared 100 ms refresh timer. The Widget uses two lines per visible request, has a 12-line total bound, preserves admission order, reports exact hidden running and queued counts, removes terminal entries immediately, and clears itself and its status when no active request remains. Every line is terminal-width safe.
+  compatibility_and_privacy_summary: >-
+    Only ctx.mode=tui activates presentation observation, partial updates, Widget/status calls, or the activityDisplay details field. Print, JSON, and RPC preserve existing result content, details, usage, result ids, errors, and events. A TUI parent ToolResult may retain only compact terminal presentation metadata; active Widget/timer state remains process-local. Renderers exclude child transcripts, tool activity, accessed paths, Provider/model identity, hidden reasoning, complete citations, and complete diffs. Unsafe reasons are sanitized and width-bounded.
+  dependency_and_distribution_summary: >-
+    The package declares @earendil-works/pi-tui as a wildcard peer and pins the currently installed 0.84.2 development dependency, adds no ordinary dependency and bundles no second TUI runtime. The new src/subagent-activity.ts module is added to both exact real-tarball member lists, and package, lockfile, type, lint, distribution, and pack checks are part of the approved tasks.
+  task_dag_summary: >-
+    Task 1.1 owns Runtime lifecycle observation and typed terminal failure outcomes in wave 1. Task 2.1 artifact-depends on 1.1 and owns the activity module, property tests, direct peer/dev package surface, tarball lists, and root AGENTS update in wave 2. Task 3.1 artifact-depends on 1.1 and 2.1 and owns extension integration, TUI-only compatibility, cleanup, integration tests, and README in wave 3. All tasks are serial and the DAG is acyclic.
+  verification_summary: >-
+    Task 1.1 uses property verification for transition, invalid-request, terminal, and observer-noninterference invariants. Task 2.1 uses property verification for stable ordering, visible-width bounds, 12-line bounds, exact overflow accounting, terminal cleanup, privacy markers, package contract, and distribution membership. Task 3.1 uses integration examples for inline/Widget lifecycle, non-TUI equivalence, rerendered terminal details, redispatch timing, public-surface absence, and session cleanup. Final commands include the affected target suites, bun run verify, bun run traceability:check, and bun run check:agents.
+  baseline_summary: >-
+    Design-time read-only baselines passed: the eight-file candidate target suite had 47 passing tests, the complete suite had 26 files and 182 passing tests, and bun run check exited successfully. Implement must record fresh target, affected, lint/check, and full-suite baselines before writes and require no new failure.
+  agents_impact_summary: >-
+    Task 1.1 is none because existing child-execution and Runtime/Scheduler routes remain authoritative. Task 2.1 is update-existing for only the managed block of root AGENTS.md, adding the src/subagent-activity.ts presentation owner and process-local/non-TUI boundary; no nested index is created. Task 3.1 is none because it only connects the already indexed presentation owner to the existing src/index.ts entrypoint. Human-authored index content remains untouched.
+  strict_validation:
+    command: openspec validate show-subagent-activity --strict --type change --json
+    valid: true
+    issues: 0
+  apply_tracks: tasks.md
+  apply_requires:
+    - tasks
+gate_a:
+  path: gate-a.yaml
+  sha256: 8a9d494fa9df766e924ef7afb957c1a169ec5704a2fcb108e7e3ce8e1f46695b
+artifacts:
+  - path: proposal.md
+    sha256: 5baa6ce0c0469e57ef182a1dca17545db9b75861b3543ccf1a3d50bd5b63cdaf
+  - path: specs/private-agent-orchestration/spec.md
+    sha256: ea25124dddf0a0f14d119cd54051f8655bea91d630f4d2186b399ea09c042f1e
+  - path: design.md
+    sha256: c532068ce318d65e641f82866731d5075fd9c3f6eb10d4dcabadc9e2a9c3b602
+  - path: tasks.md
+    hash_normalization: completed_markdown_checkboxes_to_unchecked
+    sha256: 114623fcb58cf02ad3b4335484da80b39418208aa92973d86fc29c33a0b8e708

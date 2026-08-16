@@ -5,10 +5,13 @@ import { describe, expect, it } from "vitest";
 const root = path.resolve(import.meta.dirname, "..");
 const read = (p: string) => readFileSync(p, "utf8");
 
+const NON_PACKAGE_DIRS = new Set([".git", "node_modules"]);
+
 function walk(dir: string): string[] {
   if (!existsSync(dir)) return [];
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory() && NON_PACKAGE_DIRS.has(entry.name)) continue;
     const p = path.join(dir, entry.name);
     if (entry.isDirectory()) out.push(...walk(p));
     else out.push(p);

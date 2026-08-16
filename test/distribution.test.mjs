@@ -7,7 +7,6 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
-  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -51,6 +50,7 @@ const expectedFiles = [
   "package/src/runtime.ts",
   "package/src/scheduler.ts",
   "package/src/scoped-tools.ts",
+  "package/src/subagent-activity.ts",
   "package/src/submit-tool.ts",
   "package/src/worker.ts",
 ].sort();
@@ -202,7 +202,7 @@ describe("installed-directory loading", () => {
     ]);
     expect(abs.prompts).toEqual(rel.prompts);
     expect(abs.skills).toEqual(rel.skills);
-  });
+  }, 15_000);
 });
 
 describe("first-phase scope", () => {

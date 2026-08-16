@@ -1,0 +1,26 @@
+receipt_version: 1
+change: show-subagent-activity
+schema: spec-driven
+behavior_contract:
+  goal: Make private Subagent delegation clearly visible in interactive Pi without exposing private child-session data or changing orchestration behavior.
+  scope:
+    - Compact inline TUI activity for valid run requests with role, request id, phase, objective summary, elapsed time, and queued, running, completed, failed, cancelled, or timed-out state.
+    - Temporary above-editor Agents widget for active queued and running requests in stable admission order, with accurate overflow accounting and automatic cleanup.
+    - Compact expanded evidence-count or diff-summary metadata only.
+    - Print, JSON, and RPC behavior remains unchanged.
+  non_goals:
+    - Fleet navigation or child-session viewer.
+    - Public stop, resume, steering, general Subagent, orchestration, or persistent display controls.
+    - Child transcripts, tool activity, accessed paths, model identity, hidden reasoning, complete citations, or complete diffs in the display.
+    - Scheduling, retry, cancellation, usage, retention, patch application, or validation behavior changes.
+  strategies:
+    privacy: Keep active Widget and refresh state process-local; a TUI parent ToolResult may retain only approved compact terminal presentation metadata and no private child data.
+    compatibility: Restrict enhancements to interactive TUI and preserve existing non-TUI tool results and events, including omitting the presentation-only details field.
+    failure: Keep invalid requests out of activity state; distinguish failed, cancelled, and timed-out terminal outcomes without treating partial output as success.
+approval:
+  summary: User selected inline display plus a temporary Agents widget, TUI-only compatibility, and compact metadata privacy boundaries; explicitly approved Gate A with the exact reply "批准 Gate A"; then explicitly selected the recommended TUI-only ToolResult details namespace so terminal presentation can be re-rendered while active Widget state remains process-local.
+artifacts:
+  - path: proposal.md
+    sha256: 5baa6ce0c0469e57ef182a1dca17545db9b75861b3543ccf1a3d50bd5b63cdaf
+  - path: specs/private-agent-orchestration/spec.md
+    sha256: ea25124dddf0a0f14d119cd54051f8655bea91d630f4d2186b399ea09c042f1e
