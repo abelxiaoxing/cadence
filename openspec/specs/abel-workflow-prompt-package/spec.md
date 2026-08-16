@@ -378,7 +378,7 @@ Its tarball SHALL contain package metadata, user documentation, license and attr
 
 ### Requirement: Standalone repository extraction
 
-The current target root SHALL become the standalone single-package source repository for `@abel/pi-abel-workflow` and SHALL NOT require a nested workspace or reference-monorepo directory for development, validation, packing, installation, or runtime use.
+The current target root SHALL become the standalone single-package source repository for `@abelxiaoxing/cadence` and SHALL NOT require a nested workspace or reference-monorepo directory for development, validation, packing, installation, or runtime use.
 Before orchestration product implementation begins, the standalone package baseline SHALL be extracted and the complete reference `pi-packages` repository SHALL be relocated to `/home/abelxiaoxing/work/subagent/pi-packages` with its Git metadata, local commits, modified files, untracked files, and untracked workflow-package copy preserved.
 The relocation MUST NOT delete, clean, overwrite, or normalize reference-repository content.
 After relocation, implementation MAY inspect that repository as read-only implementation, attribution, license, or provenance evidence, but standalone source, imports, dependencies, tests, commands, symbolic links, packing, installation, and runtime resolution MUST NOT depend on either its old or relocated path.
@@ -390,7 +390,7 @@ After relocation, implementation MAY inspect that repository as read-only implem
 
 #### Scenario: Standalone root replaces nested workspace
 
-- **WHEN** a maintainer inspects `/home/abelxiaoxing/work/pi-abelpackages` after extraction
+- **WHEN** a maintainer inspects the standalone package directory after extraction
 - **THEN** the root directly contains the single package source, tests, documentation, OpenSpec root, and AGENTS index without the nested reference workspace
 
 #### Scenario: Reference evidence is consulted

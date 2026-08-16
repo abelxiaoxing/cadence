@@ -11,15 +11,16 @@ const tasks = readFileSync(
     root,
     "openspec",
     "changes",
-    "extract-workflow-add-private-agent-orchestration",
+    "archive",
+    "2026-08-15-extract-workflow-add-private-agent-orchestration",
     "tasks.md",
   ),
   "utf8",
 );
 
 const specPaths = [
-  "openspec/changes/extract-workflow-add-private-agent-orchestration/specs/abel-workflow-prompt-package/spec.md",
-  "openspec/changes/extract-workflow-add-private-agent-orchestration/specs/private-agent-orchestration/spec.md",
+  "openspec/changes/archive/2026-08-15-extract-workflow-add-private-agent-orchestration/specs/abel-workflow-prompt-package/spec.md",
+  "openspec/changes/archive/2026-08-15-extract-workflow-add-private-agent-orchestration/specs/private-agent-orchestration/spec.md",
 ];
 
 const headings = new Set();
