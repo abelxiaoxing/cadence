@@ -36,12 +36,12 @@ export default function register(pi: ExtensionAPI): void {
     async execute(
       _toolCallId: string,
       params: { action?: string; request?: unknown; resultId?: string },
-      _signal: AbortSignal | undefined,
+      signal: AbortSignal | undefined,
       _onUpdate: unknown,
       ctx: import("@earendil-works/pi-coding-agent").ExtensionContext,
     ) {
       const action = typeof params?.action === "string" ? params.action : "";
-      const result = await runtime.execute(action, params, ctx);
+      const result = await runtime.execute(action, params, ctx, signal);
       if (result.ok) {
         return {
           content: [{ type: "text", text: JSON.stringify(result) }],
@@ -66,8 +66,8 @@ export default function register(pi: ExtensionAPI): void {
     }
   });
 
-  pi.on("session_shutdown", () => {
-    runtime.drain();
+  pi.on("session_shutdown", async () => {
+    await runtime.drain();
     const active = pi.getActiveTools();
     if (active.includes(DISPATCH_TOOL)) {
       pi.setActiveTools(deactivateTool(active, DISPATCH_TOOL));

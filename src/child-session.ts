@@ -16,6 +16,20 @@ import {
   type SubmitClassification,
 } from "./submit-tool.ts";
 
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
 const ZERO_USAGE: Usage = {
   input: 0,
   output: 0,
@@ -89,6 +103,7 @@ export async function runChildSession(input: {
   output: "evidence" | "diff";
   roots: string[];
   timeoutMs: number;
+  signal?: AbortSignal;
 }): Promise<
   | {
       ok: true;
@@ -118,6 +133,13 @@ export async function runChildSession(input: {
   let disposeCount = 0;
   const usage = new UsageAggregator();
   const abort = new AbortController();
+  const forwardCancellation = () =>
+    abort.abort(input.signal?.reason ?? new Error("child phase cancelled"));
+  if (input.signal?.aborted) forwardCancellation();
+  else
+    input.signal?.addEventListener("abort", forwardCancellation, {
+      once: true,
+    });
   const timer = setTimeout(
     () => abort.abort(new Error("child phase timeout")),
     input.timeoutMs,
@@ -160,7 +182,8 @@ export async function runChildSession(input: {
     };
   };
   try {
-    ({ session } = await createAgentSession({
+    abort.signal.throwIfAborted();
+    const creation = createAgentSession({
       cwd: input.cwd,
       modelRuntime: input.modelRuntime,
       model: input.model,
@@ -173,7 +196,16 @@ export async function runChildSession(input: {
         compaction: { enabled: false },
         retry: { enabled: false, maxRetries: 0, provider: { maxRetries: 0 } },
       }),
-    }));
+    });
+    try {
+      ({ session } = await abortable(creation, abort.signal));
+    } catch (error) {
+      void creation
+        .then(({ session: lateSession }) => lateSession.dispose())
+        .catch(() => undefined);
+      throw error;
+    }
+    abort.signal.throwIfAborted();
     unsubscribe = session.subscribe((event) => {
       if (event.type === "message_end" && event.message.role === "assistant") {
         usage.add(
@@ -185,6 +217,7 @@ export async function runChildSession(input: {
     const onAbort = () => void session?.abort();
     abort.signal.addEventListener("abort", onAbort, { once: true });
     try {
+      if (abort.signal.aborted) throw abort.signal.reason;
       await Promise.race([
         session.prompt(input.systemPrompt, { expandPromptTemplates: false }),
         new Promise<never>((_, reject) =>
@@ -247,6 +280,7 @@ export async function runChildSession(input: {
     };
   } finally {
     clearTimeout(timer);
+    input.signal?.removeEventListener("abort", forwardCancellation);
     unsubscribe?.();
     disposeOnce();
   }

@@ -14,6 +14,7 @@ import { type Bound, mergeBounds } from "./file-snapshot.ts";
 import { runtimeFromContext } from "./parent-provider.ts";
 import { applyRetainedPatch } from "./patch.ts";
 import { ResultStore } from "./result-store.ts";
+import { Scheduler } from "./scheduler.ts";
 import {
   contractOf,
   sameContract,
@@ -22,6 +23,19 @@ import {
 } from "./worker.ts";
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+function cancellationError(signal: AbortSignal): { ok: false; error: string } {
+  const reason = signal.reason;
+  return {
+    ok: false,
+    error:
+      reason instanceof Error
+        ? reason.message
+        : typeof reason === "string"
+          ? reason
+          : "child phase cancelled",
+  };
+}
 
 function isSafeBound(snapshot: unknown): snapshot is Bound {
   if (
@@ -98,16 +112,30 @@ export class Runtime {
   readonly results = new ResultStore();
   private applyTail: Promise<void> = Promise.resolve();
   private applySeq = 0;
+  private batchSeq = 0;
   private readonly registry = new WorkerRegistry();
+  private readonly runContexts = new WeakMap<RequestEnvelope, RunContext>();
+  private readonly scheduler: Scheduler<DispatchResult>;
 
   constructor(opts: RuntimeOptions = {}) {
     this.activation = opts.activation ?? new Activation();
+    this.scheduler = new Scheduler({
+      limit: LIMITS.maxActiveChildSessions,
+      execute: async (request, signal) => {
+        const ctx = this.runContexts.get(request);
+        if (!ctx) throw new Error("scheduled run context is unavailable");
+        const result = await this.runScheduled(request, ctx, signal);
+        if (!result.ok) throw new Error(result.error);
+        return result;
+      },
+    });
   }
 
   async execute(
     action: string,
     params: { request?: unknown; resultId?: string },
     ctx?: RunContext,
+    signal?: AbortSignal,
   ): Promise<DispatchResult> {
     if (!(ACTIONS as readonly string[]).includes(action)) {
       return { ok: false, error: `unknown action: ${String(action)}` };
@@ -115,7 +143,7 @@ export class Runtime {
     if (!this.activation.isActive()) {
       return { ok: false, notReady: true, error: "dispatcher is not active" };
     }
-    if (action === "run") return this.run(params.request, ctx);
+    if (action === "run") return this.run(params.request, ctx, signal);
     if (action === "apply") {
       if (!ctx || !params.resultId)
         return { ok: false, error: "apply requires context and resultId" };
@@ -128,12 +156,11 @@ export class Runtime {
         ? { ok: true, action }
         : { ok: false, error: "retained result not found" };
     }
-    if (action === "cancel") return { ok: true, action };
-    drainStage({
-      results: this.results,
-      registry: this.registry,
-      activation: this.activation,
-    });
+    if (action === "cancel") {
+      await this.scheduler.cancelAll();
+      return { ok: true, action };
+    }
+    await this.drain();
     return { ok: true, action: "finish" };
   }
 
@@ -160,13 +187,21 @@ export class Runtime {
     agent: { role: string; content: string },
     envelope: RequestEnvelope,
     ctx: RunContext,
+    signal: AbortSignal,
   ): Promise<DispatchResult> {
+    if (signal.aborted) return cancellationError(signal);
     let phase: Awaited<ReturnType<typeof runtimeFromContext>>;
     try {
-      phase = await runtimeFromContext(ctx);
+      phase = await runtimeFromContext(ctx, signal);
     } catch (error) {
-      return { ok: false, error: (error as Error).message };
+      return {
+        ok: false,
+        error: signal.aborted
+          ? cancellationError(signal).error
+          : (error as Error).message,
+      };
     }
+    if (signal.aborted) return cancellationError(signal);
     const roots = envelope.roots.map(
       (root) => new URL(root, `file://${ctx.cwd}/`).pathname,
     );
@@ -187,7 +222,9 @@ export class Runtime {
       output: envelope.output as "evidence" | "diff",
       roots,
       timeoutMs: LIMITS.phaseTimeoutMs,
+      signal,
     });
+    if (signal.aborted) return cancellationError(signal);
     if (!child.ok) return child;
     if (envelope.output === "evidence") {
       return {
@@ -221,11 +258,57 @@ export class Runtime {
   private async run(
     request: unknown,
     ctx?: RunContext,
+    signal?: AbortSignal,
   ): Promise<DispatchResult> {
     if (!ctx) return { ok: false, error: "run requires extension context" };
+    if (signal?.aborted) return cancellationError(signal);
     const validation = validateRequestEnvelope(request);
     if (!validation.ok) return { ok: false, error: validation.reason };
-    const envelope = validation.value;
+    const envelope: RequestEnvelope = {
+      ...validation.value,
+      roots: [...validation.value.roots],
+      context: { ...validation.value.context },
+      declared: {
+        ...validation.value.declared,
+        read: [...validation.value.declared.read],
+        write: [...validation.value.declared.write],
+        conflicts: [...validation.value.declared.conflicts],
+        resources: [...validation.value.declared.resources],
+      },
+    };
+    this.runContexts.set(envelope, ctx);
+    const batchId = `runtime-${++this.batchSeq}`;
+    const batch = this.scheduler.schedule(batchId, [
+      { request: envelope, prerequisites: [] },
+    ]);
+    const cancelBatch = () =>
+      this.scheduler.cancel(
+        batchId,
+        signal?.reason ?? new Error("tool call cancelled"),
+      );
+    if (signal?.aborted) cancelBatch();
+    else signal?.addEventListener("abort", cancelBatch, { once: true });
+    try {
+      const outcome = await batch.result(envelope.id);
+      if (outcome.status === "succeeded" && outcome.value) {
+        return outcome.value;
+      }
+      return {
+        ok: false,
+        error: outcome.error ?? `scheduled run ${outcome.status}`,
+      };
+    } finally {
+      signal?.removeEventListener("abort", cancelBatch);
+      this.runContexts.delete(envelope);
+    }
+  }
+
+  private async runScheduled(
+    envelope: RequestEnvelope,
+    ctx: RunContext,
+    signal: AbortSignal,
+  ): Promise<DispatchResult> {
+    if (signal.aborted) return cancellationError(signal);
     const agent = loadAgentDefinitions().find(
       (item) => item.role === envelope.role,
     );
@@ -260,7 +343,8 @@ export class Runtime {
       this.registry.pin(contract, identity);
     }
     const pinned = this.registry.get(envelope.id);
-    const first = await this.dispatchChild(agent, envelope, ctx);
+    const first = await this.dispatchChild(agent, envelope, ctx, signal);
+    if (signal.aborted) return cancellationError(signal);
     if (first.ok) {
       if (pinned) pinned.redispatchUsed = false;
       return first;
@@ -275,7 +359,8 @@ export class Runtime {
       return { ok: false, error: "blocked: logical Worker is not pinned" };
     }
     pinned.redispatchUsed = true;
-    const second = await this.dispatchChild(agent, envelope, ctx);
+    const second = await this.dispatchChild(agent, envelope, ctx, signal);
+    if (signal.aborted) return cancellationError(signal);
     if (!second.ok) {
       return {
         ok: false,
@@ -291,12 +376,14 @@ export class Runtime {
     return validateRequestEnvelope(envelope);
   }
 
-  drain(): void {
+  async drain(): Promise<void> {
+    const settled = this.scheduler.cancelAll();
     drainStage({
       results: this.results,
       registry: this.registry,
       activation: this.activation,
     });
+    await settled;
   }
 
   get state(): ActivationState {

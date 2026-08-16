@@ -36,6 +36,7 @@ interface SchedulerOptions<T = unknown> {
 interface SchedulerLike<T = unknown> {
   schedule(batchId: string, requests: ScheduledRequest[]): BatchHandle<T>;
   cancel(batchId: string): void;
+  cancelAll?(): Promise<void>;
 }
 
 type SchedulerConstructor = new <T>(
@@ -419,6 +420,37 @@ describe("cancellation and branch isolation", () => {
     ]);
     await turn();
     expect(starts).toEqual(["active"]);
+  });
+
+  it("cancelAll marks every batch before settlement can admit another queue", async () => {
+    const starts: string[] = [];
+    const active = deferred<string>();
+    const scheduler = createScheduler<string>((envelope, signal) => {
+      starts.push(envelope.id);
+      if (envelope.id !== "active") return Promise.resolve("unexpected start");
+      return new Promise<string>((resolve, reject) => {
+        active.promise.then(resolve, reject);
+        signal.addEventListener(
+          "abort",
+          () => reject(signal.reason ?? new Error("cancelled")),
+          { once: true },
+        );
+      });
+    }, 1);
+    const first = scheduler.schedule("first", [scheduled("active")]);
+    const second = scheduler.schedule("second", [scheduled("queued")]);
+    await turn();
+
+    const cancelAll = scheduler.cancelAll;
+    expect(cancelAll).toBeTypeOf("function");
+    await cancelAll?.call(scheduler);
+    const outcomes = await Promise.all([first.done, second.done]);
+
+    expect(starts).toEqual(["active"]);
+    expect(outcomes.flat().map((outcome) => outcome.status)).toEqual([
+      "cancelled",
+      "cancelled",
+    ]);
   });
 
   it("retains an independent sibling success when another branch fails", async () => {

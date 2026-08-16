@@ -43,6 +43,7 @@ interface Entry<T> {
   state: EntryState;
   attempts: number;
   cancelRequested: boolean;
+  cancelReason: unknown;
   controller: AbortController | null;
   resolve(outcome: ScheduledOutcome<T>): void;
   promise: Promise<ScheduledOutcome<T>>;
@@ -106,6 +107,7 @@ class Batch<T> {
         state: "queued",
         attempts: 0,
         cancelRequested: false,
+        cancelReason: undefined,
         controller: null,
         resolve,
         promise,
@@ -150,6 +152,8 @@ export class Scheduler<T> {
       }
     }
     this.pump();
+    const done = Promise.all(batch.entries.map((entry) => entry.promise));
+    void done.then(() => this.removeBatch(batch));
     return {
       batchId,
       result: (id: string) => {
@@ -157,22 +161,54 @@ export class Scheduler<T> {
         if (!entry) throw new Error(`unknown scheduled request: ${id}`);
         return entry.promise;
       },
-      done: Promise.all(batch.entries.map((entry) => entry.promise)),
+      done,
     };
   }
 
-  cancel(batchId: string): void {
+  private removeBatch(batch: Batch<T>): void {
+    const index = this.batches.indexOf(batch);
+    if (index >= 0) this.batches.splice(index, 1);
+  }
+
+  cancel(
+    batchId: string,
+    reason: unknown = new Error("batch cancelled"),
+  ): void {
     const batch = this.batches.find(
       (candidate) => candidate.batchId === batchId,
     );
-    if (!batch) return;
+    if (batch) this.cancelBatch(batch, reason);
+  }
+
+  async cancelAll(
+    reason: unknown = new Error("batch cancelled"),
+  ): Promise<void> {
+    const batches = [...this.batches];
+    for (const batch of batches) this.requestCancellation(batch, reason);
+    for (const batch of batches) this.settleQueuedCancellation(batch);
+    await Promise.all(
+      batches.flatMap((batch) => batch.entries.map((entry) => entry.promise)),
+    );
+  }
+
+  private cancelBatch(batch: Batch<T>, reason: unknown): void {
+    this.requestCancellation(batch, reason);
+    this.settleQueuedCancellation(batch);
+  }
+
+  private requestCancellation(batch: Batch<T>, reason: unknown): void {
+    for (const entry of batch.entries) {
+      if (entry.state !== "queued" && entry.state !== "running") continue;
+      if (!entry.cancelRequested) entry.cancelReason = reason;
+      entry.cancelRequested = true;
+      if (entry.state === "running") entry.controller?.abort(reason);
+    }
+  }
+
+  private settleQueuedCancellation(batch: Batch<T>): void {
     for (const entry of batch.entries) {
       if (entry.state === "queued") {
-        entry.cancelRequested = true;
         this.settle(batch, entry, this.cancelOutcome(entry));
-      } else if (entry.state === "running") {
-        entry.cancelRequested = true;
-        entry.controller?.abort();
       }
     }
     this.pump();
@@ -182,7 +218,7 @@ export class Scheduler<T> {
     for (const batch of this.batches) {
       for (const entry of batch.entries) {
         if (this.active.size >= this.limit) return;
-        if (entry.state !== "queued") continue;
+        if (entry.state !== "queued" || entry.cancelRequested) continue;
         if (!this.prerequisitesSucceeded(batch, entry)) continue;
         if (this.hasActiveConflict(entry)) continue;
         this.start(batch, entry);
@@ -207,7 +243,7 @@ export class Scheduler<T> {
 
   private start(batch: Batch<T>, entry: Entry<T>): void {
     // Guarded start: a cancelled or settled queued closure never runs later.
-    if (entry.state !== "queued") return;
+    if (entry.state !== "queued" || entry.cancelRequested) return;
     entry.state = "running";
     entry.attempts += 1;
     entry.controller = new AbortController();
@@ -262,7 +298,7 @@ export class Scheduler<T> {
       id: entry.request.id,
       status: "cancelled",
       attempts: entry.attempts,
-      error: "batch cancelled",
+      error: errorMessage(entry.cancelReason ?? new Error("batch cancelled")),
     };
   }
 

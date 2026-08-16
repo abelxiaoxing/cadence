@@ -10,12 +10,19 @@ import {
 
 export async function runtimeForProvider(
   provider: Provider,
+  signal?: AbortSignal,
 ): Promise<ModelRuntime> {
-  const runtime = await ModelRuntime.create({
-    credentials: new InMemoryCredentialStore(),
-    modelsPath: null,
-    refreshOnCreate: false,
-  });
+  signal?.throwIfAborted();
+  const runtime = await abortable(
+    ModelRuntime.create({
+      credentials: new InMemoryCredentialStore(),
+      modelsPath: null,
+      refreshOnCreate: false,
+      signal,
+    }),
+    signal,
+  );
+  signal?.throwIfAborted();
   runtime.registerNativeProvider(provider);
   return runtime;
 }
@@ -69,17 +76,39 @@ export function phaseProvider(
 
 export async function runtimeFromContext(
   ctx: Pick<ExtensionContext, "model" | "modelRegistry">,
+  signal?: AbortSignal,
 ): Promise<{ modelRuntime: ModelRuntime; model: Model<string> }> {
+  signal?.throwIfAborted();
   if (!ctx.model) throw new Error("parent model is unavailable");
   const parent = ctx.modelRegistry.getProvider(ctx.model.provider);
   if (!parent) throw new Error("parent Provider is unavailable");
-  const resolved = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);
+  const resolved = await abortable(
+    ctx.modelRegistry.getApiKeyAndHeaders(ctx.model),
+    signal,
+  );
   if (!resolved.ok) throw new Error(resolved.error);
+  signal?.throwIfAborted();
   const provider = phaseProvider(parent, resolved);
-  const modelRuntime = await runtimeForProvider(provider);
+  const modelRuntime = await runtimeForProvider(provider, signal);
+  signal?.throwIfAborted();
   const model = {
     ...ctx.model,
     baseUrl: resolved.baseUrl ?? ctx.model.baseUrl,
   } as Model<string>;
   return { modelRuntime, model };
+}
+
+function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", onAbort));
+  });
 }
