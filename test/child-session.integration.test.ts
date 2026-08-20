@@ -1,5 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,7 +16,9 @@ import {
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 import { Activation } from "../src/activation";
+import { snapshotFiles } from "../src/file-snapshot";
 import { Runtime } from "../src/runtime";
+import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 let child: typeof import("../src/child-session") | null = null;
 let parentProvider: typeof import("../src/parent-provider") | null = null;
@@ -148,6 +156,12 @@ describe("real isolated child session", () => {
     });
     execFileSync("git", ["config", "user.name", "Abel Test"], { cwd });
     writeFileSync(join(cwd, "a.txt"), "old\n");
+    mkdirSync(join(cwd, "node_modules"));
+    writeFileSync(
+      join(cwd, "package.json"),
+      `${JSON.stringify({ private: true, scripts: { check: 'node -e ""' } })}\n`,
+    );
+    writeFileSync(join(cwd, "bun.lock"), "# fixture lock\n");
     execFileSync("git", ["add", "a.txt"], { cwd });
     execFileSync("git", ["commit", "-qm", "base"], { cwd });
     const diff = "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n";
@@ -174,7 +188,10 @@ describe("real isolated child session", () => {
     const activation = new Activation();
     activation.request();
     activation.activate();
-    const runtime = new Runtime({ activation });
+    const runtime = new Runtime({
+      activation,
+      parentPayloadBridge: new PassthroughParentPayloadBridge(),
+    });
     const context = {
       cwd,
       model: faux.getModel(),
@@ -183,6 +200,7 @@ describe("real isolated child session", () => {
     const request = {
       stage: "abel-implement",
       role: "implementation-worker",
+      taskId: "task-1",
       id: "task-1",
       phase: "green",
       objective: "Change a.txt",
@@ -193,8 +211,16 @@ describe("real isolated child session", () => {
         write: ["a.txt"],
         conflicts: [],
         resources: [],
+        verificationLock: "child-session-runtime",
       },
+      snapshot: snapshotFiles(cwd, ["a.txt"]),
       output: "diff",
+      verification: {
+        id: "verify-task-1-green",
+        argv: ["bun", "run", "check"],
+        classification: "expected-green",
+        minTests: 1,
+      },
     };
     const run = await (runtime as any).execute("run", { request }, context);
     expect(run.ok).toBe(true);
@@ -213,6 +239,7 @@ type ChildOutcome = {
   submitCount?: unknown;
   disposeCount?: unknown;
   toolNames?: unknown;
+  transportFailure?: unknown;
   classification?: unknown;
 };
 type ChildModule = NonNullable<typeof child>;
@@ -328,6 +355,7 @@ describe("structural submission classification", () => {
       fauxAssistantMessage("explaining progress without submitting"),
     );
     expect.soft(classification(textOnly)?.finalCategory).toBe("text-only");
+    expect.soft(textOnly.transportFailure).toBe(false);
 
     // Attempts: a wrong request is still counted as an attempted submit.
     const wrongRequest = await runChildSessionFixture(
@@ -380,5 +408,6 @@ describe("structural submission classification", () => {
     );
     expect.soft(invalidSchema.ok).toBe(false);
     expect.soft(classification(invalidSchema)?.schema).toBe("invalid");
+    expect.soft(invalidSchema.transportFailure).toBe(false);
   });
 });

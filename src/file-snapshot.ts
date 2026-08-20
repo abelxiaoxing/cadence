@@ -1,10 +1,17 @@
 // File-level snapshots: content hashes for observed files, deterministic
-// directory-entry manifests for observed directories, and explicit absent
+// recursive content manifests for observed directories, and explicit absent
 // markers for proposed new paths. Currency is decided per bound path; no
 // global workspace revision participates.
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import {
+  existsSync,
+  lstatSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  statSync,
+} from "node:fs";
+import { join, resolve } from "node:path";
 
 export interface FileBound {
   kind: "file";
@@ -37,7 +44,57 @@ export function snapshotFile(root: string, relPath: string): FileBound | null {
   return { sha256: sha256(bytes), bytes: bytes.length, kind: "file" };
 }
 
-/** Deterministic directory-entry manifest: hash of sorted name/type entries. */
+function updateManifest(
+  hash: ReturnType<typeof createHash>,
+  ...fields: Array<string | Buffer>
+): void {
+  for (const field of fields) {
+    const bytes = typeof field === "string" ? Buffer.from(field) : field;
+    hash.update(`${bytes.length}:`);
+    hash.update(bytes);
+  }
+}
+
+function recursiveDirectoryManifest(abs: string): string {
+  const hash = createHash("sha256");
+  updateManifest(hash, "cadence-directory-manifest-v2");
+  const visit = (directory: string, prefix: string): void => {
+    const names = readdirSync(directory).sort();
+    for (const name of names) {
+      const relative = prefix ? `${prefix}/${name}` : name;
+      const current = join(directory, name);
+      const stat = lstatSync(current);
+      if (stat.isDirectory()) {
+        updateManifest(hash, "dir", relative, String(stat.mode & 0o777));
+        visit(current, relative);
+      } else if (stat.isFile()) {
+        const bytes = readFileSync(current);
+        updateManifest(
+          hash,
+          "file",
+          relative,
+          String(stat.mode & 0o777),
+          String(bytes.length),
+          sha256(bytes),
+        );
+      } else if (stat.isSymbolicLink()) {
+        updateManifest(hash, "symlink", relative, readlinkSync(current));
+      } else {
+        updateManifest(
+          hash,
+          "special",
+          relative,
+          String(stat.mode),
+          String(stat.size),
+        );
+      }
+    }
+  };
+  visit(abs, "");
+  return hash.digest("hex");
+}
+
+/** Deterministic recursive directory manifest bound to installed content. */
 export function snapshotDirManifest(
   root: string,
   relDir: string,
@@ -45,10 +102,7 @@ export function snapshotDirManifest(
   const abs = resolve(root, relDir);
   const st = statSync(abs, { throwIfNoEntry: false });
   if (!st?.isDirectory()) return null;
-  const entries = readdirSync(abs, { withFileTypes: true })
-    .map((e) => `${e.name}:${e.isDirectory() ? "dir" : "file"}`)
-    .sort();
-  return { manifest: sha256(Buffer.from(entries.join("\n"))), kind: "dir" };
+  return { manifest: recursiveDirectoryManifest(abs), kind: "dir" };
 }
 
 /** Build a bound map for the given file paths, observed directories, and absent markers. */

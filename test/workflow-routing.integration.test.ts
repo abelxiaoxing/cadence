@@ -4,7 +4,14 @@
 // against the CURRENT product. Failures are valid only at the routing surface.
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -15,7 +22,9 @@ import {
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 import { Activation } from "../src/activation";
+import { snapshotFiles } from "../src/file-snapshot";
 import { Runtime } from "../src/runtime";
+import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 let parentProvider: typeof import("../src/parent-provider") | null = null;
 try {
@@ -44,6 +53,42 @@ function makeRoot(tag: string): string {
   });
   execFileSync("git", ["config", "user.name", "Abel Test"], { cwd });
   writeFileSync(join(cwd, "a.txt"), "old\n");
+  mkdirSync(join(cwd, "node_modules/.bin"), { recursive: true });
+  const fixtureReporter = join(cwd, "node_modules/.bin/vitest");
+  writeFileSync(
+    fixtureReporter,
+    [
+      "#!/usr/bin/env bun",
+      'import { writeFileSync } from "node:fs";',
+      "const args = process.argv.slice(2);",
+      'const output = args.find((arg) => arg.startsWith("--outputFile="))?.slice(13);',
+      'if (!output) throw new Error("missing structured report output");',
+      'const identity = "[WORKFLOW-ROUTING:expected-red]";',
+      "writeFileSync(output, JSON.stringify({",
+      "  numTotalTests: 1, numFailedTests: 1, success: false,",
+      '  testResults: [{ message: "", assertionResults: [{',
+      '    status: "failed", fullName: identity, title: identity,',
+      "    failureMessages: [identity],",
+      "  }] }],",
+      "}));",
+      "process.exit(1);",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(fixtureReporter, 0o755);
+  mkdirSync(join(cwd, "test"));
+  writeFileSync(
+    join(cwd, "package.json"),
+    `${JSON.stringify({
+      private: true,
+      scripts: { check: 'node -e ""', "test:target": "vitest run" },
+    })}\n`,
+  );
+  writeFileSync(join(cwd, "bun.lock"), "# fixture lock\n");
+  writeFileSync(
+    join(cwd, "test/expected-red.mjs"),
+    "// fixture expected Red\n",
+  );
   execFileSync("git", ["add", "a.txt"], { cwd });
   execFileSync("git", ["commit", "-qm", "base"], { cwd });
   return cwd;
@@ -55,10 +100,16 @@ const submitResponse = (submitted: unknown) =>
     { stopReason: "toolUse" },
   );
 
-function requestFor(id: string, phase: string, snapshot?: unknown) {
+function requestFor(
+  id: string,
+  phase: string,
+  root: string,
+  snapshot?: unknown,
+) {
   return {
     stage: "abel-implement",
     role: "implementation-worker",
+    taskId: id,
     id,
     phase,
     objective: "Change a.txt",
@@ -69,9 +120,17 @@ function requestFor(id: string, phase: string, snapshot?: unknown) {
       write: ["a.txt"],
       conflicts: [],
       resources: [],
+      verificationLock: "workflow-routing-red",
     },
     output: "diff",
-    ...(snapshot ? { snapshot } : {}),
+    verification: {
+      id: `verify-${id}`,
+      argv: ["bun", "run", "test:target", "test/expected-red.mjs"],
+      classification: "expected-red",
+      expectedFailure: "[WORKFLOW-ROUTING:expected-red]",
+      minTests: 1,
+    },
+    snapshot: snapshot ?? snapshotFiles(root, ["a.txt"]),
   };
 }
 
@@ -104,7 +163,10 @@ async function makeActive(tag: string) {
   const activation = new Activation();
   activation.request();
   activation.activate();
-  const runtime = new Runtime({ activation });
+  const runtime = new Runtime({
+    activation,
+    parentPayloadBridge: new PassthroughParentPayloadBridge(),
+  });
   return {
     cwd,
     faux,
@@ -126,10 +188,12 @@ describe("eligible activation gates dispatch", () => {
       model: faux.getModel(),
       modelRegistry: new ModelRegistry(modelRuntime),
     };
-    const runtime = new Runtime();
+    const runtime = new Runtime({
+      parentPayloadBridge: new PassthroughParentPayloadBridge(),
+    });
     const blocked = await (runtime as any).execute(
       "run",
-      { request: requestFor("task-inactive", "red") },
+      { request: requestFor("task-inactive", "red", cwd) },
       context,
     );
     expect(blocked.ok).toBe(false);
@@ -141,10 +205,13 @@ describe("eligible activation gates dispatch", () => {
     const act = new Activation();
     act.request();
     act.activate();
-    const active = new Runtime({ activation: act });
+    const active = new Runtime({
+      activation: act,
+      parentPayloadBridge: new PassthroughParentPayloadBridge(),
+    });
     const accepted = await (active as any).execute(
       "run",
-      { request: requestFor("task-inactive", "red") },
+      { request: requestFor("task-inactive", "red", cwd) },
       {
         cwd,
         model: faux2.getModel(),
@@ -164,7 +231,9 @@ describe("Init never activates dispatch", () => {
       model: faux.getModel(),
       modelRegistry: new ModelRegistry(modelRuntime),
     };
-    const runtime = new Runtime();
+    const runtime = new Runtime({
+      parentPayloadBridge: new PassthroughParentPayloadBridge(),
+    });
     const blocked = await (runtime as any).execute("cancel", {}, context);
     expect(blocked.ok).toBe(false);
     expect(blocked.notReady).toBe(true);
@@ -180,7 +249,7 @@ describe("five-action routing", () => {
     ]);
     const run = await (runtime as any).execute(
       "run",
-      { request: requestFor("task-five", "red") },
+      { request: requestFor("task-five", "red", cwd) },
       context,
     );
     expect(run.ok).toBe(true);
@@ -199,11 +268,11 @@ describe("five-action routing", () => {
   });
 
   it("routes run -> discard and removes the retained diff from memory", async () => {
-    const { faux, runtime, context } = await makeActive("discard");
+    const { cwd, faux, runtime, context } = await makeActive("discard");
     faux.setResponses([submitResponse(diffSubmit("task-discard", "red"))]);
     const run = await (runtime as any).execute(
       "run",
-      { request: requestFor("task-discard", "red") },
+      { request: requestFor("task-discard", "red", cwd) },
       context,
     );
     expect(run.ok).toBe(true);
@@ -218,11 +287,11 @@ describe("five-action routing", () => {
   });
 
   it("routes cancel and finish without leaving retained results live", async () => {
-    const { faux, runtime, context } = await makeActive("cancel-finish");
+    const { cwd, faux, runtime, context } = await makeActive("cancel-finish");
     faux.setResponses([submitResponse(diffSubmit("task-cf", "red"))]);
     const run = await (runtime as any).execute(
       "run",
-      { request: requestFor("task-cf", "red") },
+      { request: requestFor("task-cf", "red", cwd) },
       context,
     );
     expect(run.ok).toBe(true);
@@ -238,19 +307,12 @@ describe("five-action routing", () => {
 
 describe("file snapshots bind request bounds", () => {
   it("merges a safe file snapshot into the retained result", async () => {
-    const { faux, runtime, context } = await makeActive("snapshot");
+    const { cwd, faux, runtime, context } = await makeActive("snapshot");
     faux.setResponses([submitResponse(diffSubmit("task-snap", "red"))]);
-    const snapshot = {
-      "a.txt": {
-        kind: "file",
-        sha256:
-          "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
-        bytes: 4,
-      },
-    };
+    const snapshot = snapshotFiles(cwd, ["a.txt"]);
     const run = await (runtime as any).execute(
       "run",
-      { request: requestFor("task-snap", "red", snapshot) },
+      { request: requestFor("task-snap", "red", cwd, snapshot) },
       context,
     );
     expect(run.ok).toBe(true);
@@ -258,23 +320,29 @@ describe("file snapshots bind request bounds", () => {
     expect(retained?.snapshot?.["a.txt"]?.kind).toBe("file");
   });
 
-  it("ignores a non-safe snapshot while still retaining the diff", async () => {
-    const { faux, runtime, context } = await makeActive("snapshot-bad");
+  it("rejects an unsafe snapshot before child dispatch or retention", async () => {
+    const { cwd, faux, runtime, context } = await makeActive("snapshot-bad");
     faux.setResponses([submitResponse(diffSubmit("task-snap-bad", "red"))]);
     const run = await (runtime as any).execute(
       "run",
-      { request: requestFor("task-snap-bad", "red", { "../escape": true }) },
+      {
+        request: requestFor("task-snap-bad", "red", cwd, {
+          "../escape": true,
+        }),
+      },
       context,
     );
-    expect(run.ok).toBe(true);
-    const retained = (runtime as any).results.get(run.resultId as string);
-    expect(retained?.snapshot?.["../escape"]).toBeUndefined();
+    expect(run.ok).toBe(false);
+    expect(run.error).toMatch(/snapshot/i);
+    expect(run.resultId).toBeUndefined();
+    expect(faux.state.callCount).toBe(0);
+    expect((runtime as any).results.size).toBe(0);
   });
 });
 
 describe("parent-only authority", () => {
   it("apply requires an explicit retained result and owning context", async () => {
-    const { faux, runtime, context } = await makeActive("authority");
+    const { cwd, faux, runtime, context } = await makeActive("authority");
     faux.setResponses([submitResponse(diffSubmit("task-auth", "red"))]);
     const noResultId = await (runtime as any).execute("apply", {}, context);
     expect(noResultId.ok).toBe(false);
@@ -286,7 +354,7 @@ describe("parent-only authority", () => {
     expect(unknownId.ok).toBe(false);
     const run = await (runtime as any).execute(
       "run",
-      { request: requestFor("task-auth", "red") },
+      { request: requestFor("task-auth", "red", cwd) },
       context,
     );
     expect(run.ok).toBe(true);
@@ -308,13 +376,18 @@ describe("cancellation", () => {
       model: faux.getModel(),
       modelRegistry: new ModelRegistry(modelRuntime),
     };
-    const runtime = new Runtime();
+    const runtime = new Runtime({
+      parentPayloadBridge: new PassthroughParentPayloadBridge(),
+    });
     const inactive = await (runtime as any).execute("cancel", {}, context);
     expect(inactive.ok).toBe(false);
     const act = new Activation();
     act.request();
     act.activate();
-    const activeRuntime = new Runtime({ activation: act });
+    const activeRuntime = new Runtime({
+      activation: act,
+      parentPayloadBridge: new PassthroughParentPayloadBridge(),
+    });
     const ok = await (activeRuntime as any).execute("cancel", {}, context);
     expect(ok.ok).toBe(true);
     expect(activeRuntime.state).toBe("active");

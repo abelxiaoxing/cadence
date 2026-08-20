@@ -31,6 +31,7 @@ export interface ScopedToolDef {
 
 interface Options {
   roots: string[];
+  allowedPaths?: string[];
   observer?: (obs: Observation) => void;
 }
 
@@ -38,7 +39,11 @@ type PathResult =
   | { ok: true; abs: string; rel: string }
   | { ok: false; error: string };
 
-function resolveScoped(roots: string[], input: unknown): PathResult {
+function resolveScoped(
+  roots: string[],
+  input: unknown,
+  allowedPaths?: string[],
+): PathResult {
   if (typeof input !== "string" || input.length === 0) {
     return { ok: false, error: "missing path" };
   }
@@ -54,11 +59,21 @@ function resolveScoped(roots: string[], input: unknown): PathResult {
   if (input.startsWith("./") || input.includes("//") || input.endsWith("/.")) {
     return { ok: false, error: "noncanonical path rejected" };
   }
+  let insideRoot = false;
   for (const root of roots) {
     const abs = resolve(root, input);
     const inside =
       abs === root || abs.startsWith(root.endsWith("/") ? root : `${root}/`);
     if (!inside) continue;
+    insideRoot = true;
+    if (
+      allowedPaths &&
+      !allowedPaths.some(
+        (allowed) => abs === allowed || abs.startsWith(`${allowed}/`),
+      )
+    ) {
+      continue;
+    }
     // Hidden directories are rejected unless the root itself is the hidden scope.
     const hiddenRoot =
       basename(realpathSync(root)) === ".git" ||
@@ -89,7 +104,12 @@ function resolveScoped(roots: string[], input: unknown): PathResult {
     }
     return { ok: true, abs: abs, rel: relative(root, abs) || "." };
   }
-  return { ok: false, error: "path is outside every approved root" };
+  return {
+    ok: false,
+    error: insideRoot
+      ? "path is outside the declared read/write scope"
+      : "path is outside every approved root",
+  };
 }
 
 function existsSync(p: string): boolean {
@@ -113,6 +133,7 @@ function utf8Text(abs: string): string | null {
 
 export function createScopedTools(opts: Options): ScopedToolDef[] {
   const roots = opts.roots.map((r) => resolve(r));
+  const allowedPaths = opts.allowedPaths?.map((p) => resolve(p));
   const observe = opts.observer ?? (() => {});
 
   const readTool: ScopedToolDef = {
@@ -120,7 +141,7 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
     description:
       "Read a regular UTF-8 text file within the approved scope (max 2,000 lines / 50 KiB).",
     async execute(params) {
-      const resolved = resolveScoped(roots, params.path);
+      const resolved = resolveScoped(roots, params.path, allowedPaths);
       if (!resolved.ok) return { ok: false, error: resolved.error };
       let st: Stats | undefined;
       try {
@@ -167,7 +188,7 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
           error: `pattern exceeds ${TOOL_LIMITS.maxGrepPattern} characters`,
         };
       }
-      const resolved = resolveScoped(roots, params.path ?? ".");
+      const resolved = resolveScoped(roots, params.path ?? ".", allowedPaths);
       if (!resolved.ok) return { ok: false, error: resolved.error };
       let regex: RegExp;
       try {
@@ -207,7 +228,7 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
     description:
       "List a directory within the approved scope (max 20,000 entries, stable code-unit order).",
     async execute(params) {
-      const resolved = resolveScoped(roots, params.path ?? ".");
+      const resolved = resolveScoped(roots, params.path ?? ".", allowedPaths);
       if (!resolved.ok) return { ok: false, error: resolved.error };
       let st: Stats | undefined;
       try {
@@ -236,7 +257,7 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
     description:
       "Recursively list paths within the approved scope (max 20,000 entries, stable code-unit order).",
     async execute(params) {
-      const resolved = resolveScoped(roots, params.path ?? ".");
+      const resolved = resolveScoped(roots, params.path ?? ".", allowedPaths);
       if (!resolved.ok) return { ok: false, error: resolved.error };
       let st: Stats | undefined;
       try {

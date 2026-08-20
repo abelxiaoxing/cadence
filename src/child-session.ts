@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { Model, Usage } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
@@ -66,9 +67,22 @@ export class UsageAggregator {
   }
 }
 
-function wrapScopedTools(roots: string[]) {
+function wrapScopedTools(
+  roots: string[],
+  cwd: string,
+  allowedPaths?: string[],
+) {
   const order = ["read", "grep", "find", "ls"];
-  return createScopedTools({ roots })
+  return createScopedTools({
+    roots,
+    ...(allowedPaths
+      ? {
+          allowedPaths: allowedPaths.map((relative) =>
+            path.resolve(cwd, relative),
+          ),
+        }
+      : {}),
+  })
     .sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name))
     .map((scoped) =>
       defineTool({
@@ -100,10 +114,12 @@ export async function runChildSession(input: {
   model: Model<string>;
   systemPrompt: string;
   requestId: string;
+  taskId?: string;
   role: string;
   phase?: string;
   output: "evidence" | "diff";
   roots: string[];
+  allowedPaths?: string[];
   timeoutMs: number;
   signal?: AbortSignal;
 }): Promise<
@@ -120,17 +136,19 @@ export async function runChildSession(input: {
       ok: false;
       error: string;
       failureKind: ChildFailureKind;
+      transportFailure: boolean;
       disposeCount: number;
       classification: SubmitClassification;
     }
 > {
   const submit = createSubmitTool({
     requestId: input.requestId,
+    taskId: input.taskId,
     role: input.role,
     phase: input.phase ?? "red",
     output: input.output,
   });
-  const readTools = wrapScopedTools(input.roots);
+  const readTools = wrapScopedTools(input.roots, input.cwd, input.allowedPaths);
   const customTools = [...readTools, submit.tool];
   const toolNames = customTools.map((tool) => tool.name);
   let disposeCount = 0;
@@ -184,6 +202,23 @@ export async function runChildSession(input: {
       schema: submit.getSchema(),
       identity: submit.getIdentity(),
     };
+  };
+  const transportFailed = (): boolean => {
+    const final = session?.messages
+      .filter((message) => message.role === "assistant")
+      .at(-1);
+    if (final === undefined) return true;
+    if (final.stopReason === "error") {
+      return (
+        submit.getAttempts() === 0 &&
+        !final.content.some(
+          (content) =>
+            content.type === "toolCall" &&
+            content.name === "abel_submit_result",
+        )
+      );
+    }
+    return final.stopReason === "aborted";
   };
   try {
     abort.signal.throwIfAborted();
@@ -239,11 +274,13 @@ export async function runChildSession(input: {
     const attempts = submit.getAttempts();
     const classification = classifySession();
     if (!result || attempts !== 1) {
+      const transportFailure = transportFailed();
       disposeOnce();
       return {
         ok: false,
         error: "child did not retain exactly one structural submission",
         failureKind: "failed",
+        transportFailure,
         disposeCount,
         classification,
       };
@@ -262,6 +299,7 @@ export async function runChildSession(input: {
         ok: false,
         error: "final assistant message is not one structural submit",
         failureKind: "failed",
+        transportFailure: false,
         disposeCount,
         classification,
       };
@@ -277,19 +315,22 @@ export async function runChildSession(input: {
       classification,
     };
   } catch (error) {
-    disposeOnce();
     const failureKind: ChildFailureKind = timedOut
       ? "timed-out"
       : input.signal !== undefined &&
           (input.signal.aborted || abort.signal.reason === input.signal.reason)
         ? "cancelled"
         : "failed";
+    const classification = classifySession();
+    const transportFailure = transportFailed();
+    disposeOnce();
     return {
       ok: false,
       error: (error as Error).message,
       failureKind,
+      transportFailure,
       disposeCount,
-      classification: classifySession(),
+      classification,
     };
   } finally {
     clearTimeout(timer);

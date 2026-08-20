@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RequestEnvelope } from "../src/contracts";
+import { ParentPayloadBridge } from "../src/parent-payload-bridge.ts";
 import { Runtime } from "../src/runtime";
 
 type TerminalStatus = "succeeded" | "failed" | "cancelled";
@@ -44,7 +45,9 @@ type SchedulerConstructor = new <T>(
 ) => SchedulerLike<T>;
 
 class NotReadyScheduler<T> implements SchedulerLike<T> {
-  private readonly runtime = new Runtime();
+  private readonly runtime = new Runtime({
+    parentPayloadBridge: new ParentPayloadBridge(),
+  });
 
   constructor(_options: SchedulerOptions<T>) {}
 
@@ -338,6 +341,39 @@ describe("declared compatibility", () => {
       ]);
     },
   );
+
+  it("serializes explicit conflicts by stable task id", async () => {
+    const starts: string[] = [];
+    const left = deferred<string>();
+    const right = deferred<string>();
+    const scheduler = createScheduler<string>((envelope) => {
+      starts.push(envelope.id);
+      return envelope.id === "A:red" ? left.promise : right.promise;
+    }, 2);
+
+    const leftRequest = request("A:red", { conflicts: ["B"] });
+    leftRequest.taskId = "A";
+    const rightRequest = request("B:red");
+    rightRequest.taskId = "B";
+    const batch = scheduler.schedule("stable-task-conflict", [
+      { request: leftRequest, prerequisites: [] },
+      { request: rightRequest, prerequisites: [] },
+    ]);
+
+    await turn();
+    expect(starts).toEqual(["A:red"]);
+
+    left.resolve("left");
+    await batch.result("A:red");
+    await turn();
+    expect(starts).toEqual(["A:red", "B:red"]);
+
+    right.resolve("right");
+    expect((await batch.done).map((outcome) => outcome.status)).toEqual([
+      "succeeded",
+      "succeeded",
+    ]);
+  });
 
   it("starts disjoint declarations concurrently", async () => {
     const starts: string[] = [];

@@ -122,6 +122,19 @@ describe("file snapshot invariants", () => {
     expect(snapshots.isCurrent(root, bound)).toBe(false);
   });
 
+  it("invalidates a dependency directory when nested file content changes", () => {
+    if (!snapshots) return notReady("file-snapshot");
+    const root = makeRoot();
+    mkdirSync(path.join(root, "node_modules/pkg"), { recursive: true });
+    const dependency = path.join(root, "node_modules/pkg/index.js");
+    writeFileSync(dependency, 'export const value = "old";\n');
+    const bound = snapshots.snapshotDirManifests(root, ["node_modules"]);
+
+    writeFileSync(dependency, 'export const value = "new";\n');
+
+    expect(snapshots.isCurrent(root, bound)).toBe(false);
+  });
+
   it("respects generated changes with a fixed seed", () => {
     if (!snapshots) return notReady("file-snapshot");
     const rand = mulberry32(0xf1e5);

@@ -58,6 +58,10 @@ Expanded successful presentation SHALL expose only a compact evidence-count summ
 The private Agent registry, queue, run records, Worker sessions, retained diffs, and user-interface activity records SHALL exist only in the current Pi process memory.
 The runtime SHALL use one package-wide active-run limit, one batch-size limit, one phase timeout, and one complete-result size limit; it SHALL not implement role-specific budget tiers, context-percentage thresholds, scan-byte accounting, Worker lifetime ledgers, or a compatibility platform.
 Each child session SHALL use an empty package-defined resource loader plus in-memory Session and Settings managers, with Provider retry disabled.
+Each child Provider request SHALL reuse the selected parent Provider's effective stream behavior and the parent session's effective payload-transform callback while the child resource loader continues to discover no parent, user, project, package-external, or arbitrary extension resources.
+The callback already loaded by the parent session MAY inspect and replace the child's serialized Provider payload, including request-specific input and tool data needed for the same effective parent compatibility semantics; this callback invocation is part of the parent-session bridge, while no extension factory, handler discovery, command, tool, Skill, Prompt, theme, context resource, callback transcript, or transformed payload SHALL be copied into or persisted by the child runtime.
+The callback SHALL execute once against each fresh child serialized payload, and the bridge SHALL fail closed before network send if it is unavailable or stale, if invocation of the effective callback exposed to the Provider throws or rejects, or if the exposed callback yields an unsafe non-object payload; the runtime MUST NOT silently send a separately reconstructed or untransformed payload. An individual parent extension-handler error that Pi catches internally and does not expose to the Provider callback caller SHALL retain Pi's parent-session behavior; Cadence SHALL NOT claim to rediscover that hidden error by inspecting private handlers or loading the extension in the child.
+For a child model using the `openai-responses` API, after the exposed effective callback has inspected or replaced the payload, the final serialized request payload MUST omit the optional `max_output_tokens` field and the runtime MUST NOT substitute another child output-token cap; phase timeout, cancellation, Provider retry disablement, and complete-result size limits remain in force.
 Cancellation, timeout, completion, failure, stage finish, reload, session replacement, and shutdown SHALL dispose affected child sessions and clear queued or retained state as applicable.
 Nested model usage SHALL be aggregated once into the dispatcher ToolResult usage and SHALL not be double-counted by a second private accounting layer.
 The runtime MUST NOT write child transcripts, model outputs, result files, queues, schedules, checkpoints, Worker state, or user-interface activity state to package, project, user, temporary, or external locations.
@@ -71,7 +75,27 @@ Session shutdown SHALL clear the activity display even while work is being drain
 #### Scenario: Child session is created
 
 - **WHEN** a valid Agent request starts
-- **THEN** it uses package-owned prompts and tools with empty resource discovery, in-memory session and settings, and disabled Provider retry
+- **THEN** it uses package-owned prompts and tools with empty resource discovery, in-memory session and settings, disabled Provider retry, the selected parent Provider, and the parent session's payload-transform callback without loading external extensions into the child
+
+#### Scenario: Parent payload compatibility rewrites a child request
+
+- **WHEN** the selected parent Provider/model and parent session payload callback inspect or replace a serialized request
+- **THEN** the child delegates through the same effective parent Provider, applies the callback to the child request, and sends the final transformed payload rather than a separately reconstructed Provider payload
+
+#### Scenario: Parent payload compatibility cannot complete
+
+- **WHEN** the inherited payload bridge is unavailable or stale, the exposed effective callback invocation rejects, or its final payload cannot be sent safely
+- **THEN** the child request fails before network transmission, no untransformed fallback is sent, no result is trusted, and normal bounded redispatch policy applies
+
+#### Scenario: Pi contains an internal parent handler error
+
+- **WHEN** Pi catches an individual parent payload handler error internally and the effective callback exposed to the Provider completes without exposing that error
+- **THEN** the child observes the same effective callback result as the parent request, and Cadence neither inspects private handler state nor loads that extension into the child
+
+#### Scenario: OpenAI Responses child request has no optional output cap
+
+- **WHEN** a child request is serialized for an `openai-responses` model
+- **THEN** the final network payload omits `max_output_tokens` while timeout, cancellation, retry, and complete-result bounds remain active
 
 #### Scenario: Runtime bound is reached
 

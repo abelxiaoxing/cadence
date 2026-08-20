@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -24,6 +25,7 @@ import {
 } from "../src/file-snapshot";
 import { runtimeForProvider } from "../src/parent-provider";
 import { Runtime } from "../src/runtime";
+import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 const tempRoots: string[] = [];
 let providerSequence = 0;
@@ -41,6 +43,52 @@ function makeGitRoot(files: Record<string, string>): string {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     writeFileSync(join(root, path), content);
   }
+  mkdirSync(join(root, "node_modules/.bin"), { recursive: true });
+  const fixtureReporter = join(root, "node_modules/.bin/vitest");
+  writeFileSync(
+    fixtureReporter,
+    [
+      "#!/usr/bin/env bun",
+      'import { writeFileSync } from "node:fs";',
+      "const args = process.argv.slice(2);",
+      'const output = args.find((arg) => arg.startsWith("--outputFile="))?.slice(13);',
+      'if (!output) throw new Error("missing structured report output");',
+      'const red = args.some((arg) => arg.endsWith("expected-red.mjs"));',
+      'const identity = "[FILE-CONCURRENCY:expected-red]";',
+      "writeFileSync(output, JSON.stringify({",
+      "  numTotalTests: 1,",
+      "  numFailedTests: red ? 1 : 0,",
+      "  success: !red,",
+      '  testResults: [{ message: "", assertionResults: [{',
+      '    status: red ? "failed" : "passed",',
+      '    fullName: red ? identity : "passes",',
+      '    title: red ? identity : "passes",',
+      "    failureMessages: red ? [identity] : [],",
+      "  }] }],",
+      "}));",
+      "if (red) process.exit(1);",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(fixtureReporter, 0o755);
+  mkdirSync(join(root, "test"));
+  writeFileSync(join(root, ".gitignore"), "node_modules/\n");
+  writeFileSync(
+    join(root, "package.json"),
+    `${JSON.stringify({
+      private: true,
+      scripts: { check: 'node -e ""', "test:target": "vitest run" },
+    })}\n`,
+  );
+  writeFileSync(join(root, "bun.lock"), "# fixture lock\n");
+  writeFileSync(
+    join(root, "test/expected-red.mjs"),
+    "// fixture expected Red\n",
+  );
+  writeFileSync(
+    join(root, "test/expected-green.mjs"),
+    "// fixture expected Green\n",
+  );
   execFileSync("git", ["init", "-q"], { cwd: root });
   execFileSync("git", ["config", "user.email", "test@example.invalid"], {
     cwd: root,
@@ -55,7 +103,10 @@ function activeRuntime(): Runtime {
   const activation = new Activation();
   activation.request();
   activation.activate();
-  return new Runtime({ activation });
+  return new Runtime({
+    activation,
+    parentPayloadBridge: new PassthroughParentPayloadBridge(),
+  });
 }
 
 function modifyPatch(path: string, before: string, after: string): string {
@@ -88,11 +139,13 @@ function diffRequest(input: {
   write: string[];
   snapshot: unknown;
 }): RequestEnvelope {
+  const phase = input.phase ?? "green";
   return {
     stage: "abel-implement",
     role: "implementation-worker",
+    taskId: input.id,
     id: input.id,
-    phase: input.phase ?? "green",
+    phase,
     objective: `Complete ${input.id}`,
     roots: ["."],
     context: { agents: "root contract", contract: "approved task contract" },
@@ -105,6 +158,25 @@ function diffRequest(input: {
     },
     output: "diff",
     snapshot: input.snapshot,
+    verification: {
+      id: `verify-${input.id}-${phase}`,
+      argv: [
+        "bun",
+        "run",
+        "test:target",
+        phase === "red" ? "test/expected-red.mjs" : "test/expected-green.mjs",
+      ],
+      classification:
+        phase === "red"
+          ? "expected-red"
+          : phase === "green"
+            ? "expected-green"
+            : "expected-refactor",
+      ...(phase === "red"
+        ? { expectedFailure: "[FILE-CONCURRENCY:expected-red]" }
+        : {}),
+      minTests: 1,
+    },
   };
 }
 
@@ -350,7 +422,10 @@ describe("runtime redispatch and logical Worker identity", () => {
       api: "faux",
     });
     faux.setResponses([
-      fauxAssistantMessage("first phase failed without a submission"),
+      fauxAssistantMessage([], {
+        stopReason: "error",
+        errorMessage: "first transport failure",
+      }),
       fauxAssistantMessage(
         fauxToolCall("abel_submit_result", evidence("retry-once")),
         { stopReason: "toolUse" },
@@ -380,8 +455,14 @@ describe("runtime redispatch and logical Worker identity", () => {
       api: "faux",
     });
     faux.setResponses([
-      fauxAssistantMessage("first mechanical failure"),
-      fauxAssistantMessage("second mechanical failure"),
+      fauxAssistantMessage([], {
+        stopReason: "error",
+        errorMessage: "first transport failure",
+      }),
+      fauxAssistantMessage([], {
+        stopReason: "error",
+        errorMessage: "second transport failure",
+      }),
       fauxAssistantMessage(
         fauxToolCall("abel_submit_result", evidence("retry-limit")),
         { stopReason: "toolUse" },
@@ -411,8 +492,14 @@ describe("runtime redispatch and logical Worker identity", () => {
       api: "faux",
     });
     faux.setResponses([
-      fauxAssistantMessage("first mechanical failure"),
-      fauxAssistantMessage("second mechanical failure"),
+      fauxAssistantMessage([], {
+        stopReason: "error",
+        errorMessage: "first transport failure",
+      }),
+      fauxAssistantMessage([], {
+        stopReason: "error",
+        errorMessage: "second transport failure",
+      }),
       fauxAssistantMessage(
         fauxToolCall("abel_submit_result", evidence("fixed-worker")),
         { stopReason: "toolUse" },
@@ -534,12 +621,27 @@ describe("serial parent apply FIFO and recovery", () => {
     expect(failing.ok).toBe(false);
     if (!failing.ok) expect(failing.error).toMatch(/stale/i);
     writeFileSync(join(root, "x"), "x0\n");
+    const refreshed = await runDiff({
+      runtime,
+      root,
+      request: diffRequest({
+        id: "serial-x-refreshed",
+        read: ["x"],
+        write: ["x"],
+        snapshot: snapshotFiles(root, ["x"]),
+      }),
+      diff: modifyPatch("x", "x0", "x1"),
+    });
 
     // Overlapping applies are admitted in invocation order: each controlled
     // result carries a monotonic FIFO sequence number, so the earlier caller
     // must observe a lower sequence than the later caller.
     const [first, second] = await Promise.all([
-      runtime.execute("apply", { resultId: ids[0] }, run[0].context),
+      runtime.execute(
+        "apply",
+        { resultId: retainedResultId(refreshed.result) },
+        refreshed.context,
+      ),
       runtime.execute("apply", { resultId: ids[1] }, run[1].context),
     ]);
     expect(first.ok).toBe(true);

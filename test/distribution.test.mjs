@@ -38,6 +38,8 @@ const expectedFiles = [
   "package/skills/grok-search/grok-search.mjs",
   "package/src/activation.ts",
   "package/src/agent-registry.ts",
+  "package/src/candidate-preflight.ts",
+  "package/src/parent-payload-bridge.ts",
   "package/src/child-session.ts",
   "package/src/contracts.ts",
   "package/src/drain.ts",

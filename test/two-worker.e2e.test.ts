@@ -1,5 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -13,6 +19,7 @@ import { Activation } from "../src/activation";
 import { snapshotFiles } from "../src/file-snapshot";
 import { runtimeForProvider } from "../src/parent-provider";
 import { Runtime } from "../src/runtime";
+import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 const roots: string[] = [];
 let providerSequence = 0;
@@ -27,6 +34,12 @@ function makeGitRoot(files: Record<string, string>): string {
   for (const [path, content] of Object.entries(files)) {
     writeFileSync(join(root, path), content);
   }
+  mkdirSync(join(root, "node_modules"));
+  writeFileSync(
+    join(root, "package.json"),
+    `${JSON.stringify({ private: true, scripts: { check: 'node -e ""' } })}\n`,
+  );
+  writeFileSync(join(root, "bun.lock"), "# fixture lock\n");
   execFileSync("git", ["init", "-q"], { cwd: root });
   execFileSync("git", ["config", "user.email", "test@example.invalid"], {
     cwd: root,
@@ -57,6 +70,7 @@ function requestFor(
   return {
     stage: "abel-implement",
     role: "implementation-worker",
+    taskId: id,
     id,
     phase: "green",
     objective: `Complete ${id}`,
@@ -71,6 +85,12 @@ function requestFor(
     },
     output: "diff",
     snapshot,
+    verification: {
+      id: `verify-${id}`,
+      argv: ["bun", "run", "check"],
+      classification: "expected-green",
+      minTests: 1,
+    },
   };
 }
 
@@ -116,7 +136,10 @@ function activeRuntime(): Runtime {
   const activation = new Activation();
   activation.request();
   activation.activate();
-  return new Runtime({ activation });
+  return new Runtime({
+    activation,
+    parentPayloadBridge: new PassthroughParentPayloadBridge(),
+  });
 }
 
 describe("two disjoint Workers converge", () => {

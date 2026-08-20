@@ -178,6 +178,29 @@ describe("scoped read-only tools", () => {
     expect(after).toBe("original");
     expect(readdirSync(root).sort()).toEqual(["a.txt"]);
   });
+
+  it("rejects reads and scans outside the declared read/write paths", async () => {
+    if (!scopedTools) return notReady("scoped-tools");
+    const root = makeRoot();
+    writeFileSync(path.join(root, "allowed.txt"), "allowed\n");
+    writeFileSync(path.join(root, "undeclared.txt"), "secret\n");
+    const tools = scopedTools.createScopedTools({
+      roots: [root],
+      allowedPaths: [path.join(root, "allowed.txt")],
+    });
+    const read = tools.find((tool) => tool.name === "read")!;
+    const grep = tools.find((tool) => tool.name === "grep")!;
+
+    expect((await read.execute({ path: "allowed.txt" })).ok).toBe(true);
+    expect(await read.execute({ path: "undeclared.txt" })).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/declared|scope/i),
+    });
+    expect(await grep.execute({ path: ".", pattern: "secret" })).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/declared|scope/i),
+    });
+  });
 });
 
 describe("generated path containment with a fixed seed", () => {

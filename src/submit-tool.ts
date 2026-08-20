@@ -63,6 +63,7 @@ export interface SubmitClassification {
 
 export function createSubmitTool(input: {
   requestId: string;
+  taskId?: string;
   role: string;
   phase: string;
   output: "evidence" | "diff";
@@ -98,7 +99,8 @@ export function createSubmitTool(input: {
       if (value.id !== input.requestId) identity.request = false;
       if (value.role !== input.role) identity.role = false;
       if (input.output === "diff") {
-        if (value.taskId !== input.requestId) identity.task = false;
+        if (value.taskId !== (input.taskId ?? input.requestId))
+          identity.task = false;
         if (value.phase !== input.phase) identity.phase = false;
       }
       const validation =

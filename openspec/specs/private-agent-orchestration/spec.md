@@ -80,6 +80,11 @@ Implement and Diagnose Workers SHALL return task and phase identity, concise sum
 A successful result MUST come through the structural final-submission tool, match its request identifiers, and satisfy its schema and configured complete-result size limit.
 Delivery MUST NOT expose hidden reasoning, a child transcript, tool-call history, or unfiltered raw logs.
 A unified diff MUST be complete and MUST NOT be truncated or reconstructed from a summary.
+In interactive TUI mode, each valid Subagent run SHALL additionally provide a compact inline activity presentation containing its package-owned role, request identifier, phase, single-line objective summary, elapsed time, and current or terminal state.
+The inline state vocabulary SHALL distinguish queued, running, completed, failed, cancelled, and timed-out runs.
+A failed inline presentation SHALL include a sanitized, width-bounded single-line reason without exposing Provider or model identity, accessed paths, or terminal control sequences.
+Every inline presentation line SHALL remain within the available terminal width.
+Expanded successful presentation SHALL expose only a compact evidence-count summary or compact diff summary and next-step metadata; it MUST NOT expose the complete diff or complete citations through the display layer.
 
 #### Scenario: Structured evidence succeeds
 
@@ -100,6 +105,26 @@ A unified diff MUST be complete and MUST NOT be truncated or reconstructed from 
 
 - **WHEN** a Worker cannot submit its complete diff within the configured complete-result size limit
 - **THEN** the task blocks with an executable return-to-Design split condition and no partial result is usable
+
+#### Scenario: Interactive run is visibly delegated
+
+- **WHEN** a valid Subagent request is queued or running in interactive TUI mode
+- **THEN** its inline tool presentation identifies the role, request, phase, objective summary, elapsed time, and queued or running state
+
+#### Scenario: Interactive run reaches a terminal state
+
+- **WHEN** a visible Subagent run completes, fails, is cancelled, or reaches its phase timeout
+- **THEN** its inline tool presentation retains the corresponding completed, failed, cancelled, or timed-out terminal state
+
+#### Scenario: Interactive run fails with an unsafe reason
+
+- **WHEN** a failed Subagent reason contains multiple lines, terminal controls, Provider or model identity, or accessed paths
+- **THEN** the inline presentation shows a sanitized single-line reason within the available width without exposing those values
+
+#### Scenario: Successful result is expanded
+
+- **WHEN** a user expands a completed Subagent tool result
+- **THEN** the display shows compact evidence counts or diff summary and next-step metadata without rendering the complete citations or complete diff
 
 ### Requirement: Parent-owned review application and validation
 
@@ -180,7 +205,9 @@ Each Red, Green, and optional Refactor phase SHALL receive and return a fresh fi
 Provider-managed retry SHALL be disabled with `maxRetries: 0`, and the private runtime SHALL implement no cooldown, circuit breaker, or hidden request retry.
 After one failed Agent request, the dispatcher MAY perform at most one mechanical redispatch only when request content, role, scope, prerequisites, conflict contract, and declared write set are identical.
 A stale file snapshot also MAY consume that one identical redispatch after the parent supplies only the refreshed hashes and unchanged request contract.
-A second failure or any required scope, dependency, write-set, behavior, architecture, or policy change SHALL block the affected branch and its dependent successors.
+A second Agent-request failure SHALL block the affected branch and its dependent successors and SHALL return a sanitized executable recovery condition that identifies the exhausted request, states that no third Agent attempt or partial result is usable, preserves independently accepted siblings, and directs the parent to either finish unaffected work or return to Design when recovery requires any contract change.
+Generated implementation artifacts SHALL NOT be trusted or applied to the main workspace until parent-owned preflight outside that workspace proves complete-diff consumption, current snapshot and declared-path conformance, source/test loadability, and the approved phase verification identity. Syntax, import/load, no-test, malformed-diff, and wrong-Red-identity failures SHALL be classified as implementation-artifact rejection rather than target Red or a substantive Design defect. Artifact rejection MAY receive only the approved finite artifact-correction budget; exhaustion SHALL block the affected branch and dependent successors with a sanitized implementation-artifact recovery condition and SHALL NOT automatically return the change to Design.
+Any required scope, dependency, write-set, behavior, architecture, policy, or approved verification-contract change SHALL block the affected branch and its dependent successors without redispatch and SHALL require Design.
 Independently accepted sibling results SHALL remain usable.
 Cancellation SHALL signal active work, prevent queued work from starting, and never treat partial output as successful.
 
@@ -191,8 +218,18 @@ Cancellation SHALL signal active work, prevent queued work from starting, and ne
 
 #### Scenario: Mechanical redispatch fails again
 
-- **WHEN** the single allowed redispatch also fails
-- **THEN** the affected branch and dependent successors block with an executable recovery condition
+- **WHEN** the single allowed Agent-request redispatch also fails
+- **THEN** the affected branch and dependent successors block with a sanitized executable condition naming the request, declaring the Agent-request retry exhausted and partial output unusable, preserving independent accepted siblings, and allowing only unaffected-work completion or return to Design for a changed contract
+
+#### Scenario: Candidate artifact passes structural submission but cannot load
+
+- **WHEN** a generated diff is structurally submitted but isolated preflight finds an unconsumed suffix, syntax or import/load failure, no target test, or a Red failure identity other than the approved one
+- **THEN** none of the candidate is applied to the main workspace, the failure is classified as implementation-artifact rejection, and it may consume only the finite artifact-correction budget
+
+#### Scenario: Artifact correction budget is exhausted
+
+- **WHEN** the approved finite artifact-correction budget ends without one candidate passing isolated preflight
+- **THEN** the affected branch and dependent successors block with a sanitized implementation-artifact recovery condition, independent accepted siblings remain usable, and no automatic transition returns the change to Design
 
 #### Scenario: Recovery would expand the contract
 
@@ -211,18 +248,47 @@ Cancellation SHALL signal active work, prevent queued work from starting, and ne
 
 ### Requirement: Ephemeral bounded runtime lifecycle
 
-The private Agent registry, queue, run records, Worker sessions, and retained diffs SHALL exist only in the current Pi process memory.
+The private Agent registry, queue, run records, Worker sessions, retained diffs, and user-interface activity records SHALL exist only in the current Pi process memory.
 The runtime SHALL use one package-wide active-run limit, one batch-size limit, one phase timeout, and one complete-result size limit; it SHALL not implement role-specific budget tiers, context-percentage thresholds, scan-byte accounting, Worker lifetime ledgers, or a compatibility platform.
 Each child session SHALL use an empty package-defined resource loader plus in-memory Session and Settings managers, with Provider retry disabled.
+Each child Provider request SHALL reuse the selected parent Provider's effective stream behavior and the parent session's effective payload-transform callback while the child resource loader continues to discover no parent, user, project, package-external, or arbitrary extension resources.
+The callback already loaded by the parent session MAY inspect and replace the child's serialized Provider payload, including request-specific input and tool data needed for the same effective parent compatibility semantics; this callback invocation is part of the parent-session bridge, while no extension factory, handler discovery, command, tool, Skill, Prompt, theme, context resource, callback transcript, or transformed payload SHALL be copied into or persisted by the child runtime.
+The callback SHALL execute once against each fresh child serialized payload, and the bridge SHALL fail closed before network send if it is unavailable or stale, if invocation of the effective callback exposed to the Provider throws or rejects, or if the exposed callback yields an unsafe non-object payload; the runtime MUST NOT silently send a separately reconstructed or untransformed payload. An individual parent extension-handler error that Pi catches internally and does not expose to the Provider callback caller SHALL retain Pi's parent-session behavior; Cadence SHALL NOT claim to rediscover that hidden error by inspecting private handlers or loading the extension in the child.
+For a child model using the `openai-responses` API, after the exposed effective callback has inspected or replaced the payload, the final serialized request payload MUST omit the optional `max_output_tokens` field and the runtime MUST NOT substitute another child output-token cap; phase timeout, cancellation, Provider retry disablement, and complete-result size limits remain in force.
 Cancellation, timeout, completion, failure, stage finish, reload, session replacement, and shutdown SHALL dispose affected child sessions and clear queued or retained state as applicable.
 Nested model usage SHALL be aggregated once into the dispatcher ToolResult usage and SHALL not be double-counted by a second private accounting layer.
-The runtime MUST NOT write child transcripts, model outputs, result files, queues, schedules, checkpoints, or Worker state to package, project, user, temporary, or external locations.
+The runtime MUST NOT write child transcripts, model outputs, result files, queues, schedules, checkpoints, Worker state, or user-interface activity state to package, project, user, temporary, or external locations.
 OpenSpec Gate receipts remain design audit artifacts and are not orchestration runtime state.
+In interactive TUI mode, the package SHALL maintain a temporary above-editor Agents activity display containing only valid queued and running top-level Subagent requests in stable admission order.
+Each visible activity item SHALL identify the role, request, phase, single-line objective summary, elapsed time, and queued or running state.
+The activity display SHALL remove a request immediately after any terminal outcome, SHALL clear itself and its related status indication when no active request remains, and SHALL accurately report hidden active counts when available space cannot show every item.
+Invalid requests MUST NOT enter the activity display.
+Session shutdown SHALL clear the activity display even while work is being drained.
 
 #### Scenario: Child session is created
 
 - **WHEN** a valid Agent request starts
-- **THEN** it uses package-owned prompts and tools with empty resource discovery, in-memory session and settings, and disabled Provider retry
+- **THEN** it uses package-owned prompts and tools with empty resource discovery, in-memory session and settings, disabled Provider retry, the selected parent Provider, and the parent session's payload-transform callback without loading external extensions into the child
+
+#### Scenario: Parent payload compatibility rewrites a child request
+
+- **WHEN** the selected parent Provider/model and parent session payload callback inspect or replace a serialized request
+- **THEN** the child delegates through the same effective parent Provider, applies the callback to the child request, and sends the final transformed payload rather than a separately reconstructed Provider payload
+
+#### Scenario: Parent payload compatibility cannot complete
+
+- **WHEN** the inherited payload bridge is unavailable or stale, the exposed effective callback invocation rejects, or its final payload cannot be sent safely
+- **THEN** the child request fails before network transmission, no untransformed fallback is sent, no result is trusted, and normal bounded redispatch policy applies
+
+#### Scenario: Pi contains an internal parent handler error
+
+- **WHEN** Pi catches an individual parent payload handler error internally and the effective callback exposed to the Provider completes without exposing that error
+- **THEN** the child observes the same effective callback result as the parent request, and Cadence neither inspects private handler state nor loads that extension into the child
+
+#### Scenario: OpenAI Responses child request has no optional output cap
+
+- **WHEN** a child request is serialized for an `openai-responses` model
+- **THEN** the final network payload omits `max_output_tokens` while timeout, cancellation, retry, and complete-result bounds remain active
 
 #### Scenario: Runtime bound is reached
 
@@ -232,7 +298,7 @@ OpenSpec Gate receipts remain design audit artifacts and are not orchestration r
 #### Scenario: Phase times out
 
 - **WHEN** an Agent phase exceeds the configured phase timeout
-- **THEN** its signal is aborted, its partial output is unusable, and its session is disposed
+- **THEN** its signal is aborted, its partial output is unusable, its session is disposed, and its TUI terminal state is timed out
 
 #### Scenario: Dispatcher returns nested usage
 
@@ -242,10 +308,65 @@ OpenSpec Gate receipts remain design audit artifacts and are not orchestration r
 #### Scenario: Pi lifecycle ends the stage
 
 - **WHEN** the stage finishes or Pi reloads, replaces the session, or shuts down
-- **THEN** active work is cancelled, queued and retained work is cleared, child sessions are disposed, and no resumable private state is persisted
+- **THEN** active work is cancelled, queued and retained work and visible activity are cleared, child sessions are disposed, and no resumable private state is persisted
 
 #### Scenario: Filesystem is inspected after delegation
 
 - **WHEN** package, project, user, and temporary locations are inspected after Agent execution
-- **THEN** no private child transcript, result, model-output, queue, schedule, checkpoint, or Worker-state file exists, while Pi's ordinary host-owned parent transcript is not treated as such a file
+- **THEN** no private child transcript, result, model-output, queue, schedule, checkpoint, Worker-state, or user-interface activity file exists, while Pi's ordinary host-owned parent transcript is not treated as such a file
+
+#### Scenario: Multiple Subagents are active
+
+- **WHEN** two or more valid Subagent requests are queued or running concurrently in interactive TUI mode
+- **THEN** the temporary Agents display lists them in stable admission order and preserves every still-active request when a sibling terminates
+
+#### Scenario: Activity display overflows
+
+- **WHEN** terminal space cannot show every queued or running Subagent item
+- **THEN** every rendered line remains within the available width and an overflow summary accurately accounts for all hidden active items
+
+#### Scenario: Invalid request is rejected
+
+- **WHEN** a dispatch run fails structural request validation before admission
+- **THEN** no Subagent activity item is created and the existing validation error remains the tool result
+
+### Requirement: TUI-only private activity compatibility
+
+Subagent activity enhancements SHALL affect only interactive TUI presentation.
+For an interactive TUI run, the ordinary parent ToolResult details MAY retain one presentation-only field containing only the approved compact terminal metadata needed to reproduce the inline terminal state; this field MUST NOT contain active Widget state, child transcripts, tool activity, accessed paths, Provider or model identity, hidden reasoning, complete citations, or complete diffs.
+Print, JSON, and RPC modes SHALL preserve their existing tool-result content, details, usage, result identifiers, error semantics, and lifecycle event behavior, and their ToolResult details MUST NOT contain the presentation-only field.
+Non-TUI modes MUST NOT receive added activity messages, ANSI styling, Widget output, or lifecycle events.
+Presentation failure MUST NOT alter request validation, admission order, conflict serialization, cancellation, timeout, mechanical redispatch, result retention, nested usage aggregation, patch application, or stage cleanup outcomes.
+The display layer MUST NOT expose child transcripts, child tool activity, accessed file paths, Provider or model identity, hidden reasoning, complete citations, or complete diffs.
+It MUST NOT add a Fleet, child-session viewer, public stop, resume, or steering control, general Subagent command, public orchestration API, or persistent display setting.
+
+#### Scenario: Interactive TUI receives activity presentation
+
+- **WHEN** a valid Subagent request runs in interactive TUI mode
+- **THEN** the inline presentation and temporary Agents display expose only the approved compact activity metadata
+
+#### Scenario: TUI result is rendered again
+
+- **WHEN** Pi re-renders an interactive parent ToolResult after its Subagent run reached a terminal state
+- **THEN** the presentation-only details reproduce the approved compact terminal state without reconstructing it from an error string or exposing private child data
+
+#### Scenario: Non-TUI request runs
+
+- **WHEN** the same valid request runs in print, JSON, or RPC mode
+- **THEN** its tool-result and event behavior remain unchanged, its details contain no presentation-only field, and no presentation-only output or ANSI styling is emitted
+
+#### Scenario: Display layer encounters an error
+
+- **WHEN** activity rendering or Widget refresh cannot complete
+- **THEN** the underlying Subagent run, cancellation, result, usage, and cleanup outcomes remain governed solely by the existing orchestration contract
+
+#### Scenario: Private child data is inspected through the display
+
+- **WHEN** a user expands an inline result or observes the temporary Agents display
+- **THEN** no child transcript, tool activity, accessed path, model identity, hidden reasoning, complete citation set, or complete diff is exposed
+
+#### Scenario: Public controls are inspected
+
+- **WHEN** a user or extension inspects commands, tools, settings, and activity controls after this change
+- **THEN** it finds no new Fleet, child viewer, stop, resume, steering, general Subagent, public orchestration, or persistent display control
 

@@ -1,0 +1,349 @@
+receipt_version: 1
+change: preserve-child-provider-payload-compat
+schema: spec-driven
+approval:
+  summary: >-
+    用户在完整呈现 Gate B 修订 F 后，以原文“批准 Gate B 修订 F”明确批准该技术实施契约。修订 F 保留 Gate A 修订 B 的产品行为与 Revision E 的五节点串行总体拆分，但以真实 Implement exhaustion 和 Design 恢复证据修复 bootstrap HOW：完整 hash-bound semanticContract 实际进入 Worker system prompt；公开 turn/tool 状态区分 accepted、schema/strict submit error、普通 no-submit stop/length、Provider error/abort 与 exhaustion；TypeBox schema、identity/product/reference strict submit 和 no-submit followUp 共享唯一 pre-acceptance repair token；第二 fault 在同一 Agent process 内终止，不增加第三 Provider turn、Agent process launch、candidate 或 artifact correction。Thinking 采用已批准 F-1a：requested 固定 low，effective 与 ordered supported levels 由 Pi 公共 getSupportedThinkingLevels/clampThinkingLevel 对 exact selected model 计算，provider/model/requested/effective/supported 五元组 hash-bound，bootstrap 在 auth/Provider 前独立重算且 drift fail closed。Task 1.1 Red 写集增加 test/contracts.property.test.ts 的两个精确 fixture normalization，并以两个 fresh reference checkout 分别证明 existing control expected-green 与 dedicated target expected-red；Green 只改 src/contracts.ts。Revision E Task 1.1 identity 和两个 launches 永久为 historical exhausted evidence，Revision F 使用新 identity 和新 contract/write-set/verification/thinking/harness bindings，不是第三次 E launch。本 receipt 不授权新依赖、公共编排 API、持久状态、fallback Provider、私有 Pi handler、child extension discovery、无界 repair、同 phase 第三个 Agent process launch，或 transport redispatch 与 artifact correction 叠加。
+  verbatim: 批准 Gate B 修订 F
+implementation_contract:
+  revision: F
+  supersedes_gate_b_revision: E
+  architecture:
+    - src/contracts.ts owns complete ordinary unified-diff consumption before structural retention; unchanged src/submit-tool.ts and src/patch.ts consume that policy before retention and parent Git screening.
+    - src/candidate-preflight.ts owns typed, parent-only, main-workspace-external candidate preflight with real Bound currentness, baseline reconstruction, Bubblewrap execution, normalized evidence, and deterministic cleanup.
+    - src/parent-payload-bridge.ts owns session-generation/model-bound capture, package-recursive Provider unwrapping, FIFO callback composition, cancellation/freshness checks, and final openai-responses max_output_tokens deletion.
+    - Public Provider request options, ModelRegistry.registerProvider, and public session/model lifecycle hooks are the only parent callback capture boundary; private Pi handlers are not inspected.
+    - Child sessions retain zero discovered resources, in-memory session/settings, exactly five scoped tools, fresh phase auth, and the unwrapped original Provider delegate.
+    - src/worker.ts and src/runtime.ts own stable task identity, phase-local request identity, the shared two-launch cap, typed transport/artifact/environment/design recovery, and sanitized terminal results.
+  payload_order:
+    - cancellation and generation check
+    - child SDK callback
+    - safe-object check
+    - FIFO admission and freshness recheck
+    - inherited parent effective callback
+    - safe-object check
+    - shallow clone and final openai-responses max_output_tokens deletion
+    - original unwrapped delegate sends exactly once
+  task_dag:
+    - 1.1 -> 1.2 [artifact, contract, conflict-order]
+    - 1.2 -> 2.1 [artifact, contract, conflict-order]
+    - 2.1 -> 3.1 [artifact, contract, conflict-order]
+    - 3.1 -> 4.1 [artifact, contract, conflict-order]
+  suggested_waves:
+    - ["1.1"]
+    - ["1.2"]
+    - ["2.1"]
+    - ["3.1"]
+    - ["4.1"]
+  bootstrap_delivery:
+    scope: Tasks 1.1, 1.2, 2.1, and 3.1 candidate generation; Task 4.1 uses the repaired product route instead.
+    sdk_harness:
+      source: design.md
+      start_marker: "<!-- ABEL:BOOTSTRAP-HARNESS:START -->"
+      end_marker: "<!-- ABEL:BOOTSTRAP-HARNESS:END -->"
+      extraction: Exclude marker lines and JavaScript fence, preserve exact UTF-8 bytes and final LF, and execute with Bun from a mode-0600 file outside the workspace.
+      sha256: 7dfce44e427bcc297e5513805ab9a3198d51e2a2418e5197c23de2430983061c
+      capability_required:
+        status: ready
+        sdk: true
+        fiveTools: true
+        inMemorySession: true
+        retryDisabled: true
+        strictGuard: true
+        semanticContractDelivered: true
+        classifiedTermination: true
+        sameProcessNoSubmitRepair: true
+        sharedPreAcceptanceRepairBound: 1
+        maxSubmitCallsPerLaunch: 2
+        requestedThinkingLevel: low
+        clampedThinkingPolicy:
+          requested: low
+          effective: xhigh
+          supported: [xhigh, max]
+        lowControlThinkingPolicy:
+          requested: low
+          effective: low
+          supported: [off, minimal, low, medium, high]
+        realProviderRequests: 0
+      construction: >-
+        Public createAgentSession with SessionManager.inMemory and SettingsManager.inMemory; compaction disabled; Agent and Provider retry both zero; DefaultResourceLoader with all discovery disabled; only the explicitly approved compatibility extension; active tools exactly read, grep, find, ls, and a guarded real createSubmitTool; no Skills, Prompts, themes, context files, mutation tools, commands, or session files.
+      semantic_contract: >-
+        The exact immutable semanticContract is independently hash-bound and appended to the immutable package Agent prompt inside task-contract markers before createAgentSession. Faux capability proves the Provider-visible system prompt contains those exact bytes.
+      thinking_policy:
+        requested: low
+        calculation:
+          supported: Pi public getSupportedThinkingLevels(exact selected model)
+          effective: Pi public clampThinkingLevel(exact selected model, requested)
+        binding_order: [provider, model, requested, effective, supported]
+        enforcement: >-
+          Parent attempt metadata binds the stable five-tuple. Bootstrap loads the exact selected model, independently recomputes requested/effective/ordered-supported before auth or Provider access, rejects any mismatch as bootstrap-thinking-policy-drift, passes only effective to createAgentSession, and asserts both public session thinking fields equal effective. Global settings do not select the bootstrap level.
+      bindings: >-
+        The package Agent, base system prompt, immutable semantic contract, write set, verification contract, real Bound snapshot, provider/model/requested/effective/ordered-supported thinking tuple, predecessor candidate, and normalized rejection are hash-bound in parent process-local attempt metadata. Successful output includes the merged observed-read Bound. No credential, callback, payload, transcript, concrete task-run Provider/model selection, or session state is persisted in this receipt.
+      pre_acceptance_repair:
+        budget: 1
+        shared_faults:
+          - Pi/TypeBox schema error before wrapper execution
+          - identity, product validateDiffResult, or reference strictDiff error
+          - ordinary assistant stop or length with no tool call and no accepted result
+        no_submit_action: One fixed public Agent.followUp message inside the same Agent run.
+        provider_error: Provider error or aborted is classified immediately and receives no followUp.
+        exhaustion: A second pre-acceptance fault terminates the run as bootstrap-pre-acceptance-repair-exhausted; consecutive schema/strict cases must stop after two Provider calls even when a third faux response is scripted.
+        accounting: Wrapper and public tool events deduplicate the same submit fault by distinct toolCallId; composed public shouldStopAfterTurn preserves any inherited SDK hook.
+      guard: >-
+        Exact stable bootstrap identity, product validateDiffResult, and reference strictDiff run before byte-identical delegation to the real submit tool. The guard runs no Git, test, Bubblewrap, semantic preflight, mutation, or candidate repair.
+      cleanup: Unsubscribe, call public Agent.reset to erase transcript/runtime/queues, dispose the public AgentSession, and require no in-memory settings write errors; no private handler or persistent session file is used.
+      trust_boundary: >-
+        status=candidate is only an untrusted delivered bundle. It is not retained in ResultStore, admitted, applicable, or an artifact-correction rejection until the parent completes required reference/product isolated preflight. Parent alone may retain and mechanically apply the identical admitted bytes.
+    reference_harness:
+      source: design.md
+      start_marker: "<!-- ABEL:REFERENCE-HARNESS:START -->"
+      end_marker: "<!-- ABEL:REFERENCE-HARNESS:END -->"
+      extraction: Exclude marker lines and JavaScript fence, preserve exact UTF-8 bytes and final LF, and execute from a mode-0600 file outside the workspace.
+      sha256: e1df08b6ac0fea4f55b57591f06ae4febbb77342046cae92bfa652dce268ec28
+      capability_required:
+        status: ready
+        bwrap: true
+        strictDiff: true
+        realProviderRequests: 0
+      task_1_1_red: >-
+        Independently parse identical two-file candidate bytes and run two separate fresh detached-checkout transactions, each preceded by bun run check: test/contracts.property.test.ts as expected-green with at least one test, and test/candidate-diff-admission.property.test.ts as expected-red with the approved stable assertion identity and at least one test. Both classifications must pass before main application.
+      task_1_1_green: Run each target as expected-green over identical candidate bytes in separate fresh-checkout transactions and require strict-parser conformance before main application.
+      task_1_2: Red and Green receive full clone/Bubblewrap admission and product/reference conformance in addition to strict parsing.
+      retirement: Delete both extracted harness files after Task 1.2 product/reference conformance and its stable checkpoint; all later candidates use product strict parsing and preflight.
+    historical_boundary: >-
+      Revision-D outputs and Revision-E Task 1.1 identity plus both Revision-E launches are rejection/exhaustion evidence only. They confer no candidate, correction, identity, retry, or launch entitlement and are never supplied to a Worker. Revision-F Task 1.1 starts at launchIndex 0 under preserve-child-provider-payload-compat-1.1-f with new immutable bindings.
+  candidate_preflight:
+    input_contract:
+      - exact candidate diff Buffer and declared writeSet
+      - real src/file-snapshot.ts Bound
+      - typed BaselineEntry manifest
+      - typed VerificationContract with command identity, classification, minimum test count, and expected Red identity when applicable
+      - manifest, lockfile, and dependency FileBound or DirBound
+      - optional AbortSignal
+    dependency_seam: Tests may inject only typed temporary-directory, cleanup, process-spawn, realpath, and bwrap-path dependencies; boolean bypasses, fake digest snapshots, bwrap:false, and forceVerificationFailure are forbidden.
+    transaction:
+      - Recheck complete diff, declared paths, and current merged Bound.
+      - Create a no-local/no-hardlink detached sibling clone and reject alternates, submodules, symlinks, unsupported forms, and unrepresentable baseline entries.
+      - Reconstruct only approved tracked modifications, deletions, untracked regular files, and executable bits.
+      - Apply the exact retained bytes only in the temporary checkout.
+      - Require Bubblewrap, unshare network, mount tmpfs /tmp, expose only the checkout writable, bind dependencies read-only, and hide host workspace, home, configuration, and credentials.
+      - Run argv-only bun run check and then the exact approved bun run test:target command; reject shell strings, environment assignments, package lifecycle commands, metacharacters, absolute/traversal paths, and undeclared targets.
+      - Normalize classification, command id, exit code, test count, stable assertion identity, expected-reason match, and bounded sanitized excerpt; recheck host/dependency/main currentness.
+      - Delete the checkout in finally on success, failure, or cancellation.
+    application: applyRetainedPatch runs preflight in the existing parent FIFO and applies identical bytes only for admitted Red, Green, or Refactor; the parent immediately reruns the same target in the main workspace as authoritative evidence.
+  identity_and_recovery:
+    bootstrap_identity: Before Task 4.1, the real submit tool receives one stable tool-facing id equal to taskId and requestId; Revision-F Task 1.1 uses preserve-child-provider-payload-compat-1.1-f. Fresh dispatchAttemptId and launch/correction metadata remain parent-process-local and outside RequestEnvelope, DiffResult, and public API.
+    product_identity: Task 4.1 makes taskId stable while request id, phase, exact write set, snapshot, verification, predecessor, and correction binding are phase-local; createSubmitTool and runChildSession validate separated identities and WorkerRegistry is keyed by taskId.
+    global_launch_cap: Each phase has launch index 0 or 1 only. Launch 1 is either one identical transport redispatch after pre-candidate failure or one semantic artifact correction after an initial candidate rejection; these uses cannot stack and launch 2 is rejected before child creation.
+    bootstrap_internal_repair: The one shared pre-acceptance token may add at most one Provider turn inside the same bootstrap Agent process. It creates no additional process and is not an artifact candidate or correction.
+    terminal_codes:
+      - mechanical-redispatch-exhausted
+      - implementation-artifact-delivery-blocked
+      - environment-blocked
+      - design-required
+    design_edge: Only a required behavior, architecture, dependency, policy, scope, write-set, or approved verification-contract change enters Design; artifact exhaustion has no automatic Design edge.
+    privacy: Recovery preserves independent accepted siblings and excludes raw diagnostics, payloads, complete logs, credentials, paths, callback identity, and concrete Provider/model identity.
+  repaired_route_acceptance:
+    task: "4.1"
+    host: >-
+      A fresh public-SDK process uses in-memory session and retry-disabled settings, explicitly loads only the working-tree Cadence package and approved compatibility extension, verifies package abel-implement prompt provenance, and exposes only abel_dispatch to the host Agent. It does not use CLI/global retry settings or the bootstrap submit wrapper.
+    child: Product abel_dispatch creates the real five-tool, zero-resource Worker; faux evidence must first show no host or child auto-retry.
+    acceptance: Every Task 4.1 candidate is delivered through this repaired product route; a structurally delivered result with stable taskId and distinct phase-local request id is route/identity end-to-end acceptance, while parent product preflight remains the only admission.
+  planned_write_sets:
+    "1.1":
+      red:
+        - test/candidate-diff-admission.property.test.ts
+        - test/contracts.property.test.ts
+      red_existing_fixture_limit:
+        - Change the multi-file control to @@ -1 +1,2 @@ with one context line and one addition; change its second hunk to @@ -5,2 +5,2 @@ with two context lines; add only the final empty array element required for LF.
+        - Change validDiffResult only from @@ -1,2 +1,3 @@ to @@ -1,2 +1,2 @@.
+      green:
+        - src/contracts.ts
+      validation_only:
+        - src/submit-tool.ts
+        - src/patch.ts
+      write_set_expansion: Any product write outside src/contracts.ts during Green requires Design.
+      parent_only:
+        - AGENTS.md managed block
+        - OpenSpec task state
+    "1.2":
+      red:
+        - test/candidate-preflight.property.test.ts
+      green:
+        - src/candidate-preflight.ts
+        - src/contracts.ts
+        - src/result-store.ts
+        - src/patch.ts
+        - src/runtime.ts
+        - src/submit-tool.ts
+        - scripts/pack-check.mjs
+        - test/distribution.test.mjs
+      distribution_bound: Add exactly package/src/candidate-preflight.ts to both exact member lists.
+      parent_only:
+        - AGENTS.md managed block
+        - OpenSpec task state
+    "2.1":
+      red:
+        - test/parent-payload-bridge.property.test.ts
+      green:
+        - src/parent-payload-bridge.ts
+        - src/parent-provider.ts
+        - scripts/pack-check.mjs
+        - test/distribution.test.mjs
+      distribution_bound: Add exactly package/src/parent-payload-bridge.ts after the accepted Task 1.2 member; make no unrelated member change.
+    "3.1":
+      red:
+        - test/parent-payload-lifecycle.integration.test.ts
+        - test/openai-responses-child.integration.test.ts
+      green:
+        - src/index.ts
+        - src/runtime.ts
+        - src/parent-provider.ts
+        - src/parent-payload-bridge.ts
+        - src/child-session.ts only if the approved invariant assertion requires it
+      parent_only:
+        - AGENTS.md managed block
+        - OpenSpec task state
+    "4.1":
+      red:
+        - test/runtime-recovery.property.test.ts
+        - test/stage-contracts.test.mjs
+      green:
+        - src/runtime.ts
+        - src/worker.ts
+        - src/contracts.ts
+        - src/submit-tool.ts
+        - src/child-session.ts
+        - prompts/abel-implement.md
+        - skills/abel-workflow/SKILL.md
+      parent_only:
+        - AGENTS.md managed block
+        - OpenSpec task state
+  conflicts_and_locks:
+    - The five tasks are serial because every successor consumes the predecessor contract/artifact and later tasks share candidate admission, Runtime, Provider/session state, distribution manifests, or workflow state.
+    - Task 1.1 conflicts with 1.2, 2.1, 3.1, and 4.1 and holds candidate-diff-admission, main-apply, vitest-runtime-provider, and candidate-diff-admission-suite exclusively.
+    - Task 1.2 conflicts with 2.1, 3.1, and 4.1 and holds candidate-preflight, main-apply, bwrap-namespace, temporary-checkout, vitest-runtime-provider, and candidate-preflight-suite exclusively.
+    - Task 2.1 conflicts with 3.1 and 4.1 and holds parent-payload-callback, parent-provider, vitest-runtime-provider, and provider-payload-suite exclusively.
+    - Task 3.1 conflicts with 4.1 and holds parent-provider-registration, parent-payload-callback, runtime-lifecycle, real-openai-responses-serializer, local-fetch-recorder, vitest-runtime-provider, provider-payload-suite, and openai-responses-wire exclusively.
+    - Task 4.1 holds logical-worker-registry, runtime-recovery, workflow-contract, vitest-runtime-provider, and runtime-recovery-suite exclusively and is conflict-ordered after every predecessor.
+  task_preconditions:
+    "1.1": Verify both embedded harness hashes/capabilities, including public-clamp controls and drift rejection; check package Agent and approved compatibility extension as regular files with per-run hashes kept only in session evidence; record target, affected, and full baselines; preserve existing dirt; bind real snapshots and Revision-F launch-0 metadata with null predecessor/rejection digests.
+    "1.2": Require accepted Task 1.1 target/affected/checkpoint and strict-parser/reference conformance; reverify both harnesses and thinking policy; bind fresh real Bound, typed baseline/verification, package/lock/dependency bounds, and all bootstrap digests.
+    "2.1": Require accepted Task 1.2 target/affected/checkpoint, retired temporary harness files, active product strict/preflight admission, fresh snapshots, and fresh baselines.
+    "3.1": Require accepted Task 2.1 target/affected/checkpoint, public lifecycle/Provider registration APIs, product preflight, fresh snapshots, and fresh baselines.
+    "4.1": Require every predecessor target/affected/checkpoint, prompt/Skill baselines, and the fresh repaired-route SDK host's retry-disabled faux proof before a real product-route candidate request.
+verification:
+  "1.1":
+    type: property
+    red_precheck:
+      - bun run check
+      - bun run test:target test/contracts.property.test.ts
+    red: bun run test:target test/candidate-diff-admission.property.test.ts
+    expected_red: >-
+      Both Red files load; the two normalized existing controls remain Green against current code; the dedicated target fails only because header-only admission accepts an impossible hunk or unconsumed suffix; valid ordinary add, modify, and delete controls remain valid. Parse/import/no-test/wrong-fixture or existing-control failure is artifact rejection.
+    reference_red:
+      - Fresh checkout A runs bun run check and test/contracts.property.test.ts as expected-green.
+      - Fresh checkout B over identical bytes runs bun run check and test/candidate-diff-admission.property.test.ts as expected-red with the approved stable identity.
+    reference_green:
+      - Each target runs as expected-green over identical candidate bytes in separate fresh checkouts, each preceded by bun run check.
+    affected:
+      - bun run check
+      - bun run test:target test/candidate-diff-admission.property.test.ts test/contracts.property.test.ts test/patch.integration.test.ts test/text-patch-headers.integration.test.ts test/child-session.integration.test.ts
+    checkpoint:
+      - bun run verify
+      - bun run check:agents
+  "1.2":
+    type: property
+    red: bun run test:target test/candidate-preflight.property.test.ts
+    expected_red: >-
+      At least eight fixed-API tests load through a non-literal optional import and fail only with "not_ready: isolated candidate preflight is not implemented" using real Bound values.
+    affected:
+      - bun run check
+      - bun run test:target test/candidate-preflight.property.test.ts test/candidate-diff-admission.property.test.ts test/contracts.property.test.ts test/patch.integration.test.ts test/text-patch-headers.integration.test.ts test/file-concurrency.integration.test.ts test/runtime-scheduler.integration.test.ts test/lifecycle.integration.test.ts test/stage-contracts.test.mjs
+      - bun run pack:check
+    checkpoint:
+      - bun run verify
+      - bun run pack:check
+      - bun run check:agents
+  "2.1":
+    type: property
+    red: bun run test:target test/parent-payload-bridge.property.test.ts
+    expected_red: >-
+      Optional dynamic import loads at least eight fixed-seed tests and all fail only with "not_ready: parent payload bridge is not implemented".
+    affected:
+      - bun run check
+      - bun run test:target test/parent-payload-bridge.property.test.ts test/child-session.integration.test.ts test/child-session-cancellation.test.ts test/runtime-scheduler.integration.test.ts test/distribution.test.mjs
+      - bun run pack:check
+    checkpoint:
+      - bun run verify
+      - bun run check:agents
+  "3.1":
+    type: example
+    red: bun run test:target test/parent-payload-lifecycle.integration.test.ts test/openai-responses-child.integration.test.ts
+    expected_red: >-
+      Both protocol-valid modules load; lifecycle capture and installed Responses wire assertions fail only because the public wrapper route is absent, before external network.
+    affected:
+      - bun run check
+      - bun run test:target test/parent-payload-lifecycle.integration.test.ts test/openai-responses-child.integration.test.ts test/parent-payload-bridge.property.test.ts test/activation.test.ts test/prompt-activation.integration.test.ts test/child-session.integration.test.ts test/child-session-cancellation.test.ts test/runtime-scheduler.integration.test.ts test/lifecycle.integration.test.ts test/drain.property.test.ts
+    checkpoint:
+      - bun run verify
+      - bun run check:agents
+  "4.1":
+    type: property
+    red: bun run test:target test/runtime-recovery.property.test.ts test/stage-contracts.test.mjs
+    expected_red: >-
+      Tests load and fail because product identity is request-coupled, recovery is generic, total transport/artifact launch use is not product-enforced, and workflow still routes every wrong Red to Design.
+    affected:
+      - bun run check
+      - bun run test:target test/runtime-recovery.property.test.ts test/stage-contracts.test.mjs test/child-session.integration.test.ts test/file-concurrency.integration.test.ts test/runtime-scheduler.integration.test.ts test/workflow-routing.integration.test.ts test/runtime-activity.property.test.ts test/subagent-activity.integration.test.ts test/drain.property.test.ts
+    checkpoint:
+      - bun run verify
+      - bun run traceability:check
+      - change-local 34/34 exactly-once Scenario audit
+      - bun run check:agents
+agents_impact:
+  "1.1": "update-existing root AGENTS.md after Green: route strict candidate-diff admission in src/contracts.ts and verified defensive consumers in src/submit-tool.ts and src/patch.ts."
+  "1.2": "update-existing root AGENTS.md after Green: route src/candidate-preflight.ts, typed retained verification/baseline state, isolated parent preflight, and serialized parent-only apply."
+  "2.1": "none: the pure payload bridge is not yet an entrypoint route; verify against the complete task diff and current index claims."
+  "3.1": "update-existing root AGENTS.md after Green: route session-owned capture, unwrapped delegation, lifecycle clearing, phase composition, and final Responses normalization."
+  "4.1": "update-existing root AGENTS.md after Green: route typed finite recovery and stable-task/phase-request boundaries."
+delivery:
+  strict_validation:
+    command: openspec validate preserve-child-provider-payload-compat --strict --type change
+    valid: true
+    issues: 0
+  scenario_traceability:
+    total: 34
+    owned_exactly_once: 34
+    missing: 0
+    duplicate: 0
+    unknown: 0
+  task_graph:
+    nodes: 5
+    acyclic: true
+    serial: true
+  apply_tracks: tasks.md
+  apply_requires:
+    - tasks
+  gate_b_reviews:
+    bootstrap_f1a: coherent
+    contract_trace_dag: coherent
+  reproducible_validation:
+    - bun run verify
+    - bun run traceability:check
+    - bun run check:agents
+gate_a:
+  path: gate-a.yaml
+  sha256: e5e4bb6e650457bc427d8a9b2e3be828461161a36d4e4fc322ef30d5c00ec910
+artifacts:
+  - path: proposal.md
+    sha256: b2e73fd0906f121f0014a1179fd4c5eae23a8def57c27326c0e925c567bc1925
+  - path: specs/abel-workflow-prompt-package/spec.md
+    sha256: 952cf1559a0efd4e8db3a7d974c2e42183cdef1da439bba0f88d14f6e83cbb71
+  - path: specs/private-agent-orchestration/spec.md
+    sha256: 528a55540dda65389525d357ac3bfc5cbd6f50519e28de3b3d00d8a6f3db56fe
+  - path: design.md
+    sha256: 12be3da57b55eaf37343654525da29d7102b201c7177fe9f0209f66643dc0546
+  - path: tasks.md
+    hash_normalization: completed_markdown_checkboxes_to_unchecked
+    sha256: c2f73609f3783903010a40d7612833a118109d1577c1e16cbc8c912015db47a5

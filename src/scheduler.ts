@@ -59,6 +59,7 @@ function conflictEdgeMatches(
 ): boolean {
   return conflicts.some(
     (edge) =>
+      edge === other.taskId ||
       edge === other.id ||
       other.declared.read.includes(edge) ||
       other.declared.write.includes(edge),

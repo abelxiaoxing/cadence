@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -70,6 +78,86 @@ describe("parent-owned exact patch application", () => {
     expect(result.ok).toBe(false);
     expect((result as { ok: false; error: string }).error).toMatch(/stale/i);
     expect(readFileSync(join(root, "a.txt"), "utf8")).toBe(before);
+  });
+
+  it("rejects cancellation before Git screening without mutation", async () => {
+    if (!patch || !storeMod) return notReady("patch path");
+    const root = fixture();
+    const store = new storeMod.ResultStore();
+    const id = store.retain({ diff, writeSet: ["a.txt"], root });
+    const abort = new AbortController();
+    abort.abort(new Error("cancel apply before Git screening"));
+
+    const result = await patch.applyRetainedPatch({
+      root,
+      id,
+      store,
+      signal: abort.signal,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: "candidate application cancelled",
+    });
+    expect(readFileSync(join(root, "a.txt"), "utf8")).toBe("old\n");
+    expect(store.get(id)).toBeDefined();
+  });
+
+  it("finishes an in-flight final apply before reporting cancellation", async () => {
+    if (!patch || !storeMod) return notReady("patch path");
+    const root = fixture();
+    const store = new storeMod.ResultStore();
+    const id = store.retain({ diff, writeSet: ["a.txt"], root });
+    const bin = join(root, "test-bin");
+    const wrapper = join(bin, "git");
+    const marker = join(root, "apply-started");
+    const originalPath = process.env.PATH;
+    const realGit = execFileSync("sh", ["-c", "command -v git"], {
+      encoding: "utf8",
+    }).trim();
+    mkdirSync(bin);
+    writeFileSync(
+      wrapper,
+      [
+        "#!/bin/sh",
+        '"$CADENCE_PATCH_REAL_GIT" "$@"',
+        "status=$?",
+        'if [ "$*" = "apply --recount --whitespace=nowarn -" ]; then',
+        '  : > "$CADENCE_PATCH_TEST_MARKER"',
+        "  sleep 0.2",
+        "fi",
+        'exit "$status"',
+        "",
+      ].join("\n"),
+    );
+    chmodSync(wrapper, 0o755);
+    process.env.PATH = `${bin}:${originalPath ?? ""}`;
+    process.env.CADENCE_PATCH_REAL_GIT = realGit;
+    process.env.CADENCE_PATCH_TEST_MARKER = marker;
+    const controller = new AbortController();
+
+    try {
+      const applying = patch.applyRetainedPatch({
+        root,
+        id,
+        store,
+        signal: controller.signal,
+      });
+      for (let attempt = 0; attempt < 100 && !existsSync(marker); attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(existsSync(marker)).toBe(true);
+      controller.abort(new Error("cancel after final apply started"));
+      const result = await applying;
+
+      expect(result.ok).toBe(true);
+      expect(readFileSync(join(root, "a.txt"), "utf8")).toBe("new\n");
+      expect(store.get(id)).toBeUndefined();
+    } finally {
+      process.env.PATH = originalPath;
+      delete process.env.CADENCE_PATCH_REAL_GIT;
+      delete process.env.CADENCE_PATCH_TEST_MARKER;
+    }
   });
 
   it("rejects binary, rename, mode, submodule, duplicate, and out-of-scope patches", async () => {

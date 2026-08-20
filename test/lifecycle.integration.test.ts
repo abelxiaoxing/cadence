@@ -5,7 +5,13 @@
 // retained result, mis-restored tools, or double-counted usage.
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -16,7 +22,9 @@ import {
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 import { Activation } from "../src/activation";
+import { snapshotFiles } from "../src/file-snapshot";
 import { Runtime } from "../src/runtime";
+import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 let entrypoint: typeof import("../src/index") | null = null;
 let parentProvider: typeof import("../src/parent-provider") | null = null;
@@ -76,6 +84,20 @@ function makeRoot(tag: string): string {
   });
   execFileSync("git", ["config", "user.name", "Abel Test"], { cwd });
   writeFileSync(join(cwd, "a.txt"), "old\n");
+  mkdirSync(join(cwd, "node_modules"));
+  mkdirSync(join(cwd, "test"));
+  writeFileSync(
+    join(cwd, "package.json"),
+    `${JSON.stringify({
+      private: true,
+      scripts: { check: 'node -e ""', "test:target": "node" },
+    })}\n`,
+  );
+  writeFileSync(join(cwd, "bun.lock"), "# fixture lock\n");
+  writeFileSync(
+    join(cwd, "test/expected-red.mjs"),
+    'console.error("[LIFECYCLE:expected-red]\\nTests 1 failed");\nprocess.exit(1);\n',
+  );
   execFileSync("git", ["add", "a.txt"], { cwd });
   execFileSync("git", ["commit", "-qm", "base"], { cwd });
   return cwd;
@@ -87,10 +109,11 @@ const submitResponse = (submitted: unknown) =>
     { stopReason: "toolUse" },
   );
 
-function requestFor(id: string, phase: string) {
+function requestFor(id: string, phase: string, root: string) {
   return {
     stage: "abel-implement",
     role: "implementation-worker",
+    taskId: id,
     id,
     phase,
     objective: "Change a.txt",
@@ -101,8 +124,17 @@ function requestFor(id: string, phase: string) {
       write: ["a.txt"],
       conflicts: [],
       resources: [],
+      verificationLock: "lifecycle-red",
     },
     output: "diff",
+    verification: {
+      id: `verify-${id}`,
+      argv: ["bun", "run", "test:target", "test/expected-red.mjs"],
+      classification: "expected-red",
+      expectedFailure: "[LIFECYCLE:expected-red]",
+      minTests: 1,
+    },
+    snapshot: snapshotFiles(root, ["a.txt"]),
   };
 }
 
@@ -135,7 +167,10 @@ async function makeActive(tag: string) {
   const activation = new Activation();
   activation.request();
   activation.activate();
-  const runtime = new Runtime({ activation });
+  const runtime = new Runtime({
+    activation,
+    parentPayloadBridge: new PassthroughParentPayloadBridge(),
+  });
   return {
     cwd,
     faux,
@@ -154,7 +189,7 @@ describe("stage cleanup restores inactive state", () => {
     faux.setResponses([submitResponse(diffSubmit("task-clean", "red"))]);
     const run = await (runtime as any).execute(
       "run",
-      { request: requestFor("task-clean", "red") },
+      { request: requestFor("task-clean", "red", cwd) },
       context,
     );
     expect(run.ok).toBe(true);
@@ -188,7 +223,7 @@ describe("no private state filesystem after delegation", () => {
     faux.setResponses([submitResponse(diffSubmit("task-fs", "red"))]);
     const run = await (runtime as any).execute(
       "run",
-      { request: requestFor("task-fs", "red") },
+      { request: requestFor("task-fs", "red", cwd) },
       context,
     );
     expect(run.ok).toBe(true);
@@ -206,7 +241,7 @@ describe("unique child usage is returned exactly once", () => {
     faux.setResponses([submitResponse(diffSubmit("task-usage", "red"))]);
     const run = await (runtime as any).execute(
       "run",
-      { request: requestFor("task-usage", "red") },
+      { request: requestFor("task-usage", "red", context.cwd) },
       context,
     );
     expect(run.ok).toBe(true);

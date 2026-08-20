@@ -1,75 +1,147 @@
 // Process-local logical Worker registry for private orchestration. A Worker
-// is pinned by the first accepted phase: logical ID, stage, role, the
-// provider/model/API/thinking identity, and the approved non-snapshot
-// contract. Later accepted Red/Green/optional Refactor phases receive fresh
-// snapshots and fresh phase-local auth for the SAME pinned identity. A failed
-// phase may be mechanically redispatched exactly once when its canonical
-// request is identical apart from refreshed snapshot hashes; a second failure
-// blocks that branch. No credential, transcript, or retry ledger is retained.
+// is keyed by stable task identity. Its immutable task contract is separate
+// from the current phase request, snapshot, verification, and launch budget.
+// No credential, transcript, provider diagnostic, or unbounded retry ledger
+// is retained.
 
-import type { RequestEnvelope } from "./contracts.ts";
+import type { RequestEnvelope, VerificationContract } from "./contracts.ts";
 
 export interface WorkerContract {
   stage: string;
   role: string;
-  id: string;
+  taskId: string;
   objective: string;
   roots: string[];
   agents: string;
   contractText: string;
   read: string[];
-  write: string[];
+  conflicts: string[];
+  resources: string[];
+  output: string;
+  currentPhase: WorkerPhaseContract;
+}
+
+export interface WorkerTaskContract {
+  stage: string;
+  role: string;
+  taskId: string;
+  objective: string;
+  roots: string[];
+  agents: string;
+  contractText: string;
+  read: string[];
+  conflicts: string[];
+  resources: string[];
+  output: string;
+}
+
+export interface WorkerPhaseContract {
+  requestId: string;
+  phase: string;
+  readSet: string[];
+  writeSet: string[];
   conflicts: string[];
   resources: string[];
   verificationLock?: string;
-  output: string;
+  snapshot?: unknown;
+  verification?: VerificationContract;
+  correctionIndex: 0 | 1;
 }
 
 export interface LogicalWorker {
   identity: string;
-  contract: WorkerContract;
-  redispatchUsed: boolean;
+  taskContract: WorkerTaskContract;
+  currentPhase: WorkerPhaseContract;
+  state: WorkerState;
 }
 
-// Pins the semantic scope of a logical Worker, excluding the phase label so a
-// later Red/Green/Refactor phase is recognized as the same Worker.
+export type WorkerState =
+  | { kind: "ready" }
+  | { kind: "candidate-pending" }
+  | { kind: "phase-applied" }
+  | { kind: "artifact-correction-pending"; rejection: string }
+  | { kind: "stale-redispatch-pending" }
+  | { kind: "blocked"; reason: "artifact" | "mechanical" };
+
 export function contractOf(envelope: RequestEnvelope): WorkerContract {
   return {
     stage: envelope.stage,
     role: envelope.role,
-    id: envelope.id,
+    taskId: envelope.taskId ?? envelope.id,
     objective: envelope.objective,
     roots: [...envelope.roots],
     agents: envelope.context.agents,
     contractText: envelope.context.contract,
     read: [...envelope.declared.read],
-    write: [...envelope.declared.write],
     conflicts: [...envelope.declared.conflicts],
     resources: [...envelope.declared.resources],
-    verificationLock: envelope.declared.verificationLock,
     output: envelope.output,
+    currentPhase: phaseOf(envelope, 0),
   };
 }
 
-export function sameContract(a: WorkerContract, b: WorkerContract): boolean {
+export function sameContract(
+  a: WorkerTaskContract,
+  b: WorkerTaskContract,
+): boolean {
   if (
     a.stage !== b.stage ||
     a.role !== b.role ||
-    a.id !== b.id ||
+    a.taskId !== b.taskId ||
     a.objective !== b.objective ||
     a.agents !== b.agents ||
     a.contractText !== b.contractText ||
-    a.output !== b.output ||
-    a.verificationLock !== b.verificationLock
+    a.output !== b.output
   )
     return false;
   return (
     arrayEqual(a.roots, b.roots) &&
     arrayEqual(a.read, b.read) &&
-    arrayEqual(a.write, b.write) &&
     arrayEqual(a.conflicts, b.conflicts) &&
     arrayEqual(a.resources, b.resources)
   );
+}
+
+export function samePhaseContract(
+  a: WorkerPhaseContract,
+  b: WorkerPhaseContract,
+): boolean {
+  return (
+    a.phase === b.phase &&
+    arrayEqual(a.readSet, b.readSet) &&
+    arrayEqual(a.writeSet, b.writeSet) &&
+    arrayEqual(a.conflicts, b.conflicts) &&
+    arrayEqual(a.resources, b.resources) &&
+    a.verificationLock === b.verificationLock &&
+    JSON.stringify(a.verification) === JSON.stringify(b.verification)
+  );
+}
+
+function phaseOf(
+  envelope: RequestEnvelope,
+  correctionIndex: 0 | 1,
+): WorkerPhaseContract {
+  return {
+    requestId: envelope.id,
+    phase: envelope.phase,
+    readSet: [...envelope.declared.read],
+    writeSet: [...envelope.declared.write],
+    conflicts: [...envelope.declared.conflicts],
+    resources: [...envelope.declared.resources],
+    verificationLock: envelope.declared.verificationLock,
+    snapshot:
+      envelope.snapshot === undefined
+        ? undefined
+        : structuredClone(envelope.snapshot),
+    verification:
+      envelope.verification === undefined
+        ? undefined
+        : {
+            ...envelope.verification,
+            argv: [...envelope.verification.argv],
+          },
+    correctionIndex,
+  };
 }
 
 function arrayEqual(a: string[], b: string[]): boolean {
@@ -104,16 +176,54 @@ export class WorkerRegistry {
   }
 
   pin(contract: WorkerContract, identity: string): LogicalWorker {
+    const currentPhase = clonePhase(contract.currentPhase);
     const worker: LogicalWorker = {
       identity,
-      contract,
-      redispatchUsed: false,
+      taskContract: cloneTask(contract),
+      currentPhase,
+      state: { kind: "ready" },
     };
-    this.workers.set(contract.id, worker);
+    this.workers.set(contract.taskId, worker);
+    return worker;
+  }
+
+  setCurrentPhase(
+    taskId: string,
+    contract: WorkerContract,
+    correctionIndex: 0 | 1,
+  ): LogicalWorker | undefined {
+    const worker = this.workers.get(taskId);
+    if (!worker) return undefined;
+    const currentPhase = {
+      ...clonePhase(contract.currentPhase),
+      correctionIndex,
+    };
+    worker.currentPhase = currentPhase;
+    worker.state = { kind: "ready" };
     return worker;
   }
 
   clear(): void {
     this.workers.clear();
   }
+}
+
+function cloneTask(contract: WorkerContract): WorkerTaskContract {
+  return {
+    stage: contract.stage,
+    role: contract.role,
+    taskId: contract.taskId,
+    objective: contract.objective,
+    roots: [...contract.roots],
+    agents: contract.agents,
+    contractText: contract.contractText,
+    read: [...contract.read],
+    conflicts: [...contract.conflicts],
+    resources: [...contract.resources],
+    output: contract.output,
+  };
+}
+
+function clonePhase(phase: WorkerPhaseContract): WorkerPhaseContract {
+  return structuredClone(phase);
 }

@@ -15,6 +15,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { type Activation, activateTool, deactivateTool } from "./activation.ts";
 import { ACTIONS } from "./contracts.ts";
+import { ParentPayloadBridge } from "./parent-payload-bridge.ts";
 import { Runtime } from "./runtime.ts";
 import {
   ACTIVITY_DETAILS_KEY,
@@ -68,20 +69,27 @@ function hasExpandedPromptMarker(
   );
 }
 
+function isVerifiedStageInvocation(
+  pi: ExtensionAPI,
+  activation: Activation,
+  name: EligiblePrompt,
+  prompt: string,
+): boolean {
+  return (
+    hasPackageProvenance(pi, name) &&
+    hasExpandedPromptMarker(prompt, name) &&
+    (activation.isActive() || activation.state === "inactive")
+  );
+}
+
 function activateDispatcher(
   pi: ExtensionAPI,
   activation: Activation,
   name: EligiblePrompt,
   prompt: string,
 ): void {
-  if (
-    !hasPackageProvenance(pi, name) ||
-    !hasExpandedPromptMarker(prompt, name)
-  ) {
-    return;
-  }
+  if (!isVerifiedStageInvocation(pi, activation, name, prompt)) return;
   if (!activation.isActive()) {
-    if (activation.state !== "inactive") return;
     activation.request();
     activation.activate();
   }
@@ -92,7 +100,8 @@ function activateDispatcher(
 }
 
 export default function register(pi: ExtensionAPI): void {
-  const runtime = new Runtime();
+  const parentPayloadBridge = new ParentPayloadBridge();
+  const runtime = new Runtime({ parentPayloadBridge });
   const activity = new ActivityController();
 
   pi.registerTool({
@@ -152,7 +161,7 @@ export default function register(pi: ExtensionAPI): void {
         };
       }
       return {
-        content: [{ type: "text", text: result.error }],
+        content: [{ type: "text", text: JSON.stringify(result) }],
         details,
         isError: true,
       };
@@ -177,14 +186,37 @@ export default function register(pi: ExtensionAPI): void {
     return { action: "continue" };
   });
 
-  pi.on("before_agent_start", (event) => {
+  pi.on("before_agent_start", (event, ctx) => {
     const prompt = pendingPrompt;
     pendingPrompt = undefined;
+    if (
+      prompt &&
+      isVerifiedStageInvocation(pi, runtime.activation, prompt, event.prompt)
+    ) {
+      const sessionId = ctx.sessionManager?.getSessionId?.();
+      if (typeof sessionId === "string") {
+        parentPayloadBridge.beginSession(sessionId);
+      } else {
+        parentPayloadBridge.clear();
+      }
+    }
+    if (ctx.model) {
+      parentPayloadBridge.install(ctx.model, ctx.modelRegistry);
+    }
     if (prompt)
       activateDispatcher(pi, runtime.activation, prompt, event.prompt);
   });
 
   pi.on("session_start", (_event, ctx) => {
+    const sessionId = ctx.sessionManager?.getSessionId?.();
+    if (typeof sessionId === "string") {
+      parentPayloadBridge.beginSession(sessionId);
+      if (ctx.model) {
+        parentPayloadBridge.install(ctx.model, ctx.modelRegistry);
+      }
+    } else {
+      parentPayloadBridge.clear();
+    }
     pendingPrompt = undefined;
     activity.detach();
     if (ctx.mode === "tui") activity.attach(ctx.ui);
@@ -193,6 +225,19 @@ export default function register(pi: ExtensionAPI): void {
     const active = pi.getActiveTools();
     if (active.includes(DISPATCH_TOOL)) {
       pi.setActiveTools(deactivateTool(active, DISPATCH_TOOL));
+    }
+  });
+
+  pi.on("model_select", (event, ctx) => {
+    const sessionId = ctx.sessionManager?.getSessionId?.();
+    if (typeof sessionId !== "string") {
+      parentPayloadBridge.clear();
+      return;
+    }
+    parentPayloadBridge.beginSession(sessionId);
+    const model = event.model ?? ctx.model;
+    if (model) {
+      parentPayloadBridge.install(model, ctx.modelRegistry);
     }
   });
 

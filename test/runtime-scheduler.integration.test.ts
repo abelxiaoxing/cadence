@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,9 +17,15 @@ import {
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Activation } from "../src/activation";
+import {
+  mergeBounds,
+  snapshotDirManifests,
+  snapshotFiles,
+} from "../src/file-snapshot";
 import register, { DISPATCH_TOOL } from "../src/index";
 import { runtimeForProvider } from "../src/parent-provider";
 import { Runtime } from "../src/runtime";
+import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 const roots: string[] = [];
 let providerSequence = 0;
@@ -27,6 +40,12 @@ function makeRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "abel-runtime-scheduler-"));
   roots.push(root);
   writeFileSync(join(root, "a.txt"), "old\n");
+  mkdirSync(join(root, "node_modules"));
+  writeFileSync(
+    join(root, "package.json"),
+    `${JSON.stringify({ private: true, scripts: { check: 'node -e ""' } })}\n`,
+  );
+  writeFileSync(join(root, "bun.lock"), "# fixture lock\n");
   execFileSync("git", ["init", "-q"], { cwd: root });
   execFileSync("git", ["config", "user.email", "test@example.invalid"], {
     cwd: root,
@@ -41,13 +60,17 @@ function activeRuntime(): Runtime {
   const activation = new Activation();
   activation.request();
   activation.activate();
-  return new Runtime({ activation });
+  return new Runtime({
+    activation,
+    parentPayloadBridge: new PassthroughParentPayloadBridge(),
+  });
 }
 
-function request(id: string) {
+function request(id: string, root: string) {
   return {
     stage: "abel-implement",
     role: "implementation-worker",
+    taskId: id,
     id,
     phase: "green",
     objective: `Complete ${id}`,
@@ -60,7 +83,14 @@ function request(id: string) {
       resources: [],
       verificationLock: "runtime-scheduler",
     },
+    snapshot: snapshotFiles(root, ["a.txt"]),
     output: "diff",
+    verification: {
+      id: `verify-${id}`,
+      argv: ["bun", "run", "check"],
+      classification: "expected-green",
+      minTests: 1,
+    },
   };
 }
 
@@ -115,6 +145,172 @@ async function contextFor(root: string, faux: ReturnType<typeof fauxProvider>) {
 }
 
 describe("Runtime Scheduler integration", () => {
+  it("injects the authoritative phase identity and delivery contract into the Worker prompt", async () => {
+    const root = makeRoot();
+    const runtime = activeRuntime();
+    const faux = fauxProvider({
+      provider: `abel-runtime-prompt-${providerSequence++}`,
+      api: "faux",
+    });
+    const taskId = "stable-task";
+    const requestId = "stable-task:green:1";
+    const phaseRequest = {
+      ...request(requestId, root),
+      taskId,
+      id: requestId,
+    };
+    let observedContext = "";
+    faux.setResponses([
+      (providerContext) => {
+        observedContext =
+          (providerContext as unknown as { systemPrompt?: string })
+            .systemPrompt ?? "";
+        return fauxAssistantMessage(
+          fauxToolCall("abel_submit_result", {
+            ...submitted(requestId),
+            taskId,
+          }),
+          { stopReason: "toolUse" },
+        );
+      },
+    ]);
+    const context = await contextFor(root, faux);
+
+    const outcome = await runtime.execute(
+      "run",
+      { request: phaseRequest },
+      context,
+    );
+    await runtime.execute("finish", {}, context);
+
+    expect(outcome.ok).toBe(true);
+    expect(observedContext).toContain(
+      `<phase-contract>${JSON.stringify({
+        taskId,
+        requestId,
+        phase: "green",
+        readSet: ["a.txt"],
+        writeSet: ["a.txt"],
+        verification: phaseRequest.verification,
+      })}</phase-contract>`,
+    );
+  });
+
+  it("reconstructs a declared directory from the Worker's complete observed snapshot", async () => {
+    const root = makeRoot();
+    mkdirSync(join(root, "fixtures"));
+    writeFileSync(join(root, "fixtures/observed.txt"), "head\n");
+    writeFileSync(join(root, "fixtures/removed.txt"), "remove\n");
+    execFileSync("git", ["add", "fixtures"], { cwd: root });
+    execFileSync("git", ["commit", "-qm", "directory baseline"], {
+      cwd: root,
+    });
+    writeFileSync(join(root, "fixtures/observed.txt"), "worker\n");
+    rmSync(join(root, "fixtures/removed.txt"));
+    writeFileSync(join(root, "fixtures/untracked.txt"), "untracked\n");
+    const check = [
+      "const f=require('node:fs')",
+      "if(f.readFileSync('fixtures/observed.txt','utf8')!=='worker\\n')process.exit(1)",
+      "if(f.existsSync('fixtures/removed.txt'))process.exit(1)",
+      "if(f.readFileSync('fixtures/untracked.txt','utf8')!=='untracked\\n')process.exit(1)",
+    ].join(";");
+    writeFileSync(
+      join(root, "package.json"),
+      `${JSON.stringify({ private: true, scripts: { check: `node -e "${check}"` } })}\n`,
+    );
+    const runtime = activeRuntime();
+    const faux = fauxProvider({
+      provider: `abel-runtime-directory-${providerSequence++}`,
+      api: "faux",
+    });
+    faux.setResponses([response("directory-baseline")]);
+    const context = await contextFor(root, faux);
+    const phaseRequest = {
+      ...request("directory-baseline", root),
+      declared: {
+        ...request("directory-baseline", root).declared,
+        read: ["fixtures"],
+      },
+      snapshot: mergeBounds(
+        snapshotDirManifests(root, ["fixtures"]),
+        snapshotFiles(root, ["a.txt"]),
+      ),
+    };
+
+    const outcome = await runtime.execute(
+      "run",
+      { request: phaseRequest },
+      context,
+    );
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok || !outcome.resultId) return;
+    const applied = await runtime.execute(
+      "apply",
+      { resultId: outcome.resultId },
+      context,
+    );
+    await runtime.execute("finish", {}, context);
+
+    expect(applied.ok).toBe(true);
+    expect(readFileSync(join(root, "a.txt"), "utf8")).toBe(
+      "directory-baseline\n",
+    );
+  });
+
+  it("sanitizes preflight preparation exceptions and consumes the two-launch budget", async () => {
+    const root = makeRoot();
+    const runtime = activeRuntime();
+    const faux = fauxProvider({
+      provider: `abel-runtime-preflight-error-${providerSequence++}`,
+      api: "faux",
+    });
+    faux.setResponses([
+      response("preflight-error"),
+      response("preflight-error"),
+    ]);
+    const context = await contextFor(root, faux);
+    const phaseRequest = request("preflight-error", root);
+    chmodSync(join(root, "node_modules"), 0o000);
+
+    try {
+      const first = await runtime.execute(
+        "run",
+        { request: phaseRequest },
+        context,
+      );
+      const second = await runtime.execute(
+        "run",
+        { request: phaseRequest },
+        context,
+      );
+      const blocked = await runtime.execute(
+        "run",
+        { request: phaseRequest },
+        context,
+      );
+
+      expect(first).toMatchObject({
+        ok: false,
+        recovery: { code: "environment-blocked", launchIndex: 0 },
+      });
+      expect(second).toMatchObject({
+        ok: false,
+        recovery: { code: "environment-blocked", launchIndex: 1 },
+      });
+      expect(blocked).toMatchObject({
+        ok: false,
+        recovery: { code: "mechanical-redispatch-exhausted" },
+      });
+      expect(JSON.stringify([first, second, blocked])).not.toMatch(
+        /EACCES|node_modules|abel-runtime-scheduler-/i,
+      );
+      expect(faux.state.callCount).toBe(2);
+    } finally {
+      chmodSync(join(root, "node_modules"), 0o755);
+      await runtime.execute("finish", {}, context);
+    }
+  });
+
   it("forwards the Pi tool signal into Runtime execution", async () => {
     const execute = vi
       .spyOn(Runtime.prototype, "execute")
@@ -157,6 +353,67 @@ describe("Runtime Scheduler integration", () => {
     }
   });
 
+  it("exposes complete recovery records in provider-visible failure content", async () => {
+    const recovery = {
+      code: "design-required",
+      taskId: "task-recovery-content",
+      requestId: "task-recovery-content:green:0",
+      phase: "green",
+      launchIndex: 1,
+      branchBlocked: true,
+      dependentsBlocked: true,
+      partialResultUsable: false,
+      independentResultsPreserved: true,
+      next: "return-to-design",
+    } as const;
+    const execute = vi.spyOn(Runtime.prototype, "execute").mockResolvedValue({
+      ok: false,
+      error: "design-required: branch recovery is required",
+      recovery,
+    });
+    let tool:
+      | {
+          name: string;
+          execute: (...args: any[]) => Promise<unknown>;
+        }
+      | undefined;
+    const pi = {
+      registerTool(definition: typeof tool) {
+        tool = definition;
+      },
+      on() {},
+      getActiveTools: () => [],
+      setActiveTools() {},
+    };
+
+    try {
+      register(pi as never);
+      expect(tool?.name).toBe(DISPATCH_TOOL);
+      const rendered = await tool?.execute(
+        "recovery-call",
+        { action: "run", request: {} },
+        undefined,
+        undefined,
+        {},
+      );
+      expect(rendered).toMatchObject({ isError: true });
+      const content = (
+        rendered as {
+          content?: Array<{ type: string; text?: string }>;
+        }
+      ).content;
+      expect(content?.[0]?.type).toBe("text");
+      const providerPayload = JSON.parse(content?.[0]?.text ?? "");
+      expect(providerPayload).toMatchObject({
+        ok: false,
+        error: "design-required: branch recovery is required",
+      });
+      expect(providerPayload.recovery).toEqual(recovery);
+    } finally {
+      execute.mockRestore();
+    }
+  });
+
   it("serializes conflicting Runtime runs through the Scheduler", async () => {
     const root = makeRoot();
     const runtime = activeRuntime();
@@ -179,11 +436,15 @@ describe("Runtime Scheduler integration", () => {
     ]);
     const context = await contextFor(root, faux);
 
-    const left = runtime.execute("run", { request: request("left") }, context);
+    const left = runtime.execute(
+      "run",
+      { request: request("left", root) },
+      context,
+    );
     await waitFor(() => starts.length === 1);
     const right = runtime.execute(
       "run",
-      { request: request("right") },
+      { request: request("right", root) },
       context,
     );
     await Promise.race([
@@ -232,13 +493,13 @@ describe("Runtime Scheduler integration", () => {
 
     const run = runtime.execute(
       "run",
-      { request: request("cancelled-child") },
+      { request: request("cancelled-child", root) },
       context,
     );
     await waitFor(() => childStarted);
     const queued = runtime.execute(
       "run",
-      { request: request("queued-child") },
+      { request: request("queued-child", root) },
       context,
     );
     const cancelPromise = runtime.execute("cancel", {}, context);
@@ -277,7 +538,7 @@ describe("Runtime Scheduler integration", () => {
 
     const outcome = await (runtime.execute as any)(
       "run",
-      { request: request("never-started") },
+      { request: request("never-started", root) },
       context,
       controller.signal,
     );
@@ -313,14 +574,14 @@ describe("Runtime Scheduler integration", () => {
     const controller = new AbortController();
     const cancelled = (runtime.execute as any)(
       "run",
-      { request: request("tool-cancelled") },
+      { request: request("tool-cancelled", root) },
       context,
       controller.signal,
     );
     await waitFor(() => firstStarted);
     const sibling = runtime.execute(
       "run",
-      { request: request("surviving-sibling") },
+      { request: request("surviving-sibling", root) },
       context,
     );
 
@@ -380,7 +641,7 @@ describe("Runtime Scheduler integration", () => {
     const controller = new AbortController();
     const run = (runtime.execute as any)(
       "run",
-      { request: request("auth-window") },
+      { request: request("auth-window", root) },
       context,
       controller.signal,
     );

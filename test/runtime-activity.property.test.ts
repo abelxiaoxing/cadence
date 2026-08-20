@@ -12,6 +12,7 @@ import { Activation } from "../src/activation";
 import { runChildSession } from "../src/child-session";
 import { runtimeForProvider } from "../src/parent-provider";
 import { Runtime } from "../src/runtime";
+import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 const roots: string[] = [];
 let providerSequence = 0;
@@ -74,7 +75,10 @@ async function runtimeFixture() {
   activation.request();
   activation.activate();
   return {
-    runtime: new Runtime({ activation }),
+    runtime: new Runtime({
+      activation,
+      parentPayloadBridge: new PassthroughParentPayloadBridge(),
+    }),
     context: {
       cwd,
       model: faux.getModel(),

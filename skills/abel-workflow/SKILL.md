@@ -34,7 +34,13 @@ Use Red-Green-Refactor for code, tests, and executable static contracts:
 2. **Green:** implement the minimum approved change and run the target verification after every code or test edit.
 3. **Refactor:** improve only in-scope structure or readability while target verification stays green; then run the affected suite.
 
-If Red passes, uses an invalid command, or fails for another reason, stop and return to Design rather than substituting an improvised verification.
+Syntax, import/load, no-test, malformed-diff, and wrong-Red-identity failures are generated implementation-artifact rejection.
+A wrong-Red result uses the same bounded artifact-correction path.
+Every artifact rejection receives a finite correction budget shared with the phase's mechanical redispatch budget.
+When the artifact correction budget is exhausted, report `implementation-artifact-delivery-blocked`; it must not automatically return, transition, or route to Design.
+An invalid Red contract is one where Red passes against the preflighted candidate, or where the approved command cannot witness the approved behavior without a substantive behavior, policy, dependency, architecture, scope, write-set, or verification-contract change.
+An invalid Red contract must immediately return the contract defect to Design and must not consume the artifact correction budget.
+Only an invalid Red contract or another substantive behavior, policy, dependency, architecture, scope, write-set, or verification-contract change returns the requirement to Design.
 
 ### Implement affected-suite repair boundary
 

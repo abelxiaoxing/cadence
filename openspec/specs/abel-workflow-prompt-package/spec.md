@@ -210,14 +210,17 @@ A repair that requires new behavior, policy, dependency, architecture, irreversi
 
 Implementation SHALL recompute ready work from the trusted task DAG and MAY dispatch compatible ready tasks concurrently only when their prerequisites, declared read and write sets, conflict edges, shared resources, and validation locks permit it.
 Each Worker result SHALL bind hashes for the files it actually read and every path it proposes to create, modify, or delete.
-The parent SHALL review and apply accepted results serially.
+The parent SHALL review accepted candidates serially and SHALL NOT apply a generated implementation artifact to the main workspace until parent-owned isolated preflight proves complete diff consumption, current snapshot and declared-path conformance, source/test loadability, and the approved phase verification identity.
 A sibling result SHALL remain current after an unrelated file changes, but SHALL become stale before application if any file in its bound read or write snapshot changed.
 A stale result MUST NOT be applied and MAY receive only the single allowed identical mechanical redispatch.
 Red, Green, and optional Refactor results SHALL each bind a fresh current file snapshot.
 
 Task-local professional Agents SHALL return complete unified diffs without writing the workspace or running validation.
-The parent SHALL exclusively accept or reject results, apply exact accepted diffs, run approved commands, return compact normalized validation evidence, update AGENTS indexes, and advance task state.
-It SHALL run target verification after every applied code or test diff, run the affected suite after refactoring, update AGENTS indexes only at stable task checkpoints, and finish only when target and affected verification pass and the full suite has no new failure relative to baseline.
+The parent SHALL exclusively accept or reject results, preflight and apply exact accepted diffs, run approved commands, return compact normalized validation evidence, update AGENTS indexes, and advance task state.
+Syntax, import/load, no-test, malformed-diff, and wrong-Red-identity failures SHALL be classified as generated implementation-artifact rejection rather than target Red or a substantive Design defect.
+An artifact rejection MAY receive only the task's approved finite correction budget; exhaustion SHALL block that task and its dependents with a sanitized implementation-artifact recovery condition and SHALL NOT automatically return the change to Design.
+Only a required change to behavior, policy, dependency, architecture, scope, write set, or the approved verification contract SHALL return the affected work to Design.
+Implementation SHALL run target verification after every applied code or test diff, run the affected suite after refactoring, update AGENTS indexes only at stable task checkpoints, and finish only when target and affected verification pass and the full suite has no new failure relative to baseline.
 It SHALL NOT modify unrelated dirty files or implicitly archive or publish the change.
 
 #### Scenario: Valid cross-context handoff
@@ -242,8 +245,18 @@ It SHALL NOT modify unrelated dirty files or implicitly archive or publish the c
 
 #### Scenario: Worker delivers a task phase
 
-- **WHEN** a task Worker returns a trusted Red, Green, or Refactor result with a complete in-scope unified diff bound to the current file snapshot
+- **WHEN** a task Worker returns a complete in-scope Red, Green, or Refactor candidate diff bound to the current file snapshot and isolated preflight proves its approved phase contract
 - **THEN** the parent may accept and apply that exact diff, run the approved verification, and retain sole ownership of AGENTS and task-state changes
+
+#### Scenario: Candidate artifact cannot load or has the wrong Red identity
+
+- **WHEN** isolated preflight finds an unconsumed diff suffix, syntax or import/load failure, no target test, or a Red failure identity other than the approved one
+- **THEN** none of the candidate is applied to the main workspace, the parent reports a compact normalized artifact rejection, and only the finite artifact-correction path may continue
+
+#### Scenario: Artifact correction budget is exhausted
+
+- **WHEN** the approved finite correction budget ends without a candidate passing isolated preflight
+- **THEN** the task and dependent successors block with a sanitized implementation-artifact recovery condition and no automatic transition returns the change to Design
 
 #### Scenario: Worker diff exceeds its result boundary
 
@@ -282,8 +295,13 @@ It SHALL NOT modify unrelated dirty files or implicitly archive or publish the c
 
 #### Scenario: Task Red fails for the wrong reason
 
-- **WHEN** the specified Red command passes or fails for a reason other than its approved contract
-- **THEN** implementation stops and returns the change to Design rather than improvising another verification
+- **WHEN** the specified Red candidate cannot load, runs no target test, or fails for a reason other than its approved target identity while the approved behavior and verification contract remain sufficient
+- **THEN** implementation rejects the artifact without applying it to the main workspace and does not return to Design automatically
+
+#### Scenario: Task Red contract is invalid
+
+- **WHEN** the specified Red command passes against a preflighted candidate or cannot witness the approved behavior without changing scope, behavior, architecture, dependency, write set, or verification contract
+- **THEN** implementation stops and returns the substantive contract defect to Design rather than improvising another verification
 
 #### Scenario: Implementation completes
 

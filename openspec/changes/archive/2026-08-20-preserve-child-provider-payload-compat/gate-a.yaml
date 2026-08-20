@@ -1,0 +1,36 @@
+receipt_version: 1
+change: preserve-child-provider-payload-compat
+schema: spec-driven
+behavior_contract:
+  goal: 让隔离 Subagent 子会话安全继承父会话有效的 Provider payload 兼容重写，并以主工作区外预检和有限产物纠错阻断生成错误产物造成的 Design/Implement 自动循环。
+  scope:
+    - 父会话选定 effective Provider 与 Pi 暴露给 Provider 的 parent-session effective payload callback 结果由 child 请求继承
+    - 已在 parent session 加载的完整 effective callback 可检查并替换 fresh child serialized payload，包括同一兼容语义需要的请求特定 input/tool 数据
+    - child 外部资源与扩展继续零发现，且不复制或持久化 callback、handler、transcript 或 transformed payload
+    - bridge 缺失或过期、exposed effective callback 调用拒绝、取消或产生不安全 payload 时发送前 fail closed
+    - Pi 已内部捕获且未向 Provider callback caller 暴露的单个 handler 错误沿用 parent session 的既有 Pi 语义，不访问私有 handler
+    - openai-responses 最终 payload 省略 max_output_tokens
+    - generated implementation artifact 在主工作区外预检完整 diff、snapshot/path、loadability 与批准的 phase verification identity
+    - syntax、import/load、no-test、malformed-diff 与 wrong-Red-identity 使用有限 artifact correction，耗尽后阻塞为 implementation-artifact delivery failure，且不自动返回 Design
+    - 二次 Agent-request 失败的安全可执行恢复条件与真实 openai-responses 序列化回归
+  non_goals:
+    - 在 child 中发现、加载或注册父、用户或项目外部 extension factory、handler、tool、command 或其他资源
+    - 重新观察 Pi 已吞没的内部 handler 错误，或访问私有 ExtensionRunner handler 状态
+    - 新增公共编排 API、持久状态、新依赖或兼容平台
+    - 新增 child token budget、untransformed 或 builtin fallback、无界产物纠错或第三次 Agent 请求重派
+    - 将生成产物的语法、import、no-test、malformed-diff 或 wrong-Red-identity 错误冒充目标 Red 或实质 Design 决策
+  success:
+    - child 通过同一 effective Provider 对每个 fresh serialized payload 执行一次 Pi 暴露的 parent-session effective callback 并发送最终兼容 payload
+    - callback 不进入 child resource catalogue；bridge 或 exposed callback 边界不可用、过期、拒绝或最终 payload 不安全时网络发送前 fail closed
+    - 候选产物通过主工作区外预检后才可机械应用；每个自动恢复路径都有有限预算，artifact exhaustion 没有自动返回 Design 的出边
+    - Responses 最终省略 max_output_tokens；独立 sibling 保持可用，失败分支及后继阻塞并给出下一步
+approval:
+  summary: 用户批准 Gate A 修订 B：采用父级一次性候选预检、有限产物纠错且产物耗尽不自动返回 Design；继承 Pi effective callback 的可观测语义，只有 bridge 或 exposed effective callback 边界失败、取消或最终 payload 不安全时 fail closed；Pi 内部已捕获且未向调用者暴露的 handler 错误沿用父 session 既有语义。先前批准的 effective Provider 复用、child 外部资源隔离、Responses 最终省略 max_output_tokens、不设替代 cap、单次 Agent 请求机械重派和结构化恢复行为继续有效。
+  verbatim: 批准 Gate A 修订 B
+artifacts:
+  - path: proposal.md
+    sha256: b2e73fd0906f121f0014a1179fd4c5eae23a8def57c27326c0e925c567bc1925
+  - path: specs/abel-workflow-prompt-package/spec.md
+    sha256: 952cf1559a0efd4e8db3a7d974c2e42183cdef1da439bba0f88d14f6e83cbb71
+  - path: specs/private-agent-orchestration/spec.md
+    sha256: 528a55540dda65389525d357ac3bfc5cbd6f50519e28de3b3d00d8a6f3db56fe

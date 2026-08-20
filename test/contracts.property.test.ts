@@ -118,20 +118,86 @@ describe("strict request envelope contracts", () => {
     expect(contracts.validateRequestEnvelope(env).ok).toBe(false);
   });
 
+  it("requires phase-matched verification for every implementation diff", () => {
+    if (!contracts) return notReady("contracts");
+    const implementation = (phase: "red" | "green" | "refactor") =>
+      validEnvelope({
+        stage: "abel-implement",
+        role: "implementation-worker",
+        taskId: "task-verified-1",
+        id: `task-verified-1:${phase}:0`,
+        phase,
+        declared: {
+          read: ["src/index.ts"],
+          write: ["src/index.ts"],
+          conflicts: [],
+          resources: [],
+          verificationLock: "implementation-contracts",
+        },
+        snapshot: {
+          "src/index.ts": {
+            kind: "file",
+            sha256: "a".repeat(64),
+            bytes: 1,
+          },
+        },
+        output: "diff",
+        verification: {
+          id: `verify-${phase}`,
+          argv: [
+            "bun",
+            "run",
+            "test:target",
+            "test/contracts.property.test.ts",
+          ],
+          classification: `expected-${phase}`,
+          ...(phase === "red"
+            ? { expectedFailure: "[CONTRACT:expected-red]" }
+            : {}),
+          minTests: 1,
+        },
+      });
+
+    for (const phase of ["red", "green", "refactor"] as const) {
+      expect(contracts.validateRequestEnvelope(implementation(phase)).ok).toBe(
+        true,
+      );
+    }
+
+    const missingVerification = implementation("green") as Record<
+      string,
+      unknown
+    >;
+    delete missingVerification.verification;
+    expect(contracts.validateRequestEnvelope(missingVerification).ok).toBe(
+      false,
+    );
+
+    const missingTask = implementation("green") as Record<string, unknown>;
+    delete missingTask.taskId;
+    expect(contracts.validateRequestEnvelope(missingTask).ok).toBe(false);
+
+    const mismatched = implementation("red") as Record<string, unknown>;
+    (mismatched.verification as Record<string, unknown>).classification =
+      "expected-green";
+    delete (mismatched.verification as Record<string, unknown>).expectedFailure;
+    expect(contracts.validateRequestEnvelope(mismatched).ok).toBe(false);
+  });
+
   it("extracts write paths from ordinary unified diff headers", () => {
     if (!contracts) return notReady("contracts");
     const diff = [
       "--- a/src/index.ts",
       "+++ b/src/index.ts",
-      "@@ -1,3 +1,4 @@",
+      "@@ -1 +1,2 @@",
       " old",
       "+new",
-      "",
       "--- a/test/x.test.ts",
       "+++ b/test/x.test.ts",
-      "@@ -5 +5 @@",
+      "@@ -5,2 +5,2 @@",
       " a",
       " b",
+      "",
     ].join("\n");
     const { paths } = contracts.diffWritePaths(diff);
     expect(paths).toEqual(["src/index.ts", "test/x.test.ts"]);
@@ -196,7 +262,7 @@ const validDiffResult = () => ({
   taskId: "P-004-A",
   phase: "green",
   summary: "Implement the scheduler contract",
-  diff: "--- a/src/x.ts\n+++ b/src/x.ts\n@@ -1,2 +1,3 @@\n a\n-b\n+c\n",
+  diff: "--- a/src/x.ts\n+++ b/src/x.ts\n@@ -1,2 +1,2 @@\n a\n-b\n+c\n",
   expectedVerification: "bun run check",
   risks: ["risk"],
   nextStep: "review the accepted Green",

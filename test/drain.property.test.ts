@@ -7,7 +7,7 @@
 // asserted to pin down exactly where the drain gap is.
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -18,8 +18,10 @@ import {
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 import { Activation, activateTool, deactivateTool } from "../src/activation";
+import { snapshotFiles } from "../src/file-snapshot";
 import { Runtime } from "../src/runtime";
 import { contractOf, WorkerRegistry, workerIdentity } from "../src/worker";
+import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 let parentProvider: typeof import("../src/parent-provider") | null = null;
 try {
@@ -48,6 +50,20 @@ function makeRoot(tag: string): string {
   });
   execFileSync("git", ["config", "user.name", "Abel Drain"], { cwd });
   writeFileSync(join(cwd, "a.txt"), "old\n");
+  mkdirSync(join(cwd, "node_modules"));
+  mkdirSync(join(cwd, "test"));
+  writeFileSync(
+    join(cwd, "package.json"),
+    `${JSON.stringify({
+      private: true,
+      scripts: { check: 'node -e ""', "test:target": "node" },
+    })}\n`,
+  );
+  writeFileSync(join(cwd, "bun.lock"), "# fixture lock\n");
+  writeFileSync(
+    join(cwd, "test/expected-red.mjs"),
+    'console.error("[DRAIN:expected-red]\\nTests 1 failed");\nprocess.exit(1);\n',
+  );
   execFileSync("git", ["add", "a.txt"], { cwd });
   execFileSync("git", ["commit", "-qm", "base"], { cwd });
   return cwd;
@@ -59,10 +75,11 @@ const submitResponse = (submitted: unknown) =>
     { stopReason: "toolUse" },
   );
 
-function requestFor(id: string, phase: string, snapshot?: unknown) {
+function requestFor(id: string, phase: string, root: string) {
   return {
     stage: "abel-implement",
     role: "implementation-worker",
+    taskId: id,
     id,
     phase,
     objective: "Change a.txt",
@@ -73,9 +90,17 @@ function requestFor(id: string, phase: string, snapshot?: unknown) {
       write: ["a.txt"],
       conflicts: [],
       resources: [],
+      verificationLock: "drain-red",
     },
     output: "diff",
-    ...(snapshot ? { snapshot } : {}),
+    verification: {
+      id: `verify-${id}`,
+      argv: ["bun", "run", "test:target", "test/expected-red.mjs"],
+      classification: "expected-red" as const,
+      expectedFailure: "[DRAIN:expected-red]",
+      minTests: 1,
+    },
+    snapshot: snapshotFiles(root, ["a.txt"]),
   };
 }
 
@@ -108,7 +133,10 @@ async function makeActive(tag: string) {
   const activation = new Activation();
   activation.request();
   activation.activate();
-  const runtime = new Runtime({ activation });
+  const runtime = new Runtime({
+    activation,
+    parentPayloadBridge: new PassthroughParentPayloadBridge(),
+  });
   return {
     cwd,
     faux,
@@ -137,7 +165,7 @@ describe("drain property: single idempotent step closes admission", () => {
     fixture.runtime.drain();
     const blocked = await (fixture.runtime as any).execute(
       "run",
-      { request: requestFor("drain-quiescent", "red") },
+      { request: requestFor("drain-quiescent", "red", fixture.cwd) },
       fixture.context,
     );
     expect(blocked.ok).toBe(false);
@@ -153,7 +181,7 @@ describe("drain property: finish erases results and worker", () => {
     ]);
     const run = await (fixture.runtime as any).execute(
       "run",
-      { request: requestFor("drain-erase", "red") },
+      { request: requestFor("drain-erase", "red", fixture.cwd) },
       fixture.context,
     );
     expect(run.ok).toBe(true);
@@ -171,7 +199,9 @@ describe("drain property: finish erases results and worker", () => {
   });
 
   it("drain is idempotent and repeatable on an inactive runtime", () => {
-    const runtime = new Runtime();
+    const runtime = new Runtime({
+      parentPayloadBridge: new PassthroughParentPayloadBridge(),
+    });
     runtime.drain();
     runtime.drain();
     expect(runtime.state).toBe("inactive");
@@ -186,7 +216,7 @@ describe("drain property: cancel keeps the stage active", () => {
     ]);
     const run = await (fixture.runtime as any).execute(
       "run",
-      { request: requestFor("drain-cancel", "red") },
+      { request: requestFor("drain-cancel", "red", fixture.cwd) },
       fixture.context,
     );
     expect(run.ok).toBe(true);
@@ -213,9 +243,11 @@ describe("drain property: tool restoration keeps other tools", () => {
 describe("drain property: worker identity is stable", () => {
   it("a worker is pinned by request id and erased on drain", () => {
     const registry = new WorkerRegistry();
-    const contract = contractOf(requestFor("drain-identity", "red"));
+    const contract = contractOf(
+      requestFor("drain-identity", "red", process.cwd()),
+    );
     const worker = registry.pin(contract, workerIdentity({ id: "model-a" }));
-    expect(worker.redispatchUsed).toBe(false);
+    expect(worker.state).toEqual({ kind: "ready" });
     expect(registry.has("drain-identity")).toBe(true);
     registry.clear();
     expect(registry.has("drain-identity")).toBe(false);

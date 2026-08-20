@@ -74,6 +74,46 @@ describe("Implement stage contract", () => {
     );
   });
 
+  it("classifies generated artifact failures before any Design routing", () => {
+    const text = `${implement}\n${shared}`;
+    expect(text).toMatch(
+      /syntax[\s\S]{0,240}import\/load[\s\S]{0,240}no[- ]test[\s\S]{0,240}malformed[- ]diff[\s\S]{0,240}wrong[- ]Red[- ]identity[\s\S]{0,240}(generated )?implementation[- ]artifact rejection/i,
+    );
+    expect(text).toMatch(
+      /artifact rejection[\s\S]{0,300}(finite|bounded)[\s\S]{0,160}(correction|repair) budget/i,
+    );
+    expect(text).toMatch(
+      /(artifact correction budget is exhausted|implementation-artifact-delivery-blocked)[\s\S]{0,400}(shall not|must not|does not|no automatic)[\s\S]{0,120}(return|transition|route)[\s\S]{0,80}Design/i,
+    );
+    expect(text).toMatch(
+      /Only[\s\S]{0,100}(behavior|policy|dependency|architecture|scope|write set|verification contract)[\s\S]{0,300}Design/i,
+    );
+  });
+
+  it("does not route a generated or wrong-identity Red automatically to Design", () => {
+    const text = `${implement}\n${shared}`;
+    expect(text).toMatch(
+      /wrong[- ]Red[- ]identity[\s\S]{0,240}implementation[- ]artifact rejection/i,
+    );
+    expect(text).toMatch(
+      /wrong[- ]Red[\s\S]{0,300}(finite|bounded)[\s\S]{0,160}(artifact[- ]correction|correction path)/i,
+    );
+    expect(text).not.toMatch(/wrong reason[\s\S]{0,80}returns? to Design/i);
+    expect(text).not.toMatch(
+      /fails for another reason[\s\S]{0,80}return to Design/i,
+    );
+  });
+
+  it("returns an invalid Red contract to Design without artifact correction", () => {
+    const text = `${implement}\n${shared}`;
+    expect(text).toMatch(
+      /Red[\s\S]{0,160}passes[\s\S]{0,300}(invalid command|cannot witness)[\s\S]{0,300}(immediately )?(return|route)[\s\S]{0,80}Design/i,
+    );
+    expect(text).toMatch(
+      /invalid Red contract[\s\S]{0,240}(does not|must not)[\s\S]{0,100}(consume|use)[\s\S]{0,80}artifact correction budget/i,
+    );
+  });
+
   it("does not archive, publish, or commit implicitly", () => {
     expect(implement).toMatch(/must not[\s\S]*archive/i);
     expect(implement).toMatch(/must not[\s\S]*publish/i);

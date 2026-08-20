@@ -81,7 +81,8 @@ Implement 不重新作出或请求 Gate A/B 决策；只有 Gate receipts、arti
 worker 消费任务契约的普通缩进符号列表（绝非 Markdown 复选框）：前置条件、直接依赖、派发上下文、计划写集、冲突/资源锁、验证类型、Red 命令/预期失败原因、Green 预期行为、受影响套件命令、目标范围和 AGENTS 影响。
 
 1. **🔴 Red（worker → 父代理）**：worker 只用契约规定的验证类型与范围生成失败验证 diff；父代理审查并应用后运行 Red 命令，必须因契约描述的目标缺陷失败。
-   通过、失败原因不同或命令无效时，停止该任务并返回 `/abel-design --change <name>`，绝不即兴替换契约。
+   加载/导入失败、未运行目标测试或失败身份与批准身份不同时，将结果分类为生成的实现产物拒绝并进入有界修正路径。
+   若 Red 在预检候选上通过，或批准命令无法在不改变行为、策略、依赖、架构、范围、写集或验证契约的情况下见证批准行为，则 Red 契约无效：立即返回 `/abel-design --change <name>`，不得消耗产物修正预算。
    非行为变更任务以指定的失败静态验证起步；仅人工任务返回 Design。
 2. **🟢 Green（worker → 父代理）**：同一 worker 基于已确认的 Red 证据生成最小实现 diff；父代理审查并应用后运行目标验证。
    失败证据回传 worker，仅允许在声明写集和已批准行为内生成修正 diff。
@@ -92,6 +93,14 @@ worker 消费任务契约的普通缩进符号列表（绝非 Markdown 复选框
    - 分类为 `none` → 记录证据；否则对 `<!-- ABEL:AGENTS-INDEX:START -->` … `<!-- ABEL:AGENTS-INDEX:END -->` 托管区块做最小的更新/创建/移除，保留人工与无关内容。
    - 校验已索引的路径/命令/根到嵌套路由；运行该任务的 AGENTS 验证命令。
 6. 父代理重跑目标与受影响验证；全绿后，仅在 schema `apply.tracks` 解析出的具体跟踪文件中更新匹配的那个任务复选框；零个/多个匹配 → 停止并返回 design。
+
+Syntax, import/load, no-test, malformed-diff, and wrong-Red-identity failures are generated implementation-artifact rejection.
+A wrong-Red result follows the same bounded artifact-correction path.
+Every artifact rejection uses a finite artifact correction budget shared with the phase's mechanical redispatch budget.
+When the artifact correction budget is exhausted, report `implementation-artifact-delivery-blocked`; it must not automatically return, transition, or route to Design.
+An invalid Red contract is one where Red passes against the preflighted candidate, or where the approved command cannot witness the approved behavior without a substantive behavior, policy, dependency, architecture, scope, write-set, or verification-contract change.
+An invalid Red contract must immediately return the contract defect to Design and must not consume the artifact correction budget.
+Only an invalid Red contract or another substantive change to behavior, policy, dependency, architecture, scope, write set, or verification contract may route the branch to Design.
 
 父代理拥有主工作区补丁应用、闸门、索引写入与任务完成状态；子代理只接收任务局部索引上下文，只返回统一 diff 与分析，绝不应用补丁、批准决策、编辑索引或推进状态。
 
@@ -128,6 +137,8 @@ AGENTS: {none 的证据 | 更新的索引文件与原因}
 If the required input is missing or absent, or the request is ambiguous and not unique, stop before any work and ask the user for the missing or clarified input.
 
 Record target, affected suite, and full-suite baselines before writing; keep pre-existing failures separate and never attribute them to the task Red.
-Red must fail with the expected identity (a wrong reason is invalid and returns to Design); after Green the target and affected suite must be green, in Red-Green-Refactor order, with a stable AGENTS index at checkpoints and no new failure relative to the recorded baseline.
+Red must fail with the expected identity; a wrong reason is a generated implementation-artifact rejection handled by bounded correction.
+If Red passes against the preflighted candidate or the approved command cannot witness the approved behavior, the invalid Red contract returns immediately to Design without consuming the artifact correction budget.
+After Green the target and affected suite must be green, in Red-Green-Refactor order, with a stable AGENTS index at checkpoints and no new failure relative to the recorded baseline.
 A fresh-context handoff validates the Gate receipt, hash, and trace strictly without requesting Gate approval again.
 You must not archive, publish, or commit implicitly: only explicit parent actions may do so.
