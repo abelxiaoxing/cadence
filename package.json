@@ -1,6 +1,6 @@
 {
   "name": "@abelxiaoxing/cadence",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Prompts, skills, and a private orchestration extension exposing the Abel four-stage workflow (/abel-init, /abel-design, /abel-implement, /abel-diagnose) with package-owned professional Agents.",
   "license": "MIT",
   "type": "module",
