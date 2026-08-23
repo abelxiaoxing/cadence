@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { Model, Usage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Model, Usage } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
   defineTool,
@@ -137,6 +137,26 @@ function wrapScopedTools(
 
 export type ChildFailureKind = "failed" | "cancelled" | "timed-out";
 
+function finalDeliveryContent(message: AssistantMessage | undefined) {
+  return (
+    message?.content.filter(
+      (content) =>
+        content.type !== "thinking" &&
+        !(content.type === "text" && content.text.trim().length === 0),
+    ) ?? []
+  );
+}
+
+function isSingleStructuralSubmit(message: AssistantMessage | undefined) {
+  const content = finalDeliveryContent(message);
+  return (
+    message?.role === "assistant" &&
+    content.length === 1 &&
+    content[0]?.type === "toolCall" &&
+    content[0].name === "abel_submit_result"
+  );
+}
+
 export type ChildSessionResult =
   | {
       ok: true;
@@ -218,17 +238,15 @@ export async function runChildSession(input: {
     let finalCategory: FinalCategory;
     if (!last) {
       finalCategory = "no-final-assistant";
-    } else if (
-      last.content.length === 1 &&
-      last.content[0].type === "toolCall" &&
-      last.content[0].name === "abel_submit_result"
-    ) {
+    } else if (isSingleStructuralSubmit(last)) {
       finalCategory =
         submit.getAttempts() > 1 ? "multiple-submit" : "single-submit-only";
-    } else if (last.content.length === 1 && last.content[0].type === "text") {
-      finalCategory = "text-only";
     } else {
-      finalCategory = "mixed";
+      const content = finalDeliveryContent(last);
+      finalCategory =
+        content.length === 1 && content[0]?.type === "text"
+          ? "text-only"
+          : "mixed";
     }
     return {
       finalCategory,
@@ -336,12 +354,7 @@ export async function runChildSession(input: {
     }
     const assistants = session.messages.filter((m) => m.role === "assistant");
     const final = assistants.at(-1);
-    if (
-      final?.role !== "assistant" ||
-      final.content.length !== 1 ||
-      final.content[0]?.type !== "toolCall" ||
-      final.content[0]?.name !== "abel_submit_result"
-    ) {
+    if (!isSingleStructuralSubmit(final)) {
       disposeOnce();
       return {
         ok: false,

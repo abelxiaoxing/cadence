@@ -82,6 +82,9 @@ function customSubagentModel(endpoint: SubagentEndpoint): Model<string> {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     contextWindow: endpoint.contextWindow,
     maxTokens: endpoint.maxTokens,
+    ...(endpoint.dialect === "openai-completions"
+      ? { compat: { supportsDeveloperRole: false } }
+      : {}),
   } as Model<string>;
 }
 
