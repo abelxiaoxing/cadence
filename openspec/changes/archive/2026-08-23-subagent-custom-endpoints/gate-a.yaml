@@ -1,0 +1,48 @@
+receipt: gate-a
+version: 1
+change: subagent-custom-endpoints
+schema: spec-driven
+behavior-contract:
+  goal: >-
+    Users can configure a custom endpoint (API URL, optional API key, model id,
+    optional dialect, optional context-window / max-output-token bounds) per
+    Subagent role of the cadence package, overriding the inherited parent-model
+    binding; unconfigured behavior stays byte-for-byte unchanged.
+  scope:
+    - All four closed roles (design-explorer, contract-reviewer, implementation-worker, diagnosis-worker)
+    - Configuration resolution and provider construction in the src/ launch path
+    - Key surface documented in config/.env.example
+  non-goals:
+    - No parent-session model selection change
+    - No dynamic model catalog, refresh, OAuth, or models.json integration
+    - No per-phase (red/green) granularity
+    - No cross-file merging or interpolation
+    - No dialect beyond openai-completions, openai-responses, anthropic-messages
+  observable-policies:
+    - Six keys per layer (API_URL, API_KEY, MODEL, API, CONTEXT_WINDOW, MAX_TOKENS); global layer SUBAGENT_* and per-role layer SUBAGENT_<ROLE>_* with hyphens as underscores
+    - Three-tier whole-layer resolution (role then global then inherited parent identity); no cross-layer merge; empty value is absent; absent bounds fall back to internal defaults (context window 256000, max output tokens 128000, reasoning-capable identity)
+    - Committed layer missing MODEL or API_URL, non-http(s) URL, unknown dialect, or non-positive-integer bounds fail the dispatch immediately with a typed configuration error; no retry; no transport-shared launch consumed; deterministic
+    - Custom endpoint identity bypasses the parent payload-transform chain; bridge availability does not affect such dispatches
+    - API keys never appear in dispatch results, activity display, error messages, or logs; errors name offending key names only
+    - Project cadence env file wins over the user file as a whole file
+approval:
+  summary: >-
+    The user explicitly approved Gate A in this conversation ("批准 Gate A")
+    covering decisions D1-D8 (per-role scope over the four closed roles;
+    enable condition MODEL+API_URL with optional key; default dialect
+    openai-completions; payload-bridge bypass; three-tier whole-layer
+    fallback; key surface and cadence env-file source; key privacy;
+    deterministic no-retry configuration failure). Two approved loop-backs
+    then widened and re-synced the key surface: adding optional
+    CONTEXT_WINDOW / MAX_TOKENS keys per layer ("T1 键面扩展按上述批准")
+    and fixing the internal defaults to context window 256000, max output
+    tokens 128000, reasoning-capable identity ("T1 缺省回落内部默认
+    256000 / 128000 并且是带思考的"). All affected Gate A artifacts were
+    re-synced and strictly validated after each loop-back.
+artifacts:
+  - path: proposal.md
+    sha256: 8321717ea323724443f4354b94ac4a876ff01d3551985e9d66b237a15cf68377
+  - path: specs/subagent-endpoint-config/spec.md
+    sha256: cc9f4ec39cf6094b1008ab7aac5d4f4de789fcee0d4205bd40e4631f9fddb07c
+  - path: specs/private-agent-orchestration/spec.md
+    sha256: 805d0387bb6991f4ccb6b13ef43f04873a4b39e912ebb6931d6591fc73e4867a

@@ -326,16 +326,16 @@ The runtime SHALL stop only the current task, preserve accepted independent sibl
 ### Requirement: Ephemeral bounded runtime lifecycle
 
 The private Agent registry, Scheduler queue and runs, task records, conflict declarations, terminal facts, Worker sessions, retained candidates, parent payload bridge, and user-interface activity records SHALL exist only in the current Pi process memory.
-Each task record SHALL pin the canonical workspace root, change and task identity, selected Provider/model identity, immutable approved boundary, derived lifetime conflict, and current task state for its process lifetime.
-Provider/model identity SHALL remain fixed across every phase launch for that task.
+Each task record SHALL pin the canonical workspace root, change and task identity, resolved Provider/model identity, immutable approved boundary, derived lifetime conflict, and current task state for its process lifetime.
+The resolved Provider/model identity - inherited parent identity or the role's committed custom endpoint identity - SHALL be pinned at task admission and remain fixed across every phase launch for that task.
 Ready, candidate-pending, AGENTS-checkpoint-pending, blocked, and completed SHALL be the complete Implement task-state vocabulary.
 Blocked and completed states SHALL have no child, preflight, apply, budget-consuming, or reclassification transition; a valid terminal replay SHALL return the cached fact with the current operation request identity.
 
 The runtime SHALL use one package-wide active-run limit, one batch-size limit, one phase timeout, one complete-result size limit, at most two non-cancelled child launches per phase, and at most two parent attempts for an AGENTS checkpoint.
 It SHALL not implement role-specific budget tiers, context-percentage thresholds, scan-byte accounting, Worker lifetime ledgers, a persistent recovery platform, or waiting resume.
 Each child session SHALL use an empty package-defined resource loader plus in-memory Session and Settings managers, with Provider retry disabled.
-Each child Provider request SHALL reuse the selected parent Provider's effective stream behavior and parent-session payload-transform callback while discovering no external resource.
-For an `openai-responses` child, the final payload SHALL omit optional `max_output_tokens` after the callback without substituting another child output-token cap.
+Each child Provider request SHALL either reuse the selected parent Provider's effective stream behavior and parent-session payload-transform callback when the resolved identity is inherited, or send directly to the role's committed custom endpoint with its configured credentials and dialect without the parent payload-transform callback when the resolved identity is a custom endpoint, while discovering no external resource.
+For an `openai-responses` child, the final payload SHALL omit optional `max_output_tokens` after any applied payload-transform callback without substituting another child output-token cap.
 
 Cancellation, timeout, completion, failure, stage finish, reload, session replacement, and shutdown SHALL dispose affected child sessions and clear queued or retained state as applicable.
 Stage drain SHALL idempotently close admission, settle Scheduler work, erase retained candidates and task records including terminal facts and conflicts, invalidate the parent payload bridge, and remove only dispatcher activation owned by this extension.
@@ -376,7 +376,7 @@ Invalid requests MUST NOT enter the activity display, and session shutdown SHALL
 #### Scenario: Child session is created
 
 - **WHEN** a valid Agent request starts
-- **THEN** it uses package-owned prompts and tools with empty resource discovery, in-memory session and settings, disabled Provider retry, the pinned parent Provider/model, and the parent-session payload callback
+- **THEN** it uses package-owned prompts and tools with empty resource discovery, in-memory session and settings, disabled Provider retry, the pinned resolved Provider/model identity, and, for an inherited identity, the parent-session payload callback
 
 #### Scenario: Parent payload compatibility rewrites a child request
 

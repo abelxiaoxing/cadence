@@ -30,6 +30,7 @@ const expectedMembers = [
   "package/prompts/abel-implement.md",
   "package/prompts/abel-init.md",
   "package/skills/_shared/http-client.mjs",
+  "package/skills/_shared/load-config.d.mts",
   "package/skills/_shared/load-config.mjs",
   "package/skills/abel-workflow/SKILL.md",
   "package/skills/context7-auto-research/SKILL.md",
@@ -54,6 +55,7 @@ const expectedMembers = [
   "package/src/scheduler.ts",
   "package/src/scoped-tools.ts",
   "package/src/subagent-activity.ts",
+  "package/src/subagent-endpoint.ts",
   "package/src/submit-tool.ts",
   "package/src/worker.ts",
 ].sort();

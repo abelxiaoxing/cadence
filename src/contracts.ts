@@ -114,6 +114,7 @@ export const ENVIRONMENT_FAILURE_CODES = [
   "git-apply-unavailable",
   "git-ignore-check-failed",
   "git-index-unavailable",
+  "invalid-subagent-endpoint",
   "root-unavailable",
   "sandbox-runtime-unavailable",
 ] as const;
@@ -133,10 +134,16 @@ export type EnvironmentFailureCode = (typeof ENVIRONMENT_FAILURE_CODES)[number];
 export type ApprovalBoundaryCode = (typeof APPROVAL_BOUNDARY_CODES)[number];
 export type ChildTransportCode = (typeof CHILD_TRANSPORT_CODES)[number];
 
+export type EnvironmentFailure = {
+  kind: "environment";
+  code: EnvironmentFailureCode;
+  message?: string;
+};
+
 export type CandidateFailure =
   | { kind: "artifact"; code: ArtifactFailureCode; evidence?: string[] }
   | { kind: "stale"; code: StaleFailureCode }
-  | { kind: "environment"; code: EnvironmentFailureCode }
+  | EnvironmentFailure
   | { kind: "approval-boundary"; code: ApprovalBoundaryCode }
   | { kind: "cancelled"; code: "cancelled" }
   | { kind: "result-limit"; limitBytes: number };
@@ -163,7 +170,7 @@ export type TaskFailure =
       kind: "checkpoint-attempts-exhausted";
       cause: "artifact" | "stale";
     }
-  | { kind: "environment"; code: EnvironmentFailureCode }
+  | EnvironmentFailure
   | { kind: "result-limit"; limitBytes: number };
 
 export interface CandidateApplyEvidence {

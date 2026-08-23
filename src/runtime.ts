@@ -42,7 +42,7 @@ import {
   snapshotFiles,
 } from "./file-snapshot.ts";
 import type { ParentPayloadBridge } from "./parent-payload-bridge.ts";
-import { runtimeFromContext } from "./parent-provider.ts";
+import { customPhaseRuntime, runtimeFromContext } from "./parent-provider.ts";
 import { applyAgentsCheckpoint, applyRetainedPatch } from "./patch.ts";
 import {
   type BoundRetainedResult,
@@ -51,6 +51,11 @@ import {
   type RetainedCandidateIdentity,
 } from "./result-store.ts";
 import { declarationsConflict, Scheduler } from "./scheduler.ts";
+import {
+  describeInvalidSubagentEndpoint,
+  resolveSubagentEndpoint,
+  type SubagentEndpoint,
+} from "./subagent-endpoint.ts";
 import {
   type TaskRecord,
   taskConflictOf,
@@ -1309,11 +1314,30 @@ export class Runtime {
         ...cancellationError(signal),
         failureKind: "cancelled",
       };
-    const phase = await runtimeFromContext(
-      ctx,
-      this.parentPayloadBridge,
-      signal,
-    );
+    const task = this.taskRecords.get(envelope);
+    const endpoint = task
+      ? task.subagentEndpoint === null
+        ? ({ kind: "inherited" } as const)
+        : ({ kind: "custom", endpoint: task.subagentEndpoint } as const)
+      : resolveSubagentEndpoint(envelope.role, { cwd: ctx.cwd });
+    if (endpoint.kind === "invalid") {
+      const message = describeInvalidSubagentEndpoint(endpoint);
+      return {
+        ok: false,
+        error: message,
+        failure: {
+          kind: "environment",
+          code: "invalid-subagent-endpoint",
+          message,
+        },
+        failureKind: "failed",
+        failureClass: "environment",
+      };
+    }
+    const phase =
+      endpoint.kind === "custom"
+        ? await customPhaseRuntime(endpoint.endpoint, signal)
+        : await runtimeFromContext(ctx, this.parentPayloadBridge, signal);
     if (!phase.ok) {
       return {
         ok: false,
@@ -1425,7 +1449,6 @@ export class Runtime {
         usage: child.usage,
       };
     }
-    const task = this.taskRecords.get(envelope);
     const retainedRoot = task?.workspaceRoot ?? ctx.cwd;
     const retainedSnapshot =
       prepared?.snapshot ??
@@ -1547,11 +1570,43 @@ export class Runtime {
       const identity = workerIdentity(ctx.model);
       let record: TaskRecord;
       if (runRequest.kind === "open-task") {
+        const endpoint = resolveSubagentEndpoint("implementation-worker", {
+          cwd: ctx.cwd,
+        });
+        if (endpoint.kind === "invalid") {
+          const failure = {
+            kind: "environment",
+            code: "invalid-subagent-endpoint",
+            message: describeInvalidSubagentEndpoint(endpoint),
+          } as const;
+          record = this.registry.open(
+            runRequest.boundary,
+            identity,
+            workspaceRoot,
+            attempt,
+          );
+          record.state = {
+            kind: "blocked",
+            phase: attempt.phase,
+            failure,
+          };
+          return blockedOutcome(
+            {
+              taskId: attempt.taskId,
+              requestId: attempt.requestId,
+              phase: attempt.phase,
+            },
+            failure,
+          );
+        }
+        const subagentEndpoint: Readonly<SubagentEndpoint> | null =
+          endpoint.kind === "custom" ? endpoint.endpoint : null;
         record = this.registry.open(
           runRequest.boundary,
           identity,
           workspaceRoot,
           attempt,
+          subagentEndpoint,
         );
       } else {
         const existing = this.registry.get(key);

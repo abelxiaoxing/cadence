@@ -8,6 +8,7 @@ import type {
   TaskFailure,
 } from "./contracts.ts";
 import type { ConflictDeclaration } from "./scheduler.ts";
+import type { SubagentEndpoint } from "./subagent-endpoint.ts";
 
 export type TaskState =
   | {
@@ -35,6 +36,7 @@ export interface TaskRecord {
   key: string;
   workspaceRoot: string;
   workerIdentity: string;
+  subagentEndpoint: Readonly<SubagentEndpoint> | null;
   boundary: TaskBoundary;
   conflict: ConflictDeclaration;
   state: TaskState;
@@ -118,6 +120,7 @@ export class WorkerRegistry {
     identity: string,
     workspaceRoot: string,
     attempt: PhaseAttempt,
+    subagentEndpoint: Readonly<SubagentEndpoint> | null = null,
   ): TaskRecord {
     const key = taskRecordKey(
       workspaceRoot,
@@ -130,6 +133,10 @@ export class WorkerRegistry {
       key,
       workspaceRoot,
       workerIdentity: identity,
+      subagentEndpoint:
+        subagentEndpoint === null
+          ? null
+          : Object.freeze({ ...subagentEndpoint }),
       boundary: storedBoundary,
       conflict: taskConflictOf(storedBoundary),
       state: { kind: "ready", phase: attempt.phase, launchIndex: 0 },

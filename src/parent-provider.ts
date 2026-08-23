@@ -2,7 +2,13 @@ import {
   InMemoryCredentialStore,
   type Model,
   type Provider,
+  type StreamOptions,
 } from "@earendil-works/pi-ai";
+import {
+  createProvider,
+  stream as subagentStream,
+  streamSimple as subagentStreamSimple,
+} from "@earendil-works/pi-ai/compat";
 import {
   type ExtensionContext,
   ModelRuntime,
@@ -13,6 +19,117 @@ import type {
   ParentPayloadCallback,
   ParentPayloadCapture,
 } from "./parent-payload-bridge.ts";
+import type { SubagentEndpoint } from "./subagent-endpoint.ts";
+
+const SUBAGENT_PROVIDER_ID = "abel-subagent";
+
+function customStreamOptions<T extends StreamOptions>(
+  model: Model<string>,
+  options?: T,
+): T | undefined {
+  if (model.api !== "openai-responses") return options;
+  const childOnPayload = options?.onPayload;
+  return {
+    ...options,
+    onPayload: async (payload, requestModel) => {
+      const transformed = await childOnPayload?.(payload, requestModel);
+      const current = transformed === undefined ? payload : transformed;
+      if (!current || typeof current !== "object" || Array.isArray(current))
+        return current;
+      const normalized = { ...current } as Record<string, unknown>;
+      delete normalized.max_output_tokens;
+      return normalized;
+    },
+  } as T;
+}
+
+// The compat dispatchers resolve the concrete API implementation from
+// model.api at call time, so one pair serves all supported dialects.
+const SUBAGENT_STREAMS = {
+  stream(
+    model: Parameters<typeof subagentStream>[0],
+    context: Parameters<typeof subagentStream>[1],
+    options?: Parameters<typeof subagentStream>[2],
+  ) {
+    return subagentStream(
+      model,
+      context,
+      customStreamOptions(model as Model<string>, options),
+    );
+  },
+  streamSimple(
+    model: Parameters<typeof subagentStreamSimple>[0],
+    context: Parameters<typeof subagentStreamSimple>[1],
+    options?: Parameters<typeof subagentStreamSimple>[2],
+  ) {
+    return subagentStreamSimple(
+      model,
+      context,
+      customStreamOptions(model as Model<string>, options),
+    );
+  },
+};
+
+function customSubagentModel(endpoint: SubagentEndpoint): Model<string> {
+  return {
+    id: endpoint.model,
+    name: endpoint.model,
+    api: endpoint.dialect,
+    provider: SUBAGENT_PROVIDER_ID,
+    baseUrl: endpoint.url,
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    contextWindow: endpoint.contextWindow,
+    maxTokens: endpoint.maxTokens,
+  } as Model<string>;
+}
+
+function customSubagentProvider(
+  endpoint: SubagentEndpoint,
+  model: Model<string>,
+): Provider {
+  return createProvider({
+    id: SUBAGENT_PROVIDER_ID,
+    name: "Abel Subagent Endpoint",
+    baseUrl: endpoint.url,
+    auth: {
+      apiKey: {
+        name: "Abel subagent endpoint auth",
+        resolve: async () =>
+          endpoint.apiKey
+            ? { auth: { apiKey: endpoint.apiKey }, source: "subagent-endpoint" }
+            : {
+                auth: {
+                  apiKey: "unused",
+                  headers: { authorization: null, "x-api-key": null },
+                },
+                source: "subagent-endpoint-keyless",
+              },
+      },
+    },
+    models: [model],
+    api: SUBAGENT_STREAMS,
+  }) as Provider;
+}
+
+export async function customPhaseRuntime(
+  endpoint: SubagentEndpoint,
+  signal?: AbortSignal,
+): Promise<PhaseRuntimeResult> {
+  if (signal?.aborted) return cancelledPhaseRuntime();
+  const model = customSubagentModel(endpoint);
+  const provider = customSubagentProvider(endpoint, model);
+  let modelRuntime: ModelRuntime;
+  try {
+    modelRuntime = await runtimeForProvider(provider, signal);
+  } catch (error) {
+    if (isCancellation(error, signal)) return cancelledPhaseRuntime();
+    throw error;
+  }
+  if (signal?.aborted) return cancelledPhaseRuntime();
+  return { ok: true, modelRuntime, model };
+}
 
 export interface PhasePayloadBridge {
   readonly bridge: ParentPayloadBridge;
