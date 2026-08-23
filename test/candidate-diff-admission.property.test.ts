@@ -46,7 +46,6 @@ function candidate(diff: string, summary = "Candidate ordinary unified diff") {
     expectedVerification:
       "bun run test:target test/candidate-diff-admission.property.test.ts",
     risks: [],
-    nextStep: "reject malformed candidates before retention",
     contractCompliant: true as const,
   };
 }
@@ -135,7 +134,7 @@ const malformed = [
 ] as const;
 
 describe("candidate diff complete-consumption properties", () => {
-  it("accepts valid ordinary add, modify, and delete controls", () => {
+  it("[SLICE-5:pi-tool-error] accepts control-free ordinary candidates", () => {
     const controls = [
       ["add", ordinary.add, ["src/added.ts"]],
       ["modify", ordinary.modify, ["src/changed.ts"]],
@@ -154,7 +153,16 @@ describe("candidate diff complete-consumption properties", () => {
     }
   });
 
-  it("rejects a result over the configured complete-result limit", () => {
+  it("[SLICE-5:pi-tool-error] rejects nextStep without changing diff admission", () => {
+    expect(
+      validateDiffResult({
+        ...candidate(ordinary.modify),
+        nextStep: "return-to-design",
+      }).ok,
+    ).toBe(false);
+  });
+
+  it("[SLICE-5:pi-tool-error] preserves the complete-result limit", () => {
     const result = validateDiffResult(
       candidate(ordinary.modify, "x".repeat(LIMITS.maxCompleteResultBytes)),
     );

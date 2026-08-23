@@ -17,7 +17,9 @@ $ARGUMENTS
 1. 仅设计：绝不生成或修改产品代码。
 2. 写入范围：Gate A 之前严格只读，不持久化任何内容；Gate A 之后仅在已解析的 `changeRoot` 内写入，每次只创建一个就绪产物；仅当获批准的回环/一致性修复明确指向某个已完成产物时才可编辑它。
 3. 绝不假设或猜测：每个阻塞性决策都必须提交用户（见决策模型）。
-4. 仓库 `AGENTS.md` 保持只读：审计其过期声明并规划影响，本阶段绝不编辑；绝不触碰 OpenSpec 管理的 `openspec/` 生成物（schemas、`config.yaml`、skills 与 slash commands）。
+4. **Design 阶段 AGENTS 权限仅在本阶段生效**：仓库 `AGENTS.md` 保持只读，只能审计当前索引是否过期并把影响写入任务契约，本阶段绝不编辑。
+   此只读规则不继承、不适用于 Implement；进入 Implement 后按 Gate B 已批准的结构化 AGENTS 影响契约执行父代理检查点。
+   绝不触碰 OpenSpec 管理的 `openspec/` 生成物（schemas、`config.yaml`、skills 与 slash commands）。
 5. 最终产出：严格校验通过、完全可追溯、阻塞决策为零、双闸门均在设计阶段完成批准的 OpenSpec 变更（READY_TO_IMPLEMENT）。
 
 技能集成：见全局 AGENTS《阶段技能矩阵》Design 列。
@@ -120,8 +122,16 @@ $ARGUMENTS
   - 验证类型：`property | example | E2E | static`
   - Red 命令 + 预期失败原因；Green 预期行为
   - 受影响套件命令；目标范围；验证命令的并行资格及资源锁
+  - 影响闭包（impact closure）：`changedSurfaces`、检索命令/命中证据、全部相关既有测试及其 `current-task | regression-task | unaffected` 归类、affected suite 中的既有测试证据
+  - 已批准依赖变化清单（无则 `[]`）
   - AGENTS 影响：`none | update-existing | create-index | remove-index`
-  - AGENTS 目标索引 + 基于证据的原因；AGENTS 验证命令（可执行或静态）
+  - AGENTS 目标索引（`none` 时省略）+ 基于证据的原因；`agentsManagedOnly: true`；AGENTS 验证命令（可执行或静态）
+- 每个任务只生成一次固定 `TaskBoundary`：包含稳定 identity、objective/context、逐 phase 精确 read/write、verification、scheduling、dependency、impact closure 与 AGENTS 合同。
+  首次 Red 使用 `open-task`，同时携带完整 boundary 与初始 snapshot；后续 Green、Refactor、artifact correction 或 stale refresh 只能使用 `phase-attempt`，仅携带 phase/request identity 与新的动态 snapshot，不得重述或改变 boundary。
+- **影响闭包审计**：任务修改路由授权、页面状态、API 响应或公共 HTML 结构时，必须用 URL、路由名、handler/template 符号检索所有现有入口和测试。
+  相关 E2E、theme/layout、authorization、HTML/template 与 API contract 测试必须纳入当前写集、绑定明确后续回归任务，或以引用证据证明不受影响。
+  `affected suite` 不得只包含新增测试；例如 `/videos`、`/api/videos` 变化必须覆盖上述全部测试面。
+  此审计只校验契约与检索证据，不引入业务扫描器。
 - Gate B 前审计调度契约：前置条件可判定，波次满足拓扑顺序；同波次任务的写集、共享资源和验证锁均不冲突；每个冲突均有 `conflict-order` 串行边；每个任务可由最小派发上下文独立执行。
 - 写集未知、过宽或可能重叠的任务不得标为并行；先重塑任务，或用 `conflict-order` 串行化。
 - 非行为变更任务的 Red 是变更前即可执行的静态验证。
@@ -159,7 +169,7 @@ $ARGUMENTS
 - [ ] `applyRequires` 中每个产物 id 状态均为 `done`
 - [ ] `apply.tracks` 解析到 `changeRoot` 内生成的任务产物
 - [ ] 产物一致且可追溯；任务 DAG 无环、前置条件可判定、波次及冲突排序有效、计划写集与资源锁完整；每个任务验证契约完整且可执行，无仅人工任务
-- [ ] 每个任务的 AGENTS 影响契约完整；仓库索引未被修改
+- [ ] 每个任务的结构化 AGENTS 影响、批准依赖与影响闭包契约完整；仓库索引在 Design 阶段未被修改
 - [ ] BLOCKING_DECISIONS = 0
 - [ ] `gate-a.yaml` 与 `ready.yaml` 格式、覆盖范围及全部 hash 校验通过
 - [ ] Gate A 与 Gate B 已在可信实施交付前于设计阶段完成

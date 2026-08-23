@@ -8,7 +8,7 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { DiffResult, EvidenceResult } from "./contracts.ts";
+import type { ChildFailure, DiffResult, EvidenceResult } from "./contracts.ts";
 import { EmptyResourceLoader } from "./empty-resource-loader.ts";
 import { createScopedTools } from "./scoped-tools.ts";
 import {
@@ -31,6 +31,22 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+const ABORT_SETTLE_GRACE_MS = 250;
+
+async function settleAbort(promise: Promise<void>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      promise.catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, ABORT_SETTLE_GRACE_MS);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 const ZERO_USAGE: Usage = {
   input: 0,
   output: 0,
@@ -46,11 +62,21 @@ export class UsageAggregator {
   add(id: string, value: Usage): boolean {
     if (this.ids.has(id)) return false;
     this.ids.add(id);
+    const cacheWrite1h =
+      this.usage.cacheWrite1h === undefined && value.cacheWrite1h === undefined
+        ? undefined
+        : (this.usage.cacheWrite1h ?? 0) + (value.cacheWrite1h ?? 0);
+    const reasoning =
+      this.usage.reasoning === undefined && value.reasoning === undefined
+        ? undefined
+        : (this.usage.reasoning ?? 0) + (value.reasoning ?? 0);
     this.usage = {
       input: this.usage.input + value.input,
       output: this.usage.output + value.output,
       cacheRead: this.usage.cacheRead + value.cacheRead,
       cacheWrite: this.usage.cacheWrite + value.cacheWrite,
+      ...(cacheWrite1h === undefined ? {} : { cacheWrite1h }),
+      ...(reasoning === undefined ? {} : { reasoning }),
       totalTokens: this.usage.totalTokens + value.totalTokens,
       cost: {
         input: this.usage.cost.input + value.cost.input,
@@ -61,6 +87,9 @@ export class UsageAggregator {
       },
     };
     return true;
+  }
+  hasUsage(): boolean {
+    return this.ids.size > 0;
   }
   total(): Usage {
     return structuredClone(this.usage);
@@ -108,6 +137,27 @@ function wrapScopedTools(
 
 export type ChildFailureKind = "failed" | "cancelled" | "timed-out";
 
+export type ChildSessionResult =
+  | {
+      ok: true;
+      result: EvidenceResult | DiffResult;
+      toolNames: string[];
+      submitCount: number;
+      disposeCount: number;
+      usage: Usage;
+      classification: SubmitClassification;
+    }
+  | {
+      ok: false;
+      error: string;
+      failure: ChildFailure;
+      failureKind: ChildFailureKind;
+      transportFailure: boolean;
+      disposeCount: number;
+      usage: Usage;
+      classification: SubmitClassification;
+    };
+
 export async function runChildSession(input: {
   cwd: string;
   modelRuntime: ModelRuntime;
@@ -122,25 +172,7 @@ export async function runChildSession(input: {
   allowedPaths?: string[];
   timeoutMs: number;
   signal?: AbortSignal;
-}): Promise<
-  | {
-      ok: true;
-      result: EvidenceResult | DiffResult;
-      toolNames: string[];
-      submitCount: number;
-      disposeCount: number;
-      usage: Usage;
-      classification: SubmitClassification;
-    }
-  | {
-      ok: false;
-      error: string;
-      failureKind: ChildFailureKind;
-      transportFailure: boolean;
-      disposeCount: number;
-      classification: SubmitClassification;
-    }
-> {
+}): Promise<ChildSessionResult> {
   const submit = createSubmitTool({
     requestId: input.requestId,
     taskId: input.taskId,
@@ -170,6 +202,8 @@ export async function runChildSession(input: {
     | Awaited<ReturnType<typeof createAgentSession>>["session"]
     | undefined;
   let unsubscribe: (() => void) | undefined;
+  let abortSettlement: Promise<void> | undefined;
+  let assistantSequence = 0;
   const disposeOnce = () => {
     if (session) {
       session.dispose();
@@ -244,19 +278,24 @@ export async function runChildSession(input: {
         .catch(() => undefined);
       throw error;
     }
-    abort.signal.throwIfAborted();
     unsubscribe = session.subscribe((event) => {
       if (event.type === "message_end" && event.message.role === "assistant") {
-        usage.add(
-          `${event.message.provider}:${event.message.model}:${event.message.timestamp}`,
-          event.message.usage,
-        );
+        usage.add(`assistant:${assistantSequence++}`, event.message.usage);
       }
     });
-    const onAbort = () => void session?.abort();
+    const startAbortSettlement = () => {
+      if (session && !abortSettlement) abortSettlement = session.abort();
+      return abortSettlement;
+    };
+    const onAbort = () => {
+      void startAbortSettlement()?.catch(() => undefined);
+    };
     abort.signal.addEventListener("abort", onAbort, { once: true });
     try {
-      if (abort.signal.aborted) throw abort.signal.reason;
+      if (abort.signal.aborted) {
+        onAbort();
+        throw abort.signal.reason;
+      }
       await Promise.race([
         session.prompt(input.systemPrompt, { expandPromptTemplates: false }),
         new Promise<never>((_, reject) =>
@@ -275,21 +314,30 @@ export async function runChildSession(input: {
     const classification = classifySession();
     if (!result || attempts !== 1) {
       const transportFailure = transportFailed();
+      const failure =
+        submit.getFailure() ??
+        (transportFailure
+          ? ({ kind: "transport", code: "transport-failure" } as const)
+          : ({
+              kind: "artifact",
+              code: "invalid-structural-result",
+            } as const));
       disposeOnce();
       return {
         ok: false,
         error: "child did not retain exactly one structural submission",
+        failure,
         failureKind: "failed",
         transportFailure,
         disposeCount,
+        usage: usage.total(),
         classification,
       };
     }
     const assistants = session.messages.filter((m) => m.role === "assistant");
     const final = assistants.at(-1);
     if (
-      !final ||
-      final.role !== "assistant" ||
+      final?.role !== "assistant" ||
       final.content.length !== 1 ||
       final.content[0]?.type !== "toolCall" ||
       final.content[0]?.name !== "abel_submit_result"
@@ -298,9 +346,11 @@ export async function runChildSession(input: {
       return {
         ok: false,
         error: "final assistant message is not one structural submit",
+        failure: { kind: "artifact", code: "invalid-structural-result" },
         failureKind: "failed",
         transportFailure: false,
         disposeCount,
+        usage: usage.total(),
         classification,
       };
     }
@@ -315,6 +365,11 @@ export async function runChildSession(input: {
       classification,
     };
   } catch (error) {
+    if (abort.signal.aborted && session) {
+      const settlement = abortSettlement ?? session.abort();
+      abortSettlement = settlement;
+      await settleAbort(settlement);
+    }
     const failureKind: ChildFailureKind = timedOut
       ? "timed-out"
       : input.signal !== undefined &&
@@ -323,13 +378,23 @@ export async function runChildSession(input: {
         : "failed";
     const classification = classifySession();
     const transportFailure = transportFailed();
+    const failure: ChildFailure = timedOut
+      ? { kind: "transport", code: "timeout" }
+      : failureKind === "cancelled"
+        ? { kind: "cancelled", code: "cancelled" }
+        : (submit.getFailure() ??
+          (transportFailure
+            ? { kind: "transport", code: "transport-failure" }
+            : { kind: "artifact", code: "invalid-structural-result" }));
     disposeOnce();
     return {
       ok: false,
       error: (error as Error).message,
+      failure,
       failureKind,
       transportFailure,
       disposeCount,
+      usage: usage.total(),
       classification,
     };
   } finally {

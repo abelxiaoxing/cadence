@@ -20,7 +20,7 @@ import {
   fauxToolCall,
 } from "@earendil-works/pi-ai/providers/faux";
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Activation } from "../src/activation";
 import { snapshotFiles } from "../src/file-snapshot";
 import { Runtime } from "../src/runtime";
@@ -106,31 +106,81 @@ function requestFor(
   root: string,
   snapshot?: unknown,
 ) {
+  const paths = ["a.txt"];
+  const target = ["bun", "run", "test:target", "test/expected-red.mjs"];
   return {
     stage: "abel-implement",
-    role: "implementation-worker",
-    taskId: id,
-    id,
-    phase,
-    objective: "Change a.txt",
+    kind: "open-task",
+    boundary: {
+      changeId: `workflow-routing-${id}`,
+      taskId: id,
+      objective: "Change a.txt",
+      roots: ["."],
+      context: { agents: "none", contract: "approved" },
+      phases: {
+        red: {
+          read: paths,
+          write: paths,
+          verification: {
+            id: `verify-${id}-red`,
+            argv: target,
+            classification: "expected-red",
+            expectedFailure: "[WORKFLOW-ROUTING:expected-red]",
+            minTests: 1,
+          },
+          verificationLock: "workflow-routing-red",
+        },
+        green: {
+          read: paths,
+          write: paths,
+          verification: {
+            id: `verify-${id}-green`,
+            argv: target,
+            classification: "expected-green",
+            minTests: 1,
+          },
+          verificationLock: "workflow-routing-red",
+        },
+      },
+      scheduling: { conflicts: [], resources: [] },
+      agents: { impact: "none", managedOnly: true },
+      approvedDependencies: [],
+      impactClosure: {
+        changedSurfaces: ["none"],
+        searchEvidence: [],
+        relatedTests: [],
+        affectedSuite: [],
+      },
+    },
+    attempt: {
+      changeId: `workflow-routing-${id}`,
+      taskId: id,
+      requestId: id,
+      phase,
+      snapshot: snapshot ?? snapshotFiles(root, paths),
+    },
+  };
+}
+
+function nonImplementRequest(stage: "abel-design" | "abel-diagnose") {
+  const design = stage === "abel-design";
+  return {
+    stage,
+    role: design ? "design-explorer" : "diagnosis-worker",
+    id: `${stage}-packet`,
+    phase: design ? "evidence" : "red",
+    objective: design
+      ? "Inspect the bounded fixture"
+      : "Diagnose the bounded fixture",
     roots: ["."],
     context: { agents: "none", contract: "approved" },
     declared: {
       read: ["a.txt"],
-      write: ["a.txt"],
+      write: design ? [] : ["a.txt"],
       conflicts: [],
       resources: [],
-      verificationLock: "workflow-routing-red",
     },
-    output: "diff",
-    verification: {
-      id: `verify-${id}`,
-      argv: ["bun", "run", "test:target", "test/expected-red.mjs"],
-      classification: "expected-red",
-      expectedFailure: "[WORKFLOW-ROUTING:expected-red]",
-      minTests: 1,
-    },
-    snapshot: snapshot ?? snapshotFiles(root, ["a.txt"]),
+    output: design ? "evidence" : "diff",
   };
 }
 
@@ -145,7 +195,6 @@ function diffSubmit(id: string, phase: string) {
     diff: DIFF,
     expectedVerification: "cat a.txt",
     risks: [],
-    nextStep: "apply",
     contractCompliant: true,
   };
 }
@@ -218,7 +267,41 @@ describe("eligible activation gates dispatch", () => {
         modelRegistry: new ModelRegistry(rt2),
       },
     );
-    expect(accepted.ok).toBe(true);
+    expect(accepted).toMatchObject({
+      kind: "candidate",
+      taskId: "task-inactive",
+      requestId: "task-inactive",
+      phase: "red",
+      resultId: expect.any(String),
+    });
+  });
+});
+
+describe("[SLICE-1:boundary-once] non-Implement routing regression", () => {
+  it("keeps Design and Diagnose run envelopes executable", async () => {
+    const { runtime, context } = await makeActive("non-implement");
+    const dispatch = vi
+      .spyOn(runtime as any, "dispatchChild")
+      .mockResolvedValue({
+        ok: true,
+        action: "run",
+        result: { kind: "evidence" },
+      });
+
+    const design = await (runtime as any).execute(
+      "run",
+      { request: nonImplementRequest("abel-design") },
+      context,
+    );
+    const diagnose = await (runtime as any).execute(
+      "run",
+      { request: nonImplementRequest("abel-diagnose") },
+      context,
+    );
+
+    expect(design.ok).toBe(true);
+    expect(diagnose.ok).toBe(true);
+    expect(dispatch).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -252,7 +335,13 @@ describe("five-action routing", () => {
       { request: requestFor("task-five", "red", cwd) },
       context,
     );
-    expect(run.ok).toBe(true);
+    expect(run).toMatchObject({
+      kind: "candidate",
+      taskId: "task-five",
+      requestId: "task-five",
+      phase: "red",
+      resultId: expect.any(String),
+    });
     const resultId = run.resultId as string;
     expect(resultId).toBeTypeOf("string");
     const retained = (runtime as any).results.get(resultId);
@@ -260,10 +349,16 @@ describe("five-action routing", () => {
 
     const applied = await (runtime as any).execute(
       "apply",
-      { resultId },
+      { resultId, requestId: "task-five:apply" },
       context,
     );
-    expect(applied.ok).toBe(true);
+    expect(applied).toMatchObject({
+      kind: "applied",
+      taskId: "task-five",
+      requestId: "task-five:apply",
+      phase: "red",
+      readyPhase: "green",
+    });
     expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("new\n");
   });
 
@@ -275,14 +370,36 @@ describe("five-action routing", () => {
       { request: requestFor("task-discard", "red", cwd) },
       context,
     );
-    expect(run.ok).toBe(true);
+    expect(run).toMatchObject({
+      kind: "candidate",
+      taskId: "task-discard",
+      requestId: "task-discard",
+      phase: "red",
+      resultId: expect.any(String),
+    });
     const resultId = run.resultId as string;
     const discarded = await (runtime as any).execute(
       "discard",
-      { resultId },
+      {
+        resultId,
+        requestId: "task-discard:discard",
+        rejection: {
+          kind: "artifact",
+          code: "parent-review-rejected",
+          evidence: ["discard routing fixture"],
+        },
+      },
       context,
     );
-    expect(discarded.ok).toBe(true);
+    expect(discarded).toMatchObject({
+      kind: "retry",
+      taskId: "task-discard",
+      requestId: "task-discard:discard",
+      phase: "red",
+      scope: "worker",
+      cause: "artifact",
+      remainingAttempts: 1,
+    });
     expect((runtime as any).results.get(resultId)).toBeUndefined();
   });
 
@@ -294,7 +411,13 @@ describe("five-action routing", () => {
       { request: requestFor("task-cf", "red", cwd) },
       context,
     );
-    expect(run.ok).toBe(true);
+    expect(run).toMatchObject({
+      kind: "candidate",
+      taskId: "task-cf",
+      requestId: "task-cf",
+      phase: "red",
+      resultId: expect.any(String),
+    });
     const resultId = run.resultId as string;
     const cancelled = await (runtime as any).execute("cancel", {}, context);
     expect(cancelled.ok).toBe(true);
@@ -315,7 +438,13 @@ describe("file snapshots bind request bounds", () => {
       { request: requestFor("task-snap", "red", cwd, snapshot) },
       context,
     );
-    expect(run.ok).toBe(true);
+    expect(run).toMatchObject({
+      kind: "candidate",
+      taskId: "task-snap",
+      requestId: "task-snap",
+      phase: "red",
+      resultId: expect.any(String),
+    });
     const retained = (runtime as any).results.get(run.resultId as string);
     expect(retained?.snapshot?.["a.txt"]?.kind).toBe("file");
   });
@@ -323,18 +452,17 @@ describe("file snapshots bind request bounds", () => {
   it("rejects an unsafe snapshot before child dispatch or retention", async () => {
     const { cwd, faux, runtime, context } = await makeActive("snapshot-bad");
     faux.setResponses([submitResponse(diffSubmit("task-snap-bad", "red"))]);
-    const run = await (runtime as any).execute(
-      "run",
-      {
-        request: requestFor("task-snap-bad", "red", cwd, {
-          "../escape": true,
-        }),
-      },
-      context,
-    );
-    expect(run.ok).toBe(false);
-    expect(run.error).toMatch(/snapshot/i);
-    expect(run.resultId).toBeUndefined();
+    await expect(
+      (runtime as any).execute(
+        "run",
+        {
+          request: requestFor("task-snap-bad", "red", cwd, {
+            "../escape": true,
+          }),
+        },
+        context,
+      ),
+    ).rejects.toThrow(/snapshot|protocol/i);
     expect(faux.state.callCount).toBe(0);
     expect((runtime as any).results.size).toBe(0);
   });
@@ -344,26 +472,40 @@ describe("parent-only authority", () => {
   it("apply requires an explicit retained result and owning context", async () => {
     const { cwd, faux, runtime, context } = await makeActive("authority");
     faux.setResponses([submitResponse(diffSubmit("task-auth", "red"))]);
-    const noResultId = await (runtime as any).execute("apply", {}, context);
-    expect(noResultId.ok).toBe(false);
-    const unknownId = await (runtime as any).execute(
-      "apply",
-      { resultId: "missing" },
-      context,
-    );
-    expect(unknownId.ok).toBe(false);
+    await expect(
+      (runtime as any).execute("apply", {}, context),
+    ).rejects.toThrow(/resultId/i);
+    await expect(
+      (runtime as any).execute(
+        "apply",
+        { resultId: "missing", requestId: "task-auth:missing-apply" },
+        context,
+      ),
+    ).rejects.toThrow(/retained.*result not found/i);
     const run = await (runtime as any).execute(
       "run",
       { request: requestFor("task-auth", "red", cwd) },
       context,
     );
-    expect(run.ok).toBe(true);
+    expect(run).toMatchObject({
+      kind: "candidate",
+      taskId: "task-auth",
+      requestId: "task-auth",
+      phase: "red",
+      resultId: expect.any(String),
+    });
     const applied = await (runtime as any).execute(
       "apply",
-      { resultId: run.resultId },
+      { resultId: run.resultId, requestId: "task-auth:apply" },
       context,
     );
-    expect(applied.ok).toBe(true);
+    expect(applied).toMatchObject({
+      kind: "applied",
+      taskId: "task-auth",
+      requestId: "task-auth:apply",
+      phase: "red",
+      readyPhase: "green",
+    });
   });
 });
 

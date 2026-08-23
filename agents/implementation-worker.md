@@ -12,7 +12,8 @@ Your output is a complete unified diff returned through `abel_submit_result` wit
 - the complete, untruncated unified diff covering exactly the declared write
   set (never reconstructed from a summary);
 - the expected verification command and result;
-- risks or blockers and a recommended next step.
+- risks or typed blockers.
 
-A result that cannot fit the configured complete-result limit is reported as a split condition, never a truncated diff.
+A result that cannot fit the configured complete-result limit is reported as terminal typed `result-limit` with `limitBytes`, never as a partial or truncated diff.
 The parent alone reviews, applies, and validates your diff.
+You report candidate facts only and never select parent recovery, workflow routing, or task-DAG control.

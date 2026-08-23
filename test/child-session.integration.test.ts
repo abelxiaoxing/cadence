@@ -16,7 +16,13 @@ import {
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 import { Activation } from "../src/activation";
-import { snapshotFiles } from "../src/file-snapshot";
+import { LIMITS } from "../src/contracts";
+import {
+  isCurrent,
+  mergeBounds,
+  snapshotDirManifests,
+  snapshotFiles,
+} from "../src/file-snapshot";
 import { Runtime } from "../src/runtime";
 import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
@@ -118,6 +124,7 @@ describe("real isolated child session", () => {
       timeoutMs: 5_000,
     });
     expect(result.ok).toBe(false);
+    expect(result.usage.totalTokens).toBeGreaterThan(0);
   });
 
   it("aborts on timeout and disposes exactly once", async () => {
@@ -159,7 +166,13 @@ describe("real isolated child session", () => {
     mkdirSync(join(cwd, "node_modules"));
     writeFileSync(
       join(cwd, "package.json"),
-      `${JSON.stringify({ private: true, scripts: { check: 'node -e ""' } })}\n`,
+      `${JSON.stringify({
+        private: true,
+        scripts: {
+          check:
+            "node -e \"console.error('[CHILD-SESSION:expected-red]'); process.exit(1)\"",
+        },
+      })}\n`,
     );
     writeFileSync(join(cwd, "bun.lock"), "# fixture lock\n");
     execFileSync("git", ["add", "a.txt"], { cwd });
@@ -170,12 +183,11 @@ describe("real isolated child session", () => {
       role: "implementation-worker",
       kind: "diff",
       taskId: "task-1",
-      phase: "green",
+      phase: "red",
       summary: "change a.txt",
       diff,
       expectedVerification: "cat a.txt",
       risks: [],
-      nextStep: "apply",
       contractCompliant: true,
     };
     const faux = fauxProvider({ provider: "abel-faux-runtime", api: "faux" });
@@ -199,48 +211,96 @@ describe("real isolated child session", () => {
     };
     const request = {
       stage: "abel-implement",
-      role: "implementation-worker",
-      taskId: "task-1",
-      id: "task-1",
-      phase: "green",
-      objective: "Change a.txt",
-      roots: ["."],
-      context: { agents: "none", contract: "approved" },
-      declared: {
-        read: ["a.txt"],
-        write: ["a.txt"],
-        conflicts: [],
-        resources: [],
-        verificationLock: "child-session-runtime",
+      kind: "open-task",
+      boundary: {
+        changeId: "child-session-runtime",
+        taskId: "task-1",
+        objective: "Change a.txt",
+        roots: ["."],
+        context: { agents: "none", contract: "approved" },
+        phases: {
+          red: {
+            read: ["a.txt"],
+            write: ["a.txt"],
+            verification: {
+              id: "verify-task-1-red",
+              argv: ["bun", "run", "check"],
+              classification: "expected-red",
+              expectedFailure: "[CHILD-SESSION:expected-red]",
+              minTests: 1,
+            },
+            verificationLock: "child-session-runtime",
+          },
+          green: {
+            read: ["a.txt"],
+            write: ["a.txt"],
+            verification: {
+              id: "verify-task-1-green",
+              argv: ["bun", "run", "check"],
+              classification: "expected-green",
+              minTests: 1,
+            },
+            verificationLock: "child-session-runtime",
+          },
+        },
+        scheduling: { conflicts: [], resources: [] },
+        agents: { impact: "none", managedOnly: true },
+        approvedDependencies: [],
+        impactClosure: {
+          changedSurfaces: ["none"],
+          searchEvidence: [],
+          relatedTests: [],
+          affectedSuite: [],
+        },
       },
-      snapshot: snapshotFiles(cwd, ["a.txt"]),
-      output: "diff",
-      verification: {
-        id: "verify-task-1-green",
-        argv: ["bun", "run", "check"],
-        classification: "expected-green",
-        minTests: 1,
+      attempt: {
+        changeId: "child-session-runtime",
+        taskId: "task-1",
+        requestId: "task-1",
+        phase: "red",
+        snapshot: mergeBounds(
+          snapshotFiles(cwd, ["a.txt", "package.json", "bun.lock"]),
+          snapshotDirManifests(cwd, ["node_modules"]),
+        ),
       },
     };
     const run = await (runtime as any).execute("run", { request }, context);
-    expect(run.ok).toBe(true);
+    expect(run).toMatchObject({
+      kind: "candidate",
+      requestId: "task-1",
+      taskId: "task-1",
+      phase: "red",
+      result: submitted,
+    });
     expect(run.resultId).toBeTypeOf("string");
+    const retained = runtime.results.get(run.resultId);
+    expect(retained).toBeDefined();
+    expect(isCurrent(cwd, retained?.snapshot ?? {})).toBe(true);
     const applied = await (runtime as any).execute(
       "apply",
-      { resultId: run.resultId },
+      { resultId: run.resultId, requestId: "task-1:apply:0" },
       context,
     );
-    expect(applied.ok).toBe(true);
+    expect(applied, JSON.stringify(applied)).toMatchObject({
+      kind: "applied",
+      requestId: "task-1:apply:0",
+      taskId: "task-1",
+      phase: "red",
+      readyPhase: "green",
+    });
     expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("new\n");
   });
 });
 type ChildOutcome = {
   ok: boolean;
+  result?: unknown;
+  failure?: unknown;
   submitCount?: unknown;
   disposeCount?: unknown;
   toolNames?: unknown;
   transportFailure?: unknown;
   classification?: unknown;
+  usage?: { totalTokens: number };
 };
 type ChildModule = NonNullable<typeof child>;
 type ParentModule = NonNullable<typeof parentProvider>;
@@ -251,6 +311,15 @@ async function runChildSessionFixture(
   parentRef: ParentModule,
   tag: string,
   response: FauxResponse,
+  request: {
+    requestId: string;
+    role: "design-explorer" | "implementation-worker";
+    output: "evidence" | "diff";
+  } = {
+    requestId: "task-1",
+    role: "implementation-worker",
+    output: "diff",
+  },
 ) {
   const cwd = mkdtempSync(join(tmpdir(), `abel-fc-${tag}-`));
   roots.push(cwd);
@@ -263,9 +332,9 @@ async function runChildSessionFixture(
     modelRuntime,
     model: faux.getModel(),
     systemPrompt: "Submit the supplied diff through abel_submit_result.",
-    requestId: "task-1",
-    role: "implementation-worker",
-    output: "diff",
+    requestId: request.requestId,
+    role: request.role,
+    output: request.output,
     roots: [cwd],
     timeoutMs: 5_000,
   })) as unknown as ChildOutcome;
@@ -281,7 +350,6 @@ const validDiffSubmit = {
   diff: "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n",
   expectedVerification: "cat a.txt",
   risks: [],
-  nextStep: "apply",
   contractCompliant: true,
 };
 
@@ -313,7 +381,102 @@ describe("structural submission fixture precheck", () => {
 });
 
 describe("structural submission classification", () => {
-  it("distinguishes final shape, attempts, schema, and request/role/task/phase identity", async () => {
+  it("[SLICE-2:typed-failure] measures non-ASCII evidence limits in UTF-8 bytes", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const submitted = {
+      ...evidence(),
+      conclusions: ["界".repeat(Math.ceil(LIMITS.maxCompleteResultBytes / 3))],
+    };
+    const serialized = JSON.stringify(submitted);
+    expect(serialized.length).toBeLessThan(LIMITS.maxCompleteResultBytes);
+    expect(Buffer.byteLength(serialized, "utf8")).toBeGreaterThan(
+      LIMITS.maxCompleteResultBytes,
+    );
+
+    const result = await runChildSessionFixture(
+      child,
+      parentProvider,
+      "result-limit-evidence-utf8",
+      fauxAssistantMessage(fauxToolCall("abel_submit_result", submitted), {
+        stopReason: "toolUse",
+      }),
+      {
+        requestId: "packet-1",
+        role: "design-explorer",
+        output: "evidence",
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.failure).toEqual({
+      kind: "result-limit",
+      limitBytes: LIMITS.maxCompleteResultBytes,
+    });
+    expect(result.result).toBeUndefined();
+  });
+
+  it("[SLICE-2:typed-failure] measures non-ASCII diff limits in UTF-8 bytes", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const submitted = {
+      ...validDiffSubmit,
+      diff: [
+        "--- a/a.txt",
+        "+++ b/a.txt",
+        "@@ -1 +1,2 @@",
+        "-old",
+        "+new",
+        `+${"界".repeat(Math.ceil(LIMITS.maxCompleteResultBytes / 3))}`,
+        "",
+      ].join("\n"),
+    };
+    const serialized = JSON.stringify(submitted);
+    expect(serialized.length).toBeLessThan(LIMITS.maxCompleteResultBytes);
+    expect(Buffer.byteLength(serialized, "utf8")).toBeGreaterThan(
+      LIMITS.maxCompleteResultBytes,
+    );
+
+    const result = await runChildSessionFixture(
+      child,
+      parentProvider,
+      "result-limit-diff-utf8",
+      submitResponse(submitted),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.failure).toEqual({
+      kind: "result-limit",
+      limitBytes: LIMITS.maxCompleteResultBytes,
+    });
+    expect(result.result).toBeUndefined();
+  });
+
+  it("[SLICE-2:typed-failure] returns a terminal result-limit failure without a partial result", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const oversizedDiff = [
+      "--- a/a.txt",
+      "+++ b/a.txt",
+      "@@ -1 +1,2 @@",
+      "-old",
+      "+new",
+      `+${"x".repeat(LIMITS.maxCompleteResultBytes)}`,
+      "",
+    ].join("\n");
+    const result = await runChildSessionFixture(
+      child,
+      parentProvider,
+      "result-limit",
+      submitResponse({ ...validDiffSubmit, diff: oversizedDiff }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.failure).toEqual({
+      kind: "result-limit",
+      limitBytes: LIMITS.maxCompleteResultBytes,
+    });
+    expect(result.result).toBeUndefined();
+  });
+
+  it("[SLICE-2:typed-failure] distinguishes final shape, attempts, schema, and request/role/task/phase identity", async () => {
     if (!child || !parentProvider) return notReady("child session");
     const classification = (result: ChildOutcome) =>
       result.classification as
@@ -409,5 +572,9 @@ describe("structural submission classification", () => {
     expect.soft(invalidSchema.ok).toBe(false);
     expect.soft(classification(invalidSchema)?.schema).toBe("invalid");
     expect.soft(invalidSchema.transportFailure).toBe(false);
+    expect.soft(invalidSchema.failure).toEqual({
+      kind: "artifact",
+      code: "invalid-structural-result",
+    });
   });
 });

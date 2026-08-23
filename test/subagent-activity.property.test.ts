@@ -8,9 +8,11 @@ import {
   ActivityController,
   ActivityInlineComponent,
   ActivityWidget,
+  createActivityDisplay,
   renderActivityWidgetLines,
   sanitizeDisplayText,
   sanitizeFailureReason,
+  summarizeDispatchResult,
 } from "../src/subagent-activity";
 
 function event(
@@ -148,7 +150,7 @@ describe("Subagent activity presentation", () => {
     }
   });
 
-  it("does not render private result markers in expanded output", () => {
+  it("[SLICE-5:pi-tool-error] omits next-step metadata from diff summaries", () => {
     const component = new ActivityInlineComponent(
       {
         version: 1,
@@ -162,19 +164,80 @@ describe("Subagent activity presentation", () => {
         summary: {
           kind: "diff",
           summary: "changed one file",
-          nextStep: "parent review",
           riskCount: 0,
           retained: true,
         },
-      },
+      } as never,
       undefined,
       true,
     );
     const rendered = component.render(120).join("\n");
     expect(rendered).toContain("changed one file");
+    expect(rendered).not.toContain("next:");
+    expect(rendered).not.toContain("parent review");
     expect(rendered).not.toContain("private.txt");
     expect(rendered).not.toContain("model.example");
     expect(rendered).not.toContain("complete citation");
+  });
+
+  it("[SLICE-5:pi-tool-error] summarizes a candidate without accepting nextStep", () => {
+    const summary = summarizeDispatchResult({
+      kind: "candidate",
+      requestId: "request-1",
+      taskId: "task-1",
+      phase: "green",
+      resultId: "candidate-1",
+      result: {
+        id: "request-1",
+        role: "implementation-worker",
+        kind: "diff",
+        taskId: "task-1",
+        phase: "green",
+        summary: "changed one file",
+        diff: "diff bytes stay outside presentation",
+        expectedVerification: "target passes",
+        risks: ["one bounded risk"],
+        contractCompliant: true,
+      },
+    } as never);
+
+    expect(summary).toEqual({
+      kind: "diff",
+      summary: "changed one file",
+      riskCount: 1,
+      retained: true,
+    });
+    expect(summary).not.toHaveProperty("nextStep");
+  });
+
+  it.each([
+    ["candidate", "success"],
+    ["applied", "success"],
+    ["completed", "success"],
+    ["deferred", "warning"],
+    ["retry", "warning"],
+    ["checkpoint-required", "warning"],
+    ["blocked", "muted"],
+    ["cancelled", "muted"],
+  ] as const)(
+    "[SLICE-5:pi-tool-error] maps %s outcomes to the %s presentation tone",
+    (kind, expectedTone) => {
+      const display = createActivityDisplay(event("completed", 1), 100, {
+        kind,
+      } as never);
+      const fg = vi.fn((_color: string, text: string) => text);
+      new ActivityInlineComponent(display, { fg }).render(120);
+
+      expect(fg.mock.calls[0]?.[0]).toBe(expectedTone);
+    },
+  );
+
+  it("[SLICE-5:pi-tool-error] keeps thrown activity in the error presentation tone", () => {
+    const display = createActivityDisplay(event("failed", 1), 100);
+    const fg = vi.fn((_color: string, text: string) => text);
+    new ActivityInlineComponent(display, { fg }).render(120);
+
+    expect(fg.mock.calls[0]?.[0]).toBe("error");
   });
 
   it("renders a widget component from live controller state", () => {

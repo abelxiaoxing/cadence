@@ -5,19 +5,69 @@ import { ACTIVITY_DETAILS_KEY } from "../src/subagent-activity";
 
 const request = {
   stage: "abel-implement",
-  role: "implementation-worker",
-  id: "integration-request",
-  phase: "green",
-  objective: "Inspect a bounded task",
-  roots: ["."],
-  context: { agents: "root", contract: "approved" },
-  declared: {
-    read: ["src"],
-    write: [],
-    conflicts: [],
-    resources: [],
+  kind: "open-task",
+  boundary: {
+    changeId: "subagent-activity-fixture",
+    taskId: "integration-task",
+    objective: "Inspect a bounded task",
+    roots: ["."],
+    context: { agents: "root", contract: "approved" },
+    phases: {
+      red: {
+        read: ["test/subagent-activity.integration.test.ts"],
+        write: [],
+        verification: {
+          id: "verify-subagent-activity-red",
+          argv: [
+            "bun",
+            "run",
+            "test:target",
+            "test/subagent-activity.integration.test.ts",
+          ],
+          classification: "expected-red",
+          expectedFailure: "[SUBAGENT-ACTIVITY:expected-red]",
+          minTests: 1,
+        },
+      },
+      green: {
+        read: ["test/subagent-activity.integration.test.ts"],
+        write: [],
+        verification: {
+          id: "verify-subagent-activity-green",
+          argv: [
+            "bun",
+            "run",
+            "test:target",
+            "test/subagent-activity.integration.test.ts",
+          ],
+          classification: "expected-green",
+          minTests: 1,
+        },
+      },
+    },
+    scheduling: { conflicts: [], resources: [] },
+    agents: { impact: "none", managedOnly: true },
+    approvedDependencies: [],
+    impactClosure: {
+      changedSurfaces: ["none"],
+      searchEvidence: [],
+      relatedTests: [],
+      affectedSuite: [],
+    },
   },
-  output: "evidence",
+  attempt: {
+    changeId: "subagent-activity-fixture",
+    taskId: "integration-task",
+    requestId: "integration-request",
+    phase: "red",
+    snapshot: {
+      "test/subagent-activity.integration.test.ts": {
+        kind: "file",
+        sha256: "a".repeat(64),
+        bytes: 1,
+      },
+    },
+  },
 };
 
 const evidence = {
@@ -33,6 +83,33 @@ const evidence = {
   hints: { writeSet: [], verification: "none", agentsImpact: "none" },
 };
 
+const candidateOutcome = {
+  kind: "candidate",
+  requestId: request.attempt.requestId,
+  taskId: request.attempt.taskId,
+  phase: request.attempt.phase,
+  resultId: "integration-candidate",
+  result: {
+    id: request.attempt.requestId,
+    role: "implementation-worker",
+    kind: "diff",
+    taskId: request.attempt.taskId,
+    phase: request.attempt.phase,
+    summary: "changed one file",
+    diff: "diff bytes stay outside presentation",
+    expectedVerification: "target passes",
+    risks: [],
+    contractCompliant: true,
+  },
+} as const;
+
+const completedOutcome = {
+  kind: "completed",
+  requestId: request.attempt.requestId,
+  taskId: request.attempt.taskId,
+  finalPhase: "green",
+} as const;
+
 function event(
   state:
     | "queued"
@@ -44,10 +121,10 @@ function event(
 ) {
   return {
     state,
-    requestId: request.id,
-    role: request.role,
-    phase: request.phase,
-    objective: request.objective,
+    requestId: request.attempt.requestId,
+    role: "implementation-worker",
+    phase: request.attempt.phase,
+    objective: request.boundary.objective,
     sequence: 1,
   } as const;
 }
@@ -83,7 +160,7 @@ afterEach(() => {
 });
 
 describe("Subagent activity extension integration", () => {
-  it("wires TUI lifecycle, inline renderers, terminal details, and cleanup", async () => {
+  it("[SLICE-5:pi-tool-error] renders a candidate without next-step metadata", async () => {
     const ui = {
       setWidget: vi.fn(),
       setStatus: vi.fn(),
@@ -93,7 +170,7 @@ describe("Subagent activity extension integration", () => {
         observer?.(event("queued"));
         observer?.(event("running"));
         observer?.(event("completed"));
-        return { ok: true, action: "run", result: evidence };
+        return candidateOutcome as never;
       },
     );
     const pi = new FakePi();
@@ -112,8 +189,17 @@ describe("Subagent activity extension integration", () => {
     expect(result.details[ACTIVITY_DETAILS_KEY]).toMatchObject({
       kind: "activityDisplay",
       state: "completed",
-      requestId: request.id,
+      requestId: request.attempt.requestId,
+      summary: {
+        kind: "diff",
+        summary: "changed one file",
+        riskCount: 0,
+        retained: true,
+      },
     });
+    expect(result.details[ACTIVITY_DETAILS_KEY].summary).not.toHaveProperty(
+      "nextStep",
+    );
     expect(updates.length).toBeGreaterThanOrEqual(3);
     expect(ui.setWidget).toHaveBeenCalledWith(
       "abel-subagents",
@@ -128,21 +214,24 @@ describe("Subagent activity extension integration", () => {
       {},
     );
     expect(callComponent.render(120).join("\n")).toContain("Subagent");
+    const fg = vi.fn((_color: string, text: string) => text);
     const resultComponent = pi.tool.renderResult(
       result,
       { expanded: true, isPartial: false },
-      { fg: (_color: string, text: string) => text },
+      { fg },
       {},
     );
     const rendered = resultComponent.render(120).join("\n");
-    expect(rendered).toContain("1 conclusions");
-    expect(rendered).not.toContain("private.txt");
+    expect(rendered).toContain("changed one file");
+    expect(rendered).not.toContain("next:");
+    expect(rendered).not.toContain("diff bytes stay outside presentation");
+    expect(fg.mock.calls[0]?.[0]).toBe("success");
 
     await pi.handlers.get("session_shutdown")?.({}, tuiContext(ui));
     expect(ui.setWidget).toHaveBeenLastCalledWith("abel-subagents", undefined);
   });
 
-  it("persists only typed safe terminal failure metadata", async () => {
+  it("[SLICE-5:pi-tool-error] preserves thrown errors and safe terminal presentation", async () => {
     const ui = { setWidget: vi.fn(), setStatus: vi.fn() };
     vi.spyOn(Runtime.prototype, "execute").mockImplementation(
       async (_action, _params, _ctx, _signal, observer) => {
@@ -152,24 +241,26 @@ describe("Subagent activity extension integration", () => {
           ...event("failed"),
           failureReason: "subagent failed",
         });
-        return {
-          ok: false,
-          error: "anthropic claude-sonnet-4 failed at /private/model.log",
-        };
+        throw new Error(
+          "anthropic claude-sonnet-4 failed at /private/model.log",
+        );
       },
     );
     const pi = new FakePi();
     register(pi as never);
     await pi.handlers.get("session_start")?.({}, tuiContext(ui));
 
-    const result = await pi.tool.execute(
-      "failed-call",
-      { action: "run", request },
-      undefined,
-      vi.fn(),
-      tuiContext(ui),
-    );
-    const display = result.details[ACTIVITY_DETAILS_KEY];
+    const updates: any[] = [];
+    await expect(
+      pi.tool.execute(
+        "failed-call",
+        { action: "run", request },
+        undefined,
+        (partial: unknown) => updates.push(partial),
+        tuiContext(ui),
+      ),
+    ).rejects.toThrow("anthropic claude-sonnet-4 failed at /private/model.log");
+    const display = updates.at(-1)?.details[ACTIVITY_DETAILS_KEY];
 
     expect(display).toMatchObject({
       state: "failed",
@@ -180,14 +271,12 @@ describe("Subagent activity extension integration", () => {
     );
   });
 
-  it("keeps invalid and non-TUI requests structurally unchanged", async () => {
+  it("[SLICE-5:pi-tool-error] keeps non-TUI domain outcomes structurally unchanged", async () => {
     const ui = { setWidget: vi.fn(), setStatus: vi.fn() };
     const execute = vi.spyOn(Runtime.prototype, "execute").mockResolvedValue({
-      ok: true,
-      action: "run",
-      result: evidence,
+      ...completedOutcome,
       usage: { totalTokens: 3 },
-    });
+    } as never);
     const pi = new FakePi();
     register(pi as never);
 
@@ -201,7 +290,7 @@ describe("Subagent activity extension integration", () => {
     expect(invalid.details).not.toHaveProperty(ACTIVITY_DETAILS_KEY);
     expect(execute).toHaveBeenLastCalledWith(
       "run",
-      { action: "run", request: { id: "invalid" } },
+      { request: { id: "invalid" } },
       expect.anything(),
       undefined,
     );
@@ -214,14 +303,71 @@ describe("Subagent activity extension integration", () => {
       { mode: "print" } as any,
     );
     expect(print).toEqual({
-      content: [{ type: "text", text: JSON.stringify({ ...print.details }) }],
-      details: expect.not.objectContaining({
-        [ACTIVITY_DETAILS_KEY]: expect.anything(),
-      }),
+      content: [{ type: "text", text: JSON.stringify(completedOutcome) }],
+      details: completedOutcome,
       usage: { totalTokens: 3 },
     });
+    expect(print.details).not.toHaveProperty("usage");
+    expect(print).not.toHaveProperty("isError");
     expect(ui.setWidget).not.toHaveBeenCalled();
     expect(ui.setStatus).not.toHaveBeenCalled();
+  });
+
+  it("forwards exact Implement apply and discard operation payloads", async () => {
+    const rejection = {
+      kind: "artifact",
+      code: "parent-review-rejected",
+      evidence: ["bounded rejection"],
+    } as const;
+    const execute = vi
+      .spyOn(Runtime.prototype, "execute")
+      .mockResolvedValue(completedOutcome as never);
+    const pi = new FakePi();
+    register(pi as never);
+    const ctx = { mode: "print" } as any;
+
+    await pi.tool.execute(
+      "apply-call",
+      {
+        action: "apply",
+        resultId: "candidate-1",
+        requestId: "apply-request",
+      },
+      undefined,
+      vi.fn(),
+      ctx,
+    );
+    await pi.tool.execute(
+      "discard-call",
+      {
+        action: "discard",
+        resultId: "candidate-2",
+        requestId: "discard-request",
+        rejection,
+      },
+      undefined,
+      vi.fn(),
+      ctx,
+    );
+
+    expect(execute).toHaveBeenNthCalledWith(
+      1,
+      "apply",
+      { resultId: "candidate-1", requestId: "apply-request" },
+      ctx,
+      undefined,
+    );
+    expect(execute).toHaveBeenNthCalledWith(
+      2,
+      "discard",
+      {
+        resultId: "candidate-2",
+        requestId: "discard-request",
+        rejection,
+      },
+      ctx,
+      undefined,
+    );
   });
 
   it("keeps equal logical request ids in separate tool rows", async () => {
@@ -280,15 +426,13 @@ describe("Subagent activity extension integration", () => {
   });
 
   it.each(["print", "json", "rpc"])(
-    "keeps %s mode free of presentation effects",
+    "[SLICE-5:pi-tool-error] keeps %s mode free of presentation effects",
     async (mode) => {
       const ui = { setWidget: vi.fn(), setStatus: vi.fn() };
       const onUpdate = vi.fn();
-      vi.spyOn(Runtime.prototype, "execute").mockResolvedValue({
-        ok: true,
-        action: "run",
-        result: evidence,
-      });
+      vi.spyOn(Runtime.prototype, "execute").mockResolvedValue(
+        completedOutcome as never,
+      );
       const pi = new FakePi();
       register(pi as never);
 
@@ -300,7 +444,11 @@ describe("Subagent activity extension integration", () => {
         { mode, ui } as any,
       );
 
+      expect(result.details).toEqual(completedOutcome);
       expect(result.details).not.toHaveProperty(ACTIVITY_DETAILS_KEY);
+      expect(result.details).not.toHaveProperty("presentation");
+      expect(result.details).not.toHaveProperty("tone");
+      expect(result).not.toHaveProperty("isError");
       expect(onUpdate).not.toHaveBeenCalled();
       expect(ui.setWidget).not.toHaveBeenCalled();
       expect(ui.setStatus).not.toHaveBeenCalled();
@@ -329,6 +477,8 @@ describe("Subagent activity extension integration", () => {
     const pi = new FakePi();
     register(pi as never);
     await pi.handlers.get("session_start")?.({}, tuiContext(ui));
+    expect(drain).toHaveBeenCalledOnce();
+    drain.mockClear();
     const run = pi.tool.execute(
       "active-call",
       { action: "run", request },

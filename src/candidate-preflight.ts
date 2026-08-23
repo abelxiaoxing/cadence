@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import {
+  type CandidateFailure,
   diffWritePaths,
   isValidRelativePath,
   type VerificationContract,
@@ -42,6 +43,7 @@ export interface CandidatePreflightInput {
   root: string;
   diff: Buffer;
   writeSet: string[];
+  approvedDependencies: string[];
   snapshot: Bound;
   baseline: BaselineEntry[];
   verification: VerificationContract;
@@ -50,6 +52,16 @@ export interface CandidatePreflightInput {
   dependencyTarget: FileBound | DirBound;
   signal?: AbortSignal;
 }
+
+type PreflightCandidateFailure = Exclude<
+  CandidateFailure,
+  { kind: "result-limit" }
+>;
+type PreflightFailureKind = PreflightCandidateFailure["kind"];
+type PreflightFailureFor<Kind extends PreflightFailureKind> = Extract<
+  PreflightCandidateFailure,
+  { kind: Kind }
+>;
 
 export type CandidatePreflightResult =
   | {
@@ -62,17 +74,15 @@ export type CandidatePreflightResult =
       identityMatch: boolean;
       checkoutRemoved: true;
     }
-  | {
+  | (PreflightCandidateFailure & {
       ok: false;
-      class: "artifact" | "design" | "environment" | "stale" | "cancelled";
-      code: string;
       commandId?: string;
       exitCode?: number;
       testCount?: number;
       identityMatch?: boolean;
       checkoutRemoved: boolean;
       excerpt?: string;
-    };
+    });
 
 export interface CandidatePreflightDependencies {
   mkdtemp: typeof mkdtempSync;
@@ -113,20 +123,15 @@ interface FailureDetails {
 
 class PreflightFailure extends Error {
   constructor(
-    readonly failureClass:
-      | "artifact"
-      | "design"
-      | "environment"
-      | "stale"
-      | "cancelled",
-    readonly code: string,
+    readonly failure: PreflightCandidateFailure,
     readonly details: FailureDetails = {},
   ) {
-    super(code);
+    super(failure.code);
   }
 }
 
 const SHA256 = /^[0-9a-f]{64}$/;
+const PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/iu;
 const LOCKFILES = [
   "bun.lock",
   "bun.lockb",
@@ -210,27 +215,33 @@ function spawnCommand(
   });
 }
 
-function reject(
-  failureClass: PreflightFailure["failureClass"],
-  code: string,
-  details: FailureDetails = {},
-): never {
-  throw new PreflightFailure(failureClass, code, details);
+function typedFailure<Kind extends PreflightFailureKind>(
+  kind: Kind,
+  code: PreflightFailureFor<Kind>["code"],
+): PreflightFailureFor<Kind> {
+  return { kind, code } as PreflightFailureFor<Kind>;
 }
 
-function failed(
-  failureClass: PreflightFailure["failureClass"],
-  code: string,
+function reject<Kind extends PreflightFailureKind>(
+  kind: Kind,
+  code: PreflightFailureFor<Kind>["code"],
+  details: FailureDetails = {},
+): never {
+  throw new PreflightFailure(typedFailure(kind, code), details);
+}
+
+function failed<Kind extends PreflightFailureKind>(
+  kind: Kind,
+  code: PreflightFailureFor<Kind>["code"],
   details: FailureDetails = {},
   checkoutRemoved = true,
 ): CandidatePreflightResult {
   return {
     ok: false,
-    class: failureClass,
-    code,
+    ...typedFailure(kind, code),
     ...details,
     checkoutRemoved,
-  };
+  } as CandidatePreflightResult;
 }
 
 function removeCheckout(
@@ -329,22 +340,13 @@ async function run(
     ...(input === undefined ? {} : { input }),
     ...(signal === undefined ? {} : { signal }),
   };
-  try {
-    const result = await dependencies.spawn(command, args, options);
-    return {
-      status: result.status,
-      stdout: result.stdout ?? "",
-      stderr: result.stderr ?? "",
-      ...(result.error === undefined ? {} : { error: result.error }),
-    };
-  } catch (error) {
-    return {
-      status: null,
-      stdout: "",
-      stderr: "",
-      error: error as Error,
-    };
-  }
+  const result = await dependencies.spawn(command, args, options);
+  return {
+    status: result.status,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    ...(result.error === undefined ? {} : { error: result.error }),
+  };
 }
 
 function commandExcerpt(
@@ -381,6 +383,16 @@ function validateInput(input: CandidatePreflightInput): {
   if (!validSnapshot(input.snapshot)) reject("artifact", "invalid-snapshot");
   const verification = validateVerificationContract(input.verification);
   if (!verification.ok) reject("artifact", "invalid-verification-contract");
+  if (
+    !Array.isArray(input.approvedDependencies) ||
+    input.approvedDependencies.some(
+      (dependency) => typeof dependency !== "string" || dependency.length === 0,
+    ) ||
+    new Set(input.approvedDependencies).size !==
+      input.approvedDependencies.length
+  ) {
+    reject("artifact", "invalid-approved-dependencies");
+  }
 
   let targets: string[];
   try {
@@ -477,8 +489,9 @@ function validateInput(input: CandidatePreflightInput): {
   }
   if (targets.some((target) => !entries.has(target)))
     reject("artifact", "target-baseline-missing");
-  for (const testPath of input.verification.argv.slice(3)) {
-    if (!entries.has(testPath))
+  for (let index = 3; index < input.verification.argv.length; index++) {
+    const testPath = input.verification.argv[index];
+    if (testPath === undefined || !entries.has(testPath))
       reject("artifact", "verification-baseline-missing");
   }
   return { targets, lockPath, dependencyPath };
@@ -786,6 +799,243 @@ function structuredTestReport(reportPath: string): StructuredTestReport {
   };
 }
 
+interface DependencyContractEntry {
+  value: string;
+  names: string[];
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function dependencyName(selector: string): string | null {
+  const scoped = /(@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*)/iu.exec(
+    selector,
+  )?.[1];
+  if (scoped) return scoped;
+  const segment = selector.split("/").at(-1) ?? "";
+  const name = segment.replace(/@.*$/u, "");
+  return /^[a-z0-9][a-z0-9._-]*$/iu.test(name) ? name : null;
+}
+
+function addResolutionEntries(
+  result: Map<string, DependencyContractEntry>,
+  section: string,
+  value: unknown,
+  path: string[] = [],
+  names: string[] = [],
+): void {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    for (const [key, entry] of Object.entries(
+      value as Record<string, unknown>,
+    )) {
+      const name = dependencyName(key);
+      addResolutionEntries(
+        result,
+        section,
+        entry,
+        [...path, key],
+        name && key !== "." ? [...new Set([...names, name])] : names,
+      );
+    }
+    return;
+  }
+  result.set(`${section}:${path.join(":")}`, {
+    value: canonicalJson(value),
+    names,
+  });
+}
+
+function addPackageListPolicy(
+  result: Map<string, DependencyContractEntry>,
+  section: string,
+  value: unknown,
+): void {
+  if (value === undefined) return;
+  if (
+    !Array.isArray(value) ||
+    value.some(
+      (name) => typeof name !== "string" || !PACKAGE_NAME.test(name),
+    ) ||
+    new Set(value).size !== value.length
+  ) {
+    reject("artifact", "package-manifest-invalid");
+  }
+  result.set(section, {
+    value: canonicalJson([...value].sort()),
+    names: [],
+  });
+}
+
+function addPatchedDependencies(
+  result: Map<string, DependencyContractEntry>,
+  section: string,
+  value: unknown,
+): void {
+  if (value === undefined) return;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    reject("artifact", "package-manifest-invalid");
+  }
+  for (const [selector, patchPath] of Object.entries(value)) {
+    if (
+      !dependencyName(selector) ||
+      typeof patchPath !== "string" ||
+      !isValidRelativePath(patchPath)
+    ) {
+      reject("artifact", "package-manifest-invalid");
+    }
+  }
+  result.set(section, { value: canonicalJson(value), names: [] });
+}
+
+function dependencyContract(
+  manifestPath: string,
+): Map<string, DependencyContractEntry> {
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  } catch {
+    reject("artifact", "package-manifest-invalid");
+  }
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    reject("artifact", "package-manifest-invalid");
+  }
+  const record = manifest as Record<string, unknown>;
+  const result = new Map<string, DependencyContractEntry>();
+  for (const section of [
+    "dependencies",
+    "devDependencies",
+    "peerDependencies",
+    "optionalDependencies",
+  ]) {
+    const dependencies = record[section];
+    if (dependencies === undefined) continue;
+    if (
+      !dependencies ||
+      typeof dependencies !== "object" ||
+      Array.isArray(dependencies)
+    ) {
+      reject("artifact", "package-manifest-invalid");
+    }
+    for (const [name, version] of Object.entries(dependencies)) {
+      if (typeof version !== "string")
+        reject("artifact", "package-manifest-invalid");
+      result.set(`${section}:${name}`, { value: version, names: [name] });
+    }
+  }
+  for (const section of [
+    "overrides",
+    "resolutions",
+    "dependenciesMeta",
+    "peerDependenciesMeta",
+  ]) {
+    if (record[section] !== undefined) {
+      addResolutionEntries(result, section, record[section]);
+    }
+  }
+  for (const section of ["workspaces", "catalog", "catalogs"] as const) {
+    if (record[section] !== undefined) {
+      result.set(section, {
+        value: canonicalJson(record[section]),
+        names: [],
+      });
+    }
+  }
+  addPackageListPolicy(
+    result,
+    "trustedDependencies",
+    record.trustedDependencies,
+  );
+  addPackageListPolicy(
+    result,
+    "blockedDependencies",
+    record.blockedDependencies,
+  );
+  addPackageListPolicy(
+    result,
+    "bundledDependencies",
+    record.bundledDependencies,
+  );
+  addPackageListPolicy(result, "bundleDependencies", record.bundleDependencies);
+  addPatchedDependencies(
+    result,
+    "patchedDependencies",
+    record.patchedDependencies,
+  );
+  const pnpm = record.pnpm;
+  if (pnpm !== undefined) {
+    if (!pnpm || typeof pnpm !== "object" || Array.isArray(pnpm)) {
+      reject("artifact", "package-manifest-invalid");
+    }
+    const pnpmRecord = pnpm as Record<string, unknown>;
+    const resolutionSections = [
+      "overrides",
+      "packageExtensions",
+      "peerDependencyRules",
+      "allowedDeprecatedVersions",
+    ] as const;
+    for (const section of resolutionSections) {
+      const value = pnpmRecord[section];
+      if (value !== undefined) {
+        addResolutionEntries(result, `pnpm.${section}`, value);
+      }
+    }
+    addPatchedDependencies(
+      result,
+      "pnpm.patchedDependencies",
+      pnpmRecord.patchedDependencies,
+    );
+    const tracked = new Set<string>([
+      ...resolutionSections,
+      "patchedDependencies",
+    ]);
+    const policy = Object.fromEntries(
+      Object.entries(pnpmRecord).filter(([key]) => !tracked.has(key)),
+    );
+    if (Object.keys(policy).length > 0) {
+      result.set("pnpm.policy", { value: canonicalJson(policy), names: [] });
+    }
+  }
+  return result;
+}
+
+function rejectUnapprovedDependencies(
+  before: Map<string, DependencyContractEntry>,
+  after: Map<string, DependencyContractEntry>,
+  approved: string[],
+  lockfileChanged: boolean,
+): boolean {
+  const approvedNames = new Set(approved);
+  const keys = new Set([...before.keys(), ...after.keys()]);
+  let manifestChanged = false;
+  for (const key of keys) {
+    const previous = before.get(key);
+    const next = after.get(key);
+    if (previous?.value === next?.value) continue;
+    manifestChanged = true;
+    const names = new Set([...(previous?.names ?? []), ...(next?.names ?? [])]);
+    if (
+      names.size === 0 ||
+      [...names].some((name) => !approvedNames.has(name))
+    ) {
+      reject("approval-boundary", "unapproved-dependency-change");
+    }
+  }
+  if (lockfileChanged) {
+    reject("approval-boundary", "unapproved-dependency-change");
+  }
+  return manifestChanged;
+}
+
 function normalizeTarget(
   input: CandidatePreflightInput,
   result: CommandResult,
@@ -829,7 +1079,7 @@ function normalizeTarget(
     enoughTests &&
     loadable
   ) {
-    return failed("design", "red-contract-invalid", {
+    return failed("artifact", "red-not-witnessed", {
       ...details,
       excerpt: commandExcerpt(result, secrets),
     });
@@ -890,7 +1140,9 @@ export async function preflightCandidate(
   let temp: string | undefined;
   let checkout: string | undefined;
   let targets: string[] = [];
-  let outcome: CandidatePreflightResult;
+  let outcome: CandidatePreflightResult | undefined;
+  let unknownError: unknown;
+  let hasUnknownError = false;
   try {
     if (input.signal?.aborted) reject("cancelled", "cancelled");
     if (!validSnapshot(input.snapshot)) reject("artifact", "invalid-snapshot");
@@ -1005,6 +1257,9 @@ export async function preflightCandidate(
     reconstructBoundDirectories(input, checkout, validated.dependencyPath);
     reconstructBaseline(input, checkout);
     scanCheckout(checkout);
+    const dependenciesBefore = dependencyContract(
+      path.join(checkout, "package.json"),
+    );
 
     result = await run(
       dependencies,
@@ -1031,6 +1286,14 @@ export async function preflightCandidate(
     if (input.signal?.aborted) reject("cancelled", "cancelled");
     if (result.error) reject("environment", "git-apply-unavailable");
     if (result.status !== 0) reject("artifact", "git-apply-failed");
+    const dependencyManifestChanged = rejectUnapprovedDependencies(
+      dependenciesBefore,
+      dependencyContract(path.join(checkout, "package.json")),
+      input.approvedDependencies,
+      validated.targets.some((target) =>
+        (LOCKFILES as readonly string[]).includes(target),
+      ),
+    );
     await requireRegularGitModes(dependencies, checkout, input.signal);
     scanCheckout(checkout);
 
@@ -1072,6 +1335,39 @@ export async function preflightCandidate(
         exitCode: result.status ?? 1,
         excerpt: commandExcerpt(result, [root, checkout]),
       });
+
+    if (dependencyManifestChanged) {
+      const dependencyArgs = sandboxArgs(
+        checkout,
+        dependencySource,
+        input.dependencyTarget.kind === "dir",
+        bunExecutable,
+        [
+          "bun",
+          "install",
+          "--frozen-lockfile",
+          "--dry-run",
+          "--ignore-scripts",
+          "--no-progress",
+        ],
+      );
+      result = await run(
+        dependencies,
+        checkout,
+        bwrap,
+        dependencyArgs,
+        undefined,
+        input.signal,
+      );
+      if (input.signal?.aborted) reject("cancelled", "cancelled");
+      if (result.error || result.status === null)
+        reject("environment", "bubblewrap-launch-failed", {
+          excerpt: commandExcerpt(result, [root, checkout]),
+        });
+      if (result.status !== 0) {
+        reject("approval-boundary", "unapproved-dependency-change");
+      }
+    }
 
     if (!isStaticCheck(input.verification)) {
       const checkArgs = sandboxArgs(
@@ -1144,20 +1440,29 @@ export async function preflightCandidate(
   } catch (error) {
     if (input.signal?.aborted) outcome = failed("cancelled", "cancelled");
     else if (error instanceof PreflightFailure)
-      outcome = failed(error.failureClass, error.code, error.details);
-    else
-      outcome = failed("environment", "preflight-failed", {
-        excerpt: String((error as Error).message).slice(0, 256),
-      });
+      outcome = {
+        ok: false,
+        ...error.failure,
+        ...error.details,
+        checkoutRemoved: true,
+      } as CandidatePreflightResult;
+    else {
+      unknownError = error;
+      hasUnknownError = true;
+    }
   }
-  if (temp === undefined) return outcome;
-  const cleanup = removeCheckout(temp, dependencies);
-  if (cleanup.failed)
-    return failed(
-      "environment",
-      "checkout-cleanup-failed",
-      {},
-      cleanup.removed,
-    );
+  if (temp !== undefined) {
+    const cleanup = removeCheckout(temp, dependencies);
+    if (cleanup.failed && !hasUnknownError)
+      return failed(
+        "environment",
+        "checkout-cleanup-failed",
+        {},
+        cleanup.removed,
+      );
+  }
+  if (hasUnknownError) throw unknownError;
+  if (outcome === undefined)
+    throw new Error("candidate preflight outcome unavailable");
   return outcome;
 }

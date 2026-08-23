@@ -25,6 +25,7 @@ import {
 import register, { DISPATCH_TOOL } from "../src/index";
 import { runtimeForProvider } from "../src/parent-provider";
 import { Runtime } from "../src/runtime";
+import { workerIdentity } from "../src/worker";
 import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 const roots: string[] = [];
@@ -40,10 +41,45 @@ function makeRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "abel-runtime-scheduler-"));
   roots.push(root);
   writeFileSync(join(root, "a.txt"), "old\n");
-  mkdirSync(join(root, "node_modules"));
+  writeFileSync(join(root, "b.txt"), "old\n");
+  mkdirSync(join(root, "node_modules/.bin"), { recursive: true });
+  const fixtureReporter = join(root, "node_modules/.bin/vitest");
+  writeFileSync(
+    fixtureReporter,
+    [
+      "#!/usr/bin/env bun",
+      'import { writeFileSync } from "node:fs";',
+      "const args = process.argv.slice(2);",
+      'const output = args.find((arg) => arg.startsWith("--outputFile="))?.slice(13);',
+      'if (!output) throw new Error("missing structured report output");',
+      'const identity = "[RUNTIME-SCHEDULER:expected-red]";',
+      "writeFileSync(output, JSON.stringify({",
+      "  numTotalTests: 1,",
+      "  numFailedTests: 1,",
+      "  success: false,",
+      '  testResults: [{ message: "", assertionResults: [{',
+      '    status: "failed",',
+      "    fullName: identity,",
+      "    title: identity,",
+      "    failureMessages: [identity],",
+      "  }] }],",
+      "}));",
+      "process.exit(1);",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(fixtureReporter, 0o755);
+  mkdirSync(join(root, "test"));
+  writeFileSync(
+    join(root, "test/expected-red.mjs"),
+    'console.error("[RUNTIME-SCHEDULER:expected-red]\\nTests 1 failed");\nprocess.exit(1);\n',
+  );
   writeFileSync(
     join(root, "package.json"),
-    `${JSON.stringify({ private: true, scripts: { check: 'node -e ""' } })}\n`,
+    `${JSON.stringify({
+      private: true,
+      scripts: { check: 'node -e ""', "test:target": "vitest run" },
+    })}\n`,
   );
   writeFileSync(join(root, "bun.lock"), "# fixture lock\n");
   execFileSync("git", ["init", "-q"], { cwd: root });
@@ -66,53 +102,96 @@ function activeRuntime(): Runtime {
   });
 }
 
-function request(id: string, root: string) {
+function request(
+  id: string,
+  root: string,
+  options: {
+    path?: string;
+    greenPath?: string;
+    verificationLock?: string;
+    greenVerificationLock?: string;
+    conflicts?: string[];
+    resources?: string[];
+  } = {},
+) {
+  const target = options.path ?? "a.txt";
+  const greenTarget = options.greenPath ?? target;
+  const verificationLock = options.verificationLock ?? "runtime-scheduler";
   return {
     stage: "abel-implement",
-    role: "implementation-worker",
-    taskId: id,
-    id,
-    phase: "green",
-    objective: `Complete ${id}`,
-    roots: ["."],
-    context: { agents: "root contract", contract: "approved task" },
-    declared: {
-      read: ["a.txt"],
-      write: ["a.txt"],
-      conflicts: [],
-      resources: [],
-      verificationLock: "runtime-scheduler",
+    kind: "open-task",
+    boundary: {
+      changeId: "runtime-scheduler-fixture",
+      taskId: id,
+      objective: `Complete ${id}`,
+      roots: ["."],
+      context: { agents: "root contract", contract: "approved task" },
+      phases: {
+        red: {
+          read: [target],
+          write: [target],
+          verificationLock,
+          verification: {
+            id: `verify-${id}-red`,
+            argv: ["bun", "run", "test:target", "test/expected-red.mjs"],
+            classification: "expected-red",
+            expectedFailure: "[RUNTIME-SCHEDULER:expected-red]",
+            minTests: 1,
+          },
+        },
+        green: {
+          read: [greenTarget],
+          write: [greenTarget],
+          verificationLock: options.greenVerificationLock ?? verificationLock,
+          verification: {
+            id: `verify-${id}-green`,
+            argv: ["bun", "run", "check"],
+            classification: "expected-green",
+            minTests: 1,
+          },
+        },
+      },
+      scheduling: {
+        conflicts: options.conflicts ?? [],
+        resources: options.resources ?? [],
+      },
+      agents: { impact: "none", managedOnly: true },
+      approvedDependencies: [],
+      impactClosure: {
+        changedSurfaces: ["none"],
+        searchEvidence: [],
+        relatedTests: [],
+        affectedSuite: [],
+      },
     },
-    snapshot: snapshotFiles(root, ["a.txt"]),
-    output: "diff",
-    verification: {
-      id: `verify-${id}`,
-      argv: ["bun", "run", "check"],
-      classification: "expected-green",
-      minTests: 1,
+    attempt: {
+      changeId: "runtime-scheduler-fixture",
+      taskId: id,
+      requestId: id,
+      phase: "red",
+      snapshot: snapshotFiles(root, [target]),
     },
   };
 }
 
-function submitted(id: string) {
+function submitted(id: string, target = "a.txt") {
   return {
     id,
     role: "implementation-worker",
     kind: "diff",
     taskId: id,
-    phase: "green",
+    phase: "red",
     summary: `Complete ${id}`,
-    diff: `--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+${id}\n`,
+    diff: `--- a/${target}\n+++ b/${target}\n@@ -1 +1 @@\n-old\n+${id}\n`,
     expectedVerification: "fixed fixture verification",
     risks: [],
-    nextStep: "parent review",
     contractCompliant: true,
   };
 }
 
-function response(id: string) {
+function response(id: string, target = "a.txt") {
   return fauxAssistantMessage(
-    fauxToolCall("abel_submit_result", submitted(id)),
+    fauxToolCall("abel_submit_result", submitted(id, target)),
     { stopReason: "toolUse" },
   );
 }
@@ -144,6 +223,16 @@ async function contextFor(root: string, faux: ReturnType<typeof fauxProvider>) {
   };
 }
 
+function candidateResultId(
+  outcome: Awaited<ReturnType<Runtime["execute"]>>,
+): string {
+  expect(outcome).toMatchObject({ kind: "candidate" });
+  if (!("kind" in outcome) || outcome.kind !== "candidate") {
+    throw new Error("run did not return an Implement candidate");
+  }
+  return outcome.resultId;
+}
+
 describe("Runtime Scheduler integration", () => {
   it("injects the authoritative phase identity and delivery contract into the Worker prompt", async () => {
     const root = makeRoot();
@@ -153,11 +242,13 @@ describe("Runtime Scheduler integration", () => {
       api: "faux",
     });
     const taskId = "stable-task";
-    const requestId = "stable-task:green:1";
+    const requestId = "stable-task:red:1";
     const phaseRequest = {
-      ...request(requestId, root),
-      taskId,
-      id: requestId,
+      ...request(taskId, root),
+      attempt: {
+        ...request(taskId, root).attempt,
+        requestId,
+      },
     };
     let observedContext = "";
     faux.setResponses([
@@ -183,15 +274,30 @@ describe("Runtime Scheduler integration", () => {
     );
     await runtime.execute("finish", {}, context);
 
-    expect(outcome.ok).toBe(true);
+    expect(outcome).toMatchObject({
+      kind: "candidate",
+      taskId,
+      requestId,
+      phase: "red",
+    });
     expect(observedContext).toContain(
       `<phase-contract>${JSON.stringify({
         taskId,
         requestId,
-        phase: "green",
+        phase: "red",
         readSet: ["a.txt"],
         writeSet: ["a.txt"],
-        verification: phaseRequest.verification,
+        verification: phaseRequest.boundary.phases.red.verification,
+        agentsImpact: "none",
+        agentsTarget: null,
+        agentsManagedOnly: true,
+        agentsWriteAllowed: false,
+        impactClosure: {
+          changedSurfaces: ["none"],
+          searchEvidence: [],
+          relatedTests: [],
+          affectedSuite: [],
+        },
       })}</phase-contract>`,
     );
   });
@@ -216,7 +322,13 @@ describe("Runtime Scheduler integration", () => {
     ].join(";");
     writeFileSync(
       join(root, "package.json"),
-      `${JSON.stringify({ private: true, scripts: { check: `node -e "${check}"` } })}\n`,
+      `${JSON.stringify({
+        private: true,
+        scripts: {
+          check: `node -e "${check}"`,
+          "test:target": "vitest run",
+        },
+      })}\n`,
     );
     const runtime = activeRuntime();
     const faux = fauxProvider({
@@ -227,14 +339,23 @@ describe("Runtime Scheduler integration", () => {
     const context = await contextFor(root, faux);
     const phaseRequest = {
       ...request("directory-baseline", root),
-      declared: {
-        ...request("directory-baseline", root).declared,
-        read: ["fixtures"],
+      boundary: {
+        ...request("directory-baseline", root).boundary,
+        phases: {
+          ...request("directory-baseline", root).boundary.phases,
+          red: {
+            ...request("directory-baseline", root).boundary.phases.red,
+            read: ["fixtures"],
+          },
+        },
       },
-      snapshot: mergeBounds(
-        snapshotDirManifests(root, ["fixtures"]),
-        snapshotFiles(root, ["a.txt"]),
-      ),
+      attempt: {
+        ...request("directory-baseline", root).attempt,
+        snapshot: mergeBounds(
+          snapshotDirManifests(root, ["fixtures"]),
+          snapshotFiles(root, ["a.txt"]),
+        ),
+      },
     };
 
     const outcome = await runtime.execute(
@@ -242,22 +363,30 @@ describe("Runtime Scheduler integration", () => {
       { request: phaseRequest },
       context,
     );
-    expect(outcome.ok).toBe(true);
-    if (!outcome.ok || !outcome.resultId) return;
+    const resultId = candidateResultId(outcome);
     const applied = await runtime.execute(
       "apply",
-      { resultId: outcome.resultId },
+      {
+        resultId,
+        requestId: "directory-baseline:apply",
+      },
       context,
     );
     await runtime.execute("finish", {}, context);
 
-    expect(applied.ok).toBe(true);
+    expect(applied).toMatchObject({
+      kind: "applied",
+      requestId: "directory-baseline:apply",
+      taskId: "directory-baseline",
+      phase: "red",
+      readyPhase: "green",
+    });
     expect(readFileSync(join(root, "a.txt"), "utf8")).toBe(
       "directory-baseline\n",
     );
   });
 
-  it("sanitizes preflight preparation exceptions and consumes the two-launch budget", async () => {
+  it("sanitizes preflight preparation exceptions and terminally blocks", async () => {
     const root = makeRoot();
     const runtime = activeRuntime();
     const faux = fauxProvider({
@@ -270,6 +399,11 @@ describe("Runtime Scheduler integration", () => {
     ]);
     const context = await contextFor(root, faux);
     const phaseRequest = request("preflight-error", root);
+    const retryRequest = {
+      stage: "abel-implement",
+      kind: "phase-attempt",
+      attempt: phaseRequest.attempt,
+    };
     chmodSync(join(root, "node_modules"), 0o000);
 
     try {
@@ -278,33 +412,30 @@ describe("Runtime Scheduler integration", () => {
         { request: phaseRequest },
         context,
       );
-      const second = await runtime.execute(
+      const replay = await runtime.execute(
         "run",
-        { request: phaseRequest },
-        context,
-      );
-      const blocked = await runtime.execute(
-        "run",
-        { request: phaseRequest },
+        { request: retryRequest },
         context,
       );
 
       expect(first).toMatchObject({
-        ok: false,
-        recovery: { code: "environment-blocked", launchIndex: 0 },
+        kind: "blocked",
+        taskId: "preflight-error",
+        requestId: "preflight-error",
+        phase: "red",
+        failure: { kind: "environment" },
       });
-      expect(second).toMatchObject({
-        ok: false,
-        recovery: { code: "environment-blocked", launchIndex: 1 },
+      expect(replay).toMatchObject({
+        kind: "blocked",
+        taskId: "preflight-error",
+        requestId: "preflight-error",
+        phase: "red",
+        failure: { kind: "environment" },
       });
-      expect(blocked).toMatchObject({
-        ok: false,
-        recovery: { code: "mechanical-redispatch-exhausted" },
-      });
-      expect(JSON.stringify([first, second, blocked])).not.toMatch(
+      expect(JSON.stringify([first, replay])).not.toMatch(
         /EACCES|node_modules|abel-runtime-scheduler-/i,
       );
-      expect(faux.state.callCount).toBe(2);
+      expect(faux.state.callCount).toBe(1);
     } finally {
       chmodSync(join(root, "node_modules"), 0o755);
       await runtime.execute("finish", {}, context);
@@ -312,9 +443,12 @@ describe("Runtime Scheduler integration", () => {
   });
 
   it("forwards the Pi tool signal into Runtime execution", async () => {
-    const execute = vi
-      .spyOn(Runtime.prototype, "execute")
-      .mockResolvedValue({ ok: false, error: "tool call cancelled" });
+    const execute = vi.spyOn(Runtime.prototype, "execute").mockResolvedValue({
+      kind: "cancelled",
+      taskId: "signal-task",
+      requestId: "signal-request",
+      phase: "red",
+    });
     let tool:
       | {
           name: string;
@@ -344,7 +478,7 @@ describe("Runtime Scheduler integration", () => {
       );
       expect(execute).toHaveBeenCalledWith(
         "run",
-        { action: "run", request: {} },
+        { request: {} },
         context,
         controller.signal,
       );
@@ -353,24 +487,20 @@ describe("Runtime Scheduler integration", () => {
     }
   });
 
-  it("exposes complete recovery records in provider-visible failure content", async () => {
-    const recovery = {
-      code: "design-required",
+  it("exposes a blocked Implement outcome directly in provider-visible content", async () => {
+    const blocked = {
+      kind: "blocked",
       taskId: "task-recovery-content",
       requestId: "task-recovery-content:green:0",
       phase: "green",
-      launchIndex: 1,
-      branchBlocked: true,
-      dependentsBlocked: true,
-      partialResultUsable: false,
-      independentResultsPreserved: true,
-      next: "return-to-design",
+      failure: {
+        kind: "approval-boundary",
+        code: "task-scope-insufficient",
+      },
     } as const;
-    const execute = vi.spyOn(Runtime.prototype, "execute").mockResolvedValue({
-      ok: false,
-      error: "design-required: branch recovery is required",
-      recovery,
-    });
+    const execute = vi
+      .spyOn(Runtime.prototype, "execute")
+      .mockResolvedValue(blocked);
     let tool:
       | {
           name: string;
@@ -396,7 +526,7 @@ describe("Runtime Scheduler integration", () => {
         undefined,
         {},
       );
-      expect(rendered).toMatchObject({ isError: true });
+      expect(rendered).not.toHaveProperty("isError");
       const content = (
         rendered as {
           content?: Array<{ type: string; text?: string }>;
@@ -404,17 +534,297 @@ describe("Runtime Scheduler integration", () => {
       ).content;
       expect(content?.[0]?.type).toBe("text");
       const providerPayload = JSON.parse(content?.[0]?.text ?? "");
-      expect(providerPayload).toMatchObject({
-        ok: false,
-        error: "design-required: branch recovery is required",
-      });
-      expect(providerPayload.recovery).toEqual(recovery);
+      expect(providerPayload).toEqual(blocked);
     } finally {
       execute.mockRestore();
     }
   });
 
-  it("serializes conflicting Runtime runs through the Scheduler", async () => {
+  it("[SLICE-4:task-lifetime-conflict] immediately defers a conflict across the ready next-phase gap without side effects", async () => {
+    const root = makeRoot();
+    const runtime = activeRuntime();
+    const faux = fauxProvider({
+      provider: `abel-runtime-ready-conflict-${providerSequence++}`,
+      api: "faux",
+    });
+    faux.setResponses([response("ready-owner"), response("ready-contender")]);
+    const context = await contextFor(root, faux);
+    const owner = await runtime.execute(
+      "run",
+      { request: request("ready-owner", root) },
+      context,
+    );
+    const ownerResultId = candidateResultId(owner);
+    const applied = await runtime.execute(
+      "apply",
+      { resultId: ownerResultId, requestId: "ready-owner:apply" },
+      context,
+    );
+    expect(applied).toMatchObject({
+      kind: "applied",
+      requestId: "ready-owner:apply",
+      taskId: "ready-owner",
+      readyPhase: "green",
+    });
+
+    const registry = (runtime as any).registry;
+    const scheduler = (runtime as any).scheduler;
+    expect(registry.values()[0]?.state).toEqual({
+      kind: "ready",
+      phase: "green",
+      launchIndex: 0,
+    });
+    const recordsBefore = registry.values().length;
+    const resultsBefore = runtime.results.size;
+    const launchesBefore = faux.state.callCount;
+    const open = vi.spyOn(registry, "open");
+    const schedule = vi.spyOn(scheduler, "schedule");
+    const contenderId = "ready-contender";
+    const contender = runtime.execute(
+      "run",
+      { request: request(contenderId, root) },
+      context,
+    );
+    const timeout = Symbol("deferred task waited");
+
+    try {
+      const outcome = await Promise.race([
+        contender,
+        new Promise<typeof timeout>((resolve) =>
+          setTimeout(() => resolve(timeout), 100),
+        ),
+      ]);
+
+      expect(outcome).not.toBe(timeout);
+      expect(outcome).toMatchObject({
+        kind: "deferred",
+        taskId: contenderId,
+        requestId: contenderId,
+        reason: "task-conflict",
+      });
+      expect(open).not.toHaveBeenCalled();
+      expect(schedule).not.toHaveBeenCalled();
+      expect(faux.state.callCount).toBe(launchesBefore);
+      expect(runtime.results.size).toBe(resultsBefore);
+      expect(registry.values()).toHaveLength(recordsBefore);
+      expect(
+        registry
+          .values()
+          .some(
+            (record: { boundary: { taskId: string } }) =>
+              record.boundary.taskId === contenderId,
+          ),
+      ).toBe(false);
+    } finally {
+      open.mockRestore();
+      schedule.mockRestore();
+      await runtime.execute("finish", {}, context);
+    }
+  });
+
+  it("[SLICE-4:task-lifetime-conflict] keeps candidate-pending conflict active without registering, scheduling, or launching the contender", async () => {
+    const root = makeRoot();
+    const runtime = activeRuntime();
+    const faux = fauxProvider({
+      provider: `abel-runtime-candidate-conflict-${providerSequence++}`,
+      api: "faux",
+    });
+    faux.setResponses([
+      response("candidate-owner"),
+      response("candidate-contender"),
+    ]);
+    const context = await contextFor(root, faux);
+    const owner = await runtime.execute(
+      "run",
+      { request: request("candidate-owner", root) },
+      context,
+    );
+    const ownerResultId = candidateResultId(owner);
+
+    const registry = (runtime as any).registry;
+    const scheduler = (runtime as any).scheduler;
+    expect(registry.values()[0]?.state).toMatchObject({
+      kind: "candidate-pending",
+      phase: "red",
+      originRequestId: "candidate-owner",
+      resultId: ownerResultId,
+    });
+    const recordsBefore = registry.values().length;
+    const resultsBefore = runtime.results.size;
+    const launchesBefore = faux.state.callCount;
+    const open = vi.spyOn(registry, "open");
+    const schedule = vi.spyOn(scheduler, "schedule");
+    const contenderId = "candidate-contender";
+    const contender = runtime.execute(
+      "run",
+      { request: request(contenderId, root) },
+      context,
+    );
+    const timeout = Symbol("deferred task waited");
+
+    try {
+      const outcome = await Promise.race([
+        contender,
+        new Promise<typeof timeout>((resolve) =>
+          setTimeout(() => resolve(timeout), 100),
+        ),
+      ]);
+
+      expect(outcome).not.toBe(timeout);
+      expect(outcome).toMatchObject({
+        kind: "deferred",
+        taskId: contenderId,
+        requestId: contenderId,
+        reason: "task-conflict",
+      });
+      expect(open).not.toHaveBeenCalled();
+      expect(schedule).not.toHaveBeenCalled();
+      expect(faux.state.callCount).toBe(launchesBefore);
+      expect(runtime.results.size).toBe(resultsBefore);
+      expect(registry.values()).toHaveLength(recordsBefore);
+    } finally {
+      open.mockRestore();
+      schedule.mockRestore();
+      await runtime.execute("finish", {}, context);
+    }
+  });
+
+  it.each(["edge", "resource", "later-verification-lock"] as const)(
+    "[SLICE-4:task-lifetime-conflict] derives a task-lifetime %s conflict before admission",
+    async (source) => {
+      const root = makeRoot();
+      const runtime = activeRuntime();
+      const faux = fauxProvider({
+        provider: `abel-runtime-${source}-conflict-${providerSequence++}`,
+        api: "faux",
+      });
+      const ownerId = `${source}-owner`;
+      const contenderId = `${source}-contender`;
+      const sharedResource = source === "resource" ? [source] : [];
+      const sharedLaterLock =
+        source === "later-verification-lock" ? source : undefined;
+      faux.setResponses([response(ownerId)]);
+      const context = await contextFor(root, faux);
+      const owner = await runtime.execute(
+        "run",
+        {
+          request: request(ownerId, root, {
+            verificationLock: `${ownerId}-red`,
+            greenVerificationLock: sharedLaterLock ?? `${ownerId}-green`,
+            conflicts: source === "edge" ? [contenderId] : [],
+            resources: sharedResource,
+          }),
+        },
+        context,
+      );
+      expect(owner).toMatchObject({ kind: "candidate", taskId: ownerId });
+
+      const registry = (runtime as any).registry;
+      const scheduler = (runtime as any).scheduler;
+      const recordsBefore = registry.values().length;
+      const sequenceBefore = (runtime as any).batchSeq;
+      const open = vi.spyOn(registry, "open");
+      const schedule = vi.spyOn(scheduler, "schedule");
+
+      try {
+        const deferred = await runtime.execute(
+          "run",
+          {
+            request: request(contenderId, root, {
+              path: "b.txt",
+              verificationLock: `${contenderId}-red`,
+              greenVerificationLock: sharedLaterLock ?? `${contenderId}-green`,
+              resources: sharedResource,
+            }),
+          },
+          context,
+        );
+
+        expect(deferred).toMatchObject({
+          kind: "deferred",
+          taskId: contenderId,
+          requestId: contenderId,
+          reason: "task-conflict",
+        });
+        expect(open).not.toHaveBeenCalled();
+        expect(schedule).not.toHaveBeenCalled();
+        expect(faux.state.callCount).toBe(1);
+        expect(registry.values()).toHaveLength(recordsBefore);
+        expect((runtime as any).batchSeq).toBe(sequenceBefore);
+      } finally {
+        open.mockRestore();
+        schedule.mockRestore();
+        await runtime.execute("finish", {}, context);
+      }
+    },
+  );
+
+  it.each([
+    [
+      "blocked",
+      {
+        kind: "blocked",
+        phase: "red",
+        failure: {
+          kind: "approval-boundary",
+          code: "task-scope-insufficient",
+        },
+      },
+    ],
+    ["completed", { kind: "completed", finalPhase: "green" }],
+  ] as const)(
+    "[SLICE-4:task-lifetime-conflict] releases a %s task conflict and admits a later open",
+    async (terminalKind, terminalState) => {
+      const root = makeRoot();
+      const runtime = activeRuntime();
+      const faux = fauxProvider({
+        provider: `abel-runtime-${terminalKind}-release-${providerSequence++}`,
+        api: "faux",
+      });
+      const context = await contextFor(root, faux);
+      const registry = (runtime as any).registry;
+      const ownerRequest = request(`${terminalKind}-owner`, root);
+      const owner = registry.open(
+        ownerRequest.boundary,
+        "terminal-fixture",
+        root,
+        ownerRequest.attempt,
+      );
+      owner.state = structuredClone(terminalState);
+      const contenderId = `${terminalKind}-contender`;
+      faux.setResponses([response(contenderId)]);
+
+      try {
+        const outcome = await runtime.execute(
+          "run",
+          { request: request(contenderId, root) },
+          context,
+        );
+
+        expect(outcome).toMatchObject({
+          kind: "candidate",
+          taskId: contenderId,
+          requestId: contenderId,
+          phase: "red",
+          result: { kind: "diff", taskId: contenderId },
+        });
+        expect(faux.state.callCount).toBe(1);
+        expect(registry.values()).toHaveLength(2);
+        expect(
+          registry
+            .values()
+            .find(
+              (record: { boundary: { taskId: string } }) =>
+                record.boundary.taskId === contenderId,
+            )?.state.kind,
+        ).toBe("candidate-pending");
+      } finally {
+        await runtime.execute("finish", {}, context);
+      }
+    },
+  );
+
+  it("admits compatible Runtime runs through the Scheduler", async () => {
     const root = makeRoot();
     const runtime = activeRuntime();
     const faux = fauxProvider({
@@ -444,26 +854,284 @@ describe("Runtime Scheduler integration", () => {
     await waitFor(() => starts.length === 1);
     const right = runtime.execute(
       "run",
-      { request: request("right", root) },
+      {
+        request: request("right", root, {
+          path: "b.txt",
+          verificationLock: "runtime-scheduler-right",
+        }),
+      },
       context,
     );
-    await Promise.race([
-      waitFor(() => starts.length === 2, 250).catch(() => undefined),
-      new Promise((resolve) => setTimeout(resolve, 250)),
-    ]);
+    await waitFor(() => starts.length === 2);
     const startsBeforeFirstSettled = [...starts];
 
     first.resolve(response("left"));
-    await waitFor(() => starts.length === 2);
-    second.resolve(response("right"));
+    second.resolve(response("right", "b.txt"));
     const outcomes = await Promise.all([left, right]);
     await runtime.execute("finish", {}, context);
 
-    expect(startsBeforeFirstSettled).toEqual(["left"]);
-    expect(outcomes.every((outcome) => outcome.ok)).toBe(true);
+    expect(startsBeforeFirstSettled).toEqual(["left", "right"]);
+    expect(
+      outcomes.map((outcome) => ("kind" in outcome ? outcome.kind : null)),
+    ).toEqual(["candidate", "candidate"]);
   });
 
-  it("cancel aborts active work, settles it, and never starts queued work", async () => {
+  it("binds a same-task candidate before launching a queued phase attempt", async () => {
+    const root = makeRoot();
+    const runtime = activeRuntime();
+    const faux = fauxProvider({
+      provider: `abel-runtime-same-task-${providerSequence++}`,
+      api: "faux",
+    });
+    const context = await contextFor(root, faux);
+    const taskId = "same-task-race";
+    const admitted = request(taskId, root);
+    const registry = (runtime as any).registry;
+    registry.open(
+      admitted.boundary,
+      workerIdentity(context.model),
+      root,
+      admitted.attempt,
+    );
+    const phaseAttempt = (requestId: string) => ({
+      stage: "abel-implement" as const,
+      kind: "phase-attempt" as const,
+      attempt: { ...admitted.attempt, requestId },
+    });
+    const firstRequestId = `${taskId}:red:first`;
+    const secondRequestId = `${taskId}:red:second`;
+    const firstResponse = deferred<ReturnType<typeof fauxAssistantMessage>>();
+    let firstStarted = false;
+    faux.setResponses([
+      async () => {
+        firstStarted = true;
+        return firstResponse.promise;
+      },
+      fauxAssistantMessage(
+        fauxToolCall("abel_submit_result", {
+          ...submitted(secondRequestId),
+          taskId,
+        }),
+        { stopReason: "toolUse" },
+      ),
+    ]);
+
+    const first = runtime.execute(
+      "run",
+      { request: phaseAttempt(firstRequestId) },
+      context,
+    );
+    await waitFor(() => firstStarted);
+    const second = runtime.execute(
+      "run",
+      { request: phaseAttempt(secondRequestId) },
+      context,
+    );
+    const secondRejected = expect(second).rejects.toThrow(
+      /candidate|pending|launchable/i,
+    );
+    firstResponse.resolve(
+      fauxAssistantMessage(
+        fauxToolCall("abel_submit_result", {
+          ...submitted(firstRequestId),
+          taskId,
+        }),
+        { stopReason: "toolUse" },
+      ),
+    );
+
+    const firstOutcome = await first;
+    const resultId = candidateResultId(firstOutcome);
+    await secondRejected;
+
+    expect(faux.state.callCount).toBe(1);
+    expect(runtime.results.size).toBe(1);
+    expect(runtime.results.get(resultId)).toMatchObject({
+      taskId,
+      originRequestId: firstRequestId,
+    });
+    await runtime.execute("finish", {}, context);
+  });
+
+  it("rolls back a candidate cancelled after binding and preserves the phase budget", async () => {
+    const root = makeRoot();
+    const runtime = activeRuntime();
+    const faux = fauxProvider({
+      provider: `abel-runtime-bind-cancel-${providerSequence++}`,
+      api: "faux",
+    });
+    const context = await contextFor(root, faux);
+    const taskId = "candidate-bind-cancel";
+    const admitted = request(taskId, root);
+    const registry = (runtime as any).registry;
+    const worker = registry.open(
+      admitted.boundary,
+      workerIdentity(context.model),
+      root,
+      admitted.attempt,
+    );
+    const readyState = {
+      kind: "ready" as const,
+      phase: "red" as const,
+      launchIndex: 1 as const,
+      correction: {
+        kind: "artifact" as const,
+        code: "red-not-witnessed" as const,
+      },
+    };
+    worker.state = structuredClone(readyState);
+    const phaseAttempt = (requestId: string) => ({
+      stage: "abel-implement" as const,
+      kind: "phase-attempt" as const,
+      attempt: { ...admitted.attempt, requestId },
+    });
+    const firstRequestId = `${taskId}:red:cancelled`;
+    const retryRequestId = `${taskId}:red:retry`;
+    const taskResponse = (requestId: string) =>
+      fauxAssistantMessage(
+        fauxToolCall("abel_submit_result", {
+          ...submitted(requestId),
+          taskId,
+        }),
+        { stopReason: "toolUse" },
+      );
+    faux.setResponses([
+      taskResponse(firstRequestId),
+      taskResponse(retryRequestId),
+    ]);
+    const controller = new AbortController();
+    const originalRemember = (runtime as any).rememberRetainedResult.bind(
+      runtime,
+    );
+    vi.spyOn(runtime as any, "rememberRetainedResult").mockImplementationOnce(
+      (...args: unknown[]) => {
+        originalRemember(...args);
+        controller.abort(new Error("cancel after candidate binding"));
+      },
+    );
+
+    const cancelled = await (runtime.execute as any)(
+      "run",
+      { request: phaseAttempt(firstRequestId) },
+      context,
+      controller.signal,
+    );
+
+    expect(cancelled).toMatchObject({
+      kind: "cancelled",
+      taskId,
+      requestId: firstRequestId,
+      phase: "red",
+      usage: { totalTokens: expect.any(Number) },
+    });
+    expect(runtime.results.size).toBe(0);
+    expect(worker.state).toEqual(readyState);
+
+    const retried = await (runtime.execute as any)(
+      "run",
+      { request: phaseAttempt(retryRequestId) },
+      context,
+    );
+    const resultId = candidateResultId(retried);
+    expect(runtime.results.get(resultId)).toMatchObject({
+      taskId,
+      originRequestId: retryRequestId,
+      launchIndex: 1,
+    });
+    expect(faux.state.callCount).toBe(2);
+    await runtime.execute("finish", {}, context);
+  });
+
+  it("preserves a consumed transport launch when the second launch is cancelled", async () => {
+    const root = makeRoot();
+    const runtime = activeRuntime();
+    const faux = fauxProvider({
+      provider: `abel-runtime-transport-cancel-${providerSequence++}`,
+      api: "faux",
+    });
+    const context = await contextFor(root, faux);
+    const taskId = "transport-then-cancel";
+    const admitted = request(taskId, root);
+    const worker = (runtime as any).registry.open(
+      admitted.boundary,
+      workerIdentity(context.model),
+      root,
+      admitted.attempt,
+    );
+    const phaseAttempt = (requestId: string) => ({
+      stage: "abel-implement" as const,
+      kind: "phase-attempt" as const,
+      attempt: { ...admitted.attempt, requestId },
+    });
+    const secondStarted = deferred<void>();
+    const transportFailure = {
+      ok: false as const,
+      error: "sanitized transport failure",
+      failure: {
+        kind: "transport" as const,
+        code: "transport-failure" as const,
+      },
+      failureKind: "failed" as const,
+      failureClass: "transport" as const,
+    };
+    const dispatch = vi
+      .spyOn(runtime as any, "dispatchChild")
+      .mockResolvedValueOnce(transportFailure)
+      .mockImplementationOnce(async (...args: unknown[]) => {
+        const signal = args[3] as AbortSignal;
+        secondStarted.resolve();
+        await new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        );
+        return {
+          ok: false,
+          error: "cancelled",
+          failure: { kind: "cancelled", code: "cancelled" },
+          failureKind: "cancelled",
+        };
+      })
+      .mockResolvedValueOnce(transportFailure);
+    const controller = new AbortController();
+    const requestId = `${taskId}:red:cancelled`;
+    const running = (runtime.execute as any)(
+      "run",
+      { request: phaseAttempt(requestId) },
+      context,
+      controller.signal,
+    );
+    await secondStarted.promise;
+
+    controller.abort(new Error("cancel second transport launch"));
+    const cancelled = await running;
+
+    expect(cancelled).toMatchObject({
+      kind: "cancelled",
+      taskId,
+      requestId,
+      phase: "red",
+    });
+    expect(worker.state).toEqual({
+      kind: "ready",
+      phase: "red",
+      launchIndex: 1,
+    });
+
+    const stopped = await (runtime.execute as any)(
+      "run",
+      { request: phaseAttempt(`${taskId}:red:retry`) },
+      context,
+    );
+    expect(stopped).toMatchObject({
+      kind: "blocked",
+      taskId,
+      phase: "red",
+      failure: { kind: "attempts-exhausted", cause: "transport" },
+    });
+    expect(dispatch).toHaveBeenCalledTimes(3);
+    await runtime.execute("finish", {}, context);
+  });
+
+  it("cancel aborts active work without launching a deferred conflict", async () => {
     const root = makeRoot();
     const runtime = activeRuntime();
     const faux = fauxProvider({
@@ -516,10 +1184,18 @@ describe("Runtime Scheduler integration", () => {
 
     expect(cancel).toEqual({ ok: true, action: "cancel" });
     expect(cancellationReachedChild).toBe(true);
-    expect(outcome.ok).toBe(false);
-    if (!outcome.ok) expect(outcome.error).toMatch(/cancel/i);
-    expect(queuedOutcome.ok).toBe(false);
-    if (!queuedOutcome.ok) expect(queuedOutcome.error).toMatch(/cancel/i);
+    expect(outcome).toMatchObject({
+      kind: "cancelled",
+      taskId: "cancelled-child",
+      requestId: "cancelled-child",
+      phase: "red",
+    });
+    expect(queuedOutcome).toMatchObject({
+      kind: "deferred",
+      taskId: "queued-child",
+      requestId: "queued-child",
+      reason: "task-conflict",
+    });
     expect(faux.state.callCount).toBe(1);
     expect(retainedBeforeFinish).toBe(0);
   });
@@ -544,12 +1220,16 @@ describe("Runtime Scheduler integration", () => {
     );
     await runtime.execute("finish", {}, context);
 
-    expect(outcome.ok).toBe(false);
-    if (!outcome.ok) expect(outcome.error).toMatch(/tool call cancelled/i);
+    expect(outcome).toMatchObject({
+      kind: "cancelled",
+      taskId: "never-started",
+      requestId: "never-started",
+      phase: "red",
+    });
     expect(faux.state.callCount).toBe(0);
   });
 
-  it("tool cancellation settles only its own batch and releases a queued sibling", async () => {
+  it("tool cancellation settles only its own batch and preserves a compatible sibling", async () => {
     const root = makeRoot();
     const runtime = activeRuntime();
     const faux = fauxProvider({
@@ -568,7 +1248,7 @@ describe("Runtime Scheduler integration", () => {
         );
         return pending.promise;
       },
-      response("surviving-sibling"),
+      response("surviving-sibling", "b.txt"),
     ]);
     const context = await contextFor(root, faux);
     const controller = new AbortController();
@@ -581,7 +1261,12 @@ describe("Runtime Scheduler integration", () => {
     await waitFor(() => firstStarted);
     const sibling = runtime.execute(
       "run",
-      { request: request("surviving-sibling", root) },
+      {
+        request: request("surviving-sibling", root, {
+          path: "b.txt",
+          verificationLock: "runtime-tool-cancel-sibling",
+        }),
+      },
       context,
     );
 
@@ -602,13 +1287,19 @@ describe("Runtime Scheduler integration", () => {
 
     expect(raced).not.toBe(timeout);
     if (raced === timeout) return;
-    expect(raced[0].ok).toBe(false);
-    if (!raced[0].ok) expect(raced[0].error).toMatch(/tool call cancelled/i);
-    expect(
-      "resultId" in raced[0] ? raced[0].resultId : undefined,
-    ).toBeUndefined();
-    expect(raced[1].ok).toBe(true);
-    if (raced[1].ok) expect(raced[1].resultId).toBeTypeOf("string");
+    expect(raced[0]).toMatchObject({
+      kind: "cancelled",
+      taskId: "tool-cancelled",
+      requestId: "tool-cancelled",
+      phase: "red",
+    });
+    expect(raced[0]).not.toHaveProperty("resultId");
+    expect(raced[1]).toMatchObject({
+      kind: "candidate",
+      taskId: "surviving-sibling",
+      requestId: "surviving-sibling",
+      phase: "red",
+    });
     expect(retainedBeforeFinish).toBe(1);
     expect(faux.state.callCount).toBe(2);
   });
@@ -661,8 +1352,12 @@ describe("Runtime Scheduler integration", () => {
 
     expect(raced).not.toBe(timeout);
     if (raced === timeout) return;
-    expect(raced.ok).toBe(false);
-    if (!raced.ok) expect(raced.error).toMatch(/cancelled during auth/i);
+    expect(raced).toMatchObject({
+      kind: "cancelled",
+      taskId: "auth-window",
+      requestId: "auth-window",
+      phase: "red",
+    });
     expect(faux.state.callCount).toBe(0);
   });
 });

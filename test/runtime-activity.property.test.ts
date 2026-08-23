@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,6 +10,7 @@ import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Activation } from "../src/activation";
 import { runChildSession } from "../src/child-session";
+import { snapshotFiles } from "../src/file-snapshot";
 import { runtimeForProvider } from "../src/parent-provider";
 import { Runtime } from "../src/runtime";
 import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
@@ -22,22 +23,56 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 
-function request(id: string) {
+function request(id: string, root: string) {
   return {
     stage: "abel-implement",
-    role: "implementation-worker",
-    id,
-    phase: "green",
-    objective: `Complete ${id}`,
-    roots: ["."],
-    context: { agents: "root", contract: "approved" },
-    declared: {
-      read: ["a.txt"],
-      write: [],
-      conflicts: [],
-      resources: [],
+    kind: "open-task",
+    boundary: {
+      changeId: "runtime-activity-fixture",
+      taskId: id,
+      objective: `Complete ${id}`,
+      roots: ["."],
+      context: { agents: "root", contract: "approved" },
+      phases: {
+        red: {
+          read: ["a.txt"],
+          write: ["a.txt"],
+          verification: {
+            id: `verify-${id}-red`,
+            argv: ["bun", "run", "test:target", "test/expected-red.mjs"],
+            classification: "expected-red",
+            expectedFailure: "[RUNTIME-ACTIVITY:expected-red]",
+            minTests: 1,
+          },
+        },
+        green: {
+          read: ["a.txt"],
+          write: ["a.txt"],
+          verification: {
+            id: `verify-${id}-green`,
+            argv: ["bun", "run", "check"],
+            classification: "expected-green",
+            minTests: 1,
+          },
+        },
+      },
+      scheduling: { conflicts: [], resources: [] },
+      agents: { impact: "none", managedOnly: true },
+      approvedDependencies: [],
+      impactClosure: {
+        changedSurfaces: ["none"],
+        searchEvidence: [],
+        relatedTests: [],
+        affectedSuite: [],
+      },
     },
-    output: "evidence",
+    attempt: {
+      changeId: "runtime-activity-fixture",
+      taskId: id,
+      requestId: id,
+      phase: "red",
+      snapshot: snapshotFiles(root, ["a.txt"]),
+    },
   };
 }
 
@@ -45,14 +80,14 @@ function evidence(id: string) {
   return {
     id,
     role: "implementation-worker",
-    kind: "evidence",
-    conclusions: ["done"],
-    citations: [{ path: "a.txt", lines: "1" }],
-    constraints: [],
-    dependencies: [],
+    kind: "diff",
+    taskId: id,
+    phase: "red",
+    summary: "update activity fixture",
+    diff: "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n",
+    expectedVerification: "fixed fixture verification",
     risks: [],
-    blockingQuestions: [],
-    hints: { writeSet: [], verification: "none", agentsImpact: "none" },
+    contractCompliant: true,
   };
 }
 
@@ -60,6 +95,20 @@ async function runtimeFixture() {
   const cwd = mkdtempSync(join(tmpdir(), "abel-runtime-activity-"));
   roots.push(cwd);
   writeFileSync(join(cwd, "a.txt"), "old\n");
+  mkdirSync(join(cwd, "node_modules"));
+  mkdirSync(join(cwd, "test"));
+  writeFileSync(
+    join(cwd, "test/expected-red.mjs"),
+    "// fixture expected Red\n",
+  );
+  writeFileSync(
+    join(cwd, "package.json"),
+    `${JSON.stringify({
+      private: true,
+      scripts: { check: 'node -e ""', "test:target": "node" },
+    })}\n`,
+  );
+  writeFileSync(join(cwd, "bun.lock"), "# fixture lock\n");
   const faux = fauxProvider({
     provider: `abel-runtime-activity-${providerSequence++}`,
     api: "faux",
@@ -94,7 +143,7 @@ describe("request-scoped runtime activity", () => {
 
     const result = await (runtime.execute as any)(
       "run",
-      { request: request("activity") },
+      { request: request("activity", context.cwd) },
       context,
       undefined,
       (event: (typeof events)[number]) => {
@@ -103,7 +152,12 @@ describe("request-scoped runtime activity", () => {
       },
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({
+      kind: "candidate",
+      requestId: "activity",
+      taskId: "activity",
+      phase: "red",
+    });
     expect(events.map((event) => event.state)).toEqual([
       "queued",
       "running",
@@ -117,20 +171,21 @@ describe("request-scoped runtime activity", () => {
     const { runtime, context } = await runtimeFixture();
     const events: unknown[] = [];
 
-    const result = await (runtime.execute as any)(
-      "run",
-      { request: { id: "invalid" } },
-      context,
-      undefined,
-      (event: unknown) => events.push(event),
-    );
-
-    expect(result.ok).toBe(false);
+    await expect(
+      (runtime.execute as any)(
+        "run",
+        { request: { stage: "abel-implement", id: "invalid" } },
+        context,
+        undefined,
+        (event: unknown) => events.push(event),
+      ),
+    ).rejects.toThrow(/Implement protocol error/i);
     expect(events).toEqual([]);
   });
 
   it("keeps timeout redispatch semantics and emits only the final terminal state", async () => {
     const { runtime, context } = await runtimeFixture();
+    const dispatchChild = (runtime as any).dispatchChild.bind(runtime);
     const dispatch = vi
       .spyOn(runtime as any, "dispatchChild")
       .mockResolvedValueOnce({
@@ -138,22 +193,23 @@ describe("request-scoped runtime activity", () => {
         error: "anthropic claude-sonnet-4 timed out at /private/model.log",
         failureKind: "timed-out",
       })
-      .mockResolvedValueOnce({
-        ok: true,
-        action: "run",
-        result: evidence("activity"),
-      });
+      .mockImplementation(dispatchChild);
     const events: { state: string }[] = [];
 
     const result = await (runtime.execute as any)(
       "run",
-      { request: request("activity") },
+      { request: request("activity", context.cwd) },
       context,
       undefined,
       (event: { state: string }) => events.push(event),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({
+      kind: "candidate",
+      requestId: "activity",
+      taskId: "activity",
+      phase: "red",
+    });
     expect(dispatch).toHaveBeenCalledTimes(2);
     expect(events.map((event) => event.state)).toEqual([
       "queued",
@@ -162,7 +218,7 @@ describe("request-scoped runtime activity", () => {
     ]);
   });
 
-  it("reports timed-out only after the one allowed redispatch also times out", async () => {
+  it("reports one completed activity after bounded timeout attempts block the task", async () => {
     const { runtime, context } = await runtimeFixture();
     const dispatch = vi
       .spyOn(runtime as any, "dispatchChild")
@@ -175,21 +231,24 @@ describe("request-scoped runtime activity", () => {
 
     const result = await (runtime.execute as any)(
       "run",
-      { request: request("activity") },
+      { request: request("activity", context.cwd) },
       context,
       undefined,
       (event: { state: string; failureReason?: string }) => events.push(event),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({
+      kind: "blocked",
+      requestId: "activity",
+      taskId: "activity",
+      phase: "red",
+      failure: { kind: "attempts-exhausted", cause: "transport" },
+    });
     expect(dispatch).toHaveBeenCalledTimes(2);
     expect(events).toEqual([
       expect.objectContaining({ state: "queued" }),
       expect.objectContaining({ state: "running" }),
-      expect.objectContaining({
-        state: "timed-out",
-        failureReason: "phase timed out",
-      }),
+      expect.objectContaining({ state: "completed" }),
     ]);
     expect(JSON.stringify(events)).not.toMatch(/openai|gpt|private/i);
   });
@@ -217,7 +276,7 @@ describe("request-scoped runtime activity", () => {
     const states: string[] = [];
     const run = (runtime.execute as any)(
       "run",
-      { request: request("activity") },
+      { request: request("activity", context.cwd) },
       context,
       controller.signal,
       (event: { state: string }) => states.push(event.state),
@@ -227,8 +286,85 @@ describe("request-scoped runtime activity", () => {
     controller.abort(new Error("caller cancelled"));
     const result = await run;
 
-    expect(result.ok).toBe(false);
+    expect(result).toEqual({
+      kind: "cancelled",
+      requestId: "activity",
+      taskId: "activity",
+      phase: "red",
+    });
     expect(states).toEqual(["queued", "running", "cancelled"]);
+  });
+
+  it("[SLICE-3:terminal-replay] preserves correction state when its child launch is cancelled", async () => {
+    const { runtime, context } = await runtimeFixture();
+    const initial = request("activity", context.cwd);
+    const dispatch = vi
+      .spyOn(runtime as any, "dispatchChild")
+      .mockResolvedValueOnce({
+        ok: false,
+        error: "generated artifact rejected",
+        failureKind: "failed",
+        failureClass: "artifact",
+      })
+      .mockImplementation(async (...args: unknown[]) => {
+        const signal = args[3] as AbortSignal;
+        return new Promise((resolve) => {
+          signal.addEventListener(
+            "abort",
+            () =>
+              resolve({
+                ok: false,
+                error: "cancelled by caller",
+                failureKind: "cancelled",
+              }),
+            { once: true },
+          );
+        });
+      });
+
+    await (runtime.execute as any)("run", { request: initial }, context);
+    const stateBeforeCancellation = structuredClone(
+      (runtime as any).registry.values()[0].state,
+    );
+    expect(stateBeforeCancellation).toEqual({
+      kind: "ready",
+      phase: "red",
+      launchIndex: 1,
+      correction: { kind: "artifact", code: "invalid-diff" },
+    });
+
+    const controller = new AbortController();
+    const states: string[] = [];
+    const correction = {
+      stage: "abel-implement",
+      kind: "phase-attempt",
+      attempt: {
+        ...structuredClone(initial.attempt),
+        requestId: "activity:artifact-correction",
+      },
+    };
+    const run = (runtime.execute as any)(
+      "run",
+      { request: correction },
+      context,
+      controller.signal,
+      (event: { state: string }) => states.push(event.state),
+    );
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(2));
+
+    controller.abort(new Error("caller cancelled correction"));
+    const result = await run;
+
+    expect(result).toEqual({
+      kind: "cancelled",
+      requestId: "activity:artifact-correction",
+      taskId: "activity",
+      phase: "red",
+    });
+    expect(states).toEqual(["queued", "running", "cancelled"]);
+    expect((runtime as any).registry.values()[0].state).toEqual(
+      stateBeforeCancellation,
+    );
   });
 
   it("classifies caller cancellation and phase timeout below the display layer", async () => {

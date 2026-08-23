@@ -131,8 +131,10 @@ it("header red: ordinary and copy direct/parent outcomes", async () => {
     .toBe(true);
   expect
     .soft(
-      !copyParent.ok && copyParent.error.includes("copy"),
-      "parent copy error lacking copy",
+      !copyParent.ok &&
+        copyParent.failure.kind === "artifact" &&
+        copyParent.failure.code === "invalid-diff",
+      "parent copy rejection lacks typed invalid-diff failure",
     )
     .toBe(true);
 });

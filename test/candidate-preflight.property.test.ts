@@ -93,6 +93,25 @@ const DELETE_DIFF = Buffer.from(
   ].join("\n"),
 );
 
+function replacementDiff(
+  target: string,
+  before: string,
+  after: string,
+): Buffer {
+  const beforeLines = before.trimEnd().split("\n");
+  const afterLines = after.trimEnd().split("\n");
+  return Buffer.from(
+    [
+      `--- a/${target}`,
+      `+++ b/${target}`,
+      `@@ -1,${beforeLines.length} +1,${afterLines.length} @@`,
+      ...beforeLines.map((line) => `-${line}`),
+      ...afterLines.map((line) => `+${line}`),
+      "",
+    ].join("\n"),
+  );
+}
+
 const GREEN_OUTPUT = [
   " RUN  v4.1.8 /candidate",
   " ✓ test/candidate.test.ts (2 tests) 2ms",
@@ -140,7 +159,9 @@ function asDir(bound: Bound, name: string): DirBound {
   return entry;
 }
 
-function makeFixture(): Fixture {
+function makeFixture(
+  options: { trustedDependencies?: string[] } = {},
+): Fixture {
   const root = mkdtempSync(path.join(tmpdir(), "cadence-preflight-host-"));
   roots.push(root);
   mkdirSync(path.join(root, "src"));
@@ -157,6 +178,9 @@ function makeFixture(): Fixture {
           check: "tsc --noEmit",
           "test:target": "vitest run",
         },
+        ...(options.trustedDependencies
+          ? { trustedDependencies: options.trustedDependencies }
+          : {}),
       },
       null,
       2,
@@ -253,6 +277,7 @@ function inputFor(
     root: fixture.root,
     diff: options.diff ?? MODIFY_DIFF,
     writeSet: options.writeSet ?? ["src/value.ts"],
+    approvedDependencies: [],
     snapshot: options.snapshot ?? fixture.snapshot,
     baseline: fixture.baseline,
     verification: options.verification ?? verification("expected-green"),
@@ -272,6 +297,7 @@ interface CommandOutcome {
 
 interface SandboxScript {
   check?: CommandOutcome;
+  dependency?: CommandOutcome;
   probe?: CommandOutcome;
   target?: CommandOutcome;
   bwrapError?: Error;
@@ -281,7 +307,7 @@ interface SandboxScript {
 interface SandboxCall {
   args: string[];
   invocation: string[];
-  kind: "check" | "target" | "probe";
+  kind: "check" | "dependency" | "target" | "probe";
 }
 
 interface Observation {
@@ -417,11 +443,14 @@ function makeDependencies(script: SandboxScript = {}): {
     const kind: SandboxCall["kind"] =
       invocation[0]?.endsWith("bun") && invocation[1] === "--version"
         ? "probe"
-        : invocation[1] === "run" && invocation[2] === "check"
-          ? "check"
-          : invocation.length > 0
-            ? "target"
-            : "probe";
+        : invocation[1] === "install" &&
+            invocation.includes("--frozen-lockfile")
+          ? "dependency"
+          : invocation[1] === "run" && invocation[2] === "check"
+            ? "check"
+            : invocation.length > 0
+              ? "target"
+              : "probe";
     observed.calls.push({ args, invocation, kind });
     const checkout = checkoutIn(observed.temps);
     if (checkout)
@@ -442,11 +471,13 @@ function makeDependencies(script: SandboxScript = {}): {
     const outcome =
       kind === "probe"
         ? (script.probe ?? ok("1.3.14\n"))
-        : kind === "check"
-          ? (script.check ?? ok("check passed\n"))
-          : kind === "target"
-            ? (script.target ?? ok(GREEN_OUTPUT))
-            : ok("bubblewrap 0.test\n");
+        : kind === "dependency"
+          ? (script.dependency ?? ok("lockfile is consistent\n"))
+          : kind === "check"
+            ? (script.check ?? ok("check passed\n"))
+            : kind === "target"
+              ? (script.target ?? ok(GREEN_OUTPUT))
+              : ok("bubblewrap 0.test\n");
     if (kind === "target") {
       const destination = args.indexOf(SANDBOX_REPORT_TARGET);
       if (destination >= 2 && args[destination - 2] === "--bind") {
@@ -498,7 +529,7 @@ function hasMount(
   return false;
 }
 
-describe("isolated candidate preflight", () => {
+describe("[SLICE-2:typed-failure] isolated candidate preflight", () => {
   it("admits an expected Red only for the bound failure identity", async () => {
     const preflight = requirePreflight();
     const fixture = makeFixture();
@@ -524,7 +555,7 @@ describe("isolated candidate preflight", () => {
     expect(result.testCount).toBeGreaterThanOrEqual(1);
   });
 
-  it("returns a passing expected Red contract to Design", async () => {
+  it("classifies a passing Red candidate as an artifact, not proof of a Design defect", async () => {
     const preflight = requirePreflight();
     const fixture = makeFixture();
     const input = inputFor(fixture, {
@@ -536,13 +567,479 @@ describe("isolated candidate preflight", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      class: "design",
-      code: "red-contract-invalid",
+      kind: "artifact",
+      code: "red-not-witnessed",
       commandId: input.verification.id,
       exitCode: 0,
       checkoutRemoved: true,
     });
   });
+
+  it("[SLICE-2:typed-failure] returns an unapproved dependency addition as an approval boundary", async () => {
+    const preflight = requirePreflight();
+    const fixture = makeFixture();
+    const packagePath = path.join(fixture.root, "package.json");
+    const before = readFileSync(packagePath, "utf8");
+    const manifest = JSON.parse(before) as Record<string, unknown>;
+    manifest.dependencies = { "new-unapproved-package": "1.0.0" };
+    const after = `${JSON.stringify(manifest, null, 2)}\n`;
+    const beforeLines = before.trimEnd().split("\n");
+    const afterLines = after.trimEnd().split("\n");
+    const dependencyDiff = Buffer.from(
+      [
+        "--- a/package.json",
+        "+++ b/package.json",
+        `@@ -1,${beforeLines.length} +1,${afterLines.length} @@`,
+        ...beforeLines.map((line) => `-${line}`),
+        ...afterLines.map((line) => `+${line}`),
+        "",
+      ].join("\n"),
+    );
+    const input = inputFor(fixture, {
+      diff: dependencyDiff,
+      writeSet: ["package.json"],
+    });
+    const harness = makeDependencies();
+
+    const result = await preflight(input, harness.dependencies);
+
+    expect(readFileSync(packagePath, "utf8")).toBe(before);
+    expect(isCurrent(fixture.root, input.snapshot)).toBe(true);
+    expectCleanup(result, harness.observed);
+    expect(result).toMatchObject({
+      ok: false,
+      kind: "approval-boundary",
+      code: "unapproved-dependency-change",
+      checkoutRemoved: true,
+    });
+    expect(result).not.toHaveProperty("class");
+  });
+
+  it("[SLICE-2:typed-failure] propagates an unknown preflight exception", async () => {
+    const preflight = requirePreflight();
+    const fixture = makeFixture();
+    const input = inputFor(fixture);
+    const harness = makeDependencies();
+    const unknown = new Error("unknown preflight invariant");
+    const argv = input.verification.argv;
+    let sliceCount = 0;
+    input.verification.argv = new Proxy(argv, {
+      get(target, property, receiver) {
+        if (property === "slice" && ++sliceCount === 2) throw unknown;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    await expect(preflight(input, harness.dependencies)).rejects.toBe(unknown);
+    expect(harness.observed.temps).not.toHaveLength(0);
+    expect(harness.observed.removed).not.toHaveLength(0);
+    for (const temp of harness.observed.temps) {
+      expect(existsSync(temp)).toBe(false);
+    }
+  });
+
+  it("cleans up after a post-checkout spawn rejection without replacing the unknown exception", async () => {
+    const preflight = requirePreflight();
+    const fixture = makeFixture();
+    const harness = makeDependencies();
+    const unknown = new Error("opaque spawn rejection");
+    const remove = harness.dependencies.remove;
+    const spawn = harness.dependencies.spawn;
+    let cleanupAttempts = 0;
+    let spawnCalls = 0;
+    let rejectedAfterCheckout = false;
+    harness.dependencies.spawn = async (command, args, options) => {
+      if (++spawnCalls === 5) {
+        const temp = harness.observed.temps[0];
+        rejectedAfterCheckout =
+          temp !== undefined && existsSync(path.join(temp, "candidate/.git"));
+        throw unknown;
+      }
+      return spawn(command, args, options);
+    };
+    harness.dependencies.remove = ((
+      target: Parameters<typeof rmSync>[0],
+      options?: Parameters<typeof rmSync>[1],
+    ) => {
+      cleanupAttempts++;
+      if (cleanupAttempts === 1) throw new Error("cleanup retry required");
+      remove(target, options);
+    }) as typeof rmSync;
+
+    await expect(
+      preflight(inputFor(fixture), harness.dependencies),
+    ).rejects.toBe(unknown);
+    expect(harness.observed.temps).toHaveLength(1);
+    expect(rejectedAfterCheckout).toBe(true);
+    expect(cleanupAttempts).toBe(2);
+    expect(existsSync(harness.observed.temps[0] ?? "")).toBe(false);
+  });
+
+  it("rejects a lockfile-only dependency graph change without approval", async () => {
+    const preflight = requirePreflight();
+    const fixture = makeFixture();
+    const before = readFileSync(path.join(fixture.root, "bun.lock"), "utf8");
+    const input = inputFor(fixture, {
+      diff: replacementDiff(
+        "bun.lock",
+        before,
+        "# changed unapproved dependency graph\n",
+      ),
+      writeSet: ["bun.lock"],
+    });
+
+    const result = await preflight(input, makeDependencies().dependencies);
+
+    expect(result).toMatchObject({
+      ok: false,
+      kind: "approval-boundary",
+      code: "unapproved-dependency-change",
+      checkoutRemoved: true,
+    });
+  });
+
+  it("rejects Bun trustedDependencies even when the package name is dependency-approved", async () => {
+    const preflight = requirePreflight();
+    const fixture = makeFixture();
+    const packagePath = path.join(fixture.root, "package.json");
+    const before = readFileSync(packagePath, "utf8");
+    const manifest = JSON.parse(before) as Record<string, unknown>;
+    manifest.trustedDependencies = ["fixture-package"];
+    const input = inputFor(fixture, {
+      diff: replacementDiff(
+        "package.json",
+        before,
+        `${JSON.stringify(manifest, null, 2)}\n`,
+      ),
+      writeSet: ["package.json"],
+    });
+    input.approvedDependencies = ["fixture-package"];
+
+    const result = await preflight(input, makeDependencies().dependencies);
+
+    expect(result).toMatchObject({
+      ok: false,
+      kind: "approval-boundary",
+      code: "unapproved-dependency-change",
+      checkoutRemoved: true,
+    });
+  });
+
+  it("treats reordered Bun trustedDependencies as the same policy", async () => {
+    const preflight = requirePreflight();
+    const fixture = makeFixture({
+      trustedDependencies: ["fixture-second", "fixture-first"],
+    });
+    const packagePath = path.join(fixture.root, "package.json");
+    const before = readFileSync(packagePath, "utf8");
+    const manifest = JSON.parse(before) as Record<string, unknown>;
+    manifest.trustedDependencies = ["fixture-first", "fixture-second"];
+    const input = inputFor(fixture, {
+      diff: replacementDiff(
+        "package.json",
+        before,
+        `${JSON.stringify(manifest, null, 2)}\n`,
+      ),
+      writeSet: ["package.json"],
+    });
+
+    const result = await preflight(input, makeDependencies().dependencies);
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects malformed Bun trustedDependencies as a manifest artifact", async () => {
+    const preflight = requirePreflight();
+    const fixture = makeFixture();
+    const packagePath = path.join(fixture.root, "package.json");
+    const before = readFileSync(packagePath, "utf8");
+    const manifest = JSON.parse(before) as Record<string, unknown>;
+    manifest.trustedDependencies = ["fixture-package", "fixture-package"];
+    const input = inputFor(fixture, {
+      diff: replacementDiff(
+        "package.json",
+        before,
+        `${JSON.stringify(manifest, null, 2)}\n`,
+      ),
+      writeSet: ["package.json"],
+    });
+
+    const result = await preflight(input, makeDependencies().dependencies);
+
+    expect(result).toMatchObject({
+      ok: false,
+      kind: "artifact",
+      code: "package-manifest-invalid",
+      checkoutRemoved: true,
+    });
+  });
+
+  it.each([
+    [
+      "patchedDependencies",
+      { "fixture-package@1.0.0": "patches/fixture-package.patch" },
+    ],
+    ["catalog", { "fixture-package": "1.0.0" }],
+    ["catalogs", { stable: { "fixture-package": "1.0.0" } }],
+    ["bundledDependencies", ["fixture-package"]],
+    ["bundleDependencies", ["fixture-package"]],
+  ])(
+    "rejects Bun %s even when the package name is dependency-approved",
+    async (field, policy) => {
+      const preflight = requirePreflight();
+      const fixture = makeFixture();
+      const packagePath = path.join(fixture.root, "package.json");
+      const before = readFileSync(packagePath, "utf8");
+      const manifest = JSON.parse(before) as Record<string, unknown>;
+      manifest[field] = policy;
+      const input = inputFor(fixture, {
+        diff: replacementDiff(
+          "package.json",
+          before,
+          `${JSON.stringify(manifest, null, 2)}\n`,
+        ),
+        writeSet: ["package.json"],
+      });
+      input.approvedDependencies = ["fixture-package"];
+
+      const result = await preflight(input, makeDependencies().dependencies);
+
+      expect(result).toMatchObject({
+        ok: false,
+        kind: "approval-boundary",
+        code: "unapproved-dependency-change",
+        checkoutRemoved: true,
+      });
+    },
+  );
+
+  it("rejects pnpm patchedDependencies even when the package name is dependency-approved", async () => {
+    const preflight = requirePreflight();
+    const fixture = makeFixture();
+    const packagePath = path.join(fixture.root, "package.json");
+    const before = readFileSync(packagePath, "utf8");
+    const manifest = JSON.parse(before) as Record<string, unknown>;
+    manifest.pnpm = {
+      patchedDependencies: {
+        "fixture-package@1.0.0": "patches/fixture-package.patch",
+      },
+    };
+    const input = inputFor(fixture, {
+      diff: replacementDiff(
+        "package.json",
+        before,
+        `${JSON.stringify(manifest, null, 2)}\n`,
+      ),
+      writeSet: ["package.json"],
+    });
+    input.approvedDependencies = ["fixture-package"];
+
+    const result = await preflight(input, makeDependencies().dependencies);
+
+    expect(result).toMatchObject({
+      ok: false,
+      kind: "approval-boundary",
+      code: "unapproved-dependency-change",
+      checkoutRemoved: true,
+    });
+  });
+
+  it.each([[], { "fixture-package@1.0.0": 1 }])(
+    "rejects malformed Bun patchedDependencies as a manifest artifact",
+    async (patchedDependencies) => {
+      const preflight = requirePreflight();
+      const fixture = makeFixture();
+      const packagePath = path.join(fixture.root, "package.json");
+      const before = readFileSync(packagePath, "utf8");
+      const manifest = JSON.parse(before) as Record<string, unknown>;
+      manifest.patchedDependencies = patchedDependencies;
+      const input = inputFor(fixture, {
+        diff: replacementDiff(
+          "package.json",
+          before,
+          `${JSON.stringify(manifest, null, 2)}\n`,
+        ),
+        writeSet: ["package.json"],
+      });
+
+      const result = await preflight(input, makeDependencies().dependencies);
+
+      expect(result).toMatchObject({
+        ok: false,
+        kind: "artifact",
+        code: "package-manifest-invalid",
+        checkoutRemoved: true,
+      });
+    },
+  );
+
+  it.each([
+    ["bundledDependencies", "fixture-package"],
+    ["bundledDependencies", ["fixture-package", "fixture-package"]],
+    ["bundleDependencies", "fixture-package"],
+    ["bundleDependencies", ["fixture-package", "fixture-package"]],
+  ])(
+    "rejects malformed Bun %s as a manifest artifact",
+    async (field, policy) => {
+      const preflight = requirePreflight();
+      const fixture = makeFixture();
+      const packagePath = path.join(fixture.root, "package.json");
+      const before = readFileSync(packagePath, "utf8");
+      const manifest = JSON.parse(before) as Record<string, unknown>;
+      manifest[field] = policy;
+      const input = inputFor(fixture, {
+        diff: replacementDiff(
+          "package.json",
+          before,
+          `${JSON.stringify(manifest, null, 2)}\n`,
+        ),
+        writeSet: ["package.json"],
+      });
+
+      const result = await preflight(input, makeDependencies().dependencies);
+
+      expect(result).toMatchObject({
+        ok: false,
+        kind: "artifact",
+        code: "package-manifest-invalid",
+        checkoutRemoved: true,
+      });
+    },
+  );
+
+  it("rejects an approved manifest change mixed with any lockfile edit", async () => {
+    const preflight = requirePreflight();
+    const fixture = makeFixture();
+    const packagePath = path.join(fixture.root, "package.json");
+    const lockPath = path.join(fixture.root, "bun.lock");
+    const packageBefore = readFileSync(packagePath, "utf8");
+    const lockBefore = readFileSync(lockPath, "utf8");
+    const manifest = JSON.parse(packageBefore) as Record<string, unknown>;
+    manifest.dependencies = { foo: "2.0.0" };
+    const input = inputFor(fixture, {
+      diff: Buffer.concat([
+        replacementDiff(
+          "package.json",
+          packageBefore,
+          `${JSON.stringify(manifest, null, 2)}\n`,
+        ),
+        Buffer.from("diff --git a/bun.lock b/bun.lock\n"),
+        replacementDiff(
+          "bun.lock",
+          lockBefore,
+          "# fixture lock\n# unrelated bar source changed\n",
+        ),
+      ]),
+      writeSet: ["package.json", "bun.lock"],
+    });
+    input.approvedDependencies = ["foo"];
+
+    const result = await preflight(input, makeDependencies().dependencies);
+
+    expect(result).toMatchObject({
+      ok: false,
+      kind: "approval-boundary",
+      code: "unapproved-dependency-change",
+      checkoutRemoved: true,
+    });
+  });
+
+  it("rejects an approved manifest change when the bound lockfile disagrees", async () => {
+    const preflight = requirePreflight();
+    const fixture = makeFixture();
+    const packagePath = path.join(fixture.root, "package.json");
+    const before = readFileSync(packagePath, "utf8");
+    const manifest = JSON.parse(before) as Record<string, unknown>;
+    manifest.dependencies = { foo: "2.0.0" };
+    const input = inputFor(fixture, {
+      diff: replacementDiff(
+        "package.json",
+        before,
+        `${JSON.stringify(manifest, null, 2)}\n`,
+      ),
+      writeSet: ["package.json"],
+    });
+    input.approvedDependencies = ["foo"];
+    const harness = makeDependencies({
+      dependency: {
+        status: 1,
+        stdout: "",
+        stderr: "lockfile had changes, but lockfile is frozen",
+      },
+    });
+
+    const result = await preflight(input, harness.dependencies);
+
+    expect(
+      harness.observed.calls.find((call) => call.kind === "dependency")
+        ?.invocation,
+    ).toEqual([
+      "bun",
+      "install",
+      "--frozen-lockfile",
+      "--dry-run",
+      "--ignore-scripts",
+      "--no-progress",
+    ]);
+    expect(result).toMatchObject({
+      ok: false,
+      kind: "approval-boundary",
+      code: "unapproved-dependency-change",
+      checkoutRemoved: true,
+    });
+  });
+
+  it("admits an approved manifest change when the bound lockfile agrees", async () => {
+    const preflight = requirePreflight();
+    const fixture = makeFixture();
+    const packagePath = path.join(fixture.root, "package.json");
+    const before = readFileSync(packagePath, "utf8");
+    const manifest = JSON.parse(before) as Record<string, unknown>;
+    manifest.dependencies = { foo: "2.0.0" };
+    const input = inputFor(fixture, {
+      diff: replacementDiff(
+        "package.json",
+        before,
+        `${JSON.stringify(manifest, null, 2)}\n`,
+      ),
+      writeSet: ["package.json"],
+    });
+    input.approvedDependencies = ["foo"];
+    const harness = makeDependencies();
+
+    const result = await preflight(input, harness.dependencies);
+
+    expect(
+      harness.observed.calls.find((call) => call.kind === "dependency"),
+    ).toBeDefined();
+    expect(result.ok).toBe(true);
+  });
+
+  it.each(["overrides", "resolutions"])(
+    "rejects an unapproved package-manager %s change",
+    async (field) => {
+      const preflight = requirePreflight();
+      const fixture = makeFixture();
+      const packagePath = path.join(fixture.root, "package.json");
+      const before = readFileSync(packagePath, "utf8");
+      const manifest = JSON.parse(before) as Record<string, unknown>;
+      manifest[field] = { "new-unapproved-package": "1.0.0" };
+      const after = `${JSON.stringify(manifest, null, 2)}\n`;
+      const input = inputFor(fixture, {
+        diff: replacementDiff("package.json", before, after),
+        writeSet: ["package.json"],
+      });
+
+      const result = await preflight(input, makeDependencies().dependencies);
+
+      expect(result).toMatchObject({
+        ok: false,
+        kind: "approval-boundary",
+        code: "unapproved-dependency-change",
+        checkoutRemoved: true,
+      });
+    },
+  );
 
   it("admits an expected Green control with discovered tests", async () => {
     const preflight = requirePreflight();
@@ -719,7 +1216,7 @@ describe("isolated candidate preflight", () => {
       expect(result.ok, scenario.label).toBe(false);
       if (result.ok) continue;
       expect(result, scenario.label).toMatchObject({
-        class: "artifact",
+        kind: "artifact",
         checkoutRemoved: true,
         ...(scenario.expected ?? {}),
       });
@@ -740,7 +1237,7 @@ describe("isolated candidate preflight", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      class: "stale",
+      kind: "stale",
       checkoutRemoved: true,
     });
     expect(harness.observed.calls).toHaveLength(0);
@@ -813,7 +1310,7 @@ describe("isolated candidate preflight", () => {
 
     const result = await preflight(inputFor(fixture), harness.dependencies);
 
-    expect(result).toMatchObject({ ok: false, class: "artifact" });
+    expect(result).toMatchObject({ ok: false, kind: "artifact" });
     expectCleanup(result, harness.observed);
   });
 
@@ -840,7 +1337,7 @@ describe("isolated candidate preflight", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      class: "environment",
+      kind: "environment",
       code: "checkout-cleanup-failed",
       checkoutRemoved: true,
     });
@@ -865,7 +1362,7 @@ describe("isolated candidate preflight", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      class: "environment",
+      kind: "environment",
       code: "checkout-cleanup-failed",
       checkoutRemoved: false,
     });
@@ -889,7 +1386,7 @@ describe("isolated candidate preflight", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      class: "cancelled",
+      kind: "cancelled",
       checkoutRemoved: true,
     });
     expectCleanup(result, harness.observed);
@@ -1019,7 +1516,7 @@ describe("isolated candidate preflight", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      class: "stale",
+      kind: "stale",
       code: "stale-snapshot",
       checkoutRemoved: true,
     });
@@ -1073,7 +1570,7 @@ describe("isolated candidate preflight", () => {
     controller.abort(new Error("cancel running preflight"));
     const result = await pending;
 
-    expect(result).toMatchObject({ ok: false, class: "cancelled" });
+    expect(result).toMatchObject({ ok: false, kind: "cancelled" });
     expectCleanup(result, harness.observed);
   });
 
@@ -1089,7 +1586,7 @@ describe("isolated candidate preflight", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      class: "environment",
+      kind: "environment",
       checkoutRemoved: true,
     });
     expectCleanup(result, harness.observed);
@@ -1106,7 +1603,7 @@ describe("isolated candidate preflight", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      class: "environment",
+      kind: "environment",
       code: "sandbox-runtime-unavailable",
       exitCode: 127,
       checkoutRemoved: true,
@@ -1137,7 +1634,7 @@ describe("isolated candidate preflight", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      class: "environment",
+      kind: "environment",
       code: "dependency-path-unsafe",
       checkoutRemoved: true,
     });
@@ -1159,7 +1656,7 @@ describe("isolated candidate preflight", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      class: "artifact",
+      kind: "artifact",
       code: "verification-rejected",
       exitCode: 127,
       checkoutRemoved: true,
@@ -1181,7 +1678,7 @@ describe("isolated candidate preflight", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      class: "artifact",
+      kind: "artifact",
       code: "candidate-check-failed",
       exitCode: 127,
       checkoutRemoved: true,

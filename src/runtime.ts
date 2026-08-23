@@ -1,18 +1,33 @@
-import { lstatSync, readdirSync } from "node:fs";
+import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import path from "node:path";
+import type { Usage } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Activation, type ActivationState } from "./activation.ts";
 import { loadAgentDefinitions } from "./agent-registry.ts";
 import type { BaselineEntry } from "./candidate-preflight.ts";
-import { runChildSession } from "./child-session.ts";
+import { runChildSession, UsageAggregator } from "./child-session.ts";
 import {
   ACTIONS,
+  type AgentsCheckpointAttempt,
+  type AgentsCheckpointRequest,
+  type CandidateFailure,
+  type ChildFailure,
   type DiffResult,
+  type ImplementApplyOperation,
+  type ImplementationPhase,
+  type ImplementDiscardOperation,
+  type ImplementOutcome,
+  type ImplementRunRequest,
   LIMITS,
-  type RecoveryCode,
-  type RecoveryNext,
-  type RecoveryRecord,
+  type PhaseAttempt,
   type RequestEnvelope,
+  type RunRequest,
+  type TaskBoundary,
+  type TaskFailure,
+  validateAgentsCheckpointAttempt,
+  validateImplementApplyOperation,
+  validateImplementDiscardOperation,
+  validatePhaseAttemptAgainstBoundary,
   validateRequestEnvelope,
 } from "./contracts.ts";
 import { drainStage } from "./drain.ts";
@@ -28,19 +43,177 @@ import {
 } from "./file-snapshot.ts";
 import type { ParentPayloadBridge } from "./parent-payload-bridge.ts";
 import { runtimeFromContext } from "./parent-provider.ts";
-import { applyRetainedPatch } from "./patch.ts";
-import { ResultStore } from "./result-store.ts";
-import { Scheduler } from "./scheduler.ts";
+import { applyAgentsCheckpoint, applyRetainedPatch } from "./patch.ts";
 import {
-  contractOf,
-  type LogicalWorker,
-  sameContract,
-  samePhaseContract,
+  type BoundRetainedResult,
+  ResultStore,
+  type RetainedCandidateFacts,
+  type RetainedCandidateIdentity,
+} from "./result-store.ts";
+import { declarationsConflict, Scheduler } from "./scheduler.ts";
+import {
+  type TaskRecord,
+  taskConflictOf,
+  taskRecordKey,
   WorkerRegistry,
   workerIdentity,
 } from "./worker.ts";
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+function isFileSystemFailure(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+  );
+}
+
+function canonicalWorkspaceRoot(root: string): string | null {
+  try {
+    return realpathSync(root);
+  } catch {
+    return null;
+  }
+}
+
+function isImplementRunRequest(
+  request: RunRequest,
+): request is ImplementRunRequest {
+  return request.stage === "abel-implement" && "kind" in request;
+}
+
+function targetsImplement(request: unknown): boolean {
+  return (
+    typeof request === "object" &&
+    request !== null &&
+    !Array.isArray(request) &&
+    (request as Record<string, unknown>).stage === "abel-implement"
+  );
+}
+
+function cloneLegacyEnvelope(request: RequestEnvelope): RequestEnvelope {
+  return {
+    ...request,
+    taskId: request.taskId ?? request.id,
+    roots: [...request.roots],
+    context: { ...request.context },
+    declared: {
+      ...request.declared,
+      read: [...request.declared.read],
+      write: [...request.declared.write],
+      conflicts: [...request.declared.conflicts],
+      resources: [...request.declared.resources],
+    },
+    ...(request.approvedDependencies === undefined
+      ? {}
+      : { approvedDependencies: [...request.approvedDependencies] }),
+    ...(request.impactClosure === undefined
+      ? {}
+      : { impactClosure: structuredClone(request.impactClosure) }),
+    ...(request.verification === undefined
+      ? {}
+      : {
+          verification: {
+            ...request.verification,
+            argv: [...request.verification.argv],
+          },
+        }),
+    ...(request.snapshot === undefined
+      ? {}
+      : { snapshot: structuredClone(request.snapshot) }),
+  };
+}
+
+function deriveImplementEnvelope(
+  record: TaskRecord,
+  attempt: PhaseAttempt,
+): RequestEnvelope {
+  const boundary = record.boundary;
+  const phase = boundary.phases[attempt.phase];
+  if (!phase) throw new Error("task attempt phase is not declared");
+  return {
+    stage: "abel-implement",
+    role: "implementation-worker",
+    taskId: boundary.taskId,
+    id: attempt.requestId,
+    phase: attempt.phase,
+    objective: boundary.objective,
+    roots: [...boundary.roots],
+    context: { ...boundary.context },
+    declared: {
+      read: [...phase.read],
+      write: [...phase.write],
+      conflicts: [...boundary.scheduling.conflicts],
+      resources: [...boundary.scheduling.resources],
+      ...(phase.verificationLock === undefined
+        ? {}
+        : { verificationLock: phase.verificationLock }),
+    },
+    output: "diff",
+    agentsImpact: boundary.agents.impact,
+    ...(boundary.agents.target === undefined
+      ? {}
+      : { agentsTarget: boundary.agents.target }),
+    agentsManagedOnly: true,
+    approvedDependencies: [...boundary.approvedDependencies],
+    impactClosure: structuredClone(boundary.impactClosure),
+    verification: {
+      ...phase.verification,
+      argv: [...phase.verification.argv],
+    },
+    snapshot: structuredClone(attempt.snapshot),
+  };
+}
+
+function nextDeclaredPhase(
+  boundary: TaskBoundary,
+  phase: PhaseAttempt["phase"],
+): "green" | "refactor" | null {
+  if (phase === "red") return "green";
+  if (phase === "green" && boundary.phases.refactor) return "refactor";
+  return null;
+}
+
+function assertAttemptAllowed(record: TaskRecord, attempt: PhaseAttempt): void {
+  switch (record.state.kind) {
+    case "candidate-pending":
+      throw new Error("current phase candidate is awaiting parent apply");
+    case "agents-checkpoint-pending":
+      throw new Error("AGENTS checkpoint is pending");
+    case "blocked":
+      if (attempt.phase !== record.state.phase) {
+        throw new Error("terminal task phase mismatch");
+      }
+      return;
+    case "completed":
+      if (attempt.phase !== record.state.finalPhase) {
+        throw new Error("terminal task phase mismatch");
+      }
+      return;
+    case "ready":
+      if (attempt.phase !== record.state.phase) {
+        throw new Error("invalid implementation phase transition");
+      }
+  }
+}
+
+function taskPhase(record: TaskRecord): PhaseAttempt["phase"] {
+  return record.state.kind === "agents-checkpoint-pending" ||
+    record.state.kind === "completed"
+    ? record.state.finalPhase
+    : record.state.phase;
+}
+
+function taskLaunchIndex(record: TaskRecord): 0 | 1 {
+  return record.state.kind === "ready" ||
+    record.state.kind === "candidate-pending"
+    ? record.state.launchIndex
+    : record.state.kind === "blocked" &&
+        record.state.failure.kind === "attempts-exhausted"
+      ? 1
+      : 0;
+}
 
 interface PreparedPreflight {
   snapshot: Bound;
@@ -194,7 +367,9 @@ function preparePreflight(
   };
 }
 
-function cancellationError(signal: AbortSignal): { ok: false; error: string } {
+function cancellationError(
+  signal: AbortSignal,
+): Extract<WrappedDispatchResult, { ok: false }> {
   const reason = signal.reason;
   return {
     ok: false,
@@ -209,60 +384,140 @@ function cancellationError(signal: AbortSignal): { ok: false; error: string } {
 
 type FailureClass = "transport" | "artifact" | "environment";
 
-type InternalDispatchResult = DispatchResult & {
+type InternalResultMetadata = {
   failureKind?: RunFailureKind;
   failureClass?: FailureClass;
+  failure?: ChildFailure | TaskFailure;
   launchConsumed?: true;
 };
 
-interface RecoveryIdentity {
-  taskId?: string;
-  id: string;
-  phase: string;
+type ChildDispatchResult = WrappedDispatchResult & InternalResultMetadata;
+type InternalDispatchResult = (
+  | WrappedDispatchResult
+  | (ImplementOutcome & { usage?: Usage })
+) &
+  InternalResultMetadata;
+type InternalFailureResult = Extract<WrappedDispatchResult, { ok: false }> &
+  InternalResultMetadata;
+
+interface OutcomeIdentity {
+  taskId: string;
+  requestId: string;
+  phase: ImplementationPhase;
 }
 
-function recoveryFailure(
-  identity: RecoveryIdentity,
-  code: RecoveryCode,
-  next: RecoveryNext,
-  launchIndex: 0 | 1,
-  failureKind: RunFailureKind = "failed",
-  detail = "branch recovery is required",
-): InternalDispatchResult {
-  const recovery: RecoveryRecord = {
-    code,
-    taskId: identity.taskId ?? identity.id,
-    requestId: identity.id,
-    phase: identity.phase,
-    launchIndex,
-    branchBlocked: true,
-    dependentsBlocked: true,
-    partialResultUsable: false,
-    independentResultsPreserved: true,
-    next,
-  };
+function blockedOutcome(
+  identity: OutcomeIdentity,
+  failure: TaskFailure,
+): ImplementOutcome {
+  return { kind: "blocked", ...identity, failure: structuredClone(failure) };
+}
+
+function cancelledOutcome(identity: OutcomeIdentity): ImplementOutcome {
+  return { kind: "cancelled", ...identity };
+}
+
+function retryOutcome(
+  identity: OutcomeIdentity,
+  scope: "worker" | "checkpoint",
+  cause: "artifact" | "stale",
+): ImplementOutcome {
   return {
-    ok: false,
-    error: `${code}: ${detail}`,
-    recovery,
-    failureKind,
+    kind: "retry",
+    ...identity,
+    scope,
+    cause,
+    remainingAttempts: 1,
   };
 }
 
-function normalizedArtifactRejection(error: string): string {
-  const preflight = /candidate preflight rejected: artifact:([a-z0-9-]+)/i.exec(
-    error,
-  );
-  return preflight
-    ? `candidate-preflight:${preflight[1].toLowerCase()}`
+function failureClassOf(failure: ChildFailure): FailureClass | undefined {
+  switch (failure.kind) {
+    case "artifact":
+      return "artifact";
+    case "environment":
+      return "environment";
+    case "transport":
+      return "transport";
+    case "stale":
+    case "approval-boundary":
+    case "cancelled":
+    case "result-limit":
+      return undefined;
+  }
+}
+
+function artifactCorrectionEvidence(failure?: ChildFailure): string {
+  return failure?.kind === "artifact"
+    ? `candidate:${failure.code}`
     : "generated-artifact-rejection";
 }
 
-interface RetainedRunIdentity {
-  taskId: string;
-  requestId: string;
-  phase: string;
-  launchIndex: 0 | 1;
+function childFailureOf(result: InternalFailureResult): ChildFailure {
+  if (result.failure) {
+    switch (result.failure.kind) {
+      case "artifact":
+      case "stale":
+      case "environment":
+      case "approval-boundary":
+      case "cancelled":
+      case "result-limit":
+      case "transport":
+        return result.failure;
+      case "attempts-exhausted":
+      case "checkpoint-attempts-exhausted":
+        break;
+    }
+  }
+  if (result.failureKind === "cancelled") {
+    return { kind: "cancelled", code: "cancelled" };
+  }
+  switch (result.failureClass) {
+    case "artifact":
+      return { kind: "artifact", code: "invalid-diff" };
+    case "environment":
+      return { kind: "environment", code: "root-unavailable" };
+    default:
+      return {
+        kind: "transport",
+        code:
+          result.failureKind === "timed-out" ? "timeout" : "transport-failure",
+      };
+  }
+}
+
+function terminalTaskFailure(failure: ChildFailure): TaskFailure | undefined {
+  switch (failure.kind) {
+    case "approval-boundary":
+    case "environment":
+    case "result-limit":
+      return failure;
+    case "artifact":
+    case "stale":
+    case "cancelled":
+    case "transport":
+      return undefined;
+  }
+}
+
+function attemptFailureCause(
+  failure: ChildFailure,
+): "artifact" | "stale" | "transport" {
+  switch (failure.kind) {
+    case "artifact":
+    case "stale":
+    case "transport":
+      return failure.kind;
+    case "approval-boundary":
+    case "environment":
+    case "result-limit":
+    case "cancelled":
+      throw new Error("non-retryable failure reached the launch budget");
+  }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`unhandled candidate failure: ${JSON.stringify(value)}`);
 }
 
 export type RunFailureKind = "failed" | "cancelled" | "timed-out";
@@ -293,7 +548,7 @@ export type RuntimeActivityObserver = (
 ) => void | Promise<void>;
 
 interface ScheduledRunResult {
-  dispatch: DispatchResult;
+  dispatch: InternalDispatchResult;
   failureKind?: RunFailureKind;
 }
 
@@ -343,26 +598,30 @@ function isSafeBound(snapshot: unknown): snapshot is Bound {
   return true;
 }
 
-export type DispatchResult =
+export type WrappedDispatchResult =
   | {
       ok: true;
       action: string;
       result?: unknown;
       resultId?: string;
-      usage?: unknown;
+      usage?: Usage;
     }
   | {
       ok: false;
       notReady?: true;
       error: string;
-      recovery?: RecoveryRecord;
+      failure?: ChildFailure | TaskFailure;
+      usage?: Usage;
     };
 
-export interface ApplyResult {
-  targets: string[];
-  checkExitCode: 0;
-  applyExitCode: 0;
-  sequence?: number;
+export type DispatchResult =
+  | WrappedDispatchResult
+  | (ImplementOutcome & { usage?: Usage });
+
+export function isWrappedDispatchResult(
+  result: DispatchResult,
+): result is WrappedDispatchResult {
+  return "ok" in result;
 }
 
 export interface RuntimeOptions {
@@ -378,6 +637,7 @@ interface StoredRunContext {
   sequence: number;
   runningEmitted: boolean;
   terminalEmitted: boolean;
+  usage: UsageAggregator;
 }
 
 export class Runtime {
@@ -389,7 +649,7 @@ export class Runtime {
   private batchSeq = 0;
   private readonly parentPayloadBridge: ParentPayloadBridge;
   private readonly registry = new WorkerRegistry();
-  private readonly retainedRuns = new Map<string, RetainedRunIdentity>();
+  private readonly taskRecords = new WeakMap<RequestEnvelope, TaskRecord>();
   private readonly runContexts = new WeakMap<
     RequestEnvelope,
     StoredRunContext
@@ -404,8 +664,57 @@ export class Runtime {
       execute: async (request, signal) => {
         const context = this.runContexts.get(request);
         if (!context) throw new Error("scheduled run context is unavailable");
+        const task = this.taskRecords.get(request);
+        let candidateRollback:
+          | {
+              resultId: string;
+              requestId: string;
+              phase: ImplementationPhase;
+              launchIndex: 0 | 1;
+              priorState: TaskRecord["state"];
+            }
+          | undefined;
+        const rollback = () => {
+          const pending = candidateRollback;
+          if (!pending) return;
+          this.results.discard(pending.resultId);
+          if (
+            task?.state.kind === "candidate-pending" &&
+            task.state.resultId === pending.resultId &&
+            task.state.originRequestId === pending.requestId &&
+            task.state.phase === pending.phase &&
+            task.state.launchIndex === pending.launchIndex
+          ) {
+            task.state = structuredClone(pending.priorState);
+          }
+        };
+        signal.addEventListener("abort", rollback, { once: true });
         this.notify(request, context, "running");
-        const result = await this.runScheduled(request, context.ctx, signal);
+        const result = await this.runScheduled(request, context, signal);
+        if (!isWrappedDispatchResult(result) && result.kind === "candidate") {
+          if (!task) throw new Error("candidate TaskRecord is unavailable");
+          if (task.state.kind !== "ready") {
+            throw new Error("candidate TaskRecord is not ready");
+          }
+          candidateRollback = {
+            resultId: result.resultId,
+            requestId: result.requestId,
+            phase: result.phase,
+            launchIndex: task.state.launchIndex,
+            priorState: structuredClone(task.state),
+          };
+          if (signal.aborted) {
+            rollback();
+          } else {
+            try {
+              this.rememberRetainedResult(result, request, task);
+            } catch (error) {
+              this.results.discard(result.resultId);
+              throw error;
+            }
+            if (signal.aborted) rollback();
+          }
+        }
         return {
           dispatch: result,
           ...(result.failureKind === undefined
@@ -418,13 +727,19 @@ export class Runtime {
 
   async execute(
     action: string,
-    params: { request?: unknown; resultId?: string },
+    params: {
+      request?: unknown;
+      resultId?: string;
+      requestId?: string;
+      rejection?: unknown;
+      agentsCheckpoint?: unknown;
+    },
     ctx?: RunContext,
     signal?: AbortSignal,
     observer?: RuntimeActivityObserver,
   ): Promise<DispatchResult> {
     if (!(ACTIONS as readonly string[]).includes(action)) {
-      return { ok: false, error: `unknown action: ${String(action)}` };
+      throw new Error(`unknown action: ${String(action)}`);
     }
     if (!this.activation.isActive()) {
       return { ok: false, notReady: true, error: "dispatcher is not active" };
@@ -432,13 +747,55 @@ export class Runtime {
     if (action === "run")
       return this.run(params.request, ctx, signal, observer);
     if (action === "apply") {
-      if (!ctx || !params.resultId)
-        return { ok: false, error: "apply requires context and resultId" };
-      return this.enqueueApply(ctx.cwd, params.resultId, signal);
+      if (!ctx) throw new Error("apply requires context");
+      if (params.agentsCheckpoint !== undefined) {
+        if (params.resultId !== undefined) {
+          throw new Error("apply accepts either resultId or AGENTS checkpoint");
+        }
+        const validation = validateAgentsCheckpointAttempt(
+          params.agentsCheckpoint,
+        );
+        if (!validation.ok) {
+          throw new Error(`Implement protocol error: ${validation.reason}`);
+        }
+        return this.enqueueAgentsCheckpoint(ctx.cwd, validation.value, signal);
+      }
+      if (!params.resultId) {
+        throw new Error("apply requires resultId");
+      }
+      const retained = this.results.get(params.resultId);
+      if (
+        params.requestId !== undefined ||
+        (retained && this.results.hasCandidateIdentity(params.resultId))
+      ) {
+        const validation = validateImplementApplyOperation(params);
+        if (!validation.ok) {
+          throw new Error(`Implement protocol error: ${validation.reason}`);
+        }
+        if (!retained || !this.results.hasCandidateIdentity(params.resultId)) {
+          throw new Error("retained Implement result not found");
+        }
+        return this.enqueueApply(ctx.cwd, validation.value, signal);
+      }
+      return this.enqueueApply(ctx.cwd, { resultId: params.resultId }, signal);
     }
     if (action === "discard") {
-      if (!params.resultId)
-        return { ok: false, error: "discard requires resultId" };
+      if (!params.resultId) throw new Error("discard requires resultId");
+      const retained = this.results.get(params.resultId);
+      if (
+        params.requestId !== undefined ||
+        params.rejection !== undefined ||
+        (retained && this.results.hasCandidateIdentity(params.resultId))
+      ) {
+        const validation = validateImplementDiscardOperation(params);
+        if (!validation.ok) {
+          throw new Error(`Implement protocol error: ${validation.reason}`);
+        }
+        if (!retained || !this.results.hasCandidateIdentity(params.resultId)) {
+          throw new Error("retained Implement result not found");
+        }
+        return this.enqueueDiscard(validation.value);
+      }
       return this.discardRetainedCandidate(params.resultId)
         ? { ok: true, action }
         : { ok: false, error: "retained result not found" };
@@ -451,181 +808,493 @@ export class Runtime {
     return { ok: true, action: "finish" };
   }
 
-  private discardRetainedCandidate(resultId: string): boolean {
-    const identity = this.retainedRuns.get(resultId);
-    if (!this.results.discard(resultId)) return false;
-    this.retainedRuns.delete(resultId);
-    if (!identity) return true;
-    const worker = this.registry.get(identity.taskId);
+  private enqueueAgentsCheckpoint(
+    root: string,
+    attempt: AgentsCheckpointAttempt,
+    signal?: AbortSignal,
+  ): Promise<DispatchResult> {
+    const sequence = ++this.applySeq;
+    return this.enqueueParentApply(() =>
+      this.performAgentsCheckpoint(root, attempt, signal),
+    ).then((result) => {
+      if (
+        isWrappedDispatchResult(result) ||
+        result.kind !== "completed" ||
+        !result.result
+      ) {
+        return result;
+      }
+      return {
+        ...result,
+        result: { ...result.result, sequence },
+      };
+    });
+  }
+
+  private async performAgentsCheckpoint(
+    root: string,
+    attempt: AgentsCheckpointAttempt,
+    signal?: AbortSignal,
+  ): Promise<DispatchResult> {
+    const workspaceRoot = canonicalWorkspaceRoot(root);
+    if (!workspaceRoot) {
+      throw new Error("AGENTS checkpoint workspace is unavailable");
+    }
+    const worker = this.registry.get(
+      taskRecordKey(workspaceRoot, attempt.changeId, attempt.taskId),
+    );
+    if (!worker) {
+      if (
+        this.registry
+          .values()
+          .some((record) => record.workspaceRoot === workspaceRoot)
+      ) {
+        throw new Error("AGENTS checkpoint identity mismatch");
+      }
+      throw new Error("logical Worker is unavailable for AGENTS checkpoint");
+    }
+    const agents = worker.boundary.agents;
+    if (agents.impact === "none" || !agents.target || !agents.managedOnly) {
+      throw new Error("AGENTS checkpoint contract mismatch");
+    }
+    if (worker.state.kind !== "agents-checkpoint-pending") {
+      throw new Error("AGENTS checkpoint is not pending");
+    }
     if (
-      worker?.currentPhase.requestId !== identity.requestId ||
-      worker.currentPhase.phase !== identity.phase
+      Object.keys(attempt.snapshot as Record<string, unknown>).length !== 1 ||
+      !Object.hasOwn(attempt.snapshot as object, agents.target)
     ) {
-      return true;
+      throw new Error("AGENTS checkpoint target mismatch");
     }
-    if (identity.launchIndex === 0) {
-      worker.currentPhase.correctionIndex = 1;
-      worker.state = { kind: "ready" };
-    } else {
-      worker.state = { kind: "blocked", reason: "mechanical" };
+    const request: AgentsCheckpointRequest = {
+      stage: "abel-implement",
+      taskId: worker.boundary.taskId,
+      agentsImpact: agents.impact,
+      agentsTarget: agents.target,
+      agentsManagedOnly: true,
+      stableCheckpoint: true,
+      snapshot: attempt.snapshot,
+      diff: attempt.diff,
+    };
+    const result = await applyAgentsCheckpoint(workspaceRoot, request, signal);
+    if (result.ok) {
+      const finalPhase = worker.state.finalPhase;
+      worker.state = {
+        kind: "completed",
+        finalPhase,
+      };
+      const { ok: _ok, ...checkpoint } = result;
+      return {
+        kind: "completed",
+        requestId: attempt.requestId,
+        taskId: attempt.taskId,
+        finalPhase,
+        result: checkpoint,
+      };
     }
-    return true;
+    return this.presentCheckpointFailure(attempt, worker, result.failure);
+  }
+
+  private presentCheckpointFailure(
+    attempt: AgentsCheckpointAttempt,
+    worker: TaskRecord,
+    failure: CandidateFailure,
+  ): DispatchResult {
+    if (worker.state.kind !== "agents-checkpoint-pending") {
+      throw new Error("AGENTS checkpoint is not pending");
+    }
+    const phase = worker.state.finalPhase;
+    const identity = {
+      taskId: attempt.taskId,
+      requestId: attempt.requestId,
+      phase,
+    };
+    switch (failure.kind) {
+      case "artifact": {
+        if (worker.state.attemptIndex === 1) {
+          const taskFailure: TaskFailure = {
+            kind: "checkpoint-attempts-exhausted",
+            cause: "artifact",
+          };
+          worker.state = {
+            kind: "blocked",
+            phase,
+            failure: structuredClone(taskFailure),
+          };
+          return blockedOutcome(identity, taskFailure);
+        }
+        worker.state = {
+          kind: "agents-checkpoint-pending",
+          finalPhase: phase,
+          attemptIndex: 1,
+        };
+        return retryOutcome(identity, "checkpoint", "artifact");
+      }
+      case "stale": {
+        if (worker.state.attemptIndex === 1) {
+          const taskFailure: TaskFailure = {
+            kind: "checkpoint-attempts-exhausted",
+            cause: "stale",
+          };
+          worker.state = {
+            kind: "blocked",
+            phase,
+            failure: structuredClone(taskFailure),
+          };
+          return blockedOutcome(identity, taskFailure);
+        }
+        worker.state = {
+          kind: "agents-checkpoint-pending",
+          finalPhase: phase,
+          attemptIndex: 1,
+        };
+        return retryOutcome(identity, "checkpoint", "stale");
+      }
+      case "environment": {
+        const taskFailure: TaskFailure = failure;
+        worker.state = {
+          kind: "blocked",
+          phase,
+          failure: structuredClone(taskFailure),
+        };
+        return blockedOutcome(identity, taskFailure);
+      }
+      case "approval-boundary": {
+        const taskFailure: TaskFailure = failure;
+        worker.state = {
+          kind: "blocked",
+          phase,
+          failure: structuredClone(taskFailure),
+        };
+        return blockedOutcome(identity, taskFailure);
+      }
+      case "cancelled":
+        return cancelledOutcome(identity);
+      case "result-limit": {
+        const taskFailure: TaskFailure = failure;
+        worker.state = {
+          kind: "blocked",
+          phase,
+          failure: structuredClone(taskFailure),
+        };
+        return blockedOutcome(identity, taskFailure);
+      }
+      default:
+        return assertNever(failure);
+    }
+  }
+
+  private resolveRetainedCandidate(
+    resultId: string,
+    operationRoot?: string,
+  ): { retained: BoundRetainedResult; worker: TaskRecord } | undefined {
+    const candidate = this.results.get(resultId);
+    if (!candidate) return undefined;
+    if (!this.results.hasCandidateIdentity(resultId)) return undefined;
+    if (
+      candidate.stage !== "abel-implement" ||
+      candidate.canonicalRoot === undefined ||
+      candidate.changeId === undefined ||
+      candidate.taskId === undefined ||
+      candidate.originRequestId === undefined ||
+      candidate.phase === undefined ||
+      candidate.launchIndex === undefined
+    ) {
+      throw new Error("retained candidate identity mismatch");
+    }
+    if (
+      operationRoot !== undefined &&
+      canonicalWorkspaceRoot(operationRoot) !== candidate.canonicalRoot
+    ) {
+      throw new Error("retained candidate identity mismatch");
+    }
+    const worker = this.registry.get(
+      taskRecordKey(
+        candidate.canonicalRoot,
+        candidate.changeId,
+        candidate.taskId,
+      ),
+    );
+    if (!worker) throw new Error("retained candidate identity mismatch");
+    if (
+      worker.state.kind !== "candidate-pending" ||
+      worker.state.resultId !== resultId ||
+      worker.state.originRequestId !== candidate.originRequestId ||
+      worker.state.phase !== candidate.phase ||
+      worker.state.launchIndex !== candidate.launchIndex
+    ) {
+      throw new Error("retained candidate identity mismatch");
+    }
+    const phase = worker.boundary.phases[worker.state.phase];
+    if (!phase || !isSafeBound(candidate.snapshot)) {
+      throw new Error("retained candidate identity mismatch");
+    }
+    const expected: RetainedCandidateFacts = {
+      stage: "abel-implement",
+      canonicalRoot: worker.workspaceRoot,
+      root: worker.workspaceRoot,
+      changeId: worker.boundary.changeId,
+      taskId: worker.boundary.taskId,
+      originRequestId: worker.state.originRequestId,
+      phase: worker.state.phase,
+      launchIndex: worker.state.launchIndex,
+      writeSet: [...phase.write],
+      approvedDependencies: [...worker.boundary.approvedDependencies],
+      snapshot: candidate.snapshot,
+    };
+    return {
+      retained: this.results.resolveIdentity(resultId, expected),
+      worker,
+    };
+  }
+
+  private discardRetainedCandidate(resultId: string): boolean {
+    return this.results.discard(resultId);
   }
 
   private enqueueApply(
     root: string,
-    id: string,
+    operation: ImplementApplyOperation | { resultId: string },
     signal?: AbortSignal,
   ): Promise<DispatchResult> {
-    const retainedIdentity = this.retainedRuns.get(id);
-    const run = this.applyTail.then(
-      () => applyRetainedPatch({ root, id, store: this.results, signal }),
-      () => applyRetainedPatch({ root, id, store: this.results, signal }),
+    const id = operation.resultId;
+    const resolved = this.resolveRetainedCandidate(id, root);
+    const requestId = "requestId" in operation ? operation.requestId : null;
+    if (requestId !== null && !resolved) {
+      throw new Error("retained Implement result not found");
+    }
+    if (resolved && requestId === null) {
+      throw new Error("Implement apply operation identity is missing");
+    }
+    const applyRoot = resolved?.retained.root ?? root;
+    const run = this.enqueueParentApply(() =>
+      applyRetainedPatch({ root: applyRoot, id, store: this.results, signal }),
     );
+    const seq = ++this.applySeq;
+    return run.then((result) => {
+      if (result.ok) {
+        const applied = { ...result.result, sequence: seq };
+        if (resolved) {
+          if (requestId === null)
+            throw new Error("Implement apply operation identity is missing");
+          const { retained: identity, worker } = resolved;
+          if (worker.state.kind === "candidate-pending") {
+            const readyPhase = nextDeclaredPhase(
+              worker.boundary,
+              identity.phase,
+            );
+            if (readyPhase) {
+              worker.state = {
+                kind: "ready",
+                phase: readyPhase,
+                launchIndex: 0,
+              };
+              return {
+                kind: "applied",
+                requestId,
+                taskId: identity.taskId,
+                phase: identity.phase as "red" | "green",
+                readyPhase,
+                result: applied,
+              } satisfies ImplementOutcome;
+            } else if (worker.boundary.agents.impact === "none") {
+              worker.state = {
+                kind: "completed",
+                finalPhase: identity.phase as "green" | "refactor",
+              };
+              return {
+                kind: "completed",
+                requestId,
+                taskId: identity.taskId,
+                finalPhase: identity.phase as "green" | "refactor",
+                result: applied,
+              } satisfies ImplementOutcome;
+            } else {
+              worker.state = {
+                kind: "agents-checkpoint-pending",
+                finalPhase: identity.phase as "green" | "refactor",
+                attemptIndex: 0,
+              };
+              return {
+                kind: "checkpoint-required",
+                requestId,
+                taskId: identity.taskId,
+                finalPhase: identity.phase as "green" | "refactor",
+                result: applied,
+              } satisfies ImplementOutcome;
+            }
+          }
+          throw new Error("retained candidate is not pending");
+        }
+        return {
+          ok: true,
+          action: "apply",
+          result: applied,
+        };
+      }
+      if (!resolved) {
+        return {
+          ok: false,
+          error: "candidate application failed",
+          failure: result.failure,
+        };
+      }
+      if (requestId === null)
+        throw new Error("Implement apply operation identity is missing");
+      return this.presentApplyFailure(
+        requestId,
+        id,
+        resolved.retained,
+        resolved.worker,
+        result.failure,
+      );
+    });
+  }
+
+  private enqueueDiscard(
+    operation: ImplementDiscardOperation,
+  ): Promise<DispatchResult> {
+    return this.enqueueParentApply(async () => {
+      const resolved = this.resolveRetainedCandidate(operation.resultId);
+      if (!resolved || !this.results.discard(operation.resultId)) {
+        throw new Error("retained Implement result not found");
+      }
+      const { retained: identity, worker } = resolved;
+      const outcomeIdentity = {
+        requestId: operation.requestId,
+        taskId: identity.taskId,
+        phase: identity.phase,
+      };
+      const rejection = operation.rejection;
+      if (rejection.kind === "approval-boundary") {
+        worker.state = {
+          kind: "blocked",
+          phase: identity.phase,
+          failure: structuredClone(rejection),
+        };
+        return blockedOutcome(outcomeIdentity, rejection);
+      }
+      if (identity.launchIndex === 0) {
+        worker.state = {
+          kind: "ready",
+          phase: identity.phase,
+          launchIndex: 1,
+          correction: structuredClone(rejection),
+        };
+        return retryOutcome(outcomeIdentity, "worker", "artifact");
+      }
+      const failure: TaskFailure = {
+        kind: "attempts-exhausted",
+        cause: "artifact",
+      };
+      worker.state = {
+        kind: "blocked",
+        phase: identity.phase,
+        failure: structuredClone(failure),
+      };
+      return blockedOutcome(outcomeIdentity, failure);
+    });
+  }
+
+  private enqueueParentApply<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.applyTail.then(operation, operation);
     this.applyTail = run.then(
       () => undefined,
       () => undefined,
     );
-    const seq = ++this.applySeq;
-    return run.then(
-      (result) => {
-        if (result.ok) {
-          this.retainedRuns.delete(id);
-          if (retainedIdentity) {
-            const worker = this.registry.get(retainedIdentity.taskId);
-            if (
-              worker?.currentPhase.requestId === retainedIdentity.requestId &&
-              worker.currentPhase.phase === retainedIdentity.phase
-            ) {
-              worker.state = { kind: "phase-applied" };
-            }
-          }
-          return {
-            ok: true,
-            action: "apply",
-            result: { ...result, sequence: seq },
-          };
-        }
-        return this.presentApplyFailure(
-          id,
-          retainedIdentity,
-          result.error,
-          signal,
-        );
-      },
-      (error) =>
-        this.presentApplyFailure(
-          id,
-          retainedIdentity,
-          (error as Error).message,
-          signal,
-        ),
-    );
+    return run;
   }
 
   private presentApplyFailure(
+    requestId: string,
     resultId: string,
-    identity: RetainedRunIdentity | undefined,
-    error: string,
-    signal?: AbortSignal,
+    identity: BoundRetainedResult,
+    worker: TaskRecord,
+    failure: CandidateFailure,
   ): DispatchResult {
-    if (signal?.aborted) return cancellationError(signal);
-    if (!identity) return { ok: false, error };
-    if (/cancelled/i.test(error)) {
-      return { ok: false, error: "candidate application cancelled" };
-    }
-    if (/candidate preflight rejected: environment:/i.test(error)) {
-      return recoveryFailure(
-        {
-          taskId: identity.taskId,
-          id: identity.requestId,
+    const outcomeIdentity = {
+      taskId: identity.taskId,
+      requestId,
+      phase: identity.phase,
+    };
+    switch (failure.kind) {
+      case "environment": {
+        this.results.discard(resultId);
+        worker.state = {
+          kind: "blocked",
           phase: identity.phase,
-        },
-        "environment-blocked",
-        "repair-environment",
-        identity.launchIndex,
-      );
-    }
-    const worker = this.registry.get(identity.taskId);
-    if (/candidate preflight rejected: design:/i.test(error)) {
-      this.results.discard(resultId);
-      this.retainedRuns.delete(resultId);
-      if (worker) {
-        worker.state = { kind: "ready" };
+          failure: structuredClone(failure),
+        };
+        return blockedOutcome(outcomeIdentity, failure);
       }
-      return recoveryFailure(
-        {
-          taskId: identity.taskId,
-          id: identity.requestId,
+      case "approval-boundary": {
+        this.results.discard(resultId);
+        worker.state = {
+          kind: "blocked",
           phase: identity.phase,
-        },
-        "design-required",
-        "return-to-design",
-        identity.launchIndex,
-        "failed",
-        "approved Red verification contract is invalid",
-      );
-    }
-    if (
-      /^(?:candidate preflight rejected: stale:|stale file snapshot)/i.test(
-        error,
-      )
-    ) {
-      this.results.discard(resultId);
-      this.retainedRuns.delete(resultId);
-      if (worker) {
+          failure: structuredClone(failure),
+        };
+        return blockedOutcome(outcomeIdentity, failure);
+      }
+      case "stale": {
+        this.results.discard(resultId);
         if (identity.launchIndex === 0) {
-          worker.state = { kind: "stale-redispatch-pending" };
-        } else {
-          worker.state = { kind: "blocked", reason: "mechanical" };
-        }
-      }
-      if (identity.launchIndex === 1) {
-        return recoveryFailure(
-          {
-            taskId: identity.taskId,
-            id: identity.requestId,
+          worker.state = {
+            kind: "ready",
             phase: identity.phase,
-          },
-          "mechanical-redispatch-exhausted",
-          "finish-unaffected",
-          1,
-          "failed",
-          "phase launch budget is exhausted",
-        );
+            launchIndex: 1,
+            correction: structuredClone(failure),
+          };
+        } else {
+          const taskFailure: TaskFailure = {
+            kind: "attempts-exhausted",
+            cause: "stale",
+          };
+          worker.state = {
+            kind: "blocked",
+            phase: identity.phase,
+            failure: structuredClone(taskFailure),
+          };
+          return blockedOutcome(outcomeIdentity, taskFailure);
+        }
+        return retryOutcome(outcomeIdentity, "worker", "stale");
       }
-      return { ok: false, error };
+      case "artifact": {
+        this.results.discard(resultId);
+        const correctionAvailable = identity.launchIndex === 0;
+        if (!correctionAvailable) {
+          const taskFailure: TaskFailure = {
+            kind: "attempts-exhausted",
+            cause: "artifact",
+          };
+          worker.state = {
+            kind: "blocked",
+            phase: identity.phase,
+            failure: structuredClone(taskFailure),
+          };
+          return blockedOutcome(outcomeIdentity, taskFailure);
+        }
+        worker.state = {
+          kind: "ready",
+          phase: identity.phase,
+          launchIndex: 1,
+          correction: structuredClone(failure),
+        };
+        return retryOutcome(outcomeIdentity, "worker", "artifact");
+      }
+      case "cancelled":
+        return cancelledOutcome(outcomeIdentity);
+      case "result-limit":
+        this.results.discard(resultId);
+        worker.state = {
+          kind: "blocked",
+          phase: identity.phase,
+          failure: structuredClone(failure),
+        };
+        return blockedOutcome(outcomeIdentity, failure);
+      default:
+        return assertNever(failure);
     }
-    if (/^retained result (?:not found|root mismatch)/i.test(error)) {
-      return { ok: false, error };
-    }
-
-    this.results.discard(resultId);
-    this.retainedRuns.delete(resultId);
-    const correctionAvailable = identity.launchIndex === 0;
-    if (worker) {
-      worker.currentPhase.correctionIndex = identity.launchIndex;
-      worker.state = correctionAvailable
-        ? {
-            kind: "artifact-correction-pending",
-            rejection: normalizedArtifactRejection(error),
-          }
-        : { kind: "blocked", reason: "artifact" };
-    }
-    return recoveryFailure(
-      {
-        taskId: identity.taskId,
-        id: identity.requestId,
-        phase: identity.phase,
-      },
-      "implementation-artifact-delivery-blocked",
-      correctionAvailable ? "correct-artifact" : "finish-unaffected",
-      identity.launchIndex,
-      "failed",
-      correctionAvailable
-        ? "generated implementation artifact requires bounded correction"
-        : "artifact correction launch budget is exhausted",
-    );
   }
 
   private async dispatchChild(
@@ -634,30 +1303,27 @@ export class Runtime {
     ctx: RunContext,
     signal: AbortSignal,
     artifactRejection?: string,
-  ): Promise<InternalDispatchResult> {
+  ): Promise<ChildDispatchResult> {
     if (signal.aborted)
       return {
         ...cancellationError(signal),
         failureKind: "cancelled",
       };
-    let phase: Awaited<ReturnType<typeof runtimeFromContext>>;
-    try {
-      phase = await runtimeFromContext(ctx, this.parentPayloadBridge, signal);
-    } catch (error) {
-      const bridgeUnavailable =
-        error instanceof Error &&
-        error.message === "parent payload bridge is unavailable";
+    const phase = await runtimeFromContext(
+      ctx,
+      this.parentPayloadBridge,
+      signal,
+    );
+    if (!phase.ok) {
       return {
         ok: false,
-        error: signal.aborted
-          ? cancellationError(signal).error
-          : (error as Error).message,
-        failureKind: signal.aborted ? "cancelled" : "failed",
-        failureClass: signal.aborted
-          ? undefined
-          : bridgeUnavailable
-            ? "transport"
-            : "environment",
+        error: phase.error,
+        failure: phase.failure,
+        failureKind:
+          phase.failure.kind === "cancelled" ? "cancelled" : "failed",
+        ...(phase.failure.kind === "cancelled"
+          ? {}
+          : { failureClass: phase.failure.kind }),
       };
     }
     if (signal.aborted)
@@ -675,6 +1341,11 @@ export class Runtime {
       readSet: [...envelope.declared.read],
       writeSet: [...envelope.declared.write],
       verification: envelope.verification ?? null,
+      agentsImpact: envelope.agentsImpact ?? "none",
+      agentsTarget: envelope.agentsTarget ?? null,
+      agentsManagedOnly: true,
+      agentsWriteAllowed: false,
+      impactClosure: envelope.impactClosure ?? null,
     };
     const systemPrompt = [
       agent.content,
@@ -707,22 +1378,13 @@ export class Runtime {
       return {
         ...cancellationError(signal),
         failureKind: "cancelled",
+        usage: child.usage,
       };
     if (!child.ok) {
-      const generatedArtifact =
-        child.classification.attempts > 0 ||
-        child.classification.finalCategory === "text-only" ||
-        child.classification.finalCategory === "mixed" ||
-        child.classification.finalCategory === "multiple-submit";
       return {
         ...child,
         failureKind: child.failureKind,
-        failureClass:
-          child.failureKind === "timed-out" || child.transportFailure
-            ? "transport"
-            : generatedArtifact
-              ? "artifact"
-              : "transport",
+        failureClass: failureClassOf(child.failure),
       };
     }
     if (envelope.output === "evidence") {
@@ -740,31 +1402,57 @@ export class Runtime {
     let prepared: PreparedPreflight | null;
     try {
       prepared = preparePreflight(ctx.cwd, envelope, requestSnapshot);
-    } catch {
+    } catch (error) {
+      if (!isFileSystemFailure(error)) throw error;
       return {
         ok: false,
         error: "candidate preflight inputs are unavailable",
+        failure: { kind: "environment", code: "root-unavailable" },
         failureKind: "failed",
         failureClass: "environment",
         launchConsumed: true,
+        usage: child.usage,
       };
     }
     if (envelope.verification && !prepared) {
       return {
         ok: false,
         error: "candidate preflight inputs are unavailable",
+        failure: { kind: "environment", code: "root-unavailable" },
         failureKind: "failed",
         failureClass: "environment",
         launchConsumed: true,
+        usage: child.usage,
       };
     }
+    const task = this.taskRecords.get(envelope);
+    const retainedRoot = task?.workspaceRoot ?? ctx.cwd;
+    const retainedSnapshot =
+      prepared?.snapshot ??
+      (isSafeBound(envelope.snapshot)
+        ? mergeBounds(
+            snapshotFiles(retainedRoot, envelope.declared.write),
+            envelope.snapshot,
+          )
+        : undefined);
     const resultId = this.results.retain({
       diff: diff.diff,
       writeSet: envelope.declared.write,
-      root: ctx.cwd,
+      approvedDependencies: envelope.approvedDependencies ?? [],
+      root: retainedRoot,
+      ...(task
+        ? {
+            stage: "abel-implement" as const,
+            canonicalRoot: task.workspaceRoot,
+            changeId: task.boundary.changeId,
+            taskId: task.boundary.taskId,
+            originRequestId: envelope.id,
+            phase: taskPhase(task),
+            launchIndex: taskLaunchIndex(task),
+          }
+        : {}),
       ...(prepared
         ? {
-            snapshot: prepared.snapshot,
             baseline: prepared.baseline,
             verification: envelope.verification,
             packageManifest: prepared.packageManifest,
@@ -772,13 +1460,8 @@ export class Runtime {
             dependencyTarget: prepared.dependencyTarget,
           }
         : {}),
+      ...(retainedSnapshot ? { snapshot: retainedSnapshot } : {}),
     });
-    if (!prepared && isSafeBound(envelope.snapshot)) {
-      const retained = this.results.get(resultId);
-      if (retained) {
-        retained.snapshot = mergeBounds(retained.snapshot, envelope.snapshot);
-      }
-    }
     return {
       ok: true,
       action: "run",
@@ -794,37 +1477,136 @@ export class Runtime {
     signal?: AbortSignal,
     observer?: RuntimeActivityObserver,
   ): Promise<DispatchResult> {
-    if (!ctx) return { ok: false, error: "run requires extension context" };
-    if (signal?.aborted) return cancellationError(signal);
+    const implementRequest = targetsImplement(request);
+    if (!ctx) {
+      if (implementRequest) throw new Error("run requires extension context");
+      return { ok: false, error: "run requires extension context" };
+    }
     const validation = validateRequestEnvelope(request);
-    if (!validation.ok) return { ok: false, error: validation.reason };
-    const envelope: RequestEnvelope = {
-      ...validation.value,
-      taskId: validation.value.taskId ?? validation.value.id,
-      roots: [...validation.value.roots],
-      context: { ...validation.value.context },
-      declared: {
-        ...validation.value.declared,
-        read: [...validation.value.declared.read],
-        write: [...validation.value.declared.write],
-        conflicts: [...validation.value.declared.conflicts],
-        resources: [...validation.value.declared.resources],
-      },
-      ...(validation.value.verification === undefined
-        ? {}
-        : {
-            verification: {
-              ...validation.value.verification,
-              argv: [...validation.value.verification.argv],
-            },
-          }),
-    };
+    if (!validation.ok) {
+      if (implementRequest) {
+        throw new Error(`Implement protocol error: ${validation.reason}`);
+      }
+      return { ok: false, error: validation.reason };
+    }
+
+    let envelope: RequestEnvelope;
+    if (isImplementRunRequest(validation.value)) {
+      const runRequest = validation.value;
+      const attempt = runRequest.attempt;
+      const workspaceRoot = canonicalWorkspaceRoot(ctx.cwd);
+      if (
+        runRequest.kind === "open-task" &&
+        workspaceRoot &&
+        this.registry.has(
+          taskRecordKey(workspaceRoot, attempt.changeId, attempt.taskId),
+        )
+      ) {
+        throw new Error("duplicate task open protocol error");
+      }
+      if (runRequest.kind === "open-task" && signal?.aborted) {
+        return cancelledOutcome({
+          taskId: attempt.taskId,
+          requestId: attempt.requestId,
+          phase: attempt.phase,
+        });
+      }
+      if (!workspaceRoot) {
+        throw new Error("implementation workspace is unavailable");
+      }
+      const key = taskRecordKey(
+        workspaceRoot,
+        attempt.changeId,
+        attempt.taskId,
+      );
+      if (
+        runRequest.kind === "open-task" &&
+        this.registry
+          .values()
+          .some(
+            (record) =>
+              record.workspaceRoot === workspaceRoot &&
+              record.state.kind !== "blocked" &&
+              record.state.kind !== "completed" &&
+              declarationsConflict(
+                taskConflictOf(runRequest.boundary),
+                record.conflict,
+              ),
+          )
+      ) {
+        return {
+          kind: "deferred",
+          taskId: attempt.taskId,
+          requestId: attempt.requestId,
+          reason: "task-conflict",
+        };
+      }
+      if (!ctx.model) {
+        throw new Error("implementation model is unavailable");
+      }
+      const identity = workerIdentity(ctx.model);
+      let record: TaskRecord;
+      if (runRequest.kind === "open-task") {
+        record = this.registry.open(
+          runRequest.boundary,
+          identity,
+          workspaceRoot,
+          attempt,
+        );
+      } else {
+        const existing = this.registry.get(key);
+        if (!existing) {
+          throw new Error("task identity mismatch or task is not open");
+        }
+        if (existing.workerIdentity !== identity) {
+          throw new Error("provider/model identity mismatch");
+        }
+        const attemptReason = validatePhaseAttemptAgainstBoundary(
+          existing.boundary,
+          attempt,
+        );
+        if (attemptReason !== null) throw new Error(attemptReason);
+        assertAttemptAllowed(existing, attempt);
+        record = existing;
+      }
+      if (record.state.kind === "blocked") {
+        return blockedOutcome(
+          {
+            taskId: record.boundary.taskId,
+            requestId: attempt.requestId,
+            phase: record.state.phase,
+          },
+          record.state.failure,
+        );
+      }
+      if (record.state.kind === "completed") {
+        return {
+          kind: "completed",
+          taskId: record.boundary.taskId,
+          requestId: attempt.requestId,
+          finalPhase: record.state.finalPhase,
+        };
+      }
+      if (signal?.aborted) {
+        return cancelledOutcome({
+          taskId: record.boundary.taskId,
+          requestId: attempt.requestId,
+          phase: taskPhase(record),
+        });
+      }
+      envelope = deriveImplementEnvelope(record, attempt);
+      this.taskRecords.set(envelope, record);
+    } else {
+      if (signal?.aborted) return cancellationError(signal);
+      envelope = cloneLegacyEnvelope(validation.value);
+    }
     const context: StoredRunContext = {
       ctx,
       observer,
       sequence: ++this.batchSeq,
       runningEmitted: false,
       terminalEmitted: false,
+      usage: new UsageAggregator(),
     };
     this.runContexts.set(envelope, context);
     this.notify(envelope, context, "queued");
@@ -842,28 +1624,51 @@ export class Runtime {
     try {
       const outcome = await batch.result(envelope.id);
       if (outcome.status === "succeeded" && outcome.value) {
-        const internalResult = outcome.value.dispatch as DispatchResult & {
-          failureKind?: RunFailureKind;
-          failureClass?: FailureClass;
-        };
+        const internalResult = outcome.value.dispatch;
         const {
           failureKind,
           failureClass: _failureClass,
+          launchConsumed: _launchConsumed,
           ...publicResult
         } = internalResult;
-        if (publicResult.ok) {
+        const dispatch = publicResult as DispatchResult;
+        if (isWrappedDispatchResult(dispatch)) {
+          if (!dispatch.ok) {
+            const state: RuntimeActivityState = failureKind ?? "failed";
+            this.notify(envelope, context, state);
+            return dispatch;
+          }
           this.notify(envelope, context, "completed");
-          return publicResult;
+          return dispatch;
         }
-        const state: RuntimeActivityState = failureKind ?? "failed";
-        this.notify(envelope, context, state);
-        return publicResult;
+        this.notify(
+          envelope,
+          context,
+          dispatch.kind === "cancelled" ? "cancelled" : "completed",
+        );
+        return dispatch;
       }
       const state: RuntimeActivityState =
         outcome.status === "cancelled" ? "cancelled" : "failed";
+      const task = this.taskRecords.get(envelope);
+      if (task) {
+        this.notify(envelope, context, state);
+        if (outcome.status === "cancelled") {
+          return {
+            ...cancelledOutcome({
+              taskId: task.boundary.taskId,
+              requestId: envelope.id,
+              phase: taskPhase(task),
+            }),
+            ...this.usageMetadata(context),
+          };
+        }
+        throw new Error(outcome.error ?? `scheduled run ${outcome.status}`);
+      }
       const terminal = {
         ok: false as const,
         error: outcome.error ?? `scheduled run ${outcome.status}`,
+        ...this.usageMetadata(context),
       };
       this.notify(envelope, context, state);
       return terminal;
@@ -916,192 +1721,96 @@ export class Runtime {
 
   private async runScheduled(
     envelope: RequestEnvelope,
-    ctx: RunContext,
+    context: StoredRunContext,
     signal: AbortSignal,
   ): Promise<InternalDispatchResult> {
-    if (signal.aborted)
-      return {
-        ...cancellationError(signal),
-        failureKind: "cancelled",
-      };
-    const taskId = envelope.taskId ?? envelope.id;
+    const ctx = context.ctx;
+    const task = this.taskRecords.get(envelope);
+    if (!task && envelope.stage === "abel-implement") {
+      throw new Error("implementation TaskRecord is unavailable");
+    }
+    if (signal.aborted) {
+      if (task) {
+        return cancelledOutcome({
+          taskId: task.boundary.taskId,
+          requestId: envelope.id,
+          phase: taskPhase(task),
+        });
+      }
+      return { ...cancellationError(signal), failureKind: "cancelled" };
+    }
     const agent = loadAgentDefinitions().find(
       (item) => item.role === envelope.role,
     );
-    if (!agent)
-      return {
-        ...recoveryFailure(
-          envelope,
-          "environment-blocked",
-          "repair-environment",
-          0,
-        ),
-      };
-    if (!ctx.model)
-      return recoveryFailure(
-        envelope,
-        "environment-blocked",
-        "repair-environment",
-        0,
-        "failed",
-        "phase runtime is unavailable",
-      );
-    const identity = workerIdentity(ctx.model);
-    const contract = contractOf(envelope);
-    const existing = this.registry.get(taskId);
-    if (existing) {
-      if (existing.identity !== identity) {
-        return recoveryFailure(
-          envelope,
-          "environment-blocked",
-          "repair-environment",
-          existing.currentPhase.correctionIndex,
-          "failed",
-          "pinned provider/model identity differs",
-        );
-      }
-      if (!sameContract(existing.taskContract, contract)) {
-        return recoveryFailure(
-          envelope,
-          "design-required",
-          "return-to-design",
-          existing.currentPhase.correctionIndex,
-          "failed",
-          "immutable task contract changed",
-        );
-      }
-      if (
-        existing.state.kind === "blocked" &&
-        existing.state.reason === "artifact"
-      ) {
-        return recoveryFailure(
-          envelope,
-          "implementation-artifact-delivery-blocked",
-          "finish-unaffected",
-          1,
-          "failed",
-          "artifact correction launch budget is exhausted",
-        );
-      }
-      if (
-        existing.state.kind === "blocked" &&
-        existing.state.reason === "mechanical"
-      ) {
-        return recoveryFailure(
-          envelope,
-          "mechanical-redispatch-exhausted",
-          "finish-unaffected",
-          1,
-          "failed",
-          "phase launch budget is exhausted",
-        );
-      }
-    } else {
-      this.registry.pin(contract, identity);
-    }
-    let pinned = this.registry.get(taskId);
-    if (!pinned) {
-      return recoveryFailure(
-        envelope,
-        "environment-blocked",
-        "repair-environment",
-        0,
-        "failed",
-        "logical Worker could not be pinned",
-      );
-    }
-
-    const correctingArtifact =
-      pinned.state.kind === "artifact-correction-pending";
-    const redispatchingStale = pinned.state.kind === "stale-redispatch-pending";
-    let artifactRejection: string | undefined;
-    const changedPhase =
-      pinned.currentPhase.requestId !== envelope.id ||
-      pinned.currentPhase.phase !== envelope.phase;
-    if (pinned.state.kind === "candidate-pending") {
+    if (!agent) {
+      if (task) throw new Error("implementation agent definition is missing");
       return {
         ok: false,
-        error: "current phase candidate is awaiting parent apply",
+        error: "agent definition is unavailable",
+        failure: { kind: "environment", code: "root-unavailable" },
         failureKind: "failed",
+        failureClass: "environment",
       };
     }
-    if (redispatchingStale) {
-      if (
-        envelope.id !== pinned.currentPhase.requestId ||
-        !samePhaseContract(pinned.currentPhase, contract.currentPhase)
-      ) {
-        return recoveryFailure(
-          envelope,
-          "design-required",
-          "return-to-design",
-          pinned.currentPhase.correctionIndex,
-          "failed",
-          "stale redispatch changed the current phase contract",
-        );
-      }
-      pinned = this.registry.setCurrentPhase(taskId, contract, 1) ?? pinned;
-    } else if (correctingArtifact) {
-      if (
-        envelope.id === pinned.currentPhase.requestId ||
-        !samePhaseContract(pinned.currentPhase, contract.currentPhase)
-      ) {
-        return recoveryFailure(
-          envelope,
-          "design-required",
-          "return-to-design",
-          pinned.currentPhase.correctionIndex,
-          "failed",
-          "artifact correction changed the current phase contract",
-        );
-      }
-      artifactRejection =
-        pinned.state.kind === "artifact-correction-pending"
-          ? pinned.state.rejection
-          : undefined;
-      pinned = this.registry.setCurrentPhase(taskId, contract, 1) ?? pinned;
-    } else if (changedPhase) {
-      if (pinned.state.kind !== "phase-applied") {
-        return {
-          ok: false,
-          error: "current phase candidate is not applied",
-          failureKind: "failed",
-        };
-      }
-      const sameAppliedPhase = pinned.currentPhase.phase === envelope.phase;
-      if (
-        sameAppliedPhase &&
-        !samePhaseContract(pinned.currentPhase, contract.currentPhase)
-      ) {
-        return recoveryFailure(
-          envelope,
-          "design-required",
-          "return-to-design",
-          pinned.currentPhase.correctionIndex,
-          "failed",
-          "same-phase correction changed the current phase contract",
-        );
-      }
-      if (
-        !sameAppliedPhase &&
-        !isNextImplementationPhase(pinned.currentPhase.phase, envelope.phase)
-      ) {
-        return recoveryFailure(
-          envelope,
-          "design-required",
-          "return-to-design",
-          pinned.currentPhase.correctionIndex,
-          "failed",
-          "invalid implementation phase transition",
-        );
-      }
-      pinned = this.registry.setCurrentPhase(taskId, contract, 0) ?? pinned;
-    } else if (pinned.state.kind === "phase-applied") {
+    if (!ctx.model) {
+      if (task) throw new Error("implementation model is unavailable");
       return {
         ok: false,
-        error: "current phase candidate is already applied",
+        error: "phase runtime is unavailable",
+        failure: {
+          kind: "environment",
+          code: "sandbox-runtime-unavailable",
+        },
         failureKind: "failed",
+        failureClass: "environment",
       };
     }
+    if (!task) {
+      const result = await this.dispatchChild(agent, envelope, ctx, signal);
+      this.captureUsage(context, "launch:0", result.usage);
+      return this.withUsage(context, result);
+    }
+    if (task.workerIdentity !== workerIdentity(ctx.model)) {
+      throw new Error("provider/model identity mismatch");
+    }
+    if (task.state.kind !== "ready") {
+      throw new Error("implementation task is not launchable");
+    }
+    const phase = task.state.phase;
+    const launchIndex = task.state.launchIndex;
+    const correction = task.state.correction;
+    const artifactRejection =
+      correction?.kind === "artifact"
+        ? artifactCorrectionEvidence(correction)
+        : undefined;
+    const identity: OutcomeIdentity = {
+      taskId: task.boundary.taskId,
+      requestId: envelope.id,
+      phase,
+    };
+    const block = (failure: TaskFailure): InternalDispatchResult => {
+      task.state = {
+        kind: "blocked",
+        phase,
+        failure: structuredClone(failure),
+      };
+      return blockedOutcome(identity, failure);
+    };
+    const candidate = (
+      result: Extract<ChildDispatchResult, { ok: true }>,
+    ): InternalDispatchResult => {
+      if (typeof result.resultId !== "string" || result.result === undefined) {
+        throw new Error("implementation candidate result is incomplete");
+      }
+      return {
+        kind: "candidate",
+        ...identity,
+        resultId: result.resultId,
+        result: result.result as DiffResult,
+      };
+    };
+    const finish = (result: InternalDispatchResult) =>
+      this.withUsage(context, result);
 
     const first = await this.dispatchChild(
       agent,
@@ -1110,149 +1819,161 @@ export class Runtime {
       signal,
       artifactRejection,
     );
-    if (signal.aborted)
-      return {
-        ...cancellationError(signal),
-        failureKind: "cancelled",
-      };
+    this.captureUsage(context, "launch:0", first.usage);
+    if (signal.aborted) {
+      if (first.ok && typeof first.resultId === "string") {
+        this.results.discard(first.resultId);
+      }
+      return finish(cancelledOutcome(identity));
+    }
     if (first.ok) {
-      this.rememberRetainedResult(first, envelope, pinned);
-      return first;
+      return finish(candidate(first));
     }
-    if (first.failureKind === "cancelled") return first;
-    if (first.failureClass === "environment") {
-      const launchIndex = pinned.currentPhase.correctionIndex;
-      if (first.launchConsumed) this.consumeWorkerLaunch(pinned);
-      return recoveryFailure(
-        envelope,
-        "environment-blocked",
-        "repair-environment",
-        launchIndex,
-        first.failureKind,
+    const firstFailure = childFailureOf(first);
+    if (firstFailure.kind === "cancelled") {
+      return finish(cancelledOutcome(identity));
+    }
+    const firstTerminal = terminalTaskFailure(firstFailure);
+    if (firstTerminal) return finish(block(firstTerminal));
+    if (launchIndex === 1) {
+      return finish(
+        block({
+          kind: "attempts-exhausted",
+          cause: attemptFailureCause(firstFailure),
+        }),
       );
     }
-    if (pinned.currentPhase.correctionIndex === 1) {
-      const artifactBlocked =
-        correctingArtifact || first.failureClass === "artifact";
-      pinned.state = {
-        kind: "blocked",
-        reason: artifactBlocked ? "artifact" : "mechanical",
+    if (firstFailure.kind === "artifact" || firstFailure.kind === "stale") {
+      task.state = {
+        kind: "ready",
+        phase,
+        launchIndex: 1,
+        correction: structuredClone(firstFailure),
       };
-      return recoveryFailure(
-        envelope,
-        artifactBlocked
-          ? "implementation-artifact-delivery-blocked"
-          : "mechanical-redispatch-exhausted",
-        "finish-unaffected",
-        1,
-        first.failureKind,
-        "phase launch budget is exhausted",
-      );
+      return finish(retryOutcome(identity, "worker", firstFailure.kind));
     }
 
-    if (first.failureClass === "artifact") {
-      pinned.state = {
-        kind: "artifact-correction-pending",
-        rejection: normalizedArtifactRejection(first.error),
-      };
-      return recoveryFailure(
-        envelope,
-        "implementation-artifact-delivery-blocked",
-        "correct-artifact",
-        0,
-        first.failureKind,
-        "generated implementation artifact requires bounded correction",
-      );
-    }
-
-    pinned = this.registry.setCurrentPhase(taskId, contract, 1) ?? pinned;
-    const second = await this.dispatchChild(agent, envelope, ctx, signal);
-    if (signal.aborted)
-      return {
-        ...cancellationError(signal),
-        failureKind: "cancelled",
-      };
-    if (second.ok) {
-      this.rememberRetainedResult(second, envelope, pinned);
-      return second;
-    }
-    if (second.failureKind === "cancelled") return second;
-    if (second.failureClass === "environment") {
-      if (second.launchConsumed) this.consumeWorkerLaunch(pinned);
-      return recoveryFailure(
-        envelope,
-        "environment-blocked",
-        "repair-environment",
-        1,
-        second.failureKind,
-      );
-    }
-    const artifactBlocked = second.failureClass === "artifact";
-    pinned.state = {
-      kind: "blocked",
-      reason: artifactBlocked ? "artifact" : "mechanical",
+    task.state = {
+      kind: "ready",
+      phase,
+      launchIndex: 1,
     };
-    return recoveryFailure(
-      envelope,
-      artifactBlocked
-        ? "implementation-artifact-delivery-blocked"
-        : "mechanical-redispatch-exhausted",
-      "finish-unaffected",
-      1,
-      second.failureKind ?? first.failureKind,
-      "phase launch budget is exhausted",
+    const second = await this.dispatchChild(agent, envelope, ctx, signal);
+    this.captureUsage(context, "launch:1", second.usage);
+    if (signal.aborted) {
+      if (second.ok && typeof second.resultId === "string") {
+        this.results.discard(second.resultId);
+      }
+      return finish(cancelledOutcome(identity));
+    }
+    if (second.ok) {
+      return finish(candidate(second));
+    }
+    const secondFailure = childFailureOf(second);
+    if (secondFailure.kind === "cancelled") {
+      return finish(cancelledOutcome(identity));
+    }
+    const secondTerminal = terminalTaskFailure(secondFailure);
+    if (secondTerminal) return finish(block(secondTerminal));
+    return finish(
+      block({
+        kind: "attempts-exhausted",
+        cause: attemptFailureCause(secondFailure),
+      }),
     );
   }
 
-  private consumeWorkerLaunch(worker: LogicalWorker): void {
-    if (worker.currentPhase.correctionIndex === 0) {
-      worker.currentPhase.correctionIndex = 1;
-      worker.state = { kind: "ready" };
-      return;
-    }
-    worker.state = { kind: "blocked", reason: "mechanical" };
+  private captureUsage(
+    context: StoredRunContext,
+    id: string,
+    usage: Usage | undefined,
+  ): void {
+    if (usage) context.usage.add(id, usage);
+  }
+
+  private usageMetadata(context: StoredRunContext): { usage?: Usage } {
+    return context.usage.hasUsage() ? { usage: context.usage.total() } : {};
+  }
+
+  private withUsage<T extends InternalDispatchResult>(
+    context: StoredRunContext,
+    result: T,
+  ): T {
+    return {
+      ...result,
+      ...this.usageMetadata(context),
+    };
   }
 
   private rememberRetainedResult(
-    result: InternalDispatchResult,
+    result: Extract<ImplementOutcome, { kind: "candidate" }>,
     envelope: RequestEnvelope,
-    worker: LogicalWorker,
+    task: TaskRecord,
   ): void {
-    if (!result.ok || typeof result.resultId !== "string") return;
-    this.retainedRuns.set(result.resultId, {
-      taskId: envelope.taskId ?? envelope.id,
-      requestId: envelope.id,
-      phase: envelope.phase,
-      launchIndex: worker.currentPhase.correctionIndex,
+    if (task.state.kind !== "ready") {
+      throw new Error("retained candidate identity mismatch");
+    }
+    const phaseState = task.state;
+    if (
+      result.requestId !== envelope.id ||
+      result.taskId !== task.boundary.taskId ||
+      result.phase !== phaseState.phase
+    ) {
+      throw new Error("retained candidate identity mismatch");
+    }
+    const phase = task.boundary.phases[phaseState.phase];
+    if (!phase || !isSafeBound(envelope.snapshot)) {
+      throw new Error("retained candidate identity mismatch");
+    }
+    const identity: RetainedCandidateIdentity = {
+      stage: "abel-implement",
+      canonicalRoot: task.workspaceRoot,
+      root: task.workspaceRoot,
+      changeId: task.boundary.changeId,
+      taskId: task.boundary.taskId,
+      originRequestId: envelope.id,
+      phase: phaseState.phase,
+      launchIndex: phaseState.launchIndex,
+    };
+    if (!this.results.get(result.resultId)) {
+      throw new Error("retained candidate is unavailable");
+    }
+    this.results.bindIdentity(result.resultId, identity);
+    this.results.resolveIdentity(result.resultId, {
+      ...identity,
+      writeSet: [...phase.write],
+      approvedDependencies: [...task.boundary.approvedDependencies],
+      snapshot: envelope.snapshot,
     });
-    worker.state = { kind: "candidate-pending" };
+    task.state = {
+      kind: "candidate-pending",
+      phase: phaseState.phase,
+      launchIndex: phaseState.launchIndex,
+      originRequestId: envelope.id,
+      resultId: result.resultId,
+    };
   }
 
   validateRequest(
     envelope: unknown,
-  ): { ok: true; value: RequestEnvelope } | { ok: false; reason: string } {
+  ): { ok: true; value: RunRequest } | { ok: false; reason: string } {
     return validateRequestEnvelope(envelope);
   }
 
   async drain(): Promise<void> {
+    this.activation.drain();
+    const scheduled = this.scheduler.cancelAll();
+    const applied = this.applyTail;
+    await Promise.all([scheduled, applied]);
     this.parentPayloadBridge?.clear();
-    const settled = this.scheduler.cancelAll();
-    this.retainedRuns.clear();
     drainStage({
       results: this.results,
       registry: this.registry,
       activation: this.activation,
     });
-    await settled;
   }
 
   get state(): ActivationState {
     return this.activation.state;
   }
-}
-
-function isNextImplementationPhase(current: string, next: string): boolean {
-  const phases = ["red", "green", "refactor"];
-  const index = phases.indexOf(current);
-  return index >= 0 && phases[index + 1] === next;
 }

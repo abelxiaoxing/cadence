@@ -20,6 +20,20 @@ $ARGUMENTS
 - 最少注释/文档，优先自解释代码。
 - OpenSpec 约定以 `openspec/config.yaml` 声明的 schema 及其模板为准；OpenSpec 管理的 `openspec/` 生成物（schemas、`config.yaml`、skills 与 slash commands）绝不编辑。
 
+## AGENTS 阶段权限（Implement 专用）
+
+Design 阶段的 `AGENTS.md` 只读规则仅适用于 Design 阶段，不继承为全局规则。
+进入 Implement 后，父代理必须按 Gate B 已批准的结构化契约在稳定任务检查点执行：
+
+- `agentsImpact: none`：不得修改任何 `AGENTS.md`，且不得声明 `agentsTarget`。
+- `agentsImpact: update-existing`：父代理应更新指定现有索引的托管区块。
+- `agentsImpact: create-index`：父代理可创建批准路径的新索引。
+- `agentsImpact: remove-index`：父代理可移除批准路径的索引托管区块；仅当无人工内容残留时才删除文件。
+- 非 `none` 必须有明确 `agentsTarget` 且 `agentsManagedOnly: true`。
+  父代理只能修改批准路径及 `<!-- ABEL:AGENTS-INDEX:START -->` 到 `<!-- ABEL:AGENTS-INDEX:END -->` 的托管区域，保留全部人工内容。
+- 子代理始终不能修改任何 `AGENTS.md`，其派发写集必须排除 Gate receipt、OpenSpec 跟踪文件和 AGENTS 路径。
+- 已批准的 AGENTS checkpoint 是正常 Implement Green/检查点工作，必须完成；不能成为阶段路由或用户恢复动作。
+
 ## TDD 护栏（强制）
 
 - **Red**：只创建/执行任务的失败可执行验证；实现代码禁止。
@@ -48,10 +62,15 @@ Implement 不重新作出或请求 Gate A/B 决策；只有 Gate receipts、arti
    receipt 缺失或任一 hash 失效即关闭失败。
 7. `openspec validate <name> --strict --type change` 问题为零。
 8. 阅读 `artifactPaths` 报告的全部规划产物；运行 `openspec instructions apply --change <name> --json` 并遵循其 apply 契约。
-9. 校验稳定 Requirement/Scenario 引用、Requirement → Scenario → Verification → Task 追溯链，以及每个任务的前置条件、`depends_on`、计划写集、冲突/资源锁、派发上下文、验证和 AGENTS 影响契约；缺失、含糊或不可判定时关闭失败。
-10. 在任何写入前运行并记录每个未完成任务的目标命令、全部 affected-suite 命令与完整套件基线：命令、退出码、归一化失败标识/原因。
+9. 校验稳定 Requirement/Scenario 引用、Requirement → Scenario → Verification → Task 追溯链，以及每个任务的前置条件、`depends_on`、计划写集、冲突/资源锁、派发上下文、验证、批准依赖、结构化 AGENTS 影响和影响闭包契约；缺失、含糊或不可判定时按下方矩阵关闭失败。
+10. 影响闭包（impact closure）：若任务修改路由授权、页面状态、API 响应或公共 HTML，检查 URL/路由/handler/template 检索证据及全部相关既有测试归类。
+    E2E、theme/layout、authorization、HTML/template、API contract 测试必须进入当前写集、明确后续回归任务或有不受影响证据；affected suite 不能只包含新增测试。
+    `/videos`、`/api/videos` 等变化须检查全部这些测试面。
+11. 在任何写入前运行并记录每个未完成任务的目标命令、全部 affected-suite 命令与完整套件基线：命令、退出码、归一化失败标识/原因。
     尚未加入 Red 验证时，目标命令可记录为契约规定的预期状态；既有失败与目标 Red 严格分离，既有失败绝不算 Red。
-11. 任一预检项失败 → 停止并返回 `/abel-design --change <name>`；此处绝不虚构或修补产品/行为/架构决策。
+12. 可信交付无效时，在注册任务前输出 stage-level blocker；不得伪装成 task outcome。
+    boundary 外的新路径、依赖、行为、策略、架构、冲突、资源、verification 或 AGENTS 需求使当前任务以 typed `approval-boundary` failure 终止。
+    工具、依赖路径、命令或沙箱不可用使当前任务以 typed environment failure 终止；可机械修复的产物仅使用 phase 的有界 correction budget。
 
 **工具路由**：父代理只负责可信交付校验、执行图调度、子代理派发、统一 diff 审查与机械应用、验证决策、Gate/AGENTS/任务状态所有权，不直接编写测试、实现或局部重构。
 任务的 Red、Green、Refactor 内容统一由任务 worker 子代理生成；E2E 任务使用 `/dev-browser`。
@@ -70,8 +89,9 @@ Implement 不重新作出或请求 Gate A/B 决策；只有 Gate receipts、arti
 5. 同批 worker 并行生成当前阶段的统一 diff 和说明，不得写入任何工作树。
    父代理按跟踪文件顺序校验基线、实际路径、契约与 diff，再机械应用合格 diff；父代理不得自行补写或修正实现。
    每次应用后由父代理运行契约命令，并把命令、退出码和归一化结果回传原 worker，作为进入下一阶段或生成修正 diff 的唯一事实。
-6. diff 冲突、越界、写集扩张或验证失败时只阻塞该任务及其后继；已独立验收的同批任务可保留。
-   机械重派可在不改变行为、架构、依赖和写集契约时基于最新基线进行；需要新行为、实质架构、未声明依赖/冲突或范围扩张时，停止受影响分支并返回 Design。
+6. diff 冲突、越界、写集扩张或验证失败时只终止当前任务；已独立验收的同批任务可保留，外层 DAG 的其余调度仍由父代理决定。
+   机械重派只可在不改变行为、架构、依赖和固定 boundary 时基于最新 snapshot 进行。
+   普通实现或测试失败不得由自然语言推测为契约变化。
    禁止无界重试。
 7. 一批任务稳定后，父代理逐任务完成 AGENTS 检查点和状态推进，再重新计算 ready 集合；任何后继不得提前调度。
    循环直至 DAG 全部完成。
@@ -82,25 +102,34 @@ worker 消费任务契约的普通缩进符号列表（绝非 Markdown 复选框
 
 1. **🔴 Red（worker → 父代理）**：worker 只用契约规定的验证类型与范围生成失败验证 diff；父代理审查并应用后运行 Red 命令，必须因契约描述的目标缺陷失败。
    加载/导入失败、未运行目标测试或失败身份与批准身份不同时，将结果分类为生成的实现产物拒绝并进入有界修正路径。
-   若 Red 在预检候选上通过，或批准命令无法在不改变行为、策略、依赖、架构、范围、写集或验证契约的情况下见证批准行为，则 Red 契约无效：立即返回 `/abel-design --change <name>`，不得消耗产物修正预算。
-   非行为变更任务以指定的失败静态验证起步；仅人工任务返回 Design。
+   若 Red 候选意外通过，记录 `{ kind: "artifact", code: "red-not-witnessed" }`；Runtime 返回有界 `{ kind: "retry", scope: "worker", cause: "artifact", remainingAttempts: 1 }`，因为候选通过本身不证明设计有缺陷。
+   已证明批准命令无法见证行为且必须改变行为、策略、依赖、架构、范围、写集或验证契约时，以 `verification-contract-insufficient` 终止当前任务，不消耗产物修正预算。
+   非行为变更任务以指定的失败静态验证起步；仅人工任务不具备可执行合同并阻塞。
 2. **🟢 Green（worker → 父代理）**：同一 worker 基于已确认的 Red 证据生成最小实现 diff；父代理审查并应用后运行目标验证。
    失败证据回传 worker，仅允许在声明写集和已批准行为内生成修正 diff。
 3. **🔵 Refactor（worker → 父代理）**：同一 worker 仅在声明范围内生成消除重复、改进命名/结构/可读性的可选 diff；父代理每次应用后跑目标验证，重构后跑 affected suite；失败则仅撤销该次重构 diff。
 4. **交付验收（父代理）**：拒绝基线不符、越界文件、Gate/索引/跟踪文件修改、验证证据缺失或未批准行为；父代理只做契约判断、机械应用与验证，不直接修码。
-5. **AGENTS 检查点（父代理）**：审查完整任务 diff，比较实际与计划的 AGENTS 影响。
-   - 暴露未批准的行为/架构 → 停止并返回 design。
-   - 分类为 `none` → 记录证据；否则对 `<!-- ABEL:AGENTS-INDEX:START -->` … `<!-- ABEL:AGENTS-INDEX:END -->` 托管区块做最小的更新/创建/移除，保留人工与无关内容。
-   - 校验已索引的路径/命令/根到嵌套路由；运行该任务的 AGENTS 验证命令。
-6. 父代理重跑目标与受影响验证；全绿后，仅在 schema `apply.tracks` 解析出的具体跟踪文件中更新匹配的那个任务复选框；零个/多个匹配 → 停止并返回 design。
+5. **AGENTS 检查点（父代理）**：审查完整任务 diff，机械比较 `agentsImpact`、`agentsTarget`、`agentsManagedOnly: true` 与实际影响。
+   - `none` → 记录未写 AGENTS 的证据；`update-existing | create-index | remove-index` → 父代理在稳定任务检查点按批准目标完成托管区块操作。
+     子代理 diff 中出现 AGENTS 路径一律是写集越界。
+   - 实际 diff 暴露未批准生产行为/架构，或必须改变 AGENTS/任务契约时，以匹配的 `approval-boundary` code 终止当前任务；正常已批准 checkpoint 继续执行。
+   - 校验已索引的路径/命令/根到嵌套路由、marker 唯一性与人工内容不变；运行该任务的 AGENTS 验证命令。
+6. 父代理重跑目标与受影响验证；全绿后，仅在 schema `apply.tracks` 解析出的具体跟踪文件中更新匹配的那个任务复选框；零个/多个匹配 → stage-level blocker。
 
-Syntax, import/load, no-test, malformed-diff, and wrong-Red-identity failures are generated implementation-artifact rejection.
-A wrong-Red result follows the same bounded artifact-correction path.
-Every artifact rejection uses a finite artifact correction budget shared with the phase's mechanical redispatch budget.
-When the artifact correction budget is exhausted, report `implementation-artifact-delivery-blocked`; it must not automatically return, transition, or route to Design.
-An invalid Red contract is one where Red passes against the preflighted candidate, or where the approved command cannot witness the approved behavior without a substantive behavior, policy, dependency, architecture, scope, write-set, or verification-contract change.
-An invalid Red contract must immediately return the contract defect to Design and must not consume the artifact correction budget.
-Only an invalid Red contract or another substantive change to behavior, policy, dependency, architecture, scope, write set, or verification contract may route the branch to Design.
+## 当前任务的 typed blocker（闭合）
+
+Runtime 只报告当前任务事实，不选择用户恢复动作，也不控制外层 DAG。
+闭合失败类如下：
+
+- malformed diff、syntax/import/load、no-test/错误命令、wrong Red identity、重复/无效提交或 Red 候选意外通过：`{ kind: "artifact", code: <closed-artifact-code> }`，其中意外通过使用 `red-not-witnessed`；首次可在共享两次 launch 内修正，耗尽为 `attempts-exhausted`。
+- stale snapshot 使用 `{ kind: "stale", code: <closed-stale-code> }`；可机械重派的 transport failure 使用 `{ kind: "transport", code: "transport-failure" }`；首次可在共享两次 launch 内刷新或同调用重派，耗尽为 `attempts-exhausted`。
+- Bubblewrap、依赖路径、测试沙箱或外部环境不可用：`{ kind: "environment", code: <closed-environment-code> }`，当前任务 terminal blocked。
+- 新路径、依赖、行为、策略、架构、冲突、资源、verification 或 AGENTS 合同：对应 closed `approval-boundary` code，当前任务 terminal blocked，不扩大 boundary。
+- result size 超限：`{ kind: "result-limit", limitBytes }`，当前任务 terminal blocked，不接受 partial diff。
+
+可信 delivery 的 receipt/hash/trace/strict failure 发生在 `open-task` 前并成为 `delivery-invalid` stage blocker，不是 TaskFailure。
+预期 Red 失败、artifact defect、stale snapshot、环境失败、已批准 AGENTS checkpoint、已批准文档/测试和 boundary 内兼容修复均不产生阶段选择。
+重试预算始终有限。
 
 父代理拥有主工作区补丁应用、闸门、索引写入与任务完成状态；子代理只接收任务局部索引上下文，只返回统一 diff 与分析，绝不应用补丁、批准决策、编辑索引或推进状态。
 
@@ -138,7 +167,7 @@ If the required input is missing or absent, or the request is ambiguous and not 
 
 Record target, affected suite, and full-suite baselines before writing; keep pre-existing failures separate and never attribute them to the task Red.
 Red must fail with the expected identity; a wrong reason is a generated implementation-artifact rejection handled by bounded correction.
-If Red passes against the preflighted candidate or the approved command cannot witness the approved behavior, the invalid Red contract returns immediately to Design without consuming the artifact correction budget.
+If a Red candidate passes, classify it as an artifact failure with `code: red-not-witnessed`; a separately proven insufficient verification contract terminally blocks the current task without consuming the artifact correction budget.
 After Green the target and affected suite must be green, in Red-Green-Refactor order, with a stable AGENTS index at checkpoints and no new failure relative to the recorded baseline.
 A fresh-context handoff validates the Gate receipt, hash, and trace strictly without requesting Gate approval again.
 You must not archive, publish, or commit implicitly: only explicit parent actions may do so.

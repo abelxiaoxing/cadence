@@ -1,6 +1,7 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
+  type CandidateFailure,
   type DiffResult,
   type EvidenceResult,
   validateDiffResult,
@@ -36,7 +37,6 @@ const diffSchema = Type.Object({
   diff: Type.String(),
   expectedVerification: Type.String(),
   risks: Type.Array(Type.String()),
-  nextStep: Type.String(),
   contractCompliant: Type.Literal(true),
 });
 
@@ -69,6 +69,7 @@ export function createSubmitTool(input: {
   output: "evidence" | "diff";
 }) {
   let submitted: EvidenceResult | DiffResult | undefined;
+  let failure: CandidateFailure | undefined;
   let attempts = 0;
   let schema: "valid" | "invalid" = "invalid";
   const identity: IdentityOutcome = {
@@ -94,6 +95,7 @@ export function createSubmitTool(input: {
         identity.task = false;
         identity.phase = false;
         schema = "invalid";
+        failure = { kind: "artifact", code: "invalid-structural-result" };
         throw new Error("submitted result is not an object");
       }
       if (value.id !== input.requestId) identity.request = false;
@@ -111,11 +113,17 @@ export function createSubmitTool(input: {
       const matches =
         identity.request && identity.role && identity.task && identity.phase;
       if (!validation.ok || !matches) {
+        failure =
+          validation.failure ??
+          ({ kind: "artifact", code: "invalid-structural-result" } as const);
         throw new Error(
           validation.reason ?? "submitted result identity does not match",
         );
       }
-      if (submitted) throw new Error("duplicate structural submission");
+      if (submitted) {
+        failure = { kind: "artifact", code: "invalid-structural-result" };
+        throw new Error("duplicate structural submission");
+      }
       submitted = structuredClone(value) as unknown as
         | EvidenceResult
         | DiffResult;
@@ -133,5 +141,7 @@ export function createSubmitTool(input: {
     getAttempts: () => attempts,
     getSchema: () => schema,
     getIdentity: () => ({ ...identity }),
+    getFailure: () =>
+      failure === undefined ? undefined : structuredClone(failure),
   };
 }

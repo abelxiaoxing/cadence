@@ -34,6 +34,16 @@ export interface SchedulerOptions<T = unknown> {
   ): Promise<T>;
 }
 
+export interface ConflictDeclaration {
+  taskId: string;
+  requestId?: string;
+  read: string[];
+  write: string[];
+  conflicts: string[];
+  resources: string[];
+  verificationLocks: string[];
+}
+
 type EntryState = "queued" | "running" | TerminalStatus;
 
 interface Entry<T> {
@@ -53,35 +63,63 @@ function intersects(left: string[], right: string[]): boolean {
   return left.some((path) => right.includes(path));
 }
 
+function pathsOverlap(left: string, right: string): boolean {
+  return (
+    left === "." ||
+    right === "." ||
+    left === right ||
+    left.startsWith(`${right}/`) ||
+    right.startsWith(`${left}/`)
+  );
+}
+
+function pathSetsOverlap(left: string[], right: string[]): boolean {
+  return left.some((a) => right.some((b) => pathsOverlap(a, b)));
+}
+
 function conflictEdgeMatches(
   conflicts: string[],
-  other: RequestEnvelope,
+  other: ConflictDeclaration,
 ): boolean {
   return conflicts.some(
     (edge) =>
       edge === other.taskId ||
-      edge === other.id ||
-      other.declared.read.includes(edge) ||
-      other.declared.write.includes(edge),
+      edge === other.requestId ||
+      other.read.some((path) => pathsOverlap(edge, path)) ||
+      other.write.some((path) => pathsOverlap(edge, path)),
   );
 }
 
-/** True when two declared envelopes cannot be active at the same time. */
+function requestConflictOf(request: RequestEnvelope): ConflictDeclaration {
+  return {
+    taskId: request.taskId ?? request.id,
+    requestId: request.id,
+    read: request.declared.read,
+    write: request.declared.write,
+    conflicts: request.declared.conflicts,
+    resources: request.declared.resources,
+    verificationLocks: request.declared.verificationLock
+      ? [request.declared.verificationLock]
+      : [],
+  };
+}
+
+/** True when two pure declarations cannot be active at the same time. */
 export function declarationsConflict(
-  left: RequestEnvelope,
-  right: RequestEnvelope,
+  left: ConflictDeclaration,
+  right: ConflictDeclaration,
 ): boolean {
-  const a = left.declared;
-  const b = right.declared;
-  if (intersects(a.write, b.write)) return true;
-  if (intersects(a.write, b.read) || intersects(a.read, b.write)) return true;
+  const a = left;
+  const b = right;
+  if (a.taskId === b.taskId) return true;
+  if (pathSetsOverlap(a.write, b.write)) return true;
+  if (pathSetsOverlap(a.write, b.read) || pathSetsOverlap(a.read, b.write)) {
+    return true;
+  }
   if (conflictEdgeMatches(a.conflicts, right)) return true;
   if (conflictEdgeMatches(b.conflicts, left)) return true;
   if (intersects(a.resources, b.resources)) return true;
-  return (
-    a.verificationLock !== undefined &&
-    a.verificationLock === b.verificationLock
-  );
+  return intersects(a.verificationLocks, b.verificationLocks);
 }
 
 function errorMessage(error: unknown): string {
@@ -235,7 +273,12 @@ export class Scheduler<T> {
 
   private hasActiveConflict(entry: Entry<T>): boolean {
     for (const activeEntry of this.active) {
-      if (declarationsConflict(entry.request, activeEntry.request)) {
+      if (
+        declarationsConflict(
+          requestConflictOf(entry.request),
+          requestConflictOf(activeEntry.request),
+        )
+      ) {
         return true;
       }
     }

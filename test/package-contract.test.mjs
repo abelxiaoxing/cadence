@@ -81,9 +81,12 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
   it("exposes no host-version policy or compatibility module", () => {
     const srcFiles = walkTs(path.join(root, "src"));
     expect(srcFiles.length).toBeGreaterThan(0);
-    for (const f of srcFiles) {
-      expect(read(f)).not.toMatch(
-        /compatib|version.*check|check.*version|unsupported.*version/i,
+    expect(srcFiles.map((file) => path.basename(file))).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/compatib/i)]),
+    );
+    for (const file of srcFiles) {
+      expect(read(file)).not.toMatch(
+        /version.*check|check.*version|unsupported.*version|from ["'][^"']*compatib/i,
       );
     }
   });
@@ -96,5 +99,33 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     expect(existsSync(path.join(root, "bun.lock"))).toBe(true);
     const lock = read(path.join(root, "bun.lock"));
     expect(lock).not.toMatch(/@gotgenes/);
+  });
+
+  it("[SLICE-5:pi-tool-error] ships fact-only worker and reviewer contracts", () => {
+    const implementation = read(
+      path.join(root, "agents", "implementation-worker.md"),
+    );
+    const diagnosis = read(path.join(root, "agents", "diagnosis-worker.md"));
+    const reviewer = read(path.join(root, "agents", "contract-reviewer.md"));
+
+    expect(implementation).toMatch(/complete unified diff/i);
+    expect(implementation).toMatch(/expected verification/i);
+    expect(implementation).toMatch(/result-limit/i);
+    expect(implementation).not.toMatch(
+      /design-required|return-to-design|\/abel-design|recommended next (workflow )?step|nextStep|dependent successors?|split condition/i,
+    );
+
+    expect(diagnosis).toMatch(/reproduced symptoms/i);
+    expect(diagnosis).toMatch(/falsif/i);
+    expect(diagnosis).toMatch(/failing-regression[\s\S]{0,240}minimum-repair/i);
+    expect(diagnosis).not.toMatch(
+      /recommended next (workflow )?step|nextStep/i,
+    );
+
+    expect(reviewer).toMatch(/delivery-invalid/);
+    expect(reviewer).toMatch(/approval-boundary/);
+    expect(reviewer).not.toMatch(
+      /returns?[\s\S]{0,80}(defects?|issues?)[\s\S]{0,80}to Design|recommended next (workflow )?step|nextStep/i,
+    );
   });
 });

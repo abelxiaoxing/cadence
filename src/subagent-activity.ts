@@ -10,7 +10,6 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import type {
-  DispatchResult,
   RuntimeActivityEvent,
   RuntimeActivityObserver,
   RuntimeActivityState,
@@ -39,12 +38,12 @@ export interface EvidenceActivitySummary {
 export interface DiffActivitySummary {
   kind: "diff";
   summary: string;
-  nextStep: string;
   riskCount: number;
   retained: boolean;
 }
 
 export type ActivitySummary = EvidenceActivitySummary | DiffActivitySummary;
+export type ActivityTone = "success" | "warning" | "muted" | "error";
 
 export interface ActivityDisplay {
   version: 1;
@@ -54,6 +53,7 @@ export interface ActivityDisplay {
   phase: string;
   objective: string;
   state: TerminalActivityState;
+  tone: ActivityTone;
   elapsedMs: number;
   summary?: ActivitySummary;
   reason?: string;
@@ -217,14 +217,7 @@ function renderActivityLines(
     formatElapsed(elapsed),
   ].join(" · ");
   const second = `  ${sanitizeDisplayText(snapshot.objective, 240)}`;
-  const color =
-    snapshot.state === "completed"
-      ? "success"
-      : snapshot.state === "failed" || snapshot.state === "timed-out"
-        ? "error"
-        : snapshot.state === "cancelled"
-          ? "warning"
-          : "accent";
+  const color = "tone" in snapshot ? snapshot.tone : "accent";
   return [
     line(styled(theme, color, first), width),
     line(styled(theme, "muted", second), width),
@@ -311,7 +304,7 @@ export class ActivityInlineComponent implements Component {
         lines[1] = line(
           styled(
             this.theme,
-            "error",
+            this.display.tone,
             `  reason: ${sanitizeFailureReason(this.display.reason)}`,
           ),
           width,
@@ -323,7 +316,7 @@ export class ActivityInlineComponent implements Component {
     const detail =
       summary.kind === "evidence"
         ? `  evidence: ${summary.conclusions} conclusions · ${summary.citations} citations · ${summary.risks} risks · ${summary.blockingQuestions} blocking`
-        : `  diff: ${sanitizeDisplayText(summary.summary)} · next: ${sanitizeDisplayText(summary.nextStep)} · ${summary.riskCount} risks · retained: ${summary.retained ? "yes" : "no"}`;
+        : `  diff: ${sanitizeDisplayText(summary.summary)} · ${summary.riskCount} risks · retained: ${summary.retained ? "yes" : "no"}`;
     return [lines[0] ?? "", line(styled(this.theme, "muted", detail), width)];
   }
 
@@ -337,10 +330,14 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 export function summarizeDispatchResult(
-  result: DispatchResult,
+  result: unknown,
 ): ActivitySummary | undefined {
-  if (!result.ok) return undefined;
-  const value = asRecord(result.result);
+  const outer = asRecord(result);
+  if (!outer || outer.ok === false) return undefined;
+  const outcome = outer.ok === true ? asRecord(outer.result) : outer;
+  if (!outcome) return undefined;
+  const value =
+    outcome.kind === "candidate" ? asRecord(outcome.result) : outcome;
   if (!value) return undefined;
   if (
     value.kind === "evidence" &&
@@ -360,18 +357,39 @@ export function summarizeDispatchResult(
   if (
     value.kind === "diff" &&
     typeof value.summary === "string" &&
-    typeof value.nextStep === "string" &&
     Array.isArray(value.risks)
   ) {
     return {
       kind: "diff",
       summary: sanitizeDisplayText(value.summary),
-      nextStep: sanitizeDisplayText(value.nextStep),
       riskCount: value.risks.length,
-      retained: typeof result.resultId === "string",
+      retained:
+        typeof outer.resultId === "string" ||
+        typeof outcome.resultId === "string",
     };
   }
   return undefined;
+}
+
+function toneForResult(result: unknown): ActivityTone | undefined {
+  const outer = asRecord(result);
+  if (!outer || outer.ok === false) return undefined;
+  const value = outer.ok === true ? asRecord(outer.result) : outer;
+  switch (value?.kind) {
+    case "candidate":
+    case "applied":
+    case "completed":
+      return "success";
+    case "deferred":
+    case "retry":
+    case "checkpoint-required":
+      return "warning";
+    case "blocked":
+    case "cancelled":
+      return "muted";
+    default:
+      return undefined;
+  }
 }
 
 function terminalState(
@@ -396,6 +414,12 @@ function displayFromEvent(
     phase: entry.phase,
     objective: sanitizeDisplayText(entry.objective),
     state: event.state as TerminalActivityState,
+    tone:
+      event.state === "failed" || event.state === "timed-out"
+        ? "error"
+        : event.state === "cancelled"
+          ? "muted"
+          : "success",
     elapsedMs,
     ...(reason === undefined ? {} : { reason: sanitizeFailureReason(reason) }),
   };
@@ -404,7 +428,7 @@ function displayFromEvent(
 export function createActivityDisplay(
   event: RuntimeActivityEvent,
   elapsedMs: number,
-  result?: DispatchResult,
+  result?: unknown,
 ): ActivityDisplay {
   const entry: ActivityEntry = {
     toolCallId: "",
@@ -419,7 +443,12 @@ export function createActivityDisplay(
   };
   const display = displayFromEvent(entry, event, elapsedMs);
   const summary = result ? summarizeDispatchResult(result) : undefined;
-  return summary ? { ...display, summary } : display;
+  const tone = result ? toneForResult(result) : undefined;
+  return {
+    ...display,
+    ...(tone === undefined ? {} : { tone }),
+    ...(summary === undefined ? {} : { summary }),
+  };
 }
 
 function activityPartial(display: ActivityDisplay | ActivitySnapshot): unknown {
@@ -538,15 +567,17 @@ export class ActivityController {
     this.syncUi();
   }
 
-  finalize(
-    toolCallId: string,
-    result: DispatchResult,
-  ): ActivityDisplay | undefined {
+  finalize(toolCallId: string, result: unknown): ActivityDisplay | undefined {
     const display = this.terminals.get(toolCallId);
     if (!display) return undefined;
     this.terminals.delete(toolCallId);
     const summary = summarizeDispatchResult(result);
-    return summary ? { ...display, summary } : display;
+    const tone = toneForResult(result);
+    return {
+      ...display,
+      ...(tone === undefined ? {} : { tone }),
+      ...(summary === undefined ? {} : { summary }),
+    };
   }
 
   getActiveEntries(): readonly ActivitySnapshot[] {

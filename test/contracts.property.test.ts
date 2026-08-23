@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vitest";
+import type {
+  ImplementRunRequest,
+  PhaseAttempt,
+  TaskBoundary,
+} from "../src/contracts";
 
 let contracts = null;
 try {
@@ -43,6 +48,105 @@ function validEnvelope(overrides = {}) {
   };
 }
 
+function validTaskBoundary(): TaskBoundary {
+  const target = [
+    "bun",
+    "run",
+    "test:target",
+    "test/contracts.property.test.ts",
+  ];
+  return {
+    changeId: "remove-implement-design-loop",
+    taskId: "S1",
+    objective: "Replace repeated Implement envelopes with one task boundary",
+    context: {
+      agents: "bounded package context",
+      contract: "approved immutable task contract",
+    },
+    roots: ["."],
+    phases: {
+      red: {
+        read: ["src/contracts.ts"],
+        write: ["test/contracts.property.test.ts"],
+        verification: {
+          id: "verify-s1-red",
+          argv: target,
+          classification: "expected-red",
+          expectedFailure: "[SLICE-1:boundary-once]",
+          minTests: 1,
+        },
+        verificationLock: "vitest-implement-runtime",
+      },
+      green: {
+        read: ["src/contracts.ts", "test/contracts.property.test.ts"],
+        write: ["src/contracts.ts"],
+        verification: {
+          id: "verify-s1-green",
+          argv: target,
+          classification: "expected-green",
+          minTests: 1,
+        },
+        verificationLock: "vitest-implement-runtime",
+      },
+    },
+    scheduling: {
+      conflicts: ["S2"],
+      resources: ["implement-runtime-core"],
+    },
+    agents: {
+      impact: "none",
+      managedOnly: true,
+    },
+    approvedDependencies: [] as string[],
+    impactClosure: {
+      changedSurfaces: ["none"],
+      searchEvidence: [],
+      relatedTests: [
+        {
+          path: "test/contracts.property.test.ts",
+          disposition: "current-task",
+          evidence: "S1 Red owns the strict request contract.",
+        },
+      ],
+      affectedSuite: ["test/contracts.property.test.ts"],
+    },
+  };
+}
+
+function phaseAttempt(
+  phase: "red" | "green" | "refactor" = "red",
+  requestId = `S1:${phase}:0`,
+): PhaseAttempt {
+  const paths =
+    phase === "red"
+      ? ["src/contracts.ts", "test/contracts.property.test.ts"]
+      : ["src/contracts.ts", "test/contracts.property.test.ts"];
+  return {
+    changeId: "remove-implement-design-loop",
+    taskId: "S1",
+    requestId,
+    phase,
+    snapshot: Object.fromEntries(
+      paths.map((path) => [
+        path,
+        { kind: "file", sha256: "a".repeat(64), bytes: 1 },
+      ]),
+    ),
+  };
+}
+
+function openTaskRequest(): Extract<
+  ImplementRunRequest,
+  { kind: "open-task" }
+> {
+  return {
+    stage: "abel-implement",
+    kind: "open-task",
+    boundary: validTaskBoundary(),
+    attempt: phaseAttempt(),
+  };
+}
+
 const REQUIRED_FIELDS = [
   "stage",
   "role",
@@ -54,6 +158,261 @@ const REQUIRED_FIELDS = [
 ];
 
 describe("strict request envelope contracts", () => {
+  it("[SLICE-1:boundary-once] accepts only the strict Implement run union", () => {
+    if (!contracts) return notReady("contracts");
+    expect(contracts.validateRequestEnvelope(openTaskRequest()).ok).toBe(true);
+    expect(
+      contracts.validateRequestEnvelope({
+        stage: "abel-implement",
+        kind: "phase-attempt",
+        attempt: phaseAttempt("green"),
+      }).ok,
+    ).toBe(true);
+
+    const firstGreen = openTaskRequest();
+    firstGreen.attempt = phaseAttempt("green");
+    expect(contracts.validateRequestEnvelope(firstGreen).ok).toBe(false);
+
+    const missingBoundary = openTaskRequest() as Record<string, unknown>;
+    delete missingBoundary.boundary;
+    expect(contracts.validateRequestEnvelope(missingBoundary).ok).toBe(false);
+
+    const repeatedBoundary = {
+      stage: "abel-implement",
+      kind: "phase-attempt",
+      boundary: validTaskBoundary(),
+      attempt: phaseAttempt("green"),
+    };
+    expect(contracts.validateRequestEnvelope(repeatedBoundary).ok).toBe(false);
+
+    const mismatchedChange = openTaskRequest();
+    mismatchedChange.attempt.changeId = "another-change";
+    expect(contracts.validateRequestEnvelope(mismatchedChange).ok).toBe(false);
+
+    const mismatchedTask = openTaskRequest();
+    mismatchedTask.attempt.taskId = "S1-other";
+    expect(contracts.validateRequestEnvelope(mismatchedTask).ok).toBe(false);
+  });
+
+  it("[SLICE-1:boundary-once] rejects stable facts on phase attempts", () => {
+    if (!contracts) return notReady("contracts");
+    const stableFacts: Array<[string, unknown]> = [
+      ["objective", "replayed objective"],
+      ["context", { agents: "replayed", contract: "replayed" }],
+      ["roots", ["."]],
+      ["phases", validTaskBoundary().phases],
+      ["scheduling", validTaskBoundary().scheduling],
+      ["agents", validTaskBoundary().agents],
+      ["approvedDependencies", []],
+      ["impactClosure", validTaskBoundary().impactClosure],
+      ["verification", validTaskBoundary().phases.green.verification],
+      ["evidence", ["caller verification"]],
+      ["role", "implementation-worker"],
+      ["output", "diff"],
+    ];
+
+    for (const [field, value] of stableFacts) {
+      const request = {
+        stage: "abel-implement",
+        kind: "phase-attempt",
+        attempt: {
+          ...phaseAttempt("green"),
+          [field]: value,
+        },
+      };
+      expect(
+        contracts.validateRequestEnvelope(request).ok,
+        `${field} must not be replayed`,
+      ).toBe(false);
+    }
+  });
+
+  it("[SLICE-1:boundary-once] rejects duplicate or overlapping roots and set members", () => {
+    if (!contracts) return notReady("contracts");
+    const invalidBoundaries: Array<
+      [string, (boundary: ReturnType<typeof validTaskBoundary>) => void]
+    > = [
+      ["duplicate roots", (boundary) => (boundary.roots = ["src", "src"])],
+      [
+        "overlapping roots",
+        (boundary) => (boundary.roots = ["src", "src/runtime"]),
+      ],
+      [
+        "duplicate reads",
+        (boundary) =>
+          boundary.phases.red.read.push(boundary.phases.red.read[0]),
+      ],
+      [
+        "duplicate writes",
+        (boundary) =>
+          boundary.phases.red.write.push(boundary.phases.red.write[0]),
+      ],
+      [
+        "duplicate conflicts",
+        (boundary) =>
+          boundary.scheduling.conflicts.push(boundary.scheduling.conflicts[0]),
+      ],
+      [
+        "duplicate resources",
+        (boundary) =>
+          boundary.scheduling.resources.push(boundary.scheduling.resources[0]),
+      ],
+      [
+        "duplicate dependencies",
+        (boundary) => boundary.approvedDependencies.push("vitest", "vitest"),
+      ],
+      [
+        "duplicate impact surfaces",
+        (boundary) => boundary.impactClosure.changedSurfaces.push("none"),
+      ],
+      [
+        "duplicate affected tests",
+        (boundary) =>
+          boundary.impactClosure.affectedSuite.push(
+            boundary.impactClosure.affectedSuite[0],
+          ),
+      ],
+    ];
+
+    for (const [label, mutate] of invalidBoundaries) {
+      const request = openTaskRequest();
+      mutate(request.boundary);
+      expect(
+        contracts.validateRequestEnvelope(request).ok,
+        `${label} must fail closed`,
+      ).toBe(false);
+    }
+  });
+
+  it("[SLICE-1:boundary-once] contains every phase path within an approved root", () => {
+    if (!contracts) return notReady("contracts");
+    const request = openTaskRequest();
+    request.boundary.roots = ["src"];
+    for (const phase of [
+      request.boundary.phases.red,
+      request.boundary.phases.green,
+    ]) {
+      phase.read = ["src/contracts.ts"];
+      phase.write = ["src/contracts.ts"];
+    }
+    request.boundary.impactClosure = {
+      changedSurfaces: ["none"],
+      searchEvidence: [],
+      relatedTests: [],
+      affectedSuite: [],
+    };
+    request.attempt.snapshot = {
+      "src/contracts.ts": {
+        kind: "file",
+        sha256: "a".repeat(64),
+        bytes: 1,
+      },
+    };
+    expect(contracts.validateRequestEnvelope(request).ok).toBe(true);
+
+    request.boundary.phases.red.write = ["outside.ts"];
+    request.attempt.snapshot = {
+      "src/contracts.ts": {
+        kind: "file",
+        sha256: "a".repeat(64),
+        bytes: 1,
+      },
+      "outside.ts": {
+        kind: "file",
+        sha256: "b".repeat(64),
+        bytes: 1,
+      },
+    };
+    expect(contracts.validateRequestEnvelope(request).ok).toBe(false);
+  });
+
+  it("[SLICE-1:boundary-once] requires regular-file or absent write bounds", () => {
+    if (!contracts) return notReady("contracts");
+    const request = openTaskRequest();
+    (request.attempt.snapshot as Record<string, unknown>)[
+      "test/contracts.property.test.ts"
+    ] = {
+      kind: "dir",
+      manifest: "b".repeat(64),
+    };
+
+    expect(contracts.validateRequestEnvelope(request).ok).toBe(false);
+  });
+
+  it("[SLICE-1:boundary-once] rejects nested TaskBoundary and snapshot fields", () => {
+    if (!contracts) return notReady("contracts");
+    const mutations: Array<
+      [string, (request: ReturnType<typeof openTaskRequest>) => void]
+    > = [
+      [
+        "verification",
+        (request) => {
+          (
+            request.boundary.phases.red.verification as unknown as Record<
+              string,
+              unknown
+            >
+          ).evidence = ["hidden instruction"];
+        },
+      ],
+      [
+        "impact closure",
+        (request) => {
+          (
+            request.boundary.impactClosure as unknown as Record<string, unknown>
+          ).nextStep = "hidden";
+        },
+      ],
+      [
+        "related test",
+        (request) => {
+          (
+            request.boundary.impactClosure.relatedTests[0] as unknown as Record<
+              string,
+              unknown
+            >
+          ).nextStep = "hidden";
+        },
+      ],
+      [
+        "snapshot entry",
+        (request) => {
+          (
+            (request.attempt.snapshot as Record<string, unknown>)[
+              "src/contracts.ts"
+            ] as Record<string, unknown>
+          ).mode = "100644";
+        },
+      ],
+    ];
+
+    for (const [label, mutate] of mutations) {
+      const request = openTaskRequest();
+      mutate(request);
+      expect(
+        contracts.validateRequestEnvelope(request).ok,
+        `${label} must fail closed`,
+      ).toBe(false);
+    }
+  });
+
+  it("[SLICE-1:boundary-once] keeps Design and Diagnose run envelopes valid", () => {
+    if (!contracts) return notReady("contracts");
+    expect(contracts.validateRequestEnvelope(validEnvelope()).ok).toBe(true);
+    expect(
+      contracts.validateRequestEnvelope(
+        validEnvelope({
+          stage: "abel-diagnose",
+          role: "diagnosis-worker",
+          id: "diagnose-001",
+          phase: "red",
+          objective: "Diagnose the bounded regression",
+          output: "diff",
+        }),
+      ).ok,
+    ).toBe(true);
+  });
+
   it("accepts a valid evidence envelope", () => {
     if (!contracts) return notReady("contracts");
     const result = contracts.validateRequestEnvelope(validEnvelope());
@@ -118,70 +477,192 @@ describe("strict request envelope contracts", () => {
     expect(contracts.validateRequestEnvelope(env).ok).toBe(false);
   });
 
+  it("rejects equivalent noncanonical path spellings before scheduling", () => {
+    if (!contracts) return notReady("contracts");
+    expect(contracts.isValidRelativePath(".")).toBe(true);
+    for (const path of ["./src/a.ts", "src/./a.ts", "src/"]) {
+      expect(
+        contracts.isValidRelativePath(path),
+        `${path} must not alias a canonical declaration`,
+      ).toBe(false);
+
+      const design = validEnvelope();
+      (design.declared as { read: string[] }).read = [path];
+      expect(
+        contracts.validateRequestEnvelope(design).ok,
+        `Design declaration ${path} must fail closed`,
+      ).toBe(false);
+
+      const implementation = openTaskRequest();
+      implementation.boundary.phases.red.read = [path];
+      expect(
+        contracts.validateRequestEnvelope(implementation).ok,
+        `Implement declaration ${path} must fail closed`,
+      ).toBe(false);
+    }
+  });
+
   it("requires phase-matched verification for every implementation diff", () => {
     if (!contracts) return notReady("contracts");
-    const implementation = (phase: "red" | "green" | "refactor") =>
-      validEnvelope({
-        stage: "abel-implement",
-        role: "implementation-worker",
-        taskId: "task-verified-1",
-        id: `task-verified-1:${phase}:0`,
-        phase,
-        declared: {
-          read: ["src/index.ts"],
-          write: ["src/index.ts"],
-          conflicts: [],
-          resources: [],
-          verificationLock: "implementation-contracts",
-        },
-        snapshot: {
-          "src/index.ts": {
-            kind: "file",
-            sha256: "a".repeat(64),
-            bytes: 1,
-          },
-        },
-        output: "diff",
-        verification: {
-          id: `verify-${phase}`,
-          argv: [
-            "bun",
-            "run",
-            "test:target",
-            "test/contracts.property.test.ts",
-          ],
-          classification: `expected-${phase}`,
-          ...(phase === "red"
-            ? { expectedFailure: "[CONTRACT:expected-red]" }
-            : {}),
-          minTests: 1,
-        },
-      });
+    const implementation = openTaskRequest();
+    (implementation.boundary.phases as Record<string, unknown>).refactor = {
+      read: ["src/contracts.ts"],
+      write: ["src/contracts.ts"],
+      verificationLock: "vitest-implement-runtime",
+      verification: {
+        id: "verify-refactor",
+        argv: ["bun", "run", "test:target", "test/contracts.property.test.ts"],
+        classification: "expected-refactor",
+        minTests: 1,
+      },
+    };
+    expect(contracts.validateRequestEnvelope(implementation).ok).toBe(true);
 
     for (const phase of ["red", "green", "refactor"] as const) {
-      expect(contracts.validateRequestEnvelope(implementation(phase)).ok).toBe(
-        true,
-      );
+      const missing = structuredClone(implementation);
+      delete (
+        missing.boundary.phases[phase] as unknown as Record<string, unknown>
+      ).verification;
+      expect(contracts.validateRequestEnvelope(missing).ok).toBe(false);
+
+      const mismatched = structuredClone(implementation);
+      const verification = mismatched.boundary.phases[phase]!
+        .verification as unknown as Record<string, unknown>;
+      verification.classification =
+        phase === "red" ? "expected-green" : "expected-red";
+      delete verification.expectedFailure;
+      expect(contracts.validateRequestEnvelope(mismatched).ok).toBe(false);
     }
 
-    const missingVerification = implementation("green") as Record<
-      string,
-      unknown
-    >;
-    delete missingVerification.verification;
-    expect(contracts.validateRequestEnvelope(missingVerification).ok).toBe(
-      false,
-    );
-
-    const missingTask = implementation("green") as Record<string, unknown>;
-    delete missingTask.taskId;
+    const missingTask = structuredClone(implementation) as unknown as {
+      boundary: Record<string, unknown>;
+    };
+    delete missingTask.boundary.taskId;
     expect(contracts.validateRequestEnvelope(missingTask).ok).toBe(false);
+  });
 
-    const mismatched = implementation("red") as Record<string, unknown>;
-    (mismatched.verification as Record<string, unknown>).classification =
-      "expected-green";
-    delete (mismatched.verification as Record<string, unknown>).expectedFailure;
-    expect(contracts.validateRequestEnvelope(mismatched).ok).toBe(false);
+  it("requires a mechanical AGENTS impact contract and never delegates AGENTS writes", () => {
+    if (!contracts) return notReady("contracts");
+    const implementation = openTaskRequest();
+    implementation.boundary.agents = {
+      impact: "update-existing",
+      target: "AGENTS.md",
+      managedOnly: true,
+    };
+
+    expect(contracts.validateRequestEnvelope(implementation).ok).toBe(true);
+
+    const missing = structuredClone(implementation);
+    delete (missing.boundary.agents as Record<string, unknown>).impact;
+    expect(contracts.validateRequestEnvelope(missing).ok).toBe(false);
+
+    const noneWithTarget = structuredClone(implementation);
+    noneWithTarget.boundary.agents.impact = "none";
+    expect(contracts.validateRequestEnvelope(noneWithTarget).ok).toBe(false);
+
+    for (const impact of [
+      "none",
+      "update-existing",
+      "create-index",
+      "remove-index",
+    ] as const) {
+      const delegated = structuredClone(implementation);
+      delegated.boundary.agents.impact = impact;
+      if (impact === "none") delete delegated.boundary.agents.target;
+      delegated.boundary.phases.green.write.push("AGENTS.md");
+      expect(
+        contracts.validateRequestEnvelope(delegated).ok,
+        `${impact} must not grant a child AGENTS write`,
+      ).toBe(false);
+    }
+
+    const designWrite = validEnvelope({
+      declared: {
+        read: [],
+        write: ["AGENTS.md"],
+        conflicts: [],
+        resources: [],
+      },
+    });
+    expect(contracts.validateRequestEnvelope(designWrite).ok).toBe(false);
+  });
+
+  it("requires existing-test impact closure for public route and authorization changes", () => {
+    if (!contracts) return notReady("contracts");
+    const routeTask = openTaskRequest();
+    for (const phase of [
+      routeTask.boundary.phases.red,
+      routeTask.boundary.phases.green,
+    ]) {
+      phase.read = ["src/index.ts", "test/contracts.property.test.ts"];
+      phase.write = ["src/index.ts"];
+    }
+    routeTask.attempt.snapshot = {
+      "src/index.ts": {
+        kind: "file",
+        sha256: "a".repeat(64),
+        bytes: 1,
+      },
+      "test/contracts.property.test.ts": {
+        kind: "file",
+        sha256: "b".repeat(64),
+        bytes: 1,
+      },
+    };
+    routeTask.boundary.impactClosure = {
+      changedSurfaces: ["route-authorization", "api-response"],
+      searchEvidence: ["rg -n '/videos|/api/videos' tests test templates src"],
+      relatedTests: [
+        {
+          path: "test/contracts.property.test.ts",
+          disposition: "unaffected",
+          evidence:
+            "Existing route contract remains valid under the approved policy.",
+        },
+      ],
+      affectedSuite: ["test/contracts.property.test.ts"],
+    };
+
+    expect(contracts.validateRequestEnvelope(routeTask).ok).toBe(true);
+
+    const newTestOnly = structuredClone(routeTask);
+    for (const phase of [
+      newTestOnly.boundary.phases.red,
+      newTestOnly.boundary.phases.green,
+    ]) {
+      phase.read = ["src/index.ts"];
+      phase.write = ["src/index.ts", "test/new-videos-route.test.ts"];
+    }
+    newTestOnly.attempt.snapshot = {
+      "src/index.ts": {
+        kind: "file",
+        sha256: "a".repeat(64),
+        bytes: 1,
+      },
+      "test/new-videos-route.test.ts": { kind: "absent", absent: true },
+    };
+    newTestOnly.boundary.impactClosure = {
+      changedSurfaces: ["route-authorization"],
+      searchEvidence: ["rg -n '/videos' test tests"],
+      relatedTests: [
+        {
+          path: "test/new-videos-route.test.ts",
+          disposition: "current-task",
+          evidence: "new authorization test",
+        },
+      ],
+      affectedSuite: ["test/new-videos-route.test.ts"],
+    };
+    expect(contracts.validateRequestEnvelope(newTestOnly).ok).toBe(false);
+  });
+
+  it("requires explicit targets for index creation and removal", () => {
+    if (!contracts) return notReady("contracts");
+    for (const impact of ["create-index", "remove-index"] as const) {
+      const request = openTaskRequest();
+      request.boundary.agents.impact = impact;
+      expect(contracts.validateRequestEnvelope(request).ok).toBe(false);
+    }
   });
 
   it("extracts write paths from ordinary unified diff headers", () => {
@@ -255,6 +736,87 @@ describe("generated envelope fuzzing with a fixed seed", () => {
   });
 });
 
+const validEvidenceResult = () => ({
+  id: "packet-001",
+  role: "design-explorer",
+  kind: "evidence",
+  conclusions: ["The scheduler owns bounded admission."],
+  citations: [{ path: "src/scheduler.ts", lines: "1-20" }],
+  constraints: ["Keep state in memory."],
+  dependencies: [],
+  risks: [],
+  blockingQuestions: [],
+  hints: {
+    writeSet: ["src/scheduler.ts"],
+    verification: "bun run check",
+    agentsImpact: "none",
+  },
+});
+
+describe("strict evidence result schema", () => {
+  it("[SLICE-5:pi-tool-error] validates a control-free evidence result", () => {
+    if (!contracts) return notReady("contracts");
+    expect(contracts.validateEvidenceResult(validEvidenceResult()).ok).toBe(
+      true,
+    );
+  });
+
+  it.each(["nextStep", "returnToDesign"])(
+    "[SLICE-5:pi-tool-error] rejects %s as an extra evidence control field",
+    (field) => {
+      if (!contracts) return notReady("contracts");
+      expect(
+        contracts.validateEvidenceResult({
+          ...validEvidenceResult(),
+          [field]: "return-to-design",
+        }).ok,
+      ).toBe(false);
+    },
+  );
+
+  it("rejects incomplete or malformed evidence fields", () => {
+    if (!contracts) return notReady("contracts");
+    const valid = validEvidenceResult();
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ["missing constraints", { constraints: undefined }],
+      ["missing dependencies", { dependencies: undefined }],
+      ["missing risks", { risks: undefined }],
+      ["missing hints", { hints: undefined }],
+      ["wrong conclusions", { conclusions: [1] }],
+      ["wrong constraints", { constraints: "none" }],
+      ["wrong dependencies", { dependencies: [false] }],
+      ["wrong risks", { risks: [null] }],
+      ["wrong blocking questions", { blockingQuestions: [1] }],
+      ["wrong citations", { citations: [{ path: 1, lines: "1" }] }],
+      [
+        "extra citation control",
+        {
+          citations: [
+            { path: "src/scheduler.ts", lines: "1", nextStep: "design" },
+          ],
+        },
+      ],
+      ["escaping citation", { citations: [{ path: "../x", lines: "1" }] }],
+      ["wrong hint write set", { hints: { ...valid.hints, writeSet: [1] } }],
+      [
+        "wrong hint verification",
+        { hints: { ...valid.hints, verification: 1 } },
+      ],
+      ["wrong hint impact", { hints: { ...valid.hints, agentsImpact: "all" } }],
+      [
+        "extra hint control",
+        { hints: { ...valid.hints, nextStep: "return-to-design" } },
+      ],
+    ];
+    for (const [label, overrides] of cases) {
+      expect(
+        contracts.validateEvidenceResult({ ...valid, ...overrides }).ok,
+        `${label} must be rejected`,
+      ).toBe(false);
+    }
+  });
+});
+
 const validDiffResult = () => ({
   id: "packet-001",
   role: "implementation-worker",
@@ -265,12 +827,11 @@ const validDiffResult = () => ({
   diff: "--- a/src/x.ts\n+++ b/src/x.ts\n@@ -1,2 +1,2 @@\n a\n-b\n+c\n",
   expectedVerification: "bun run check",
   risks: ["risk"],
-  nextStep: "review the accepted Green",
   contractCompliant: true,
 });
 
 describe("strict diff result fixture precheck", () => {
-  it("validates the approved control fixture", () => {
+  it("[SLICE-5:pi-tool-error] validates a control-free diff result", () => {
     if (!contracts) return notReady("contracts");
     const result = contracts.validateDiffResult(validDiffResult());
     expect(result.ok).toBe(true);
@@ -278,6 +839,26 @@ describe("strict diff result fixture precheck", () => {
 });
 
 describe("strict diff result schema", () => {
+  it("[SLICE-5:pi-tool-error] rejects nextStep as an extra control field", () => {
+    if (!contracts) return notReady("contracts");
+    const result = contracts.validateDiffResult({
+      ...validDiffResult(),
+      nextStep: "return-to-design",
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("[SLICE-5:pi-tool-error] omits Implement recovery exports", () => {
+    if (!contracts) return notReady("contracts");
+    for (const field of [
+      "RECOVERY_CODES",
+      "RECOVERY_FAILURE_CLASSES",
+      "RECOVERY_REASON_CODES",
+    ]) {
+      expect(contracts).not.toHaveProperty(field);
+    }
+  });
+
   it("strict diff result schema and identity shape", () => {
     if (!contracts) return notReady("contracts");
     const mutate = (
@@ -289,7 +870,6 @@ describe("strict diff result schema", () => {
     const cases: [string, Record<string, unknown>][] = [
       ["missing expectedVerification", { expectedVerification: undefined }],
       ["missing risks", { risks: undefined }],
-      ["missing nextStep", { nextStep: undefined }],
       ["missing task", { taskId: undefined }],
       ["missing phase", { phase: undefined }],
       ["wrong-typed phase", { phase: 7 }],
@@ -298,7 +878,6 @@ describe("strict diff result schema", () => {
       ["missing compliance", { contractCompliant: undefined }],
       ["wrong-typed expectedVerification", { expectedVerification: 7 }],
       ["wrong-typed risks", { risks: "not an array" }],
-      ["wrong-typed nextStep", { nextStep: 7 }],
       ["wrong-typed summary", { summary: 7 }],
       ["wrong-typed diff", { diff: 7 }],
       ["wrong-typed compliance", { contractCompliant: "yes" }],

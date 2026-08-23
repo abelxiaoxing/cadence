@@ -99,6 +99,14 @@ function activateDispatcher(
   }
 }
 
+function splitUsage(result: unknown): { payload: unknown; usage?: unknown } {
+  if (typeof result !== "object" || result === null || !("usage" in result)) {
+    return { payload: result };
+  }
+  const { usage, ...payload } = result as Record<string, unknown>;
+  return { payload, usage };
+}
+
 export default function register(pi: ExtensionAPI): void {
   const parentPayloadBridge = new ParentPayloadBridge();
   const runtime = new Runtime({ parentPayloadBridge });
@@ -108,7 +116,7 @@ export default function register(pi: ExtensionAPI): void {
     name: DISPATCH_TOOL,
     label: "Abel Dispatch",
     description:
-      "Private Abel workflow delegation: run bounded read-only evidence or Worker phase requests, apply or discard retained results, cancel work, or finish the stage. Inactive unless an eligible Abel stage verified its invocation.",
+      "Private Abel workflow delegation: run bounded read-only evidence or Worker phase requests, apply or discard retained results, apply a parent-only stable AGENTS checkpoint, cancel work, or finish the stage. Inactive unless an eligible Abel stage verified its invocation.",
     parameters: {
       type: "object",
       properties: {
@@ -121,12 +129,32 @@ export default function register(pi: ExtensionAPI): void {
           type: "string",
           description: "Retained result id for apply/discard",
         },
+        requestId: {
+          type: "string",
+          description: "Current Implement apply/discard operation identity",
+        },
+        rejection: {
+          type: "object",
+          description: "Typed parent rejection for Implement discard",
+        },
+        agentsCheckpoint: {
+          type: "object",
+          description:
+            "Parent-owned approved managed-block checkpoint for action=apply (mutually exclusive with resultId)",
+        },
       },
       required: ["action"],
     },
     async execute(
       toolCallId: string,
-      params: { action?: string; request?: unknown; resultId?: string },
+      params: {
+        action?: string;
+        request?: unknown;
+        resultId?: string;
+        requestId?: string;
+        rejection?: unknown;
+        agentsCheckpoint?: unknown;
+      },
       signal: AbortSignal | undefined,
       onUpdate: AgentToolUpdateCallback<unknown> | undefined,
       ctx: ExtensionContext,
@@ -135,10 +163,11 @@ export default function register(pi: ExtensionAPI): void {
       const validRun =
         action === "run" && runtime.validateRequest(params.request).ok;
       const tuiRun = ctx.mode === "tui" && validRun;
+      const { action: _action, ...operation } = params;
       const result = tuiRun
         ? await runtime.execute(
             action,
-            params,
+            operation,
             ctx,
             signal,
             activity.observe(
@@ -146,24 +175,21 @@ export default function register(pi: ExtensionAPI): void {
               onUpdate as ((result: unknown) => void) | undefined,
             ),
           )
-        : await runtime.execute(action, params, ctx, signal);
+        : await runtime.execute(action, operation, ctx, signal);
       const display = tuiRun
         ? activity.finalize(toolCallId, result)
         : undefined;
+      const { payload, usage } = splitUsage(result);
       const details = display
-        ? { ...result, [ACTIVITY_DETAILS_KEY]: display }
-        : result;
-      if (result.ok) {
-        return {
-          content: [{ type: "text", text: JSON.stringify(result) }],
-          details,
-          usage: result.usage,
-        };
-      }
+        ? {
+            ...(payload as Record<string, unknown>),
+            [ACTIVITY_DETAILS_KEY]: display,
+          }
+        : payload;
       return {
-        content: [{ type: "text", text: JSON.stringify(result) }],
+        content: [{ type: "text", text: JSON.stringify(payload) }],
         details,
-        isError: true,
+        ...(usage === undefined ? {} : { usage }),
       };
     },
     renderCall(args: unknown, theme: Theme, _context: unknown) {
@@ -207,7 +233,15 @@ export default function register(pi: ExtensionAPI): void {
       activateDispatcher(pi, runtime.activation, prompt, event.prompt);
   });
 
-  pi.on("session_start", (_event, ctx) => {
+  pi.on("session_start", async (_event, ctx) => {
+    pendingPrompt = undefined;
+    activity.detach();
+    const active = pi.getActiveTools();
+    if (active.includes(DISPATCH_TOOL)) {
+      pi.setActiveTools(deactivateTool(active, DISPATCH_TOOL));
+    }
+    await runtime.drain();
+    activity.clear();
     const sessionId = ctx.sessionManager?.getSessionId?.();
     if (typeof sessionId === "string") {
       parentPayloadBridge.beginSession(sessionId);
@@ -217,15 +251,7 @@ export default function register(pi: ExtensionAPI): void {
     } else {
       parentPayloadBridge.clear();
     }
-    pendingPrompt = undefined;
-    activity.detach();
     if (ctx.mode === "tui") activity.attach(ctx.ui);
-    // Restore the default: dispatch is inactive unless a verified stage
-    // reactivates it through the activation helpers.
-    const active = pi.getActiveTools();
-    if (active.includes(DISPATCH_TOOL)) {
-      pi.setActiveTools(deactivateTool(active, DISPATCH_TOOL));
-    }
   });
 
   pi.on("model_select", (event, ctx) => {

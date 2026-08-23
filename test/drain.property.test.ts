@@ -7,7 +7,13 @@
 // asserted to pin down exactly where the drain gap is.
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -18,9 +24,10 @@ import {
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 import { Activation, activateTool, deactivateTool } from "../src/activation";
+import type { ImplementRunRequest } from "../src/contracts";
 import { snapshotFiles } from "../src/file-snapshot";
 import { Runtime } from "../src/runtime";
-import { contractOf, WorkerRegistry, workerIdentity } from "../src/worker";
+import { taskRecordKey, WorkerRegistry, workerIdentity } from "../src/worker";
 import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 let parentProvider: typeof import("../src/parent-provider") | null = null;
@@ -56,15 +63,39 @@ function makeRoot(tag: string): string {
     join(cwd, "package.json"),
     `${JSON.stringify({
       private: true,
-      scripts: { check: 'node -e ""', "test:target": "node" },
+      scripts: {
+        check: 'node -e ""',
+        "test:target": "node test/red-runner.mjs",
+      },
     })}\n`,
   );
   writeFileSync(join(cwd, "bun.lock"), "# fixture lock\n");
   writeFileSync(
-    join(cwd, "test/expected-red.mjs"),
-    'console.error("[DRAIN:expected-red]\\nTests 1 failed");\nprocess.exit(1);\n',
+    join(cwd, "test/expected-red.test.mjs"),
+    "// Fixture identity consumed by red-runner.mjs.\n",
   );
-  execFileSync("git", ["add", "a.txt"], { cwd });
+  writeFileSync(
+    join(cwd, "test/red-runner.mjs"),
+    [
+      'import { writeFileSync } from "node:fs";',
+      'const output = process.argv.find((arg) => arg.startsWith("--outputFile="));',
+      'if (output) writeFileSync(output.slice("--outputFile=".length), JSON.stringify({',
+      "  numTotalTests: 1,",
+      "  numFailedTests: 1,",
+      "  success: false,",
+      '  testResults: [{ message: "", assertionResults: [{',
+      '    status: "failed", fullName: "[DRAIN:expected-red]",',
+      '    title: "[DRAIN:expected-red]", failureMessages: ["expected Red"],',
+      "  }] }],",
+      "}));",
+      'console.error("[DRAIN:expected-red]");',
+      "process.exit(1);",
+      "",
+    ].join("\n"),
+  );
+  execFileSync("git", ["add", "a.txt", "package.json", "bun.lock", "test"], {
+    cwd,
+  });
   execFileSync("git", ["commit", "-qm", "base"], { cwd });
   return cwd;
 }
@@ -75,32 +106,68 @@ const submitResponse = (submitted: unknown) =>
     { stopReason: "toolUse" },
   );
 
-function requestFor(id: string, phase: string, root: string) {
+type OpenTaskRequest = Extract<ImplementRunRequest, { kind: "open-task" }>;
+
+function requestFor(
+  id: string,
+  phase: "red" | "green" | "refactor",
+  root: string,
+): OpenTaskRequest {
+  const attempt = {
+    changeId: "drain-fixture",
+    taskId: id,
+    requestId: id,
+    phase,
+    snapshot: snapshotFiles(root, ["a.txt"]),
+  };
   return {
     stage: "abel-implement",
-    role: "implementation-worker",
-    taskId: id,
-    id,
-    phase,
-    objective: "Change a.txt",
-    roots: ["."],
-    context: { agents: "none", contract: "approved" },
-    declared: {
-      read: ["a.txt"],
-      write: ["a.txt"],
-      conflicts: [],
-      resources: [],
-      verificationLock: "drain-red",
+    kind: "open-task",
+    boundary: {
+      changeId: "drain-fixture",
+      taskId: id,
+      objective: "Change a.txt",
+      roots: ["."],
+      context: { agents: "none", contract: "approved" },
+      phases: {
+        red: {
+          read: ["a.txt"],
+          write: ["a.txt"],
+          verificationLock: "drain-red",
+          verification: {
+            id: `verify-${id}`,
+            argv: ["bun", "run", "test:target", "test/expected-red.test.mjs"],
+            classification: "expected-red" as const,
+            expectedFailure: "[DRAIN:expected-red]",
+            minTests: 1,
+          },
+        },
+        green: {
+          read: ["a.txt"],
+          write: ["a.txt"],
+          verificationLock: "drain-green",
+          verification: {
+            id: `verify-${id}-green`,
+            argv: ["bun", "run", "check"],
+            classification: "expected-green" as const,
+            minTests: 1,
+          },
+        },
+      },
+      scheduling: {
+        conflicts: [],
+        resources: [],
+      },
+      agents: { impact: "none", managedOnly: true },
+      approvedDependencies: [],
+      impactClosure: {
+        changedSurfaces: ["none"],
+        searchEvidence: [],
+        relatedTests: [],
+        affectedSuite: [],
+      },
     },
-    output: "diff",
-    verification: {
-      id: `verify-${id}`,
-      argv: ["bun", "run", "test:target", "test/expected-red.mjs"],
-      classification: "expected-red" as const,
-      expectedFailure: "[DRAIN:expected-red]",
-      minTests: 1,
-    },
-    snapshot: snapshotFiles(root, ["a.txt"]),
+    attempt,
   };
 }
 
@@ -115,7 +182,6 @@ function diffSubmit(id: string, phase: string) {
     diff: DIFF,
     expectedVerification: "cat a.txt",
     risks: [],
-    nextStep: "apply",
     contractCompliant: true,
   };
 }
@@ -127,7 +193,10 @@ async function modelFixture(tag: string) {
   return { faux, modelRuntime };
 }
 
-async function makeActive(tag: string) {
+async function makeActive(
+  tag: string,
+  parentPayloadBridge = new PassthroughParentPayloadBridge(),
+) {
   const cwd = makeRoot(tag);
   const { faux, modelRuntime } = await modelFixture(tag);
   const activation = new Activation();
@@ -135,12 +204,13 @@ async function makeActive(tag: string) {
   activation.activate();
   const runtime = new Runtime({
     activation,
-    parentPayloadBridge: new PassthroughParentPayloadBridge(),
+    parentPayloadBridge,
   });
   return {
     cwd,
     faux,
     runtime,
+    parentPayloadBridge,
     context: {
       cwd,
       model: faux.getModel(),
@@ -184,7 +254,12 @@ describe("drain property: finish erases results and worker", () => {
       { request: requestFor("drain-erase", "red", fixture.cwd) },
       fixture.context,
     );
-    expect(run.ok).toBe(true);
+    expect(run).toMatchObject({
+      kind: "candidate",
+      requestId: "drain-erase",
+      taskId: "drain-erase",
+      phase: "red",
+    });
     const resultId = run.resultId as string;
     expect((fixture.runtime as any).results.get(resultId)).toBeDefined();
     const finished = await (fixture.runtime as any).execute(
@@ -198,6 +273,49 @@ describe("drain property: finish erases results and worker", () => {
     expect((fixture.runtime as any).results.size).toBe(0);
   });
 
+  it("[SLICE-4:task-lifetime-conflict] complete drain releases conflict for a later open", async () => {
+    const fixture = await makeActive("conflict-release");
+    fixture.faux.setResponses([
+      submitResponse(diffSubmit("before-drain", "red")),
+      submitResponse(diffSubmit("after-drain", "red")),
+    ]);
+    const registry = (fixture.runtime as any).registry as WorkerRegistry;
+
+    const first = await (fixture.runtime as any).execute(
+      "run",
+      { request: requestFor("before-drain", "red", fixture.cwd) },
+      fixture.context,
+    );
+    expect(first).toMatchObject({
+      kind: "candidate",
+      requestId: "before-drain",
+      taskId: "before-drain",
+      phase: "red",
+    });
+    expect(registry.values()).toHaveLength(1);
+
+    await fixture.runtime.drain();
+    expect(registry.values()).toHaveLength(0);
+    expect(fixture.runtime.activation.request()).toBe(true);
+    expect(fixture.runtime.activation.activate()).toBe(true);
+
+    const later = await (fixture.runtime as any).execute(
+      "run",
+      { request: requestFor("after-drain", "red", fixture.cwd) },
+      fixture.context,
+    );
+
+    expect(later).toMatchObject({
+      kind: "candidate",
+      requestId: "after-drain",
+      taskId: "after-drain",
+      phase: "red",
+    });
+    expect(fixture.faux.state.callCount).toBe(2);
+    expect(registry.values()).toHaveLength(1);
+    expect(registry.find(fixture.cwd, "after-drain")).toBeDefined();
+  });
+
   it("drain is idempotent and repeatable on an inactive runtime", () => {
     const runtime = new Runtime({
       parentPayloadBridge: new PassthroughParentPayloadBridge(),
@@ -205,6 +323,169 @@ describe("drain property: finish erases results and worker", () => {
     runtime.drain();
     runtime.drain();
     expect(runtime.state).toBe("inactive");
+  });
+
+  it("[SLICE-3:terminal-replay] settles parent apply before erasing every process-local fact", async () => {
+    const bridge = new PassthroughParentPayloadBridge();
+    bridge.beginSession("drain-terminal-replay");
+    const fixture = await makeActive("terminal-replay", bridge);
+    fixture.faux.setResponses([
+      submitResponse(diffSubmit("drain-pending", "red")),
+    ]);
+    const run = await (fixture.runtime as any).execute(
+      "run",
+      { request: requestFor("drain-pending", "red", fixture.cwd) },
+      fixture.context,
+    );
+    expect(run).toMatchObject({
+      kind: "candidate",
+      requestId: "drain-pending",
+      taskId: "drain-pending",
+      phase: "red",
+    });
+    const resultId = run.resultId as string;
+    const registry = (fixture.runtime as any).registry as WorkerRegistry;
+    const candidate = registry.values()[0];
+    const identity = workerIdentity(fixture.context.model);
+    const blockedRequest = requestFor("drain-blocked", "red", fixture.cwd);
+    const blocked = registry.open(
+      blockedRequest.boundary,
+      identity,
+      fixture.cwd,
+      blockedRequest.attempt,
+    );
+    blocked.state = {
+      kind: "blocked",
+      phase: "red",
+      failure: {
+        kind: "approval-boundary",
+        code: "task-scope-insufficient",
+      },
+    } as never;
+    const completedRequest = requestFor("drain-completed", "red", fixture.cwd);
+    const completed = registry.open(
+      completedRequest.boundary,
+      identity,
+      fixture.cwd,
+      completedRequest.attempt,
+    );
+    completed.state = { kind: "completed", finalPhase: "green" } as never;
+
+    expect(fixture.runtime.results.size).toBe(1);
+    expect((fixture.runtime.results as any).sealedResults.size).toBe(1);
+    expect((fixture.runtime.results as any).sealedCandidateFacts.size).toBe(1);
+    expect(registry.values()).toHaveLength(3);
+    expect(
+      registry
+        .values()
+        .map((record) => record.state.kind)
+        .sort(),
+    ).toEqual(["blocked", "candidate-pending", "completed"]);
+    expect((bridge as any).state?.active).toBe(true);
+
+    let releaseApply!: () => void;
+    (fixture.runtime as any).applyTail = new Promise<void>((resolve) => {
+      releaseApply = resolve;
+    });
+    const order: string[] = [];
+    const applying = (fixture.runtime as any)
+      .execute(
+        "apply",
+        { resultId, requestId: "drain-pending:apply" },
+        fixture.context,
+      )
+      .then(
+        (result: unknown) => {
+          order.push("apply");
+          return result;
+        },
+        (error: unknown) => {
+          order.push("apply-rejected");
+          throw error;
+        },
+      );
+    let discardSettled = false;
+    const discarding = (fixture.runtime as any)
+      .execute(
+        "discard",
+        {
+          resultId,
+          requestId: "drain-pending:discard",
+          rejection: {
+            kind: "artifact",
+            code: "parent-review-rejected",
+            evidence: ["concurrent review decision"],
+          },
+        },
+        fixture.context,
+      )
+      .then(
+        (result: unknown) => {
+          discardSettled = true;
+          order.push("discard");
+          return result;
+        },
+        (error: unknown) => {
+          discardSettled = true;
+          order.push("discard-rejected");
+          throw error;
+        },
+      );
+    let finishSettled = false;
+    const finishing = (fixture.runtime as any)
+      .execute("finish", {}, fixture.context)
+      .then((result: unknown) => {
+        finishSettled = true;
+        order.push("finish");
+        return result;
+      });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const finishSettledBeforeApply = finishSettled;
+    expect(discardSettled).toBe(false);
+    expect((bridge as any).state?.active).toBe(true);
+    releaseApply();
+    const [applyOutcome, discardOutcome, finishOutcome] =
+      await Promise.allSettled([applying, discarding, finishing]);
+
+    expect(finishSettledBeforeApply).toBe(false);
+    expect(applyOutcome).toMatchObject({
+      status: "fulfilled",
+      value: {
+        kind: "applied",
+        requestId: "drain-pending:apply",
+        taskId: "drain-pending",
+        phase: "red",
+        readyPhase: "green",
+      },
+    });
+    expect(discardOutcome).toMatchObject({
+      status: "rejected",
+      reason: expect.objectContaining({
+        message: expect.stringMatching(/retained Implement result not found/i),
+      }),
+    });
+    expect(finishOutcome).toMatchObject({
+      status: "fulfilled",
+      value: { ok: true, action: "finish" },
+    });
+    expect(order).toEqual(["apply", "discard-rejected", "finish"]);
+    expect(candidate?.state).toEqual({
+      kind: "ready",
+      phase: "green",
+      launchIndex: 0,
+    });
+    expect(readFileSync(join(fixture.cwd, "a.txt"), "utf8")).toBe("new\n");
+    expect(fixture.runtime.results.size).toBe(0);
+    expect((fixture.runtime.results as any).sealedResults.size).toBe(0);
+    expect((fixture.runtime.results as any).sealedCandidateFacts.size).toBe(0);
+    expect(registry.values()).toHaveLength(0);
+    expect((bridge as any).state).toBeUndefined();
+    expect(fixture.runtime.state).toBe("inactive");
+
+    await fixture.runtime.drain();
+    expect(fixture.runtime.results.size).toBe(0);
+    expect(registry.values()).toHaveLength(0);
+    expect(fixture.runtime.state).toBe("inactive");
   });
 });
 
@@ -219,7 +500,12 @@ describe("drain property: cancel keeps the stage active", () => {
       { request: requestFor("drain-cancel", "red", fixture.cwd) },
       fixture.context,
     );
-    expect(run.ok).toBe(true);
+    expect(run).toMatchObject({
+      kind: "candidate",
+      requestId: "drain-cancel",
+      taskId: "drain-cancel",
+      phase: "red",
+    });
     const resultId = run.resultId as string;
     const cancelled = await (fixture.runtime as any).execute(
       "cancel",
@@ -243,13 +529,21 @@ describe("drain property: tool restoration keeps other tools", () => {
 describe("drain property: worker identity is stable", () => {
   it("a worker is pinned by request id and erased on drain", () => {
     const registry = new WorkerRegistry();
-    const contract = contractOf(
-      requestFor("drain-identity", "red", process.cwd()),
+    const request = requestFor("drain-identity", "red", process.cwd());
+    const worker = registry.open(
+      request.boundary,
+      workerIdentity({ id: "model-a" }),
+      process.cwd(),
+      request.attempt,
     );
-    const worker = registry.pin(contract, workerIdentity({ id: "model-a" }));
-    expect(worker.state).toEqual({ kind: "ready" });
-    expect(registry.has("drain-identity")).toBe(true);
+    expect(worker.state).toMatchObject({
+      kind: "ready",
+      phase: "red",
+      launchIndex: 0,
+    });
+    const key = taskRecordKey(process.cwd(), "drain-fixture", "drain-identity");
+    expect(registry.has(key)).toBe(true);
     registry.clear();
-    expect(registry.has("drain-identity")).toBe(false);
+    expect(registry.has(key)).toBe(false);
   });
 });

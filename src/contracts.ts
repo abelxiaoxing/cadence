@@ -21,19 +21,22 @@ export const PHASES = [
   "review",
 ] as const;
 
-export const RECOVERY_CODES = [
-  "mechanical-redispatch-exhausted",
-  "implementation-artifact-delivery-blocked",
-  "environment-blocked",
-  "design-required",
+export const AGENTS_IMPACTS = [
+  "none",
+  "update-existing",
+  "create-index",
+  "remove-index",
 ] as const;
+export type AgentsImpact = (typeof AGENTS_IMPACTS)[number];
 
-export type RecoveryCode = (typeof RECOVERY_CODES)[number];
-export type RecoveryNext =
-  | "finish-unaffected"
-  | "correct-artifact"
-  | "repair-environment"
-  | "return-to-design";
+export const IMPACT_SURFACES = [
+  "none",
+  "route-authorization",
+  "page-state",
+  "api-response",
+  "public-html",
+] as const;
+export type ImpactSurface = (typeof IMPACT_SURFACES)[number];
 
 export const LIMITS = {
   maxActiveChildSessions: 4,
@@ -42,6 +45,136 @@ export const LIMITS = {
   phaseTimeoutMs: 20 * 60 * 1000,
   maxCompleteResultBytes: 64 * 1024,
 } as const;
+
+export const ARTIFACT_FAILURE_CODES = [
+  "agents-impact-mismatch",
+  "agents-target-mismatch",
+  "baseline-bound-mismatch",
+  "baseline-deletion-kind",
+  "baseline-directory-kind",
+  "baseline-directory-mismatch",
+  "baseline-directory-special-file",
+  "baseline-directory-symlink",
+  "baseline-file-kind",
+  "baseline-shape",
+  "candidate-check-failed",
+  "checkout-special-file",
+  "checkout-symlink",
+  "dependency-bound-mismatch",
+  "escaping-path",
+  "git-apply-check-failed",
+  "git-apply-failed",
+  "git-numstat-rejected",
+  "git-summary-rejected",
+  "ignored-baseline-input",
+  "incomplete-baseline",
+  "invalid-approved-dependencies",
+  "invalid-checkpoint-contract",
+  "invalid-diff",
+  "invalid-diff-bytes",
+  "invalid-snapshot",
+  "invalid-structural-result",
+  "invalid-verification-contract",
+  "lockfile-bound-mismatch",
+  "noncanonical-path",
+  "nonregular-mode",
+  "outside-managed-region",
+  "package-bound-mismatch",
+  "package-manifest-invalid",
+  "parent-review-rejected",
+  "red-not-witnessed",
+  "submodule",
+  "target-baseline-missing",
+  "verification-baseline-missing",
+  "verification-input-unavailable",
+  "verification-rejected",
+  "verification-report-invalid",
+  "verification-report-missing",
+  "write-set-mismatch",
+] as const;
+export const STALE_FAILURE_CODES = [
+  "baseline-deletion-drift",
+  "baseline-directory-drift",
+  "baseline-file-drift",
+  "git-apply-check-failed",
+  "stale-snapshot",
+] as const;
+export const ENVIRONMENT_FAILURE_CODES = [
+  "bubblewrap-launch-failed",
+  "bubblewrap-or-dependency-unavailable",
+  "bun-executable-unavailable",
+  "checkpoint-unavailable",
+  "checkout-cleanup-failed",
+  "checkout-failed",
+  "clone-alternates",
+  "clone-failed",
+  "dependency-path-unsafe",
+  "git-apply-check-unavailable",
+  "git-apply-failed",
+  "git-apply-unavailable",
+  "git-ignore-check-failed",
+  "git-index-unavailable",
+  "root-unavailable",
+  "sandbox-runtime-unavailable",
+] as const;
+export const APPROVAL_BOUNDARY_CODES = [
+  "unapproved-dependency-change",
+  "behavior-contract-insufficient",
+  "architecture-contract-insufficient",
+  "task-scope-insufficient",
+  "verification-contract-insufficient",
+  "agents-contract-insufficient",
+] as const;
+export const CHILD_TRANSPORT_CODES = ["timeout", "transport-failure"] as const;
+
+export type ArtifactFailureCode = (typeof ARTIFACT_FAILURE_CODES)[number];
+export type StaleFailureCode = (typeof STALE_FAILURE_CODES)[number];
+export type EnvironmentFailureCode = (typeof ENVIRONMENT_FAILURE_CODES)[number];
+export type ApprovalBoundaryCode = (typeof APPROVAL_BOUNDARY_CODES)[number];
+export type ChildTransportCode = (typeof CHILD_TRANSPORT_CODES)[number];
+
+export type CandidateFailure =
+  | { kind: "artifact"; code: ArtifactFailureCode; evidence?: string[] }
+  | { kind: "stale"; code: StaleFailureCode }
+  | { kind: "environment"; code: EnvironmentFailureCode }
+  | { kind: "approval-boundary"; code: ApprovalBoundaryCode }
+  | { kind: "cancelled"; code: "cancelled" }
+  | { kind: "result-limit"; limitBytes: number };
+
+export type ChildFailure =
+  | CandidateFailure
+  | { kind: "transport"; code: ChildTransportCode };
+
+export type CandidateRejection =
+  | {
+      kind: "artifact";
+      code: "parent-review-rejected";
+      evidence?: string[];
+    }
+  | { kind: "approval-boundary"; code: ApprovalBoundaryCode };
+
+export type TaskFailure =
+  | { kind: "approval-boundary"; code: ApprovalBoundaryCode }
+  | {
+      kind: "attempts-exhausted";
+      cause: "artifact" | "stale" | "transport";
+    }
+  | {
+      kind: "checkpoint-attempts-exhausted";
+      cause: "artifact" | "stale";
+    }
+  | { kind: "environment"; code: EnvironmentFailureCode }
+  | { kind: "result-limit"; limitBytes: number };
+
+export interface CandidateApplyEvidence {
+  targets: string[];
+  checkExitCode: 0;
+  applyExitCode: 0;
+}
+
+export type ApplyCandidateResult =
+  | { ok: true; result: CandidateApplyEvidence }
+  | { ok: false; failure: CandidateFailure };
 
 const NONCANONICAL = /(^|\/)\.\.(\/|$)|(^|\/)\/|^\//;
 const SNAPSHOT_SHA256 = /^[a-f0-9]{64}$/;
@@ -53,6 +186,69 @@ export interface VerificationContract {
   expectedFailure?: string;
   minTests: number;
 }
+
+export interface ImpactClosureContract {
+  changedSurfaces: ImpactSurface[];
+  searchEvidence: string[];
+  relatedTests: Array<{
+    path: string;
+    disposition: "current-task" | "regression-task" | "unaffected";
+    evidence: string;
+    regressionTaskId?: string;
+  }>;
+  affectedSuite: string[];
+}
+
+export type ImplementationPhase = "red" | "green" | "refactor";
+
+export interface PhaseBoundary {
+  read: string[];
+  write: string[];
+  verification: VerificationContract;
+  verificationLock?: string;
+}
+
+export interface TaskBoundary {
+  changeId: string;
+  taskId: string;
+  objective: string;
+  context: { agents: string; contract: string };
+  roots: string[];
+  phases: {
+    red: PhaseBoundary;
+    green: PhaseBoundary;
+    refactor?: PhaseBoundary;
+  };
+  scheduling: { conflicts: string[]; resources: string[] };
+  agents: {
+    impact: AgentsImpact;
+    target?: string;
+    managedOnly: true;
+  };
+  approvedDependencies: string[];
+  impactClosure: ImpactClosureContract;
+}
+
+export interface PhaseAttempt {
+  changeId: string;
+  taskId: string;
+  requestId: string;
+  phase: ImplementationPhase;
+  snapshot: unknown;
+}
+
+export type ImplementRunRequest =
+  | {
+      stage: "abel-implement";
+      kind: "open-task";
+      boundary: TaskBoundary;
+      attempt: PhaseAttempt;
+    }
+  | {
+      stage: "abel-implement";
+      kind: "phase-attempt";
+      attempt: PhaseAttempt;
+    };
 
 export interface RequestEnvelope {
   stage: string;
@@ -71,21 +267,43 @@ export interface RequestEnvelope {
     verificationLock?: string;
   };
   output: string;
+  agentsImpact?: AgentsImpact;
+  agentsTarget?: string;
+  agentsManagedOnly?: true;
+  approvedDependencies?: string[];
+  impactClosure?: ImpactClosureContract;
   verification?: VerificationContract;
   snapshot?: unknown;
 }
 
-export interface RecoveryRecord {
-  code: RecoveryCode;
+export type RunRequest = RequestEnvelope | ImplementRunRequest;
+
+export interface AgentsCheckpointRequest {
+  stage: "abel-implement";
+  taskId: string;
+  agentsImpact: Exclude<AgentsImpact, "none">;
+  agentsTarget: string;
+  agentsManagedOnly: true;
+  stableCheckpoint: true;
+  snapshot: unknown;
+  diff: string;
+}
+
+export interface AgentsCheckpointAttempt {
+  changeId: string;
   taskId: string;
   requestId: string;
-  phase: string;
-  launchIndex: 0 | 1;
-  branchBlocked: true;
-  dependentsBlocked: true;
-  partialResultUsable: false;
-  independentResultsPreserved: true;
-  next: RecoveryNext;
+  snapshot: unknown;
+  diff: string;
+}
+
+export interface ImplementApplyOperation {
+  resultId: string;
+  requestId: string;
+}
+
+export interface ImplementDiscardOperation extends ImplementApplyOperation {
+  rejection: CandidateRejection;
 }
 
 export function isValidRelativePath(p: unknown): p is string {
@@ -95,10 +313,18 @@ export function isValidRelativePath(p: unknown): p is string {
     p.length <= 512 &&
     !NONCANONICAL.test(p) &&
     !p.startsWith("/") &&
+    (p === "." ||
+      (!p.startsWith("./") &&
+        !p.endsWith("/") &&
+        !p.split("/").includes("."))) &&
     !p.includes("..") &&
     !p.includes("\\") &&
     !p.includes("\u0000")
   );
+}
+
+export function isAgentsPath(p: unknown): p is string {
+  return isValidRelativePath(p) && /(?:^|\/)AGENTS\.md$/u.test(p);
 }
 
 export function validateVerificationContract(
@@ -179,6 +405,7 @@ function validateImplementationSnapshot(
     const entry = value as Record<string, unknown>;
     if (entry.kind === "file") {
       if (
+        !hasExactKeys(entry, ["kind", "sha256", "bytes"]) ||
         typeof entry.sha256 !== "string" ||
         !SNAPSHOT_SHA256.test(entry.sha256) ||
         typeof entry.bytes !== "number" ||
@@ -189,28 +416,609 @@ function validateImplementationSnapshot(
       }
     } else if (entry.kind === "dir") {
       if (
+        !hasExactKeys(entry, ["kind", "manifest"]) ||
         typeof entry.manifest !== "string" ||
         !SNAPSHOT_SHA256.test(entry.manifest)
       ) {
         return "invalid snapshot";
       }
     } else if (entry.kind === "absent") {
-      if (entry.absent !== true) return "invalid snapshot";
+      if (!hasExactKeys(entry, ["kind", "absent"]) || entry.absent !== true) {
+        return "invalid snapshot";
+      }
     } else {
       return "invalid snapshot";
     }
   }
-  if (
-    [...new Set(paths)].some(
-      (path) => !Object.prototype.hasOwnProperty.call(bounds, path),
-    )
-  ) {
+  if ([...new Set(paths)].some((path) => !Object.hasOwn(bounds, path))) {
     return "snapshot does not cover declared paths";
   }
   return null;
 }
 
+function validateAgentsContract(env: Record<string, unknown>): string | null {
+  if (!(AGENTS_IMPACTS as readonly unknown[]).includes(env.agentsImpact)) {
+    return "invalid AGENTS impact";
+  }
+  if (env.agentsManagedOnly !== true) return "AGENTS must be managed-only";
+  if (env.agentsImpact === "none") {
+    return env.agentsTarget === undefined
+      ? null
+      : "none AGENTS impact cannot declare a target";
+  }
+  return isAgentsPath(env.agentsTarget)
+    ? null
+    : "AGENTS impact requires an explicit AGENTS target";
+}
+
+function validateApprovedDependencies(value: unknown): string | null {
+  if (
+    !Array.isArray(value) ||
+    value.some(
+      (dependency) =>
+        typeof dependency !== "string" ||
+        !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/iu.test(
+          dependency,
+        ),
+    ) ||
+    new Set(value).size !== value.length
+  ) {
+    return "invalid approved dependencies";
+  }
+  return null;
+}
+
+function validateImpactClosure(
+  value: unknown,
+  declared: Record<string, unknown>,
+  snapshot: unknown,
+): string | null {
+  if (
+    !hasExactKeys(value, [
+      "changedSurfaces",
+      "searchEvidence",
+      "relatedTests",
+      "affectedSuite",
+    ])
+  ) {
+    return "invalid impact closure";
+  }
+  const closure = value as Record<string, unknown>;
+  const surfaces = closure.changedSurfaces;
+  const searchEvidence = closure.searchEvidence;
+  const relatedTests = closure.relatedTests;
+  const affectedSuite = closure.affectedSuite;
+  if (
+    !Array.isArray(surfaces) ||
+    surfaces.length === 0 ||
+    surfaces.some(
+      (surface) => !(IMPACT_SURFACES as readonly unknown[]).includes(surface),
+    ) ||
+    new Set(surfaces).size !== surfaces.length ||
+    (surfaces.includes("none") && surfaces.length !== 1) ||
+    !Array.isArray(searchEvidence) ||
+    searchEvidence.some(
+      (evidence) => typeof evidence !== "string" || evidence.length === 0,
+    ) ||
+    !Array.isArray(relatedTests) ||
+    !Array.isArray(affectedSuite) ||
+    affectedSuite.some(
+      (test) => !isValidRelativePath(test) || !isTestPath(test),
+    ) ||
+    new Set(affectedSuite).size !== affectedSuite.length
+  ) {
+    return "invalid impact closure";
+  }
+
+  const scope = new Set([
+    ...((declared.read as string[]) ?? []),
+    ...((declared.write as string[]) ?? []),
+  ]);
+  const writes = new Set((declared.write as string[]) ?? []);
+  const relatedPaths = new Set<string>();
+  for (const item of relatedTests) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return "invalid impact closure related test";
+    }
+    const related = item as Record<string, unknown>;
+    const relatedKeys =
+      related.disposition === "regression-task"
+        ? ["path", "disposition", "evidence", "regressionTaskId"]
+        : ["path", "disposition", "evidence"];
+    if (
+      !hasExactKeys(related, relatedKeys) ||
+      !isValidRelativePath(related.path) ||
+      !isTestPath(related.path) ||
+      relatedPaths.has(related.path) ||
+      !scope.has(related.path) ||
+      !["current-task", "regression-task", "unaffected"].includes(
+        String(related.disposition),
+      ) ||
+      typeof related.evidence !== "string" ||
+      related.evidence.length === 0
+    ) {
+      return "invalid impact closure related test";
+    }
+    relatedPaths.add(related.path);
+    if (related.disposition === "current-task" && !writes.has(related.path)) {
+      return "current-task related test is outside the write set";
+    }
+    if (
+      related.disposition === "regression-task" &&
+      (typeof related.regressionTaskId !== "string" ||
+        related.regressionTaskId.length === 0)
+    ) {
+      return "regression task identity is required";
+    }
+    if (
+      related.disposition !== "regression-task" &&
+      related.regressionTaskId !== undefined
+    ) {
+      return "unexpected regression task identity";
+    }
+  }
+
+  if (surfaces[0] === "none") return null;
+  if (
+    searchEvidence.length === 0 ||
+    relatedTests.length === 0 ||
+    affectedSuite.length === 0 ||
+    affectedSuite.some((test) => !relatedPaths.has(test))
+  ) {
+    return "public impact closure is incomplete";
+  }
+  const bounds = snapshot as Record<string, { kind?: unknown }>;
+  if (!affectedSuite.some((test) => bounds?.[test]?.kind === "file")) {
+    return "affected suite contains no existing test evidence";
+  }
+  return null;
+}
+
+function isTestPath(path: string): boolean {
+  return /^(?:test|tests)\//u.test(path);
+}
+
+export function validateAgentsCheckpointRequest(
+  value: unknown,
+):
+  | { ok: true; value: AgentsCheckpointRequest }
+  | { ok: false; reason: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ok: false, reason: "missing AGENTS checkpoint request" };
+  }
+  const request = value as Record<string, unknown>;
+  if (
+    request.stage !== "abel-implement" ||
+    typeof request.taskId !== "string" ||
+    request.taskId.length === 0 ||
+    request.taskId.length > 128 ||
+    request.agentsImpact === "none" ||
+    !(AGENTS_IMPACTS as readonly unknown[]).includes(request.agentsImpact) ||
+    !isAgentsPath(request.agentsTarget) ||
+    request.agentsManagedOnly !== true ||
+    request.stableCheckpoint !== true ||
+    typeof request.diff !== "string" ||
+    request.diff.length === 0 ||
+    request.diff.length > LIMITS.maxCompleteResultBytes
+  ) {
+    return { ok: false, reason: "invalid AGENTS checkpoint contract" };
+  }
+  const snapshotReason = validateImplementationSnapshot(request.snapshot, [
+    request.agentsTarget,
+  ] as string[]);
+  if (snapshotReason !== null) {
+    return { ok: false, reason: snapshotReason };
+  }
+  return {
+    ok: true,
+    value: request as unknown as AgentsCheckpointRequest,
+  };
+}
+
+export function validateAgentsCheckpointAttempt(
+  value: unknown,
+):
+  | { ok: true; value: AgentsCheckpointAttempt }
+  | { ok: false; reason: string } {
+  if (
+    !hasExactKeys(value, [
+      "changeId",
+      "taskId",
+      "requestId",
+      "snapshot",
+      "diff",
+    ]) ||
+    !validIdentifier(value.changeId) ||
+    !validIdentifier(value.taskId) ||
+    !validIdentifier(value.requestId) ||
+    typeof value.diff !== "string" ||
+    value.diff.length === 0 ||
+    value.diff.length > LIMITS.maxCompleteResultBytes ||
+    !value.snapshot ||
+    typeof value.snapshot !== "object" ||
+    Array.isArray(value.snapshot) ||
+    Object.keys(value.snapshot).length === 0 ||
+    validateImplementationSnapshot(
+      value.snapshot,
+      Object.keys(value.snapshot as Record<string, unknown>),
+    ) !== null
+  ) {
+    return { ok: false, reason: "invalid AGENTS checkpoint attempt" };
+  }
+  return {
+    ok: true,
+    value: structuredClone(value) as unknown as AgentsCheckpointAttempt,
+  };
+}
+
+export function validateImplementApplyOperation(
+  value: unknown,
+):
+  | { ok: true; value: ImplementApplyOperation }
+  | { ok: false; reason: string } {
+  if (
+    !hasExactKeys(value, ["resultId", "requestId"]) ||
+    !validIdentifier(value.resultId) ||
+    !validIdentifier(value.requestId)
+  ) {
+    return { ok: false, reason: "invalid Implement apply operation" };
+  }
+  return {
+    ok: true,
+    value: { resultId: value.resultId, requestId: value.requestId },
+  };
+}
+
+function validateCandidateRejection(
+  value: unknown,
+): value is CandidateRejection {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const rejection = value as Record<string, unknown>;
+  if (rejection.kind === "approval-boundary") {
+    return (
+      hasExactKeys(rejection, ["kind", "code"]) &&
+      (APPROVAL_BOUNDARY_CODES as readonly unknown[]).includes(rejection.code)
+    );
+  }
+  if (
+    rejection.kind !== "artifact" ||
+    rejection.code !== "parent-review-rejected" ||
+    !hasExactKeys(rejection, ["kind", "code"], ["evidence"])
+  ) {
+    return false;
+  }
+  return (
+    rejection.evidence === undefined ||
+    (Array.isArray(rejection.evidence) &&
+      rejection.evidence.length <= 8 &&
+      rejection.evidence.every(
+        (item) =>
+          typeof item === "string" && item.length > 0 && item.length <= 512,
+      ))
+  );
+}
+
+export function validateImplementDiscardOperation(
+  value: unknown,
+):
+  | { ok: true; value: ImplementDiscardOperation }
+  | { ok: false; reason: string } {
+  if (
+    !hasExactKeys(value, ["resultId", "requestId", "rejection"]) ||
+    !validIdentifier(value.resultId) ||
+    !validIdentifier(value.requestId) ||
+    !validateCandidateRejection(value.rejection)
+  ) {
+    return { ok: false, reason: "invalid Implement discard operation" };
+  }
+  return {
+    ok: true,
+    value: structuredClone(value) as unknown as ImplementDiscardOperation,
+  };
+}
+
+function hasExactKeys(
+  value: unknown,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const allowed = new Set([...required, ...optional]);
+  return (
+    required.every((key) => Object.hasOwn(record, key)) &&
+    Object.keys(record).every((key) => allowed.has(key))
+  );
+}
+
+function validIdentifier(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 128;
+}
+
+function validatePathSet(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.every(isValidRelativePath) &&
+    new Set(value).size === value.length
+  );
+}
+
+function validateRoots(value: unknown): value is string[] {
+  if (!validatePathSet(value) || value.length === 0) return false;
+  if (
+    value.some(
+      (root) => (root !== "." && root.startsWith("./")) || root.endsWith("/"),
+    )
+  ) {
+    return false;
+  }
+  return !value.some((root, index) =>
+    value.some(
+      (other, otherIndex) =>
+        index !== otherIndex && (root === "." || other.startsWith(`${root}/`)),
+    ),
+  );
+}
+
+function isWithinRoots(path: string, roots: string[]): boolean {
+  return roots.some(
+    (root) => root === "." || path === root || path.startsWith(`${root}/`),
+  );
+}
+
+function validatePhaseBoundary(
+  value: unknown,
+  phase: ImplementationPhase,
+): value is PhaseBoundary {
+  if (
+    !hasExactKeys(
+      value,
+      ["read", "write", "verification"],
+      ["verificationLock"],
+    )
+  ) {
+    return false;
+  }
+  if (
+    !validatePathSet(value.read) ||
+    !validatePathSet(value.write) ||
+    value.write.some(isAgentsPath) ||
+    (value.verificationLock !== undefined &&
+      !isValidRelativePath(value.verificationLock))
+  ) {
+    return false;
+  }
+  const verificationKeys =
+    phase === "red"
+      ? ["id", "argv", "classification", "expectedFailure", "minTests"]
+      : ["id", "argv", "classification", "minTests"];
+  if (!hasExactKeys(value.verification, verificationKeys)) return false;
+  const verification = validateVerificationContract(value.verification);
+  if (!verification.ok) return false;
+  const classification = {
+    red: "expected-red",
+    green: "expected-green",
+    refactor: "expected-refactor",
+  } as const;
+  return verification.value.classification === classification[phase];
+}
+
+function validateTaskBoundary(
+  value: unknown,
+  snapshot: unknown,
+): value is TaskBoundary {
+  if (
+    !hasExactKeys(value, [
+      "changeId",
+      "taskId",
+      "objective",
+      "context",
+      "roots",
+      "phases",
+      "scheduling",
+      "agents",
+      "approvedDependencies",
+      "impactClosure",
+    ]) ||
+    !validIdentifier(value.changeId) ||
+    !validIdentifier(value.taskId) ||
+    typeof value.objective !== "string" ||
+    value.objective.length === 0 ||
+    value.objective.length > 4096 ||
+    !hasExactKeys(value.context, ["agents", "contract"]) ||
+    typeof value.context.agents !== "string" ||
+    typeof value.context.contract !== "string" ||
+    !validateRoots(value.roots) ||
+    !hasExactKeys(value.phases, ["red", "green"], ["refactor"]) ||
+    !validatePhaseBoundary(value.phases.red, "red") ||
+    !validatePhaseBoundary(value.phases.green, "green") ||
+    (value.phases.refactor !== undefined &&
+      !validatePhaseBoundary(value.phases.refactor, "refactor")) ||
+    !hasExactKeys(value.scheduling, ["conflicts", "resources"]) ||
+    !validatePathSet(value.scheduling.conflicts) ||
+    !validatePathSet(value.scheduling.resources) ||
+    !hasExactKeys(value.agents, ["impact", "managedOnly"], ["target"]) ||
+    !(AGENTS_IMPACTS as readonly unknown[]).includes(value.agents.impact) ||
+    value.agents.managedOnly !== true
+  ) {
+    return false;
+  }
+  if (
+    value.agents.impact === "none"
+      ? value.agents.target !== undefined
+      : !isAgentsPath(value.agents.target)
+  ) {
+    return false;
+  }
+  if (validateApprovedDependencies(value.approvedDependencies) !== null) {
+    return false;
+  }
+  const phases = [
+    value.phases.red,
+    value.phases.green,
+    ...(value.phases.refactor ? [value.phases.refactor] : []),
+  ];
+  const roots = value.roots as string[];
+  if (
+    phases.some((phase) =>
+      [...phase.read, ...phase.write].some(
+        (path) => !isWithinRoots(path, roots),
+      ),
+    )
+  ) {
+    return false;
+  }
+  const declared = {
+    read: [...new Set(phases.flatMap((entry) => entry.read))],
+    write: [...new Set(phases.flatMap((entry) => entry.write))],
+  };
+  return (
+    validateImpactClosure(value.impactClosure, declared, snapshot) === null
+  );
+}
+
+function validatePhaseAttemptShape(value: unknown): value is PhaseAttempt {
+  if (
+    !hasExactKeys(value, [
+      "changeId",
+      "taskId",
+      "requestId",
+      "phase",
+      "snapshot",
+    ]) ||
+    !validIdentifier(value.changeId) ||
+    !validIdentifier(value.taskId) ||
+    !validIdentifier(value.requestId) ||
+    !["red", "green", "refactor"].includes(String(value.phase))
+  ) {
+    return false;
+  }
+  if (
+    !value.snapshot ||
+    typeof value.snapshot !== "object" ||
+    Array.isArray(value.snapshot)
+  ) {
+    return false;
+  }
+  return (
+    validateImplementationSnapshot(
+      value.snapshot,
+      Object.keys(value.snapshot as Record<string, unknown>),
+    ) === null
+  );
+}
+
+export function validatePhaseAttemptAgainstBoundary(
+  boundary: TaskBoundary,
+  attempt: PhaseAttempt,
+): string | null {
+  if (
+    attempt.changeId !== boundary.changeId ||
+    attempt.taskId !== boundary.taskId
+  ) {
+    return "task attempt identity mismatch";
+  }
+  const phase = boundary.phases[attempt.phase];
+  if (!phase) return "task attempt phase is not declared";
+  const snapshotReason = validateImplementationSnapshot(attempt.snapshot, [
+    ...phase.read,
+    ...phase.write,
+  ]);
+  if (snapshotReason !== null) return snapshotReason;
+  const bounds = attempt.snapshot as Record<string, { kind?: unknown }>;
+  if (
+    phase.write.some(
+      (path) =>
+        bounds[path]?.kind !== "file" && bounds[path]?.kind !== "absent",
+    )
+  ) {
+    return "write snapshot must bind a regular file or absent path";
+  }
+  return null;
+}
+
+function validateImplementRunRequest(
+  value: unknown,
+): { ok: true; value: ImplementRunRequest } | { ok: false; reason: string } {
+  const serialized = JSON.stringify(value);
+  if (serialized.length > LIMITS.maxEnvelopeBytes) {
+    return {
+      ok: false,
+      reason: `request envelope exceeds ${LIMITS.maxEnvelopeBytes / 1024} KiB`,
+    };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ok: false, reason: "missing request envelope" };
+  }
+  const request = value as Record<string, unknown>;
+  if (request.kind === "open-task") {
+    if (
+      request.attempt &&
+      typeof request.attempt === "object" &&
+      !Array.isArray(request.attempt) &&
+      !Object.hasOwn(request.attempt, "snapshot")
+    ) {
+      return { ok: false, reason: "invalid snapshot" };
+    }
+    if (
+      !hasExactKeys(request, ["stage", "kind", "boundary", "attempt"]) ||
+      !validatePhaseAttemptShape(request.attempt) ||
+      !validateTaskBoundary(request.boundary, request.attempt.snapshot)
+    ) {
+      return { ok: false, reason: "invalid task open contract" };
+    }
+    const boundary = request.boundary as TaskBoundary;
+    const attempt = request.attempt as PhaseAttempt;
+    const attemptReason = validatePhaseAttemptAgainstBoundary(
+      boundary,
+      attempt,
+    );
+    if (attempt.phase !== "red" || attemptReason !== null) {
+      return {
+        ok: false,
+        reason:
+          attempt.phase !== "red"
+            ? "task open must begin with Red"
+            : (attemptReason ?? "invalid phase attempt"),
+      };
+    }
+    return {
+      ok: true,
+      value: structuredClone(request) as ImplementRunRequest,
+    };
+  }
+  if (request.kind === "phase-attempt") {
+    if (
+      !hasExactKeys(request, ["stage", "kind", "attempt"]) ||
+      !validatePhaseAttemptShape(request.attempt)
+    ) {
+      return { ok: false, reason: "invalid phase attempt contract" };
+    }
+    return {
+      ok: true,
+      value: structuredClone(request) as ImplementRunRequest,
+    };
+  }
+  return { ok: false, reason: "invalid Implement run kind" };
+}
+
 export function validateRequestEnvelope(
+  value: unknown,
+): { ok: true; value: RunRequest } | { ok: false; reason: string } {
+  if (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    (value as Record<string, unknown>).stage === "abel-implement"
+  ) {
+    return validateImplementRunRequest(value);
+  }
+  return validateLegacyRequestEnvelope(value);
+}
+
+function validateLegacyRequestEnvelope(
   value: unknown,
 ): { ok: true; value: RequestEnvelope } | { ok: false; reason: string } {
   if (value === null || typeof value !== "object") {
@@ -310,6 +1118,9 @@ export function validateRequestEnvelope(
       return { ok: false, reason: `invalid declared ${key} set` };
     }
   }
+  if ((decl.write as unknown[]).some(isAgentsPath)) {
+    return { ok: false, reason: "subagents cannot declare AGENTS writes" };
+  }
   if (
     decl.verificationLock !== undefined &&
     !isValidRelativePath(decl.verificationLock)
@@ -329,6 +1140,20 @@ export function validateRequestEnvelope(
     }
   }
   if (env.stage === "abel-implement" && env.output === "diff") {
+    const agentsReason = validateAgentsContract(env);
+    if (agentsReason !== null) return { ok: false, reason: agentsReason };
+    const dependenciesReason = validateApprovedDependencies(
+      env.approvedDependencies,
+    );
+    if (dependenciesReason !== null) {
+      return { ok: false, reason: dependenciesReason };
+    }
+    const closureReason = validateImpactClosure(
+      env.impactClosure,
+      decl,
+      env.snapshot,
+    );
+    if (closureReason !== null) return { ok: false, reason: closureReason };
     if (env.verification === undefined) {
       return { ok: false, reason: "missing required field: verification" };
     }
@@ -592,37 +1417,154 @@ export interface DiffResult {
   diff: string;
   expectedVerification: string;
   risks: string[];
-  nextStep: string;
   contractCompliant: boolean;
 }
+
+export interface ApplyResult {
+  targets: string[];
+  checkExitCode: 0;
+  applyExitCode: 0;
+  sequence?: number;
+}
+
+export interface AgentsCheckpointResult {
+  target: string;
+  agentsImpact: Exclude<TaskBoundary["agents"]["impact"], "none">;
+  checkExitCode: 0;
+  applyExitCode: 0;
+  sequence?: number;
+}
+
+export type ImplementOutcome =
+  | {
+      kind: "deferred";
+      requestId: string;
+      taskId: string;
+      reason: "task-conflict";
+    }
+  | {
+      kind: "candidate";
+      requestId: string;
+      taskId: string;
+      phase: ImplementationPhase;
+      resultId: string;
+      result: DiffResult;
+    }
+  | {
+      kind: "applied";
+      requestId: string;
+      taskId: string;
+      phase: "red" | "green";
+      readyPhase: "green" | "refactor";
+      result: ApplyResult;
+    }
+  | {
+      kind: "checkpoint-required";
+      requestId: string;
+      taskId: string;
+      finalPhase: "green" | "refactor";
+      result: ApplyResult;
+    }
+  | {
+      kind: "retry";
+      requestId: string;
+      taskId: string;
+      scope: "worker" | "checkpoint";
+      phase: ImplementationPhase;
+      cause: "artifact" | "stale";
+      remainingAttempts: 1;
+    }
+  | {
+      kind: "completed";
+      requestId: string;
+      taskId: string;
+      finalPhase: "green" | "refactor";
+      result?: ApplyResult | AgentsCheckpointResult;
+    }
+  | {
+      kind: "blocked";
+      requestId: string;
+      taskId: string;
+      phase: ImplementationPhase;
+      failure: TaskFailure;
+    }
+  | {
+      kind: "cancelled";
+      requestId: string;
+      taskId: string;
+      phase: ImplementationPhase;
+    };
 
 export function validateEvidenceResult(value: unknown): {
   ok: boolean;
   reason?: string;
+  failure?: CandidateFailure;
 } {
   if (value === null || typeof value !== "object")
     return { ok: false, reason: "missing result" };
   const r = value as Record<string, unknown>;
   if (r.kind !== "evidence") return { ok: false, reason: "wrong result kind" };
-  for (const field of [
+  const fields = [
     "id",
     "role",
+    "kind",
     "conclusions",
     "citations",
+    "constraints",
+    "dependencies",
+    "risks",
     "blockingQuestions",
-  ]) {
-    if (r[field] === undefined)
-      return { ok: false, reason: `missing field: ${field}` };
+    "hints",
+  ] as const;
+  if (!hasExactKeys(r, fields)) {
+    return { ok: false, reason: "invalid evidence result fields" };
   }
-  if (typeof r.id !== "string" || typeof r.role !== "string")
+  if (!validIdentifier(r.id) || typeof r.role !== "string")
     return { ok: false, reason: "invalid identity" };
   if (!(ROLES as readonly string[]).includes(r.role))
     return { ok: false, reason: "unknown role" };
+  for (const field of [
+    "conclusions",
+    "constraints",
+    "dependencies",
+    "risks",
+    "blockingQuestions",
+  ] as const) {
+    if (
+      !Array.isArray(r[field]) ||
+      !r[field].every((entry) => typeof entry === "string")
+    ) {
+      return { ok: false, reason: `invalid evidence field: ${field}` };
+    }
+  }
+  if (
+    !Array.isArray(r.citations) ||
+    r.citations.some(
+      (citation) =>
+        !hasExactKeys(citation, ["path", "lines"]) ||
+        !isValidRelativePath(citation.path) ||
+        typeof citation.lines !== "string",
+    )
+  ) {
+    return { ok: false, reason: "invalid evidence citations" };
+  }
+  if (
+    !hasExactKeys(r.hints, ["writeSet", "verification", "agentsImpact"]) ||
+    !validatePathSet(r.hints.writeSet) ||
+    typeof r.hints.verification !== "string" ||
+    !(AGENTS_IMPACTS as readonly unknown[]).includes(r.hints.agentsImpact)
+  ) {
+    return { ok: false, reason: "invalid evidence hints" };
+  }
   const serialized = JSON.stringify(r);
-  if (serialized.length > LIMITS.maxCompleteResultBytes) {
+  if (Buffer.byteLength(serialized, "utf8") > LIMITS.maxCompleteResultBytes) {
     return {
       ok: false,
       reason: `result exceeds ${LIMITS.maxCompleteResultBytes} bytes`,
+      failure: {
+        kind: "result-limit",
+        limitBytes: LIMITS.maxCompleteResultBytes,
+      },
     };
   }
   return { ok: true };
@@ -632,23 +1574,28 @@ export function validateDiffResult(value: unknown): {
   ok: boolean;
   reason?: string;
   paths?: string[];
+  failure?: CandidateFailure;
 } {
   if (value === null || typeof value !== "object")
     return { ok: false, reason: "missing result" };
   const r = value as Record<string, unknown>;
   if (r.kind !== "diff") return { ok: false, reason: "wrong result kind" };
-  for (const field of [
+  const fields = [
     "id",
     "role",
+    "kind",
     "taskId",
     "phase",
     "summary",
     "diff",
     "expectedVerification",
     "risks",
-    "nextStep",
     "contractCompliant",
-  ]) {
+  ] as const;
+  if (!hasExactKeys(r, fields)) {
+    return { ok: false, reason: "invalid diff result fields" };
+  }
+  for (const field of fields) {
     if (r[field] === undefined)
       return { ok: false, reason: `missing field: ${field}` };
   }
@@ -675,9 +1622,7 @@ export function validateDiffResult(value: unknown): {
     typeof r.summary !== "string" ||
     r.summary.length === 0 ||
     typeof r.expectedVerification !== "string" ||
-    r.expectedVerification.length === 0 ||
-    typeof r.nextStep !== "string" ||
-    r.nextStep.length === 0
+    r.expectedVerification.length === 0
   ) {
     return { ok: false, reason: "invalid diff result text" };
   }
@@ -696,10 +1641,14 @@ export function validateDiffResult(value: unknown): {
     return { ok: false, reason: `invalid diff: ${(err as Error).message}` };
   }
   const serialized = JSON.stringify(r);
-  if (serialized.length > LIMITS.maxCompleteResultBytes) {
+  if (Buffer.byteLength(serialized, "utf8") > LIMITS.maxCompleteResultBytes) {
     return {
       ok: false,
       reason: `result exceeds ${LIMITS.maxCompleteResultBytes} bytes`,
+      failure: {
+        kind: "result-limit",
+        limitBytes: LIMITS.maxCompleteResultBytes,
+      },
     };
   }
   return { ok: true, paths };

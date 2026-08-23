@@ -7,6 +7,7 @@ import {
   type ExtensionContext,
   ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
+import type { ChildFailure } from "./contracts.ts";
 import type {
   ParentPayloadBridge,
   ParentPayloadCallback,
@@ -16,6 +17,33 @@ import type {
 export interface PhasePayloadBridge {
   readonly bridge: ParentPayloadBridge;
   readonly capture: ParentPayloadCapture;
+}
+
+type PhaseRuntimeFailure = Extract<
+  ChildFailure,
+  { kind: "cancelled" | "environment" | "transport" }
+>;
+
+export type PhaseRuntimeResult =
+  | { ok: true; modelRuntime: ModelRuntime; model: Model<string> }
+  | { ok: false; error: string; failure: PhaseRuntimeFailure };
+
+function phaseRuntimeFailure(
+  failure: PhaseRuntimeFailure,
+  error: string,
+): Extract<PhaseRuntimeResult, { ok: false }> {
+  return { ok: false, error, failure };
+}
+
+function cancelledPhaseRuntime(): Extract<PhaseRuntimeResult, { ok: false }> {
+  return phaseRuntimeFailure(
+    { kind: "cancelled", code: "cancelled" },
+    "child phase cancelled",
+  );
+}
+
+function isCancellation(error: unknown, signal?: AbortSignal): boolean {
+  return signal?.aborted === true && error === signal.reason;
 }
 
 function phasePayloadCallback(
@@ -137,44 +165,82 @@ export async function runtimeFromContext(
   ctx: Pick<ExtensionContext, "model" | "modelRegistry">,
   payloadBridge: ParentPayloadBridge,
   signal?: AbortSignal,
-): Promise<{ modelRuntime: ModelRuntime; model: Model<string> }> {
-  signal?.throwIfAborted();
-  if (!ctx.model) throw new Error("parent model is unavailable");
+): Promise<PhaseRuntimeResult> {
+  if (signal?.aborted) return cancelledPhaseRuntime();
+  if (!ctx.model) {
+    return phaseRuntimeFailure(
+      { kind: "environment", code: "sandbox-runtime-unavailable" },
+      "parent model is unavailable",
+    );
+  }
   const selectedModel = ctx.model;
   const selectedModelKey = modelKeyFor(selectedModel);
-  const resolved = await abortable(
-    ctx.modelRegistry.getApiKeyAndHeaders(selectedModel),
-    signal,
-  );
-  if (!resolved.ok) throw new Error(resolved.error);
-  signal?.throwIfAborted();
+  let resolved: Awaited<
+    ReturnType<typeof ctx.modelRegistry.getApiKeyAndHeaders>
+  >;
+  try {
+    resolved = await abortable(
+      ctx.modelRegistry.getApiKeyAndHeaders(selectedModel),
+      signal,
+    );
+  } catch (error) {
+    if (isCancellation(error, signal)) return cancelledPhaseRuntime();
+    throw error;
+  }
+  if (!resolved.ok) {
+    return phaseRuntimeFailure(
+      { kind: "environment", code: "sandbox-runtime-unavailable" },
+      "phase authentication is unavailable",
+    );
+  }
+  if (signal?.aborted) return cancelledPhaseRuntime();
   const model = {
     ...selectedModel,
     baseUrl: resolved.baseUrl ?? selectedModel.baseUrl,
   } as Model<string>;
   const effectiveModelKey = modelKeyFor(model);
   const capture = payloadBridge.capture(effectiveModelKey, ctx.modelRegistry);
-  if (!capture) throw new Error("parent payload bridge is unavailable");
-  const requireReadyCapture = () => {
-    if (
-      !ctx.model ||
-      !sameSelectedModel(ctx.model, selectedModelKey) ||
-      payloadBridge.capture(effectiveModelKey, ctx.modelRegistry) !== capture
-    ) {
-      throw new Error("parent payload bridge is unavailable");
-    }
+  if (!capture) {
+    return phaseRuntimeFailure(
+      { kind: "transport", code: "transport-failure" },
+      "parent payload bridge is unavailable",
+    );
+  }
+  const captureIsReady = () => {
+    const currentModel = ctx.model;
+    return (
+      currentModel !== undefined &&
+      sameSelectedModel(currentModel, selectedModelKey) &&
+      payloadBridge.capture(effectiveModelKey, ctx.modelRegistry) === capture
+    );
   };
-  requireReadyCapture();
+  if (!captureIsReady()) {
+    return phaseRuntimeFailure(
+      { kind: "transport", code: "transport-failure" },
+      "parent payload bridge is unavailable",
+    );
+  }
   const delegate = capture.delegate;
   if (!delegate) throw new Error("parent Provider is unavailable");
   const provider = phaseProvider(delegate, resolved, {
     bridge: payloadBridge,
     capture,
   });
-  const modelRuntime = await runtimeForProvider(provider, signal);
-  signal?.throwIfAborted();
-  requireReadyCapture();
-  return { modelRuntime, model };
+  let modelRuntime: ModelRuntime;
+  try {
+    modelRuntime = await runtimeForProvider(provider, signal);
+  } catch (error) {
+    if (isCancellation(error, signal)) return cancelledPhaseRuntime();
+    throw error;
+  }
+  if (signal?.aborted) return cancelledPhaseRuntime();
+  if (!captureIsReady()) {
+    return phaseRuntimeFailure(
+      { kind: "transport", code: "transport-failure" },
+      "parent payload bridge is unavailable",
+    );
+  }
+  return { ok: true, modelRuntime, model };
 }
 
 function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RequestEnvelope } from "../src/contracts";
 import { ParentPayloadBridge } from "../src/parent-payload-bridge.ts";
-import { Runtime } from "../src/runtime";
+import { isWrappedDispatchResult, Runtime } from "../src/runtime";
 
 type TerminalStatus = "succeeded" | "failed" | "cancelled";
 
@@ -49,8 +49,6 @@ class NotReadyScheduler<T> implements SchedulerLike<T> {
     parentPayloadBridge: new ParentPayloadBridge(),
   });
 
-  constructor(_options: SchedulerOptions<T>) {}
-
   schedule(batchId: string, requests: ScheduledRequest[]): BatchHandle<T> {
     const results = new Map<string, Promise<ScheduledOutcome<T>>>();
     for (const entry of requests) {
@@ -60,9 +58,10 @@ class NotReadyScheduler<T> implements SchedulerLike<T> {
           id: entry.request.id,
           status: "failed" as const,
           attempts: 0,
-          error: probe.ok
-            ? "not_ready: single-run facade has no scheduler"
-            : `not_ready: ${probe.error}`,
+          error:
+            !isWrappedDispatchResult(probe) || probe.ok
+              ? "not_ready: single-run facade has no scheduler"
+              : `not_ready: ${probe.error}`,
         }));
       results.set(entry.request.id, outcome);
     }
@@ -295,6 +294,11 @@ describe("declared compatibility", () => {
       { read: ["src/shared.ts"] },
     ],
     [
+      "ancestor/descendant path overlap",
+      { read: ["src"] },
+      { write: ["src/nested/shared.ts"] },
+    ],
+    [
       "declared conflict edge",
       { conflicts: ["right"] },
       { write: ["src/right.ts"] },
@@ -375,6 +379,39 @@ describe("declared compatibility", () => {
     ]);
   });
 
+  it("serializes compatible attempts of the same stable task", async () => {
+    const starts: string[] = [];
+    const first = deferred<string>();
+    const second = deferred<string>();
+    const scheduler = createScheduler<string>((envelope) => {
+      starts.push(envelope.id);
+      return envelope.id === "task:red:first" ? first.promise : second.promise;
+    }, 2);
+    const firstRequest = request("task:red:first");
+    firstRequest.taskId = "task";
+    const secondRequest = request("task:red:second");
+    secondRequest.taskId = "task";
+
+    const batch = scheduler.schedule("same-stable-task", [
+      { request: firstRequest, prerequisites: [] },
+      { request: secondRequest, prerequisites: [] },
+    ]);
+
+    await turn();
+    expect(starts).toEqual(["task:red:first"]);
+
+    first.resolve("first");
+    await batch.result("task:red:first");
+    await turn();
+    expect(starts).toEqual(["task:red:first", "task:red:second"]);
+
+    second.resolve("second");
+    expect((await batch.done).map((outcome) => outcome.status)).toEqual([
+      "succeeded",
+      "succeeded",
+    ]);
+  });
+
   it("starts disjoint declarations concurrently", async () => {
     const starts: string[] = [];
     const left = deferred<string>();
@@ -387,7 +424,7 @@ describe("declared compatibility", () => {
     const batch = scheduler.schedule("disjoint", [
       scheduled("left", {
         declared: {
-          read: ["src/a.ts"],
+          read: ["src/a"],
           write: ["test/a.test.ts"],
           resources: ["resource-a"],
           verificationLock: "lock-a",
@@ -395,7 +432,7 @@ describe("declared compatibility", () => {
       }),
       scheduled("right", {
         declared: {
-          read: ["src/b.ts"],
+          read: ["src/ab"],
           write: ["test/b.test.ts"],
           resources: ["resource-b"],
           verificationLock: "lock-b",

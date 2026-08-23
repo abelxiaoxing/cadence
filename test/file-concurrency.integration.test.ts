@@ -17,7 +17,7 @@ import {
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 import { Activation } from "../src/activation";
-import type { RequestEnvelope } from "../src/contracts";
+import type { ImplementRunRequest } from "../src/contracts";
 import {
   mergeBounds,
   snapshotDirManifests,
@@ -134,110 +134,111 @@ function addPatch(path: string, content: string): string {
 
 function diffRequest(input: {
   id: string;
-  phase?: "red" | "green" | "refactor";
   read: string[];
   write: string[];
+  green?: { read: string[]; write: string[] };
   snapshot: unknown;
-}): RequestEnvelope {
-  const phase = input.phase ?? "green";
+}): Extract<ImplementRunRequest, { kind: "open-task" }> {
+  const verification = (phase: "red" | "green") => ({
+    id: `verify-${input.id}-${phase}`,
+    argv: [
+      "bun",
+      "run",
+      "test:target",
+      phase === "red" ? "test/expected-red.mjs" : "test/expected-green.mjs",
+    ],
+    classification:
+      phase === "red" ? ("expected-red" as const) : ("expected-green" as const),
+    ...(phase === "red"
+      ? { expectedFailure: "[FILE-CONCURRENCY:expected-red]" }
+      : {}),
+    minTests: 1,
+  });
   return {
     stage: "abel-implement",
+    kind: "open-task",
+    boundary: {
+      changeId: "file-concurrency-fixture",
+      taskId: input.id,
+      objective: `Complete ${input.id}`,
+      roots: ["."],
+      context: {
+        agents: "root contract",
+        contract: "approved task contract",
+      },
+      phases: {
+        red: {
+          read: input.read,
+          write: input.write,
+          verificationLock: `verify-${input.id}`,
+          verification: verification("red"),
+        },
+        green: {
+          read: input.green?.read ?? input.read,
+          write: input.green?.write ?? input.write,
+          verificationLock: `verify-${input.id}`,
+          verification: verification("green"),
+        },
+      },
+      scheduling: { conflicts: [], resources: [] },
+      agents: { impact: "none", managedOnly: true },
+      approvedDependencies: [],
+      impactClosure: {
+        changedSurfaces: ["none"],
+        searchEvidence: [],
+        relatedTests: [],
+        affectedSuite: [],
+      },
+    },
+    attempt: {
+      changeId: "file-concurrency-fixture",
+      taskId: input.id,
+      requestId: input.id,
+      phase: "red",
+      snapshot: input.snapshot,
+    },
+  };
+}
+
+function phaseAttempt(
+  request: Extract<ImplementRunRequest, { kind: "open-task" }>,
+  phase: "green",
+  snapshot: unknown,
+): ImplementRunRequest {
+  return {
+    stage: "abel-implement",
+    kind: "phase-attempt",
+    attempt: {
+      ...structuredClone(request.attempt),
+      requestId: `${request.attempt.taskId}:${phase}`,
+      phase,
+      snapshot,
+    },
+  };
+}
+
+function submittedDiff(request: ImplementRunRequest, diff: string) {
+  return {
+    id: request.attempt.requestId,
     role: "implementation-worker",
-    taskId: input.id,
-    id: input.id,
-    phase,
-    objective: `Complete ${input.id}`,
-    roots: ["."],
-    context: { agents: "root contract", contract: "approved task contract" },
-    declared: {
-      read: input.read,
-      write: input.write,
-      conflicts: [],
-      resources: [],
-      verificationLock: `verify-${input.id}`,
-    },
-    output: "diff",
-    snapshot: input.snapshot,
-    verification: {
-      id: `verify-${input.id}-${phase}`,
-      argv: [
-        "bun",
-        "run",
-        "test:target",
-        phase === "red" ? "test/expected-red.mjs" : "test/expected-green.mjs",
-      ],
-      classification:
-        phase === "red"
-          ? "expected-red"
-          : phase === "green"
-            ? "expected-green"
-            : "expected-refactor",
-      ...(phase === "red"
-        ? { expectedFailure: "[FILE-CONCURRENCY:expected-red]" }
-        : {}),
-      minTests: 1,
-    },
-  };
-}
-
-function evidenceRequest(
-  id: string,
-  overrides: Partial<RequestEnvelope> = {},
-): RequestEnvelope {
-  return {
-    stage: "abel-design",
-    role: "design-explorer",
-    id,
-    phase: "evidence",
-    objective: "Return bounded evidence",
-    roots: ["."],
-    context: { agents: "root contract", contract: "approved packet" },
-    declared: {
-      read: ["a.txt"],
-      write: [],
-      conflicts: [],
-      resources: [],
-    },
-    output: "evidence",
-    snapshot: {},
-    ...overrides,
-  };
-}
-
-function evidence(id: string) {
-  return {
-    id,
-    role: "design-explorer",
-    kind: "evidence",
-    conclusions: ["bounded evidence"],
-    citations: [{ path: "a.txt", lines: "1" }],
-    constraints: [],
-    dependencies: [],
+    kind: "diff",
+    taskId: request.attempt.taskId,
+    phase: request.attempt.phase,
+    summary: `Complete ${request.attempt.taskId}`,
+    diff,
+    expectedVerification: "fixed fixture verification",
     risks: [],
-    blockingQuestions: [],
-    hints: { writeSet: [], verification: "none", agentsImpact: "none" },
+    contractCompliant: true,
   };
 }
 
 async function runDiff(input: {
   runtime: Runtime;
   root: string;
-  request: RequestEnvelope;
+  request: ImplementRunRequest;
   diff: string;
 }) {
-  const submitted = {
-    id: input.request.id,
-    role: "implementation-worker",
-    kind: "diff",
-    taskId: input.request.id,
-    phase: input.request.phase,
-    summary: `Complete ${input.request.id}`,
-    diff: input.diff,
-    expectedVerification: "fixed fixture verification",
-    risks: [],
-    nextStep: "parent review",
-    contractCompliant: true,
-  };
+  const submitted = submittedDiff(input.request, input.diff);
   const faux = fauxProvider({
     provider: `abel-file-faux-${providerSequence++}`,
     api: "faux",
@@ -264,12 +265,103 @@ async function runDiff(input: {
 function retainedResultId(
   result: Awaited<ReturnType<Runtime["execute"]>>,
 ): string {
-  expect(result.ok).toBe(true);
-  if (!result.ok || typeof result.resultId !== "string") {
+  expect(result).toMatchObject({ kind: "candidate" });
+  if (!("kind" in result) || result.kind !== "candidate") {
     throw new Error("run did not retain a diff result");
   }
   return result.resultId;
 }
+
+let applySequence = 0;
+function applyCandidate(
+  runtime: Runtime,
+  resultId: string,
+  context: Parameters<Runtime["execute"]>[2],
+) {
+  return runtime.execute(
+    "apply",
+    {
+      resultId,
+      requestId: `file-concurrency:apply:${applySequence++}`,
+    },
+    context,
+  );
+}
+
+describe("task-lifetime conflict admission", () => {
+  it("[SLICE-4:task-lifetime-conflict] retains later-phase conflicts while a candidate is pending without losing an independent sibling", async () => {
+    const root = makeGitRoot({
+      "owner-red.txt": "owner0\n",
+      "contender-red.txt": "contender0\n",
+      "later-shared.txt": "shared0\n",
+      "sibling.txt": "sibling0\n",
+    });
+    const runtime = activeRuntime();
+    const owner = await runDiff({
+      runtime,
+      root,
+      request: diffRequest({
+        id: "lifetime-owner",
+        read: ["owner-red.txt"],
+        write: ["owner-red.txt"],
+        green: {
+          read: ["later-shared.txt"],
+          write: ["later-shared.txt"],
+        },
+        snapshot: snapshotFiles(root, ["owner-red.txt"]),
+      }),
+      diff: modifyPatch("owner-red.txt", "owner0", "owner1"),
+    });
+    expect(retainedResultId(owner.result)).toBeTypeOf("string");
+
+    const conflictingRequest = diffRequest({
+      id: "later-phase-contender",
+      read: ["contender-red.txt"],
+      write: ["contender-red.txt"],
+      green: {
+        read: ["later-shared.txt"],
+        write: ["later-shared.txt"],
+      },
+      snapshot: snapshotFiles(root, ["contender-red.txt"]),
+    });
+    const firstDeferred = await runDiff({
+      runtime,
+      root,
+      request: conflictingRequest,
+      diff: modifyPatch("contender-red.txt", "contender0", "contender1"),
+    });
+    const secondDeferred = await runDiff({
+      runtime,
+      root,
+      request: conflictingRequest,
+      diff: modifyPatch("contender-red.txt", "contender0", "contender1"),
+    });
+    const sibling = await runDiff({
+      runtime,
+      root,
+      request: diffRequest({
+        id: "independent-sibling",
+        read: ["sibling.txt"],
+        write: ["sibling.txt"],
+        snapshot: snapshotFiles(root, ["sibling.txt"]),
+      }),
+      diff: modifyPatch("sibling.txt", "sibling0", "sibling1"),
+    });
+
+    for (const deferred of [firstDeferred, secondDeferred]) {
+      expect(deferred.result).toMatchObject({
+        kind: "deferred",
+        requestId: "later-phase-contender",
+        taskId: "later-phase-contender",
+        reason: "task-conflict",
+      });
+      expect(deferred.faux.state.callCount).toBe(0);
+    }
+    expect(sibling.result).toMatchObject({ kind: "candidate" });
+    expect(sibling.faux.state.callCount).toBe(1);
+    expect(retainedResultId(sibling.result)).toBeTypeOf("string");
+  });
+});
 
 describe("file-aware current and stale results", () => {
   it("keeps a disjoint sibling current after applying another accepted result", async () => {
@@ -298,40 +390,29 @@ describe("file-aware current and stale results", () => {
       diff: modifyPatch("b.txt", "b0", "b1"),
     });
 
-    const appliedLeft = await runtime.execute(
-      "apply",
-      { resultId: retainedResultId(left.result) },
+    const appliedLeft = await applyCandidate(
+      runtime,
+      retainedResultId(left.result),
       left.context,
     );
-    expect(appliedLeft.ok).toBe(true);
+    expect(appliedLeft).toMatchObject({ kind: "applied" });
 
-    const appliedRight = await runtime.execute(
-      "apply",
-      { resultId: retainedResultId(right.result) },
+    const appliedRight = await applyCandidate(
+      runtime,
+      retainedResultId(right.result),
       right.context,
     );
-    expect(appliedRight.ok).toBe(true);
+    expect(appliedRight).toMatchObject({ kind: "applied" });
     expect(readFileSync(join(root, "a.txt"), "utf8")).toBe("a1\n");
     expect(readFileSync(join(root, "b.txt"), "utf8")).toBe("b1\n");
   });
 
-  it("stales a result when another accepted diff changes a bound read file", async () => {
+  it("stales a result when a bound read file changes", async () => {
     const root = makeGitRoot({
       "shared.txt": "shared0\n",
       "worker.txt": "worker0\n",
     });
     const runtime = activeRuntime();
-    const changing = await runDiff({
-      runtime,
-      root,
-      request: diffRequest({
-        id: "change-shared",
-        read: ["shared.txt"],
-        write: ["shared.txt"],
-        snapshot: snapshotFiles(root, ["shared.txt"]),
-      }),
-      diff: modifyPatch("shared.txt", "shared0", "shared1"),
-    });
     const observing = await runDiff({
       runtime,
       root,
@@ -344,42 +425,29 @@ describe("file-aware current and stale results", () => {
       diff: modifyPatch("worker.txt", "worker0", "worker1"),
     });
 
-    const applied = await runtime.execute(
-      "apply",
-      { resultId: retainedResultId(changing.result) },
-      changing.context,
-    );
-    expect(applied.ok).toBe(true);
+    writeFileSync(join(root, "shared.txt"), "shared1\n");
 
-    const stale = await runtime.execute(
-      "apply",
-      { resultId: retainedResultId(observing.result) },
+    const stale = await applyCandidate(
+      runtime,
+      retainedResultId(observing.result),
       observing.context,
     );
-    expect(stale.ok).toBe(false);
-    if (!stale.ok) expect(stale.error).toMatch(/stale/i);
+    expect(stale).toMatchObject({
+      kind: "retry",
+      scope: "worker",
+      phase: "red",
+      cause: "stale",
+      remainingAttempts: 1,
+    });
     expect(readFileSync(join(root, "worker.txt"), "utf8")).toBe("worker0\n");
   });
 
-  it("stales a result when an accepted diff changes an observed directory manifest", async () => {
+  it("defers a descendant write and stales on an external directory-manifest change", async () => {
     const root = makeGitRoot({
       "docs/base.txt": "base\n",
       "worker.txt": "worker0\n",
     });
     const runtime = activeRuntime();
-    const adding = await runDiff({
-      runtime,
-      root,
-      request: diffRequest({
-        id: "add-directory-entry",
-        read: [],
-        write: ["docs/new.txt"],
-        snapshot: snapshotFiles(root, ["docs/new.txt"], {
-          absent: ["docs/new.txt"],
-        }),
-      }),
-      diff: addPatch("docs/new.txt", "new"),
-    });
     const observing = await runDiff({
       runtime,
       root,
@@ -394,21 +462,40 @@ describe("file-aware current and stale results", () => {
       }),
       diff: modifyPatch("worker.txt", "worker0", "worker1"),
     });
+    const adding = await runDiff({
+      runtime,
+      root,
+      request: diffRequest({
+        id: "add-directory-entry",
+        read: [],
+        write: ["docs/new.txt"],
+        snapshot: snapshotFiles(root, ["docs/new.txt"], {
+          absent: ["docs/new.txt"],
+        }),
+      }),
+      diff: addPatch("docs/new.txt", "new"),
+    });
 
-    const applied = await runtime.execute(
-      "apply",
-      { resultId: retainedResultId(adding.result) },
-      adding.context,
-    );
-    expect(applied.ok).toBe(true);
+    expect(adding.result).toMatchObject({
+      kind: "deferred",
+      taskId: "add-directory-entry",
+      reason: "task-conflict",
+    });
+    expect(adding.faux.state.callCount).toBe(0);
+    writeFileSync(join(root, "docs/new.txt"), "new\n");
 
-    const stale = await runtime.execute(
-      "apply",
-      { resultId: retainedResultId(observing.result) },
+    const stale = await applyCandidate(
+      runtime,
+      retainedResultId(observing.result),
       observing.context,
     );
-    expect(stale.ok).toBe(false);
-    if (!stale.ok) expect(stale.error).toMatch(/stale/i);
+    expect(stale).toMatchObject({
+      kind: "retry",
+      scope: "worker",
+      phase: "red",
+      cause: "stale",
+      remainingAttempts: 1,
+    });
     expect(readFileSync(join(root, "worker.txt"), "utf8")).toBe("worker0\n");
   });
 });
@@ -417,6 +504,12 @@ describe("runtime redispatch and logical Worker identity", () => {
   it("mechanically redispatches one unchanged failed request exactly once", async () => {
     const root = makeGitRoot({ "a.txt": "alpha\n" });
     const runtime = activeRuntime();
+    const request = diffRequest({
+      id: "retry-once",
+      read: ["a.txt"],
+      write: ["a.txt"],
+      snapshot: snapshotFiles(root, ["a.txt"]),
+    });
     const faux = fauxProvider({
       provider: `abel-retry-faux-${providerSequence++}`,
       api: "faux",
@@ -427,7 +520,10 @@ describe("runtime redispatch and logical Worker identity", () => {
         errorMessage: "first transport failure",
       }),
       fauxAssistantMessage(
-        fauxToolCall("abel_submit_result", evidence("retry-once")),
+        fauxToolCall(
+          "abel_submit_result",
+          submittedDiff(request, modifyPatch("a.txt", "alpha", "updated")),
+        ),
         { stopReason: "toolUse" },
       ),
     ]);
@@ -438,18 +534,20 @@ describe("runtime redispatch and logical Worker identity", () => {
       modelRegistry: new ModelRegistry(modelRuntime),
     };
 
-    const result = await runtime.execute(
-      "run",
-      { request: evidenceRequest("retry-once") },
-      context,
-    );
+    const result = await runtime.execute("run", { request }, context);
     expect(faux.state.callCount).toBe(2);
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ kind: "candidate" });
   });
 
   it("blocks after the identical mechanical redispatch fails again", async () => {
     const root = makeGitRoot({ "a.txt": "alpha\n" });
     const runtime = activeRuntime();
+    const request = diffRequest({
+      id: "retry-limit",
+      read: ["a.txt"],
+      write: ["a.txt"],
+      snapshot: snapshotFiles(root, ["a.txt"]),
+    });
     const faux = fauxProvider({
       provider: `abel-retry-limit-faux-${providerSequence++}`,
       api: "faux",
@@ -464,7 +562,10 @@ describe("runtime redispatch and logical Worker identity", () => {
         errorMessage: "second transport failure",
       }),
       fauxAssistantMessage(
-        fauxToolCall("abel_submit_result", evidence("retry-limit")),
+        fauxToolCall(
+          "abel_submit_result",
+          submittedDiff(request, modifyPatch("a.txt", "alpha", "updated")),
+        ),
         { stopReason: "toolUse" },
       ),
     ]);
@@ -475,18 +576,24 @@ describe("runtime redispatch and logical Worker identity", () => {
       modelRegistry: new ModelRegistry(modelRuntime),
     };
 
-    const result = await runtime.execute(
-      "run",
-      { request: evidenceRequest("retry-limit") },
-      context,
-    );
-    expect(result.ok).toBe(false);
+    const result = await runtime.execute("run", { request }, context);
+    expect(result).toMatchObject({
+      kind: "blocked",
+      phase: "red",
+      failure: { kind: "attempts-exhausted", cause: "transport" },
+    });
     expect(faux.state.callCount).toBe(2);
   });
 
   it("does not treat an expanded recovery contract as a mechanical redispatch", async () => {
     const root = makeGitRoot({ "a.txt": "alpha\n", "b.txt": "beta\n" });
     const runtime = activeRuntime();
+    const request = diffRequest({
+      id: "fixed-worker",
+      read: ["a.txt"],
+      write: ["a.txt"],
+      snapshot: snapshotFiles(root, ["a.txt"]),
+    });
     const faux = fauxProvider({
       provider: `abel-retry-scope-faux-${providerSequence++}`,
       api: "faux",
@@ -501,7 +608,10 @@ describe("runtime redispatch and logical Worker identity", () => {
         errorMessage: "second transport failure",
       }),
       fauxAssistantMessage(
-        fauxToolCall("abel_submit_result", evidence("fixed-worker")),
+        fauxToolCall(
+          "abel_submit_result",
+          submittedDiff(request, modifyPatch("a.txt", "alpha", "updated")),
+        ),
         { stopReason: "toolUse" },
       ),
     ]);
@@ -512,86 +622,61 @@ describe("runtime redispatch and logical Worker identity", () => {
       modelRegistry: new ModelRegistry(modelRuntime),
     };
 
-    await runtime.execute(
-      "run",
-      { request: evidenceRequest("fixed-worker") },
-      context,
-    );
-    const expanded = await runtime.execute(
-      "run",
-      {
-        request: evidenceRequest("fixed-worker", {
-          objective: "Expand the failed request to inspect another file",
-          declared: {
-            read: ["a.txt", "b.txt"],
-            write: [],
-            conflicts: [],
-            resources: [],
-          },
-        }),
-      },
-      context,
-    );
+    await runtime.execute("run", { request }, context);
+    const expanded = structuredClone(request);
+    expanded.boundary.phases.red.read.push("b.txt");
+    expanded.boundary.phases.green.read.push("b.txt");
+    expanded.attempt.snapshot = snapshotFiles(root, ["a.txt", "b.txt"]);
 
-    expect(expanded.ok).toBe(false);
-    if (!expanded.ok) {
-      expect(expanded.error).toMatch(
-        /blocked|changed|contract|scope|identity/i,
-      );
-    }
+    await expect(
+      runtime.execute("run", { request: expanded }, context),
+    ).rejects.toThrow(/duplicate|open|protocol/i);
     expect(faux.state.callCount).toBe(2);
   });
 
   it("pins provider/model identity across fresh phases of one logical Worker", async () => {
     const root = makeGitRoot({ "a.txt": "a0\n" });
     const runtime = activeRuntime();
+    const openRequest = diffRequest({
+      id: "pinned-worker",
+      read: ["a.txt"],
+      write: ["a.txt"],
+      snapshot: snapshotFiles(root, ["a.txt"]),
+    });
     const first = await runDiff({
       runtime,
       root,
-      request: diffRequest({
-        id: "pinned-worker",
-        phase: "red",
-        read: ["a.txt"],
-        write: ["a.txt"],
-        snapshot: snapshotFiles(root, ["a.txt"]),
-      }),
+      request: openRequest,
       diff: modifyPatch("a.txt", "a0", "a1"),
     });
     const firstResultId = retainedResultId(first.result);
     expect(first.faux.state.callCount).toBe(1);
-    const applied = await runtime.execute(
-      "apply",
-      { resultId: firstResultId },
-      first.context,
-    );
-    expect(applied.ok).toBe(true);
+    const applied = await applyCandidate(runtime, firstResultId, first.context);
+    expect(applied).toMatchObject({ kind: "applied" });
 
-    const changedIdentity = await runDiff({
-      runtime,
-      root,
-      request: diffRequest({
-        id: "pinned-worker",
-        phase: "green",
-        read: ["a.txt"],
-        write: ["a.txt"],
-        snapshot: snapshotFiles(root, ["a.txt"]),
+    await expect(
+      runDiff({
+        runtime,
+        root,
+        request: phaseAttempt(
+          openRequest,
+          "green",
+          snapshotFiles(root, ["a.txt"]),
+        ),
+        diff: modifyPatch("a.txt", "a1", "a2"),
       }),
-      diff: modifyPatch("a.txt", "a1", "a2"),
-    });
-
-    expect(changedIdentity.result.ok).toBe(false);
-    if (!changedIdentity.result.ok) {
-      expect(changedIdentity.result.error).toMatch(
-        /blocked|identity|model|provider|pinned/i,
-      );
-    }
-    expect(changedIdentity.faux.state.callCount).toBe(0);
+    ).rejects.toThrow(/identity|model|provider|pinned/i);
     expect(readFileSync(join(root, "a.txt"), "utf8")).toBe("a1\n");
   });
 });
 describe("serial parent apply FIFO and recovery", () => {
   it("serial parent apply FIFO and recovery", async () => {
-    const root = makeGitRoot({ x: "x0\n", y: "y0\n" });
+    const root = makeGitRoot({
+      x: "x0\n",
+      y: "y0\n",
+      z: "z0\n",
+      w: "w0\n",
+    });
     const runtime = activeRuntime();
     const run: Array<Awaited<ReturnType<typeof runDiff>>> = [];
     for (const file of ["x", "y"]) {
@@ -610,48 +695,45 @@ describe("serial parent apply FIFO and recovery", () => {
     }
     const ids = run.map((r) => retainedResultId(r.result));
 
-    // A forced stale failure (bound file changed after retention) must settle
-    // as { ok: false } and must not poison later applies.
+    // A forced stale failure must settle as retry and not poison later applies.
     writeFileSync(join(root, "x"), "x-changed\n");
-    const failing = await runtime.execute(
-      "apply",
-      { resultId: ids[0] },
-      run[0].context,
-    );
-    expect(failing.ok).toBe(false);
-    if (!failing.ok) expect(failing.error).toMatch(/stale/i);
+    const failing = await applyCandidate(runtime, ids[0], run[0].context);
+    expect(failing).toMatchObject({ kind: "retry", cause: "stale" });
     writeFileSync(join(root, "x"), "x0\n");
-    const refreshed = await runDiff({
+    const replacement = await runDiff({
       runtime,
       root,
       request: diffRequest({
-        id: "serial-x-refreshed",
-        read: ["x"],
-        write: ["x"],
-        snapshot: snapshotFiles(root, ["x"]),
+        id: "serial-z",
+        read: ["z"],
+        write: ["z"],
+        snapshot: snapshotFiles(root, ["z"]),
       }),
-      diff: modifyPatch("x", "x0", "x1"),
+      diff: modifyPatch("z", "z0", "z1"),
     });
 
     // Overlapping applies are admitted in invocation order: each controlled
     // result carries a monotonic FIFO sequence number, so the earlier caller
     // must observe a lower sequence than the later caller.
     const [first, second] = await Promise.all([
-      runtime.execute(
-        "apply",
-        { resultId: retainedResultId(refreshed.result) },
-        refreshed.context,
+      applyCandidate(
+        runtime,
+        retainedResultId(replacement.result),
+        replacement.context,
       ),
-      runtime.execute("apply", { resultId: ids[1] }, run[1].context),
+      applyCandidate(runtime, ids[1], run[1].context),
     ]);
-    expect(first.ok).toBe(true);
-    expect(second.ok).toBe(true);
-    if (first.ok && second.ok) {
-      const firstSeq = (first.result as { sequence?: number })?.sequence;
-      const secondSeq = (second.result as { sequence?: number })?.sequence;
-      expect(firstSeq).toBeTypeOf("number");
-      expect(secondSeq).toBeTypeOf("number");
-      expect(firstSeq!).toBeLessThan(secondSeq!);
+    expect(first).toMatchObject({ kind: "applied" });
+    expect(second).toMatchObject({ kind: "applied" });
+    if (
+      "kind" in first &&
+      first.kind === "applied" &&
+      "kind" in second &&
+      second.kind === "applied"
+    ) {
+      expect(first.result.sequence).toBeTypeOf("number");
+      expect(second.result.sequence).toBeTypeOf("number");
+      expect(first.result.sequence!).toBeLessThan(second.result.sequence!);
     }
 
     // Recovery: a later apply for a third retained result still succeeds.
@@ -659,18 +741,18 @@ describe("serial parent apply FIFO and recovery", () => {
       runtime,
       root,
       request: diffRequest({
-        id: "serial-y2",
-        read: ["y"],
-        write: ["y"],
-        snapshot: snapshotFiles(root, ["y"]),
+        id: "serial-w",
+        read: ["w"],
+        write: ["w"],
+        snapshot: snapshotFiles(root, ["w"]),
       }),
-      diff: modifyPatch("y", "y1", "y2"),
+      diff: modifyPatch("w", "w0", "w1"),
     });
-    const recovered = await runtime.execute(
-      "apply",
-      { resultId: retainedResultId(c.result) },
+    const recovered = await applyCandidate(
+      runtime,
+      retainedResultId(c.result),
       c.context,
     );
-    expect(recovered.ok).toBe(true);
+    expect(recovered).toMatchObject({ kind: "applied" });
   });
 });
