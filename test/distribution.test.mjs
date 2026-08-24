@@ -127,9 +127,9 @@ describe("real npm tarball", () => {
   });
 
   it("ships the four prompts and four skills with expected names", () => {
-    const prompts = listFiles(path.join(packedPackageDir, "prompts")).map(
-      (f) => f.relative,
-    );
+    const prompts = listFiles(path.join(packedPackageDir, "prompts"))
+      .map((f) => f.relative)
+      .sort();
     expect(prompts).toEqual([
       "abel-design.md",
       "abel-diagnose.md",

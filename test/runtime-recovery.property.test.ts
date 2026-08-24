@@ -160,6 +160,36 @@ function taskRecord(runtime: Runtime) {
   return (runtime as any).registry.values()[0];
 }
 
+function pinInheritedTask(
+  runtime: Runtime,
+  request: ReturnType<typeof phaseRequest>,
+  ctx: ReturnType<typeof context>,
+) {
+  const worker = (runtime as any).registry.open(
+    request.boundary,
+    workerIdentity(ctx.model ?? {}),
+    ctx.cwd,
+    request.attempt,
+    null,
+  );
+  expect(worker.subagentEndpoint).toBeNull();
+  return worker;
+}
+
+function pinInheritedDispatch(
+  runtime: Runtime,
+  envelope: ReturnType<typeof phaseChildEnvelope>,
+  ctx: ReturnType<typeof context>,
+) {
+  const request = phaseRequest({
+    requestId: envelope.id,
+    read: [...envelope.declared.read],
+    write: [...envelope.declared.write],
+  });
+  const worker = pinInheritedTask(runtime, request, ctx);
+  (runtime as any).taskRecords.set(envelope, worker);
+}
+
 function taskBoundary() {
   const target = [
     "bun",
@@ -1469,10 +1499,12 @@ describe("typed finite Runtime recovery", () => {
     };
     ctx.modelRegistry = { getApiKeyAndHeaders };
     const requestId = "approved-task-4.1:red:bridge-unavailable";
+    const request = phaseRequest({ requestId });
+    pinInheritedTask(runtime, request, ctx);
 
     const result = await (runtime.execute as any)(
       "run",
-      { request: phaseRequest({ requestId }) },
+      { request: phaseAttempt(request) },
       ctx,
     );
 
@@ -1537,6 +1569,7 @@ describe("typed finite Runtime recovery", () => {
       output: "diff",
     };
 
+    pinInheritedDispatch(runtime, envelope, ctx);
     await expect(
       (runtime as any).dispatchChild(
         { role: "implementation-worker", content: "bounded fixture" },
@@ -1557,11 +1590,13 @@ describe("typed finite Runtime recovery", () => {
     ctx.modelRegistry = {
       getApiKeyAndHeaders: vi.fn().mockRejectedValue(internalError),
     };
+    const envelope = phaseChildEnvelope();
+    pinInheritedDispatch(runtime, envelope, ctx);
 
     await expect(
       (runtime as any).dispatchChild(
         { role: "implementation-worker", content: "bounded fixture" },
-        phaseChildEnvelope(),
+        envelope,
         ctx,
         new AbortController().signal,
       ),
@@ -1583,7 +1618,9 @@ describe("typed finite Runtime recovery", () => {
       delegate: {} as never,
       onPayload: (payload: unknown) => payload,
     };
-    vi.spyOn(bridge, "capture").mockReturnValue(capture as never);
+    const captureSpy = vi
+      .spyOn(bridge, "capture")
+      .mockReturnValue(capture as never);
     const activation = new Activation();
     activation.request();
     activation.activate();
@@ -1591,14 +1628,15 @@ describe("typed finite Runtime recovery", () => {
     const ctx = context() as ReturnType<typeof context> & {
       modelRegistry: Record<string, unknown>;
     };
-    ctx.modelRegistry = {
-      getApiKeyAndHeaders: vi.fn().mockResolvedValue({
-        ok: true,
-        apiKey: "phase-key",
-        headers: {},
-        env: {},
-      }),
-    };
+    const getApiKeyAndHeaders = vi.fn().mockResolvedValue({
+      ok: true,
+      apiKey: "phase-key",
+      headers: {},
+      env: {},
+    });
+    ctx.modelRegistry = { getApiKeyAndHeaders };
+    const envelope = phaseChildEnvelope();
+    pinInheritedDispatch(runtime, envelope, ctx);
     const create = vi
       .spyOn(ModelRuntime, "create")
       .mockRejectedValueOnce(internalError);
@@ -1606,11 +1644,13 @@ describe("typed finite Runtime recovery", () => {
       await expect(
         (runtime as any).dispatchChild(
           { role: "implementation-worker", content: "bounded fixture" },
-          phaseChildEnvelope(),
+          envelope,
           ctx,
           new AbortController().signal,
         ),
       ).rejects.toBe(internalError);
+      expect(getApiKeyAndHeaders).toHaveBeenCalledTimes(1);
+      expect(captureSpy).toHaveBeenCalled();
     } finally {
       create.mockRestore();
     }
@@ -1643,12 +1683,10 @@ describe("typed finite Runtime recovery", () => {
       }),
     };
 
+    const request = phaseRequest({ requestId: RED_REQUEST_ID });
+    pinInheritedTask(runtime, request, ctx);
     await expect(
-      (runtime.execute as any)(
-        "run",
-        { request: phaseRequest({ requestId: RED_REQUEST_ID }) },
-        ctx,
-      ),
+      (runtime.execute as any)("run", { request: phaseAttempt(request) }, ctx),
     ).rejects.toThrow(internalError.message);
   });
 
