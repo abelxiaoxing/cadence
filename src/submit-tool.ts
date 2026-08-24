@@ -8,7 +8,7 @@ import {
   validateEvidenceResult,
 } from "./contracts.ts";
 
-const evidenceSchema = Type.Object({
+const compactEvidenceSchema = Type.Object({
   id: Type.String(),
   role: Type.String(),
   kind: Type.Literal("evidence"),
@@ -26,6 +26,40 @@ const evidenceSchema = Type.Object({
     agentsImpact: Type.String(),
   }),
 });
+
+const designEvidenceSchema = Type.Object(
+  {
+    id: Type.String(),
+    role: Type.Literal("design-explorer"),
+    kind: Type.Literal("evidence"),
+    packet_id: Type.String(),
+    module_name: Type.String(),
+    scope: Type.Array(Type.String()),
+    files_read: Type.Array(Type.String()),
+    evidence: Type.Array(
+      Type.Object(
+        {
+          claim: Type.String(),
+          path: Type.String(),
+          line_start: Type.Integer({ minimum: 1 }),
+          line_end: Type.Integer({ minimum: 1 }),
+        },
+        { additionalProperties: false },
+      ),
+    ),
+    existing_structures: Type.Array(Type.String()),
+    existing_conventions: Type.Array(Type.String()),
+    constraints_discovered: Type.Array(Type.String()),
+    open_questions: Type.Array(Type.String()),
+    dependencies: Type.Array(Type.String()),
+    write_set_hints: Type.Array(Type.String()),
+    validation_hints: Type.Array(Type.String()),
+    agents_impact_hints: Type.Array(Type.String()),
+    risks: Type.Array(Type.String()),
+    success_criteria_hints: Type.Array(Type.String()),
+  },
+  { additionalProperties: false },
+);
 
 const diffSchema = Type.Object({
   id: Type.String(),
@@ -85,7 +119,12 @@ export function createSubmitTool(input: {
     description:
       "Submit the one final structured Abel evidence or complete unified-diff result.",
     executionMode: "sequential",
-    parameters: input.output === "evidence" ? evidenceSchema : diffSchema,
+    parameters:
+      input.output === "evidence"
+        ? input.role === "design-explorer"
+          ? designEvidenceSchema
+          : compactEvidenceSchema
+        : diffSchema,
     async execute(_toolCallId, params) {
       attempts++;
       const value = params as unknown as Record<string, unknown>;
@@ -99,6 +138,12 @@ export function createSubmitTool(input: {
         throw new Error("submitted result is not an object");
       }
       if (value.id !== input.requestId) identity.request = false;
+      if (
+        input.role === "design-explorer" &&
+        value.packet_id !== input.requestId
+      ) {
+        identity.request = false;
+      }
       if (value.role !== input.role) identity.role = false;
       if (input.output === "diff") {
         if (value.taskId !== (input.taskId ?? input.requestId))

@@ -34,6 +34,117 @@ const ELIGIBLE_PROMPTS = [
 ] as const;
 type EligiblePrompt = (typeof ELIGIBLE_PROMPTS)[number];
 
+const GENERIC_REQUEST_SCHEMA = {
+  type: "object",
+  description:
+    "Stage-specific request envelope for action=run. The verified Abel prompt refreshes this schema before the stage's first model turn.",
+} as const;
+
+const DESIGN_REQUEST_SCHEMA = {
+  type: "object",
+  description:
+    "One bounded read-only design-explorer packet. Send one sibling abel_dispatch tool call per packet; do not wrap multiple packets in requests.",
+  properties: {
+    stage: {
+      type: "string",
+      enum: ["abel-design"],
+      description: "Exact verified workflow stage.",
+    },
+    role: {
+      type: "string",
+      enum: ["design-explorer"],
+      description: "Exact package-owned read-only Agent role.",
+    },
+    id: {
+      type: "string",
+      description:
+        "Unique packet and request identity, at most 128 characters.",
+    },
+    phase: {
+      type: "string",
+      enum: ["evidence"],
+      description: "Design exploration phase.",
+    },
+    objective: {
+      type: "string",
+      description: "Bounded evidence objective for this packet only.",
+    },
+    roots: {
+      type: "array",
+      items: { type: "string" },
+      description: 'Approved relative workspace roots, normally ["."].',
+    },
+    context: {
+      type: "object",
+      properties: {
+        agents: {
+          type: "string",
+          description: "Applicable AGENTS.md instructions for this packet.",
+        },
+        contract: {
+          type: "string",
+          description:
+            "Packet scope, retrieval, read-only, and structured-output contract.",
+        },
+      },
+      required: ["agents", "contract"],
+      additionalProperties: false,
+    },
+    declared: {
+      type: "object",
+      properties: {
+        read: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Exact relative files or directories this packet may read.",
+        },
+        write: {
+          type: "array",
+          items: { type: "string" },
+          description: "Must be empty for design-explorer.",
+        },
+        conflicts: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Declared conflict edges; normally empty for read-only packets.",
+        },
+        resources: {
+          type: "array",
+          items: { type: "string" },
+          description: "Declared exclusive resources; normally empty.",
+        },
+      },
+      required: ["read", "write", "conflicts", "resources"],
+      additionalProperties: false,
+    },
+    output: {
+      type: "string",
+      enum: ["evidence"],
+      description: "Exact structured child-result kind.",
+    },
+  },
+  required: [
+    "stage",
+    "role",
+    "id",
+    "phase",
+    "objective",
+    "roots",
+    "context",
+    "declared",
+    "output",
+  ],
+  additionalProperties: false,
+} as const;
+
+function requestSchemaForStage(name?: EligiblePrompt): object {
+  return name === "abel-design"
+    ? DESIGN_REQUEST_SCHEMA
+    : GENERIC_REQUEST_SCHEMA;
+}
+
 function invokedPrompt(text: string): EligiblePrompt | undefined {
   const name = text.match(/^\/([^\s]+)(?:\s|$)/)?.[1];
   return ELIGIBLE_PROMPTS.find((candidate) => candidate === name);
@@ -112,100 +223,105 @@ export default function register(pi: ExtensionAPI): void {
   const runtime = new Runtime({ parentPayloadBridge });
   const activity = new ActivityController();
 
-  pi.registerTool({
-    name: DISPATCH_TOOL,
-    label: "Abel Dispatch",
-    description:
-      "Private Abel workflow delegation: run bounded read-only evidence or Worker phase requests, apply or discard retained results, apply a parent-only stable AGENTS checkpoint, cancel work, or finish the stage. Inactive unless an eligible Abel stage verified its invocation.",
-    parameters: {
-      type: "object",
-      properties: {
-        action: { type: "string", enum: [...ACTIONS] },
-        request: {
-          type: "object",
-          description: "Request envelope for action=run",
+  const registerDispatchTool = (stage?: EligiblePrompt) => {
+    pi.registerTool({
+      name: DISPATCH_TOOL,
+      label: "Abel Dispatch",
+      description:
+        stage === "abel-design"
+          ? "Run exactly one bounded read-only design-explorer packet. When parallel packets are required, emit every sibling abel_dispatch call together in one assistant response before waiting for any result."
+          : "Private Abel workflow delegation: run bounded read-only evidence or Worker phase requests, apply or discard retained results, apply a parent-only stable AGENTS checkpoint, cancel work, or finish the stage. Inactive unless an eligible Abel stage verified its invocation.",
+      executionMode: "parallel",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: [...ACTIONS] },
+          request: requestSchemaForStage(stage),
+          resultId: {
+            type: "string",
+            description: "Retained result id for apply/discard",
+          },
+          requestId: {
+            type: "string",
+            description: "Current Implement apply/discard operation identity",
+          },
+          rejection: {
+            type: "object",
+            description: "Typed parent rejection for Implement discard",
+          },
+          agentsCheckpoint: {
+            type: "object",
+            description:
+              "Parent-owned approved managed-block checkpoint for action=apply (mutually exclusive with resultId)",
+          },
         },
-        resultId: {
-          type: "string",
-          description: "Retained result id for apply/discard",
-        },
-        requestId: {
-          type: "string",
-          description: "Current Implement apply/discard operation identity",
-        },
-        rejection: {
-          type: "object",
-          description: "Typed parent rejection for Implement discard",
-        },
-        agentsCheckpoint: {
-          type: "object",
-          description:
-            "Parent-owned approved managed-block checkpoint for action=apply (mutually exclusive with resultId)",
-        },
+        required: ["action"],
       },
-      required: ["action"],
-    },
-    async execute(
-      toolCallId: string,
-      params: {
-        action?: string;
-        request?: unknown;
-        resultId?: string;
-        requestId?: string;
-        rejection?: unknown;
-        agentsCheckpoint?: unknown;
+      async execute(
+        toolCallId: string,
+        params: {
+          action?: string;
+          request?: unknown;
+          resultId?: string;
+          requestId?: string;
+          rejection?: unknown;
+          agentsCheckpoint?: unknown;
+        },
+        signal: AbortSignal | undefined,
+        onUpdate: AgentToolUpdateCallback<unknown> | undefined,
+        ctx: ExtensionContext,
+      ) {
+        const action = typeof params?.action === "string" ? params.action : "";
+        const validRun =
+          action === "run" && runtime.validateRequest(params.request).ok;
+        const tuiRun = ctx.mode === "tui" && validRun;
+        const { action: _action, ...operation } = params;
+        const result = tuiRun
+          ? await runtime.execute(
+              action,
+              operation,
+              ctx,
+              signal,
+              activity.observe(
+                toolCallId,
+                onUpdate as ((result: unknown) => void) | undefined,
+              ),
+            )
+          : await runtime.execute(action, operation, ctx, signal);
+        const display = tuiRun
+          ? activity.finalize(toolCallId, result)
+          : undefined;
+        const { payload, usage } = splitUsage(result);
+        const details = display
+          ? {
+              ...(payload as Record<string, unknown>),
+              [ACTIVITY_DETAILS_KEY]: display,
+            }
+          : payload;
+        return {
+          content: [{ type: "text", text: JSON.stringify(payload) }],
+          details,
+          ...(usage === undefined ? {} : { usage }),
+        };
       },
-      signal: AbortSignal | undefined,
-      onUpdate: AgentToolUpdateCallback<unknown> | undefined,
-      ctx: ExtensionContext,
-    ) {
-      const action = typeof params?.action === "string" ? params.action : "";
-      const validRun =
-        action === "run" && runtime.validateRequest(params.request).ok;
-      const tuiRun = ctx.mode === "tui" && validRun;
-      const { action: _action, ...operation } = params;
-      const result = tuiRun
-        ? await runtime.execute(
-            action,
-            operation,
-            ctx,
-            signal,
-            activity.observe(
-              toolCallId,
-              onUpdate as ((result: unknown) => void) | undefined,
-            ),
-          )
-        : await runtime.execute(action, operation, ctx, signal);
-      const display = tuiRun
-        ? activity.finalize(toolCallId, result)
-        : undefined;
-      const { payload, usage } = splitUsage(result);
-      const details = display
-        ? {
-            ...(payload as Record<string, unknown>),
-            [ACTIVITY_DETAILS_KEY]: display,
-          }
-        : payload;
-      return {
-        content: [{ type: "text", text: JSON.stringify(payload) }],
-        details,
-        ...(usage === undefined ? {} : { usage }),
-      };
-    },
-    renderCall(args: unknown, theme: Theme, _context: unknown) {
-      return renderActivityCall(args, theme);
-    },
-    renderResult(
-      result: AgentToolResult<unknown>,
-      options: ToolRenderResultOptions,
-      theme: Theme,
-      _context: unknown,
-    ) {
-      return renderActivityResult(result, options, theme);
-    },
-  } as never);
+      renderCall(args: unknown, theme: Theme, _context: unknown) {
+        return renderActivityCall(args, theme);
+      },
+      renderResult(
+        result: AgentToolResult<unknown>,
+        options: ToolRenderResultOptions,
+        theme: Theme,
+        _context: unknown,
+      ) {
+        return renderActivityResult(result, options, theme);
+      },
+    } as never);
+  };
+
+  registerDispatchTool();
 
   let pendingPrompt: EligiblePrompt | undefined;
+  let activePrompt: EligiblePrompt | undefined;
 
   pi.on("input", (event) => {
     pendingPrompt = invokedPrompt(event.text);
@@ -215,10 +331,12 @@ export default function register(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (event, ctx) => {
     const prompt = pendingPrompt;
     pendingPrompt = undefined;
-    if (
+    const verified =
       prompt &&
-      isVerifiedStageInvocation(pi, runtime.activation, prompt, event.prompt)
-    ) {
+      isVerifiedStageInvocation(pi, runtime.activation, prompt, event.prompt);
+    if (verified) {
+      activePrompt = prompt;
+      registerDispatchTool(prompt);
       const sessionId = ctx.sessionManager?.getSessionId?.();
       if (typeof sessionId === "string") {
         parentPayloadBridge.beginSession(sessionId);
@@ -233,8 +351,22 @@ export default function register(pi: ExtensionAPI): void {
       activateDispatcher(pi, runtime.activation, prompt, event.prompt);
   });
 
+  pi.on("before_provider_request", (event, ctx) => {
+    if (
+      activePrompt !== "abel-design" ||
+      ctx.model?.api !== "openai-responses" ||
+      event.payload === null ||
+      typeof event.payload !== "object" ||
+      Array.isArray(event.payload)
+    ) {
+      return;
+    }
+    return { ...event.payload, parallel_tool_calls: true };
+  });
+
   pi.on("session_start", async (_event, ctx) => {
     pendingPrompt = undefined;
+    activePrompt = undefined;
     activity.detach();
     const active = pi.getActiveTools();
     if (active.includes(DISPATCH_TOOL)) {
@@ -268,6 +400,7 @@ export default function register(pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", async () => {
+    activePrompt = undefined;
     activity.detach();
     await runtime.drain();
     activity.clear();

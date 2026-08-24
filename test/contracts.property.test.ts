@@ -738,7 +738,7 @@ describe("generated envelope fuzzing with a fixed seed", () => {
 
 const validEvidenceResult = () => ({
   id: "packet-001",
-  role: "design-explorer",
+  role: "contract-reviewer",
   kind: "evidence",
   conclusions: ["The scheduler owns bounded admission."],
   citations: [{ path: "src/scheduler.ts", lines: "1-20" }],
@@ -753,7 +753,81 @@ const validEvidenceResult = () => ({
   },
 });
 
+const validDesignPacketResult = () => ({
+  id: "packet-001",
+  role: "design-explorer",
+  kind: "evidence",
+  packet_id: "packet-001",
+  module_name: "package-manifest",
+  scope: ["package.json"],
+  files_read: ["package.json"],
+  evidence: [
+    {
+      claim: "The package has one standalone manifest.",
+      path: "package.json",
+      line_start: 1,
+      line_end: 3,
+    },
+  ],
+  existing_structures: ["package manifest"],
+  existing_conventions: ["ES module package"],
+  constraints_discovered: ["read-only exploration"],
+  open_questions: [],
+  dependencies: [],
+  write_set_hints: [],
+  validation_hints: ["inspect cited lines"],
+  agents_impact_hints: ["none"],
+  risks: [],
+  success_criteria_hints: ["all claims have exact line citations"],
+});
+
 describe("strict evidence result schema", () => {
+  it("accepts the Design packet shape required by the bundled prompt", () => {
+    if (!contracts) return notReady("contracts");
+    expect(contracts.validateEvidenceResult(validDesignPacketResult()).ok).toBe(
+      true,
+    );
+  });
+
+  it.each([
+    ["mismatched packet identity", { packet_id: "another-packet" }],
+    [
+      "escaping evidence path",
+      {
+        evidence: [
+          {
+            claim: "escape",
+            path: "../package.json",
+            line_start: 1,
+            line_end: 1,
+          },
+        ],
+      },
+    ],
+    [
+      "reversed evidence lines",
+      {
+        evidence: [
+          {
+            claim: "reversed",
+            path: "package.json",
+            line_start: 3,
+            line_end: 2,
+          },
+        ],
+      },
+    ],
+    ["extra control field", { nextStep: "continue" }],
+  ])("rejects Design packets with %s", (_name, override) => {
+    if (!contracts) return notReady("contracts");
+    expect(
+      contracts.validateEvidenceResult({
+        ...validDesignPacketResult(),
+        ...override,
+      }).ok,
+    ).toBe(false);
+  });
+
   it("[SLICE-5:pi-tool-error] validates a control-free evidence result", () => {
     if (!contracts) return notReady("contracts");
     expect(contracts.validateEvidenceResult(validEvidenceResult()).ok).toBe(

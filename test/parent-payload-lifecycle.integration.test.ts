@@ -187,17 +187,28 @@ function evidence(id: string) {
     id,
     role: "design-explorer",
     kind: "evidence",
-    conclusions: ["bounded child completed"],
-    citations: [{ path: "sentinel.txt", lines: "1" }],
-    constraints: [],
+    packet_id: id,
+    module_name: "parent-payload",
+    scope: ["sentinel.txt"],
+    files_read: ["sentinel.txt"],
+    evidence: [
+      {
+        claim: "bounded child completed",
+        path: "sentinel.txt",
+        line_start: 1,
+        line_end: 1,
+      },
+    ],
+    existing_structures: ["bounded child"],
+    existing_conventions: [],
+    constraints_discovered: [],
+    open_questions: [],
     dependencies: [],
+    write_set_hints: [],
+    validation_hints: ["none"],
+    agents_impact_hints: ["none"],
     risks: [],
-    blockingQuestions: [],
-    hints: {
-      writeSet: [],
-      verification: "none",
-      agentsImpact: "none",
-    },
+    success_criteria_hints: ["one structural submission"],
   };
 }
 

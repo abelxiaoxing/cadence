@@ -355,6 +355,21 @@ export function summarizeDispatchResult(
     };
   }
   if (
+    value.kind === "evidence" &&
+    Array.isArray(value.evidence) &&
+    Array.isArray(value.existing_structures) &&
+    Array.isArray(value.risks) &&
+    Array.isArray(value.open_questions)
+  ) {
+    return {
+      kind: "evidence",
+      conclusions: value.existing_structures.length,
+      citations: value.evidence.length,
+      risks: value.risks.length,
+      blockingQuestions: value.open_questions.length,
+    };
+  }
+  if (
     value.kind === "diff" &&
     typeof value.summary === "string" &&
     Array.isArray(value.risks)

@@ -1401,7 +1401,7 @@ function requireCanonicalDiffPath(path: string): string {
   return path;
 }
 
-export interface EvidenceResult {
+export interface CompactEvidenceResult {
   id: string;
   role: string;
   kind: "evidence";
@@ -1413,6 +1413,34 @@ export interface EvidenceResult {
   blockingQuestions: string[];
   hints: { writeSet: string[]; verification: string; agentsImpact: string };
 }
+
+export interface DesignEvidenceResult {
+  id: string;
+  role: "design-explorer";
+  kind: "evidence";
+  packet_id: string;
+  module_name: string;
+  scope: string[];
+  files_read: string[];
+  evidence: Array<{
+    claim: string;
+    path: string;
+    line_start: number;
+    line_end: number;
+  }>;
+  existing_structures: string[];
+  existing_conventions: string[];
+  constraints_discovered: string[];
+  open_questions: string[];
+  dependencies: string[];
+  write_set_hints: string[];
+  validation_hints: string[];
+  agents_impact_hints: string[];
+  risks: string[];
+  success_criteria_hints: string[];
+}
+
+export type EvidenceResult = CompactEvidenceResult | DesignEvidenceResult;
 
 export interface DiffResult {
   id: string;
@@ -1511,6 +1539,7 @@ export function validateEvidenceResult(value: unknown): {
     return { ok: false, reason: "missing result" };
   const r = value as Record<string, unknown>;
   if (r.kind !== "evidence") return { ok: false, reason: "wrong result kind" };
+  if (r.role === "design-explorer") return validateDesignEvidenceResult(r);
   const fields = [
     "id",
     "role",
@@ -1562,6 +1591,98 @@ export function validateEvidenceResult(value: unknown): {
     !(AGENTS_IMPACTS as readonly unknown[]).includes(r.hints.agentsImpact)
   ) {
     return { ok: false, reason: "invalid evidence hints" };
+  }
+  const serialized = JSON.stringify(r);
+  if (Buffer.byteLength(serialized, "utf8") > LIMITS.maxCompleteResultBytes) {
+    return {
+      ok: false,
+      reason: `result exceeds ${LIMITS.maxCompleteResultBytes} bytes`,
+      failure: {
+        kind: "result-limit",
+        limitBytes: LIMITS.maxCompleteResultBytes,
+      },
+    };
+  }
+  return { ok: true };
+}
+
+function validateDesignEvidenceResult(r: Record<string, unknown>): {
+  ok: boolean;
+  reason?: string;
+  failure?: CandidateFailure;
+} {
+  const fields = [
+    "id",
+    "role",
+    "kind",
+    "packet_id",
+    "module_name",
+    "scope",
+    "files_read",
+    "evidence",
+    "existing_structures",
+    "existing_conventions",
+    "constraints_discovered",
+    "open_questions",
+    "dependencies",
+    "write_set_hints",
+    "validation_hints",
+    "agents_impact_hints",
+    "risks",
+    "success_criteria_hints",
+  ] as const;
+  if (!hasExactKeys(r, fields)) {
+    return { ok: false, reason: "invalid Design evidence result fields" };
+  }
+  if (
+    !validIdentifier(r.id) ||
+    r.packet_id !== r.id ||
+    !validIdentifier(r.module_name)
+  ) {
+    return { ok: false, reason: "invalid Design evidence identity" };
+  }
+  if (!validatePathSet(r.scope) || r.scope.length === 0) {
+    return { ok: false, reason: "invalid Design evidence scope" };
+  }
+  if (!validatePathSet(r.files_read) || !validatePathSet(r.write_set_hints)) {
+    return { ok: false, reason: "invalid Design evidence path set" };
+  }
+  if (
+    !Array.isArray(r.evidence) ||
+    r.evidence.some(
+      (entry) =>
+        !hasExactKeys(entry, ["claim", "path", "line_start", "line_end"]) ||
+        typeof entry.claim !== "string" ||
+        entry.claim.length === 0 ||
+        !isValidRelativePath(entry.path) ||
+        !Number.isSafeInteger(entry.line_start) ||
+        !Number.isSafeInteger(entry.line_end) ||
+        (entry.line_start as number) < 1 ||
+        (entry.line_end as number) < (entry.line_start as number),
+    )
+  ) {
+    return { ok: false, reason: "invalid Design evidence citations" };
+  }
+  for (const field of [
+    "existing_structures",
+    "existing_conventions",
+    "constraints_discovered",
+    "open_questions",
+    "dependencies",
+    "validation_hints",
+    "agents_impact_hints",
+    "risks",
+    "success_criteria_hints",
+  ] as const) {
+    if (
+      !Array.isArray(r[field]) ||
+      !r[field].every((entry) => typeof entry === "string")
+    ) {
+      return {
+        ok: false,
+        reason: `invalid Design evidence field: ${field}`,
+      };
+    }
   }
   const serialized = JSON.stringify(r);
   if (Buffer.byteLength(serialized, "utf8") > LIMITS.maxCompleteResultBytes) {

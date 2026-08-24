@@ -157,17 +157,28 @@ function evidence(id: string) {
     id,
     role: "design-explorer",
     kind: "evidence",
-    conclusions: ["installed Responses child route completed"],
-    citations: [{ path: "sentinel.txt", lines: "1" }],
-    constraints: [],
+    packet_id: id,
+    module_name: "responses-child",
+    scope: ["sentinel.txt"],
+    files_read: ["sentinel.txt"],
+    evidence: [
+      {
+        claim: "installed Responses child route completed",
+        path: "sentinel.txt",
+        line_start: 1,
+        line_end: 1,
+      },
+    ],
+    existing_structures: ["Responses child route"],
+    existing_conventions: [],
+    constraints_discovered: [],
+    open_questions: [],
     dependencies: [],
+    write_set_hints: [],
+    validation_hints: ["local fetch recorder"],
+    agents_impact_hints: ["none"],
     risks: [],
-    blockingQuestions: [],
-    hints: {
-      writeSet: [],
-      verification: "local fetch recorder",
-      agentsImpact: "none",
-    },
+    success_criteria_hints: ["one structural submission"],
   };
 }
 

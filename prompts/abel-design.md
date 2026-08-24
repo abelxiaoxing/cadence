@@ -54,6 +54,36 @@ $ARGUMENTS
 
 ## 阶段 1 —— 证据探索（只读）
 
+- 使用私有工具 `abel_dispatch` 的 `action: "run"` 派发探索包。
+  每个包对应一个独立 tool call，`request` 必须是单个 envelope；禁止使用 `requests` 数组或其他批量 wrapper。
+- 用户要求两个或更多并行包时，下一次 assistant response 必须只包含全部 sibling `abel_dispatch` tool calls，并在该同一 assistant turn（同一响应轮次）一次发齐；少发、先等一个结果、在后续 turn 补发均为调度失败，不得用串行重试或父代理并行读取冒充 Subagent。
+- Design 单包 envelope 的精确形状如下；字段名、固定值和数组形状不得猜测或改写：
+
+  ```json
+  {
+    "action": "run",
+    "request": {
+      "stage": "abel-design",
+      "role": "design-explorer",
+      "id": "unique-packet-id",
+      "phase": "evidence",
+      "objective": "bounded evidence objective for this packet",
+      "roots": ["."],
+      "context": {
+        "agents": "applicable AGENTS.md instructions",
+        "contract": "exact scope, retrieval, read-only, output, and budget contract"
+      },
+      "declared": {
+        "read": ["exact/relative/path"],
+        "write": [],
+        "conflicts": [],
+        "resources": []
+      },
+      "output": "evidence"
+    }
+  }
+  ```
+
 - 主 agent 只负责核实相关 AGENTS、拆分探索包、派发、校验证据、综合、澄清与 Gate 呈现；广泛代码库探索必须委派。
   主 agent 仅可为范围划分、引用抽查和冲突裁决做最小定向读取。
 - 默认并行派发多个只读探索子代理：优先按独立上下文边界拆分；只有一个边界时，按互不重叠的路径或符号证据面拆分。

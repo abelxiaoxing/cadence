@@ -49,13 +49,23 @@ function evidence() {
     id: "packet-1",
     role: "design-explorer",
     kind: "evidence",
-    conclusions: ["src exists"],
-    citations: [{ path: "a.txt", lines: "1" }],
-    constraints: [],
+    packet_id: "packet-1",
+    module_name: "fixture",
+    scope: ["a.txt"],
+    files_read: ["a.txt"],
+    evidence: [
+      { claim: "src exists", path: "a.txt", line_start: 1, line_end: 1 },
+    ],
+    existing_structures: ["fixture file"],
+    existing_conventions: [],
+    constraints_discovered: [],
+    open_questions: [],
     dependencies: [],
+    write_set_hints: [],
+    validation_hints: ["none"],
+    agents_impact_hints: ["none"],
     risks: [],
-    blockingQuestions: [],
-    hints: { writeSet: [], verification: "none", agentsImpact: "none" },
+    success_criteria_hints: ["cited fixture evidence"],
   };
 }
 
@@ -385,7 +395,9 @@ describe("structural submission classification", () => {
     if (!child || !parentProvider) return notReady("child session");
     const submitted = {
       ...evidence(),
-      conclusions: ["界".repeat(Math.ceil(LIMITS.maxCompleteResultBytes / 3))],
+      existing_structures: [
+        "界".repeat(Math.ceil(LIMITS.maxCompleteResultBytes / 3)),
+      ],
     };
     const serialized = JSON.stringify(submitted);
     expect(serialized.length).toBeLessThan(LIMITS.maxCompleteResultBytes);

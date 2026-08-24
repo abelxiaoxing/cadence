@@ -15,6 +15,16 @@ const sharedImplement = shared.slice(
 );
 
 describe("Design stage contract", () => {
+  it("spells out the callable parallel Design dispatch protocol", () => {
+    expect(design).toMatch(/`abel_dispatch`/);
+    expect(design).toMatch(/`action:\s*["']run["']`/);
+    expect(design).toMatch(/["']stage["']:\s*["']abel-design["']/);
+    expect(design).toMatch(/每(?:个|一)包[^\n]*一个[^\n]*tool call/i);
+    expect(design).toMatch(/同一[^\n]*(assistant turn|响应轮次)/i);
+    expect(design).toMatch(/sibling[^\n]*`abel_dispatch`/i);
+    expect(design).toMatch(/禁止[^\n]*(requests|批量)[^\n]*(包装|wrapper)/i);
+  });
+
   it("keeps new Design read-only through explicit Gate A", () => {
     expect(design).toMatch(/read-only/i);
     expect(design).toMatch(/blocking[\s\S]*(decision|ambigu)/i);

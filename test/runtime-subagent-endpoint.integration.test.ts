@@ -245,17 +245,28 @@ function evidence(id: string) {
     id,
     role: "design-explorer",
     kind: "evidence",
-    conclusions: ["inherited endpoint used"],
-    citations: [],
-    constraints: [],
+    packet_id: id,
+    module_name: "runtime-endpoint",
+    scope: ["a.txt"],
+    files_read: ["a.txt"],
+    evidence: [
+      {
+        claim: "inherited endpoint used",
+        path: "a.txt",
+        line_start: 1,
+        line_end: 1,
+      },
+    ],
+    existing_structures: ["inherited endpoint"],
+    existing_conventions: [],
+    constraints_discovered: [],
+    open_questions: [],
     dependencies: [],
+    write_set_hints: [],
+    validation_hints: ["bun run check"],
+    agents_impact_hints: ["none"],
     risks: [],
-    blockingQuestions: [],
-    hints: {
-      writeSet: [],
-      verification: "bun run check",
-      agentsImpact: "none",
-    },
+    success_criteria_hints: ["one structural submission"],
   };
 }
 

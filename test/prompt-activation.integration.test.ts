@@ -96,7 +96,9 @@ async function controlledToolSession(
   return { session };
 }
 
-function activePackageTool() {
+function activePackageTool(
+  prompt: "abel-design" | "abel-implement" = "abel-implement",
+) {
   let tool: unknown;
   const handlers = new Map<string, (...args: any[]) => unknown>();
   let active: string[] = [];
@@ -109,12 +111,12 @@ function activePackageTool() {
     },
     getCommands: () => [
       {
-        name: "abel-implement",
+        name: prompt,
         source: "prompt",
         sourceInfo: {
           origin: "package",
           baseDir: packageDir,
-          path: join(packageDir, "prompts", "abel-implement.md"),
+          path: join(packageDir, "prompts", `${prompt}.md`),
         },
       },
     ],
@@ -124,11 +126,10 @@ function activePackageTool() {
     },
   };
   register(pi as never);
-  handlers.get("input")?.({ text: "/abel-implement verified input" });
+  handlers.get("input")?.({ text: `/${prompt} verified input` });
   handlers.get("before_agent_start")?.(
     {
-      prompt:
-        "<abel-request>verified input</abel-request> <!-- ABEL:PROMPT:abel-implement -->",
+      prompt: `<abel-request>verified input</abel-request> <!-- ABEL:PROMPT:${prompt} -->`,
     },
     {},
   );
@@ -199,6 +200,34 @@ function implementRequest(taskId: string, requestId: string) {
   };
 }
 
+function designRequest(id: string, read: string[]) {
+  return {
+    stage: "abel-design",
+    role: "design-explorer",
+    id,
+    phase: "evidence",
+    objective: `Inspect ${read.join(", ")} without writing`,
+    roots: ["."],
+    context: { agents: "root AGENTS.md", contract: "read-only evidence" },
+    declared: {
+      read,
+      write: [],
+      conflicts: [],
+      resources: [],
+    },
+    output: "evidence",
+  };
+}
+
+function objectSchemas(value: unknown): Array<Record<string, any>> {
+  if (value === null || typeof value !== "object") return [];
+  const current = value as Record<string, unknown>;
+  return [
+    ...(current.type === "object" ? [current] : []),
+    ...Object.values(current).flatMap(objectSchemas),
+  ];
+}
+
 function dispatchResults(
   session: Awaited<ReturnType<typeof promptSession>>["session"],
 ) {
@@ -212,6 +241,94 @@ function dispatchResults(
 }
 
 describe("package Prompt provenance activates abel_dispatch", () => {
+  it("requests parallel tool calls for an active Design Responses turn", () => {
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    let active: string[] = [];
+    const pi = {
+      registerTool() {},
+      on(name: string, handler: (...args: any[]) => unknown) {
+        handlers.set(name, handler);
+      },
+      getCommands: () => [
+        {
+          name: "abel-design",
+          source: "prompt",
+          sourceInfo: {
+            origin: "package",
+            baseDir: packageDir,
+            path: join(packageDir, "prompts", "abel-design.md"),
+          },
+        },
+      ],
+      getActiveTools: () => active,
+      setActiveTools(next: string[]) {
+        active = next;
+      },
+    };
+    register(pi as never);
+    handlers.get("input")?.({ text: "/abel-design verified input" });
+    handlers.get("before_agent_start")?.(
+      {
+        prompt:
+          "<abel-request>verified input</abel-request> <!-- ABEL:PROMPT:abel-design -->",
+      },
+      {},
+    );
+
+    const payload = handlers.get("before_provider_request")?.(
+      { payload: { tools: [{ name: DISPATCH_TOOL }] } },
+      { model: { api: "openai-responses" } },
+    );
+    expect(payload).toMatchObject({ parallel_tool_calls: true });
+  });
+
+  it("publishes a discoverable strict Design request envelope", () => {
+    const tool = activePackageTool("abel-design") as {
+      parameters: Record<string, unknown>;
+    };
+    const requestSchema = (
+      tool.parameters.properties as Record<string, unknown>
+    ).request;
+    const design = objectSchemas(requestSchema).find((schema) => {
+      const properties = schema.properties as
+        | Record<string, Record<string, unknown>>
+        | undefined;
+      return (
+        (properties?.stage?.enum as unknown[])?.includes("abel-design") &&
+        (properties?.role?.enum as unknown[])?.includes("design-explorer")
+      );
+    });
+
+    expect(design).toBeDefined();
+    expect(design?.required).toEqual([
+      "stage",
+      "role",
+      "id",
+      "phase",
+      "objective",
+      "roots",
+      "context",
+      "declared",
+      "output",
+    ]);
+    expect(design?.additionalProperties).toBe(false);
+    expect(design?.properties).toMatchObject({
+      phase: { enum: ["evidence"] },
+      output: { enum: ["evidence"] },
+      roots: { type: "array", items: { type: "string" } },
+      context: {
+        type: "object",
+        required: ["agents", "contract"],
+        additionalProperties: false,
+      },
+      declared: {
+        type: "object",
+        required: ["read", "write", "conflicts", "resources"],
+        additionalProperties: false,
+      },
+    });
+  });
+
   for (const name of ["abel-design", "abel-implement", "abel-diagnose"]) {
     it(`activates for verified /${name}`, async () => {
       const { session } = await promptSession();
@@ -249,6 +366,60 @@ describe("package Prompt provenance activates abel_dispatch", () => {
       { type: "text", text: '{"ok":true,"action":"cancel"}' },
     ]);
     session.dispose();
+  });
+
+  it("admits two sibling Design tool calls concurrently", async () => {
+    const started: string[] = [];
+    let release: (() => void) | undefined;
+    const bothStarted = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const dispatch = vi
+      .spyOn(Runtime.prototype as any, "dispatchChild")
+      .mockImplementation(async (_agent, request: any) => {
+        started.push(request.id);
+        if (started.length === 2) release?.();
+        await bothStarted;
+        return {
+          ok: true,
+          action: "run",
+          result: { id: request.id, role: request.role, kind: "evidence" },
+        };
+      });
+    const tool = activePackageTool();
+    const { session } = await controlledToolSession(tool, [
+      fauxAssistantMessage(
+        [
+          fauxToolCall(
+            DISPATCH_TOOL,
+            {
+              action: "run",
+              request: designRequest("design-package", ["package.json"]),
+            },
+            { id: "design-package-call" },
+          ),
+          fauxToolCall(
+            DISPATCH_TOOL,
+            {
+              action: "run",
+              request: designRequest("design-readme", ["README.md"]),
+            },
+            { id: "design-readme-call" },
+          ),
+        ],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("done"),
+    ]);
+
+    try {
+      await session.prompt("run both Design packets");
+      expect(started.sort()).toEqual(["design-package", "design-readme"]);
+      expect(dispatchResults(session)).toHaveLength(2);
+    } finally {
+      dispatch.mockRestore();
+      session.dispose();
+    }
   });
 
   it("[SLICE-5:pi-tool-error] uses real Agent Loop error flags for Implement domain and protocol outcomes", async () => {

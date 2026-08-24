@@ -210,6 +210,36 @@ describe("Subagent activity presentation", () => {
     expect(summary).not.toHaveProperty("nextStep");
   });
 
+  it("summarizes rich Design evidence without exposing citations", () => {
+    const summary = summarizeDispatchResult({
+      ok: true,
+      action: "run",
+      result: {
+        kind: "evidence",
+        evidence: [
+          {
+            claim: "private claim",
+            path: "private.txt",
+            line_start: 1,
+            line_end: 1,
+          },
+        ],
+        existing_structures: ["one structure"],
+        risks: ["one risk"],
+        open_questions: [],
+      },
+    });
+
+    expect(summary).toEqual({
+      kind: "evidence",
+      conclusions: 1,
+      citations: 1,
+      risks: 1,
+      blockingQuestions: 0,
+    });
+    expect(JSON.stringify(summary)).not.toContain("private.txt");
+  });
+
   it.each([
     ["candidate", "success"],
     ["applied", "success"],
