@@ -1821,9 +1821,19 @@ export class Runtime {
       };
     }
     if (!task) {
-      const result = await this.dispatchChild(agent, envelope, ctx, signal);
-      this.captureUsage(context, "launch:0", result.usage);
-      return this.withUsage(context, result);
+      const first = await this.dispatchChild(agent, envelope, ctx, signal);
+      this.captureUsage(context, "launch:0", first.usage);
+      const retryInvalidDesignResult =
+        !signal.aborted &&
+        envelope.stage === "abel-design" &&
+        !first.ok &&
+        first.failure?.kind === "artifact" &&
+        first.failure.code === "invalid-structural-result";
+      if (!retryInvalidDesignResult) return this.withUsage(context, first);
+
+      const second = await this.dispatchChild(agent, envelope, ctx, signal);
+      this.captureUsage(context, "launch:1", second.usage);
+      return this.withUsage(context, second);
     }
     if (task.workerIdentity !== workerIdentity(ctx.model)) {
       throw new Error("provider/model identity mismatch");

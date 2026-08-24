@@ -303,6 +303,46 @@ describe("[SLICE-1:boundary-once] non-Implement routing regression", () => {
     expect(diagnose.ok).toBe(true);
     expect(dispatch).toHaveBeenCalledTimes(2);
   });
+
+  it("[DIAGNOSE:design-structural-redispatch] mechanically redispatches one invalid structural Design result", async () => {
+    const { runtime, context } = await makeActive("design-structural-retry");
+    const dispatch = vi
+      .spyOn(runtime as any, "dispatchChild")
+      .mockResolvedValueOnce({
+        ok: false,
+        error: "final assistant message is not one structural submit",
+        failure: { kind: "artifact", code: "invalid-structural-result" },
+        failureKind: "failed",
+        failureClass: "artifact",
+        transportFailure: false,
+        disposeCount: 1,
+        classification: {
+          finalCategory: "mixed",
+          attempts: 1,
+          schema: "valid",
+          identity: { request: true, role: true, task: true, phase: true },
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        action: "run",
+        result: { kind: "evidence" },
+      });
+
+    const result = await (runtime as any).execute(
+      "run",
+      { request: nonImplementRequest("abel-design") },
+      context,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      action: "run",
+      result: { kind: "evidence" },
+    });
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch.mock.calls[1]?.[1]).toBe(dispatch.mock.calls[0]?.[1]);
+  });
 });
 
 describe("Init never activates dispatch", () => {
