@@ -1,3 +1,7 @@
+import {
+  initTheme,
+  ToolExecutionComponent,
+} from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import register, { DISPATCH_TOOL } from "../src/index";
 import { Runtime } from "../src/runtime";
@@ -500,4 +504,181 @@ describe("Subagent activity extension integration", () => {
     release?.();
     await Promise.all([run, shutdown]);
   });
+
+  it("renders one Implement identity row through the real ToolExecutionComponent", async () => {
+    initTheme("dark", false);
+    const ui = { setWidget: vi.fn(), setStatus: vi.fn() };
+    vi.spyOn(Runtime.prototype, "execute").mockImplementation(
+      async (_action, _params, _ctx, _signal, observer) => {
+        observer?.(event("queued"));
+        observer?.(event("running"));
+        observer?.(event("completed"));
+        return candidateOutcome as never;
+      },
+    );
+    const pi = new FakePi();
+    register(pi as never);
+    await pi.handlers.get("session_start")?.({}, tuiContext(ui));
+
+    const component = new ToolExecutionComponent(
+      DISPATCH_TOOL,
+      "tool-call-live",
+      { action: "run", request },
+      {},
+      pi.tool,
+      { requestRender: vi.fn() } as never,
+      process.cwd(),
+    );
+    component.markExecutionStarted();
+    const updates: unknown[] = [];
+    let running = "";
+    const result = await pi.tool.execute(
+      "tool-call-live",
+      { action: "run", request },
+      undefined,
+      (partial: { content?: unknown; details?: unknown }) => {
+        updates.push(partial);
+        component.updateResult(
+          {
+            content: partial.content as never,
+            details: partial.details,
+            isError: false,
+          },
+          true,
+        );
+        const snapshot = stripAnsi(component.render(120).join("\n"));
+        if (
+          snapshot.includes(" running ") ||
+          snapshot.includes(" · running ·")
+        ) {
+          running = snapshot;
+        }
+      },
+      tuiContext(ui),
+    );
+    expect(running).toContain("implementation-worker");
+    expect(running).toContain("#integration-request");
+    expect(running).toContain("Inspect a bounded task");
+    expect(running).not.toMatch(/unknown · #unknown · unknown · queued/);
+    expect(running.match(/Subagent/g)).toHaveLength(1);
+    expect(running).toMatch(/running/);
+
+    component.updateResult(
+      {
+        content: result.content,
+        details: result.details,
+        isError: false,
+      },
+      false,
+    );
+    const completed = stripAnsi(component.render(120).join("\n"));
+    expect(completed).toContain("completed");
+    expect(completed).not.toMatch(/unknown · #unknown · unknown · queued/);
+    expect(completed.match(/Subagent/g)).toHaveLength(1);
+    expect(updates.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("keeps thrown ToolExecutionComponent results sanitized", async () => {
+    initTheme("dark", false);
+    const ui = { setWidget: vi.fn(), setStatus: vi.fn() };
+    vi.spyOn(Runtime.prototype, "execute").mockImplementation(
+      async (_action, _params, _ctx, _signal, observer) => {
+        observer?.(event("queued"));
+        observer?.(event("running"));
+        observer?.({ ...event("failed"), failureReason: "subagent failed" });
+        throw new Error(
+          "anthropic claude-sonnet-4 failed at /private/model.log",
+        );
+      },
+    );
+    const pi = new FakePi();
+    register(pi as never);
+    await pi.handlers.get("session_start")?.({}, tuiContext(ui));
+
+    const component = new ToolExecutionComponent(
+      DISPATCH_TOOL,
+      "failed-live",
+      { action: "run", request },
+      {},
+      pi.tool,
+      { requestRender: vi.fn() } as never,
+      process.cwd(),
+    );
+    component.markExecutionStarted();
+    await expect(
+      pi.tool.execute(
+        "failed-live",
+        { action: "run", request },
+        undefined,
+        (partial: { content?: unknown; details?: unknown }) => {
+          component.updateResult(
+            {
+              content: partial.content as never,
+              details: partial.details,
+              isError: false,
+            },
+            true,
+          );
+        },
+        tuiContext(ui),
+      ),
+    ).rejects.toThrow("anthropic claude-sonnet-4 failed at /private/model.log");
+    component.updateResult(
+      {
+        content: [
+          {
+            type: "text",
+            text: "anthropic claude-sonnet-4 failed at /private/model.log",
+          },
+        ],
+        isError: true,
+      },
+      false,
+    );
+    const rendered = stripAnsi(component.render(120).join("\n"));
+    expect(rendered).toMatch(/failed|subagent failed/);
+    expect(rendered).not.toMatch(
+      /anthropic|claude-sonnet-4|\/private\/model\.log/i,
+    );
+  });
+
+  it("renders non-run Tool errors as one sanitized Dispatch row", () => {
+    initTheme("dark", false);
+    const pi = new FakePi();
+    register(pi as never);
+    const component = new ToolExecutionComponent(
+      DISPATCH_TOOL,
+      "failed-apply",
+      { action: "apply", resultId: "missing-result" },
+      {},
+      pi.tool,
+      { requestRender: vi.fn() } as never,
+      process.cwd(),
+    );
+    component.markExecutionStarted();
+    component.updateResult(
+      {
+        content: [
+          {
+            type: "text",
+            text: "anthropic failed at /private/apply.log",
+          },
+        ],
+        isError: true,
+      },
+      false,
+    );
+
+    const rendered = stripAnsi(component.render(120).join("\n"));
+    expect(rendered).toContain("Abel Dispatch apply failed");
+    expect(rendered.match(/Abel Dispatch/g)).toHaveLength(1);
+    expect(rendered).not.toMatch(/Subagent|unknown|anthropic|\/private/i);
+  });
 });
+
+function stripAnsi(value: string): string {
+  return value.replace(
+    new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"),
+    "",
+  );
+}

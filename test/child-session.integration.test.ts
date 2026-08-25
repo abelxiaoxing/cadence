@@ -639,3 +639,126 @@ describe("structural submission classification", () => {
     });
   });
 });
+
+describe("child scoped tool argument compatibility", () => {
+  it("accepts Pi-style find, ls, grep, and windowed read arguments", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const cwd = mkdtempSync(join(tmpdir(), "abel-child-tools-"));
+    roots.push(cwd);
+    mkdirSync(join(cwd, "src"));
+    writeFileSync(
+      join(cwd, "src", "index.ts"),
+      Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join("\n"),
+    );
+    writeFileSync(join(cwd, "src", "other.ts"), "other\n");
+    writeFileSync(join(cwd, "readme.md"), "# readme\n");
+    const toolResults: Array<{
+      toolName: string;
+      isError: boolean;
+      text: string;
+    }> = [];
+    const faux = fauxProvider({
+      provider: "abel-faux-child-tools",
+      api: "faux",
+    });
+    const collect = (context: { messages: Array<{ role: string }> }) => {
+      for (const message of context.messages) {
+        if (message.role !== "toolResult") continue;
+        const result = message as unknown as {
+          toolName: string;
+          isError: boolean;
+          content: Array<{ type?: string; text?: string }>;
+        };
+        const text = result.content
+          .map((part) => (part.type === "text" ? (part.text ?? "") : ""))
+          .join("\n");
+        if (
+          !toolResults.some(
+            (entry) =>
+              entry.toolName === result.toolName && entry.text === text,
+          )
+        ) {
+          toolResults.push({
+            toolName: result.toolName,
+            isError: result.isError,
+            text,
+          });
+        }
+      }
+    };
+    faux.setResponses([
+      (context) => {
+        collect(context);
+        return fauxAssistantMessage(
+          fauxToolCall(
+            "find",
+            { path: "src", pattern: "*.ts", limit: 1 },
+            { id: "find-1" },
+          ),
+          { stopReason: "toolUse" },
+        );
+      },
+      (context) => {
+        collect(context);
+        return fauxAssistantMessage(fauxToolCall("ls", {}, { id: "ls-1" }), {
+          stopReason: "toolUse",
+        });
+      },
+      (context) => {
+        collect(context);
+        return fauxAssistantMessage(
+          fauxToolCall(
+            "read",
+            { path: "src/index.ts", offset: 4, limit: 3 },
+            { id: "read-1" },
+          ),
+          { stopReason: "toolUse" },
+        );
+      },
+      (context) => {
+        collect(context);
+        return fauxAssistantMessage(
+          fauxToolCall("grep", { pattern: "line 1" }, { id: "grep-1" }),
+          { stopReason: "toolUse" },
+        );
+      },
+      (context) => {
+        collect(context);
+        return fauxAssistantMessage(
+          fauxToolCall("abel_submit_result", evidence(), { id: "submit-1" }),
+          { stopReason: "toolUse" },
+        );
+      },
+    ]);
+    const modelRuntime = await parentProvider.runtimeForProvider(faux.provider);
+    const result = await child.runChildSession({
+      cwd,
+      modelRuntime,
+      model: faux.getModel(),
+      systemPrompt: "Inspect the fixture through scoped tools, then submit.",
+      requestId: "packet-1",
+      role: "design-explorer",
+      output: "evidence",
+      roots: [cwd],
+      allowedPaths: ["src/index.ts", "src/other.ts"],
+      timeoutMs: 8_000,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const byName = Object.fromEntries(
+      toolResults.map((entry) => [entry.toolName, entry]),
+    );
+    expect(byName.find?.isError).toBe(false);
+    expect(byName.find?.text).toContain('"entries":["index.ts"]');
+    expect(byName.find?.text).not.toContain("other.ts");
+    expect(byName.find?.text).not.toContain(cwd);
+    expect(byName.ls?.isError).toBe(false);
+    expect(byName.ls?.text).toContain('"name":"src"');
+    expect(byName.ls?.text).not.toContain("readme.md");
+    expect(byName.read?.isError).toBe(false);
+    expect(byName.read?.text).toContain("line 4");
+    expect(byName.read?.text).not.toContain("line 1");
+    expect(byName.grep?.isError).toBe(false);
+    expect(byName.grep?.text).toContain("src/index.ts");
+  });
+});

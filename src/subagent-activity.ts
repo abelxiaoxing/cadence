@@ -87,6 +87,11 @@ type ActivityTheme = {
   fg?: (color: ActivityColor, text: string) => string;
 };
 type ActivityUi = Pick<ExtensionUIContext, "setWidget" | "setStatus">;
+type ActivityRenderContext = {
+  args?: unknown;
+  executionStarted?: boolean;
+  isError?: boolean;
+};
 type TimerHandle = ReturnType<typeof setInterval>;
 
 export interface ActivityControllerOptions {
@@ -734,11 +739,40 @@ export function renderActivityResult(
   result: unknown,
   options: ToolRenderResultOptions,
   theme?: ActivityTheme,
+  context?: ActivityRenderContext,
 ): Component {
   const details = asRecord(asRecord(result)?.details);
   const activity = details?.[ACTIVITY_DETAILS_KEY];
-  if (isActivityDisplay(activity)) {
+  const failed = context?.isError === true;
+  const args = asRecord(context?.args);
+  const failedRun = failed && args?.action === "run";
+  if (isActivityDisplay(activity) && !failed) {
     return new ActivityInlineComponent(activity, theme, options.expanded);
+  }
+  if (failedRun) {
+    const snapshot = identityFromDispatchArgs(asRecord(context?.args)?.request);
+    const display: ActivityDisplay = {
+      version: 1,
+      kind: "activityDisplay",
+      requestId: isActivityDisplay(activity)
+        ? activity.requestId
+        : snapshot.requestId,
+      role: isActivityDisplay(activity) ? activity.role : snapshot.role,
+      phase: isActivityDisplay(activity) ? activity.phase : snapshot.phase,
+      objective: isActivityDisplay(activity)
+        ? activity.objective
+        : snapshot.objective,
+      state: "failed",
+      tone: "error",
+      elapsedMs: isActivityDisplay(activity) ? activity.elapsedMs : 0,
+      reason: sanitizeFailureReason(
+        isActivityDisplay(activity) ? activity.reason : undefined,
+      ),
+    };
+    return new ActivityInlineComponent(display, theme);
+  }
+  if (failed) {
+    return new Text(`${dispatchLabel(args?.action)} failed`, 0, 0);
   }
   const content = asRecord(result)?.content;
   const text = Array.isArray(content)
@@ -748,6 +782,11 @@ export function renderActivityResult(
         .join("\n")
     : "";
   return new Text(text, 0, 0);
+}
+
+function dispatchLabel(action: unknown): string {
+  const value = sanitizeDisplayText(action ?? "");
+  return value.length > 0 ? `Abel Dispatch ${value}` : "Abel Dispatch";
 }
 
 function isActivityDisplay(value: unknown): value is ActivityDisplay {
@@ -764,26 +803,55 @@ function isActivityDisplay(value: unknown): value is ActivityDisplay {
   );
 }
 
+function identityFromDispatchArgs(request: unknown): {
+  requestId: string;
+  role: string;
+  phase: string;
+  objective: string;
+} {
+  const value = asRecord(request);
+  const attempt = asRecord(value?.attempt);
+  const boundary = asRecord(value?.boundary);
+  return {
+    requestId: sanitizeDisplayText(
+      attempt?.requestId ?? value?.id ?? "unknown",
+      128,
+    ),
+    role: sanitizeDisplayText(
+      value?.role ??
+        (value?.stage === "abel-implement"
+          ? "implementation-worker"
+          : "unknown"),
+      80,
+    ),
+    phase: sanitizeDisplayText(attempt?.phase ?? value?.phase ?? "unknown", 40),
+    objective: sanitizeDisplayText(
+      value?.objective ?? boundary?.objective ?? "",
+      240,
+    ),
+  };
+}
+
 export function renderActivityCall(
   args: unknown,
   theme?: ActivityTheme,
+  context?: ActivityRenderContext,
 ): Component {
   const value = asRecord(args);
   if (value?.action !== "run") {
-    return new Text(
-      `Abel Dispatch ${sanitizeDisplayText(value?.action ?? "")}`,
-      0,
-      0,
-    );
+    return new Text(context?.isError ? "" : dispatchLabel(value?.action), 0, 0);
   }
-  const request = asRecord(value.request);
-  if (!request) return new Text("Subagent", 0, 0);
+  if (context?.executionStarted || context?.isError) {
+    return new Text("");
+  }
+  if (!asRecord(value.request)) return new Text("Subagent", 0, 0);
+  const identity = identityFromDispatchArgs(value.request);
   const display: ActivitySnapshot = {
     toolCallId: "call",
-    requestId: sanitizeDisplayText(request.id ?? "unknown", 128),
-    role: sanitizeDisplayText(request.role ?? "unknown", 80),
-    phase: sanitizeDisplayText(request.phase ?? "unknown", 40),
-    objective: sanitizeDisplayText(request.objective ?? "", 240),
+    requestId: identity.requestId,
+    role: identity.role,
+    phase: identity.phase,
+    objective: identity.objective,
     state: "queued",
     sequence: 0,
     startedAt: Date.now(),

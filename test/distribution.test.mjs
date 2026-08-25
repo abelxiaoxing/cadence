@@ -61,7 +61,7 @@ const expectedFiles = [
 ].sort();
 
 const obsoleteControlPattern =
-  /\b(?:RECOVERY_CODES|RecoveryCode|RecoveryNext|RecoveryRecord|RecoveryIdentity|recoveryFailure|normalizedArtifactRejection|WorkerContract|WorkerTaskContract|WorkerPhaseContract|LogicalWorker|WorkerState|contractOf|sameContract|samePhaseContract|branchBlocked|dependentsBlocked|partialResultUsable|independentResultsPreserved|nextStep|artifact-correction-pending|stale-redispatch-pending|artifact-correction-required|reasonCode|artifact-invalid|transport-failed|environment-unavailable|result-too-large|mechanical-redispatch-exhausted|implementation-artifact-delivery-blocked|environment-blocked|finish-unaffected|correct-artifact|repair-environment|isError)\b|design-required|design-contract|return-to-design|candidate preflight rejected|split condition/i;
+  /\b(?:RECOVERY_CODES|RecoveryCode|RecoveryNext|RecoveryRecord|RecoveryIdentity|recoveryFailure|normalizedArtifactRejection|WorkerContract|WorkerTaskContract|WorkerPhaseContract|LogicalWorker|WorkerState|contractOf|sameContract|samePhaseContract|branchBlocked|dependentsBlocked|partialResultUsable|independentResultsPreserved|nextStep|artifact-correction-pending|stale-redispatch-pending|artifact-correction-required|reasonCode|artifact-invalid|transport-failed|environment-unavailable|result-too-large|mechanical-redispatch-exhausted|implementation-artifact-delivery-blocked|environment-blocked|finish-unaffected|correct-artifact|repair-environment)\b|design-required|design-contract|return-to-design|candidate preflight rejected|split condition/i;
 
 const exec = (command, args, options = {}) => {
   const result = spawnSync(command, args, { encoding: "utf8", ...options });
@@ -224,6 +224,15 @@ describe("real npm tarball", () => {
           `${label}:${relative}`,
         ).not.toMatch(obsoleteControlPattern);
       }
+    }
+    for (const [label, root] of [
+      ["working tree", packageDir],
+      ["packed tarball", packedPackageDir],
+    ]) {
+      expect(
+        readFileSync(path.join(root, "src/index.ts"), "utf8"),
+        `${label}:src/index.ts`,
+      ).not.toMatch(/\bisError\s*:/);
     }
   });
 });

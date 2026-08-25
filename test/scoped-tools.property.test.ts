@@ -170,7 +170,9 @@ describe("scoped read-only tools", () => {
           ? { path: "a.txt" }
           : tool.name === "grep"
             ? { pattern: "a", path: "." }
-            : { path: "." };
+            : tool.name === "find"
+              ? { path: ".", pattern: "**" }
+              : { path: "." };
       const result = await tool.execute(params);
       expect(result.ok).toBe(true);
     }
@@ -190,6 +192,8 @@ describe("scoped read-only tools", () => {
     });
     const read = tools.find((tool) => tool.name === "read")!;
     const grep = tools.find((tool) => tool.name === "grep")!;
+    const find = tools.find((tool) => tool.name === "find")!;
+    const ls = tools.find((tool) => tool.name === "ls")!;
 
     expect((await read.execute({ path: "allowed.txt" })).ok).toBe(true);
     expect(await read.execute({ path: "undeclared.txt" })).toMatchObject({
@@ -197,8 +201,173 @@ describe("scoped read-only tools", () => {
       error: expect.stringMatching(/declared|scope/i),
     });
     expect(await grep.execute({ path: ".", pattern: "secret" })).toMatchObject({
+      ok: true,
+      matches: [],
+    });
+    expect(await grep.execute({ path: ".", pattern: "allowed" })).toMatchObject(
+      {
+        ok: true,
+        matches: [expect.objectContaining({ path: "allowed.txt" })],
+      },
+    );
+    expect(await ls.execute({})).toMatchObject({
+      ok: true,
+      entries: [{ name: "allowed.txt", type: "file" }],
+    });
+    expect(await find.execute({ pattern: "*.txt" })).toMatchObject({
+      ok: true,
+      entries: ["allowed.txt"],
+    });
+  });
+
+  it("accepts Pi-style scoped arguments without escaping declared paths", async () => {
+    if (!scopedTools) return notReady("scoped-tools");
+    const root = makeRoot();
+    mkdirSync(path.join(root, "src"));
+    writeFileSync(
+      path.join(root, "src", "index.ts"),
+      Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join("\n"),
+    );
+    writeFileSync(path.join(root, "src", "other.ts"), "other\n");
+    writeFileSync(path.join(root, "readme.md"), "# readme\n");
+    const tools = scopedTools.createScopedTools({
+      roots: [root],
+      allowedPaths: [
+        path.join(root, "src", "index.ts"),
+        path.join(root, "src", "other.ts"),
+      ],
+    });
+    const find = tools.find((tool) => tool.name === "find")!;
+    const ls = tools.find((tool) => tool.name === "ls")!;
+    const read = tools.find((tool) => tool.name === "read")!;
+    const grep = tools.find((tool) => tool.name === "grep")!;
+
+    const listed = await ls.execute({});
+    expect(listed.ok).toBe(true);
+    expect(
+      (listed.entries as { name: string }[]).map((entry) => entry.name),
+    ).toEqual(["src"]);
+
+    const found = await find.execute({ pattern: "*.ts" });
+    expect(found.ok).toBe(true);
+    expect(found.entries).toEqual(["src/index.ts", "src/other.ts"]);
+    expect(
+      (found.entries as string[]).every((entry) => !path.isAbsolute(entry)),
+    ).toBe(true);
+
+    const nested = await find.execute({
+      path: "src",
+      pattern: "*.ts",
+      limit: 1,
+    });
+    expect(nested).toMatchObject({ ok: true, entries: ["index.ts"] });
+    expect(await find.execute({ path: "src" })).toMatchObject({
       ok: false,
-      error: expect.stringMatching(/declared|scope/i),
+      error: expect.stringMatching(/pattern/i),
+    });
+
+    const windowed = await read.execute({
+      path: "src/index.ts",
+      offset: 4,
+      limit: 3,
+    });
+    expect(windowed.ok).toBe(true);
+    expect(windowed.content).toBe("line 4\nline 5\nline 6");
+    expect(
+      await read.execute({ path: "src/index.ts", offset: 13, limit: 1 }),
+    ).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/offset|line/i),
+    });
+
+    const grepped = await grep.execute({ pattern: "line 1" });
+    expect(grepped.ok).toBe(true);
+    expect(
+      (grepped.matches as { path: string }[]).map((match) => match.path),
+    ).toContain("src/index.ts");
+    expect(JSON.stringify({ listed, found, grepped })).not.toContain(
+      "readme.md",
+    );
+  });
+
+  it("scans every related root when Pi-style paths are omitted", async () => {
+    if (!scopedTools) return notReady("scoped-tools");
+    const workspace = makeRoot();
+    const srcRoot = path.join(workspace, "src");
+    const testRoot = path.join(workspace, "test");
+    mkdirSync(srcRoot);
+    mkdirSync(testRoot);
+    writeFileSync(path.join(srcRoot, "source.ts"), "shared needle\n");
+    writeFileSync(path.join(testRoot, "source.test.ts"), "shared needle\n");
+    writeFileSync(path.join(workspace, "outside.ts"), "shared needle\n");
+    const tools = scopedTools.createScopedTools({
+      roots: [srcRoot, testRoot],
+      allowedPaths: [
+        path.join(srcRoot, "source.ts"),
+        path.join(testRoot, "source.test.ts"),
+      ],
+    });
+    const find = tools.find((tool) => tool.name === "find")!;
+    const grep = tools.find((tool) => tool.name === "grep")!;
+    const ls = tools.find((tool) => tool.name === "ls")!;
+
+    expect(await find.execute({ pattern: "*.ts" })).toMatchObject({
+      ok: true,
+      entries: ["src/source.ts", "test/source.test.ts"],
+    });
+    expect(await grep.execute({ pattern: "needle" })).toMatchObject({
+      ok: true,
+      matches: [
+        expect.objectContaining({ path: "src/source.ts" }),
+        expect.objectContaining({ path: "test/source.test.ts" }),
+      ],
+    });
+    expect(await ls.execute({})).toMatchObject({
+      ok: true,
+      entries: [
+        { name: "src", type: "dir" },
+        { name: "test", type: "dir" },
+      ],
+    });
+    expect(
+      JSON.stringify({
+        find: await find.execute({ pattern: "*.ts" }),
+        grep: await grep.execute({ pattern: "needle" }),
+      }),
+    ).not.toContain("outside.ts");
+  });
+
+  it("supports standard positive and negated glob character classes", async () => {
+    if (!scopedTools) return notReady("scoped-tools");
+    const root = makeRoot();
+    mkdirSync(path.join(root, "src"));
+    for (const name of ["a.ts", "b.ts", "c.ts"]) {
+      writeFileSync(path.join(root, "src", name), `${name}\n`);
+    }
+    const find = scopedTools
+      .createScopedTools({
+        roots: [root],
+        allowedPaths: [path.join(root, "src")],
+      })
+      .find((tool) => tool.name === "find")!;
+
+    expect(
+      await find.execute({ path: "src", pattern: "[ab].ts" }),
+    ).toMatchObject({
+      ok: true,
+      entries: ["a.ts", "b.ts"],
+    });
+    expect(
+      await find.execute({ path: "src", pattern: "[!a].ts" }),
+    ).toMatchObject({
+      ok: true,
+      entries: ["b.ts", "c.ts"],
+    });
+    expect(
+      await find.execute({ path: "src", pattern: "[^a].ts" }),
+    ).toMatchObject({
+      ok: true,
+      entries: ["b.ts", "c.ts"],
     });
   });
 });

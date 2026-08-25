@@ -232,6 +232,7 @@ export default function register(pi: ExtensionAPI): void {
           ? "Run exactly one bounded read-only design-explorer packet. When parallel packets are required, emit every sibling abel_dispatch call together in one assistant response before waiting for any result."
           : "Private Abel workflow delegation: run bounded read-only evidence or Worker phase requests, apply or discard retained results, apply a parent-only stable AGENTS checkpoint, cancel work, or finish the stage. Inactive unless an eligible Abel stage verified its invocation.",
       executionMode: "parallel",
+      renderShell: "self",
       parameters: {
         type: "object",
         properties: {
@@ -304,16 +305,25 @@ export default function register(pi: ExtensionAPI): void {
           ...(usage === undefined ? {} : { usage }),
         };
       },
-      renderCall(args: unknown, theme: Theme, _context: unknown) {
-        return renderActivityCall(args, theme);
+      renderCall(args: unknown, theme: Theme, context: unknown) {
+        return renderActivityCall(
+          args,
+          theme,
+          context as Parameters<typeof renderActivityCall>[2],
+        );
       },
       renderResult(
         result: AgentToolResult<unknown>,
         options: ToolRenderResultOptions,
         theme: Theme,
-        _context: unknown,
+        context: unknown,
       ) {
-        return renderActivityResult(result, options, theme);
+        return renderActivityResult(
+          result,
+          options,
+          theme,
+          context as Parameters<typeof renderActivityResult>[3],
+        );
       },
     } as never);
   };

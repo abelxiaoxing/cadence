@@ -10,7 +10,7 @@ import {
 import { Type } from "typebox";
 import type { ChildFailure, DiffResult, EvidenceResult } from "./contracts.ts";
 import { EmptyResourceLoader } from "./empty-resource-loader.ts";
-import { createScopedTools } from "./scoped-tools.ts";
+import { createScopedTools, TOOL_LIMITS } from "./scoped-tools.ts";
 import {
   createSubmitTool,
   type FinalCategory,
@@ -120,8 +120,30 @@ function wrapScopedTools(
         description: scoped.description,
         parameters:
           scoped.name === "grep"
-            ? Type.Object({ path: Type.String(), pattern: Type.String() })
-            : Type.Object({ path: Type.String() }),
+            ? Type.Object({
+                path: Type.Optional(Type.String()),
+                pattern: Type.String(),
+              })
+            : scoped.name === "find"
+              ? Type.Object({
+                  path: Type.Optional(Type.String()),
+                  pattern: Type.String(),
+                  limit: Type.Optional(
+                    Type.Integer({
+                      minimum: 1,
+                      maximum: TOOL_LIMITS.maxEntries,
+                    }),
+                  ),
+                })
+              : scoped.name === "read"
+                ? Type.Object({
+                    path: Type.String(),
+                    offset: Type.Optional(Type.Integer({ minimum: 1 })),
+                    limit: Type.Optional(Type.Integer({ minimum: 1 })),
+                  })
+                : Type.Object({
+                    path: Type.Optional(Type.String()),
+                  }),
         async execute(_id, params) {
           const result = await scoped.execute(
             params as Record<string, unknown>,

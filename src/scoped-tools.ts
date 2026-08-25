@@ -8,7 +8,7 @@ import {
   type Stats,
   statSync,
 } from "node:fs";
-import { basename, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 export const TOOL_LIMITS = {
   maxReadBytes: 50 * 1024,
@@ -18,6 +18,115 @@ export const TOOL_LIMITS = {
   maxGrepMillis: 5000,
   maxEntries: 20000,
 } as const;
+
+function globToRegExp(pattern: string): RegExp | { error: string } {
+  if (pattern.length === 0) return { error: "missing pattern" };
+  if (pattern.length > TOOL_LIMITS.maxGrepPattern) {
+    return {
+      error: `pattern exceeds ${TOOL_LIMITS.maxGrepPattern} characters`,
+    };
+  }
+  let source = "^";
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === "*" && pattern[i + 1] === "*") {
+      const next = pattern[i + 2];
+      if (next === "/") {
+        source += "(?:.*/)?";
+        i += 2;
+        continue;
+      }
+      source += ".*";
+      i += 1;
+      continue;
+    }
+    if (ch === "*") {
+      source += "[^/]*";
+      continue;
+    }
+    if (ch === "?") {
+      source += "[^/]";
+      continue;
+    }
+    if (ch === "[") {
+      let end = i + 1;
+      if (pattern[end] === "!" || pattern[end] === "^") end++;
+      while (end < pattern.length && pattern[end] !== "]") end++;
+      if (end === pattern.length) {
+        source += "\\[";
+        continue;
+      }
+      const raw = pattern.slice(i + 1, end);
+      const negated = raw.startsWith("!") || raw.startsWith("^");
+      const body = raw.slice(negated ? 1 : 0);
+      if (body.length === 0 || body.includes("/")) {
+        return { error: "invalid glob character class" };
+      }
+      const escaped = [...body]
+        .map((value, index) => {
+          if (value === "\\" || value === "[" || value === "]") {
+            return `\\${value}`;
+          }
+          return value === "^" && index === 0 ? "\\^" : value;
+        })
+        .join("");
+      source += `[${negated ? "^" : ""}${escaped}]`;
+      i = end;
+      continue;
+    }
+    if ("\\^$+()[]{}|.".includes(ch)) source += `\\${ch}`;
+    else source += ch;
+  }
+  source += "$";
+  try {
+    return new RegExp(source, "u");
+  } catch {
+    return { error: "invalid glob pattern" };
+  }
+}
+
+function boundedInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0
+    ? value
+    : undefined;
+}
+
+function isWithinPath(path: string, parent: string): boolean {
+  return path === parent || path.startsWith(`${parent}${sep}`);
+}
+
+function isAllowedContent(path: string, allowedPaths?: string[]): boolean {
+  return (
+    allowedPaths === undefined ||
+    allowedPaths.some((allowed) => isWithinPath(path, allowed))
+  );
+}
+
+function isRelatedToAllowedPath(
+  path: string,
+  allowedPaths?: string[],
+): boolean {
+  return (
+    allowedPaths === undefined ||
+    allowedPaths.some(
+      (allowed) => isWithinPath(path, allowed) || isWithinPath(allowed, path),
+    )
+  );
+}
+
+function commonAncestor(paths: string[]): string {
+  let candidate = paths[0];
+  while (!paths.every((path) => isWithinPath(path, candidate))) {
+    const parent = dirname(candidate);
+    if (parent === candidate) return candidate;
+    candidate = parent;
+  }
+  return candidate;
+}
+
+function relativePath(base: string, path: string): string {
+  return (relative(base, path) || ".").split(sep).join("/");
+}
 
 export type Observation =
   | { kind: "file"; path: string }
@@ -38,11 +147,13 @@ interface Options {
 type PathResult =
   | { ok: true; abs: string; rel: string }
   | { ok: false; error: string };
+type ResolvedPath = Extract<PathResult, { ok: true }>;
 
 function resolveScoped(
   roots: string[],
   input: unknown,
   allowedPaths?: string[],
+  allowScopedAncestor = false,
 ): PathResult {
   if (typeof input !== "string" || input.length === 0) {
     return { ok: false, error: "missing path" };
@@ -69,7 +180,9 @@ function resolveScoped(
     if (
       allowedPaths &&
       !allowedPaths.some(
-        (allowed) => abs === allowed || abs.startsWith(`${allowed}/`),
+        (allowed) =>
+          isWithinPath(abs, allowed) ||
+          (allowScopedAncestor && isWithinPath(allowed, abs)),
       )
     ) {
       continue;
@@ -135,6 +248,37 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
   const roots = opts.roots.map((r) => resolve(r));
   const allowedPaths = opts.allowedPaths?.map((p) => resolve(p));
   const observe = opts.observer ?? (() => {});
+  const virtualRoot = commonAncestor(roots);
+
+  function resolveScanTargets(
+    input: unknown,
+  ):
+    | { ok: true; targets: ResolvedPath[]; virtual: boolean }
+    | { ok: false; error: string } {
+    if (input !== undefined) {
+      const resolved = resolveScoped(roots, input, allowedPaths, true);
+      return resolved.ok
+        ? { ok: true, targets: [resolved], virtual: false }
+        : resolved;
+    }
+    const targets: ResolvedPath[] = [];
+    for (const root of roots) {
+      const resolved = resolveScoped([root], ".", allowedPaths, true);
+      if (resolved.ok) targets.push(resolved);
+    }
+    return targets.length > 0
+      ? { ok: true, targets, virtual: roots.length > 1 }
+      : {
+          ok: false,
+          error: "path is outside the declared read/write scope",
+        };
+  }
+
+  function rootRelativePath(path: string, virtual: boolean): string {
+    if (virtual) return relativePath(virtualRoot, path);
+    const root = roots.find((candidate) => isWithinPath(path, candidate));
+    return relativePath(root ?? roots[0], path);
+  }
 
   const readTool: ScopedToolDef = {
     name: "read",
@@ -153,21 +297,39 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
       const text = utf8Text(resolved.abs);
       if (text === null) return { ok: false, error: "not valid UTF-8 text" };
       observe({ kind: "file", path: resolved.rel });
-      const bytes = Buffer.byteLength(text, "utf8");
-      const lines = text.split("\n").length;
-      const truncated =
-        bytes > TOOL_LIMITS.maxReadBytes || lines > TOOL_LIMITS.maxReadLines;
-      let content = text;
-      if (bytes > TOOL_LIMITS.maxReadBytes) {
-        content = Buffer.from(text, "utf8")
+      const allLines = text.split("\n");
+      const offset = boundedInteger(params.offset);
+      const limit = boundedInteger(params.limit);
+      if (offset !== undefined && offset > allLines.length) {
+        return {
+          ok: false,
+          error: `offset ${offset} exceeds file length (${allLines.length} lines)`,
+        };
+      }
+      const start = offset === undefined ? 0 : Math.max(0, offset - 1);
+      const windowed =
+        offset === undefined && limit === undefined
+          ? allLines
+          : allLines.slice(
+              start,
+              limit === undefined ? undefined : start + limit,
+            );
+      let content = windowed.join("\n");
+      let truncated =
+        Buffer.byteLength(content, "utf8") > TOOL_LIMITS.maxReadBytes ||
+        windowed.length > TOOL_LIMITS.maxReadLines;
+      if (Buffer.byteLength(content, "utf8") > TOOL_LIMITS.maxReadBytes) {
+        content = Buffer.from(content, "utf8")
           .subarray(0, TOOL_LIMITS.maxReadBytes)
           .toString("utf8");
+        truncated = true;
       }
       if (content.split("\n").length > TOOL_LIMITS.maxReadLines) {
         content = content
           .split("\n")
           .slice(0, TOOL_LIMITS.maxReadLines)
           .join("\n");
+        truncated = true;
       }
       return { ok: true, content, truncated };
     },
@@ -188,8 +350,8 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
           error: `pattern exceeds ${TOOL_LIMITS.maxGrepPattern} characters`,
         };
       }
-      const resolved = resolveScoped(roots, params.path ?? ".", allowedPaths);
-      if (!resolved.ok) return { ok: false, error: resolved.error };
+      const scan = resolveScanTargets(params.path);
+      if (!scan.ok) return { ok: false, error: scan.error };
       let regex: RegExp;
       try {
         regex = new RegExp(pattern, "u");
@@ -199,20 +361,29 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
       const start = performance.now();
       const matches: { path: string; line: number; text: string }[] = [];
       let scanned = 0;
-      const files = collectFiles(resolved.abs, [], TOOL_LIMITS.maxEntries);
+      const files: string[] = [];
+      for (const target of scan.targets) {
+        collectFiles(target.abs, files, TOOL_LIMITS.maxEntries, allowedPaths);
+      }
+      files.sort((left, right) => {
+        const leftPath = rootRelativePath(left, scan.virtual);
+        const rightPath = rootRelativePath(right, scan.virtual);
+        return leftPath < rightPath ? -1 : leftPath > rightPath ? 1 : 0;
+      });
       for (const file of files) {
         if (scanned >= TOOL_LIMITS.maxGrepFiles) break;
         if (performance.now() - start > TOOL_LIMITS.maxGrepMillis) break;
         scanned++;
         const text = utf8Text(file);
         if (text === null) continue;
-        observe({ kind: "file", path: relative(roots[0], file) });
+        const path = rootRelativePath(file, scan.virtual);
+        observe({ kind: "file", path });
         const lines = text.split("\n");
         for (let i = 0; i < lines.length; i++) {
           regex.lastIndex = 0;
           if (regex.test(lines[i])) {
             matches.push({
-              path: relative(roots[0], file),
+              path,
               line: i + 1,
               text: lines[i].slice(0, 500),
             });
@@ -228,18 +399,41 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
     description:
       "List a directory within the approved scope (max 20,000 entries, stable code-unit order).",
     async execute(params) {
-      const resolved = resolveScoped(roots, params.path ?? ".", allowedPaths);
-      if (!resolved.ok) return { ok: false, error: resolved.error };
-      let st: Stats | undefined;
-      try {
-        st = statSync(resolved.abs);
-      } catch {
-        return { ok: false, error: "directory does not exist" };
+      const scan = resolveScanTargets(params.path);
+      if (!scan.ok) return { ok: false, error: scan.error };
+      for (const target of scan.targets) {
+        let st: Stats | undefined;
+        try {
+          st = statSync(target.abs);
+        } catch {
+          return { ok: false, error: "directory does not exist" };
+        }
+        if (!st.isDirectory()) return { ok: false, error: "not a directory" };
+        observe({
+          kind: "dir",
+          path: rootRelativePath(target.abs, scan.virtual),
+        });
       }
-      if (!st.isDirectory()) return { ok: false, error: "not a directory" };
-      observe({ kind: "dir", path: resolved.rel });
+      if (scan.virtual) {
+        const names = new Set(
+          scan.targets.map(
+            (target) => relativePath(virtualRoot, target.abs).split("/")[0],
+          ),
+        );
+        return {
+          ok: true,
+          entries: [...names]
+            .sort()
+            .slice(0, TOOL_LIMITS.maxEntries)
+            .map((name) => ({ name, type: "dir" })),
+        };
+      }
+      const resolved = scan.targets[0];
       const entries = readdirSync(resolved.abs, { withFileTypes: true })
         .filter((e) => !isHidden(e.name, roots))
+        .filter((e) =>
+          isRelatedToAllowedPath(join(resolved.abs, e.name), allowedPaths),
+        )
         .slice(0, TOOL_LIMITS.maxEntries)
         .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
       return {
@@ -255,33 +449,79 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
   const findTool: ScopedToolDef = {
     name: "find",
     description:
-      "Recursively list paths within the approved scope (max 20,000 entries, stable code-unit order).",
+      "Search for files by glob pattern within the approved scope; paths are relative to the search directory (max 20,000 entries).",
     async execute(params) {
-      const resolved = resolveScoped(roots, params.path ?? ".", allowedPaths);
-      if (!resolved.ok) return { ok: false, error: resolved.error };
-      let st: Stats | undefined;
-      try {
-        st = statSync(resolved.abs);
-      } catch {
-        return { ok: false, error: "directory does not exist" };
+      const pattern = params.pattern;
+      if (typeof pattern !== "string" || pattern.length === 0) {
+        return { ok: false, error: "missing pattern" };
       }
-      if (!st.isDirectory()) return { ok: false, error: "not a directory" };
-      observe({ kind: "dir", path: resolved.rel });
-      const out = collectFiles(resolved.abs, [], TOOL_LIMITS.maxEntries);
-      return { ok: true, entries: out.slice(0, TOOL_LIMITS.maxEntries).sort() };
+      const limit =
+        params.limit === undefined
+          ? TOOL_LIMITS.maxEntries
+          : boundedInteger(params.limit);
+      if (limit === undefined) {
+        return { ok: false, error: "limit must be a positive integer" };
+      }
+      const scan = resolveScanTargets(params.path);
+      if (!scan.ok) return { ok: false, error: scan.error };
+      for (const target of scan.targets) {
+        let st: Stats | undefined;
+        try {
+          st = statSync(target.abs);
+        } catch {
+          return { ok: false, error: "directory does not exist" };
+        }
+        if (!st.isDirectory()) return { ok: false, error: "not a directory" };
+        observe({
+          kind: "dir",
+          path: rootRelativePath(target.abs, scan.virtual),
+        });
+      }
+      const matcher = globToRegExp(pattern);
+      if ("error" in matcher) {
+        return { ok: false, error: matcher.error };
+      }
+      const files: string[] = [];
+      for (const target of scan.targets) {
+        collectFiles(target.abs, files, TOOL_LIMITS.maxEntries, allowedPaths);
+      }
+      const findBase = scan.virtual ? virtualRoot : scan.targets[0].abs;
+      const out = files.map((abs) => relativePath(findBase, abs));
+      const entries = out.filter(
+        (rel) => matcher.test(rel) || matcher.test(basename(rel)),
+      );
+      return {
+        ok: true,
+        entries: entries
+          .sort()
+          .slice(0, Math.min(limit, TOOL_LIMITS.maxEntries)),
+      };
     },
   };
 
-  function collectFiles(dir: string, out: string[], limit: number): string[] {
+  function collectFiles(
+    dir: string,
+    out: string[],
+    limit: number,
+    scopedPaths?: string[],
+  ): string[] {
     if (out.length >= limit) return out;
+    const target = statSync(dir);
+    if (target.isFile()) {
+      if (isAllowedContent(dir, scopedPaths)) out.push(dir);
+      return out;
+    }
+    if (!target.isDirectory()) return out;
     const entries = readdirSync(dir, { withFileTypes: true });
     for (const e of entries) {
       if (out.length >= limit) break;
       if (isHidden(e.name, roots)) continue;
       const full = join(dir, e.name);
       if (e.isDirectory()) {
-        collectFiles(full, out, limit);
-      } else if (e.isFile()) {
+        if (isRelatedToAllowedPath(full, scopedPaths)) {
+          collectFiles(full, out, limit, scopedPaths);
+        }
+      } else if (e.isFile() && isAllowedContent(full, scopedPaths)) {
         out.push(full);
       }
     }
