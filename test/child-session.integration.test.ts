@@ -160,7 +160,13 @@ describe("real isolated child session", () => {
       timeoutMs: 5,
     });
     expect(result.ok).toBe(false);
+    if (result.ok) return;
     expect(result.disposeCount).toBe(1);
+    expect(result.failure).toEqual({
+      kind: "transport",
+      code: "child-timeout",
+      stage: "child-timeout",
+    });
   });
 
   it("routes one diff through Runtime run -> retain -> apply", async () => {
@@ -531,6 +537,41 @@ describe("structural submission classification", () => {
     );
     expect.soft(classification(textOnly)?.finalCategory).toBe("text-only");
     expect.soft(textOnly.transportFailure).toBe(false);
+    expect.soft(textOnly.failure).toEqual({
+      kind: "artifact",
+      code: "child-no-structural-submit",
+    });
+
+    const providerError = await runChildSessionFixture(
+      child,
+      parentProvider,
+      "provider-error",
+      fauxAssistantMessage([], {
+        stopReason: "error",
+        errorMessage:
+          "provider=openai model=private payload=must-not-be-public",
+      }),
+    );
+    expect.soft(providerError.failure).toEqual({
+      kind: "transport",
+      code: "child-provider-stream-error",
+      stage: "child-provider-stream",
+    });
+    expect(JSON.stringify(providerError)).not.toMatch(
+      /openai|private|must-not-be-public/i,
+    );
+
+    const providerAborted = await runChildSessionFixture(
+      child,
+      parentProvider,
+      "provider-aborted",
+      fauxAssistantMessage([], { stopReason: "aborted" }),
+    );
+    expect.soft(providerAborted.failure).toEqual({
+      kind: "transport",
+      code: "child-provider-stream-aborted",
+      stage: "child-provider-stream",
+    });
 
     // Attempts: a wrong request is still counted as an attempted submit.
     const wrongRequest = await runChildSessionFixture(

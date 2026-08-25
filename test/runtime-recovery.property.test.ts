@@ -1359,12 +1359,22 @@ describe("typed finite Runtime recovery", () => {
         ok: false,
         error:
           "provider=openai model=gpt-secret path=/home/alice/.config/token",
+        failure: {
+          kind: "transport",
+          code: "child-provider-stream-error",
+          stage: "child-provider-stream",
+        },
         failureKind: "failed",
         failureClass: "transport",
       })
       .mockResolvedValueOnce({
         ok: false,
         error: "compat-extension-secret payload=sk-live-secret",
+        failure: {
+          kind: "transport",
+          code: "child-provider-stream-error",
+          stage: "child-provider-stream",
+        },
         failureKind: "failed",
         failureClass: "transport",
       });
@@ -1383,7 +1393,14 @@ describe("typed finite Runtime recovery", () => {
         taskId: TASK_ID,
         requestId: RED_REQUEST_ID,
         phase: "red",
-        failure: { kind: "attempts-exhausted", cause: "transport" },
+        failure: {
+          kind: "attempts-exhausted",
+          cause: "transport",
+          lastFailure: {
+            code: "child-provider-stream-error",
+            stage: "child-provider-stream",
+          },
+        },
       },
       [/openai|gpt-secret|alice|compat-extension-secret|sk-live-secret/i],
     );
@@ -1480,7 +1497,7 @@ describe("typed finite Runtime recovery", () => {
     });
   });
 
-  it("[RUNTIME-RECOVERY:bridge-redispatch] bounds an unavailable bridge as mechanical redispatch", async () => {
+  it("[RUNTIME-RECOVERY:bridge-redispatch] blocks an unavailable bridge once with a safe initialization code", async () => {
     const activation = new Activation();
     activation.request();
     activation.activate();
@@ -1508,13 +1525,17 @@ describe("typed finite Runtime recovery", () => {
       ctx,
     );
 
-    expect(getApiKeyAndHeaders).toHaveBeenCalledTimes(2);
+    expect(getApiKeyAndHeaders).toHaveBeenCalledTimes(1);
     expectImplementOutcome(result, {
       kind: "blocked",
       taskId: TASK_ID,
       requestId,
       phase: "red",
-      failure: { kind: "attempts-exhausted", cause: "transport" },
+      failure: {
+        kind: "environment",
+        code: "parent-bridge-session-unavailable",
+        stage: "phase-runtime",
+      },
     });
   });
 

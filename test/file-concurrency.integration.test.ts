@@ -580,7 +580,14 @@ describe("runtime redispatch and logical Worker identity", () => {
     expect(result).toMatchObject({
       kind: "blocked",
       phase: "red",
-      failure: { kind: "attempts-exhausted", cause: "transport" },
+      failure: {
+        kind: "attempts-exhausted",
+        cause: "transport",
+        lastFailure: {
+          code: "child-provider-stream-error",
+          stage: "child-provider-stream",
+        },
+      },
     });
     expect(faux.state.callCount).toBe(2);
   });

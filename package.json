@@ -1,6 +1,6 @@
 {
   "name": "@abelxiaoxing/cadence",
-  "version": "1.0.8",
+  "version": "1.0.10",
   "description": "Prompts, skills, and a private orchestration extension exposing the Abel four-stage workflow (/abel-init, /abel-design, /abel-implement, /abel-diagnose) with package-owned professional Agents.",
   "license": "MIT",
   "type": "module",
@@ -53,8 +53,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
-    "@earendil-works/pi-coding-agent": "0.84.1",
-    "@earendil-works/pi-tui": "0.84.2",
+    "@earendil-works/pi-coding-agent": "0.84.3",
+    "@earendil-works/pi-tui": "0.84.3",
     "@types/node": "^22.15.3",
     "rumdl": "^0.2.10",
     "typescript": "^6.0.3",

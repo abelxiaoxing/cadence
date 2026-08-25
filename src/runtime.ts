@@ -521,6 +521,25 @@ function attemptFailureCause(
   }
 }
 
+function attemptsExhaustedFailure(failure: ChildFailure): TaskFailure {
+  const cause = attemptFailureCause(failure);
+  if (failure.kind !== "transport") {
+    return { kind: "attempts-exhausted", cause };
+  }
+  return {
+    kind: "attempts-exhausted",
+    cause,
+    lastFailure: {
+      code: failure.code,
+      stage:
+        failure.stage ??
+        (failure.code === "child-timeout" || failure.code === "timeout"
+          ? "child-timeout"
+          : "child-provider-stream"),
+    },
+  };
+}
+
 function assertNever(value: never): never {
   throw new Error(`unhandled candidate failure: ${JSON.stringify(value)}`);
 }
@@ -1397,6 +1416,7 @@ export class Runtime {
       ],
       timeoutMs: LIMITS.phaseTimeoutMs,
       signal,
+      failureOverride: phase.failureOverride,
     });
     if (signal.aborted)
       return {
@@ -1828,7 +1848,8 @@ export class Runtime {
         envelope.stage === "abel-design" &&
         !first.ok &&
         first.failure?.kind === "artifact" &&
-        first.failure.code === "invalid-structural-result";
+        (first.failure.code === "invalid-structural-result" ||
+          first.failure.code === "child-no-structural-submit");
       if (!retryInvalidDesignResult) return this.withUsage(context, first);
 
       const second = await this.dispatchChild(agent, envelope, ctx, signal);
@@ -1901,12 +1922,7 @@ export class Runtime {
     const firstTerminal = terminalTaskFailure(firstFailure);
     if (firstTerminal) return finish(block(firstTerminal));
     if (launchIndex === 1) {
-      return finish(
-        block({
-          kind: "attempts-exhausted",
-          cause: attemptFailureCause(firstFailure),
-        }),
-      );
+      return finish(block(attemptsExhaustedFailure(firstFailure)));
     }
     if (firstFailure.kind === "artifact" || firstFailure.kind === "stale") {
       task.state = {
@@ -1940,12 +1956,7 @@ export class Runtime {
     }
     const secondTerminal = terminalTaskFailure(secondFailure);
     if (secondTerminal) return finish(block(secondTerminal));
-    return finish(
-      block({
-        kind: "attempts-exhausted",
-        cause: attemptFailureCause(secondFailure),
-      }),
-    );
+    return finish(block(attemptsExhaustedFailure(secondFailure)));
   }
 
   private captureUsage(

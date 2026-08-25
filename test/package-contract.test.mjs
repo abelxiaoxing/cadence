@@ -28,7 +28,7 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     expect(pkg.peerDependencies?.["@earendil-works/pi-coding-agent"]).toBe("*");
     expect(pkg.peerDependencies?.["@earendil-works/pi-tui"]).toBe("*");
     expect(pkg.peerDependencies?.typebox).toBe("*");
-    expect(pkg.devDependencies?.["@earendil-works/pi-tui"]).toBe("0.84.2");
+    expect(pkg.devDependencies?.["@earendil-works/pi-tui"]).toBe("0.84.3");
     expect(pkg.dependencies).toBeUndefined();
     expect(pkg.workspaces).toBeUndefined();
     expect(pkg.exports).toBeUndefined();

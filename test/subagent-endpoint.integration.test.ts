@@ -360,7 +360,8 @@ describe("custom phase runtime", () => {
       if (child.ok) throw new Error("unreachable");
       expect(child.failure).toEqual({
         kind: "transport",
-        code: "transport-failure",
+        code: "child-provider-stream-error",
+        stage: "child-provider-stream",
       });
       // Provider retry disabled: a single network attempt, no retry.
       expect(fake.requests).toHaveLength(1);

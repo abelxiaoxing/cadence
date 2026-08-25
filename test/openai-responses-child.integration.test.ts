@@ -1,4 +1,11 @@
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -7,13 +14,22 @@ import {
   type Context,
   createAssistantMessageEventStream,
   fauxAssistantMessage,
+  fauxToolCall,
   type Model,
   type Provider,
   type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { streamSimple as openAIResponsesStreamSimple } from "@earendil-works/pi-ai/api/openai-responses";
+import {
+  createAgentSession,
+  DefaultResourceLoader,
+  SessionManager,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
+import { snapshotFiles } from "../src/file-snapshot";
 import register from "../src/index";
+import { runtimeForProvider } from "../src/parent-provider";
 
 type PayloadCallback = NonNullable<SimpleStreamOptions["onPayload"]>;
 
@@ -295,7 +311,241 @@ function request(id: string) {
   };
 }
 
+const IMPLEMENT_DIFF = "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n";
+
+function implementationRoot(): string {
+  const cwd = mkdtempSync(join(tmpdir(), "cadence-responses-implement-"));
+  roots.push(cwd);
+  execFileSync("git", ["init", "-q"], { cwd });
+  execFileSync("git", ["config", "user.email", "test@example.invalid"], {
+    cwd,
+  });
+  execFileSync("git", ["config", "user.name", "Cadence Test"], { cwd });
+  writeFileSync(join(cwd, "a.txt"), "old\n");
+  mkdirSync(join(cwd, "node_modules"));
+  mkdirSync(join(cwd, "test"));
+  writeFileSync(
+    join(cwd, "package.json"),
+    `${JSON.stringify({
+      private: true,
+      scripts: { check: 'node -e ""', "test:target": "node" },
+    })}\n`,
+  );
+  writeFileSync(join(cwd, "bun.lock"), "# fixture lock\n");
+  writeFileSync(
+    join(cwd, "test/expected-red.mjs"),
+    'console.error("[RESPONSES-FIRST-DISPATCH:expected-red]\\nTests 1 failed");\nprocess.exit(1);\n',
+  );
+  execFileSync("git", ["add", "a.txt"], { cwd });
+  execFileSync("git", ["commit", "-qm", "base"], { cwd });
+  return cwd;
+}
+
+function implementationRequest(id: string, cwd: string) {
+  const target = ["bun", "run", "test:target", "test/expected-red.mjs"];
+  return {
+    stage: "abel-implement",
+    kind: "open-task",
+    boundary: {
+      changeId: "responses-first-dispatch",
+      taskId: id,
+      objective: "Return one bounded Red candidate",
+      roots: ["."],
+      context: { agents: "none", contract: "approved" },
+      phases: {
+        red: {
+          read: ["a.txt"],
+          write: ["a.txt"],
+          verificationLock: "responses-first-dispatch-red",
+          verification: {
+            id: `verify-${id}-red`,
+            argv: target,
+            classification: "expected-red",
+            expectedFailure: "[RESPONSES-FIRST-DISPATCH:expected-red]",
+            minTests: 1,
+          },
+        },
+        green: {
+          read: ["a.txt"],
+          write: ["a.txt"],
+          verificationLock: "responses-first-dispatch-green",
+          verification: {
+            id: `verify-${id}-green`,
+            argv: ["bun", "run", "check"],
+            classification: "expected-green",
+            minTests: 1,
+          },
+        },
+      },
+      scheduling: { conflicts: [], resources: [] },
+      agents: { impact: "none", managedOnly: true },
+      approvedDependencies: [],
+      impactClosure: {
+        changedSurfaces: ["none"],
+        searchEvidence: [],
+        relatedTests: [],
+        affectedSuite: ["test/expected-red.mjs"],
+      },
+    },
+    attempt: {
+      changeId: "responses-first-dispatch",
+      taskId: id,
+      requestId: `${id}-red-1`,
+      phase: "red",
+      snapshot: snapshotFiles(cwd, ["a.txt"]),
+    },
+  };
+}
+
+function implementationDiff(id: string) {
+  return {
+    id: `${id}-red-1`,
+    role: "implementation-worker",
+    kind: "diff",
+    taskId: id,
+    phase: "red",
+    summary: "Change the bounded fixture",
+    diff: IMPLEMENT_DIFF,
+    expectedVerification: "bun run test:target test/expected-red.mjs",
+    risks: [],
+    contractCompliant: true,
+  };
+}
+
 describe("installed openai-responses child route", () => {
+  it("[RESPONSES-FIRST-DISPATCH:capture-ready] serves the first legal Implement tool call in the Pi lifecycle", async () => {
+    const cwd = implementationRoot();
+    const taskId = "responses-first-worker";
+    const model = modelFor("cadence-lifecycle-responses");
+    const request = implementationRequest(taskId, cwd);
+    const calls: Array<{
+      child: boolean;
+      options: SimpleStreamOptions | undefined;
+    }> = [];
+    let parentTurn = 0;
+
+    const respond = (
+      requestModel: Model<string>,
+      context: Context,
+      options: SimpleStreamOptions | undefined,
+    ): AssistantMessageEventStream => {
+      const output = createAssistantMessageEventStream();
+      const child =
+        context.tools?.some((tool) => tool.name === "abel_submit_result") ??
+        false;
+      calls.push({ child, options });
+      queueMicrotask(async () => {
+        try {
+          const payload = child
+            ? { input: [{ role: "user", content: "bounded child" }] }
+            : { instructions: "bounded parent", input: [] };
+          await options?.onPayload?.(payload, requestModel);
+          const content = child
+            ? fauxToolCall("abel_submit_result", implementationDiff(taskId), {
+                id: "submit-first-worker",
+              })
+            : parentTurn++ === 0
+              ? fauxToolCall(
+                  "abel_dispatch",
+                  { action: "run", request },
+                  { id: "dispatch-first-worker" },
+                )
+              : "parent completed";
+          const stopReason = typeof content === "string" ? "stop" : "toolUse";
+          const message: AssistantMessage = {
+            ...fauxAssistantMessage(content, {
+              stopReason,
+            }),
+            api: requestModel.api,
+            provider: requestModel.provider,
+            model: requestModel.id,
+          };
+          output.push({ type: "done", reason: stopReason, message });
+          output.end(message);
+        } catch (error) {
+          const message: AssistantMessage = {
+            ...fauxAssistantMessage("", {
+              stopReason: "error",
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
+            }),
+            api: requestModel.api,
+            provider: requestModel.provider,
+            model: requestModel.id,
+          };
+          output.push({ type: "error", reason: "error", error: message });
+          output.end(message);
+        }
+      });
+      return output;
+    };
+
+    const delegate = {
+      id: model.provider,
+      name: "Lifecycle Responses Provider",
+      baseUrl: model.baseUrl,
+      auth: {
+        apiKey: {
+          name: "Lifecycle Responses auth",
+          resolve: async () => ({ auth: { apiKey: "test-only-key" } }),
+        },
+      },
+      getModels: () => [model],
+      stream: respond,
+      streamSimple: respond,
+    } as unknown as Provider;
+    const modelRuntime = await runtimeForProvider(delegate);
+    const settingsManager = SettingsManager.inMemory({
+      compaction: { enabled: false },
+      retry: { enabled: false, provider: { maxRetries: 0 } },
+    });
+    const resourceLoader = new DefaultResourceLoader({
+      cwd,
+      agentDir: join(cwd, "agent"),
+      settingsManager,
+      additionalExtensionPaths: [join(import.meta.dirname, "..")],
+      noThemes: true,
+      noContextFiles: true,
+    });
+    await resourceLoader.reload();
+    const { session } = await createAgentSession({
+      cwd,
+      modelRuntime,
+      model,
+      resourceLoader,
+      sessionManager: SessionManager.inMemory(cwd),
+      settingsManager,
+    });
+    const ui = { setWidget() {}, setStatus() {} };
+
+    try {
+      await session.bindExtensions({ mode: "tui", uiContext: ui as never });
+      await session.prompt("/abel-implement first inherited dispatch");
+
+      const toolResult = session.state.messages.find(
+        (message) =>
+          message.role === "toolResult" && message.toolName === "abel_dispatch",
+      );
+      expect(toolResult?.role).toBe("toolResult");
+      if (toolResult?.role !== "toolResult") {
+        throw new Error("first Implement dispatch did not execute");
+      }
+      const text = toolResult.content.find((part) => part.type === "text");
+      expect(text?.type).toBe("text");
+      const outcome = JSON.parse(text?.type === "text" ? text.text : "null");
+      expect(outcome).toMatchObject({
+        kind: "candidate",
+        taskId,
+        requestId: `${taskId}-red-1`,
+        phase: "red",
+      });
+      expect(calls.filter((call) => call.child)).toHaveLength(1);
+      expect(calls.find((call) => call.child)?.options?.maxRetries).toBe(0);
+    } finally {
+      session.dispose();
+    }
+  });
+
   it("uses the captured original delegate once with fresh auth, five tools, transformed request data, and no resources or output cap", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "cadence-responses-child-"));
     roots.push(cwd);

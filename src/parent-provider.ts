@@ -14,10 +14,11 @@ import {
   ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
 import type { ChildFailure } from "./contracts.ts";
-import type {
-  ParentPayloadBridge,
-  ParentPayloadCallback,
-  ParentPayloadCapture,
+import {
+  type ParentPayloadBridge,
+  ParentPayloadBridgeError,
+  type ParentPayloadCallback,
+  type ParentPayloadCapture,
 } from "./parent-payload-bridge.ts";
 import type { SubagentEndpoint } from "./subagent-endpoint.ts";
 
@@ -145,7 +146,12 @@ type PhaseRuntimeFailure = Extract<
 >;
 
 export type PhaseRuntimeResult =
-  | { ok: true; modelRuntime: ModelRuntime; model: Model<string> }
+  | {
+      ok: true;
+      modelRuntime: ModelRuntime;
+      model: Model<string>;
+      failureOverride?: () => PhaseRuntimeFailure | undefined;
+    }
   | { ok: false; error: string; failure: PhaseRuntimeFailure };
 
 function phaseRuntimeFailure(
@@ -170,15 +176,28 @@ function phasePayloadCallback(
   payloadBridge: PhasePayloadBridge,
   childOnPayload: ParentPayloadCallback | undefined,
   signal: AbortSignal | undefined,
+  diagnostic?: { failure?: PhaseRuntimeFailure },
 ): ParentPayloadCallback {
-  return (payload, model) =>
-    payloadBridge.bridge.composePayload(
-      payloadBridge.capture,
-      payload,
-      model,
-      childOnPayload,
-      signal,
-    );
+  return async (payload, model) => {
+    try {
+      return await payloadBridge.bridge.composePayload(
+        payloadBridge.capture,
+        payload,
+        model,
+        childOnPayload,
+        signal,
+      );
+    } catch (error) {
+      if (error instanceof ParentPayloadBridgeError && diagnostic) {
+        diagnostic.failure = {
+          kind: "environment",
+          code: error.code,
+          stage: "child-provider-stream",
+        };
+      }
+      throw error;
+    }
+  };
 }
 
 export async function runtimeForProvider(
@@ -209,6 +228,7 @@ export function phaseProvider(
     env?: Record<string, string>;
   },
   payloadBridge: PhasePayloadBridge,
+  diagnostic?: { failure?: PhaseRuntimeFailure },
 ): Provider {
   return {
     ...parent,
@@ -232,6 +252,7 @@ export function phaseProvider(
         payloadBridge,
         options?.onPayload as ParentPayloadCallback | undefined,
         options?.signal,
+        diagnostic,
       );
       return parent.stream(model, context, {
         ...options,
@@ -247,6 +268,7 @@ export function phaseProvider(
         payloadBridge,
         options?.onPayload as ParentPayloadCallback | undefined,
         options?.signal,
+        diagnostic,
       );
       return parent.streamSimple(model, context, {
         ...options,
@@ -321,31 +343,55 @@ export async function runtimeFromContext(
   const effectiveModelKey = modelKeyFor(model);
   const capture = payloadBridge.capture(effectiveModelKey, ctx.modelRegistry);
   if (!capture) {
+    const code =
+      payloadBridge.diagnoseCapture(effectiveModelKey, ctx.modelRegistry) ??
+      "parent-bridge-capture-not-ready";
     return phaseRuntimeFailure(
-      { kind: "transport", code: "transport-failure" },
-      "parent payload bridge is unavailable",
+      { kind: "environment", code, stage: "phase-runtime" },
+      code,
     );
   }
-  const captureIsReady = () => {
+  const captureFailure = () => {
     const currentModel = ctx.model;
-    return (
-      currentModel !== undefined &&
-      sameSelectedModel(currentModel, selectedModelKey) &&
+    if (
+      currentModel === undefined ||
+      !sameSelectedModel(currentModel, selectedModelKey)
+    ) {
+      return "parent-bridge-model-key-mismatch" as const;
+    }
+    if (
       payloadBridge.capture(effectiveModelKey, ctx.modelRegistry) === capture
+    ) {
+      return undefined;
+    }
+    return (
+      payloadBridge.diagnoseCapture(effectiveModelKey, ctx.modelRegistry) ??
+      "parent-bridge-capture-not-ready"
     );
   };
-  if (!captureIsReady()) {
+  const initialCaptureFailure = captureFailure();
+  if (initialCaptureFailure) {
     return phaseRuntimeFailure(
-      { kind: "transport", code: "transport-failure" },
-      "parent payload bridge is unavailable",
+      {
+        kind: "environment",
+        code: initialCaptureFailure,
+        stage: "phase-runtime",
+      },
+      initialCaptureFailure,
     );
   }
   const delegate = capture.delegate;
   if (!delegate) throw new Error("parent Provider is unavailable");
-  const provider = phaseProvider(delegate, resolved, {
-    bridge: payloadBridge,
-    capture,
-  });
+  const diagnostic: { failure?: PhaseRuntimeFailure } = {};
+  const provider = phaseProvider(
+    delegate,
+    resolved,
+    {
+      bridge: payloadBridge,
+      capture,
+    },
+    diagnostic,
+  );
   let modelRuntime: ModelRuntime;
   try {
     modelRuntime = await runtimeForProvider(provider, signal);
@@ -354,13 +400,23 @@ export async function runtimeFromContext(
     throw error;
   }
   if (signal?.aborted) return cancelledPhaseRuntime();
-  if (!captureIsReady()) {
+  const finalCaptureFailure = captureFailure();
+  if (finalCaptureFailure) {
     return phaseRuntimeFailure(
-      { kind: "transport", code: "transport-failure" },
-      "parent payload bridge is unavailable",
+      {
+        kind: "environment",
+        code: finalCaptureFailure,
+        stage: "phase-runtime",
+      },
+      finalCaptureFailure,
     );
   }
-  return { ok: true, modelRuntime, model };
+  return {
+    ok: true,
+    modelRuntime,
+    model,
+    failureOverride: () => diagnostic.failure,
+  };
 }
 
 function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {

@@ -27,6 +27,23 @@ export interface ParentPayloadCapture {
   readonly onPayload: ParentPayloadCallback;
 }
 
+export type ParentBridgeFailureCode =
+  | "parent-bridge-session-unavailable"
+  | "parent-bridge-provider-not-installed"
+  | "parent-bridge-capture-not-ready"
+  | "parent-bridge-model-key-mismatch"
+  | "parent-bridge-generation-invalidated";
+
+export class ParentPayloadBridgeError extends Error {
+  readonly code: ParentBridgeFailureCode;
+
+  constructor(code: ParentBridgeFailureCode) {
+    super(code);
+    this.name = "ParentPayloadBridgeError";
+    this.code = code;
+  }
+}
+
 export interface ParentProviderRegistry {
   getProvider(provider: string): Provider | undefined;
   registerProvider(provider: Provider): void;
@@ -217,6 +234,32 @@ export class ParentPayloadBridge {
     return capture;
   }
 
+  diagnoseCapture(
+    modelKey: ParentModelKey,
+    registry: Pick<ParentProviderRegistry, "getProvider">,
+  ): ParentBridgeFailureCode | undefined {
+    const state = this.state;
+    if (!state?.active) return "parent-bridge-session-unavailable";
+    const current = registry.getProvider(modelKey.provider);
+    if (!current || !this.isWrappedProvider(current)) {
+      return "parent-bridge-provider-not-installed";
+    }
+    const capture = state.ready.get(modelKeyId(modelKey));
+    if (capture && sameModelKey(capture.modelKey, modelKey)) {
+      return this.unwrapProvider(current) === capture.delegate
+        ? undefined
+        : "parent-bridge-provider-not-installed";
+    }
+    if (
+      [...state.ready.values()].some(
+        (ready) => ready.modelKey.provider === modelKey.provider,
+      )
+    ) {
+      return "parent-bridge-model-key-mismatch";
+    }
+    return "parent-bridge-capture-not-ready";
+  }
+
   wrapProvider(delegate: Provider): Provider {
     const original = this.unwrapProvider(delegate);
     const stream = (
@@ -265,7 +308,9 @@ export class ParentPayloadBridge {
     childOnPayload?: ParentPayloadCallback,
     signal?: AbortSignal,
   ): Promise<Record<string, unknown>> {
-    if (!capture) throw new Error("parent payload bridge is unavailable");
+    if (!capture) {
+      throw new ParentPayloadBridgeError("parent-bridge-capture-not-ready");
+    }
     const requestedKey = modelKeyFor(model);
     const state = this.requireCurrentCapture(capture, requestedKey);
     signal?.throwIfAborted();
@@ -360,13 +405,13 @@ export class ParentPayloadBridge {
     model: Model<string>,
     provisional: ProvisionalCapture | undefined,
   ): Promise<void> {
-    let successful = false;
     try {
       for await (const event of source) {
-        if (event.type === "done") successful = true;
+        if (event.type === "done") {
+          if (provisional) this.commitCapture(provisional);
+        }
         output.push(event);
       }
-      if (successful && provisional) this.commitCapture(provisional);
     } catch {
       const error = streamFailure(model);
       output.push({ type: "error", reason: "error", error });
@@ -401,18 +446,30 @@ export class ParentPayloadBridge {
     modelKey: ParentModelKey,
   ): GenerationState {
     const state = this.state;
+    if (!capture) {
+      throw new ParentPayloadBridgeError("parent-bridge-capture-not-ready");
+    }
     if (
-      !capture ||
       !state?.active ||
       this.captureStates.get(capture) !== state ||
       capture.generation !== state.generation ||
-      capture.sessionId !== state.sessionId ||
-      !sameModelKey(capture.modelKey, modelKey) ||
-      state.ready.get(modelKeyId(modelKey)) !== capture
+      capture.sessionId !== state.sessionId
     ) {
-      throw new Error("parent payload bridge is unavailable");
+      throw new ParentPayloadBridgeError(
+        "parent-bridge-generation-invalidated",
+      );
+    }
+    if (!sameModelKey(capture.modelKey, modelKey)) {
+      throw new ParentPayloadBridgeError("parent-bridge-model-key-mismatch");
+    }
+    if (state.ready.get(modelKeyId(modelKey)) !== capture) {
+      throw new ParentPayloadBridgeError("parent-bridge-capture-not-ready");
     }
     return state;
+  }
+
+  private isWrappedProvider(provider: Provider): boolean {
+    return Reflect.get(provider, PROVIDER_WRAPPER) !== undefined;
   }
 
   private unwrapProvider(provider: Provider): Provider {

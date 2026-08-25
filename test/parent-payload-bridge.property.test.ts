@@ -37,6 +37,22 @@ type ProviderHandler = (
   options: RequestOptions | undefined,
 ) => AssistantMessageEventStream;
 
+class TestRegistry implements ProviderRegistry {
+  private readonly providers = new Map<string, Provider>();
+
+  constructor(provider: Provider) {
+    this.providers.set(provider.id, provider);
+  }
+
+  getProvider(provider: string): Provider | undefined {
+    return this.providers.get(provider);
+  }
+
+  registerProvider(provider: Provider): void {
+    this.providers.set(provider.id, provider);
+  }
+}
+
 const context: Context = { messages: [] };
 
 function modelFor(
@@ -239,6 +255,63 @@ async function readyFixture(
 }
 
 describe("parent payload bridge properties", () => {
+  it("reports safe session, installation, readiness, model-key, and generation identities", async () => {
+    const bridge = new ParentPayloadBridge();
+    const model = modelFor(0x20, "openai-responses");
+    const delegate = providerFor(
+      model,
+      (_method, requestModel) => terminalStream(requestModel, "done").stream,
+    );
+    const registry = new TestRegistry(delegate);
+    const diagnose = () =>
+      (
+        bridge as ParentPayloadBridge & {
+          diagnoseCapture(
+            key: ParentModelKey,
+            registry: ProviderRegistry,
+          ): string;
+        }
+      ).diagnoseCapture(modelKey(model), registry);
+
+    expect(diagnose()).toBe("parent-bridge-session-unavailable");
+    bridge.beginSession("diagnostic-session");
+    expect(diagnose()).toBe("parent-bridge-provider-not-installed");
+    bridge.install(model, registry);
+    expect(diagnose()).toBe("parent-bridge-capture-not-ready");
+
+    const installed = registry.getProvider(model.provider);
+    expect(installed).toBeDefined();
+    const output = invoke(installed!, "streamSimple", model, {
+      onPayload: () => undefined,
+    });
+    await collect(output);
+    const capture = bridge.capture(modelKey(model));
+    expect(capture).toBeDefined();
+    expect(
+      bridge.capture({ ...modelKey(model), baseUrl: `${model.baseUrl}/other` }),
+    ).toBeUndefined();
+    expect(
+      (
+        bridge as ParentPayloadBridge & {
+          diagnoseCapture(
+            key: ParentModelKey,
+            registry: ProviderRegistry,
+          ): string;
+        }
+      ).diagnoseCapture(
+        { ...modelKey(model), baseUrl: `${model.baseUrl}/other` },
+        registry,
+      ),
+    ).toBe("parent-bridge-model-key-mismatch");
+
+    bridge.beginSession("replacement-session");
+    await expect(
+      bridge.composePayload(capture, { safe: true }, model),
+    ).rejects.toMatchObject({
+      code: "parent-bridge-generation-invalidated",
+    });
+  });
+
   it("binds readiness to the exact generation, session, and model tuple [seed=0x21]", async () => {
     const Bridge = requireBridge();
     const bridge = new Bridge();

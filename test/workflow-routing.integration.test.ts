@@ -343,6 +343,48 @@ describe("[SLICE-1:boundary-once] non-Implement routing regression", () => {
     expect(dispatch).toHaveBeenCalledTimes(2);
     expect(dispatch.mock.calls[1]?.[1]).toBe(dispatch.mock.calls[0]?.[1]);
   });
+
+  it("[DIAGNOSE:design-missing-submit-redispatch] mechanically redispatches one Design result without a structural submit", async () => {
+    const { runtime, context } = await makeActive(
+      "design-missing-submit-retry",
+    );
+    const dispatch = vi
+      .spyOn(runtime as any, "dispatchChild")
+      .mockResolvedValueOnce({
+        ok: false,
+        error: "child produced no structural submission",
+        failure: { kind: "artifact", code: "child-no-structural-submit" },
+        failureKind: "failed",
+        failureClass: "artifact",
+        transportFailure: false,
+        disposeCount: 1,
+        classification: {
+          finalCategory: "text-only",
+          attempts: 0,
+          schema: "none",
+          identity: { request: false, role: false, task: false, phase: false },
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        action: "run",
+        result: { kind: "evidence" },
+      });
+
+    const result = await (runtime as any).execute(
+      "run",
+      { request: nonImplementRequest("abel-design") },
+      context,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      action: "run",
+      result: { kind: "evidence" },
+    });
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch.mock.calls[1]?.[1]).toBe(dispatch.mock.calls[0]?.[1]);
+  });
 });
 
 describe("Init never activates dispatch", () => {

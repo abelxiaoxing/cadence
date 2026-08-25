@@ -59,6 +59,71 @@ function within<T>(promise: Promise<T>, timeoutMs = 500): Promise<T> {
 }
 
 describe("child session creation cancellation", () => {
+  it("returns a terminal safe code when child session creation fails", async () => {
+    fixture.setFactory(async () => {
+      throw new Error("provider headers=private payload=must-not-leak");
+    });
+
+    const outcome = await runChildSession({
+      cwd: process.cwd(),
+      modelRuntime: {} as never,
+      model: {} as never,
+      systemPrompt: "submit",
+      requestId: "create-failed",
+      role: "design-explorer",
+      output: "evidence",
+      roots: [process.cwd()],
+      timeoutMs: 5_000,
+    });
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "environment",
+        code: "child-session-create-failed",
+        stage: "child-session-create",
+      },
+    });
+    expect(JSON.stringify(outcome)).not.toMatch(/headers|private|payload/i);
+  });
+
+  it("distinguishes a completed prompt with no final assistant", async () => {
+    const dispose = vi.fn();
+    fixture.setFactory(async () => ({
+      session: {
+        messages: [],
+        subscribe() {
+          return () => {};
+        },
+        async prompt() {},
+        abort: vi.fn(),
+        dispose,
+      },
+    }));
+
+    const outcome = await runChildSession({
+      cwd: process.cwd(),
+      modelRuntime: {} as never,
+      model: {} as never,
+      systemPrompt: "submit",
+      requestId: "no-final-assistant",
+      role: "design-explorer",
+      output: "evidence",
+      roots: [process.cwd()],
+      timeoutMs: 5_000,
+    });
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "transport",
+        code: "child-no-final-assistant",
+        stage: "child-finalization",
+      },
+    });
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
   it("settles immediately and disposes a session that is created late", async () => {
     const controller = new AbortController();
     const dispose = vi.fn();

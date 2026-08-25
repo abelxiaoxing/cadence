@@ -157,6 +157,39 @@ function isSingleStructuralSubmit(message: AssistantMessage | undefined) {
   );
 }
 
+function safeChildError(failure: ChildFailure): string {
+  switch (failure.kind) {
+    case "environment":
+      return failure.code === "child-session-create-failed"
+        ? "child session creation failed"
+        : "child environment unavailable";
+    case "transport":
+      switch (failure.code) {
+        case "child-timeout":
+        case "timeout":
+          return "child phase timeout";
+        case "child-no-final-assistant":
+          return "child produced no final assistant";
+        case "child-provider-stream-aborted":
+          return "child provider stream aborted";
+        case "child-provider-stream-error":
+        case "transport-failure":
+          return "child provider stream failed";
+      }
+      return "child provider stream failed";
+    case "artifact":
+      return failure.code === "child-no-structural-submit"
+        ? "child produced no structural submission"
+        : "child structural submission is invalid";
+    case "cancelled":
+      return "child phase cancelled";
+    case "stale":
+    case "approval-boundary":
+    case "result-limit":
+      return "child result rejected";
+  }
+}
+
 export type ChildSessionResult =
   | {
       ok: true;
@@ -192,6 +225,7 @@ export async function runChildSession(input: {
   allowedPaths?: string[];
   timeoutMs: number;
   signal?: AbortSignal;
+  failureOverride?: () => ChildFailure | undefined;
 }): Promise<ChildSessionResult> {
   const submit = createSubmitTool({
     requestId: input.requestId,
@@ -255,23 +289,46 @@ export async function runChildSession(input: {
       identity: submit.getIdentity(),
     };
   };
-  const transportFailed = (): boolean => {
+  const transportFailure = ():
+    | Extract<ChildFailure, { kind: "transport" }>
+    | undefined => {
     const final = session?.messages
       .filter((message) => message.role === "assistant")
       .at(-1);
-    if (final === undefined) return true;
+    if (final === undefined) {
+      return {
+        kind: "transport",
+        code: "child-no-final-assistant",
+        stage: "child-finalization",
+      };
+    }
     if (final.stopReason === "error") {
-      return (
-        submit.getAttempts() === 0 &&
+      return submit.getAttempts() === 0 &&
         !final.content.some(
           (content) =>
             content.type === "toolCall" &&
             content.name === "abel_submit_result",
         )
-      );
+        ? {
+            kind: "transport",
+            code: "child-provider-stream-error",
+            stage: "child-provider-stream",
+          }
+        : undefined;
     }
-    return final.stopReason === "aborted";
+    if (final.stopReason === "aborted") {
+      return {
+        kind: "transport",
+        code: "child-provider-stream-aborted",
+        stage: "child-provider-stream",
+      };
+    }
+    return undefined;
   };
+  const noStructuralSubmit = (): ChildFailure =>
+    submit.getAttempts() === 0
+      ? { kind: "artifact", code: "child-no-structural-submit" }
+      : { kind: "artifact", code: "invalid-structural-result" };
   try {
     abort.signal.throwIfAborted();
     const creation = createAgentSession({
@@ -331,22 +388,19 @@ export async function runChildSession(input: {
     const attempts = submit.getAttempts();
     const classification = classifySession();
     if (!result || attempts !== 1) {
-      const transportFailure = transportFailed();
       const failure =
         submit.getFailure() ??
-        (transportFailure
-          ? ({ kind: "transport", code: "transport-failure" } as const)
-          : ({
-              kind: "artifact",
-              code: "invalid-structural-result",
-            } as const));
+        input.failureOverride?.() ??
+        transportFailure() ??
+        noStructuralSubmit();
+      const isTransport = failure.kind === "transport";
       disposeOnce();
       return {
         ok: false,
-        error: "child did not retain exactly one structural submission",
+        error: safeChildError(failure),
         failure,
         failureKind: "failed",
-        transportFailure,
+        transportFailure: isTransport,
         disposeCount,
         usage: usage.total(),
         classification,
@@ -355,11 +409,15 @@ export async function runChildSession(input: {
     const assistants = session.messages.filter((m) => m.role === "assistant");
     const final = assistants.at(-1);
     if (!isSingleStructuralSubmit(final)) {
+      const failure = {
+        kind: "artifact",
+        code: "invalid-structural-result",
+      } as const;
       disposeOnce();
       return {
         ok: false,
-        error: "final assistant message is not one structural submit",
-        failure: { kind: "artifact", code: "invalid-structural-result" },
+        error: safeChildError(failure),
+        failure,
         failureKind: "failed",
         transportFailure: false,
         disposeCount,
@@ -390,22 +448,35 @@ export async function runChildSession(input: {
         ? "cancelled"
         : "failed";
     const classification = classifySession();
-    const transportFailure = transportFailed();
     const failure: ChildFailure = timedOut
-      ? { kind: "transport", code: "timeout" }
+      ? {
+          kind: "transport",
+          code: "child-timeout",
+          stage: "child-timeout",
+        }
       : failureKind === "cancelled"
         ? { kind: "cancelled", code: "cancelled" }
-        : (submit.getFailure() ??
-          (transportFailure
-            ? { kind: "transport", code: "transport-failure" }
-            : { kind: "artifact", code: "invalid-structural-result" }));
+        : session === undefined
+          ? {
+              kind: "environment",
+              code: "child-session-create-failed",
+              stage: "child-session-create",
+            }
+          : (submit.getFailure() ??
+            input.failureOverride?.() ??
+            transportFailure() ??
+            noStructuralSubmit());
+    const isTransport = failure.kind === "transport";
     disposeOnce();
     return {
       ok: false,
-      error: (error as Error).message,
+      error:
+        failure.kind === "cancelled" && error instanceof Error
+          ? error.message
+          : safeChildError(failure),
       failure,
       failureKind,
-      transportFailure,
+      transportFailure: isTransport,
       disposeCount,
       usage: usage.total(),
       classification,

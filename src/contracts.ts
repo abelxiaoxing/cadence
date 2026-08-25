@@ -74,6 +74,7 @@ export const ARTIFACT_FAILURE_CODES = [
   "invalid-diff-bytes",
   "invalid-snapshot",
   "invalid-structural-result",
+  "child-no-structural-submit",
   "invalid-verification-contract",
   "lockfile-bound-mismatch",
   "noncanonical-path",
@@ -108,6 +109,7 @@ export const ENVIRONMENT_FAILURE_CODES = [
   "checkout-failed",
   "clone-alternates",
   "clone-failed",
+  "child-session-create-failed",
   "dependency-path-unsafe",
   "git-apply-check-unavailable",
   "git-apply-failed",
@@ -115,6 +117,11 @@ export const ENVIRONMENT_FAILURE_CODES = [
   "git-ignore-check-failed",
   "git-index-unavailable",
   "invalid-subagent-endpoint",
+  "parent-bridge-capture-not-ready",
+  "parent-bridge-generation-invalidated",
+  "parent-bridge-model-key-mismatch",
+  "parent-bridge-provider-not-installed",
+  "parent-bridge-session-unavailable",
   "root-unavailable",
   "sandbox-runtime-unavailable",
 ] as const;
@@ -126,18 +133,39 @@ export const APPROVAL_BOUNDARY_CODES = [
   "verification-contract-insufficient",
   "agents-contract-insufficient",
 ] as const;
-export const CHILD_TRANSPORT_CODES = ["timeout", "transport-failure"] as const;
+export const CHILD_TRANSPORT_CODES = [
+  "child-no-final-assistant",
+  "child-provider-stream-aborted",
+  "child-provider-stream-error",
+  "child-timeout",
+  "timeout",
+  "transport-failure",
+] as const;
+export const FAILURE_STAGES = [
+  "phase-runtime",
+  "child-session-create",
+  "child-provider-stream",
+  "child-finalization",
+  "child-timeout",
+] as const;
 
 export type ArtifactFailureCode = (typeof ARTIFACT_FAILURE_CODES)[number];
 export type StaleFailureCode = (typeof STALE_FAILURE_CODES)[number];
 export type EnvironmentFailureCode = (typeof ENVIRONMENT_FAILURE_CODES)[number];
 export type ApprovalBoundaryCode = (typeof APPROVAL_BOUNDARY_CODES)[number];
 export type ChildTransportCode = (typeof CHILD_TRANSPORT_CODES)[number];
+export type FailureStage = (typeof FAILURE_STAGES)[number];
+
+export interface SafeFailureDiagnostic {
+  code: ChildTransportCode;
+  stage: FailureStage;
+}
 
 export type EnvironmentFailure = {
   kind: "environment";
   code: EnvironmentFailureCode;
   message?: string;
+  stage?: FailureStage;
 };
 
 export type CandidateFailure =
@@ -150,7 +178,11 @@ export type CandidateFailure =
 
 export type ChildFailure =
   | CandidateFailure
-  | { kind: "transport"; code: ChildTransportCode };
+  | {
+      kind: "transport";
+      code: ChildTransportCode;
+      stage?: FailureStage;
+    };
 
 export type CandidateRejection =
   | {
@@ -165,6 +197,7 @@ export type TaskFailure =
   | {
       kind: "attempts-exhausted";
       cause: "artifact" | "stale" | "transport";
+      lastFailure?: SafeFailureDiagnostic;
     }
   | {
       kind: "checkpoint-attempts-exhausted";
