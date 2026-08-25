@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -7,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Activation } from "../src/activation.ts";
 import {
   type ChildFailure,
+  cloneVerificationContract,
   validateRequestEnvelope,
 } from "../src/contracts.ts";
 import { snapshotFiles } from "../src/file-snapshot.ts";
@@ -405,10 +413,30 @@ function mockCandidateDelivery(runtime: Runtime) {
     );
 }
 
+function addLegacyVerificationFixture(root: string): void {
+  mkdirSync(join(root, "test"), { recursive: true });
+  mkdirSync(join(root, "node_modules/.bin"), { recursive: true });
+  writeFileSync(
+    join(root, "package.json"),
+    JSON.stringify({
+      private: true,
+      scripts: { "test:target": "vitest run", check: 'node -e ""' },
+    }),
+  );
+  writeFileSync(join(root, "bun.lock"), "# fixture lock\n");
+  writeFileSync(
+    join(root, "test/runtime-recovery.property.test.ts"),
+    "// runtime recovery fixture\n",
+  );
+  writeFileSync(join(root, "node_modules/.bin/vitest"), "#!/bin/sh\n");
+  chmodSync(join(root, "node_modules/.bin/vitest"), 0o755);
+}
+
 function artifactFixture(runtime: Runtime) {
   const root = mkdtempSync(join(tmpdir(), "cadence-runtime-recovery-"));
   roots.push(root);
   execFileSync("git", ["init", "-q"], { cwd: root });
+  addLegacyVerificationFixture(root);
   const target = "private-provider-token.txt";
   writeFileSync(join(root, target), "actual-private-value\n");
   const snapshot = snapshotFiles(root, [target]);
@@ -435,6 +463,7 @@ function retainedImplementFixture(
   const root = mkdtempSync(join(tmpdir(), "cadence-retained-implement-"));
   roots.push(root);
   execFileSync("git", ["init", "-q"], { cwd: root });
+  addLegacyVerificationFixture(root);
   const target = "candidate.txt";
   writeFileSync(join(root, target), "old\n");
   const request = phaseRequest({
@@ -520,7 +549,9 @@ describe("[SLICE-1:boundary-once] one admitted task boundary", () => {
         verificationLock: request.boundary.phases.red.verificationLock,
       },
       output: "diff",
-      verification: request.boundary.phases.red.verification,
+      verification: cloneVerificationContract(
+        request.boundary.phases.red.verification as never,
+      ),
     });
     expect(derived.declared.write).not.toContain("src/runtime.ts");
 

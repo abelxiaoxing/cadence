@@ -287,12 +287,12 @@ describe("strict request envelope contracts", () => {
   it("[SLICE-1:boundary-once] contains every phase path within an approved root", () => {
     if (!contracts) return notReady("contracts");
     const request = openTaskRequest();
-    request.boundary.roots = ["src"];
+    request.boundary.roots = ["src", "test"];
     for (const phase of [
       request.boundary.phases.red,
       request.boundary.phases.green,
     ]) {
-      phase.read = ["src/contracts.ts"];
+      phase.read = ["src/contracts.ts", "test/contracts.property.test.ts"];
       phase.write = ["src/contracts.ts"];
     }
     request.boundary.impactClosure = {
@@ -305,6 +305,11 @@ describe("strict request envelope contracts", () => {
       "src/contracts.ts": {
         kind: "file",
         sha256: "a".repeat(64),
+        bytes: 1,
+      },
+      "test/contracts.property.test.ts": {
+        kind: "file",
+        sha256: "c".repeat(64),
         bytes: 1,
       },
     };
@@ -320,6 +325,11 @@ describe("strict request envelope contracts", () => {
       "outside.ts": {
         kind: "file",
         sha256: "b".repeat(64),
+        bytes: 1,
+      },
+      "test/contracts.property.test.ts": {
+        kind: "file",
+        sha256: "c".repeat(64),
         bytes: 1,
       },
     };
@@ -506,7 +516,7 @@ describe("strict request envelope contracts", () => {
     if (!contracts) return notReady("contracts");
     const implementation = openTaskRequest();
     (implementation.boundary.phases as Record<string, unknown>).refactor = {
-      read: ["src/contracts.ts"],
+      read: ["src/contracts.ts", "test/contracts.property.test.ts"],
       write: ["src/contracts.ts"],
       verificationLock: "vitest-implement-runtime",
       verification: {
@@ -539,6 +549,166 @@ describe("strict request envelope contracts", () => {
     };
     delete missingTask.boundary.taskId;
     expect(contracts.validateRequestEnvelope(missingTask).ok).toBe(false);
+  });
+
+  it("accepts only structured cross-project verification kinds and safe runners", () => {
+    if (!contracts) return notReady("contracts");
+    const common = {
+      id: "consumer-verification",
+      classification: "expected-green",
+    } as const;
+    const supported = [
+      {
+        ...common,
+        kind: "vitest",
+        runner: {
+          kind: "package-script",
+          packageManager: "npm",
+          script: "test:run",
+          command: "vitest run",
+        },
+        testFiles: ["tests/utils/upstreamFetch.test.js"],
+        args: [],
+        minTests: 1,
+      },
+      {
+        ...common,
+        kind: "package-script",
+        packageManager: "npm",
+        script: "typecheck",
+        command: "tsc --noEmit",
+        args: [],
+      },
+      {
+        ...common,
+        kind: "static-check",
+        runner: { kind: "node", script: "scripts/check-agents.mjs" },
+        args: [],
+      },
+      {
+        ...common,
+        kind: "static-check",
+        runner: { kind: "npx", executable: "prisma", noInstall: true },
+        args: ["validate"],
+      },
+      {
+        ...common,
+        kind: "steps",
+        steps: [
+          {
+            id: "typecheck-first",
+            kind: "package-script",
+            packageManager: "npm",
+            script: "typecheck",
+            command: "tsc --noEmit",
+            args: [],
+            classification: "expected-green",
+          },
+          {
+            id: "target",
+            kind: "vitest",
+            runner: {
+              kind: "package-script",
+              packageManager: "npm",
+              script: "test:run",
+              command: "vitest run",
+            },
+            testFiles: ["tests/utils/upstreamFetch.test.js"],
+            args: [],
+            minTests: 1,
+            classification: "expected-green",
+          },
+        ],
+      },
+    ];
+    for (const verification of supported) {
+      expect(
+        contracts.validateVerificationContract(verification),
+        JSON.stringify(verification),
+      ).toMatchObject({ ok: true });
+    }
+
+    for (const verification of [
+      {
+        ...supported[0],
+        testFiles: ["../outside.test.ts"],
+      },
+      {
+        ...supported[0],
+        args: ["--config=/tmp/outside.ts"],
+      },
+      {
+        ...supported[0],
+        args: ["--dir=../outside"],
+      },
+      {
+        ...supported[0],
+        runner: { kind: "local-binary", executable: "jest" },
+      },
+      {
+        ...supported[0],
+        runner: {
+          kind: "package-script",
+          packageManager: "npm",
+          script: "test:run",
+          command: "jest --run",
+        },
+      },
+      {
+        ...supported[1],
+        args: ["&&", "node", "outside.js"],
+      },
+      {
+        ...supported[2],
+        runner: { kind: "node", script: "/tmp/outside.mjs" },
+      },
+      {
+        ...supported[3],
+        runner: { kind: "npx", executable: "prisma", noInstall: false },
+      },
+    ]) {
+      expect(
+        contracts.validateVerificationContract(verification),
+        JSON.stringify(verification),
+      ).toMatchObject({ ok: false });
+    }
+  });
+
+  it("keeps legacy bun target/check contracts as normalized compatibility input", () => {
+    if (!contracts) return notReady("contracts");
+    const target = contracts.validateVerificationContract({
+      id: "legacy-target",
+      argv: ["bun", "run", "test:target", "test/legacy.test.ts"],
+      classification: "expected-green",
+      minTests: 1,
+    });
+    expect(target).toMatchObject({
+      ok: true,
+      value: {
+        kind: "vitest",
+        runner: {
+          kind: "package-script",
+          packageManager: "bun",
+          script: "test:target",
+        },
+        testFiles: ["test/legacy.test.ts"],
+      },
+    });
+
+    const check = contracts.validateVerificationContract({
+      id: "legacy-check",
+      argv: ["bun", "run", "check"],
+      classification: "expected-green",
+      minTests: 1,
+    });
+    expect(check).toMatchObject({
+      ok: true,
+      value: {
+        kind: "package-script",
+        packageManager: "bun",
+        script: "check",
+      },
+    });
   });
 
   it("requires a mechanical AGENTS impact contract and never delegates AGENTS writes", () => {

@@ -12,6 +12,7 @@ import {
   type AgentsCheckpointRequest,
   type CandidateFailure,
   type ChildFailure,
+  cloneVerificationContract,
   type DiffResult,
   type ImplementApplyOperation,
   type ImplementationPhase,
@@ -29,6 +30,7 @@ import {
   validateImplementDiscardOperation,
   validatePhaseAttemptAgainstBoundary,
   validateRequestEnvelope,
+  verificationInputPaths,
 } from "./contracts.ts";
 import { drainStage } from "./drain.ts";
 import {
@@ -56,6 +58,7 @@ import {
   resolveSubagentEndpoint,
   type SubagentEndpoint,
 } from "./subagent-endpoint.ts";
+import { assessVerificationReadiness } from "./verification-capability.ts";
 import {
   type TaskRecord,
   taskConflictOf,
@@ -119,10 +122,7 @@ function cloneLegacyEnvelope(request: RequestEnvelope): RequestEnvelope {
     ...(request.verification === undefined
       ? {}
       : {
-          verification: {
-            ...request.verification,
-            argv: [...request.verification.argv],
-          },
+          verification: cloneVerificationContract(request.verification),
         }),
     ...(request.snapshot === undefined
       ? {}
@@ -163,10 +163,7 @@ function deriveImplementEnvelope(
     agentsManagedOnly: true,
     approvedDependencies: [...boundary.approvedDependencies],
     impactClosure: structuredClone(boundary.impactClosure),
-    verification: {
-      ...phase.verification,
-      argv: [...phase.verification.argv],
-    },
+    verification: cloneVerificationContract(phase.verification),
     snapshot: structuredClone(attempt.snapshot),
   };
 }
@@ -318,7 +315,7 @@ function preparePreflight(
     ...envelope.declared.write,
     "package.json",
     lockPath,
-    ...envelope.verification.argv.slice(3),
+    ...verificationInputPaths(envelope.verification),
   ]);
   const entries = new Map<string, BaselineEntry>();
   const observed: Bound = {};
@@ -446,6 +443,7 @@ function failureClassOf(failure: ChildFailure): FailureClass | undefined {
       return "transport";
     case "stale":
     case "approval-boundary":
+    case "verification-adapter":
     case "cancelled":
     case "result-limit":
       return undefined;
@@ -465,6 +463,7 @@ function childFailureOf(result: InternalFailureResult): ChildFailure {
       case "stale":
       case "environment":
       case "approval-boundary":
+      case "verification-adapter":
       case "cancelled":
       case "result-limit":
       case "transport":
@@ -495,6 +494,7 @@ function terminalTaskFailure(failure: ChildFailure): TaskFailure | undefined {
   switch (failure.kind) {
     case "approval-boundary":
     case "environment":
+    case "verification-adapter":
     case "result-limit":
       return failure;
     case "artifact":
@@ -515,6 +515,7 @@ function attemptFailureCause(
       return failure.kind;
     case "approval-boundary":
     case "environment":
+    case "verification-adapter":
     case "result-limit":
     case "cancelled":
       throw new Error("non-retryable failure reached the launch budget");
@@ -992,6 +993,15 @@ export class Runtime {
         };
         return blockedOutcome(identity, taskFailure);
       }
+      case "verification-adapter": {
+        const taskFailure: TaskFailure = failure;
+        worker.state = {
+          kind: "blocked",
+          phase,
+          failure: structuredClone(taskFailure),
+        };
+        return blockedOutcome(identity, taskFailure);
+      }
       case "cancelled":
         return cancelledOutcome(identity);
       case "result-limit": {
@@ -1252,6 +1262,15 @@ export class Runtime {
         return blockedOutcome(outcomeIdentity, failure);
       }
       case "approval-boundary": {
+        this.results.discard(resultId);
+        worker.state = {
+          kind: "blocked",
+          phase: identity.phase,
+          failure: structuredClone(failure),
+        };
+        return blockedOutcome(outcomeIdentity, failure);
+      }
+      case "verification-adapter": {
         this.results.discard(resultId);
         worker.state = {
           kind: "blocked",
@@ -1562,6 +1581,42 @@ export class Runtime {
         attempt.changeId,
         attempt.taskId,
       );
+      if (runRequest.kind === "open-task") {
+        const phases = runRequest.boundary.phases;
+        const readiness = assessVerificationReadiness(
+          workspaceRoot,
+          [
+            phases.red.verification,
+            phases.green.verification,
+            ...(phases.refactor ? [phases.refactor.verification] : []),
+          ],
+          {
+            allowedMissingInputs: [
+              ...new Set([
+                ...phases.red.write,
+                ...phases.green.write,
+                ...(phases.refactor?.write ?? []),
+              ]),
+            ],
+          },
+        );
+        const diagnostic = readiness.diagnostics[0];
+        if (diagnostic) {
+          if (diagnostic.kind === "design-readiness") {
+            throw new Error(
+              `Implement protocol error: ${diagnostic.code}: ${diagnostic.message}`,
+            );
+          }
+          return {
+            ok: false,
+            error: `${diagnostic.kind}/${diagnostic.code}: ${diagnostic.message}`,
+            failure: {
+              kind: diagnostic.kind,
+              code: diagnostic.code,
+            },
+          };
+        }
+      }
       if (
         runRequest.kind === "open-task" &&
         this.registry

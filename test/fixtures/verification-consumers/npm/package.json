@@ -1,0 +1,9 @@
+{
+  "name": "cadence-npm-consumer-fixture",
+  "private": true,
+  "scripts": {
+    "test:run": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build:web": "vite build"
+  }
+}

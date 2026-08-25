@@ -23,6 +23,39 @@ A missing receipt, invalid hash, or inconsistent artifact is a `delivery-invalid
 Every approved behavior must retain a stable trace from Requirement to Scenario to Verification to Task.
 Every task must state exactly one executable verification type, its Red command and expected target failure, Green behavior, affected suite, target files, approved dependency changes, impact-closure evidence, and structured AGENTS impact.
 
+### Structured verification capability
+
+Design and Implement share `src/verification-capability.ts`; Design must call `assessVerificationReadiness` over every phase verification contract before Gate B approval and again immediately before writing `ready.yaml`.
+The receipt may state `taskContractsExecutable: true` only when that assessment returns true with no diagnostics.
+A future verification input may be absent only when its exact safe relative path is in the task's approved write set.
+Missing, escaping, absolute, or symbolic-link inputs remain closed failures.
+
+Design emits only the structured Runtime kinds `kind: "vitest"`, `kind: "package-script"`, `kind: "static-check"`, and `kind: "steps"`:
+
+- `vitest` declares its runner, safe relative `testFiles`, explicit `args`, and `minTests`.
+  It uses a consumer-installed local Vitest.
+  Runtime alone injects the JSON reporter and checks assertion identity for Red.
+- `package-script` pins the package manager, script name, exact Gate-B-approved `package.json` command, and argument array.
+  The script and runner must already exist in the consumer repository.
+- `static-check` declares a local binary, `npx` with `noInstall: true`, or a safe relative Node script.
+  It covers static, typecheck, build, schema, and parent-only AGENTS checkpoint verification without Vitest arguments.
+- `steps` is an ordered list of atomic contracts.
+  Every precheck is an explicit expected-green step and only the final step carries the phase classification.
+  A compound command must not use `&&` or another shell operator.
+
+No kind admits an arbitrary shell command.
+Tokens are passed without a shell; shell operators, path escapes, absolute paths, unsafe executable names, unapproved commands, and implicit download runners are rejected.
+`npx` is compiled with `--no-install` and still requires its executable in the approved local `node_modules`.
+Bun, npm, pnpm, and Yarn package scripts are allowed only when the named package manager and exact pinned script capability validate.
+
+Runtime never invents `bun run check`, `bun run test:target`, or another consumer script.
+A precheck or affected verification runs only as an explicit approved contract or ordered step.
+Legacy Cadence 1.0.x `bun run test:target <paths>` and `bun run check` inputs remain accepted and are normalized immediately, but Design must not generate new argv-only contracts.
+
+An unsupported shape is `design-readiness/verification-contract-unsupported`.
+A missing approved script is `verification-adapter/script-missing`; other missing or drifted consumer capabilities use their closed `verification-adapter` code.
+Only an unavailable Bubblewrap launch, Bun resolution, dependency path, or sandbox runtime is an `environment` failure.
+
 ## Verification discipline
 
 Before writes, record target, affected-suite, and full-suite baselines with commands, exit codes, and normalized failure identities.
@@ -94,6 +127,9 @@ It does not select a user recovery action, recommend another workflow, or claim 
 - Generated artifact defects are closed typed failures: malformed diff, syntax/import/load, no-test or wrong command, wrong Red identity, duplicate/invalid structured result, and `red-not-witnessed`.
 - Artifact, stale-snapshot, and transport failures share two non-cancelled launches per phase; exhaustion is `attempts-exhausted` and cancellation is budget-neutral.
 - Bubblewrap, dependency-path, sandbox, or external runtime failure is `{ kind: "environment", code: <closed-environment-code> }` and terminally blocks the current task.
+- Unsupported verification contracts close Design readiness; missing scripts,
+  runners, local executables, or inputs are closed `verification-adapter` failures
+  and must not be reported as Bubblewrap or dependency environment failures.
 - Any required path, dependency, behavior, policy, architecture, conflict, resource, verification, or AGENTS expansion is the matching closed `approval-boundary` failure and never expands the boundary at runtime.
 - Oversized output is `{ kind: "result-limit", limitBytes }`, terminal, and never yields a partial diff.
 

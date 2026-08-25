@@ -57,6 +57,24 @@ describe("Design stage contract", () => {
     );
   });
 
+  it("proves structured verification capability before reporting readiness", () => {
+    const text = `${design}\n${implement}\n${shared}`;
+    expect(design).toMatch(/assessVerificationReadiness/);
+    expect(design).toMatch(/taskContractsExecutable/);
+    expect(design).toMatch(/kind:\s*["'`]vitest["'`]/i);
+    expect(design).toMatch(/kind:\s*["'`]package-script["'`]/i);
+    expect(design).toMatch(/kind:\s*["'`]static-check["'`]/i);
+    expect(design).toMatch(/kind:\s*["'`]steps["'`]/i);
+    expect(text).toMatch(/noInstall|--no-install/);
+    expect(text).toMatch(/local[ -]binary|本地 executable/i);
+    expect(text).toMatch(/不(?:得|能)[^\n]*&&|must not[^\n]*&&/i);
+    expect(text).toMatch(/JSON reporter/i);
+    expect(text).toMatch(/minTests/);
+    expect(text).toMatch(/verification-adapter\/script-missing/);
+    expect(text).toMatch(/design-readiness\/verification-contract-unsupported/);
+    expect(implement).toMatch(/不[^\n]*隐式[^\n]*bun run check/i);
+  });
+
   it("scopes AGENTS read-only authority to Design only", () => {
     expect(design).toMatch(/Design stage|Design 阶段/i);
     expect(design).toMatch(/AGENTS\.md[\s\S]{0,160}(read-only|只读)/i);

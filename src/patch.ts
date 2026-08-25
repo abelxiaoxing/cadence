@@ -48,6 +48,11 @@ async function git(
       settled = true;
       resolve(result);
     };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
     child.stdout.on("data", (b: Buffer) => stdout.push(b));
     child.stderr.on("data", (b: Buffer) => stderr.push(b));
     child.on("error", (error) => {
@@ -59,7 +64,7 @@ async function git(
           cancelled: true,
         });
       } else {
-        reject(error);
+        fail(error);
       }
     });
     child.on("close", (code) =>
@@ -70,6 +75,11 @@ async function git(
         cancelled: signal?.aborted ?? false,
       }),
     );
+    child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+      // A command may reject its input and exit before Node finishes writing it.
+      // Its exit status remains the authoritative command result.
+      if (error.code !== "EPIPE") fail(error);
+    });
     child.stdin.end(input);
   });
 }
@@ -348,6 +358,8 @@ export async function applyRetainedPatch(input: {
         case "stale":
           return failure({ kind: preflight.kind, code: preflight.code });
         case "environment":
+          return failure({ kind: preflight.kind, code: preflight.code });
+        case "verification-adapter":
           return failure({ kind: preflight.kind, code: preflight.code });
         case "approval-boundary":
           return failure({ kind: preflight.kind, code: preflight.code });

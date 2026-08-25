@@ -1,4 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -95,7 +101,7 @@ async function runtimeFixture() {
   const cwd = mkdtempSync(join(tmpdir(), "abel-runtime-activity-"));
   roots.push(cwd);
   writeFileSync(join(cwd, "a.txt"), "old\n");
-  mkdirSync(join(cwd, "node_modules"));
+  mkdirSync(join(cwd, "node_modules/.bin"), { recursive: true });
   mkdirSync(join(cwd, "test"));
   writeFileSync(
     join(cwd, "test/expected-red.mjs"),
@@ -109,6 +115,8 @@ async function runtimeFixture() {
     })}\n`,
   );
   writeFileSync(join(cwd, "bun.lock"), "# fixture lock\n");
+  writeFileSync(join(cwd, "node_modules/.bin/vitest"), "#!/bin/sh\n");
+  chmodSync(join(cwd, "node_modules/.bin/vitest"), 0o755);
   const faux = fauxProvider({
     provider: `abel-runtime-activity-${providerSequence++}`,
     api: "faux",

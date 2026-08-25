@@ -1,0 +1,8 @@
+{
+  "name": "cadence-bun-consumer-fixture",
+  "private": true,
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test:target": "vitest run"
+  }
+}

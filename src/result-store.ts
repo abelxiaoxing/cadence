@@ -4,7 +4,10 @@ import type {
   BaselineEntry,
   VerificationContract,
 } from "./candidate-preflight.ts";
-import type { ImplementationPhase } from "./contracts.ts";
+import {
+  cloneVerificationContract,
+  type ImplementationPhase,
+} from "./contracts.ts";
 import type { Bound, DirBound, FileBound } from "./file-snapshot.ts";
 import { snapshotFiles } from "./file-snapshot.ts";
 
@@ -105,10 +108,7 @@ function cloneRetained(retained: RetainedResult): RetainedResult {
     baseline: retained.baseline.map((entry) => ({ ...entry })),
   };
   if (retained.verification) {
-    clone.verification = {
-      ...retained.verification,
-      argv: [...retained.verification.argv],
-    };
+    clone.verification = cloneVerificationContract(retained.verification);
   }
   if (retained.packageManifest) {
     clone.packageManifest = { ...retained.packageManifest };
@@ -147,10 +147,7 @@ export class ResultStore {
       ...(input.verification === undefined
         ? {}
         : {
-            verification: {
-              ...input.verification,
-              argv: [...input.verification.argv],
-            },
+            verification: cloneVerificationContract(input.verification),
           }),
       ...(input.packageManifest === undefined
         ? {}

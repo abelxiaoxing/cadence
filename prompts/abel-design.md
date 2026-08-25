@@ -150,7 +150,9 @@ $ARGUMENTS
   - 计划写集：修改/新建/删除的精确路径或最窄可判定 glob；预期交付文件/符号
   - 冲突集：任务 ID + 原因；共享状态、生成物、清单、数据库、端口、fixture 或验证资源及所需资源锁
   - 验证类型：`property | example | E2E | static`
-  - Red 命令 + 预期失败原因；Green 预期行为
+  - 每个 phase 的 Runtime verification contract：只使用 `kind: "vitest"`、`kind: "package-script"`、`kind: "static-check"` 或 `kind: "steps"`；Red 命令 + 预期失败原因；Green 预期行为
+  - `vitest` 明确 runner、安全相对 `testFiles`、`args`、`minTests`；`package-script` 明确 `bun | npm | pnpm | yarn`、真实 script、Gate B 固定的完整 script command 与 `args`；`static-check` 明确本地 executable、`npx` + `noInstall: true` 或安全相对 Node script
+  - 复合验证建模为有序 `steps`：前置检查为 `expected-green`，最后一步匹配 phase classification；不得使用 `&&` 或其他 shell operator
   - 受影响套件命令；目标范围；验证命令的并行资格及资源锁
   - 影响闭包（impact closure）：`changedSurfaces`、检索命令/命中证据、全部相关既有测试及其 `current-task | regression-task | unaffected` 归类、affected suite 中的既有测试证据
   - 已批准依赖变化清单（无则 `[]`）
@@ -166,15 +168,25 @@ $ARGUMENTS
 - 写集未知、过宽或可能重叠的任务不得标为并行；先重塑任务，或用 `conflict-order` 串行化。
 - 非行为变更任务的 Red 是变更前即可执行的静态验证。
   仅人工验证的任务不具备实施就绪性，绝不通过 Gate B 或退出；重塑任务直至具备可执行验证。
+- Gate B 呈现前，使用 Cadence 与 Implement Runtime 共用的 `src/verification-capability.ts::assessVerificationReadiness` 在 consumer root 校验全部 phase verification contracts。
+  仅允许 consumer 已存在且内容与合同完全一致的 package script、可用的显式 package manager、本地 `node_modules` executable，以及 `npx` 的 `noInstall: true`/`--no-install` 语义；绝不允许隐式联网下载、任意 shell 或 shell operator。
+  将来才由任务创建的测试/静态输入只有在其精确安全相对路径已列入批准写集时才可暂缺；绝对路径、路径逃逸和符号链接仍关闭失败。
+  不支持的合同以 `design-readiness/verification-contract-unsupported` 诊断关闭；脚本缺失以 `verification-adapter/script-missing` 关闭。
+  任何诊断存在时不得呈现 Gate B 为可批准、不得生成 `taskContractsExecutable: true`。
+- `vitest` 才允许 Runtime 注入 JSON reporter、要求 `minTests` 并用 assertion identity 判定 Red；`package-script` 与 `static-check` 只按退出码及批准的稳定输出 identity 判定，绝不附加 Vitest 参数。
+  `bun run check`、`bun run test:target`、precheck 与 affected suite 都不得由 Runtime 隐式补充；需要时必须成为 Gate B 明确批准的 contract/step。
+  Design 不生成 argv-only legacy contract。
 - 范围内每个索引过期发现分配给一个任务，或报告为无关的既有过期问题。
 - 循环至未决技术决策为零；在内存中备好剩余产物内容/统一 diff。
 
 ## ⛔ Gate B —— 批准实施契约
 
 - 核实阶段 3/4 忠实展开 Gate A 契约，未引入未批准的新决策。
+- 重新运行共享 `assessVerificationReadiness`；只有结果为 `{ taskContractsExecutable: true, diagnostics: [] }` 才可请求 Gate B 批准。
+  否则以精确 readiness/adapter 诊断返回阶段 3/4 修正，不把缺失 consumer capability 延迟到 Implement Red。
 - 呈现实质技术决策、任务 DAG/建议波次、前置条件、计划写集/冲突/资源锁、验证映射、AGENTS 影响矩阵与产物物化预览；用户显式批准。
 - 按写入协议逐个写入剩余就绪产物。
-- 最后写 `changeRoot/ready.yaml`：记录 receipt 版本、change/schema、Gate B 批准原文的忠实摘要（含任务 DAG、建议波次、前置条件、计划写集、冲突与资源锁）、任务验证与 AGENTS 影响摘要、`gate-a.yaml` 的 SHA-256，以及全部规划产物的规范化相对路径与 SHA-256；排除 `ready.yaml` 自身。
+- 最后写 `changeRoot/ready.yaml`：记录 receipt 版本、change/schema、Gate B 批准原文的忠实摘要（含任务 DAG、建议波次、前置条件、计划写集、冲突与资源锁）、共享 capability validator 产生的 `taskContractsExecutable: true` 与空 diagnostics、任务验证与 AGENTS 影响摘要、`gate-a.yaml` 的 SHA-256，以及全部规划产物的规范化相对路径与 SHA-256；排除 `ready.yaml` 自身。
   任务跟踪文件计算 hash 前只将任务完成标记 `- [x]`/`- [X]` 规范化为 `- [ ]`，其余字节不得忽略。
 
 ## 回环规则

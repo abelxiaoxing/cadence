@@ -6,6 +6,7 @@
 
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -92,7 +93,7 @@ function makeRoot(tag: string): string {
   });
   execFileSync("git", ["config", "user.name", "Abel Test"], { cwd });
   writeFileSync(join(cwd, "a.txt"), "old\n");
-  mkdirSync(join(cwd, "node_modules"));
+  mkdirSync(join(cwd, "node_modules/.bin"), { recursive: true });
   mkdirSync(join(cwd, "test"));
   writeFileSync(
     join(cwd, "package.json"),
@@ -106,6 +107,8 @@ function makeRoot(tag: string): string {
     join(cwd, "test/expected-red.mjs"),
     'console.error("[LIFECYCLE:expected-red]\\nTests 1 failed");\nprocess.exit(1);\n',
   );
+  writeFileSync(join(cwd, "node_modules/.bin/vitest"), "#!/bin/sh\n");
+  chmodSync(join(cwd, "node_modules/.bin/vitest"), 0o755);
   execFileSync("git", ["add", "a.txt"], { cwd });
   execFileSync("git", ["commit", "-qm", "base"], { cwd });
   return cwd;

@@ -15,11 +15,15 @@ import {
 } from "node:fs";
 import path from "node:path";
 import {
+  type AtomicVerificationContract,
   type CandidateFailure,
   diffWritePaths,
   isValidRelativePath,
+  type StructuredVerificationContract,
   type VerificationContract,
   validateVerificationContract,
+  verificationInputPaths,
+  verificationSteps,
 } from "./contracts.ts";
 import {
   type Bound,
@@ -28,6 +32,10 @@ import {
   isCurrent,
   snapshotDirManifest,
 } from "./file-snapshot.ts";
+import {
+  type VerificationRunnerBinding,
+  validateVerificationCapability,
+} from "./verification-capability.ts";
 
 export type { VerificationContract } from "./contracts.ts";
 
@@ -377,6 +385,7 @@ function validateInput(input: CandidatePreflightInput): {
   targets: string[];
   lockPath: string;
   dependencyPath: string;
+  verification: StructuredVerificationContract;
 } {
   if (!Buffer.isBuffer(input.diff) || input.diff.length === 0)
     reject("artifact", "invalid-diff-bytes");
@@ -489,12 +498,16 @@ function validateInput(input: CandidatePreflightInput): {
   }
   if (targets.some((target) => !entries.has(target)))
     reject("artifact", "target-baseline-missing");
-  for (let index = 3; index < input.verification.argv.length; index++) {
-    const testPath = input.verification.argv[index];
-    if (testPath === undefined || !entries.has(testPath))
+  for (const verificationPath of verificationInputPaths(verification.value)) {
+    if (!entries.has(verificationPath))
       reject("artifact", "verification-baseline-missing");
   }
-  return { targets, lockPath, dependencyPath };
+  return {
+    targets,
+    lockPath,
+    dependencyPath,
+    verification: verification.value,
+  };
 }
 
 function verifyBaselineAt(root: string, baseline: BaselineEntry[]): void {
@@ -655,11 +668,18 @@ function sandboxArgs(
   checkout: string,
   dependencySource: string,
   dependencyIsDirectory: boolean,
-  bunExecutable: string,
+  bunExecutable: string | undefined,
+  runnerPlan: SandboxRunnerPlan,
   invocation: string[],
   reportSource?: string,
 ): string[] {
   const candidate = "/candidate";
+  const sandboxPath = [
+    ...runnerPlan.pathEntries,
+    "/usr/bin",
+    "/usr/local/bin",
+    "/bin",
+  ].join(":");
   const args = [
     "--unshare-net",
     "--unshare-pid",
@@ -674,7 +694,7 @@ function sandboxArgs(
     "--clearenv",
     "--setenv",
     "PATH",
-    "/usr/bin:/usr/local/bin:/bin",
+    sandboxPath,
     "--setenv",
     "HOME",
     "/nonexistent",
@@ -685,7 +705,15 @@ function sandboxArgs(
   for (const systemPath of ["/usr", "/bin", "/lib", "/lib64", "/etc"]) {
     if (existsSync(systemPath)) args.push("--ro-bind", systemPath, systemPath);
   }
-  args.push("--ro-bind", bunExecutable, SANDBOX_BUN_TARGET);
+  if (bunExecutable) {
+    args.push("--ro-bind", bunExecutable, SANDBOX_BUN_TARGET);
+  }
+  if (runnerPlan.mounts.length > 0) {
+    args.push("--dir", "/cadence", "--dir", "/cadence/runners");
+    for (const mount of runnerPlan.mounts) {
+      args.push("--dir", mount.target, "--ro-bind", mount.source, mount.target);
+    }
+  }
   const dependencyDestination = path.posix.join(candidate, "node_modules");
   const localDependency = path.join(checkout, "node_modules");
   rmSync(localDependency, { recursive: true, force: true });
@@ -710,6 +738,59 @@ function sandboxArgs(
     ...invocation,
   );
   return args;
+}
+
+interface SandboxRunnerPlan {
+  mounts: Array<{ source: string; target: string }>;
+  pathEntries: string[];
+}
+
+function pathWithin(root: string, candidate: string): boolean {
+  return candidate === root || candidate.startsWith(`${root}${path.sep}`);
+}
+
+function sandboxRunnerPlan(
+  bindings: readonly VerificationRunnerBinding[],
+): SandboxRunnerPlan {
+  const relevant = bindings.filter((binding) => binding.command !== "bun");
+  const sources = [
+    ...new Set(
+      relevant.flatMap((binding) =>
+        binding.mountSource ? [binding.mountSource] : [],
+      ),
+    ),
+  ]
+    .sort(
+      (left, right) => left.length - right.length || left.localeCompare(right),
+    )
+    .filter(
+      (source, index, all) =>
+        !all.some(
+          (candidate, candidateIndex) =>
+            candidateIndex !== index &&
+            candidate.length < source.length &&
+            pathWithin(candidate, source),
+        ),
+    );
+  const mounts = sources.map((source, index) => ({
+    source,
+    target: `/cadence/runners/${index}`,
+  }));
+  const pathEntries = relevant.map((binding) => {
+    if (!binding.mountSource) return path.dirname(binding.executablePath);
+    const mount = mounts.find((candidate) =>
+      pathWithin(candidate.source, binding.executablePath),
+    );
+    if (!mount) throw new Error("verification runner mount plan is incomplete");
+    const relative = path.relative(
+      mount.source,
+      path.dirname(binding.executablePath),
+    );
+    return relative
+      ? path.posix.join(mount.target, ...relative.split(path.sep))
+      : mount.target;
+  });
+  return { mounts, pathEntries: [...new Set(pathEntries)] };
 }
 
 interface StructuredTestReport {
@@ -1037,44 +1118,44 @@ function rejectUnapprovedDependencies(
 }
 
 function normalizeTarget(
-  input: CandidatePreflightInput,
+  verification: AtomicVerificationContract,
   result: CommandResult,
   secrets: string[],
   report?: StructuredTestReport,
 ): CandidatePreflightResult {
-  const staticCheck = isStaticCheck(input.verification);
+  const vitest = verification.kind === "vitest";
   const output = `${result.stdout}\n${result.stderr}`;
-  const count = staticCheck ? 0 : (report?.total ?? 0);
+  const count = vitest ? (report?.total ?? 0) : 0;
   const identityMatch =
-    input.verification.classification !== "expected-red" ||
-    (staticCheck
-      ? output.includes(input.verification.expectedFailure ?? "")
-      : (report?.failedAssertions.some((failure) =>
-          failure.includes(input.verification.expectedFailure ?? ""),
-        ) ?? false));
+    verification.classification !== "expected-red" ||
+    (vitest
+      ? (report?.failedAssertions.some((failure) =>
+          failure.includes(verification.expectedFailure ?? ""),
+        ) ?? false)
+      : output.includes(verification.expectedFailure ?? ""));
   const loadable =
-    staticCheck ||
+    !vitest ||
     ((report?.fileErrors.length ?? 0) === 0 && !LOAD_FAILURE.test(output));
-  const enoughTests = staticCheck || count >= input.verification.minTests;
+  const enoughTests = !vitest || count >= verification.minTests;
   const accepted =
-    input.verification.classification === "expected-red"
+    verification.classification === "expected-red"
       ? result.status !== 0 &&
-        (staticCheck || (report?.failed ?? 0) > 0) &&
+        (!vitest || (report?.failed ?? 0) > 0) &&
         enoughTests &&
         identityMatch &&
         loadable
       : result.status === 0 &&
-        (staticCheck || report?.success === true) &&
+        (!vitest || report?.success === true) &&
         enoughTests &&
         loadable;
   const details = {
-    commandId: input.verification.id,
+    commandId: verification.id,
     exitCode: result.status ?? 1,
     testCount: count,
     identityMatch,
   };
   if (
-    input.verification.classification === "expected-red" &&
+    verification.classification === "expected-red" &&
     result.status === 0 &&
     enoughTests &&
     loadable
@@ -1092,20 +1173,74 @@ function normalizeTarget(
   }
   return {
     ok: true,
-    classification: input.verification.classification,
+    classification: verification.classification,
     targets: [],
     ...details,
     checkoutRemoved: true,
   };
 }
 
-function isStaticCheck(verification: VerificationContract): boolean {
-  return (
-    verification.argv.length === 3 &&
-    verification.argv[0] === "bun" &&
-    verification.argv[1] === "run" &&
-    verification.argv[2] === "check"
-  );
+function packageScriptInvocation(
+  packageManager: string,
+  script: string,
+  args: string[],
+): string[] {
+  switch (packageManager) {
+    case "npm":
+    case "pnpm":
+      return [packageManager, "run", script, "--", ...args];
+    case "yarn":
+      return [packageManager, "run", script, ...args];
+    default:
+      return ["bun", "run", script, ...args];
+  }
+}
+
+function executableInvocation(
+  runner: Exclude<
+    AtomicVerificationContract,
+    { kind: "package-script" }
+  >["runner"],
+  args: string[],
+): string[] {
+  switch (runner.kind) {
+    case "package-script":
+      return packageScriptInvocation(
+        runner.packageManager,
+        runner.script,
+        args,
+      );
+    case "local-binary":
+      return [
+        path.posix.join("/candidate/node_modules/.bin", runner.executable),
+        ...args,
+      ];
+    case "npx":
+      return ["npx", "--no-install", runner.executable, ...args];
+    case "node":
+      return ["node", runner.script, ...args];
+  }
+}
+
+function verificationInvocation(
+  verification: AtomicVerificationContract,
+  report: boolean,
+): string[] {
+  const reporter = report
+    ? ["--reporter=json", `--outputFile=${SANDBOX_REPORT_TARGET}`]
+    : [];
+  if (verification.kind === "package-script") {
+    return packageScriptInvocation(
+      verification.packageManager,
+      verification.script,
+      verification.args,
+    );
+  }
+  const args =
+    verification.kind === "vitest"
+      ? [...verification.testFiles, ...verification.args, ...reporter]
+      : verification.args;
+  return executableInvocation(verification.runner, args);
 }
 
 function resolveDependencySource(
@@ -1297,29 +1432,53 @@ export async function preflightCandidate(
     await requireRegularGitModes(dependencies, checkout, input.signal);
     scanCheckout(checkout);
 
-    for (const testPath of input.verification.argv.slice(3)) {
-      const stat = lstatSync(safePath(checkout, testPath), {
+    for (const verificationPath of verificationInputPaths(
+      validated.verification,
+    )) {
+      const stat = lstatSync(safePath(checkout, verificationPath), {
         throwIfNoEntry: false,
       });
       if (!stat?.isFile() || stat.isSymbolicLink())
         reject("artifact", "verification-input-unavailable");
     }
 
+    const capability = validateVerificationCapability(
+      checkout,
+      validated.verification,
+      { dependencyOwner: root },
+    );
+    if (!capability.ok) {
+      if (capability.diagnostic.kind === "verification-adapter") {
+        reject("verification-adapter", capability.diagnostic.code);
+      }
+      reject("artifact", "invalid-verification-contract");
+    }
+
     let bwrap: string;
-    let bunExecutable: string;
     try {
       bwrap = dependencies.realpath(dependencies.bwrapPath);
-      bunExecutable = resolveBunExecutable(dependencies);
     } catch {
       reject("environment", "bubblewrap-or-dependency-unavailable");
     }
+    const runnerPlan = sandboxRunnerPlan(capability.runnerBindings);
+    const sandboxSecrets = [
+      root,
+      checkout,
+      ...runnerPlan.mounts.map((mount) => mount.source),
+    ];
+    let bunExecutable =
+      capability.runnerBindings.some((binding) => binding.command === "bun") ||
+      dependencyManifestChanged
+        ? resolveBunExecutable(dependencies)
+        : undefined;
 
     const probeArgs = sandboxArgs(
       checkout,
       dependencySource,
       input.dependencyTarget.kind === "dir",
       bunExecutable,
-      ["bun", "--version"],
+      runnerPlan,
+      ["/bin/true"],
     );
     result = await run(
       dependencies,
@@ -1333,15 +1492,17 @@ export async function preflightCandidate(
     if (result.error || result.status !== 0)
       reject("environment", "sandbox-runtime-unavailable", {
         exitCode: result.status ?? 1,
-        excerpt: commandExcerpt(result, [root, checkout]),
+        excerpt: commandExcerpt(result, sandboxSecrets),
       });
 
     if (dependencyManifestChanged) {
+      bunExecutable ??= resolveBunExecutable(dependencies);
       const dependencyArgs = sandboxArgs(
         checkout,
         dependencySource,
         input.dependencyTarget.kind === "dir",
         bunExecutable,
+        runnerPlan,
         [
           "bun",
           "install",
@@ -1362,81 +1523,67 @@ export async function preflightCandidate(
       if (input.signal?.aborted) reject("cancelled", "cancelled");
       if (result.error || result.status === null)
         reject("environment", "bubblewrap-launch-failed", {
-          excerpt: commandExcerpt(result, [root, checkout]),
+          excerpt: commandExcerpt(result, sandboxSecrets),
         });
       if (result.status !== 0) {
         reject("approval-boundary", "unapproved-dependency-change");
       }
     }
 
-    if (!isStaticCheck(input.verification)) {
-      const checkArgs = sandboxArgs(
+    const steps = verificationSteps(validated.verification);
+    for (const [index, step] of steps.entries()) {
+      const structuredReportPath =
+        step.kind === "vitest"
+          ? path.join(temp, `verification-report-${index}.json`)
+          : undefined;
+      if (structuredReportPath) {
+        writeFileSync(structuredReportPath, "", { mode: 0o600 });
+      }
+      const targetArgs = sandboxArgs(
         checkout,
         dependencySource,
         input.dependencyTarget.kind === "dir",
         bunExecutable,
-        ["bun", "run", "check"],
+        runnerPlan,
+        verificationInvocation(step, structuredReportPath !== undefined),
+        structuredReportPath,
       );
       result = await run(
         dependencies,
         checkout,
         bwrap,
-        checkArgs,
+        targetArgs,
         undefined,
         input.signal,
       );
       if (input.signal?.aborted) reject("cancelled", "cancelled");
-      if (result.error || result.status === null)
+      requireCurrentHost(input);
+      if (result.error || result.status === null) {
         reject("environment", "bubblewrap-launch-failed", {
-          excerpt: commandExcerpt(result, [root, checkout]),
+          excerpt: commandExcerpt(result, sandboxSecrets),
         });
-      if (result.status !== 0)
-        reject("artifact", "candidate-check-failed", {
-          commandId: input.verification.id,
-          exitCode: result.status,
-          excerpt: commandExcerpt(result, [root, checkout]),
-        });
+      }
+      const report = structuredReportPath
+        ? structuredTestReport(structuredReportPath)
+        : undefined;
+      const normalized = normalizeTarget(step, result, sandboxSecrets, report);
+      if (!normalized.ok) {
+        outcome =
+          index < steps.length - 1
+            ? failed("artifact", "candidate-check-failed", {
+                commandId: step.id,
+                exitCode: normalized.exitCode,
+                testCount: normalized.testCount,
+                identityMatch: normalized.identityMatch,
+                excerpt: normalized.excerpt,
+              })
+            : normalized;
+        break;
+      }
+      if (index === steps.length - 1) {
+        outcome = { ...normalized, targets };
+      }
     }
-
-    const structuredReportPath = isStaticCheck(input.verification)
-      ? undefined
-      : path.join(temp, "verification-report.json");
-    if (structuredReportPath)
-      writeFileSync(structuredReportPath, "", { mode: 0o600 });
-    const targetInvocation = structuredReportPath
-      ? [
-          ...input.verification.argv,
-          "--reporter=json",
-          `--outputFile=${SANDBOX_REPORT_TARGET}`,
-        ]
-      : input.verification.argv;
-    const targetArgs = sandboxArgs(
-      checkout,
-      dependencySource,
-      input.dependencyTarget.kind === "dir",
-      bunExecutable,
-      targetInvocation,
-      structuredReportPath,
-    );
-    result = await run(
-      dependencies,
-      checkout,
-      bwrap,
-      targetArgs,
-      undefined,
-      input.signal,
-    );
-    if (input.signal?.aborted) reject("cancelled", "cancelled");
-    requireCurrentHost(input);
-    if (result.error || result.status === null)
-      reject("environment", "bubblewrap-launch-failed", {
-        excerpt: commandExcerpt(result, [root, checkout]),
-      });
-    const report = structuredReportPath
-      ? structuredTestReport(structuredReportPath)
-      : undefined;
-    const normalized = normalizeTarget(input, result, [root, checkout], report);
-    outcome = normalized.ok ? { ...normalized, targets } : normalized;
   } catch (error) {
     if (input.signal?.aborted) outcome = failed("cancelled", "cancelled");
     else if (error instanceof PreflightFailure)

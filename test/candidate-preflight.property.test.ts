@@ -23,6 +23,10 @@ import {
   preflightCandidate,
   type VerificationContract,
 } from "../src/candidate-preflight.ts";
+import type {
+  AtomicVerificationContract,
+  PackageScriptVerificationContract,
+} from "../src/contracts.ts";
 import type { Bound, DirBound, FileBound } from "../src/file-snapshot.ts";
 import {
   isCurrent,
@@ -166,7 +170,8 @@ function makeFixture(
   roots.push(root);
   mkdirSync(path.join(root, "src"));
   mkdirSync(path.join(root, "test"));
-  mkdirSync(path.join(root, "node_modules"));
+  mkdirSync(path.join(root, "scripts"));
+  mkdirSync(path.join(root, "node_modules/.bin"), { recursive: true });
   writeFileSync(path.join(root, ".gitignore"), "node_modules/\n");
   writeFileSync(
     path.join(root, "package.json"),
@@ -177,6 +182,8 @@ function makeFixture(
         scripts: {
           check: "tsc --noEmit",
           "test:target": "vitest run",
+          "test:run": "vitest run",
+          typecheck: "tsc --noEmit",
         },
         ...(options.trustedDependencies
           ? { trustedDependencies: options.trustedDependencies }
@@ -196,7 +203,17 @@ function makeFixture(
     path.join(root, "test/candidate.test.ts"),
     `// ${RED_IDENTITY}\nexport {};\n`,
   );
+  writeFileSync(
+    path.join(root, "scripts/check-static.mjs"),
+    "process.exitCode = 0;\n",
+  );
   writeFileSync(path.join(root, "node_modules/.sentinel"), "immutable\n");
+  writeFileSync(path.join(root, "node_modules/.bin/vitest"), "#!/bin/sh\n", {
+    mode: 0o755,
+  });
+  writeFileSync(path.join(root, "node_modules/.bin/tsc"), "#!/bin/sh\n", {
+    mode: 0o755,
+  });
 
   git(root, ["init", "-q"]);
   git(root, ["config", "user.email", "test@example.invalid"]);
@@ -208,6 +225,7 @@ function makeFixture(
     "src/value.ts",
     "src/deleted.ts",
     "test/candidate.test.ts",
+    "scripts/check-static.mjs",
   ];
   git(root, ["add", "--", ...baselinePaths]);
   git(root, ["commit", "-qm", "baseline"]);
@@ -239,8 +257,16 @@ function verification(
   classification: VerificationContract["classification"],
 ): VerificationContract {
   return {
+    kind: "vitest",
     id: `candidate-preflight-${classification}`,
-    argv: ["bun", "run", "test:target", "test/candidate.test.ts"],
+    runner: {
+      kind: "package-script",
+      packageManager: "bun",
+      script: "test:target",
+      command: "vitest run",
+    },
+    testFiles: ["test/candidate.test.ts"],
+    args: [],
     classification,
     ...(classification === "expected-red"
       ? { expectedFailure: RED_IDENTITY }
@@ -253,13 +279,87 @@ function staticVerification(
   classification: VerificationContract["classification"],
 ): VerificationContract {
   return {
+    kind: "package-script",
     id: `candidate-static-${classification}`,
-    argv: ["bun", "run", "check"],
+    packageManager: "bun",
+    script: "check",
+    command: "tsc --noEmit",
+    args: [],
     classification,
     ...(classification === "expected-red"
       ? { expectedFailure: "[PREFLIGHT:static-red]" }
       : {}),
+  };
+}
+
+function npmVitestVerification(
+  classification: VerificationContract["classification"],
+): VerificationContract {
+  return {
+    kind: "vitest",
+    id: `candidate-npm-vitest-${classification}`,
+    runner: {
+      kind: "package-script",
+      packageManager: "npm",
+      script: "test:run",
+      command: "vitest run",
+    },
+    testFiles: ["test/candidate.test.ts"],
+    args: [],
+    classification,
+    ...(classification === "expected-red"
+      ? { expectedFailure: RED_IDENTITY }
+      : {}),
     minTests: 1,
+  } as VerificationContract;
+}
+
+function packageScriptVerification(): PackageScriptVerificationContract {
+  return {
+    kind: "package-script",
+    id: "candidate-package-typecheck",
+    packageManager: "npm",
+    script: "typecheck",
+    command: "tsc --noEmit",
+    args: [],
+    classification: "expected-green",
+  };
+}
+
+function nodeStaticVerification(): VerificationContract {
+  return {
+    kind: "static-check",
+    id: "candidate-node-static",
+    runner: { kind: "node", script: "scripts/check-static.mjs" },
+    args: [],
+    classification: "expected-green",
+  };
+}
+
+function localBinaryStaticVerification(): VerificationContract {
+  return {
+    kind: "static-check",
+    id: "candidate-local-static",
+    runner: { kind: "local-binary", executable: "tsc" },
+    args: ["--noEmit"],
+    classification: "expected-green",
+  };
+}
+
+function verificationWithPrecheck(
+  target: VerificationContract,
+): VerificationContract {
+  if (target.kind === undefined || target.kind === "steps") {
+    throw new Error("fixture target must be structured and atomic");
+  }
+  return {
+    kind: "steps",
+    id: `steps-${target.id}`,
+    classification: target.classification,
+    steps: [
+      staticVerification("expected-green") as AtomicVerificationContract,
+      target as AtomicVerificationContract,
+    ],
   };
 }
 
@@ -359,7 +459,7 @@ function structuredReportFor(outcome: CommandOutcome): Record<string, unknown> {
 }
 
 function invocationFrom(args: string[]): string[] {
-  const separator = args.lastIndexOf("--");
+  const separator = args.indexOf("--");
   if (separator >= 0) return args.slice(separator + 1);
   const bun = args.findIndex((arg) => arg === "bun" || arg.endsWith("/bun"));
   return bun >= 0 ? args.slice(bun) : [];
@@ -441,7 +541,8 @@ function makeDependencies(script: SandboxScript = {}): {
 
     const invocation = invocationFrom(args);
     const kind: SandboxCall["kind"] =
-      invocation[0]?.endsWith("bun") && invocation[1] === "--version"
+      (invocation.length === 1 && invocation[0] === "/bin/true") ||
+      (invocation.length === 2 && invocation[1] === "--version")
         ? "probe"
         : invocation[1] === "install" &&
             invocation.includes("--frozen-lockfile")
@@ -621,14 +722,11 @@ describe("[SLICE-2:typed-failure] isolated candidate preflight", () => {
     const input = inputFor(fixture);
     const harness = makeDependencies();
     const unknown = new Error("unknown preflight invariant");
-    const argv = input.verification.argv;
-    let sliceCount = 0;
-    input.verification.argv = new Proxy(argv, {
-      get(target, property, receiver) {
-        if (property === "slice" && ++sliceCount === 2) throw unknown;
-        return Reflect.get(target, property, receiver);
-      },
-    });
+    const spawn = harness.dependencies.spawn;
+    harness.dependencies.spawn = async (command, args, options) => {
+      if (command === "git" && args.includes("bundle")) throw unknown;
+      return spawn(command, args, options);
+    };
 
     await expect(preflight(input, harness.dependencies)).rejects.toBe(unknown);
     expect(harness.observed.temps).not.toHaveLength(0);
@@ -812,6 +910,165 @@ describe("[SLICE-2:typed-failure] isolated candidate preflight", () => {
       });
     },
   );
+
+  it("runs an approved npm Vitest target without an implicit bun check", async () => {
+    const preflight = requirePreflight();
+    const fixture = makeFixture();
+    const input = inputFor(fixture, {
+      verification: npmVitestVerification("expected-green"),
+    });
+    const harness = makeDependencies();
+
+    const result = await preflight(input, harness.dependencies);
+
+    expect(result.ok).toBe(true);
+    expect(
+      harness.observed.calls.filter((call) => call.kind === "check"),
+    ).toEqual([]);
+    const target = harness.observed.calls.find(
+      (call) => call.kind === "target",
+    );
+    expect(target?.invocation).toEqual(
+      expect.arrayContaining([
+        "npm",
+        "run",
+        "test:run",
+        "test/candidate.test.ts",
+        "--reporter=json",
+      ]),
+    );
+  });
+
+  it("does not inject Vitest reporter arguments into package scripts", async () => {
+    const preflight = requirePreflight();
+    const fixture = makeFixture();
+    const input = inputFor(fixture, {
+      verification: packageScriptVerification(),
+    });
+    const harness = makeDependencies();
+
+    const result = await preflight(input, harness.dependencies);
+
+    expect(result.ok).toBe(true);
+    const target = harness.observed.calls.find(
+      (call) => call.kind === "target",
+    );
+    expect(target?.invocation).toEqual(["npm", "run", "typecheck", "--"]);
+    expect(target?.invocation.join(" ")).not.toContain("reporter=json");
+    expect(target?.invocation.join(" ")).not.toContain("outputFile");
+  });
+
+  it("executes an approved Node static check without Vitest arguments", async () => {
+    const preflight = requirePreflight();
+    const fixture = makeFixture();
+    const input = inputFor(fixture, { verification: nodeStaticVerification() });
+    const harness = makeDependencies();
+
+    const result = await preflight(input, harness.dependencies);
+
+    expect(result.ok).toBe(true);
+    const target = harness.observed.calls.find(
+      (call) => call.kind === "target",
+    );
+    expect(target?.invocation).toEqual(["node", "scripts/check-static.mjs"]);
+    expect(target?.invocation.join(" ")).not.toContain("reporter=json");
+    expect(target?.invocation.join(" ")).not.toContain("outputFile");
+  });
+
+  it("does not impose a --version probe on an approved local binary", async () => {
+    const preflight = requirePreflight();
+    const fixture = makeFixture();
+    const input = inputFor(fixture, {
+      verification: localBinaryStaticVerification(),
+    });
+    const harness = makeDependencies();
+
+    const result = await preflight(input, harness.dependencies);
+
+    expect(result.ok).toBe(true);
+    expect(harness.observed.calls[0]?.invocation).toEqual(["/bin/true"]);
+    expect(
+      harness.observed.calls.some((call) =>
+        call.invocation.includes("--version"),
+      ),
+    ).toBe(false);
+    expect(harness.observed.calls.at(-1)?.invocation).toEqual([
+      "/candidate/node_modules/.bin/tsc",
+      "--noEmit",
+    ]);
+  });
+
+  it("binds a PATH-discovered npm toolchain outside system roots", async () => {
+    const preflight = requirePreflight();
+    const fixture = makeFixture();
+    const toolchain = mkdtempSync(path.join(tmpdir(), "cadence-path-runner-"));
+    roots.push(toolchain);
+    const installRoot = path.join(toolchain, "node-v22");
+    const bin = path.join(installRoot, "bin");
+    const npmBin = path.join(installRoot, "lib/node_modules/npm/bin");
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(npmBin, { recursive: true });
+    writeFileSync(path.join(bin, "node"), "#!/bin/sh\n", { mode: 0o755 });
+    writeFileSync(path.join(npmBin, "npm-cli.js"), "#!/usr/bin/env node\n", {
+      mode: 0o755,
+    });
+    symlinkSync(
+      "../lib/node_modules/npm/bin/npm-cli.js",
+      path.join(bin, "npm"),
+    );
+    const originalPath = process.env.PATH;
+    process.env.PATH = [bin, originalPath].filter(Boolean).join(path.delimiter);
+    try {
+      const harness = makeDependencies();
+      const result = await preflight(
+        inputFor(fixture, { verification: packageScriptVerification() }),
+        harness.dependencies,
+      );
+
+      expect(result.ok).toBe(true);
+      const target = harness.observed.calls.find(
+        (call) => call.kind === "target",
+      );
+      expect(target?.args).toEqual(
+        expect.arrayContaining([
+          "--ro-bind",
+          installRoot,
+          "/cadence/runners/0",
+        ]),
+      );
+      const pathIndex = target?.args.indexOf("PATH") ?? -1;
+      expect(target?.args[pathIndex + 1]).toContain("/cadence/runners/0/bin");
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+    }
+  });
+
+  it("classifies a missing approved script as an adapter failure before Bubblewrap", async () => {
+    const preflight = requirePreflight();
+    const fixture = makeFixture();
+    const input = inputFor(fixture, {
+      verification: {
+        ...packageScriptVerification(),
+        script: "typecheck:missing",
+      },
+    });
+    const harness = makeDependencies();
+
+    const result = await preflight(input, harness.dependencies);
+
+    expect(result).toMatchObject({
+      ok: false,
+      kind: "verification-adapter",
+      code: "script-missing",
+      checkoutRemoved: true,
+    });
+    expect(result).not.toMatchObject({
+      kind: "environment",
+      code: "bubblewrap-or-dependency-unavailable",
+    });
+    expect(harness.observed.calls).toEqual([]);
+  });
 
   it("rejects pnpm patchedDependencies even when the package name is dependency-approved", async () => {
     const preflight = requirePreflight();
@@ -1133,6 +1390,9 @@ describe("[SLICE-2:typed-failure] isolated candidate preflight", () => {
         build: (fixture) => ({
           input: inputFor(fixture, {
             diff: MALFORMED_SOURCE_DIFF,
+            verification: verificationWithPrecheck(
+              verification("expected-green"),
+            ),
           }),
           script: {
             check: {
@@ -1417,9 +1677,12 @@ describe("[SLICE-2:typed-failure] isolated candidate preflight", () => {
     const target = harness.observed.calls.find(
       (call) => call.kind === "target",
     );
-    expect(check?.invocation).toEqual(["bun", "run", "check"]);
+    expect(check).toBeUndefined();
     expect(target?.invocation).toEqual([
-      ...input.verification.argv,
+      "bun",
+      "run",
+      "test:target",
+      "test/candidate.test.ts",
       "--reporter=json",
       `--outputFile=${SANDBOX_REPORT_TARGET}`,
     ]);
@@ -1428,12 +1691,12 @@ describe("[SLICE-2:typed-failure] isolated candidate preflight", () => {
         (arg, index, args) =>
           arg === "--bind" &&
           args[index + 2] === SANDBOX_REPORT_TARGET &&
-          args[index + 1]?.endsWith("verification-report.json"),
+          args[index + 1]?.endsWith("verification-report-0.json"),
       ),
     ).toBe(true);
     const bunExecutable = resolveBunExecutable();
     const home = process.env.HOME ? realpathSync(process.env.HOME) : undefined;
-    for (const call of [check, target]) {
+    for (const call of [target]) {
       expect(call).toBeDefined();
       const sandbox = call?.args ?? [];
       expect(
@@ -1674,7 +1937,12 @@ describe("[SLICE-2:typed-failure] isolated candidate preflight", () => {
       },
     });
 
-    const result = await preflight(inputFor(fixture), harness.dependencies);
+    const result = await preflight(
+      inputFor(fixture, {
+        verification: verificationWithPrecheck(verification("expected-green")),
+      }),
+      harness.dependencies,
+    );
 
     expect(result).toMatchObject({
       ok: false,

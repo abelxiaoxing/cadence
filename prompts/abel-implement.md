@@ -63,12 +63,19 @@ Implement 不重新作出或请求 Gate A/B 决策；只有 Gate receipts、arti
 7. `openspec validate <name> --strict --type change` 问题为零。
 8. 阅读 `artifactPaths` 报告的全部规划产物；运行 `openspec instructions apply --change <name> --json` 并遵循其 apply 契约。
 9. 校验稳定 Requirement/Scenario 引用、Requirement → Scenario → Verification → Task 追溯链，以及每个任务的前置条件、`depends_on`、计划写集、冲突/资源锁、派发上下文、验证、批准依赖、结构化 AGENTS 影响和影响闭包契约；缺失、含糊或不可判定时按下方矩阵关闭失败。
+   每个 phase 必须是 Gate B 批准的结构化 `kind: "vitest" | "package-script" | "static-check" | "steps"`；Implement 不从命令固定下标猜测语义，也不隐式运行 `bun run check`、`bun run test:target` 或任何 consumer script。
+   `steps` 按声明顺序执行；precheck 必须是显式 `expected-green` step，不得用 `&&` 或其他 shell operator 合成。
 10. 影响闭包（impact closure）：若任务修改路由授权、页面状态、API 响应或公共 HTML，检查 URL/路由/handler/template 检索证据及全部相关既有测试归类。
     E2E、theme/layout、authorization、HTML/template、API contract 测试必须进入当前写集、明确后续回归任务或有不受影响证据；affected suite 不能只包含新增测试。
     `/videos`、`/api/videos` 等变化须检查全部这些测试面。
-11. 在任何写入前运行并记录每个未完成任务的目标命令、全部 affected-suite 命令与完整套件基线：命令、退出码、归一化失败标识/原因。
+11. 在注册任务和运行 Red 前，对 ready receipt 的 `taskContractsExecutable: true` 与所有 TaskBoundary verification 重跑共享 `assessVerificationReadiness`。
+    package script 的 package manager、名称与完整 command 必须和当前 consumer `package.json` 一致；本地 executable 必须受 `node_modules` 约束；`npx` 只能用 `noInstall: true` 并编译为 `--no-install`，不允许下载。
+    `vitest` 才注入 JSON reporter、应用 `minTests` 并解析 assertion Red identity；`package-script`/`static-check` 不附加 Vitest 参数，只使用退出码和批准的稳定输出 identity。
+    parent-only AGENTS checkpoint 可使用合法的 Node/static contract。
+    不支持的 shape 是 `design-readiness/verification-contract-unsupported` stage blocker；缺失 script 是 `verification-adapter/script-missing`，其他缺失/漂移能力使用精确 adapter code；只有 Bubblewrap、Bun 解析、依赖路径或 sandbox runtime 不可用才使用 environment code。
+12. 在任何写入前运行并记录每个未完成任务的目标命令、全部 affected-suite 命令与完整套件基线：命令、退出码、归一化失败标识/原因。
     尚未加入 Red 验证时，目标命令可记录为契约规定的预期状态；既有失败与目标 Red 严格分离，既有失败绝不算 Red。
-12. 可信交付无效时，在注册任务前输出 stage-level blocker；不得伪装成 task outcome。
+13. 可信交付无效时，在注册任务前输出 stage-level blocker；不得伪装成 task outcome。
     boundary 外的新路径、依赖、行为、策略、架构、冲突、资源、verification 或 AGENTS 需求使当前任务以 typed `approval-boundary` failure 终止。
     工具、依赖路径、命令或沙箱不可用使当前任务以 typed environment failure 终止；可机械修复的产物仅使用 phase 的有界 correction budget。
 
@@ -124,6 +131,7 @@ Runtime 只报告当前任务事实，不选择用户恢复动作，也不控制
 - malformed diff、syntax/import/load、no-test/错误命令、wrong Red identity、重复/无效提交或 Red 候选意外通过：`{ kind: "artifact", code: <closed-artifact-code> }`，其中意外通过使用 `red-not-witnessed`；首次可在共享两次 launch 内修正，耗尽为 `attempts-exhausted`。
 - stale snapshot 使用 `{ kind: "stale", code: <closed-stale-code> }`；可机械重派的 transport failure 使用 `{ kind: "transport", code: "transport-failure" }`；首次可在共享两次 launch 内刷新或同调用重派，耗尽为 `attempts-exhausted`。
 - Bubblewrap、依赖路径、测试沙箱或外部环境不可用：`{ kind: "environment", code: <closed-environment-code> }`，当前任务 terminal blocked。
+- 缺失/漂移的已批准 script、runner、本地 executable 或 verification input：`{ kind: "verification-adapter", code: <closed-adapter-code> }`；`script-missing` 不得误报为 `bubblewrap-or-dependency-unavailable`。
 - 新路径、依赖、行为、策略、架构、冲突、资源、verification 或 AGENTS 合同：对应 closed `approval-boundary` code，当前任务 terminal blocked，不扩大 boundary。
 - result size 超限：`{ kind: "result-limit", limitBytes }`，当前任务 terminal blocked，不接受 partial diff。
 

@@ -1,4 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -72,6 +78,18 @@ async function controlledToolSession(
 ) {
   const cwd = mkdtempSync(join(tmpdir(), "abel-pi-tool-error-"));
   roots.push(cwd);
+  mkdirSync(join(cwd, "test"));
+  mkdirSync(join(cwd, "node_modules/.bin"), { recursive: true });
+  writeFileSync(
+    join(cwd, "test/prompt-activation.integration.test.ts"),
+    "// prompt activation fixture\n",
+  );
+  writeFileSync(
+    join(cwd, "package.json"),
+    JSON.stringify({ scripts: { "test:target": "vitest run" } }),
+  );
+  writeFileSync(join(cwd, "node_modules/.bin/vitest"), "#!/bin/sh\n");
+  chmodSync(join(cwd, "node_modules/.bin/vitest"), 0o755);
   const faux = fauxProvider({
     provider: `abel-pi-tool-error-${sequence++}`,
     api: "faux",

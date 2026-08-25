@@ -185,13 +185,21 @@ describe("real isolated child session", () => {
       `${JSON.stringify({
         private: true,
         scripts: {
-          check:
-            "node -e \"console.error('[CHILD-SESSION:expected-red]'); process.exit(1)\"",
+          check: "node test/check.mjs",
         },
       })}\n`,
     );
+    mkdirSync(join(cwd, "test"));
+    writeFileSync(
+      join(cwd, "test/check.mjs"),
+      "console.error('[CHILD-SESSION:expected-red]');\nprocess.exit(1);\n",
+    );
     writeFileSync(join(cwd, "bun.lock"), "# fixture lock\n");
-    execFileSync("git", ["add", "a.txt"], { cwd });
+    execFileSync(
+      "git",
+      ["add", "a.txt", "package.json", "bun.lock", "test/check.mjs"],
+      { cwd },
+    );
     execFileSync("git", ["commit", "-qm", "base"], { cwd });
     const diff = "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n";
     const submitted = {

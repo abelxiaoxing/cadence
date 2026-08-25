@@ -45,6 +45,54 @@ npm install -g @abelxiaoxing/cadence
 
 本包从不检查或分类 Pi 主机版本，不声明任何版本范围，也不从参考仓库源安装。
 
+## 跨项目验证合同（Cross-project verification）
+
+Cadence 不要求 consumer repository 提供 `check` 或 `test:target` 脚本。
+Gate B 使用 Implement Runtime 同一套 capability validator，只批准 consumer 当前确实能够执行的结构化合同：
+
+- `vitest`：显式 package script、本地 binary 或 `npx`（必须 `noInstall: true`），安全相对测试路径和 `minTests`。
+  只有这个 kind 会注入 JSON reporter 并校验 Red assertion identity。
+- `package-script`：固定 `bun | npm | pnpm | yarn`、script 名、完整 script
+  command 和参数；可用于 typecheck、build 与仓库已有测试脚本。
+- `static-check`：本地 binary、禁止下载的 `npx` 或安全相对 Node script；可用于
+  schema/Prisma/AGENTS 等静态检查，不接收 Vitest 参数。
+- `steps`：显式有序 precheck/target；不使用 `&&` 拼接复合命令。
+
+例如 npm-only consumer 的 Vitest target：
+
+```json
+{
+  "kind": "vitest",
+  "id": "npm-vitest-target",
+  "runner": {
+    "kind": "package-script",
+    "packageManager": "npm",
+    "script": "test:run",
+    "command": "vitest run"
+  },
+  "testFiles": ["tests/utils/upstreamFetch.test.js"],
+  "args": [],
+  "classification": "expected-green",
+  "minTests": 1
+}
+```
+
+Prisma 检查使用本地已安装 executable，不会隐式联网：
+
+```json
+{
+  "kind": "static-check",
+  "id": "prisma-schema",
+  "runner": { "kind": "npx", "executable": "prisma", "noInstall": true },
+  "args": ["validate"],
+  "classification": "expected-green"
+}
+```
+
+迁移时，将新的 Gate B argv 命令改为上述 kind；需要 `typecheck` 再测试时用 `steps`，并把 typecheck 建模为 expected-green precheck。
+Cadence 仍接受旧版 `bun run test:target <paths>` 和 `bun run check` 合同并立即规范化，但 Design 不再生成 argv-only 合同。
+脚本缺失会在 readiness 以 `verification-adapter/script-missing` 明确关闭，而不是在 Red 阶段误报为 Bubblewrap 或依赖环境故障。
+
 ## 开发（Development）
 
 ```sh
@@ -60,7 +108,7 @@ bun run check:agents          # AGENTS 索引校验
 
 ```sh
 bun run verify      # check && lint && test && pack:check（发布前全套校验）
-bun run pack:check  # 真实 tarball 39 成员清单校验
+bun run pack:check  # 真实 tarball 44 成员清单校验
 bun run traceability:check   # 81 条 Requirement/Scenario 引用精确解析
 ```
 

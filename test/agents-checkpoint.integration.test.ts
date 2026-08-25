@@ -43,7 +43,18 @@ function fixture(): string {
     path.join(root, "AGENTS.md"),
     ["# Human policy", "", START, "- old route", END, ""].join("\n"),
   );
-  execFileSync("git", ["add", "AGENTS.md"], { cwd: root });
+  mkdirSync(path.join(root, "scripts"));
+  writeFileSync(
+    path.join(root, "scripts/check.mjs"),
+    "process.exitCode = 0;\n",
+  );
+  writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ scripts: { check: "node scripts/check.mjs" } }),
+  );
+  execFileSync("git", ["add", "AGENTS.md", "package.json", "scripts"], {
+    cwd: root,
+  });
   execFileSync("git", ["commit", "-qm", "baseline"], { cwd: root });
   return root;
 }
@@ -105,21 +116,33 @@ function docsTaskRequest(
           read: [document],
           write: [document],
           verification: {
+            kind: "static-check",
             id: `${taskId}-static-red`,
-            argv: ["bun", "run", "check"],
+            runner: {
+              kind: "package-script",
+              packageManager: "bun",
+              script: "check",
+              command: "node scripts/check.mjs",
+            },
+            args: [],
             classification: "expected-red",
             expectedFailure: "[DOCS:missing-approved-route]",
-            minTests: 1,
           },
         },
         green: {
           read: [document],
           write: [document],
           verification: {
+            kind: "static-check",
             id: `${taskId}-static-green`,
-            argv: ["bun", "run", "check"],
+            runner: {
+              kind: "package-script",
+              packageManager: "bun",
+              script: "check",
+              command: "node scripts/check.mjs",
+            },
+            args: [],
             classification: "expected-green",
-            minTests: 1,
           },
         },
       },

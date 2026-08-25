@@ -57,6 +57,7 @@ const expectedMembers = [
   "package/src/subagent-activity.ts",
   "package/src/subagent-endpoint.ts",
   "package/src/submit-tool.ts",
+  "package/src/verification-capability.ts",
   "package/src/worker.ts",
 ].sort();
 

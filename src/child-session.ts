@@ -185,6 +185,7 @@ function safeChildError(failure: ChildFailure): string {
       return "child phase cancelled";
     case "stale":
     case "approval-boundary":
+    case "verification-adapter":
     case "result-limit":
       return "child result rejected";
   }

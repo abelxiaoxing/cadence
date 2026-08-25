@@ -28,6 +28,11 @@ describe("shared Abel workflow and Init contracts", () => {
     expect(skill).toMatch(/baseline/i);
     expect(skill).toMatch(/ABEL:AGENTS-INDEX:START/);
     expect(skill).toMatch(/parent[\s\S]*subagent/i);
+    expect(skill).toMatch(/assessVerificationReadiness/);
+    expect(skill).toMatch(/taskContractsExecutable/);
+    expect(skill).toMatch(
+      /vitest[\s\S]*package-script[\s\S]*static-check[\s\S]*steps/i,
+    );
   });
 
   it("makes Init load the core Skill before any writes", () => {

@@ -17,6 +17,7 @@ import {
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Activation } from "../src/activation";
+import { cloneVerificationContract } from "../src/contracts.ts";
 import {
   mergeBounds,
   snapshotDirManifests,
@@ -287,7 +288,9 @@ describe("Runtime Scheduler integration", () => {
         phase: "red",
         readSet: ["a.txt"],
         writeSet: ["a.txt"],
-        verification: phaseRequest.boundary.phases.red.verification,
+        verification: cloneVerificationContract(
+          phaseRequest.boundary.phases.red.verification as never,
+        ),
         agentsImpact: "none",
         agentsTarget: null,
         agentsManagedOnly: true,
@@ -320,12 +323,14 @@ describe("Runtime Scheduler integration", () => {
       "if(f.existsSync('fixtures/removed.txt'))process.exit(1)",
       "if(f.readFileSync('fixtures/untracked.txt','utf8')!=='untracked\\n')process.exit(1)",
     ].join(";");
+    mkdirSync(join(root, "scripts"));
+    writeFileSync(join(root, "scripts/check-directory.cjs"), `${check};\n`);
     writeFileSync(
       join(root, "package.json"),
       `${JSON.stringify({
         private: true,
         scripts: {
-          check: `node -e "${check}"`,
+          check: "node scripts/check-directory.cjs",
           "test:target": "vitest run",
         },
       })}\n`,
@@ -345,7 +350,43 @@ describe("Runtime Scheduler integration", () => {
           ...request("directory-baseline", root).boundary.phases,
           red: {
             ...request("directory-baseline", root).boundary.phases.red,
-            read: ["fixtures"],
+            read: [
+              "fixtures",
+              "scripts/check-directory.cjs",
+              "test/expected-red.mjs",
+            ],
+            verification: {
+              kind: "steps",
+              id: "directory-baseline-red-steps",
+              classification: "expected-red",
+              steps: [
+                {
+                  kind: "static-check",
+                  id: "directory-baseline-static",
+                  runner: {
+                    kind: "node",
+                    script: "scripts/check-directory.cjs",
+                  },
+                  args: [],
+                  classification: "expected-green",
+                },
+                {
+                  kind: "vitest",
+                  id: "directory-baseline-red",
+                  runner: {
+                    kind: "package-script",
+                    packageManager: "bun",
+                    script: "test:target",
+                    command: "vitest run",
+                  },
+                  testFiles: ["test/expected-red.mjs"],
+                  args: [],
+                  classification: "expected-red",
+                  expectedFailure: "[RUNTIME-SCHEDULER:expected-red]",
+                  minTests: 1,
+                },
+              ],
+            },
           },
         },
       },
@@ -353,7 +394,11 @@ describe("Runtime Scheduler integration", () => {
         ...request("directory-baseline", root).attempt,
         snapshot: mergeBounds(
           snapshotDirManifests(root, ["fixtures"]),
-          snapshotFiles(root, ["a.txt"]),
+          snapshotFiles(root, [
+            "a.txt",
+            "scripts/check-directory.cjs",
+            "test/expected-red.mjs",
+          ]),
         ),
       },
     };
@@ -386,7 +431,7 @@ describe("Runtime Scheduler integration", () => {
     );
   });
 
-  it("sanitizes preflight preparation exceptions and terminally blocks", async () => {
+  it("closes an unreadable local verification executable before Red", async () => {
     const root = makeRoot();
     const runtime = activeRuntime();
     const faux = fauxProvider({
@@ -399,11 +444,6 @@ describe("Runtime Scheduler integration", () => {
     ]);
     const context = await contextFor(root, faux);
     const phaseRequest = request("preflight-error", root);
-    const retryRequest = {
-      stage: "abel-implement",
-      kind: "phase-attempt",
-      attempt: phaseRequest.attempt,
-    };
     chmodSync(join(root, "node_modules"), 0o000);
 
     try {
@@ -412,30 +452,17 @@ describe("Runtime Scheduler integration", () => {
         { request: phaseRequest },
         context,
       );
-      const replay = await runtime.execute(
-        "run",
-        { request: retryRequest },
-        context,
-      );
-
       expect(first).toMatchObject({
-        kind: "blocked",
-        taskId: "preflight-error",
-        requestId: "preflight-error",
-        phase: "red",
-        failure: { kind: "environment" },
+        ok: false,
+        failure: {
+          kind: "verification-adapter",
+          code: "local-executable-missing",
+        },
       });
-      expect(replay).toMatchObject({
-        kind: "blocked",
-        taskId: "preflight-error",
-        requestId: "preflight-error",
-        phase: "red",
-        failure: { kind: "environment" },
-      });
-      expect(JSON.stringify([first, replay])).not.toMatch(
+      expect(JSON.stringify(first)).not.toMatch(
         /EACCES|node_modules|abel-runtime-scheduler-/i,
       );
-      expect(faux.state.callCount).toBe(1);
+      expect(faux.state.callCount).toBe(0);
     } finally {
       chmodSync(join(root, "node_modules"), 0o755);
       await runtime.execute("finish", {}, context);

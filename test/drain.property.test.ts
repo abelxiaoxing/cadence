@@ -8,6 +8,7 @@
 
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -57,7 +58,7 @@ function makeRoot(tag: string): string {
   });
   execFileSync("git", ["config", "user.name", "Abel Drain"], { cwd });
   writeFileSync(join(cwd, "a.txt"), "old\n");
-  mkdirSync(join(cwd, "node_modules"));
+  mkdirSync(join(cwd, "node_modules/.bin"), { recursive: true });
   mkdirSync(join(cwd, "test"));
   writeFileSync(
     join(cwd, "package.json"),
@@ -93,6 +94,8 @@ function makeRoot(tag: string): string {
       "",
     ].join("\n"),
   );
+  writeFileSync(join(cwd, "node_modules/.bin/vitest"), "#!/bin/sh\n");
+  chmodSync(join(cwd, "node_modules/.bin/vitest"), 0o755);
   execFileSync("git", ["add", "a.txt", "package.json", "bun.lock", "test"], {
     cwd,
   });
