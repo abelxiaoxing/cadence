@@ -19,12 +19,18 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Activation } from "../src/activation";
 import type { ImplementRunRequest } from "../src/contracts";
 import {
+  type Bound,
   mergeBounds,
   snapshotDirManifests,
   snapshotFiles,
 } from "../src/file-snapshot";
 import { runtimeForProvider } from "../src/parent-provider";
 import { Runtime } from "../src/runtime";
+import {
+  admitGraph,
+  type ImplementTaskFixture,
+  taskAttemptFor,
+} from "./helpers/implement-graph-fixture.ts";
 import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 const tempRoots: string[] = [];
@@ -133,20 +139,26 @@ function addPatch(path: string, content: string): string {
 }
 
 function diffRequest(input: {
+  root: string;
   id: string;
   read: string[];
   write: string[];
   green?: { read: string[]; write: string[] };
-  snapshot: unknown;
-}): Extract<ImplementRunRequest, { kind: "open-task" }> {
+  snapshot: Bound;
+}): ImplementTaskFixture {
   const verification = (phase: "red" | "green") => ({
+    kind: "vitest" as const,
     id: `verify-${input.id}-${phase}`,
-    argv: [
-      "bun",
-      "run",
-      "test:target",
+    runner: {
+      kind: "package-script" as const,
+      packageManager: "bun" as const,
+      script: "test:target",
+      command: "vitest run",
+    },
+    testFiles: [
       phase === "red" ? "test/expected-red.mjs" : "test/expected-green.mjs",
     ],
+    args: [],
     classification:
       phase === "red" ? ("expected-red" as const) : ("expected-green" as const),
     ...(phase === "red"
@@ -155,11 +167,10 @@ function diffRequest(input: {
     minTests: 1,
   });
   return {
-    stage: "abel-implement",
-    kind: "open-task",
     boundary: {
       changeId: "file-concurrency-fixture",
       taskId: input.id,
+      dependsOn: [],
       objective: `Complete ${input.id}`,
       roots: ["."],
       context: {
@@ -168,16 +179,34 @@ function diffRequest(input: {
       },
       phases: {
         red: {
-          read: input.read,
+          read: [
+            ...input.read,
+            "test/expected-red.mjs",
+            "test/expected-green.mjs",
+            "package.json",
+          ],
           write: input.write,
           verificationLock: `verify-${input.id}`,
           verification: verification("red"),
+          verificationInputs: [
+            { kind: "workspace", path: "test/expected-red.mjs" },
+            { kind: "workspace", path: "package.json" },
+          ],
         },
         green: {
-          read: input.green?.read ?? input.read,
+          read: [
+            ...(input.green?.read ?? input.read),
+            "test/expected-red.mjs",
+            "test/expected-green.mjs",
+            "package.json",
+          ],
           write: input.green?.write ?? input.write,
           verificationLock: `verify-${input.id}`,
           verification: verification("green"),
+          verificationInputs: [
+            { kind: "workspace", path: "test/expected-green.mjs" },
+            { kind: "workspace", path: "package.json" },
+          ],
         },
       },
       scheduling: { conflicts: [], resources: [] },
@@ -195,29 +224,43 @@ function diffRequest(input: {
       taskId: input.id,
       requestId: input.id,
       phase: "red",
-      snapshot: input.snapshot,
+      snapshot: mergeBounds(
+        input.snapshot,
+        snapshotFiles(input.root, [
+          "test/expected-red.mjs",
+          "test/expected-green.mjs",
+          "package.json",
+        ]),
+      ),
     },
   };
 }
 
 function phaseAttempt(
-  request: Extract<ImplementRunRequest, { kind: "open-task" }>,
+  request: ImplementTaskFixture,
   phase: "green",
   snapshot: unknown,
-): ImplementRunRequest {
+): Extract<ImplementRunRequest, { kind: "task-attempt" }> {
   return {
     stage: "abel-implement",
-    kind: "phase-attempt",
+    kind: "task-attempt",
     attempt: {
       ...structuredClone(request.attempt),
       requestId: `${request.attempt.taskId}:${phase}`,
       phase,
-      snapshot,
+      snapshot: {
+        ...(request.attempt.snapshot as Record<string, unknown>),
+        ...(snapshot as Record<string, unknown>),
+      },
     },
   };
 }
 
-function submittedDiff(request: ImplementRunRequest, diff: string) {
+type AttemptRequest =
+  | ImplementTaskFixture
+  | Extract<ImplementRunRequest, { kind: "task-attempt" }>;
+
+function submittedDiff(request: AttemptRequest, diff: string) {
   return {
     id: request.attempt.requestId,
     role: "implementation-worker",
@@ -235,7 +278,8 @@ function submittedDiff(request: ImplementRunRequest, diff: string) {
 async function runDiff(input: {
   runtime: Runtime;
   root: string;
-  request: ImplementRunRequest;
+  request: AttemptRequest;
+  graph?: ImplementTaskFixture[];
   diff: string;
 }) {
   const submitted = submittedDiff(input.request, input.diff);
@@ -254,11 +298,18 @@ async function runDiff(input: {
     model: faux.getModel(),
     modelRegistry: new ModelRegistry(modelRuntime),
   };
-  const result = await input.runtime.execute(
-    "run",
-    { request: input.request },
-    context,
-  );
+  const request =
+    "boundary" in input.request ? taskAttemptFor(input.request) : input.request;
+  if (
+    "boundary" in input.request &&
+    !(input.runtime as any).registry.getGraph(
+      input.root,
+      input.request.boundary.changeId,
+    )
+  ) {
+    await admitGraph(input.runtime, input.graph ?? [input.request], context);
+  }
+  const result = await input.runtime.execute("run", { request }, context);
   return { context, faux, result };
 }
 
@@ -297,24 +348,19 @@ describe("task-lifetime conflict admission", () => {
       "sibling.txt": "sibling0\n",
     });
     const runtime = activeRuntime();
-    const owner = await runDiff({
-      runtime,
+    const ownerRequest = diffRequest({
       root,
-      request: diffRequest({
-        id: "lifetime-owner",
-        read: ["owner-red.txt"],
-        write: ["owner-red.txt"],
-        green: {
-          read: ["later-shared.txt"],
-          write: ["later-shared.txt"],
-        },
-        snapshot: snapshotFiles(root, ["owner-red.txt"]),
-      }),
-      diff: modifyPatch("owner-red.txt", "owner0", "owner1"),
+      id: "lifetime-owner",
+      read: ["owner-red.txt"],
+      write: ["owner-red.txt"],
+      green: {
+        read: ["later-shared.txt"],
+        write: ["later-shared.txt"],
+      },
+      snapshot: snapshotFiles(root, ["owner-red.txt"]),
     });
-    expect(retainedResultId(owner.result)).toBeTypeOf("string");
-
     const conflictingRequest = diffRequest({
+      root,
       id: "later-phase-contender",
       read: ["contender-red.txt"],
       write: ["contender-red.txt"],
@@ -324,6 +370,22 @@ describe("task-lifetime conflict admission", () => {
       },
       snapshot: snapshotFiles(root, ["contender-red.txt"]),
     });
+    const siblingRequest = diffRequest({
+      root,
+      id: "independent-sibling",
+      read: ["sibling.txt"],
+      write: ["sibling.txt"],
+      snapshot: snapshotFiles(root, ["sibling.txt"]),
+    });
+    const owner = await runDiff({
+      runtime,
+      root,
+      request: ownerRequest,
+      graph: [ownerRequest, conflictingRequest, siblingRequest],
+      diff: modifyPatch("owner-red.txt", "owner0", "owner1"),
+    });
+    expect(retainedResultId(owner.result)).toBeTypeOf("string");
+
     const firstDeferred = await runDiff({
       runtime,
       root,
@@ -339,12 +401,7 @@ describe("task-lifetime conflict admission", () => {
     const sibling = await runDiff({
       runtime,
       root,
-      request: diffRequest({
-        id: "independent-sibling",
-        read: ["sibling.txt"],
-        write: ["sibling.txt"],
-        snapshot: snapshotFiles(root, ["sibling.txt"]),
-      }),
+      request: siblingRequest,
       diff: modifyPatch("sibling.txt", "sibling0", "sibling1"),
     });
 
@@ -367,26 +424,31 @@ describe("file-aware current and stale results", () => {
   it("keeps a disjoint sibling current after applying another accepted result", async () => {
     const root = makeGitRoot({ "a.txt": "a0\n", "b.txt": "b0\n" });
     const runtime = activeRuntime();
+    const leftRequest = diffRequest({
+      root,
+      id: "disjoint-left",
+      read: ["a.txt"],
+      write: ["a.txt"],
+      snapshot: snapshotFiles(root, ["a.txt"]),
+    });
+    const rightRequest = diffRequest({
+      root,
+      id: "disjoint-right",
+      read: ["b.txt"],
+      write: ["b.txt"],
+      snapshot: snapshotFiles(root, ["b.txt"]),
+    });
     const left = await runDiff({
       runtime,
       root,
-      request: diffRequest({
-        id: "disjoint-left",
-        read: ["a.txt"],
-        write: ["a.txt"],
-        snapshot: snapshotFiles(root, ["a.txt"]),
-      }),
+      request: leftRequest,
+      graph: [leftRequest, rightRequest],
       diff: modifyPatch("a.txt", "a0", "a1"),
     });
     const right = await runDiff({
       runtime,
       root,
-      request: diffRequest({
-        id: "disjoint-right",
-        read: ["b.txt"],
-        write: ["b.txt"],
-        snapshot: snapshotFiles(root, ["b.txt"]),
-      }),
+      request: rightRequest,
       diff: modifyPatch("b.txt", "b0", "b1"),
     });
 
@@ -417,6 +479,7 @@ describe("file-aware current and stale results", () => {
       runtime,
       root,
       request: diffRequest({
+        root,
         id: "observes-shared",
         read: ["shared.txt", "worker.txt"],
         write: ["worker.txt"],
@@ -448,31 +511,36 @@ describe("file-aware current and stale results", () => {
       "worker.txt": "worker0\n",
     });
     const runtime = activeRuntime();
+    const observingRequest = diffRequest({
+      root,
+      id: "observes-directory",
+      read: ["docs", "worker.txt"],
+      write: ["worker.txt"],
+      snapshot: mergeBounds(
+        snapshotFiles(root, ["worker.txt"]),
+        snapshotDirManifests(root, ["docs"]),
+      ),
+    });
+    const addingRequest = diffRequest({
+      root,
+      id: "add-directory-entry",
+      read: [],
+      write: ["docs/new.txt"],
+      snapshot: snapshotFiles(root, ["docs/new.txt"], {
+        absent: ["docs/new.txt"],
+      }),
+    });
     const observing = await runDiff({
       runtime,
       root,
-      request: diffRequest({
-        id: "observes-directory",
-        read: ["docs", "worker.txt"],
-        write: ["worker.txt"],
-        snapshot: mergeBounds(
-          snapshotFiles(root, ["worker.txt"]),
-          snapshotDirManifests(root, ["docs"]),
-        ),
-      }),
+      request: observingRequest,
+      graph: [observingRequest, addingRequest],
       diff: modifyPatch("worker.txt", "worker0", "worker1"),
     });
     const adding = await runDiff({
       runtime,
       root,
-      request: diffRequest({
-        id: "add-directory-entry",
-        read: [],
-        write: ["docs/new.txt"],
-        snapshot: snapshotFiles(root, ["docs/new.txt"], {
-          absent: ["docs/new.txt"],
-        }),
-      }),
+      request: addingRequest,
       diff: addPatch("docs/new.txt", "new"),
     });
 
@@ -505,6 +573,7 @@ describe("runtime redispatch and logical Worker identity", () => {
     const root = makeGitRoot({ "a.txt": "alpha\n" });
     const runtime = activeRuntime();
     const request = diffRequest({
+      root,
       id: "retry-once",
       read: ["a.txt"],
       write: ["a.txt"],
@@ -534,7 +603,12 @@ describe("runtime redispatch and logical Worker identity", () => {
       modelRegistry: new ModelRegistry(modelRuntime),
     };
 
-    const result = await runtime.execute("run", { request }, context);
+    await admitGraph(runtime, [request], context);
+    const result = await runtime.execute(
+      "run",
+      { request: taskAttemptFor(request) },
+      context,
+    );
     expect(faux.state.callCount).toBe(2);
     expect(result).toMatchObject({ kind: "candidate" });
   });
@@ -543,6 +617,7 @@ describe("runtime redispatch and logical Worker identity", () => {
     const root = makeGitRoot({ "a.txt": "alpha\n" });
     const runtime = activeRuntime();
     const request = diffRequest({
+      root,
       id: "retry-limit",
       read: ["a.txt"],
       write: ["a.txt"],
@@ -576,7 +651,12 @@ describe("runtime redispatch and logical Worker identity", () => {
       modelRegistry: new ModelRegistry(modelRuntime),
     };
 
-    const result = await runtime.execute("run", { request }, context);
+    await admitGraph(runtime, [request], context);
+    const result = await runtime.execute(
+      "run",
+      { request: taskAttemptFor(request) },
+      context,
+    );
     expect(result).toMatchObject({
       kind: "blocked",
       phase: "red",
@@ -592,10 +672,84 @@ describe("runtime redispatch and logical Worker identity", () => {
     expect(faux.state.callCount).toBe(2);
   });
 
+  it("preserves the final no-submit diagnostic after two bounded launches", async () => {
+    const root = makeGitRoot({ "a.txt": "alpha\n" });
+    const runtime = activeRuntime();
+    const request = diffRequest({
+      root,
+      id: "no-structural-submit",
+      read: ["a.txt"],
+      write: ["a.txt"],
+      snapshot: snapshotFiles(root, ["a.txt"]),
+    });
+    const faux = fauxProvider({
+      provider: `abel-no-submit-faux-${providerSequence++}`,
+      api: "faux",
+    });
+    faux.setResponses([
+      fauxAssistantMessage("prompt=private-first token=sk-private-first", {
+        stopReason: "stop",
+      }),
+      fauxAssistantMessage("diff=private-second endpoint=https://private", {
+        stopReason: "stop",
+      }),
+    ]);
+    const modelRuntime = await runtimeForProvider(faux.provider);
+    const context = {
+      cwd: root,
+      model: faux.getModel(),
+      modelRegistry: new ModelRegistry(modelRuntime),
+    };
+
+    await admitGraph(runtime, [request], context);
+    const first = await runtime.execute(
+      "run",
+      { request: taskAttemptFor(request) },
+      context,
+    );
+    const correction = taskAttemptFor(request);
+    correction.attempt.requestId = "no-structural-submit:red:1";
+    const exhausted = await runtime.execute(
+      "run",
+      { request: correction },
+      context,
+    );
+
+    const lastFailure = {
+      code: "child-no-structural-submit",
+      stage: "child-finalization",
+      details: {
+        finalCategory: "text-only",
+        submitAttempts: 0,
+        schema: "not-submitted",
+      },
+    };
+    expect(first).toMatchObject({
+      kind: "retry",
+      cause: "artifact",
+      remainingAttempts: 1,
+      lastFailure,
+    });
+    expect(exhausted).toMatchObject({
+      kind: "blocked",
+      failure: {
+        kind: "attempts-exhausted",
+        cause: "artifact",
+        attemptsUsed: 2,
+        lastFailure,
+      },
+    });
+    expect(JSON.stringify({ first, exhausted })).not.toMatch(
+      /private-first|private-second|sk-private|https:\/\/private|prompt=|diff=/i,
+    );
+    expect(faux.state.callCount).toBe(2);
+  });
+
   it("does not treat an expanded recovery contract as a mechanical redispatch", async () => {
     const root = makeGitRoot({ "a.txt": "alpha\n", "b.txt": "beta\n" });
     const runtime = activeRuntime();
     const request = diffRequest({
+      root,
       id: "fixed-worker",
       read: ["a.txt"],
       write: ["a.txt"],
@@ -629,15 +783,16 @@ describe("runtime redispatch and logical Worker identity", () => {
       modelRegistry: new ModelRegistry(modelRuntime),
     };
 
-    await runtime.execute("run", { request }, context);
+    await admitGraph(runtime, [request], context);
+    await runtime.execute("run", { request: taskAttemptFor(request) }, context);
     const expanded = structuredClone(request);
     expanded.boundary.phases.red.read.push("b.txt");
     expanded.boundary.phases.green.read.push("b.txt");
     expanded.attempt.snapshot = snapshotFiles(root, ["a.txt", "b.txt"]);
 
-    await expect(
-      runtime.execute("run", { request: expanded }, context),
-    ).rejects.toThrow(/duplicate|open|protocol/i);
+    await expect(admitGraph(runtime, [expanded], context)).rejects.toThrow(
+      /duplicate|graph|protocol/i,
+    );
     expect(faux.state.callCount).toBe(2);
   });
 
@@ -645,6 +800,7 @@ describe("runtime redispatch and logical Worker identity", () => {
     const root = makeGitRoot({ "a.txt": "a0\n" });
     const runtime = activeRuntime();
     const openRequest = diffRequest({
+      root,
       id: "pinned-worker",
       read: ["a.txt"],
       write: ["a.txt"],
@@ -685,17 +841,25 @@ describe("serial parent apply FIFO and recovery", () => {
       w: "w0\n",
     });
     const runtime = activeRuntime();
-    const run: Array<Awaited<ReturnType<typeof runDiff>>> = [];
-    for (const file of ["x", "y"]) {
-      const r = await runDiff({
-        runtime,
-        root,
-        request: diffRequest({
+    const requests = new Map(
+      ["x", "y", "z", "w"].map((file) => [
+        file,
+        diffRequest({
+          root,
           id: `serial-${file}`,
           read: [file],
           write: [file],
           snapshot: snapshotFiles(root, [file]),
         }),
+      ]),
+    );
+    const run: Array<Awaited<ReturnType<typeof runDiff>>> = [];
+    for (const file of ["x", "y"]) {
+      const r = await runDiff({
+        runtime,
+        root,
+        request: requests.get(file) as ImplementTaskFixture,
+        ...(file === "x" ? { graph: [...requests.values()] } : {}),
         diff: modifyPatch(file, `${file}0`, `${file}1`),
       });
       run.push(r);
@@ -710,12 +874,7 @@ describe("serial parent apply FIFO and recovery", () => {
     const replacement = await runDiff({
       runtime,
       root,
-      request: diffRequest({
-        id: "serial-z",
-        read: ["z"],
-        write: ["z"],
-        snapshot: snapshotFiles(root, ["z"]),
-      }),
+      request: requests.get("z") as ImplementTaskFixture,
       diff: modifyPatch("z", "z0", "z1"),
     });
 
@@ -747,12 +906,7 @@ describe("serial parent apply FIFO and recovery", () => {
     const c = await runDiff({
       runtime,
       root,
-      request: diffRequest({
-        id: "serial-w",
-        read: ["w"],
-        write: ["w"],
-        snapshot: snapshotFiles(root, ["w"]),
-      }),
+      request: requests.get("w") as ImplementTaskFixture,
       diff: modifyPatch("w", "w0", "w1"),
     });
     const recovered = await applyCandidate(

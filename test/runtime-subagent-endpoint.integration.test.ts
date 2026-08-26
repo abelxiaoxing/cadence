@@ -14,6 +14,11 @@ import { Activation } from "../src/activation.ts";
 import { snapshotFiles } from "../src/file-snapshot.ts";
 import { runtimeForProvider } from "../src/parent-provider.ts";
 import { Runtime } from "../src/runtime.ts";
+import {
+  admitGraph,
+  type ImplementTaskFixture,
+  taskAttemptFor,
+} from "./helpers/implement-graph-fixture.ts";
 import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 interface FakeEndpoint {
@@ -187,13 +192,12 @@ async function startEndpoint(): Promise<FakeEndpoint> {
   return endpoint;
 }
 
-function implementRequest(root: string) {
+function implementRequest(root: string): ImplementTaskFixture {
   return {
-    stage: "abel-implement",
-    kind: "open-task",
     boundary: {
       changeId: "pinned-endpoint-change",
       taskId: "pinned-endpoint-task",
+      dependsOn: [],
       objective: "Apply endpoint-pinned changes to a.txt",
       roots: ["."],
       context: { agents: "none", contract: "approved endpoint pin task" },
@@ -202,22 +206,26 @@ function implementRequest(root: string) {
           read: ["a.txt", "test/check.mjs"],
           write: ["a.txt"],
           verification: {
+            kind: "static-check",
             id: "pinned-endpoint-red",
-            argv: ["bun", "run", "check"],
+            runner: { kind: "node", script: "test/check.mjs" },
+            args: [],
             classification: "expected-red",
             expectedFailure: "[ENDPOINT-PIN:expected-red]",
-            minTests: 1,
           },
+          verificationInputs: [{ kind: "workspace", path: "test/check.mjs" }],
         },
         green: {
           read: ["a.txt", "test/check.mjs"],
           write: ["a.txt"],
           verification: {
+            kind: "static-check",
             id: "pinned-endpoint-green",
-            argv: ["bun", "run", "check"],
+            runner: { kind: "node", script: "test/check.mjs" },
+            args: [],
             classification: "expected-green",
-            minTests: 1,
           },
+          verificationInputs: [{ kind: "workspace", path: "test/check.mjs" }],
         },
       },
       scheduling: { conflicts: [], resources: [] },
@@ -365,10 +373,11 @@ describe("runtime subagent endpoint dispatch", () => {
     });
     const { faux, runtime, context } = await harness(root, "invalid-implement");
     const opened = implementRequest(root);
+    await admitGraph(runtime, [opened], context);
 
     const first = await (runtime as any).execute(
       "run",
-      { request: opened },
+      { request: taskAttemptFor(opened) },
       context,
     );
     const replay = await (runtime as any).execute(
@@ -376,7 +385,7 @@ describe("runtime subagent endpoint dispatch", () => {
       {
         request: {
           stage: "abel-implement",
-          kind: "phase-attempt",
+          kind: "task-attempt",
           attempt: {
             ...opened.attempt,
             requestId: "pinned-endpoint:red:replay",
@@ -447,10 +456,15 @@ describe("runtime subagent endpoint dispatch", () => {
     });
     const { runtime, context } = await harness(root, "pinned-parent");
     const opened = implementRequest(root);
+    await admitGraph(runtime, [opened], context);
 
     const red: any = await within(
       "red dispatch",
-      (runtime as any).execute("run", { request: opened }, context),
+      (runtime as any).execute(
+        "run",
+        { request: taskAttemptFor(opened) },
+        context,
+      ),
     );
     expect(red).toMatchObject({ kind: "candidate", phase: "red" });
     expect(red.result.diff).toBe(
@@ -478,7 +492,7 @@ describe("runtime subagent endpoint dispatch", () => {
         {
           request: {
             stage: "abel-implement",
-            kind: "phase-attempt",
+            kind: "task-attempt",
             attempt: {
               changeId: "pinned-endpoint-change",
               taskId: "pinned-endpoint-task",

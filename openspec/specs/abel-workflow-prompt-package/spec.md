@@ -168,7 +168,8 @@ Before Gate A it SHALL remain read-only, decompose broad exploration into bounde
 The parent Agent SHALL NOT silently replace failed delegated exploration with its own broad exploration.
 It SHALL separately obtain Gate A for the behavioral contract and Gate B for the technical implementation contract.
 After Gate A it SHALL write only inside the resolved OpenSpec change root according to the artifact graph.
-It SHALL define executable verification and AGENTS-impact contracts for every implementation task.
+It SHALL define exactly one machine-readable `ImplementGraphBoundary` containing every implementation task, explicit task dependencies, phase verification-input bindings, generated output provenance and postconditions, executable verification, and AGENTS-impact contracts.
+Before Gate B and again before writing the ready receipt, it SHALL use the shared graph-readiness core and require an executable static verification closure with no diagnostics. The ready receipt SHALL embed that exact graph, its canonical hash, and the successful closure result without a second task-readiness summary.
 It SHALL report `READY_TO_IMPLEMENT` only when strict validation, receipts, hashes, traceability, artifact completeness, trusted delegated evidence, and zero blocking decisions all pass.
 
 #### Scenario: New design reaches Gate A
@@ -198,8 +199,8 @@ It SHALL report `READY_TO_IMPLEMENT` only when strict validation, receipts, hash
 
 #### Scenario: Design is complete
 
-- **WHEN** both Gates are approved and all delivery checks pass
-- **THEN** the workflow reports `READY_TO_IMPLEMENT` without modifying product code or repository AGENTS indexes
+- **WHEN** both Gates are approved, the canonical Implement graph has an executable verification closure, and all delivery checks pass
+- **THEN** the workflow binds that graph and hash in the ready receipt and reports `READY_TO_IMPLEMENT` without modifying product code or repository AGENTS indexes
 
 ### Requirement: Implementation behavior
 
@@ -207,9 +208,13 @@ It SHALL report `READY_TO_IMPLEMENT` only when strict validation, receipts, hash
 Invalid trusted delivery SHALL produce one stage-level blocker before task registration and SHALL NOT be represented as a task failure or an automatic workflow transition.
 Before writing, the parent SHALL record target, affected-suite, and full-suite baselines with stable failure identities and SHALL keep every pre-existing failure separate from the task Red.
 
-For each ready task, the parent SHALL register one immutable approved boundary containing stable identity, phase-local read and exact write sets, target verification, scheduling declarations, approved dependencies, impact closure, and structured AGENTS impact.
-Later phase attempts, stale refreshes, candidate decisions, and AGENTS checkpoints SHALL carry only their operation identity and dynamic facts and SHALL NOT restate or alter the stable boundary.
+The parent SHALL validate the receipt's one canonical Implement graph and hash, call the same graph-readiness core used by Design, and admit that graph once before opening any task. Fresh-context facts SHALL come only from parent-owned completed task state, current in-process blocked state, and a safe current workspace scan; file existence alone SHALL NOT prove task or phase completion.
+For each ready task, the parent SHALL submit a phase-local task attempt, and the runtime SHALL resolve one immutable approved boundary from the admitted graph containing stable identity, explicit dependencies, phase-local read and exact write sets, verification-input bindings, target verification, scheduling declarations, approved dependency changes, impact closure, and structured AGENTS impact.
+Later phase attempts, stale refreshes, candidate decisions, and AGENTS checkpoints SHALL carry only their operation identity and dynamic facts and SHALL NOT restate or alter the stable graph or task boundary.
 Every foreseeable compatibility test, fixture, and repair path SHALL be included in the approved phase boundary; discovering a required path, dependency, behavior, architecture, policy, or verification outside that boundary SHALL terminally block the task as an approval-boundary failure without expanding it at runtime.
+
+A workspace verification-input binding SHALL already be a safe regular file at Gate B. A generated input SHALL bind to a unique output id whose explicit producer path is in that phase's write set. Cross-task consumption SHALL require a transitive `dependsOn` path; suggested waves, conflicts, resources, and verification locks SHALL NOT substitute for that dependency. A phase MAY consume an output created by its own candidate or an earlier successfully applied phase and MUST NOT consume an output created only by a later phase. Write-set membership SHALL NOT prove provenance or availability.
+The runtime SHALL check declared outputs after applying a candidate in isolation and before verification, after exact main-workspace application, before phase progression, and before task completion. Cross-task outputs SHALL publish only after producer task completion. A blocked producer SHALL keep a consumer dependency-blocked without a child launch, and a completed producer with a missing or unsafe output SHALL fail as producer-output-unavailable.
 
 Implementation SHALL recompute ready work from the trusted parent-owned task DAG and MAY dispatch compatible ready tasks concurrently only when their prerequisites and task-lifetime read/write, conflict, resource, validation-lock, and AGENTS-target declarations permit it.
 A conflicting task open SHALL return immediately as deferred without registration, queueing, or consuming an Agent launch.
@@ -224,6 +229,7 @@ A sibling candidate SHALL remain current after unrelated changes and SHALL becom
 Only Runtime-owned isolated preflight and exact application SHALL advance Red, Green, Refactor, or the AGENTS checkpoint.
 Caller-supplied verification claims SHALL NOT advance a phase.
 Each phase SHALL allow at most two non-cancelled Agent launches shared by transport, stale, and artifact correction; cancellation SHALL preserve state without consuming a launch.
+Retry and terminal exhaustion outcomes for artifact, stale, and transport failures SHALL retain the final safe closed code and stage. Terminal exhaustion SHALL include `attemptsUsed: 2` and `lastFailure`; optional details SHALL be limited to a closed final-submit category, bounded submit-attempt count, schema state, mismatched identity dimension names, and a validated verification id. Public outcomes SHALL NOT contain prompts, diffs, model output, excerpts, consumer content, commands, endpoints, credentials, environment values, or actual identity values.
 AGENTS checkpoint correction SHALL have a separate maximum of two parent attempts.
 An oversized result SHALL terminally block the task and SHALL NOT be truncated, partially applied, or converted into a request to select another workflow stage.
 
@@ -237,8 +243,8 @@ It SHALL NOT modify unrelated dirty files, preserve an alias for the unreleased 
 
 #### Scenario: Valid cross-context handoff
 
-- **WHEN** receipts, artifact hashes, traceability, strict validation, and task contracts are valid in a fresh context
-- **THEN** implementation records baselines and may register the first approved task without requesting either Gate again
+- **WHEN** receipts, artifact hashes, traceability, strict validation, canonical graph hash, closure, and task contracts are valid in a fresh context
+- **THEN** implementation records baselines, admits the graph once, and may submit the first ready task attempt without requesting either Gate again
 
 #### Scenario: Invalid trusted delivery
 
@@ -247,12 +253,12 @@ It SHALL NOT modify unrelated dirty files, preserve an alias for the unreleased 
 
 #### Scenario: Task boundary is opened
 
-- **WHEN** a ready task submits its first approved Red attempt
-- **THEN** the runtime registers its stable boundary exactly once and derives the Red Worker request from that boundary
+- **WHEN** a ready graph task submits its first approved Red task attempt
+- **THEN** the runtime resolves and registers its stable boundary exactly once from the admitted graph and derives the Red Worker request from that boundary
 
 #### Scenario: Stable facts are replayed
 
-- **WHEN** a later phase attempt or operation restates or changes stable objective, scope, verification, dependency, impact, or AGENTS facts
+- **WHEN** a later phase attempt or operation restates or changes the graph, stable objective, scope, verification, dependency, output, impact, or AGENTS facts
 - **THEN** the request fails as a protocol error before a child launch or state transition
 
 #### Scenario: Conflicting task is opened
@@ -288,7 +294,7 @@ It SHALL NOT modify unrelated dirty files, preserve an alias for the unreleased 
 #### Scenario: Artifact correction budget is exhausted
 
 - **WHEN** two non-cancelled launches in one phase end in artifact, stale, or transport failure
-- **THEN** the task becomes terminally blocked for attempts exhausted with no third launch or partial result
+- **THEN** the task becomes terminally blocked with cause, `attemptsUsed: 2`, and the final safe `lastFailure` code and stage, with no third launch or partial result
 
 #### Scenario: Worker diff exceeds its result boundary
 
@@ -302,7 +308,7 @@ It SHALL NOT modify unrelated dirty files, preserve an alias for the unreleased 
 
 #### Scenario: Runtime apply advances a phase
 
-- **WHEN** isolated preflight and exact application both succeed for the current candidate
+- **WHEN** isolated preflight, candidate output checks, exact application, and post-apply output checks all succeed for the current candidate
 - **THEN** the runtime advances only to the next approved phase or the required AGENTS checkpoint
 
 #### Scenario: Parent reports verification without apply

@@ -24,6 +24,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Activation } from "../src/activation";
 import { snapshotFiles } from "../src/file-snapshot";
 import { Runtime } from "../src/runtime";
+import {
+  admitGraph,
+  assertCandidateOutcome,
+  graphAdmissionFor,
+  type ImplementTaskFixture,
+  taskAttemptFor,
+} from "./helpers/implement-graph-fixture.ts";
 import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 let parentProvider: typeof import("../src/parent-provider") | null = null;
@@ -102,18 +109,33 @@ const submitResponse = (submitted: unknown) =>
 
 function requestFor(
   id: string,
-  phase: string,
+  phase: ImplementTaskFixture["attempt"]["phase"],
   root: string,
   snapshot?: unknown,
-) {
-  const paths = ["a.txt"];
-  const target = ["bun", "run", "test:target", "test/expected-red.mjs"];
+): ImplementTaskFixture {
+  const paths = ["a.txt", "test/expected-red.mjs", "package.json"];
+  const verification = (classification: "expected-red" | "expected-green") => ({
+    kind: "vitest" as const,
+    id: `verify-${id}-${classification === "expected-red" ? "red" : "green"}`,
+    runner: {
+      kind: "package-script" as const,
+      packageManager: "bun" as const,
+      script: "test:target",
+      command: "vitest run",
+    },
+    testFiles: ["test/expected-red.mjs"],
+    args: [],
+    classification,
+    ...(classification === "expected-red"
+      ? { expectedFailure: "[WORKFLOW-ROUTING:expected-red]" }
+      : {}),
+    minTests: 1,
+  });
   return {
-    stage: "abel-implement",
-    kind: "open-task",
     boundary: {
       changeId: `workflow-routing-${id}`,
       taskId: id,
+      dependsOn: [],
       objective: "Change a.txt",
       roots: ["."],
       context: { agents: "none", contract: "approved" },
@@ -121,24 +143,21 @@ function requestFor(
         red: {
           read: paths,
           write: paths,
-          verification: {
-            id: `verify-${id}-red`,
-            argv: target,
-            classification: "expected-red",
-            expectedFailure: "[WORKFLOW-ROUTING:expected-red]",
-            minTests: 1,
-          },
+          verification: verification("expected-red"),
+          verificationInputs: [
+            { kind: "workspace", path: "test/expected-red.mjs" },
+            { kind: "workspace", path: "package.json" },
+          ],
           verificationLock: "workflow-routing-red",
         },
         green: {
           read: paths,
           write: paths,
-          verification: {
-            id: `verify-${id}-green`,
-            argv: target,
-            classification: "expected-green",
-            minTests: 1,
-          },
+          verification: verification("expected-green"),
+          verificationInputs: [
+            { kind: "workspace", path: "test/expected-red.mjs" },
+            { kind: "workspace", path: "package.json" },
+          ],
           verificationLock: "workflow-routing-red",
         },
       },
@@ -160,6 +179,15 @@ function requestFor(
       snapshot: snapshot ?? snapshotFiles(root, paths),
     },
   };
+}
+
+async function runFixture(
+  runtime: Runtime,
+  request: ImplementTaskFixture,
+  context: Parameters<Runtime["execute"]>[2],
+) {
+  await admitGraph(runtime, [request], context);
+  return runtime.execute("run", { request: taskAttemptFor(request) }, context);
 }
 
 function nonImplementRequest(stage: "abel-design" | "abel-diagnose") {
@@ -242,7 +270,9 @@ describe("eligible activation gates dispatch", () => {
     });
     const blocked = await (runtime as any).execute(
       "run",
-      { request: requestFor("task-inactive", "red", cwd) },
+      {
+        request: graphAdmissionFor([requestFor("task-inactive", "red", cwd)]),
+      },
       context,
     );
     expect(blocked.ok).toBe(false);
@@ -258,14 +288,10 @@ describe("eligible activation gates dispatch", () => {
       activation: act,
       parentPayloadBridge: new PassthroughParentPayloadBridge(),
     });
-    const accepted = await (active as any).execute(
-      "run",
-      { request: requestFor("task-inactive", "red", cwd) },
-      {
-        cwd,
-        model: faux2.getModel(),
-        modelRegistry: new ModelRegistry(rt2),
-      },
+    const accepted = await runFixture(
+      active,
+      requestFor("task-inactive", "red", cwd),
+      { cwd, model: faux2.getModel(), modelRegistry: new ModelRegistry(rt2) },
     );
     expect(accepted).toMatchObject({
       kind: "candidate",
@@ -412,9 +438,9 @@ describe("five-action routing", () => {
       submitResponse(diffSubmit("task-five", "red")),
       submitResponse(diffSubmit("task-five-b", "red")),
     ]);
-    const run = await (runtime as any).execute(
-      "run",
-      { request: requestFor("task-five", "red", cwd) },
+    const run = await runFixture(
+      runtime,
+      requestFor("task-five", "red", cwd),
       context,
     );
     expect(run).toMatchObject({
@@ -424,6 +450,7 @@ describe("five-action routing", () => {
       phase: "red",
       resultId: expect.any(String),
     });
+    assertCandidateOutcome(run);
     const resultId = run.resultId as string;
     expect(resultId).toBeTypeOf("string");
     const retained = (runtime as any).results.get(resultId);
@@ -447,9 +474,9 @@ describe("five-action routing", () => {
   it("routes run -> discard and removes the retained diff from memory", async () => {
     const { cwd, faux, runtime, context } = await makeActive("discard");
     faux.setResponses([submitResponse(diffSubmit("task-discard", "red"))]);
-    const run = await (runtime as any).execute(
-      "run",
-      { request: requestFor("task-discard", "red", cwd) },
+    const run = await runFixture(
+      runtime,
+      requestFor("task-discard", "red", cwd),
       context,
     );
     expect(run).toMatchObject({
@@ -459,6 +486,7 @@ describe("five-action routing", () => {
       phase: "red",
       resultId: expect.any(String),
     });
+    assertCandidateOutcome(run);
     const resultId = run.resultId as string;
     const discarded = await (runtime as any).execute(
       "discard",
@@ -468,7 +496,7 @@ describe("five-action routing", () => {
         rejection: {
           kind: "artifact",
           code: "parent-review-rejected",
-          evidence: ["discard routing fixture"],
+          stage: "parent-review",
         },
       },
       context,
@@ -488,9 +516,9 @@ describe("five-action routing", () => {
   it("routes cancel and finish without leaving retained results live", async () => {
     const { cwd, faux, runtime, context } = await makeActive("cancel-finish");
     faux.setResponses([submitResponse(diffSubmit("task-cf", "red"))]);
-    const run = await (runtime as any).execute(
-      "run",
-      { request: requestFor("task-cf", "red", cwd) },
+    const run = await runFixture(
+      runtime,
+      requestFor("task-cf", "red", cwd),
       context,
     );
     expect(run).toMatchObject({
@@ -500,6 +528,7 @@ describe("five-action routing", () => {
       phase: "red",
       resultId: expect.any(String),
     });
+    assertCandidateOutcome(run);
     const resultId = run.resultId as string;
     const cancelled = await (runtime as any).execute("cancel", {}, context);
     expect(cancelled.ok).toBe(true);
@@ -514,10 +543,14 @@ describe("file snapshots bind request bounds", () => {
   it("merges a safe file snapshot into the retained result", async () => {
     const { cwd, faux, runtime, context } = await makeActive("snapshot");
     faux.setResponses([submitResponse(diffSubmit("task-snap", "red"))]);
-    const snapshot = snapshotFiles(cwd, ["a.txt"]);
-    const run = await (runtime as any).execute(
-      "run",
-      { request: requestFor("task-snap", "red", cwd, snapshot) },
+    const snapshot = snapshotFiles(cwd, [
+      "a.txt",
+      "test/expected-red.mjs",
+      "package.json",
+    ]);
+    const run = await runFixture(
+      runtime,
+      requestFor("task-snap", "red", cwd, snapshot),
       context,
     );
     expect(run).toMatchObject({
@@ -527,6 +560,7 @@ describe("file snapshots bind request bounds", () => {
       phase: "red",
       resultId: expect.any(String),
     });
+    assertCandidateOutcome(run);
     const retained = (runtime as any).results.get(run.resultId as string);
     expect(retained?.snapshot?.["a.txt"]?.kind).toBe("file");
   });
@@ -535,13 +569,9 @@ describe("file snapshots bind request bounds", () => {
     const { cwd, faux, runtime, context } = await makeActive("snapshot-bad");
     faux.setResponses([submitResponse(diffSubmit("task-snap-bad", "red"))]);
     await expect(
-      (runtime as any).execute(
-        "run",
-        {
-          request: requestFor("task-snap-bad", "red", cwd, {
-            "../escape": true,
-          }),
-        },
+      runFixture(
+        runtime,
+        requestFor("task-snap-bad", "red", cwd, { "../escape": true }),
         context,
       ),
     ).rejects.toThrow(/snapshot|protocol/i);
@@ -564,9 +594,9 @@ describe("parent-only authority", () => {
         context,
       ),
     ).rejects.toThrow(/retained.*result not found/i);
-    const run = await (runtime as any).execute(
-      "run",
-      { request: requestFor("task-auth", "red", cwd) },
+    const run = await runFixture(
+      runtime,
+      requestFor("task-auth", "red", cwd),
       context,
     );
     expect(run).toMatchObject({
@@ -576,6 +606,7 @@ describe("parent-only authority", () => {
       phase: "red",
       resultId: expect.any(String),
     });
+    assertCandidateOutcome(run);
     const applied = await (runtime as any).execute(
       "apply",
       { resultId: run.resultId, requestId: "task-auth:apply" },

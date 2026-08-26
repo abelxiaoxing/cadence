@@ -27,6 +27,11 @@ import register, { DISPATCH_TOOL } from "../src/index";
 import { runtimeForProvider } from "../src/parent-provider";
 import { Runtime } from "../src/runtime";
 import { workerIdentity } from "../src/worker";
+import {
+  admitGraph,
+  type ImplementTaskFixture,
+  taskAttemptFor,
+} from "./helpers/implement-graph-fixture.ts";
 import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 const roots: string[] = [];
@@ -114,42 +119,57 @@ function request(
     conflicts?: string[];
     resources?: string[];
   } = {},
-) {
+): ImplementTaskFixture {
   const target = options.path ?? "a.txt";
   const greenTarget = options.greenPath ?? target;
   const verificationLock = options.verificationLock ?? "runtime-scheduler";
   return {
-    stage: "abel-implement",
-    kind: "open-task",
     boundary: {
       changeId: "runtime-scheduler-fixture",
       taskId: id,
+      dependsOn: [],
       objective: `Complete ${id}`,
       roots: ["."],
       context: { agents: "root contract", contract: "approved task" },
       phases: {
         red: {
-          read: [target],
+          read: [target, "test/expected-red.mjs", "package.json"],
           write: [target],
           verificationLock,
           verification: {
+            kind: "vitest",
             id: `verify-${id}-red`,
-            argv: ["bun", "run", "test:target", "test/expected-red.mjs"],
+            runner: {
+              kind: "package-script",
+              packageManager: "bun",
+              script: "test:target",
+              command: "vitest run",
+            },
+            testFiles: ["test/expected-red.mjs"],
+            args: [],
             classification: "expected-red",
             expectedFailure: "[RUNTIME-SCHEDULER:expected-red]",
             minTests: 1,
           },
+          verificationInputs: [
+            { kind: "workspace", path: "test/expected-red.mjs" },
+            { kind: "workspace", path: "package.json" },
+          ],
         },
         green: {
-          read: [greenTarget],
+          read: [greenTarget, "package.json"],
           write: [greenTarget],
           verificationLock: options.greenVerificationLock ?? verificationLock,
           verification: {
+            kind: "package-script",
             id: `verify-${id}-green`,
-            argv: ["bun", "run", "check"],
+            packageManager: "bun",
+            script: "check",
+            command: 'node -e ""',
+            args: [],
             classification: "expected-green",
-            minTests: 1,
           },
+          verificationInputs: [{ kind: "workspace", path: "package.json" }],
         },
       },
       scheduling: {
@@ -170,7 +190,11 @@ function request(
       taskId: id,
       requestId: id,
       phase: "red",
-      snapshot: snapshotFiles(root, [target]),
+      snapshot: snapshotFiles(root, [
+        target,
+        "test/expected-red.mjs",
+        "package.json",
+      ]),
     },
   };
 }
@@ -244,7 +268,7 @@ describe("Runtime Scheduler integration", () => {
     });
     const taskId = "stable-task";
     const requestId = "stable-task:red:1";
-    const phaseRequest = {
+    const phaseRequest: ImplementTaskFixture = {
       ...request(taskId, root),
       attempt: {
         ...request(taskId, root).attempt,
@@ -267,10 +291,13 @@ describe("Runtime Scheduler integration", () => {
       },
     ]);
     const context = await contextFor(root, faux);
+    expect(await admitGraph(runtime, [phaseRequest], context)).toMatchObject({
+      kind: "graph-admitted",
+    });
 
     const outcome = await runtime.execute(
       "run",
-      { request: phaseRequest },
+      { request: taskAttemptFor(phaseRequest) },
       context,
     );
     await runtime.execute("finish", {}, context);
@@ -286,7 +313,7 @@ describe("Runtime Scheduler integration", () => {
         taskId,
         requestId,
         phase: "red",
-        readSet: ["a.txt"],
+        readSet: ["a.txt", "test/expected-red.mjs", "package.json"],
         writeSet: ["a.txt"],
         verification: cloneVerificationContract(
           phaseRequest.boundary.phases.red.verification as never,
@@ -342,18 +369,31 @@ describe("Runtime Scheduler integration", () => {
     });
     faux.setResponses([response("directory-baseline")]);
     const context = await contextFor(root, faux);
-    const phaseRequest = {
+    const phaseRequest: ImplementTaskFixture = {
       ...request("directory-baseline", root),
       boundary: {
         ...request("directory-baseline", root).boundary,
         phases: {
           ...request("directory-baseline", root).boundary.phases,
+          green: {
+            ...request("directory-baseline", root).boundary.phases.green,
+            verification: {
+              kind: "package-script",
+              id: "verify-directory-baseline-green",
+              packageManager: "bun",
+              script: "check",
+              command: "node scripts/check-directory.cjs",
+              args: [],
+              classification: "expected-green",
+            },
+          },
           red: {
             ...request("directory-baseline", root).boundary.phases.red,
             read: [
               "fixtures",
               "scripts/check-directory.cjs",
               "test/expected-red.mjs",
+              "package.json",
             ],
             verification: {
               kind: "steps",
@@ -387,6 +427,11 @@ describe("Runtime Scheduler integration", () => {
                 },
               ],
             },
+            verificationInputs: [
+              { kind: "workspace", path: "scripts/check-directory.cjs" },
+              { kind: "workspace", path: "test/expected-red.mjs" },
+              { kind: "workspace", path: "package.json" },
+            ],
           },
         },
       },
@@ -398,14 +443,19 @@ describe("Runtime Scheduler integration", () => {
             "a.txt",
             "scripts/check-directory.cjs",
             "test/expected-red.mjs",
+            "package.json",
           ]),
         ),
       },
     };
+    const admission = await admitGraph(runtime, [phaseRequest], context);
+    expect(admission).toMatchObject({
+      kind: "graph-admitted",
+    });
 
     const outcome = await runtime.execute(
       "run",
-      { request: phaseRequest },
+      { request: taskAttemptFor(phaseRequest) },
       context,
     );
     const resultId = candidateResultId(outcome);
@@ -447,17 +497,15 @@ describe("Runtime Scheduler integration", () => {
     chmodSync(join(root, "node_modules"), 0o000);
 
     try {
-      const first = await runtime.execute(
-        "run",
-        { request: phaseRequest },
-        context,
-      );
+      const first = await admitGraph(runtime, [phaseRequest], context);
       expect(first).toMatchObject({
-        ok: false,
-        failure: {
-          kind: "verification-adapter",
-          code: "local-executable-missing",
-        },
+        kind: "graph-rejected",
+        diagnostics: [
+          {
+            kind: "verification-adapter",
+            code: "local-executable-missing",
+          },
+        ],
       });
       expect(JSON.stringify(first)).not.toMatch(
         /EACCES|node_modules|abel-runtime-scheduler-/i,
@@ -576,9 +624,12 @@ describe("Runtime Scheduler integration", () => {
     });
     faux.setResponses([response("ready-owner"), response("ready-contender")]);
     const context = await contextFor(root, faux);
+    const ownerRequest = request("ready-owner", root);
+    const contenderRequest = request("ready-contender", root);
+    await admitGraph(runtime, [ownerRequest, contenderRequest], context);
     const owner = await runtime.execute(
       "run",
-      { request: request("ready-owner", root) },
+      { request: taskAttemptFor(ownerRequest) },
       context,
     );
     const ownerResultId = candidateResultId(owner);
@@ -606,10 +657,10 @@ describe("Runtime Scheduler integration", () => {
     const launchesBefore = faux.state.callCount;
     const open = vi.spyOn(registry, "open");
     const schedule = vi.spyOn(scheduler, "schedule");
-    const contenderId = "ready-contender";
+    const contenderId = contenderRequest.boundary.taskId;
     const contender = runtime.execute(
       "run",
-      { request: request(contenderId, root) },
+      { request: taskAttemptFor(contenderRequest) },
       context,
     );
     const timeout = Symbol("deferred task waited");
@@ -661,9 +712,12 @@ describe("Runtime Scheduler integration", () => {
       response("candidate-contender"),
     ]);
     const context = await contextFor(root, faux);
+    const ownerRequest = request("candidate-owner", root);
+    const contenderRequest = request("candidate-contender", root);
+    await admitGraph(runtime, [ownerRequest, contenderRequest], context);
     const owner = await runtime.execute(
       "run",
-      { request: request("candidate-owner", root) },
+      { request: taskAttemptFor(ownerRequest) },
       context,
     );
     const ownerResultId = candidateResultId(owner);
@@ -681,10 +735,10 @@ describe("Runtime Scheduler integration", () => {
     const launchesBefore = faux.state.callCount;
     const open = vi.spyOn(registry, "open");
     const schedule = vi.spyOn(scheduler, "schedule");
-    const contenderId = "candidate-contender";
+    const contenderId = contenderRequest.boundary.taskId;
     const contender = runtime.execute(
       "run",
-      { request: request(contenderId, root) },
+      { request: taskAttemptFor(contenderRequest) },
       context,
     );
     const timeout = Symbol("deferred task waited");
@@ -732,16 +786,22 @@ describe("Runtime Scheduler integration", () => {
         source === "later-verification-lock" ? source : undefined;
       faux.setResponses([response(ownerId)]);
       const context = await contextFor(root, faux);
+      const ownerRequest = request(ownerId, root, {
+        verificationLock: `${ownerId}-red`,
+        greenVerificationLock: sharedLaterLock ?? `${ownerId}-green`,
+        conflicts: source === "edge" ? [contenderId] : [],
+        resources: sharedResource,
+      });
+      const contenderRequest = request(contenderId, root, {
+        path: "b.txt",
+        verificationLock: `${contenderId}-red`,
+        greenVerificationLock: sharedLaterLock ?? `${contenderId}-green`,
+        resources: sharedResource,
+      });
+      await admitGraph(runtime, [ownerRequest, contenderRequest], context);
       const owner = await runtime.execute(
         "run",
-        {
-          request: request(ownerId, root, {
-            verificationLock: `${ownerId}-red`,
-            greenVerificationLock: sharedLaterLock ?? `${ownerId}-green`,
-            conflicts: source === "edge" ? [contenderId] : [],
-            resources: sharedResource,
-          }),
-        },
+        { request: taskAttemptFor(ownerRequest) },
         context,
       );
       expect(owner).toMatchObject({ kind: "candidate", taskId: ownerId });
@@ -756,14 +816,7 @@ describe("Runtime Scheduler integration", () => {
       try {
         const deferred = await runtime.execute(
           "run",
-          {
-            request: request(contenderId, root, {
-              path: "b.txt",
-              verificationLock: `${contenderId}-red`,
-              greenVerificationLock: sharedLaterLock ?? `${contenderId}-green`,
-              resources: sharedResource,
-            }),
-          },
+          { request: taskAttemptFor(contenderRequest) },
           context,
         );
 
@@ -819,12 +872,14 @@ describe("Runtime Scheduler integration", () => {
       );
       owner.state = structuredClone(terminalState);
       const contenderId = `${terminalKind}-contender`;
+      const contenderRequest = request(contenderId, root);
+      await admitGraph(runtime, [ownerRequest, contenderRequest], context);
       faux.setResponses([response(contenderId)]);
 
       try {
         const outcome = await runtime.execute(
           "run",
-          { request: request(contenderId, root) },
+          { request: taskAttemptFor(contenderRequest) },
           context,
         );
 
@@ -872,21 +927,22 @@ describe("Runtime Scheduler integration", () => {
       },
     ]);
     const context = await contextFor(root, faux);
+    const leftRequest = request("left", root);
+    const rightRequest = request("right", root, {
+      path: "b.txt",
+      verificationLock: "runtime-scheduler-right",
+    });
+    await admitGraph(runtime, [leftRequest, rightRequest], context);
 
     const left = runtime.execute(
       "run",
-      { request: request("left", root) },
+      { request: taskAttemptFor(leftRequest) },
       context,
     );
     await waitFor(() => starts.length === 1);
     const right = runtime.execute(
       "run",
-      {
-        request: request("right", root, {
-          path: "b.txt",
-          verificationLock: "runtime-scheduler-right",
-        }),
-      },
+      { request: taskAttemptFor(rightRequest) },
       context,
     );
     await waitFor(() => starts.length === 2);
@@ -913,6 +969,7 @@ describe("Runtime Scheduler integration", () => {
     const context = await contextFor(root, faux);
     const taskId = "same-task-race";
     const admitted = request(taskId, root);
+    await admitGraph(runtime, [admitted], context);
     const registry = (runtime as any).registry;
     registry.open(
       admitted.boundary,
@@ -922,7 +979,7 @@ describe("Runtime Scheduler integration", () => {
     );
     const phaseAttempt = (requestId: string) => ({
       stage: "abel-implement" as const,
-      kind: "phase-attempt" as const,
+      kind: "task-attempt" as const,
       attempt: { ...admitted.attempt, requestId },
     });
     const firstRequestId = `${taskId}:red:first`;
@@ -990,6 +1047,7 @@ describe("Runtime Scheduler integration", () => {
     const context = await contextFor(root, faux);
     const taskId = "candidate-bind-cancel";
     const admitted = request(taskId, root);
+    await admitGraph(runtime, [admitted], context);
     const registry = (runtime as any).registry;
     const worker = registry.open(
       admitted.boundary,
@@ -1004,12 +1062,13 @@ describe("Runtime Scheduler integration", () => {
       correction: {
         kind: "artifact" as const,
         code: "red-not-witnessed" as const,
+        stage: "phase-runtime" as const,
       },
     };
     worker.state = structuredClone(readyState);
     const phaseAttempt = (requestId: string) => ({
       stage: "abel-implement" as const,
-      kind: "phase-attempt" as const,
+      kind: "task-attempt" as const,
       attempt: { ...admitted.attempt, requestId },
     });
     const firstRequestId = `${taskId}:red:cancelled`;
@@ -1079,6 +1138,7 @@ describe("Runtime Scheduler integration", () => {
     const context = await contextFor(root, faux);
     const taskId = "transport-then-cancel";
     const admitted = request(taskId, root);
+    await admitGraph(runtime, [admitted], context);
     const worker = (runtime as any).registry.open(
       admitted.boundary,
       workerIdentity(context.model),
@@ -1087,7 +1147,7 @@ describe("Runtime Scheduler integration", () => {
     );
     const phaseAttempt = (requestId: string) => ({
       stage: "abel-implement" as const,
-      kind: "phase-attempt" as const,
+      kind: "task-attempt" as const,
       attempt: { ...admitted.attempt, requestId },
     });
     const secondStarted = deferred<void>();
@@ -1097,6 +1157,7 @@ describe("Runtime Scheduler integration", () => {
       failure: {
         kind: "transport" as const,
         code: "transport-failure" as const,
+        stage: "child-provider-stream" as const,
       },
       failureKind: "failed" as const,
       failureClass: "transport" as const,
@@ -1185,16 +1246,19 @@ describe("Runtime Scheduler integration", () => {
       },
     ]);
     const context = await contextFor(root, faux);
+    const runningRequest = request("cancelled-child", root);
+    const queuedRequest = request("queued-child", root);
+    await admitGraph(runtime, [runningRequest, queuedRequest], context);
 
     const run = runtime.execute(
       "run",
-      { request: request("cancelled-child", root) },
+      { request: taskAttemptFor(runningRequest) },
       context,
     );
     await waitFor(() => childStarted);
     const queued = runtime.execute(
       "run",
-      { request: request("queued-child", root) },
+      { request: taskAttemptFor(queuedRequest) },
       context,
     );
     const cancelPromise = runtime.execute("cancel", {}, context);
@@ -1236,12 +1300,14 @@ describe("Runtime Scheduler integration", () => {
     });
     faux.setResponses([response("never-started")]);
     const context = await contextFor(root, faux);
+    const cancelledRequest = request("never-started", root);
+    await admitGraph(runtime, [cancelledRequest], context);
     const controller = new AbortController();
     controller.abort(new Error("tool call cancelled"));
 
     const outcome = await (runtime.execute as any)(
       "run",
-      { request: request("never-started", root) },
+      { request: taskAttemptFor(cancelledRequest) },
       context,
       controller.signal,
     );
@@ -1278,22 +1344,23 @@ describe("Runtime Scheduler integration", () => {
       response("surviving-sibling", "b.txt"),
     ]);
     const context = await contextFor(root, faux);
+    const cancelledRequest = request("tool-cancelled", root);
+    const siblingRequest = request("surviving-sibling", root, {
+      path: "b.txt",
+      verificationLock: "runtime-tool-cancel-sibling",
+    });
+    await admitGraph(runtime, [cancelledRequest, siblingRequest], context);
     const controller = new AbortController();
     const cancelled = (runtime.execute as any)(
       "run",
-      { request: request("tool-cancelled", root) },
+      { request: taskAttemptFor(cancelledRequest) },
       context,
       controller.signal,
     );
     await waitFor(() => firstStarted);
     const sibling = runtime.execute(
       "run",
-      {
-        request: request("surviving-sibling", root, {
-          path: "b.txt",
-          verificationLock: "runtime-tool-cancel-sibling",
-        }),
-      },
+      { request: taskAttemptFor(siblingRequest) },
       context,
     );
 
@@ -1356,10 +1423,12 @@ describe("Runtime Scheduler integration", () => {
         },
       },
     };
+    const authRequest = request("auth-window", root);
+    await admitGraph(runtime, [authRequest], context as any);
     const controller = new AbortController();
     const run = (runtime.execute as any)(
       "run",
-      { request: request("auth-window", root) },
+      { request: taskAttemptFor(authRequest) },
       context,
       controller.signal,
     );

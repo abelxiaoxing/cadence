@@ -8,7 +8,13 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { ChildFailure, DiffResult, EvidenceResult } from "./contracts.ts";
+import type {
+  ChildFailure,
+  DiffResult,
+  EvidenceResult,
+  IdentityDimension,
+  SafeFailureDetails,
+} from "./contracts.ts";
 import { EmptyResourceLoader } from "./empty-resource-loader.ts";
 import { createScopedTools, TOOL_LIMITS } from "./scoped-tools.ts";
 import {
@@ -213,6 +219,35 @@ function safeChildError(failure: ChildFailure): string {
   }
 }
 
+function submitDetails(
+  classification: SubmitClassification,
+): SafeFailureDetails {
+  const identityMismatch = (
+    ["request", "role", "task", "phase"] as IdentityDimension[]
+  ).filter((dimension) => !classification.identity[dimension]);
+  return {
+    finalCategory: classification.finalCategory,
+    submitAttempts: Math.min(classification.attempts, 2),
+    schema: classification.schema,
+    ...(identityMismatch.length > 0 ? { identityMismatch } : {}),
+  };
+}
+
+function withSubmitDetails(
+  failure: ChildFailure,
+  classification: SubmitClassification,
+): ChildFailure {
+  return failure.kind === "artifact"
+    ? {
+        ...failure,
+        details: {
+          ...failure.details,
+          ...submitDetails(classification),
+        },
+      }
+    : failure;
+}
+
 export type ChildSessionResult =
   | {
       ok: true;
@@ -350,8 +385,16 @@ export async function runChildSession(input: {
   };
   const noStructuralSubmit = (): ChildFailure =>
     submit.getAttempts() === 0
-      ? { kind: "artifact", code: "child-no-structural-submit" }
-      : { kind: "artifact", code: "invalid-structural-result" };
+      ? {
+          kind: "artifact",
+          code: "child-no-structural-submit",
+          stage: "child-finalization",
+        }
+      : {
+          kind: "artifact",
+          code: "invalid-structural-result",
+          stage: "structural-submit",
+        };
   try {
     abort.signal.throwIfAborted();
     const creation = createAgentSession({
@@ -411,11 +454,13 @@ export async function runChildSession(input: {
     const attempts = submit.getAttempts();
     const classification = classifySession();
     if (!result || attempts !== 1) {
-      const failure =
+      const failure = withSubmitDetails(
         submit.getFailure() ??
-        input.failureOverride?.() ??
-        transportFailure() ??
-        noStructuralSubmit();
+          input.failureOverride?.() ??
+          transportFailure() ??
+          noStructuralSubmit(),
+        classification,
+      );
       const isTransport = failure.kind === "transport";
       disposeOnce();
       return {
@@ -435,6 +480,8 @@ export async function runChildSession(input: {
       const failure = {
         kind: "artifact",
         code: "invalid-structural-result",
+        stage: "child-finalization",
+        details: submitDetails(classification),
       } as const;
       disposeOnce();
       return {
@@ -471,24 +518,27 @@ export async function runChildSession(input: {
         ? "cancelled"
         : "failed";
     const classification = classifySession();
-    const failure: ChildFailure = timedOut
-      ? {
-          kind: "transport",
-          code: "child-timeout",
-          stage: "child-timeout",
-        }
-      : failureKind === "cancelled"
-        ? { kind: "cancelled", code: "cancelled" }
-        : session === undefined
-          ? {
-              kind: "environment",
-              code: "child-session-create-failed",
-              stage: "child-session-create",
-            }
-          : (submit.getFailure() ??
-            input.failureOverride?.() ??
-            transportFailure() ??
-            noStructuralSubmit());
+    const failure: ChildFailure = withSubmitDetails(
+      timedOut
+        ? {
+            kind: "transport",
+            code: "child-timeout",
+            stage: "child-timeout",
+          }
+        : failureKind === "cancelled"
+          ? { kind: "cancelled", code: "cancelled" }
+          : session === undefined
+            ? {
+                kind: "environment",
+                code: "child-session-create-failed",
+                stage: "child-session-create",
+              }
+            : (submit.getFailure() ??
+              input.failureOverride?.() ??
+              transportFailure() ??
+              noStructuralSubmit()),
+      classification,
+    );
     const isTransport = failure.kind === "transport";
     disposeOnce();
     return {

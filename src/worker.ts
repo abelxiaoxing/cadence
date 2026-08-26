@@ -3,6 +3,7 @@
 import type {
   CandidateFailure,
   ImplementationPhase,
+  ImplementGraphBoundary,
   PhaseAttempt,
   TaskBoundary,
   TaskFailure,
@@ -40,6 +41,22 @@ export interface TaskRecord {
   boundary: TaskBoundary;
   conflict: ConflictDeclaration;
   state: TaskState;
+}
+
+export interface ImplementGraphRecord {
+  key: string;
+  workspaceRoot: string;
+  graphHash: string;
+  boundary: ImplementGraphBoundary;
+  completedTasks: Set<string>;
+  blockedTasks: Set<string>;
+}
+
+export function graphRecordKey(
+  workspaceRoot: string,
+  changeId: string,
+): string {
+  return `${workspaceRoot}\0${changeId}`;
 }
 
 export function taskRecordKey(
@@ -97,6 +114,37 @@ export function workerIdentity(model: {
 
 export class WorkerRegistry {
   private readonly tasks = new Map<string, TaskRecord>();
+  private readonly graphs = new Map<string, ImplementGraphRecord>();
+
+  admitGraph(
+    boundary: ImplementGraphBoundary,
+    graphHash: string,
+    workspaceRoot: string,
+    state: {
+      completedTasks: readonly string[];
+      blockedTasks: readonly string[];
+    },
+  ): ImplementGraphRecord {
+    const key = graphRecordKey(workspaceRoot, boundary.changeId);
+    if (this.graphs.has(key)) throw new Error("duplicate graph admission");
+    const record: ImplementGraphRecord = {
+      key,
+      workspaceRoot,
+      graphHash,
+      boundary: structuredClone(boundary),
+      completedTasks: new Set(state.completedTasks),
+      blockedTasks: new Set(state.blockedTasks),
+    };
+    this.graphs.set(key, record);
+    return record;
+  }
+
+  getGraph(
+    workspaceRoot: string,
+    changeId: string,
+  ): ImplementGraphRecord | undefined {
+    return this.graphs.get(graphRecordKey(workspaceRoot, changeId));
+  }
 
   has(key: string): boolean {
     return this.tasks.has(key);
@@ -151,5 +199,6 @@ export class WorkerRegistry {
 
   clear(): void {
     this.tasks.clear();
+    this.graphs.clear();
   }
 }

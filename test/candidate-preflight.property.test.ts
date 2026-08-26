@@ -370,6 +370,7 @@ function inputFor(
     writeSet?: string[];
     snapshot?: Bound;
     verification?: VerificationContract;
+    candidateOutputsAvailable?: (checkoutRoot: string) => boolean;
     signal?: AbortSignal;
   } = {},
 ): CandidatePreflightInput {
@@ -384,6 +385,7 @@ function inputFor(
     packageManifest: fixture.packageManifest,
     lockfile: fixture.lockfile,
     dependencyTarget: fixture.dependencyTarget,
+    candidateOutputsAvailable: options.candidateOutputsAvailable,
     signal: options.signal,
   };
 }
@@ -631,6 +633,33 @@ function hasMount(
 }
 
 describe("[SLICE-2:typed-failure] isolated candidate preflight", () => {
+  it("checks declared outputs after applying the candidate and before verification", async () => {
+    const preflight = requirePreflight();
+    const fixture = makeFixture();
+    const harness = makeDependencies();
+    let observedCandidate = false;
+
+    const result = await preflight(
+      inputFor(fixture, {
+        candidateOutputsAvailable(checkoutRoot) {
+          observedCandidate =
+            readFileSync(path.join(checkoutRoot, "src/value.ts"), "utf8") ===
+            'export const value = "new";\n';
+          return false;
+        },
+      }),
+      harness.dependencies,
+    );
+
+    expect(observedCandidate).toBe(true);
+    expect(result).toMatchObject({
+      ok: false,
+      kind: "artifact",
+      code: "producer-output-unavailable",
+      checkoutRemoved: true,
+    });
+  });
+
   it("admits an expected Red only for the bound failure identity", async () => {
     const preflight = requirePreflight();
     const fixture = makeFixture();
@@ -1886,11 +1915,7 @@ describe("[SLICE-2:typed-failure] isolated candidate preflight", () => {
       force: true,
     });
     symlinkSync(outside, path.join(fixture.root, "node_modules"), "dir");
-    const dependency = snapshotDirManifests(fixture.root, ["node_modules"]);
-    const input = inputFor(fixture, {
-      snapshot: mergeBounds(fixture.snapshot, dependency),
-    });
-    input.dependencyTarget = asDir(dependency, "node_modules");
+    const input = inputFor(fixture);
     const harness = makeDependencies();
 
     const result = await preflight(input, harness.dependencies);

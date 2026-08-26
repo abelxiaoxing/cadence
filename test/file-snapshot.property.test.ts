@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -169,5 +175,31 @@ describe("proposed write targets", () => {
     mkdirSync(path.join(root, "proposed"));
     writeFileSync(path.join(root, "proposed", "new-file.ts"), "created");
     expect(snapshots.isCurrent(root, bound)).toBe(false);
+  });
+
+  it("never follows final or parent symlinks when binding snapshots", () => {
+    if (!snapshots) return notReady("file-snapshot");
+    const root = makeRoot();
+    const outside = makeRoot();
+    writeFileSync(path.join(outside, "value.txt"), "outside");
+    symlinkSync(path.join(outside, "value.txt"), path.join(root, "linked.txt"));
+    const linked = snapshots.snapshotFiles(root, ["linked.txt"]);
+    expect(linked["linked.txt"]).toEqual({ kind: "absent", absent: true });
+    expect(snapshots.isCurrent(root, linked)).toBe(false);
+
+    symlinkSync(outside, path.join(root, "linked-parent"));
+    const proposed = snapshots.snapshotFiles(root, ["linked-parent/new.txt"], {
+      absent: ["linked-parent/new.txt"],
+    });
+    expect(snapshots.isCurrent(root, proposed)).toBe(false);
+    expect(
+      snapshots.isCurrent(root, {
+        "linked-parent/value.txt": {
+          kind: "file",
+          sha256: sha("outside"),
+          bytes: 7,
+        },
+      }),
+    ).toBe(false);
   });
 });

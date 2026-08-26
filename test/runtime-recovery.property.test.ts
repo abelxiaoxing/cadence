@@ -15,6 +15,7 @@ import { Activation } from "../src/activation.ts";
 import {
   type ChildFailure,
   cloneVerificationContract,
+  type VerificationContract,
   validateRequestEnvelope,
 } from "../src/contracts.ts";
 import { snapshotFiles } from "../src/file-snapshot.ts";
@@ -22,6 +23,12 @@ import { ParentPayloadBridge } from "../src/parent-payload-bridge.ts";
 import { Runtime } from "../src/runtime.ts";
 import { createSubmitTool } from "../src/submit-tool.ts";
 import { WorkerRegistry, workerIdentity } from "../src/worker.ts";
+import {
+  admitGraph,
+  graphAdmissionFor,
+  type ImplementTaskFixture,
+  taskAttemptFor,
+} from "./helpers/implement-graph-fixture.ts";
 import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 const TASK_ID = "approved-task-4.1";
@@ -52,18 +59,29 @@ function phaseRequest(input: {
   objective?: string;
   read?: string[];
   write?: string[];
-}) {
+}): ImplementTaskFixture {
   const phase = input.phase ?? "red";
-  const read = input.read ?? ["src/runtime.ts"];
-  const write = input.write ?? ["src/runtime.ts"];
-  const verification = (current: "red" | "green" | "refactor") => ({
-    id: `verify-${input.requestId}-${current}`,
-    argv: [
-      "bun",
-      "run",
-      "test:target",
+  const read = [
+    ...new Set([
+      ...(input.read ?? ["src/runtime.ts"]),
       "test/runtime-recovery.property.test.ts",
-    ],
+      "package.json",
+    ]),
+  ];
+  const write = input.write ?? ["src/runtime.ts"];
+  const verification = (
+    current: "red" | "green" | "refactor",
+  ): VerificationContract => ({
+    kind: "vitest" as const,
+    id: `verify-${input.requestId}-${current}`,
+    runner: {
+      kind: "package-script" as const,
+      packageManager: "bun" as const,
+      script: "test:target",
+      command: "vitest run",
+    },
+    testFiles: ["test/runtime-recovery.property.test.ts"],
+    args: [],
     classification:
       current === "red"
         ? "expected-red"
@@ -82,8 +100,6 @@ function phaseRequest(input: {
     ]),
   );
   return {
-    stage: "abel-implement",
-    kind: "open-task",
     boundary: {
       changeId: "runtime-recovery",
       taskId: input.taskId ?? TASK_ID,
@@ -98,12 +114,26 @@ function phaseRequest(input: {
           read,
           write,
           verification: verification("red"),
+          verificationInputs: [
+            {
+              kind: "workspace",
+              path: "test/runtime-recovery.property.test.ts",
+            },
+            { kind: "workspace", path: "package.json" },
+          ],
           verificationLock: "runtime-recovery-suite",
         },
         green: {
           read,
           write,
           verification: verification("green"),
+          verificationInputs: [
+            {
+              kind: "workspace",
+              path: "test/runtime-recovery.property.test.ts",
+            },
+            { kind: "workspace", path: "package.json" },
+          ],
           verificationLock: "runtime-recovery-suite",
         },
         ...(phase === "refactor"
@@ -112,6 +142,13 @@ function phaseRequest(input: {
                 read,
                 write,
                 verification: verification("refactor"),
+                verificationInputs: [
+                  {
+                    kind: "workspace",
+                    path: "test/runtime-recovery.property.test.ts",
+                  },
+                  { kind: "workspace", path: "package.json" },
+                ],
                 verificationLock: "runtime-recovery-suite",
               },
             }
@@ -121,6 +158,7 @@ function phaseRequest(input: {
         conflicts: [],
         resources: ["runtime-recovery"],
       },
+      dependsOn: [],
       agents: { impact: "none", managedOnly: true },
       approvedDependencies: [] as string[],
       impactClosure: {
@@ -150,7 +188,7 @@ function phaseAttempt(
 ) {
   return {
     stage: "abel-implement",
-    kind: "phase-attempt",
+    kind: "task-attempt",
     attempt: {
       ...structuredClone(request.attempt),
       ...(overrides.requestId === undefined
@@ -159,7 +197,15 @@ function phaseAttempt(
       ...(overrides.phase === undefined ? {} : { phase: overrides.phase }),
       ...(overrides.snapshot === undefined
         ? {}
-        : { snapshot: overrides.snapshot }),
+        : {
+            snapshot: {
+              ...(structuredClone(request.attempt.snapshot) as Record<
+                string,
+                unknown
+              >),
+              ...(overrides.snapshot as Record<string, unknown>),
+            },
+          }),
     },
   };
 }
@@ -173,6 +219,13 @@ function pinInheritedTask(
   request: ReturnType<typeof phaseRequest>,
   ctx: ReturnType<typeof context>,
 ) {
+  const admission = graphAdmissionFor([request]);
+  (runtime as any).registry.admitGraph(
+    admission.graph,
+    admission.graphHash,
+    ctx.cwd,
+    admission.state,
+  );
   const worker = (runtime as any).registry.open(
     request.boundary,
     workerIdentity(ctx.model ?? {}),
@@ -198,13 +251,7 @@ function pinInheritedDispatch(
   (runtime as any).taskRecords.set(envelope, worker);
 }
 
-function taskBoundary() {
-  const target = [
-    "bun",
-    "run",
-    "test:target",
-    "test/runtime-recovery.property.test.ts",
-  ];
+function taskBoundary(): ImplementTaskFixture["boundary"] {
   return {
     changeId: "remove-implement-design-loop",
     taskId: "S1",
@@ -216,26 +263,64 @@ function taskBoundary() {
     roots: ["."],
     phases: {
       red: {
-        read: ["src/runtime.ts", "test/runtime-recovery.property.test.ts"],
+        read: [
+          "src/runtime.ts",
+          "test/runtime-recovery.property.test.ts",
+          "package.json",
+        ],
         write: ["test/runtime-recovery.property.test.ts"],
         verification: {
+          kind: "vitest" as const,
           id: "verify-s1-red",
-          argv: target,
+          runner: {
+            kind: "package-script" as const,
+            packageManager: "bun" as const,
+            script: "test:target",
+            command: "vitest run",
+          },
+          testFiles: ["test/runtime-recovery.property.test.ts"],
+          args: [],
           classification: "expected-red",
           expectedFailure: "[SLICE-1:boundary-once]",
           minTests: 1,
         },
+        verificationInputs: [
+          {
+            kind: "workspace",
+            path: "test/runtime-recovery.property.test.ts",
+          },
+          { kind: "workspace", path: "package.json" },
+        ],
         verificationLock: "vitest-implement-runtime",
       },
       green: {
-        read: ["src/runtime.ts", "test/runtime-recovery.property.test.ts"],
+        read: [
+          "src/runtime.ts",
+          "test/runtime-recovery.property.test.ts",
+          "package.json",
+        ],
         write: ["src/runtime.ts"],
         verification: {
+          kind: "vitest" as const,
           id: "verify-s1-green",
-          argv: target,
+          runner: {
+            kind: "package-script" as const,
+            packageManager: "bun" as const,
+            script: "test:target",
+            command: "vitest run",
+          },
+          testFiles: ["test/runtime-recovery.property.test.ts"],
+          args: [],
           classification: "expected-green",
           minTests: 1,
         },
+        verificationInputs: [
+          {
+            kind: "workspace",
+            path: "test/runtime-recovery.property.test.ts",
+          },
+          { kind: "workspace", path: "package.json" },
+        ],
         verificationLock: "vitest-implement-runtime",
       },
     },
@@ -243,6 +328,7 @@ function taskBoundary() {
       conflicts: ["S2"],
       resources: ["implement-runtime-core"],
     },
+    dependsOn: [],
     agents: { impact: "none", managedOnly: true },
     approvedDependencies: [],
     impactClosure: {
@@ -270,20 +356,36 @@ function taskAttempt(
     requestId,
     phase,
     snapshot: Object.fromEntries(
-      ["src/runtime.ts", "test/runtime-recovery.property.test.ts"].map(
-        (path) => [path, { kind: "file", sha256: SNAPSHOT_SHA, bytes: 1 }],
-      ),
+      [
+        "src/runtime.ts",
+        "test/runtime-recovery.property.test.ts",
+        "package.json",
+      ].map((path) => [path, { kind: "file", sha256: SNAPSHOT_SHA, bytes: 1 }]),
     ),
   };
 }
 
-function taskOpen() {
+function taskFixture(): ImplementTaskFixture {
   return {
-    stage: "abel-implement",
-    kind: "open-task",
     boundary: taskBoundary(),
     attempt: taskAttempt(),
   };
+}
+
+async function runFixture(
+  runtime: Runtime,
+  request: ImplementTaskFixture,
+  ctx: ReturnType<typeof context>,
+) {
+  const registry = (runtime as any).registry as WorkerRegistry;
+  if (!registry.getGraph(ctx.cwd, request.boundary.changeId)) {
+    await admitGraph(runtime, [request], ctx as never);
+  }
+  return (runtime.execute as any)(
+    "run",
+    { request: taskAttemptFor(request) },
+    ctx,
+  );
 }
 
 function diffCandidate(requestId: string, taskId = TASK_ID) {
@@ -413,7 +515,7 @@ function mockCandidateDelivery(runtime: Runtime) {
     );
 }
 
-function addLegacyVerificationFixture(root: string): void {
+function addVerificationFixture(root: string): void {
   mkdirSync(join(root, "test"), { recursive: true });
   mkdirSync(join(root, "node_modules/.bin"), { recursive: true });
   writeFileSync(
@@ -436,10 +538,14 @@ function artifactFixture(runtime: Runtime) {
   const root = mkdtempSync(join(tmpdir(), "cadence-runtime-recovery-"));
   roots.push(root);
   execFileSync("git", ["init", "-q"], { cwd: root });
-  addLegacyVerificationFixture(root);
+  addVerificationFixture(root);
   const target = "private-provider-token.txt";
   writeFileSync(join(root, target), "actual-private-value\n");
-  const snapshot = snapshotFiles(root, [target]);
+  const snapshot = snapshotFiles(root, [
+    target,
+    "test/runtime-recovery.property.test.ts",
+    "package.json",
+  ]);
   const resultId = runtime.results.retain({
     diff: [
       `--- a/${target}`,
@@ -463,7 +569,7 @@ function retainedImplementFixture(
   const root = mkdtempSync(join(tmpdir(), "cadence-retained-implement-"));
   roots.push(root);
   execFileSync("git", ["init", "-q"], { cwd: root });
-  addLegacyVerificationFixture(root);
+  addVerificationFixture(root);
   const target = "candidate.txt";
   writeFileSync(join(root, target), "old\n");
   const request = phaseRequest({
@@ -497,9 +603,9 @@ async function deliveredImplementFixture(runtime: Runtime, requestId?: string) {
     result: { kind: "diff" },
     resultId: fixture.resultId,
   });
-  const delivered = await (runtime.execute as any)(
-    "run",
-    { request: fixture.request },
+  const delivered = await runFixture(
+    runtime,
+    fixture.request,
     context(fixture.root),
   );
   expect(delivered).toMatchObject({
@@ -516,15 +622,11 @@ describe("[SLICE-1:boundary-once] one admitted task boundary", () => {
   it("opens Red once and derives the child scope without the Green-only write", async () => {
     const runtime = activeRuntime();
     const dispatch = mockCandidateDelivery(runtime);
-    const request = taskOpen();
+    const request = taskFixture();
 
-    const opened = await (runtime.execute as any)(
-      "run",
-      { request },
-      context(),
-    );
+    const opened = await runFixture(runtime, request, context());
 
-    expect(opened, "[SLICE-1:boundary-once] open-task").toMatchObject({
+    expect(opened, "[SLICE-1:boundary-once] task attempt").toMatchObject({
       kind: "candidate",
       taskId: "S1",
       requestId: "S1:red:0",
@@ -556,18 +658,22 @@ describe("[SLICE-1:boundary-once] one admitted task boundary", () => {
     expect(derived.declared.write).not.toContain("src/runtime.ts");
 
     await expect(
-      (runtime.execute as any)("run", { request: taskOpen() }, context()),
-    ).rejects.toThrow(/duplicate|open|protocol/i);
+      (runtime.execute as any)(
+        "run",
+        { request: taskAttemptFor(taskFixture()) },
+        context(),
+      ),
+    ).rejects.toThrow(/candidate|phase|protocol/i);
     const cancelledDuplicate = new AbortController();
     cancelledDuplicate.abort(new Error("cancel duplicate open"));
     await expect(
       (runtime.execute as any)(
         "run",
-        { request: taskOpen() },
+        { request: taskAttemptFor(taskFixture()) },
         context(),
         cancelledDuplicate.signal,
       ),
-    ).rejects.toThrow(/duplicate|open|protocol/i);
+    ).rejects.toThrow(/candidate|phase|protocol/i);
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
@@ -581,7 +687,7 @@ describe("[SLICE-1:boundary-once] one admitted task boundary", () => {
         label: "stable evidence replay",
         request: {
           stage: "abel-implement",
-          kind: "phase-attempt",
+          kind: "task-attempt",
           attempt: {
             ...taskAttempt("green"),
             objective: "replayed stable objective",
@@ -593,7 +699,7 @@ describe("[SLICE-1:boundary-once] one admitted task boundary", () => {
         label: "change identity",
         request: {
           stage: "abel-implement",
-          kind: "phase-attempt",
+          kind: "task-attempt",
           attempt: {
             ...taskAttempt("green"),
             changeId: "another-change",
@@ -605,7 +711,7 @@ describe("[SLICE-1:boundary-once] one admitted task boundary", () => {
         label: "task identity",
         request: {
           stage: "abel-implement",
-          kind: "phase-attempt",
+          kind: "task-attempt",
           attempt: {
             ...taskAttempt("green"),
             taskId: "S1-other",
@@ -617,7 +723,7 @@ describe("[SLICE-1:boundary-once] one admitted task boundary", () => {
         label: "provider identity",
         request: {
           stage: "abel-implement",
-          kind: "phase-attempt",
+          kind: "task-attempt",
           attempt: taskAttempt("green"),
         },
         nextContext: {
@@ -639,7 +745,7 @@ describe("[SLICE-1:boundary-once] one admitted task boundary", () => {
       label: "workspace root identity",
       request: {
         stage: "abel-implement",
-        kind: "phase-attempt",
+        kind: "task-attempt",
         attempt: taskAttempt("green"),
       },
       nextContext: context(otherRoot),
@@ -648,11 +754,7 @@ describe("[SLICE-1:boundary-once] one admitted task boundary", () => {
     for (const testCase of cases) {
       const runtime = activeRuntime();
       const dispatch = mockCandidateDelivery(runtime);
-      const opened = await (runtime.execute as any)(
-        "run",
-        { request: taskOpen() },
-        context(),
-      );
+      const opened = await runFixture(runtime, taskFixture(), context());
       expect(opened, `${testCase.label}: initial open`).toMatchObject({
         kind: "candidate",
         taskId: "S1",
@@ -674,11 +776,7 @@ describe("[SLICE-1:boundary-once] one admitted task boundary", () => {
   it("pins the provider model API before phase transition checks", async () => {
     const runtime = activeRuntime();
     const dispatch = mockCandidateDelivery(runtime);
-    const opened = await (runtime.execute as any)(
-      "run",
-      { request: taskOpen() },
-      context(),
-    );
+    const opened = await runFixture(runtime, taskFixture(), context());
     expect(opened).toMatchObject({
       kind: "candidate",
       taskId: "S1",
@@ -691,7 +789,7 @@ describe("[SLICE-1:boundary-once] one admitted task boundary", () => {
         {
           request: {
             stage: "abel-implement",
-            kind: "phase-attempt",
+            kind: "task-attempt",
             attempt: taskAttempt("green"),
           },
         },
@@ -708,7 +806,7 @@ describe("[SLICE-1:boundary-once] one admitted task boundary", () => {
 
 describe("stable task and phase identity", () => {
   it("requires a stable task id independently of the phase request id", () => {
-    const request = phaseRequest({ requestId: RED_REQUEST_ID });
+    const request = taskAttemptFor(phaseRequest({ requestId: RED_REQUEST_ID }));
     const validation = validateRequestEnvelope(request);
     expect(validation.ok).toBe(true);
     if (validation.ok) {
@@ -721,34 +819,31 @@ describe("stable task and phase identity", () => {
   });
 
   it("rejects implementation requests without a snapshot", () => {
-    const request = phaseRequest({ requestId: RED_REQUEST_ID });
+    const request = taskAttemptFor(phaseRequest({ requestId: RED_REQUEST_ID }));
     const withoutSnapshot = structuredClone(request) as Record<string, unknown>;
     delete (withoutSnapshot.attempt as Record<string, unknown>).snapshot;
 
     const validation = validateRequestEnvelope(withoutSnapshot);
     expect(validation.ok).toBe(false);
     expect((validation as { ok: false; reason: string }).reason).toMatch(
-      /snapshot/i,
+      /task attempt/i,
     );
   });
 
-  it("rejects implementation requests with an incomplete read snapshot", () => {
+  it("rejects implementation requests with an incomplete read snapshot", async () => {
+    const runtime = activeRuntime();
     const request = phaseRequest({ requestId: RED_REQUEST_ID });
-    const incompleteSnapshot = structuredClone(request) as Record<
-      string,
-      unknown
-    >;
-    (
-      incompleteSnapshot.boundary as {
-        phases: { red: { read: string[] } };
-      }
-    ).phases.red.read.push("src/contracts.ts");
+    request.boundary.phases.red.read.push("src/contracts.ts");
+    await admitGraph(runtime, [request], context() as never);
 
-    const validation = validateRequestEnvelope(incompleteSnapshot);
-    expect(validation.ok).toBe(false);
-    expect((validation as { ok: false; reason: string }).reason).toMatch(
-      /snapshot/i,
-    );
+    await expect(
+      (runtime.execute as any)(
+        "run",
+        { request: taskAttemptFor(request) },
+        context(),
+      ),
+    ).rejects.toThrow(/snapshot/i);
+    expect((runtime as any).registry.values()).toHaveLength(0);
   });
 
   it("accepts distinct request and task identities at structural submit", async () => {
@@ -784,6 +879,13 @@ describe("stable task and phase identity", () => {
   it("keys one logical Worker by stable task id, not request id", () => {
     const registry = new WorkerRegistry();
     const request = phaseRequest({ requestId: RED_REQUEST_ID });
+    const admission = graphAdmissionFor([request]);
+    registry.admitGraph(
+      admission.graph,
+      admission.graphHash,
+      process.cwd(),
+      admission.state,
+    );
     const worker = registry.open(
       request.boundary as any,
       workerIdentity({ provider: "test", id: "model" }),
@@ -799,6 +901,13 @@ describe("stable task and phase identity", () => {
   it("pins the stable boundary and current phase budget", () => {
     const request = phaseRequest({ requestId: RED_REQUEST_ID });
     const registry = new WorkerRegistry();
+    const admission = graphAdmissionFor([request]);
+    registry.admitGraph(
+      admission.graph,
+      admission.graphHash,
+      process.cwd(),
+      admission.state,
+    );
     const worker = registry.open(
       request.boundary as any,
       workerIdentity({ provider: "test", id: "model" }),
@@ -906,11 +1015,7 @@ describe("[SLICE-2:typed-failure] retained identity and typed control", () => {
       const apply = vi.spyOn(runtime as any, "enqueueParentApply");
 
       await expect(
-        (runtime.execute as any)(
-          "run",
-          { request: fixture.request },
-          context(fixture.root),
-        ),
+        runFixture(runtime, fixture.request, context(fixture.root)),
       ).rejects.toThrow(/retained candidate identity mismatch/i);
 
       expect(apply).not.toHaveBeenCalled();
@@ -1044,7 +1149,7 @@ describe("[SLICE-2:typed-failure] retained identity and typed control", () => {
     const rejection = {
       kind: "artifact",
       code: "parent-review-rejected",
-      evidence: ["bounded parent review evidence"],
+      stage: "parent-review",
     };
     const invalid = await Promise.allSettled([
       (runtime.execute as any)("discard", {
@@ -1084,6 +1189,10 @@ describe("[SLICE-2:typed-failure] retained identity and typed control", () => {
       scope: "worker",
       cause: "artifact",
       remainingAttempts: 1,
+      lastFailure: {
+        code: "parent-review-rejected",
+        stage: "parent-review",
+      },
     });
     expect(runtime.results.get(fixture.resultId)).toBeUndefined();
   });
@@ -1112,8 +1221,22 @@ describe("[SLICE-2:typed-failure] retained identity and typed control", () => {
   });
 
   it.each([
-    ["artifact", { kind: "artifact", code: "red-not-witnessed" }],
-    ["stale", { kind: "stale", code: "stale-snapshot" }],
+    [
+      "artifact",
+      {
+        kind: "artifact",
+        code: "red-not-witnessed",
+        stage: "candidate-preflight",
+      },
+    ],
+    [
+      "stale",
+      {
+        kind: "stale",
+        code: "stale-snapshot",
+        stage: "candidate-preflight",
+      },
+    ],
     [
       "environment",
       { kind: "environment", code: "sandbox-runtime-unavailable" },
@@ -1203,11 +1326,7 @@ describe("typed finite Runtime recovery", () => {
     const dispatch = mockCandidateDelivery(runtime);
     const red = phaseRequest({ requestId: RED_REQUEST_ID });
 
-    const delivered = await (runtime.execute as any)(
-      "run",
-      { request: red },
-      context(),
-    );
+    const delivered = await runFixture(runtime, red, context());
     expect(delivered).toMatchObject({
       kind: "candidate",
       taskId: TASK_ID,
@@ -1242,11 +1361,7 @@ describe("typed finite Runtime recovery", () => {
     const dispatch = mockCandidateDelivery(runtime);
     const initial = phaseRequest({ requestId: RED_REQUEST_ID });
 
-    const delivered = await (runtime.execute as any)(
-      "run",
-      { request: initial },
-      context(),
-    );
+    const delivered = await runFixture(runtime, initial, context());
     const worker = taskRecord(runtime);
     worker.state = {
       kind: "ready",
@@ -1290,11 +1405,7 @@ describe("typed finite Runtime recovery", () => {
       phase: "refactor",
     });
     red.attempt.phase = "red";
-    const delivered = await (runtime.execute as any)(
-      "run",
-      { request: red },
-      context(),
-    );
+    const delivered = await runFixture(runtime, red, context());
     const worker = taskRecord(runtime);
     worker.state = {
       kind: "ready",
@@ -1337,20 +1448,19 @@ describe("typed finite Runtime recovery", () => {
       read: [fixture.target],
       write: [fixture.target],
     });
-    request.attempt.snapshot =
-      fixture.snapshot as unknown as typeof request.attempt.snapshot;
+    request.attempt.snapshot = {
+      ...(request.attempt.snapshot as Record<string, unknown>),
+      ...fixture.snapshot,
+    };
 
-    const delivered = await (runtime.execute as any)(
-      "run",
-      { request },
-      context(fixture.root),
-    );
+    const delivered = await runFixture(runtime, request, context(fixture.root));
     const discarded = await runtime.execute("discard", {
       resultId: fixture.resultId,
       requestId: "approved-task-4.1:discard:0",
       rejection: {
         kind: "artifact",
         code: "parent-review-rejected",
+        stage: "parent-review",
       },
     });
     const redispatched = await (runtime.execute as any)(
@@ -1372,6 +1482,10 @@ describe("typed finite Runtime recovery", () => {
       scope: "worker",
       cause: "artifact",
       remainingAttempts: 1,
+      lastFailure: {
+        code: "parent-review-rejected",
+        stage: "parent-review",
+      },
     });
     expect(redispatched).toMatchObject({
       kind: "candidate",
@@ -1410,9 +1524,9 @@ describe("typed finite Runtime recovery", () => {
         failureClass: "transport",
       });
 
-    const result = await (runtime.execute as any)(
-      "run",
-      { request: phaseRequest({ requestId: RED_REQUEST_ID }) },
+    const result = await runFixture(
+      runtime,
+      phaseRequest({ requestId: RED_REQUEST_ID }),
       context(),
     );
 
@@ -1442,14 +1556,18 @@ describe("typed finite Runtime recovery", () => {
     vi.spyOn(runtime as any, "dispatchChild").mockResolvedValueOnce({
       ok: false,
       error: "invalid candidate",
-      failure: { kind: "artifact", code: "red-not-witnessed" },
+      failure: {
+        kind: "artifact",
+        code: "red-not-witnessed",
+        stage: "candidate-preflight",
+      },
       failureKind: "failed",
       usage: firstUsage,
     });
 
-    const result = await (runtime.execute as any)(
-      "run",
-      { request: phaseRequest({ requestId: RED_REQUEST_ID }) },
+    const result = await runFixture(
+      runtime,
+      phaseRequest({ requestId: RED_REQUEST_ID }),
       context(),
     );
 
@@ -1463,6 +1581,58 @@ describe("typed finite Runtime recovery", () => {
     });
   });
 
+  it("preserves a stale code and stage when its bounded attempts exhaust", async () => {
+    const runtime = activeRuntime();
+    const dispatch = vi
+      .spyOn(runtime as any, "dispatchChild")
+      .mockResolvedValue({
+        ok: false,
+        error: "snapshot contents must not be exposed",
+        failure: {
+          kind: "stale",
+          code: "stale-snapshot",
+          stage: "candidate-preflight",
+        },
+        failureKind: "failed",
+      });
+    const initial = phaseRequest({ requestId: RED_REQUEST_ID });
+
+    const first = await runFixture(runtime, initial, context());
+    const exhausted = await (runtime.execute as any)(
+      "run",
+      {
+        request: phaseAttempt(initial, {
+          requestId: "approved-task-4.1:red:stale-refresh",
+        }),
+      },
+      context(),
+    );
+
+    expect(first).toMatchObject({
+      kind: "retry",
+      cause: "stale",
+      remainingAttempts: 1,
+      lastFailure: {
+        code: "stale-snapshot",
+        stage: "candidate-preflight",
+      },
+    });
+    expect(exhausted).toMatchObject({
+      kind: "blocked",
+      failure: {
+        kind: "attempts-exhausted",
+        cause: "stale",
+        attemptsUsed: 2,
+        lastFailure: {
+          code: "stale-snapshot",
+          stage: "candidate-preflight",
+        },
+      },
+    });
+    expect(JSON.stringify(exhausted)).not.toContain("snapshot contents");
+    expect(dispatch).toHaveBeenCalledTimes(2);
+  });
+
   it("aggregates both transport launches into one successful outcome usage", async () => {
     const runtime = activeRuntime();
     const fixture = retainedImplementFixture(
@@ -1473,7 +1643,11 @@ describe("typed finite Runtime recovery", () => {
       .mockResolvedValueOnce({
         ok: false,
         error: "first transport failed",
-        failure: { kind: "transport", code: "transport-failure" },
+        failure: {
+          kind: "transport",
+          code: "transport-failure",
+          stage: "child-provider-stream",
+        },
         failureKind: "failed",
         usage: firstUsage,
       })
@@ -1482,9 +1656,9 @@ describe("typed finite Runtime recovery", () => {
         usage: secondUsage,
       }));
 
-    const result = await (runtime.execute as any)(
-      "run",
-      { request: fixture.request },
+    const result = await runFixture(
+      runtime,
+      fixture.request,
       context(fixture.root),
     );
 
@@ -1501,21 +1675,29 @@ describe("typed finite Runtime recovery", () => {
       .mockResolvedValueOnce({
         ok: false,
         error: "first transport failed",
-        failure: { kind: "transport", code: "transport-failure" },
+        failure: {
+          kind: "transport",
+          code: "transport-failure",
+          stage: "child-provider-stream",
+        },
         failureKind: "failed",
         usage: firstUsage,
       })
       .mockResolvedValueOnce({
         ok: false,
         error: "second transport failed",
-        failure: { kind: "transport", code: "transport-failure" },
+        failure: {
+          kind: "transport",
+          code: "transport-failure",
+          stage: "child-provider-stream",
+        },
         failureKind: "failed",
         usage: secondUsage,
       });
 
-    const result = await (runtime.execute as any)(
-      "run",
-      { request: phaseRequest({ requestId: RED_REQUEST_ID }) },
+    const result = await runFixture(
+      runtime,
+      phaseRequest({ requestId: RED_REQUEST_ID }),
       context(),
     );
 
@@ -1749,6 +1931,11 @@ describe("typed finite Runtime recovery", () => {
       .mockResolvedValueOnce({
         ok: false,
         error: "malformed diff leaked-provider-secret",
+        failure: {
+          kind: "artifact",
+          code: "invalid-diff",
+          stage: "candidate-diff",
+        },
         failureKind: "failed",
         failureClass: "artifact",
       })
@@ -1757,11 +1944,7 @@ describe("typed finite Runtime recovery", () => {
       );
     const initial = phaseRequest({ requestId: RED_REQUEST_ID });
 
-    const rejected = await (runtime.execute as any)(
-      "run",
-      { request: initial },
-      context(),
-    );
+    const rejected = await runFixture(runtime, initial, context());
 
     expectImplementOutcome(
       rejected,
@@ -1804,17 +1987,14 @@ describe("typed finite Runtime recovery", () => {
     expect(dispatch.mock.calls[1]?.[4]).toBe("candidate:invalid-diff");
   });
 
-  it("throws when an open-task model is unavailable without registering or launching", async () => {
+  it("throws when the initial Red model is unavailable without registering or launching", async () => {
     const runtime = activeRuntime();
     const requestId = "approved-task-4.1:red:environment";
     const dispatch = vi.spyOn(runtime as any, "dispatchChild");
 
+    const request = phaseRequest({ requestId });
     await expect(
-      (runtime.execute as any)(
-        "run",
-        { request: phaseRequest({ requestId }) },
-        context(process.cwd(), false),
-      ),
+      runFixture(runtime, request, context(process.cwd(), false)),
     ).rejects.toThrow(/model.*unavailable/i);
 
     expect(dispatch).not.toHaveBeenCalled();
@@ -1828,6 +2008,11 @@ describe("typed finite Runtime recovery", () => {
       .mockResolvedValue({
         ok: false,
         error: "candidate preflight inputs are unavailable",
+        failure: {
+          kind: "environment",
+          code: "root-unavailable",
+          stage: "phase-runtime",
+        },
         failureKind: "failed",
         failureClass: "environment",
         launchConsumed: true,
@@ -1837,7 +2022,7 @@ describe("typed finite Runtime recovery", () => {
     });
     const retry = phaseAttempt(request);
 
-    const first = await (runtime.execute as any)("run", { request }, context());
+    const first = await runFixture(runtime, request, context());
     const replay = await (runtime.execute as any)(
       "run",
       { request: retry },
@@ -1876,14 +2061,12 @@ describe("typed finite Runtime recovery", () => {
       read: [fixture.target],
       write: [fixture.target],
     });
-    request.attempt.snapshot =
-      fixture.snapshot as unknown as typeof request.attempt.snapshot;
+    request.attempt.snapshot = {
+      ...(request.attempt.snapshot as Record<string, unknown>),
+      ...fixture.snapshot,
+    };
 
-    const delivered = await (runtime.execute as any)(
-      "run",
-      { request },
-      context(fixture.root),
-    );
+    const delivered = await runFixture(runtime, request, context(fixture.root));
     const rejected = await (runtime.execute as any)(
       "apply",
       {
@@ -1919,6 +2102,13 @@ describe("typed finite Runtime recovery", () => {
   it("routes a passing Red candidate to bounded artifact correction", () => {
     const runtime = activeRuntime();
     const request = phaseRequest({ requestId: RED_REQUEST_ID });
+    const admission = graphAdmissionFor([request]);
+    (runtime as any).registry.admitGraph(
+      admission.graph,
+      admission.graphHash,
+      process.cwd(),
+      admission.state,
+    );
     const worker = (runtime as any).registry.open(
       request.boundary,
       workerIdentity({
@@ -1957,7 +2147,11 @@ describe("typed finite Runtime recovery", () => {
       resultId,
       retained,
       worker,
-      { kind: "artifact", code: "red-not-witnessed" },
+      {
+        kind: "artifact",
+        code: "red-not-witnessed",
+        stage: "candidate-preflight",
+      },
     );
 
     expectImplementOutcome(result, {
@@ -1974,7 +2168,11 @@ describe("typed finite Runtime recovery", () => {
       kind: "ready",
       phase: "red",
       launchIndex: 1,
-      correction: { kind: "artifact", code: "red-not-witnessed" },
+      correction: {
+        kind: "artifact",
+        code: "red-not-witnessed",
+        stage: "candidate-preflight",
+      },
     });
   });
 
@@ -1995,20 +2193,22 @@ describe("typed finite Runtime recovery", () => {
       read: [fixture.target],
       write: [fixture.target],
     });
-    initial.attempt.snapshot =
-      fixture.snapshot as unknown as typeof initial.attempt.snapshot;
+    initial.attempt.snapshot = {
+      ...(initial.attempt.snapshot as Record<string, unknown>),
+      ...fixture.snapshot,
+    };
 
-    const delivered = await (runtime.execute as any)(
-      "run",
-      { request: initial },
-      context(fixture.root),
-    );
+    const delivered = await runFixture(runtime, initial, context(fixture.root));
     const stale = (runtime as any).presentApplyFailure(
       requestId,
       fixture.resultId,
       runtime.results.get(fixture.resultId),
       taskRecord(runtime),
-      { kind: "stale", code: "stale-snapshot" },
+      {
+        kind: "stale",
+        code: "stale-snapshot",
+        stage: "candidate-preflight",
+      },
     );
     const refreshed = phaseAttempt(initial, {
       snapshot: {
@@ -2059,6 +2259,11 @@ describe("typed finite Runtime recovery", () => {
       .mockResolvedValueOnce({
         ok: false,
         error: "transport-secret",
+        failure: {
+          kind: "transport",
+          code: "transport-failure",
+          stage: "child-provider-stream",
+        },
         failureKind: "failed",
         failureClass: "transport",
       })
@@ -2079,14 +2284,12 @@ describe("typed finite Runtime recovery", () => {
       read: [fixture.target],
       write: [fixture.target],
     });
-    initial.attempt.snapshot =
-      fixture.snapshot as unknown as typeof initial.attempt.snapshot;
+    initial.attempt.snapshot = {
+      ...(initial.attempt.snapshot as Record<string, unknown>),
+      ...fixture.snapshot,
+    };
 
-    const delivered = await (runtime.execute as any)(
-      "run",
-      { request: initial },
-      context(fixture.root),
-    );
+    const delivered = await runFixture(runtime, initial, context(fixture.root));
     const rejected = await (runtime.execute as any)(
       "apply",
       {
@@ -2190,11 +2393,7 @@ describe("[SLICE-3:terminal-replay] closed task state and replay", () => {
     });
     initial.attempt.phase = "red";
 
-    const red = await (runtime.execute as any)(
-      "run",
-      { request: initial },
-      context(),
-    );
+    const red = await runFixture(runtime, initial, context());
     const redApplied = await applyDelivered(
       runtime,
       red,
@@ -2316,11 +2515,7 @@ describe("[SLICE-3:terminal-replay] closed task state and replay", () => {
       managedOnly: true,
     };
 
-    const red = await (runtime.execute as any)(
-      "run",
-      { request: initial },
-      context(),
-    );
+    const red = await runFixture(runtime, initial, context());
     await applyDelivered(runtime, red, "approved-task-4.1:red:agents-apply");
     const green = await (runtime.execute as any)(
       "run",
@@ -2382,11 +2577,7 @@ describe("[SLICE-3:terminal-replay] closed task state and replay", () => {
       const apply = vi.spyOn(runtime as any, "enqueueParentApply");
       const initial = phaseRequest({ requestId: RED_REQUEST_ID });
 
-      const blocked = await (runtime.execute as any)(
-        "run",
-        { request: initial },
-        context(),
-      );
+      const blocked = await runFixture(runtime, initial, context());
       expect.soft(blocked).toMatchObject({
         kind: "blocked",
         taskId: TASK_ID,
@@ -2444,9 +2635,26 @@ describe("[SLICE-3:terminal-replay] closed task state and replay", () => {
   );
 
   it.each([
-    ["artifact", { kind: "artifact", code: "invalid-diff" }],
-    ["stale", { kind: "stale", code: "stale-snapshot" }],
-    ["transport", { kind: "transport", code: "transport-failure" }],
+    [
+      "artifact",
+      { kind: "artifact", code: "invalid-diff", stage: "candidate-diff" },
+    ],
+    [
+      "stale",
+      {
+        kind: "stale",
+        code: "stale-snapshot",
+        stage: "candidate-preflight",
+      },
+    ],
+    [
+      "transport",
+      {
+        kind: "transport",
+        code: "transport-failure",
+        stage: "child-provider-stream",
+      },
+    ],
   ] as const)(
     "shares exactly two non-cancelled launches when %s fails first",
     async (_name, firstFailure) => {
@@ -2454,6 +2662,7 @@ describe("[SLICE-3:terminal-replay] closed task state and replay", () => {
       const secondFailure = {
         kind: "transport",
         code: "transport-failure",
+        stage: "child-provider-stream",
       } as const;
       const dispatch = vi
         .spyOn(runtime as any, "dispatchChild")
@@ -2476,11 +2685,7 @@ describe("[SLICE-3:terminal-replay] closed task state and replay", () => {
         });
       const initial = phaseRequest({ requestId: RED_REQUEST_ID });
 
-      const first = await (runtime.execute as any)(
-        "run",
-        { request: initial },
-        context(),
-      );
+      const first = await runFixture(runtime, initial, context());
       let stopped = first;
       if (firstFailure.kind !== "transport") {
         expect.soft(first).toMatchObject({

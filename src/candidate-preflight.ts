@@ -58,6 +58,7 @@ export interface CandidatePreflightInput {
   packageManifest: FileBound;
   lockfile: FileBound;
   dependencyTarget: FileBound | DirBound;
+  candidateOutputsAvailable?: (checkoutRoot: string) => boolean;
   signal?: AbortSignal;
 }
 
@@ -1281,11 +1282,6 @@ export async function preflightCandidate(
   try {
     if (input.signal?.aborted) reject("cancelled", "cancelled");
     if (!validSnapshot(input.snapshot)) reject("artifact", "invalid-snapshot");
-    requireCurrentHost(input);
-    const validated = validateInput(input);
-    targets = validated.targets;
-    verifyBaselineAt(input.root, input.baseline);
-
     let root: string;
     try {
       root = dependencies.realpath(input.root);
@@ -1295,8 +1291,12 @@ export async function preflightCandidate(
     const dependencySource = resolveDependencySource(
       dependencies,
       root,
-      validated.dependencyPath,
+      "node_modules",
     );
+    requireCurrentHost(input);
+    const validated = validateInput(input);
+    targets = validated.targets;
+    verifyBaselineAt(input.root, input.baseline);
     const prefix = path.join(
       path.dirname(root),
       `.${path.basename(root)}-candidate-`,
@@ -1431,6 +1431,9 @@ export async function preflightCandidate(
     );
     await requireRegularGitModes(dependencies, checkout, input.signal);
     scanCheckout(checkout);
+    if (input.candidateOutputsAvailable?.(checkout) === false) {
+      reject("artifact", "producer-output-unavailable");
+    }
 
     for (const verificationPath of verificationInputPaths(
       validated.verification,

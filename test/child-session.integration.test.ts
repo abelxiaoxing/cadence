@@ -24,6 +24,12 @@ import {
   snapshotFiles,
 } from "../src/file-snapshot";
 import { Runtime } from "../src/runtime";
+import {
+  admitGraph,
+  assertCandidateOutcome,
+  type ImplementTaskFixture,
+  taskAttemptFor,
+} from "./helpers/implement-graph-fixture.ts";
 import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 let child: typeof import("../src/child-session") | null = null;
@@ -233,37 +239,44 @@ describe("real isolated child session", () => {
       model: faux.getModel(),
       modelRegistry: new ModelRegistry(modelRuntime),
     };
-    const request = {
-      stage: "abel-implement",
-      kind: "open-task",
+    const request: ImplementTaskFixture = {
       boundary: {
         changeId: "child-session-runtime",
         taskId: "task-1",
+        dependsOn: [],
         objective: "Change a.txt",
         roots: ["."],
         context: { agents: "none", contract: "approved" },
         phases: {
           red: {
-            read: ["a.txt"],
+            read: ["a.txt", "package.json"],
             write: ["a.txt"],
             verification: {
+              kind: "package-script",
               id: "verify-task-1-red",
-              argv: ["bun", "run", "check"],
+              packageManager: "bun",
+              script: "check",
+              command: "node test/check.mjs",
+              args: [],
               classification: "expected-red",
               expectedFailure: "[CHILD-SESSION:expected-red]",
-              minTests: 1,
             },
+            verificationInputs: [{ kind: "workspace", path: "package.json" }],
             verificationLock: "child-session-runtime",
           },
           green: {
-            read: ["a.txt"],
+            read: ["a.txt", "package.json"],
             write: ["a.txt"],
             verification: {
+              kind: "package-script",
               id: "verify-task-1-green",
-              argv: ["bun", "run", "check"],
+              packageManager: "bun",
+              script: "check",
+              command: "node test/check.mjs",
+              args: [],
               classification: "expected-green",
-              minTests: 1,
             },
+            verificationInputs: [{ kind: "workspace", path: "package.json" }],
             verificationLock: "child-session-runtime",
           },
         },
@@ -288,7 +301,12 @@ describe("real isolated child session", () => {
         ),
       },
     };
-    const run = await (runtime as any).execute("run", { request }, context);
+    await admitGraph(runtime, [request], context);
+    const run = await (runtime as any).execute(
+      "run",
+      { request: taskAttemptFor(request) },
+      context,
+    );
     expect(run).toMatchObject({
       kind: "candidate",
       requestId: "task-1",
@@ -296,6 +314,7 @@ describe("real isolated child session", () => {
       phase: "red",
       result: submitted,
     });
+    assertCandidateOutcome(run);
     expect(run.resultId).toBeTypeOf("string");
     const retained = runtime.results.get(run.resultId);
     expect(retained).toBeDefined();
@@ -548,6 +567,12 @@ describe("structural submission classification", () => {
     expect.soft(textOnly.failure).toEqual({
       kind: "artifact",
       code: "child-no-structural-submit",
+      stage: "child-finalization",
+      details: {
+        finalCategory: "text-only",
+        submitAttempts: 0,
+        schema: "not-submitted",
+      },
     });
 
     const providerError = await runChildSessionFixture(
@@ -591,6 +616,12 @@ describe("structural submission classification", () => {
     expect.soft(wrongRequest.ok).toBe(false);
     expect.soft(classification(wrongRequest)?.attempts).toBe(1);
     expect.soft(classification(wrongRequest)?.identity?.request).toBe(false);
+    expect.soft(wrongRequest.failure).toMatchObject({
+      kind: "artifact",
+      code: "structural-identity-mismatch",
+      stage: "structural-submit",
+      details: { identityMismatch: ["request"] },
+    });
 
     // Attempts: a wrong role is still counted as an attempted submit.
     const wrongRole = await runChildSessionFixture(
@@ -602,6 +633,11 @@ describe("structural submission classification", () => {
     expect.soft(wrongRole.ok).toBe(false);
     expect.soft(classification(wrongRole)?.attempts).toBe(1);
     expect.soft(classification(wrongRole)?.identity?.role).toBe(false);
+    expect.soft(wrongRole.failure).toMatchObject({
+      kind: "artifact",
+      code: "structural-identity-mismatch",
+      details: { identityMismatch: ["role"] },
+    });
 
     // Identity: a wrong task id must be rejected before retention.
     const wrongTask = await runChildSessionFixture(
@@ -612,6 +648,11 @@ describe("structural submission classification", () => {
     );
     expect.soft(wrongTask.ok).toBe(false);
     expect.soft(classification(wrongTask)?.identity?.task).toBe(false);
+    expect.soft(wrongTask.failure).toMatchObject({
+      kind: "artifact",
+      code: "structural-identity-mismatch",
+      details: { identityMismatch: ["task"] },
+    });
 
     // Identity: a phase other than the request phase must be rejected.
     const wrongPhase = await runChildSessionFixture(
@@ -622,6 +663,11 @@ describe("structural submission classification", () => {
     );
     expect.soft(wrongPhase.ok).toBe(false);
     expect.soft(classification(wrongPhase)?.identity?.phase).toBe(false);
+    expect.soft(wrongPhase.failure).toMatchObject({
+      kind: "artifact",
+      code: "structural-identity-mismatch",
+      details: { identityMismatch: ["phase"] },
+    });
 
     // Schema: an invalid diff payload is rejected and classed as invalid.
     const invalidSchema = await runChildSessionFixture(
@@ -635,7 +681,26 @@ describe("structural submission classification", () => {
     expect.soft(invalidSchema.transportFailure).toBe(false);
     expect.soft(invalidSchema.failure).toEqual({
       kind: "artifact",
+      code: "invalid-diff",
+      stage: "candidate-diff",
+      details: {
+        finalCategory: "mixed",
+        submitAttempts: 1,
+        schema: "invalid",
+      },
+    });
+
+    const invalidStructural = await runChildSessionFixture(
+      child,
+      parentProvider,
+      "invalid-structural",
+      submitResponse({ ...validDiffSubmit, summary: "" }),
+    );
+    expect.soft(invalidStructural.failure).toMatchObject({
+      kind: "artifact",
       code: "invalid-structural-result",
+      stage: "structural-submit",
+      details: { schema: "invalid", submitAttempts: 1 },
     });
   });
 });

@@ -25,6 +25,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Activation } from "../src/activation";
 import { snapshotFiles } from "../src/file-snapshot";
 import { Runtime } from "../src/runtime";
+import {
+  admitGraph,
+  assertCandidateOutcome,
+  type ImplementTaskFixture,
+  taskAttemptFor,
+} from "./helpers/implement-graph-fixture.ts";
 import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 let entrypoint: typeof import("../src/index") | null = null;
@@ -120,39 +126,50 @@ const submitResponse = (submitted: unknown) =>
     { stopReason: "toolUse" },
   );
 
-function requestFor(id: string, phase: string, root: string) {
+function requestFor(
+  id: string,
+  phase: "red" | "green" | "refactor",
+  root: string,
+): ImplementTaskFixture {
   return {
-    stage: "abel-implement",
-    kind: "open-task",
     boundary: {
       changeId: "lifecycle-fixture",
       taskId: id,
+      dependsOn: [],
       objective: "Change a.txt",
       roots: ["."],
       context: { agents: "none", contract: "approved" },
       phases: {
         red: {
-          read: ["a.txt"],
+          read: ["a.txt", "test/expected-red.mjs"],
           write: ["a.txt"],
           verificationLock: "lifecycle-red",
           verification: {
+            kind: "static-check",
             id: `verify-${id}`,
-            argv: ["bun", "run", "test:target", "test/expected-red.mjs"],
+            runner: { kind: "node", script: "test/expected-red.mjs" },
+            args: [],
             classification: "expected-red",
             expectedFailure: "[LIFECYCLE:expected-red]",
-            minTests: 1,
           },
+          verificationInputs: [
+            { kind: "workspace", path: "test/expected-red.mjs" },
+          ],
         },
         green: {
-          read: ["a.txt"],
+          read: ["a.txt", "package.json"],
           write: ["a.txt"],
           verificationLock: "lifecycle-green",
           verification: {
+            kind: "package-script",
             id: `verify-${id}-green`,
-            argv: ["bun", "run", "check"],
+            packageManager: "bun",
+            script: "check",
+            command: 'node -e ""',
+            args: [],
             classification: "expected-green",
-            minTests: 1,
           },
+          verificationInputs: [{ kind: "workspace", path: "package.json" }],
         },
       },
       scheduling: { conflicts: [], resources: [] },
@@ -170,9 +187,18 @@ function requestFor(id: string, phase: string, root: string) {
       taskId: id,
       requestId: id,
       phase,
-      snapshot: snapshotFiles(root, ["a.txt"]),
+      snapshot: snapshotFiles(root, ["a.txt", "test/expected-red.mjs"]),
     },
   };
+}
+
+async function runFixture(
+  runtime: Runtime,
+  request: ImplementTaskFixture,
+  context: Parameters<Runtime["execute"]>[2],
+) {
+  await admitGraph(runtime, [request], context);
+  return runtime.execute("run", { request: taskAttemptFor(request) }, context);
 }
 
 function diffSubmit(id: string, phase: string) {
@@ -223,9 +249,9 @@ describe("stage cleanup restores inactive state", () => {
   it("restores inactive state and clears retained state", async () => {
     const { cwd, faux, runtime, context } = await makeActive("stage-clean");
     faux.setResponses([submitResponse(diffSubmit("task-clean", "red"))]);
-    const run = await (runtime as any).execute(
-      "run",
-      { request: requestFor("task-clean", "red", cwd) },
+    const run = await runFixture(
+      runtime,
+      requestFor("task-clean", "red", cwd),
       context,
     );
     expect(run).toMatchObject({
@@ -234,6 +260,7 @@ describe("stage cleanup restores inactive state", () => {
       taskId: "task-clean",
       phase: "red",
     });
+    assertCandidateOutcome(run);
     const resultId = run.resultId as string;
     expect((runtime as any).results.get(resultId)).toBeDefined();
     expect((runtime as any).registry.find(cwd, "task-clean")).toBeDefined();
@@ -283,7 +310,7 @@ describe("pi lifecycle end (session_shutdown) finishes the stage", () => {
         api: "faux",
       },
       modelRegistry: {},
-    };
+    } as Parameters<Runtime["execute"]>[2];
     const activeStarted = deferred<void>();
     let activePromise: Promise<unknown> | undefined;
     const dispatch = vi
@@ -321,9 +348,9 @@ describe("pi lifecycle end (session_shutdown) finishes the stage", () => {
       }) as any);
 
     try {
-      const retained = await (activeRuntime.execute as any)(
-        "run",
-        { request: requestFor("replacement-retained", "red", cwd) },
+      const retained = await runFixture(
+        activeRuntime,
+        requestFor("replacement-retained", "red", cwd),
         context,
       );
       expect(retained).toMatchObject({ kind: "candidate" });
@@ -382,9 +409,9 @@ describe("no private state filesystem after delegation", () => {
   it("leaves no private state on disk", async () => {
     const { cwd, faux, runtime, context } = await makeActive("fs-scope");
     faux.setResponses([submitResponse(diffSubmit("task-fs", "red"))]);
-    const run = await (runtime as any).execute(
-      "run",
-      { request: requestFor("task-fs", "red", cwd) },
+    const run = await runFixture(
+      runtime,
+      requestFor("task-fs", "red", cwd),
       context,
     );
     expect(run).toMatchObject({
@@ -405,9 +432,9 @@ describe("unique child usage is returned exactly once", () => {
   it("exposes the single child usage without double counting", async () => {
     const { faux, runtime, context } = await makeActive("usage-once");
     faux.setResponses([submitResponse(diffSubmit("task-usage", "red"))]);
-    const run = await (runtime as any).execute(
-      "run",
-      { request: requestFor("task-usage", "red", context.cwd) },
+    const run = await runFixture(
+      runtime,
+      requestFor("task-usage", "red", context.cwd),
       context,
     );
     expect(run).toMatchObject({
@@ -416,8 +443,9 @@ describe("unique child usage is returned exactly once", () => {
       taskId: "task-usage",
       phase: "red",
     });
+    assertCandidateOutcome(run);
     expect(run.usage).toBeDefined();
     expect(run.usage).not.toBeInstanceOf(Array);
-    expect(run.usage.totalTokens).toBeTypeOf("number");
+    expect(run.usage?.totalTokens).toBeTypeOf("number");
   });
 });

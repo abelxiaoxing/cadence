@@ -17,12 +17,14 @@ import {
   type ImplementApplyOperation,
   type ImplementationPhase,
   type ImplementDiscardOperation,
+  type ImplementGraphReadinessDiagnostic,
   type ImplementOutcome,
   type ImplementRunRequest,
   LIMITS,
   type PhaseAttempt,
   type RequestEnvelope,
   type RunRequest,
+  type SafeFailureDiagnostic,
   type TaskBoundary,
   type TaskFailure,
   validateAgentsCheckpointAttempt,
@@ -43,6 +45,11 @@ import {
   snapshotFile,
   snapshotFiles,
 } from "./file-snapshot.ts";
+import {
+  assessImplementGraphReadiness,
+  hashImplementGraphBoundary,
+  type ImplementExecutionFacts,
+} from "./implement-graph.ts";
 import type { ParentPayloadBridge } from "./parent-payload-bridge.ts";
 import { customPhaseRuntime, runtimeFromContext } from "./parent-provider.ts";
 import { applyAgentsCheckpoint, applyRetainedPatch } from "./patch.ts";
@@ -58,8 +65,8 @@ import {
   resolveSubagentEndpoint,
   type SubagentEndpoint,
 } from "./subagent-endpoint.ts";
-import { assessVerificationReadiness } from "./verification-capability.ts";
 import {
+  type ImplementGraphRecord,
   type TaskRecord,
   taskConflictOf,
   taskRecordKey,
@@ -100,7 +107,7 @@ function targetsImplement(request: unknown): boolean {
   );
 }
 
-function cloneLegacyEnvelope(request: RequestEnvelope): RequestEnvelope {
+function cloneNonImplementEnvelope(request: RequestEnvelope): RequestEnvelope {
   return {
     ...request,
     taskId: request.taskId ?? request.id,
@@ -175,6 +182,39 @@ function nextDeclaredPhase(
   if (phase === "red") return "green";
   if (phase === "green" && boundary.phases.refactor) return "refactor";
   return null;
+}
+
+function taskBoundaryOf(
+  graph: ImplementGraphRecord,
+  taskId: string,
+): TaskBoundary | null {
+  const task = graph.boundary.tasks.find(
+    (candidate) => candidate.taskId === taskId,
+  );
+  return task
+    ? ({
+        changeId: graph.boundary.changeId,
+        ...structuredClone(task),
+      } satisfies TaskBoundary)
+    : null;
+}
+
+function appliedPhasesOf(record: TaskRecord): ImplementationPhase[] {
+  const phases: ImplementationPhase[] = ["red", "green"];
+  if (record.boundary.phases.refactor) phases.push("refactor");
+  if (
+    record.state.kind === "completed" ||
+    record.state.kind === "agents-checkpoint-pending"
+  ) {
+    return phases;
+  }
+  const current =
+    record.state.kind === "ready" ||
+    record.state.kind === "candidate-pending" ||
+    record.state.kind === "blocked"
+      ? record.state.phase
+      : "red";
+  return phases.slice(0, phases.indexOf(current));
 }
 
 function assertAttemptAllowed(record: TaskRecord, attempt: PhaseAttempt): void {
@@ -411,25 +451,28 @@ interface OutcomeIdentity {
 function blockedOutcome(
   identity: OutcomeIdentity,
   failure: TaskFailure,
-): ImplementOutcome {
+): Extract<ImplementOutcome, { kind: "blocked" }> {
   return { kind: "blocked", ...identity, failure: structuredClone(failure) };
 }
 
-function cancelledOutcome(identity: OutcomeIdentity): ImplementOutcome {
+function cancelledOutcome(
+  identity: OutcomeIdentity,
+): Extract<ImplementOutcome, { kind: "cancelled" }> {
   return { kind: "cancelled", ...identity };
 }
 
 function retryOutcome(
   identity: OutcomeIdentity,
   scope: "worker" | "checkpoint",
-  cause: "artifact" | "stale",
+  failure: Extract<ChildFailure, { kind: "artifact" | "stale" }>,
 ): ImplementOutcome {
   return {
     kind: "retry",
     ...identity,
     scope,
-    cause,
+    cause: failure.kind,
     remainingAttempts: 1,
+    lastFailure: safeFailureDiagnostic(failure),
   };
 }
 
@@ -478,7 +521,11 @@ function childFailureOf(result: InternalFailureResult): ChildFailure {
   }
   switch (result.failureClass) {
     case "artifact":
-      return { kind: "artifact", code: "invalid-diff" };
+      return {
+        kind: "artifact",
+        code: "invalid-diff",
+        stage: "phase-runtime",
+      };
     case "environment":
       return { kind: "environment", code: "root-unavailable" };
     default:
@@ -486,6 +533,10 @@ function childFailureOf(result: InternalFailureResult): ChildFailure {
         kind: "transport",
         code:
           result.failureKind === "timed-out" ? "timeout" : "transport-failure",
+        stage:
+          result.failureKind === "timed-out"
+            ? "child-timeout"
+            : "child-provider-stream",
       };
   }
 }
@@ -524,20 +575,28 @@ function attemptFailureCause(
 
 function attemptsExhaustedFailure(failure: ChildFailure): TaskFailure {
   const cause = attemptFailureCause(failure);
-  if (failure.kind !== "transport") {
-    return { kind: "attempts-exhausted", cause };
-  }
   return {
     kind: "attempts-exhausted",
     cause,
-    lastFailure: {
-      code: failure.code,
-      stage:
-        failure.stage ??
-        (failure.code === "child-timeout" || failure.code === "timeout"
-          ? "child-timeout"
-          : "child-provider-stream"),
-    },
+    attemptsUsed: 2,
+    lastFailure: safeFailureDiagnostic(
+      failure as Extract<
+        ChildFailure,
+        { kind: "artifact" | "stale" | "transport" }
+      >,
+    ),
+  };
+}
+
+function safeFailureDiagnostic(
+  failure: Extract<ChildFailure, { kind: "artifact" | "stale" | "transport" }>,
+): SafeFailureDiagnostic {
+  return {
+    code: failure.code,
+    stage: failure.stage,
+    ...("details" in failure && failure.details
+      ? { details: structuredClone(failure.details) }
+      : {}),
   };
 }
 
@@ -891,6 +950,30 @@ export class Runtime {
     ) {
       throw new Error("AGENTS checkpoint target mismatch");
     }
+    const outputFailure = this.unavailableAppliedOutput(
+      worker,
+      worker.state.finalPhase,
+      true,
+    );
+    if (outputFailure) {
+      const failure: TaskFailure = {
+        kind: "graph-readiness",
+        diagnostic: outputFailure,
+      };
+      worker.state = {
+        kind: "blocked",
+        phase: worker.state.finalPhase,
+        failure,
+      };
+      return blockedOutcome(
+        {
+          requestId: attempt.requestId,
+          taskId: attempt.taskId,
+          phase: worker.state.phase,
+        },
+        failure,
+      );
+    }
     const request: AgentsCheckpointRequest = {
       stage: "abel-implement",
       taskId: worker.boundary.taskId,
@@ -940,6 +1023,8 @@ export class Runtime {
           const taskFailure: TaskFailure = {
             kind: "checkpoint-attempts-exhausted",
             cause: "artifact",
+            attemptsUsed: 2,
+            lastFailure: safeFailureDiagnostic(failure),
           };
           worker.state = {
             kind: "blocked",
@@ -953,13 +1038,15 @@ export class Runtime {
           finalPhase: phase,
           attemptIndex: 1,
         };
-        return retryOutcome(identity, "checkpoint", "artifact");
+        return retryOutcome(identity, "checkpoint", failure);
       }
       case "stale": {
         if (worker.state.attemptIndex === 1) {
           const taskFailure: TaskFailure = {
             kind: "checkpoint-attempts-exhausted",
             cause: "stale",
+            attemptsUsed: 2,
+            lastFailure: safeFailureDiagnostic(failure),
           };
           worker.state = {
             kind: "blocked",
@@ -973,7 +1060,7 @@ export class Runtime {
           finalPhase: phase,
           attemptIndex: 1,
         };
-        return retryOutcome(identity, "checkpoint", "stale");
+        return retryOutcome(identity, "checkpoint", failure);
       }
       case "environment": {
         const taskFailure: TaskFailure = failure;
@@ -1102,7 +1189,18 @@ export class Runtime {
     }
     const applyRoot = resolved?.retained.root ?? root;
     const run = this.enqueueParentApply(() =>
-      applyRetainedPatch({ root: applyRoot, id, store: this.results, signal }),
+      applyRetainedPatch({
+        root: applyRoot,
+        id,
+        store: this.results,
+        ...(resolved
+          ? {
+              candidateOutputsAvailable: (checkoutRoot: string) =>
+                this.candidateOutputsAvailable(resolved.worker, checkoutRoot),
+            }
+          : {}),
+        signal,
+      }),
     );
     const seq = ++this.applySeq;
     return run.then((result) => {
@@ -1117,6 +1215,33 @@ export class Runtime {
               worker.boundary,
               identity.phase,
             );
+            const outputFailure = this.unavailableAppliedOutput(
+              worker,
+              identity.phase,
+              readyPhase === null && worker.boundary.agents.impact === "none",
+            );
+            if (outputFailure) {
+              const failure: TaskFailure = {
+                kind: "graph-readiness",
+                diagnostic: outputFailure,
+              };
+              worker.state = {
+                kind: "blocked",
+                phase: identity.phase,
+                failure,
+              };
+              return {
+                ...blockedOutcome(
+                  {
+                    requestId,
+                    taskId: identity.taskId,
+                    phase: identity.phase,
+                  },
+                  failure,
+                ),
+                result: applied,
+              } satisfies ImplementOutcome;
+            }
             if (readyPhase) {
               worker.state = {
                 kind: "ready",
@@ -1215,12 +1340,9 @@ export class Runtime {
           launchIndex: 1,
           correction: structuredClone(rejection),
         };
-        return retryOutcome(outcomeIdentity, "worker", "artifact");
+        return retryOutcome(outcomeIdentity, "worker", rejection);
       }
-      const failure: TaskFailure = {
-        kind: "attempts-exhausted",
-        cause: "artifact",
-      };
+      const failure = attemptsExhaustedFailure(rejection);
       worker.state = {
         kind: "blocked",
         phase: identity.phase,
@@ -1289,10 +1411,7 @@ export class Runtime {
             correction: structuredClone(failure),
           };
         } else {
-          const taskFailure: TaskFailure = {
-            kind: "attempts-exhausted",
-            cause: "stale",
-          };
+          const taskFailure = attemptsExhaustedFailure(failure);
           worker.state = {
             kind: "blocked",
             phase: identity.phase,
@@ -1300,16 +1419,13 @@ export class Runtime {
           };
           return blockedOutcome(outcomeIdentity, taskFailure);
         }
-        return retryOutcome(outcomeIdentity, "worker", "stale");
+        return retryOutcome(outcomeIdentity, "worker", failure);
       }
       case "artifact": {
         this.results.discard(resultId);
         const correctionAvailable = identity.launchIndex === 0;
         if (!correctionAvailable) {
-          const taskFailure: TaskFailure = {
-            kind: "attempts-exhausted",
-            cause: "artifact",
-          };
+          const taskFailure = attemptsExhaustedFailure(failure);
           worker.state = {
             kind: "blocked",
             phase: identity.phase,
@@ -1323,7 +1439,7 @@ export class Runtime {
           launchIndex: 1,
           correction: structuredClone(failure),
         };
-        return retryOutcome(outcomeIdentity, "worker", "artifact");
+        return retryOutcome(outcomeIdentity, "worker", failure);
       }
       case "cancelled":
         return cancelledOutcome(outcomeIdentity);
@@ -1533,6 +1649,184 @@ export class Runtime {
     };
   }
 
+  private graphFacts(graph: ImplementGraphRecord): ImplementExecutionFacts {
+    const records = this.registry
+      .values()
+      .filter(
+        (record) =>
+          record.workspaceRoot === graph.workspaceRoot &&
+          record.boundary.changeId === graph.boundary.changeId,
+      );
+    return {
+      completedTasks: [
+        ...new Set([
+          ...graph.completedTasks,
+          ...records
+            .filter((record) => record.state.kind === "completed")
+            .map((record) => record.boundary.taskId),
+        ]),
+      ],
+      blockedTasks: [
+        ...new Set([
+          ...graph.blockedTasks,
+          ...records
+            .filter((record) => record.state.kind === "blocked")
+            .map((record) => record.boundary.taskId),
+        ]),
+      ],
+      appliedPhases: records.flatMap((record) =>
+        appliedPhasesOf(record).map((phase) => ({
+          taskId: record.boundary.taskId,
+          phase,
+        })),
+      ),
+      dependencyOwner: graph.workspaceRoot,
+    };
+  }
+
+  private graphFor(worker: TaskRecord): ImplementGraphRecord {
+    const graph = this.registry.getGraph(
+      worker.workspaceRoot,
+      worker.boundary.changeId,
+    );
+    if (!graph) throw new Error("Implement graph is unavailable");
+    return graph;
+  }
+
+  private candidateOutputsAvailable(
+    worker: TaskRecord,
+    checkoutRoot: string,
+  ): boolean {
+    const graph = this.graphFor(worker);
+    const phase = taskPhase(worker);
+    const produced = new Set(
+      graph.boundary.outputs
+        .filter(
+          (output) =>
+            output.producer.taskId === worker.boundary.taskId &&
+            output.producer.phase === phase,
+        )
+        .map((output) => output.id),
+    );
+    if (produced.size === 0) return true;
+    const readiness = assessImplementGraphReadiness(
+      checkoutRoot,
+      graph.boundary,
+      {
+        ...this.graphFacts(graph),
+        candidate: { taskId: worker.boundary.taskId, phase },
+      },
+    );
+    return readiness.outputs.every(
+      (output) =>
+        !produced.has(output.outputId) || output.status === "available",
+    );
+  }
+
+  private unavailableAppliedOutput(
+    worker: TaskRecord,
+    phase: ImplementationPhase,
+    allTaskOutputs: boolean,
+  ): ImplementGraphReadinessDiagnostic | undefined {
+    const graph = this.graphFor(worker);
+    const facts = this.graphFacts(graph);
+    const appliedPhases = [
+      ...(facts.appliedPhases ?? []),
+      { taskId: worker.boundary.taskId, phase },
+    ].filter(
+      (entry, index, entries) =>
+        entries.findIndex(
+          (candidate) =>
+            candidate.taskId === entry.taskId &&
+            candidate.phase === entry.phase,
+        ) === index,
+    );
+    const readiness = assessImplementGraphReadiness(
+      worker.workspaceRoot,
+      graph.boundary,
+      { ...facts, appliedPhases },
+    );
+    const output = readiness.outputs.find(
+      (entry) =>
+        entry.producerTaskId === worker.boundary.taskId &&
+        (allTaskOutputs || entry.producerPhase === phase) &&
+        entry.status !== "available",
+    );
+    if (!output) return undefined;
+    return (
+      output.diagnostic ?? {
+        kind: "graph-readiness",
+        code: "producer-output-unavailable",
+        outputId: output.outputId,
+        producerTaskId: output.producerTaskId,
+        producerPhase: output.producerPhase,
+      }
+    );
+  }
+
+  private admitImplementGraph(
+    request: Extract<ImplementRunRequest, { kind: "admit-graph" }>,
+    workspaceRoot: string,
+  ): ImplementOutcome {
+    if (this.registry.getGraph(workspaceRoot, request.graph.changeId)) {
+      throw new Error("duplicate graph admission protocol error");
+    }
+    const actualHash = hashImplementGraphBoundary(request.graph);
+    if (actualHash !== request.graphHash) {
+      return {
+        kind: "graph-rejected",
+        changeId: request.graph.changeId,
+        graphHash: request.graphHash,
+        diagnostics: [
+          {
+            kind: "graph-readiness",
+            code: "graph-hash-mismatch",
+          },
+        ],
+      };
+    }
+    const readiness = assessImplementGraphReadiness(
+      workspaceRoot,
+      request.graph,
+      {
+        completedTasks: request.state.completedTasks,
+        blockedTasks: request.state.blockedTasks,
+        dependencyOwner: workspaceRoot,
+      },
+    );
+    const unavailableOutputs = readiness.outputs.flatMap((output) =>
+      output.status === "unavailable" && output.diagnostic
+        ? [output.diagnostic]
+        : [],
+    );
+    if (!readiness.closure.executable || unavailableOutputs.length > 0) {
+      return {
+        kind: "graph-rejected",
+        changeId: request.graph.changeId,
+        graphHash: request.graphHash,
+        diagnostics: [...readiness.closure.diagnostics, ...unavailableOutputs],
+      };
+    }
+    this.registry.admitGraph(
+      request.graph,
+      request.graphHash,
+      workspaceRoot,
+      request.state,
+    );
+    const red = readiness.phases.filter((phase) => phase.phase === "red");
+    return {
+      kind: "graph-admitted",
+      changeId: request.graph.changeId,
+      graphHash: request.graphHash,
+      readyTasks: red
+        .filter((phase) => phase.ready)
+        .map((phase) => phase.taskId),
+      blockedTasks: red
+        .filter((phase) => !phase.ready && !phase.completed)
+        .map((phase) => phase.taskId),
+    };
+  }
+
   private async run(
     request: unknown,
     ctx?: RunContext,
@@ -1555,70 +1849,136 @@ export class Runtime {
     let envelope: RequestEnvelope;
     if (isImplementRunRequest(validation.value)) {
       const runRequest = validation.value;
-      const attempt = runRequest.attempt;
       const workspaceRoot = canonicalWorkspaceRoot(ctx.cwd);
-      if (
-        runRequest.kind === "open-task" &&
-        workspaceRoot &&
-        this.registry.has(
-          taskRecordKey(workspaceRoot, attempt.changeId, attempt.taskId),
-        )
-      ) {
-        throw new Error("duplicate task open protocol error");
-      }
-      if (runRequest.kind === "open-task" && signal?.aborted) {
-        return cancelledOutcome({
-          taskId: attempt.taskId,
-          requestId: attempt.requestId,
-          phase: attempt.phase,
-        });
-      }
       if (!workspaceRoot) {
         throw new Error("implementation workspace is unavailable");
       }
+      if (runRequest.kind === "admit-graph") {
+        if (signal?.aborted) return cancellationError(signal);
+        return this.admitImplementGraph(runRequest, workspaceRoot);
+      }
+
+      const attempt = runRequest.attempt;
+      const graph = this.registry.getGraph(workspaceRoot, attempt.changeId);
+      if (!graph) {
+        throw new Error("Implement graph is not admitted");
+      }
+      const boundary = taskBoundaryOf(graph, attempt.taskId);
+      if (!boundary) throw new Error("task identity mismatch");
       const key = taskRecordKey(
         workspaceRoot,
         attempt.changeId,
         attempt.taskId,
       );
-      if (runRequest.kind === "open-task") {
-        const phases = runRequest.boundary.phases;
-        const readiness = assessVerificationReadiness(
-          workspaceRoot,
-          [
-            phases.red.verification,
-            phases.green.verification,
-            ...(phases.refactor ? [phases.refactor.verification] : []),
-          ],
+      const existing = this.registry.get(key);
+      let existingIdentity: string | undefined;
+      if (existing) {
+        if (!ctx.model) {
+          throw new Error("implementation model is unavailable");
+        }
+        existingIdentity = workerIdentity(ctx.model);
+        if (existing.workerIdentity !== existingIdentity) {
+          throw new Error("provider/model identity mismatch");
+        }
+      }
+      if (existing?.state.kind === "blocked") {
+        if (attempt.phase !== existing.state.phase) {
+          throw new Error("terminal task phase mismatch");
+        }
+        return blockedOutcome(
           {
-            allowedMissingInputs: [
-              ...new Set([
-                ...phases.red.write,
-                ...phases.green.write,
-                ...(phases.refactor?.write ?? []),
-              ]),
-            ],
+            taskId: existing.boundary.taskId,
+            requestId: attempt.requestId,
+            phase: existing.state.phase,
           },
+          existing.state.failure,
         );
-        const diagnostic = readiness.diagnostics[0];
-        if (diagnostic) {
-          if (diagnostic.kind === "design-readiness") {
-            throw new Error(
-              `Implement protocol error: ${diagnostic.code}: ${diagnostic.message}`,
-            );
-          }
+      }
+      if (existing?.state.kind === "completed") {
+        if (attempt.phase !== existing.state.finalPhase) {
+          throw new Error("terminal task phase mismatch");
+        }
+        return {
+          kind: "completed",
+          taskId: existing.boundary.taskId,
+          requestId: attempt.requestId,
+          finalPhase: existing.state.finalPhase,
+        };
+      }
+      if (graph.completedTasks.has(attempt.taskId)) {
+        const finalPhase = boundary.phases.refactor ? "refactor" : "green";
+        if (attempt.phase !== finalPhase) {
+          throw new Error("terminal task phase mismatch");
+        }
+        return {
+          kind: "completed",
+          taskId: attempt.taskId,
+          requestId: attempt.requestId,
+          finalPhase,
+        };
+      }
+      const attemptReason = validatePhaseAttemptAgainstBoundary(
+        boundary,
+        attempt,
+      );
+      if (attemptReason !== null) throw new Error(attemptReason);
+      if (existing) assertAttemptAllowed(existing, attempt);
+      else if (attempt.phase !== "red") {
+        throw new Error("task must begin with Red");
+      }
+
+      const readiness = assessImplementGraphReadiness(
+        workspaceRoot,
+        graph.boundary,
+        this.graphFacts(graph),
+      );
+      const phaseReadiness = readiness.phases.find(
+        (phase) =>
+          phase.taskId === attempt.taskId && phase.phase === attempt.phase,
+      );
+      if (!phaseReadiness) throw new Error("task phase is not declared");
+      if (!phaseReadiness.ready) {
+        const dependencyDiagnostics = phaseReadiness.diagnostics.filter(
+          (diagnostic) =>
+            diagnostic.kind === "graph-readiness" &&
+            diagnostic.code === "dependency-blocked",
+        );
+        if (dependencyDiagnostics.length > 0) {
+          return {
+            kind: "dependency-blocked",
+            taskId: attempt.taskId,
+            requestId: attempt.requestId,
+            phase: attempt.phase,
+            diagnostics: dependencyDiagnostics,
+          };
+        }
+        const diagnostic = phaseReadiness.diagnostics[0];
+        if (!diagnostic) throw new Error("task phase is not ready");
+        if (diagnostic.kind === "design-readiness") {
+          throw new Error(`Implement protocol error: ${diagnostic.code}`);
+        }
+        if (diagnostic.kind === "verification-adapter") {
           return {
             ok: false,
-            error: `${diagnostic.kind}/${diagnostic.code}: ${diagnostic.message}`,
+            error: `${diagnostic.kind}/${diagnostic.code}`,
             failure: {
               kind: diagnostic.kind,
               code: diagnostic.code,
             },
           };
         }
+        return blockedOutcome(
+          {
+            taskId: attempt.taskId,
+            requestId: attempt.requestId,
+            phase: attempt.phase,
+          },
+          { kind: "graph-readiness", diagnostic },
+        );
       }
+
       if (
-        runRequest.kind === "open-task" &&
+        !existing &&
         this.registry
           .values()
           .some(
@@ -1626,10 +1986,7 @@ export class Runtime {
               record.workspaceRoot === workspaceRoot &&
               record.state.kind !== "blocked" &&
               record.state.kind !== "completed" &&
-              declarationsConflict(
-                taskConflictOf(runRequest.boundary),
-                record.conflict,
-              ),
+              declarationsConflict(taskConflictOf(boundary), record.conflict),
           )
       ) {
         return {
@@ -1642,9 +1999,9 @@ export class Runtime {
       if (!ctx.model) {
         throw new Error("implementation model is unavailable");
       }
-      const identity = workerIdentity(ctx.model);
+      const identity = existingIdentity ?? workerIdentity(ctx.model);
       let record: TaskRecord;
-      if (runRequest.kind === "open-task") {
+      if (!existing) {
         const endpoint = resolveSubagentEndpoint("implementation-worker", {
           cwd: ctx.cwd,
         });
@@ -1655,7 +2012,7 @@ export class Runtime {
             message: describeInvalidSubagentEndpoint(endpoint),
           } as const;
           record = this.registry.open(
-            runRequest.boundary,
+            boundary,
             identity,
             workspaceRoot,
             attempt,
@@ -1677,45 +2034,14 @@ export class Runtime {
         const subagentEndpoint: Readonly<SubagentEndpoint> | null =
           endpoint.kind === "custom" ? endpoint.endpoint : null;
         record = this.registry.open(
-          runRequest.boundary,
+          boundary,
           identity,
           workspaceRoot,
           attempt,
           subagentEndpoint,
         );
       } else {
-        const existing = this.registry.get(key);
-        if (!existing) {
-          throw new Error("task identity mismatch or task is not open");
-        }
-        if (existing.workerIdentity !== identity) {
-          throw new Error("provider/model identity mismatch");
-        }
-        const attemptReason = validatePhaseAttemptAgainstBoundary(
-          existing.boundary,
-          attempt,
-        );
-        if (attemptReason !== null) throw new Error(attemptReason);
-        assertAttemptAllowed(existing, attempt);
         record = existing;
-      }
-      if (record.state.kind === "blocked") {
-        return blockedOutcome(
-          {
-            taskId: record.boundary.taskId,
-            requestId: attempt.requestId,
-            phase: record.state.phase,
-          },
-          record.state.failure,
-        );
-      }
-      if (record.state.kind === "completed") {
-        return {
-          kind: "completed",
-          taskId: record.boundary.taskId,
-          requestId: attempt.requestId,
-          finalPhase: record.state.finalPhase,
-        };
       }
       if (signal?.aborted) {
         return cancelledOutcome({
@@ -1728,7 +2054,7 @@ export class Runtime {
       this.taskRecords.set(envelope, record);
     } else {
       if (signal?.aborted) return cancellationError(signal);
-      envelope = cloneLegacyEnvelope(validation.value);
+      envelope = cloneNonImplementEnvelope(validation.value);
     }
     const context: StoredRunContext = {
       ctx,
@@ -1986,7 +2312,7 @@ export class Runtime {
         launchIndex: 1,
         correction: structuredClone(firstFailure),
       };
-      return finish(retryOutcome(identity, "worker", firstFailure.kind));
+      return finish(retryOutcome(identity, "worker", firstFailure));
     }
 
     task.state = {

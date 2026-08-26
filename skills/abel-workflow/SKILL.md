@@ -19,16 +19,34 @@ Design and Implement may run in different contexts.
 A handoff is trusted only when versioned Gate receipts bind the same change and schema, every covered artifact's normalized relative path and SHA-256 hash is valid, the Gate A receipt hash is valid, OpenSpec strict validation passes, and the artifact graph is complete.
 Normalize only the tracked task file's completed Markdown checkboxes before hashing; reject absolute paths, `..`, path escapes, and symbolic-link escapes.
 A missing receipt, invalid hash, or inconsistent artifact is a `delivery-invalid` stage blocker before Implement registers a task.
+The current `ready.yaml` receipt embeds one canonical `implementGraph`, its `implementGraphHash`, and the graph closure result; it has no alternate task-readiness summary.
 
 Every approved behavior must retain a stable trace from Requirement to Scenario to Verification to Task.
 Every task must state exactly one executable verification type, its Red command and expected target failure, Green behavior, affected suite, target files, approved dependency changes, impact-closure evidence, and structured AGENTS impact.
 
-### Structured verification capability
+### Graph-proven structured verification
 
-Design and Implement share `src/verification-capability.ts`; Design must call `assessVerificationReadiness` over every phase verification contract before Gate B approval and again immediately before writing `ready.yaml`.
-The receipt may state `taskContractsExecutable: true` only when that assessment returns true with no diagnostics.
-A future verification input may be absent only when its exact safe relative path is in the task's approved write set.
-Missing, escaping, absolute, or symbolic-link inputs remain closed failures.
+Design emits exactly one immutable `ImplementGraphBoundary` for the change.
+It contains every task, each task's explicit `dependsOn`, each phase's `verificationInputs`, and every generated output as an id, safe relative path, producer task and phase, and `regular-file` postcondition.
+A write set grants permission only; it never proves that an output exists.
+
+Every direct verification input binds exactly once to either an existing workspace path or a graph output id.
+A workspace binding must already be a safe regular file at Gate B. An output binding must resolve to one unique producer whose path is in that producer phase's write set.
+A cross-task consumer must have the producer as a transitive DAG dependency.
+Suggested waves, conflicts, resources, and verification locks do not create a dependency edge.
+A phase may consume an output created by its own candidate or an earlier applied phase, but never one produced only by a later phase.
+
+Design and Implement share `src/implement-graph.ts::assessImplementGraphReadiness`.
+The same core receives the canonical graph, consumer root, current completed and blocked task facts, applied phases, and an optional candidate overlay.
+Gate B and receipt creation require an executable static closure with no diagnostics; current dependency waiting is a dynamic readiness fact and does not invalidate that closure.
+`ready.yaml` stores the exact `implementGraph`, `hashImplementGraphBoundary(implementGraph)` as `implementGraphHash`, and `verificationClosure: { executable: true, diagnostics: [] }`.
+
+Runtime admits that same graph once, recomputes readiness before a task launch, checks declared outputs in the isolated candidate before verification, checks them again after main-workspace application and before phase or task completion, and publishes a cross-task output only after its producer task completes.
+A blocked producer keeps its consumers `dependency-blocked`; a completed producer with an absent or unsafe output is `producer-output-unavailable`.
+
+Fresh Implement reconstructs availability only from the receipt-bound graph and hash, parent-owned completed task facts, current in-process blocked facts, and a fresh safe scan of the workspace.
+It never infers phase completion merely because a file exists and never persists Runtime state, retry budgets, sessions, or model output.
+All path observations reject absolute or noncanonical paths, `..`, NUL, root escape, a symbolic link in any existing component, a non-directory parent, and a non-regular final input or output.
 
 Design emits only the structured Runtime kinds `kind: "vitest"`, `kind: "package-script"`, `kind: "static-check"`, and `kind: "steps"`:
 
@@ -50,7 +68,7 @@ Bun, npm, pnpm, and Yarn package scripts are allowed only when the named package
 
 Runtime never invents `bun run check`, `bun run test:target`, or another consumer script.
 A precheck or affected verification runs only as an explicit approved contract or ordered step.
-Legacy Cadence 1.0.x `bun run test:target <paths>` and `bun run check` inputs remain accepted and are normalized immediately, but Design must not generate new argv-only contracts.
+Argv-only verification contracts are invalid; there is no legacy normalizer or parallel verification schema.
 
 An unsupported shape is `design-readiness/verification-contract-unsupported`.
 A missing approved script is `verification-adapter/script-missing`; other missing or drifted consumer capabilities use their closed `verification-adapter` code.
@@ -74,11 +92,12 @@ When the artifact correction budget is exhausted, terminally block the current I
 A Red candidate that passes is `{ kind: "artifact", code: "red-not-witnessed" }`; Runtime returns a bounded `{ kind: "retry", scope: "worker", cause: "artifact", remainingAttempts: 1 }`, and candidate success alone does not prove a Design defect.
 If separate evidence proves that the approved command cannot witness the approved behavior without changing behavior, policy, dependency, architecture, scope, write-set, or verification contract, terminally block the current task as `verification-contract-insufficient` without consuming the artifact correction budget.
 
-### Implement fixed task boundary
+### Implement graph and fixed task boundary
 
 This boundary applies only to Implement.
-The parent registers each ready task once with one immutable `TaskBoundary`; its first Red uses `open-task`, and every later Green, Refactor, correction, or stale refresh uses `phase-attempt` with only phase/request identity and a fresh dynamic snapshot.
-The boundary includes all phase-local exact read/write paths, target and affected verification, scheduling declarations, approved dependencies, impact closure, and AGENTS impact.
+The parent submits the receipt-bound graph once with `admit-graph`.
+A ready task's first Red `task-attempt` opens one process-local task record from the graph; every later Green, Refactor, correction, or stale refresh is another `task-attempt` with only change/task/request/phase identity and a fresh dynamic snapshot.
+The immutable task entry includes all phase-local exact read/write paths, verification input bindings, target and affected verification, scheduling declarations, explicit dependencies, approved dependency changes, impact closure, and AGENTS impact.
 Runtime never expands it.
 Keep each command, exit code, normalized failure identity, reproducibility result, attribution, and root-cause evidence in context and the final report, not in a state file.
 Every reproducible pre-existing affected failure remains separate from task Red and may be repaired only when its paths and behavior are already inside the approved boundary.
@@ -125,7 +144,10 @@ Implement reports facts about only the current task.
 It does not select a user recovery action, recommend another workflow, or claim control over the parent-owned DAG.
 
 - Generated artifact defects are closed typed failures: malformed diff, syntax/import/load, no-test or wrong command, wrong Red identity, duplicate/invalid structured result, and `red-not-witnessed`.
-- Artifact, stale-snapshot, and transport failures share two non-cancelled launches per phase; exhaustion is `attempts-exhausted` and cancellation is budget-neutral.
+- Artifact, stale-snapshot, and transport failures share two non-cancelled launches per phase; exhaustion is `{ kind: "attempts-exhausted", cause, attemptsUsed: 2, lastFailure: { code, stage, details? } }` and cancellation is budget-neutral.
+- `lastFailure` always preserves the final closed code and stage for artifact, stale, and transport exhaustion.
+  Optional details are limited to final submission category, a bounded submit-attempt count, schema state, mismatched identity dimension names, and a validated verification id.
+- Public outcomes never contain a prompt, diff, model output, excerpt, consumer file content, command or argv, endpoint, credential, environment value, or actual/expected identity value.
 - Bubblewrap, dependency-path, sandbox, or external runtime failure is `{ kind: "environment", code: <closed-environment-code> }` and terminally blocks the current task.
 - Unsupported verification contracts close Design readiness; missing scripts,
   runners, local executables, or inputs are closed `verification-adapter` failures

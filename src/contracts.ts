@@ -75,6 +75,7 @@ export const ARTIFACT_FAILURE_CODES = [
   "invalid-snapshot",
   "invalid-structural-result",
   "child-no-structural-submit",
+  "structural-identity-mismatch",
   "invalid-verification-contract",
   "lockfile-bound-mismatch",
   "noncanonical-path",
@@ -83,6 +84,7 @@ export const ARTIFACT_FAILURE_CODES = [
   "package-bound-mismatch",
   "package-manifest-invalid",
   "parent-review-rejected",
+  "producer-output-unavailable",
   "red-not-witnessed",
   "submodule",
   "target-baseline-missing",
@@ -150,11 +152,37 @@ export const CHILD_TRANSPORT_CODES = [
   "transport-failure",
 ] as const;
 export const FAILURE_STAGES = [
-  "phase-runtime",
   "child-session-create",
   "child-provider-stream",
-  "child-finalization",
   "child-timeout",
+  "child-finalization",
+  "structural-submit",
+  "candidate-retention",
+  "candidate-diff",
+  "candidate-preflight",
+  "parent-review",
+  "candidate-apply",
+  "agents-checkpoint",
+  "phase-runtime",
+] as const;
+
+export const SUBMIT_FINAL_CATEGORIES = [
+  "no-final-assistant",
+  "text-only",
+  "mixed",
+  "multiple-submit",
+  "single-submit-only",
+] as const;
+export const SUBMIT_SCHEMA_STATES = [
+  "not-submitted",
+  "valid",
+  "invalid",
+] as const;
+export const IDENTITY_DIMENSIONS = [
+  "request",
+  "role",
+  "task",
+  "phase",
 ] as const;
 
 export type ArtifactFailureCode = (typeof ARTIFACT_FAILURE_CODES)[number];
@@ -165,10 +193,22 @@ export type VerificationAdapterCode =
   (typeof VERIFICATION_ADAPTER_CODES)[number];
 export type ChildTransportCode = (typeof CHILD_TRANSPORT_CODES)[number];
 export type FailureStage = (typeof FAILURE_STAGES)[number];
+export type SubmitFinalCategory = (typeof SUBMIT_FINAL_CATEGORIES)[number];
+export type SubmitSchemaState = (typeof SUBMIT_SCHEMA_STATES)[number];
+export type IdentityDimension = (typeof IDENTITY_DIMENSIONS)[number];
+
+export interface SafeFailureDetails {
+  finalCategory?: SubmitFinalCategory;
+  submitAttempts?: number;
+  schema?: SubmitSchemaState;
+  identityMismatch?: IdentityDimension[];
+  verificationId?: string;
+}
 
 export interface SafeFailureDiagnostic {
-  code: ChildTransportCode;
+  code: ArtifactFailureCode | StaleFailureCode | ChildTransportCode;
   stage: FailureStage;
+  details?: SafeFailureDetails;
 }
 
 export type EnvironmentFailure = {
@@ -179,8 +219,13 @@ export type EnvironmentFailure = {
 };
 
 export type CandidateFailure =
-  | { kind: "artifact"; code: ArtifactFailureCode; evidence?: string[] }
-  | { kind: "stale"; code: StaleFailureCode }
+  | {
+      kind: "artifact";
+      code: ArtifactFailureCode;
+      stage: FailureStage;
+      details?: SafeFailureDetails;
+    }
+  | { kind: "stale"; code: StaleFailureCode; stage: FailureStage }
   | EnvironmentFailure
   | { kind: "verification-adapter"; code: VerificationAdapterCode }
   | { kind: "approval-boundary"; code: ApprovalBoundaryCode }
@@ -192,14 +237,15 @@ export type ChildFailure =
   | {
       kind: "transport";
       code: ChildTransportCode;
-      stage?: FailureStage;
+      stage: FailureStage;
+      details?: SafeFailureDetails;
     };
 
 export type CandidateRejection =
   | {
       kind: "artifact";
       code: "parent-review-rejected";
-      evidence?: string[];
+      stage: "parent-review";
     }
   | { kind: "approval-boundary"; code: ApprovalBoundaryCode };
 
@@ -207,13 +253,20 @@ export type TaskFailure =
   | { kind: "approval-boundary"; code: ApprovalBoundaryCode }
   | { kind: "verification-adapter"; code: VerificationAdapterCode }
   | {
+      kind: "graph-readiness";
+      diagnostic: ImplementGraphReadinessDiagnostic;
+    }
+  | {
       kind: "attempts-exhausted";
       cause: "artifact" | "stale" | "transport";
-      lastFailure?: SafeFailureDiagnostic;
+      attemptsUsed: 2;
+      lastFailure: SafeFailureDiagnostic;
     }
   | {
       kind: "checkpoint-attempts-exhausted";
       cause: "artifact" | "stale";
+      attemptsUsed: 2;
+      lastFailure: SafeFailureDiagnostic;
     }
   | EnvironmentFailure
   | { kind: "result-limit"; limitBytes: number };
@@ -240,8 +293,6 @@ interface VerificationBase {
   id: string;
   classification: VerificationClassification;
   expectedFailure?: string;
-  /** Internal marker retained only for normalized 1.0.x argv compatibility. */
-  legacy?: true;
 }
 
 export type PackageManager = "bun" | "npm" | "pnpm" | "yarn";
@@ -250,8 +301,7 @@ export interface PackageScriptRunner {
   kind: "package-script";
   packageManager: PackageManager;
   script: string;
-  /** Exact Gate-B-approved package.json script value. Omitted only for legacy input. */
-  command?: string;
+  command: string;
 }
 
 export type ExecutableRunner =
@@ -271,8 +321,7 @@ export interface PackageScriptVerificationContract extends VerificationBase {
   kind: "package-script";
   packageManager: PackageManager;
   script: string;
-  /** Exact Gate-B-approved package.json script value. Omitted only for legacy input. */
-  command?: string;
+  command: string;
   args: string[];
 }
 
@@ -294,20 +343,11 @@ export interface VerificationStepsContract {
   steps: AtomicVerificationContract[];
 }
 
-/** @deprecated Accepted only as 1.0.x compatibility input and normalized immediately. */
-export interface LegacyVerificationContract extends VerificationBase {
-  argv: string[];
-  minTests: number;
-  kind?: never;
-}
-
 export type StructuredVerificationContract =
   | AtomicVerificationContract
   | VerificationStepsContract;
 
-export type VerificationContract =
-  | StructuredVerificationContract
-  | LegacyVerificationContract;
+export type VerificationContract = StructuredVerificationContract;
 
 export interface ImpactClosureContract {
   changedSurfaces: ImpactSurface[];
@@ -321,18 +361,25 @@ export interface ImpactClosureContract {
   affectedSuite: string[];
 }
 
-export type ImplementationPhase = "red" | "green" | "refactor";
+export const IMPLEMENTATION_PHASES = ["red", "green", "refactor"] as const;
+export type ImplementationPhase = (typeof IMPLEMENTATION_PHASES)[number];
+
+export type VerificationInputBinding =
+  | { kind: "workspace"; path: string }
+  | { kind: "output"; outputId: string };
 
 export interface PhaseBoundary {
   read: string[];
   write: string[];
   verification: VerificationContract;
+  verificationInputs: VerificationInputBinding[];
   verificationLock?: string;
 }
 
 export interface TaskBoundary {
   changeId: string;
   taskId: string;
+  dependsOn: string[];
   objective: string;
   context: { agents: string; contract: string };
   roots: string[];
@@ -351,6 +398,77 @@ export interface TaskBoundary {
   impactClosure: ImpactClosureContract;
 }
 
+export interface ImplementGraphOutput {
+  id: string;
+  path: string;
+  producer: { taskId: string; phase: ImplementationPhase };
+  postcondition: "regular-file";
+}
+
+export type ImplementTaskBoundary = Omit<TaskBoundary, "changeId">;
+
+export interface ImplementGraphBoundary {
+  changeId: string;
+  tasks: ImplementTaskBoundary[];
+  outputs: ImplementGraphOutput[];
+}
+
+export const IMPLEMENT_GRAPH_READINESS_CODES = [
+  "dependency-blocked",
+  "dependency-cycle",
+  "duplicate-output-id",
+  "duplicate-task-id",
+  "graph-hash-mismatch",
+  "invalid-implement-graph",
+  "invalid-output-path",
+  "multiple-output-producers",
+  "output-not-declared",
+  "output-producer-invalid",
+  "output-write-not-approved",
+  "phase-blocked",
+  "producer-not-dependency",
+  "producer-output-unavailable",
+  "producer-phase-after-consumer",
+  "unknown-dependency",
+  "verification-input-binding-mismatch",
+  "workspace-input-has-producer",
+  "workspace-input-unavailable",
+] as const;
+
+export type ImplementGraphReadinessCode =
+  (typeof IMPLEMENT_GRAPH_READINESS_CODES)[number];
+
+type ImplementGraphDiagnosticDetails = Partial<{
+  taskId: string;
+  phase: ImplementationPhase;
+  verificationId: string;
+  outputId: string;
+  path: string;
+  producerTaskId: string;
+  producerPhase: ImplementationPhase;
+  dependencyTaskId: string;
+}>;
+
+export type ImplementGraphReadinessDiagnostic =
+  | ({
+      kind: "graph-readiness";
+      code: ImplementGraphReadinessCode;
+    } & ImplementGraphDiagnosticDetails)
+  | ({
+      kind: "verification-adapter";
+      code: VerificationAdapterCode;
+      taskId: string;
+      phase: ImplementationPhase;
+      verificationId: string;
+    } & ImplementGraphDiagnosticDetails)
+  | ({
+      kind: "design-readiness";
+      code: "verification-contract-unsupported";
+      taskId: string;
+      phase: ImplementationPhase;
+      verificationId?: string;
+    } & ImplementGraphDiagnosticDetails);
+
 export interface PhaseAttempt {
   changeId: string;
   taskId: string;
@@ -362,13 +480,14 @@ export interface PhaseAttempt {
 export type ImplementRunRequest =
   | {
       stage: "abel-implement";
-      kind: "open-task";
-      boundary: TaskBoundary;
-      attempt: PhaseAttempt;
+      kind: "admit-graph";
+      graph: ImplementGraphBoundary;
+      graphHash: string;
+      state: { completedTasks: string[]; blockedTasks: string[] };
     }
   | {
       stage: "abel-implement";
-      kind: "phase-attempt";
+      kind: "task-attempt";
       attempt: PhaseAttempt;
     };
 
@@ -435,6 +554,7 @@ export function isValidRelativePath(p: unknown): p is string {
     p.length <= 512 &&
     !NONCANONICAL.test(p) &&
     !p.startsWith("/") &&
+    !/^[a-z]:\//iu.test(p) &&
     (p === "." ||
       (!p.startsWith("./") &&
         !p.endsWith("/") &&
@@ -513,36 +633,26 @@ function validVerificationIdentity(contract: Record<string, unknown>): boolean {
 
 function validatePackageScriptRunner(
   value: unknown,
-  requireCommand: boolean,
 ): value is PackageScriptRunner {
   if (
-    !hasExactKeys(
-      value,
-      requireCommand
-        ? ["kind", "packageManager", "script", "command"]
-        : ["kind", "packageManager", "script"],
-      requireCommand ? [] : ["command"],
-    ) ||
+    !hasExactKeys(value, ["kind", "packageManager", "script", "command"]) ||
     value.kind !== "package-script" ||
     !["bun", "npm", "pnpm", "yarn"].includes(String(value.packageManager)) ||
     typeof value.script !== "string" ||
     !VERIFICATION_NAME.test(value.script) ||
     value.script.includes("/") ||
-    (value.command !== undefined && !validScriptCommand(value.command))
+    !validScriptCommand(value.command)
   ) {
     return false;
   }
-  return !requireCommand || value.command !== undefined;
+  return true;
 }
 
-function validateExecutableRunner(
-  value: unknown,
-  requirePackageCommand: boolean,
-): value is ExecutableRunner {
+function validateExecutableRunner(value: unknown): value is ExecutableRunner {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const runner = value as Record<string, unknown>;
   if (runner.kind === "package-script") {
-    return validatePackageScriptRunner(runner, requirePackageCommand);
+    return validatePackageScriptRunner(runner);
   }
   if (
     runner.kind === "local-binary" &&
@@ -562,13 +672,9 @@ function validateExecutableRunner(
   );
 }
 
-function validateVitestRunner(
-  value: ExecutableRunner,
-  legacy: boolean,
-): boolean {
-  if (legacy) return true;
+function validateVitestRunner(value: ExecutableRunner): boolean {
   if (value.kind === "package-script") {
-    const tokens = value.command?.split(/\s+/u) ?? [];
+    const tokens = value.command.split(/\s+/u);
     return (
       tokens[0] === "vitest" ||
       (tokens[0] === "npx" &&
@@ -581,16 +687,12 @@ function validateVitestRunner(
 
 function validateAtomicVerification(
   value: unknown,
-  requirePackageCommand: boolean,
 ): value is AtomicVerificationContract {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const contract = value as Record<string, unknown>;
-  const legacy = contract.legacy === true;
-  const packageCommandRequired = requirePackageCommand && !legacy;
   const expectedFailure =
     contract.classification === "expected-red" ? ["expectedFailure"] : [];
   if (contract.kind === "vitest") {
-    const legacyRunner = contract.runner as Record<string, unknown>;
     const executableRunner = contract.runner as ExecutableRunner;
     return (
       hasExactKeys(contract, [
@@ -602,11 +704,10 @@ function validateAtomicVerification(
         "classification",
         ...expectedFailure,
         "minTests",
-        ...(legacy ? ["legacy"] : []),
       ]) &&
       validVerificationIdentity(contract) &&
-      validateExecutableRunner(contract.runner, packageCommandRequired) &&
-      validateVitestRunner(executableRunner, legacy) &&
+      validateExecutableRunner(contract.runner) &&
+      validateVitestRunner(executableRunner) &&
       Array.isArray(contract.testFiles) &&
       contract.testFiles.length > 0 &&
       contract.testFiles.length <= 64 &&
@@ -614,14 +715,7 @@ function validateAtomicVerification(
       new Set(contract.testFiles).size === contract.testFiles.length &&
       validVerificationArgs(contract.args) &&
       Number.isSafeInteger(contract.minTests) &&
-      (contract.minTests as number) >= 1 &&
-      (!legacy ||
-        (hasExactKeys(legacyRunner, ["kind", "packageManager", "script"]) &&
-          legacyRunner.kind === "package-script" &&
-          legacyRunner.packageManager === "bun" &&
-          legacyRunner.script === "test:target" &&
-          contract.testFiles.every((part) => part.startsWith("test/")) &&
-          contract.args.length === 0))
+      (contract.minTests as number) >= 1
     );
   }
   if (contract.kind === "package-script") {
@@ -629,38 +723,28 @@ function validateAtomicVerification(
       kind: "package-script",
       packageManager: contract.packageManager,
       script: contract.script,
-      ...(contract.command === undefined ? {} : { command: contract.command }),
+      command: contract.command,
     };
     return (
-      hasExactKeys(
-        contract,
-        [
-          "kind",
-          "id",
-          "packageManager",
-          "script",
-          ...(packageCommandRequired ? ["command"] : []),
-          "args",
-          "classification",
-          ...expectedFailure,
-          ...(legacy ? ["legacy"] : []),
-        ],
-        packageCommandRequired ? [] : ["command"],
-      ) &&
+      hasExactKeys(contract, [
+        "kind",
+        "id",
+        "packageManager",
+        "script",
+        "command",
+        "args",
+        "classification",
+        ...expectedFailure,
+      ]) &&
       validVerificationIdentity(contract) &&
-      validatePackageScriptRunner(runner, packageCommandRequired) &&
-      validVerificationArgs(contract.args) &&
-      (!legacy ||
-        (contract.packageManager === "bun" &&
-          contract.script === "check" &&
-          contract.command === undefined &&
-          contract.args.length === 0))
+      validatePackageScriptRunner(runner) &&
+      validVerificationArgs(contract.args)
     );
   }
   if (contract.kind !== "static-check") return false;
   const runner = contract.runner as Record<string, unknown> | undefined;
   const validRunner =
-    validateExecutableRunner(runner, requirePackageCommand) ||
+    validateExecutableRunner(runner) ||
     (hasExactKeys(runner, ["kind", "script"]) &&
       runner.kind === "node" &&
       isValidRelativePath(runner.script));
@@ -685,7 +769,7 @@ function validateStructuredVerification(
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const contract = value as Record<string, unknown>;
   if (contract.kind !== "steps") {
-    return validateAtomicVerification(contract, true);
+    return validateAtomicVerification(contract);
   }
   if (
     !hasExactKeys(contract, ["kind", "id", "classification", "steps"]) ||
@@ -698,7 +782,7 @@ function validateStructuredVerification(
     !Array.isArray(contract.steps) ||
     contract.steps.length === 0 ||
     contract.steps.length > 8 ||
-    !contract.steps.every((step) => validateAtomicVerification(step, true))
+    !contract.steps.every((step) => validateAtomicVerification(step))
   ) {
     return false;
   }
@@ -712,72 +796,6 @@ function validateStructuredVerification(
   );
 }
 
-function normalizeLegacyVerification(
-  contract: Record<string, unknown>,
-): StructuredVerificationContract | null {
-  if (
-    !hasExactKeys(
-      contract,
-      ["id", "argv", "classification", "minTests"],
-      ["expectedFailure"],
-    ) ||
-    !validVerificationIdentity(contract) ||
-    !Number.isSafeInteger(contract.minTests) ||
-    (contract.minTests as number) < 1 ||
-    !Array.isArray(contract.argv) ||
-    !contract.argv.every(validVerificationToken)
-  ) {
-    return null;
-  }
-  const argv = contract.argv as string[];
-  const base = {
-    id: contract.id as string,
-    classification: contract.classification as VerificationClassification,
-    ...(contract.expectedFailure === undefined
-      ? {}
-      : { expectedFailure: contract.expectedFailure as string }),
-  };
-  if (
-    argv.length >= 4 &&
-    argv[0] === "bun" &&
-    argv[1] === "run" &&
-    argv[2] === "test:target" &&
-    argv
-      .slice(3)
-      .every((part) => part.startsWith("test/") && isValidRelativePath(part))
-  ) {
-    return {
-      ...base,
-      kind: "vitest",
-      runner: {
-        kind: "package-script",
-        packageManager: "bun",
-        script: "test:target",
-      },
-      testFiles: argv.slice(3),
-      args: [],
-      minTests: contract.minTests as number,
-      legacy: true,
-    };
-  }
-  if (
-    argv.length === 3 &&
-    argv[0] === "bun" &&
-    argv[1] === "run" &&
-    argv[2] === "check"
-  ) {
-    return {
-      ...base,
-      kind: "package-script",
-      packageManager: "bun",
-      script: "check",
-      args: [],
-      legacy: true,
-    };
-  }
-  return null;
-}
-
 export function validateVerificationContract(
   value: unknown,
 ):
@@ -785,12 +803,6 @@ export function validateVerificationContract(
   | { ok: false; reason: string } {
   if (validateStructuredVerification(value)) {
     return { ok: true, value: structuredClone(value) };
-  }
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    const legacy = normalizeLegacyVerification(
-      value as Record<string, unknown>,
-    );
-    if (legacy) return { ok: true, value: legacy };
   }
   return {
     ok: false,
@@ -813,13 +825,21 @@ export function verificationInputPaths(
 ): string[] {
   return [
     ...new Set(
-      verificationSteps(verification).flatMap((step) =>
-        step.kind === "vitest"
-          ? step.testFiles
-          : step.kind === "static-check" && step.runner.kind === "node"
-            ? [step.runner.script]
-            : [],
-      ),
+      verificationSteps(verification).flatMap((step) => {
+        const paths =
+          step.kind === "vitest"
+            ? [...step.testFiles]
+            : step.kind === "static-check" && step.runner.kind === "node"
+              ? [step.runner.script]
+              : [];
+        if (
+          step.kind === "package-script" ||
+          ("runner" in step && step.runner.kind === "package-script")
+        ) {
+          paths.push("package.json");
+        }
+        return paths;
+      }),
     ),
   ];
 }
@@ -1019,8 +1039,11 @@ function validateImpactClosure(
   ) {
     return "public impact closure is incomplete";
   }
-  const bounds = snapshot as Record<string, { kind?: unknown }>;
-  if (!affectedSuite.some((test) => bounds?.[test]?.kind === "file")) {
+  const bounds = snapshot as Record<string, { kind?: unknown }> | undefined;
+  if (
+    bounds !== undefined &&
+    !affectedSuite.some((test) => bounds[test]?.kind === "file")
+  ) {
     return "affected suite contains no existing test evidence";
   }
   return null;
@@ -1137,19 +1160,12 @@ function validateCandidateRejection(
   if (
     rejection.kind !== "artifact" ||
     rejection.code !== "parent-review-rejected" ||
-    !hasExactKeys(rejection, ["kind", "code"], ["evidence"])
+    rejection.stage !== "parent-review" ||
+    !hasExactKeys(rejection, ["kind", "code", "stage"])
   ) {
     return false;
   }
-  return (
-    rejection.evidence === undefined ||
-    (Array.isArray(rejection.evidence) &&
-      rejection.evidence.length <= 8 &&
-      rejection.evidence.every(
-        (item) =>
-          typeof item === "string" && item.length > 0 && item.length <= 512,
-      ))
-  );
+  return true;
 }
 
 export function validateImplementDiscardOperation(
@@ -1197,6 +1213,49 @@ function validatePathSet(value: unknown): value is string[] {
   );
 }
 
+function validateIdentifierSet(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.every(validIdentifier) &&
+    new Set(value).size === value.length
+  );
+}
+
+function validateVerificationInputBindings(
+  value: unknown,
+): value is VerificationInputBinding[] {
+  if (!Array.isArray(value)) return false;
+  const keys = new Set<string>();
+  for (const binding of value) {
+    if (
+      binding &&
+      typeof binding === "object" &&
+      !Array.isArray(binding) &&
+      (binding as { kind?: unknown }).kind === "workspace" &&
+      hasExactKeys(binding, ["kind", "path"]) &&
+      isValidRelativePath(binding.path)
+    ) {
+      if (keys.has(`workspace:${binding.path}`)) return false;
+      keys.add(`workspace:${binding.path}`);
+      continue;
+    }
+    if (
+      binding &&
+      typeof binding === "object" &&
+      !Array.isArray(binding) &&
+      (binding as { kind?: unknown }).kind === "output" &&
+      hasExactKeys(binding, ["kind", "outputId"]) &&
+      validIdentifier(binding.outputId)
+    ) {
+      if (keys.has(`output:${binding.outputId}`)) return false;
+      keys.add(`output:${binding.outputId}`);
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
 function validateRoots(value: unknown): value is string[] {
   if (!validatePathSet(value) || value.length === 0) return false;
   if (
@@ -1227,7 +1286,7 @@ function validatePhaseBoundary(
   if (
     !hasExactKeys(
       value,
-      ["read", "write", "verification"],
+      ["read", "write", "verification", "verificationInputs"],
       ["verificationLock"],
     )
   ) {
@@ -1236,6 +1295,7 @@ function validatePhaseBoundary(
   if (
     !validatePathSet(value.read) ||
     !validatePathSet(value.write) ||
+    !validateVerificationInputBindings(value.verificationInputs) ||
     value.write.some(isAgentsPath) ||
     (value.verificationLock !== undefined &&
       !isValidRelativePath(value.verificationLock))
@@ -1260,6 +1320,7 @@ function validateTaskBoundary(
     !hasExactKeys(value, [
       "changeId",
       "taskId",
+      "dependsOn",
       "objective",
       "context",
       "roots",
@@ -1271,6 +1332,7 @@ function validateTaskBoundary(
     ]) ||
     !validIdentifier(value.changeId) ||
     !validIdentifier(value.taskId) ||
+    !validateIdentifierSet(value.dependsOn) ||
     typeof value.objective !== "string" ||
     value.objective.length === 0 ||
     value.objective.length > 4096 ||
@@ -1339,20 +1401,121 @@ function validateTaskBoundary(
   );
 }
 
-function normalizedTaskBoundary(value: TaskBoundary): TaskBoundary {
-  const clone = structuredClone(value);
-  clone.phases.red.verification = cloneVerificationContract(
-    clone.phases.red.verification,
-  );
-  clone.phases.green.verification = cloneVerificationContract(
-    clone.phases.green.verification,
-  );
-  if (clone.phases.refactor) {
-    clone.phases.refactor.verification = cloneVerificationContract(
-      clone.phases.refactor.verification,
-    );
+export type ImplementGraphContractDiagnostic =
+  | { code: "invalid-implement-graph" }
+  | { code: "invalid-output-path"; outputId?: string };
+
+export function validateImplementGraphBoundary(value: unknown):
+  | { ok: true; value: ImplementGraphBoundary }
+  | {
+      ok: false;
+      reason: string;
+      diagnostic: ImplementGraphContractDiagnostic;
+    } {
+  if (
+    !hasExactKeys(value, ["changeId", "tasks", "outputs"]) ||
+    !validIdentifier(value.changeId) ||
+    !Array.isArray(value.tasks) ||
+    value.tasks.length === 0 ||
+    value.tasks.length > 128 ||
+    !Array.isArray(value.outputs) ||
+    value.outputs.length > 512
+  ) {
+    return {
+      ok: false,
+      reason: "invalid Implement graph boundary",
+      diagnostic: { code: "invalid-implement-graph" },
+    };
   }
-  return clone;
+
+  for (const candidate of value.tasks) {
+    if (
+      !candidate ||
+      typeof candidate !== "object" ||
+      Array.isArray(candidate)
+    ) {
+      return {
+        ok: false,
+        reason: "invalid Implement task boundary",
+        diagnostic: { code: "invalid-implement-graph" },
+      };
+    }
+    const task = candidate as Record<string, unknown>;
+    const phases = task.phases as Record<string, unknown> | undefined;
+    if (
+      Object.hasOwn(task, "changeId") ||
+      !Object.hasOwn(task, "dependsOn") ||
+      !validateIdentifierSet(task.dependsOn) ||
+      !phases ||
+      !["red", "green"].every((phase) => {
+        const boundary = phases[phase];
+        return (
+          boundary !== null &&
+          typeof boundary === "object" &&
+          !Array.isArray(boundary) &&
+          Object.hasOwn(boundary, "verificationInputs")
+        );
+      }) ||
+      (phases.refactor !== undefined &&
+        (!phases.refactor ||
+          typeof phases.refactor !== "object" ||
+          Array.isArray(phases.refactor) ||
+          !Object.hasOwn(phases.refactor, "verificationInputs"))) ||
+      !validateTaskBoundary({ changeId: value.changeId, ...task }, undefined)
+    ) {
+      return {
+        ok: false,
+        reason: "invalid Implement task boundary",
+        diagnostic: { code: "invalid-implement-graph" },
+      };
+    }
+  }
+
+  for (const candidate of value.outputs) {
+    if (
+      !candidate ||
+      typeof candidate !== "object" ||
+      Array.isArray(candidate)
+    ) {
+      return {
+        ok: false,
+        reason: "invalid Implement graph output",
+        diagnostic: { code: "invalid-implement-graph" },
+      };
+    }
+    const output = candidate as Record<string, unknown>;
+    if (!isValidRelativePath(output.path)) {
+      return {
+        ok: false,
+        reason: "invalid Implement graph output path",
+        diagnostic: {
+          code: "invalid-output-path",
+          ...(validIdentifier(output.id) ? { outputId: output.id } : {}),
+        },
+      };
+    }
+    if (
+      !hasExactKeys(output, ["id", "path", "producer", "postcondition"]) ||
+      !validIdentifier(output.id) ||
+      !hasExactKeys(output.producer, ["taskId", "phase"]) ||
+      !validIdentifier(output.producer.taskId) ||
+      !(IMPLEMENTATION_PHASES as readonly unknown[]).includes(
+        output.producer.phase,
+      ) ||
+      output.postcondition !== "regular-file"
+    ) {
+      return {
+        ok: false,
+        reason: "invalid Implement graph output",
+        diagnostic: { code: "invalid-implement-graph" },
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    value: structuredClone(value) as unknown as ImplementGraphBoundary,
+  };
 }
 
 function validatePhaseAttemptShape(value: unknown): value is PhaseAttempt {
@@ -1412,7 +1575,19 @@ export function validatePhaseAttemptAgainstBoundary(
   ) {
     return "write snapshot must bind a regular file or absent path";
   }
-  return null;
+  const phases = [
+    boundary.phases.red,
+    boundary.phases.green,
+    ...(boundary.phases.refactor ? [boundary.phases.refactor] : []),
+  ];
+  return validateImpactClosure(
+    boundary.impactClosure,
+    {
+      read: [...new Set(phases.flatMap((entry) => entry.read))],
+      write: [...new Set(phases.flatMap((entry) => entry.write))],
+    },
+    attempt.snapshot,
+  );
 }
 
 function validateImplementRunRequest(
@@ -1429,53 +1604,56 @@ function validateImplementRunRequest(
     return { ok: false, reason: "missing request envelope" };
   }
   const request = value as Record<string, unknown>;
-  if (request.kind === "open-task") {
+  if (request.kind === "admit-graph") {
+    const state = request.state as Record<string, unknown>;
     if (
-      request.attempt &&
-      typeof request.attempt === "object" &&
-      !Array.isArray(request.attempt) &&
-      !Object.hasOwn(request.attempt, "snapshot")
+      !hasExactKeys(request, [
+        "stage",
+        "kind",
+        "graph",
+        "graphHash",
+        "state",
+      ]) ||
+      typeof request.graphHash !== "string" ||
+      !SNAPSHOT_SHA256.test(request.graphHash) ||
+      !hasExactKeys(state, ["completedTasks", "blockedTasks"]) ||
+      !validateIdentifierSet(state.completedTasks) ||
+      !validateIdentifierSet(state.blockedTasks)
     ) {
-      return { ok: false, reason: "invalid snapshot" };
+      return { ok: false, reason: "invalid Implement graph admission" };
     }
+    const completedTasks = state.completedTasks as string[];
+    const blockedTasks = state.blockedTasks as string[];
+    if (completedTasks.some((taskId) => blockedTasks.includes(taskId))) {
+      return { ok: false, reason: "invalid Implement graph admission" };
+    }
+    const graph = validateImplementGraphBoundary(request.graph);
+    if (!graph.ok) return { ok: false, reason: graph.reason };
+    const taskIds = new Set(graph.value.tasks.map((task) => task.taskId));
     if (
-      !hasExactKeys(request, ["stage", "kind", "boundary", "attempt"]) ||
-      !validatePhaseAttemptShape(request.attempt) ||
-      !validateTaskBoundary(request.boundary, request.attempt.snapshot)
+      [...completedTasks, ...blockedTasks].some(
+        (taskId) => !taskIds.has(taskId),
+      )
     ) {
-      return { ok: false, reason: "invalid task open contract" };
-    }
-    const boundary = request.boundary as TaskBoundary;
-    const attempt = request.attempt as PhaseAttempt;
-    const attemptReason = validatePhaseAttemptAgainstBoundary(
-      boundary,
-      attempt,
-    );
-    if (attempt.phase !== "red" || attemptReason !== null) {
-      return {
-        ok: false,
-        reason:
-          attempt.phase !== "red"
-            ? "task open must begin with Red"
-            : (attemptReason ?? "invalid phase attempt"),
-      };
+      return { ok: false, reason: "unknown Implement graph task state" };
     }
     return {
       ok: true,
       value: {
         stage: "abel-implement",
-        kind: "open-task",
-        boundary: normalizedTaskBoundary(boundary),
-        attempt: structuredClone(attempt),
+        kind: "admit-graph",
+        graph: graph.value,
+        graphHash: request.graphHash,
+        state: structuredClone({ completedTasks, blockedTasks }),
       },
     };
   }
-  if (request.kind === "phase-attempt") {
+  if (request.kind === "task-attempt") {
     if (
       !hasExactKeys(request, ["stage", "kind", "attempt"]) ||
       !validatePhaseAttemptShape(request.attempt)
     ) {
-      return { ok: false, reason: "invalid phase attempt contract" };
+      return { ok: false, reason: "invalid task attempt contract" };
     }
     return {
       ok: true,
@@ -1496,10 +1674,10 @@ export function validateRequestEnvelope(
   ) {
     return validateImplementRunRequest(value);
   }
-  return validateLegacyRequestEnvelope(value);
+  return validateNonImplementRequestEnvelope(value);
 }
 
-function validateLegacyRequestEnvelope(
+function validateNonImplementRequestEnvelope(
   value: unknown,
 ): { ok: true; value: RequestEnvelope } | { ok: false; reason: string } {
   if (value === null || typeof value !== "object") {
@@ -1946,6 +2124,26 @@ export interface AgentsCheckpointResult {
 
 export type ImplementOutcome =
   | {
+      kind: "graph-admitted";
+      changeId: string;
+      graphHash: string;
+      readyTasks: string[];
+      blockedTasks: string[];
+    }
+  | {
+      kind: "graph-rejected";
+      changeId: string;
+      graphHash: string;
+      diagnostics: ImplementGraphReadinessDiagnostic[];
+    }
+  | {
+      kind: "dependency-blocked";
+      requestId: string;
+      taskId: string;
+      phase: ImplementationPhase;
+      diagnostics: ImplementGraphReadinessDiagnostic[];
+    }
+  | {
       kind: "deferred";
       requestId: string;
       taskId: string;
@@ -1982,6 +2180,7 @@ export type ImplementOutcome =
       phase: ImplementationPhase;
       cause: "artifact" | "stale";
       remainingAttempts: 1;
+      lastFailure: SafeFailureDiagnostic;
     }
   | {
       kind: "completed";
@@ -1996,6 +2195,7 @@ export type ImplementOutcome =
       taskId: string;
       phase: ImplementationPhase;
       failure: TaskFailure;
+      result?: ApplyResult;
     }
   | {
       kind: "cancelled";
@@ -2240,7 +2440,15 @@ export function validateDiffResult(value: unknown): {
   try {
     paths = diffWritePaths(r.diff as string).paths;
   } catch (err) {
-    return { ok: false, reason: `invalid diff: ${(err as Error).message}` };
+    return {
+      ok: false,
+      reason: `invalid diff: ${(err as Error).message}`,
+      failure: {
+        kind: "artifact",
+        code: "invalid-diff",
+        stage: "candidate-diff",
+      },
+    };
   }
   const serialized = JSON.stringify(r);
   if (Buffer.byteLength(serialized, "utf8") > LIMITS.maxCompleteResultBytes) {

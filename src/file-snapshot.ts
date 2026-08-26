@@ -3,15 +3,10 @@
 // markers for proposed new paths. Currency is decided per bound path; no
 // global workspace revision participates.
 import { createHash } from "node:crypto";
-import {
-  existsSync,
-  lstatSync,
-  readdirSync,
-  readFileSync,
-  readlinkSync,
-  statSync,
-} from "node:fs";
+import { lstatSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
+
+import { observeSafePath } from "./safe-path.ts";
 
 export interface FileBound {
   kind: "file";
@@ -37,9 +32,8 @@ function sha256(bytes: Buffer): string {
 
 /** Snapshot one existing regular file under root. */
 export function snapshotFile(root: string, relPath: string): FileBound | null {
+  if (observeSafePath(root, relPath).kind !== "file") return null;
   const abs = resolve(root, relPath);
-  const st = statSync(abs, { throwIfNoEntry: false });
-  if (!st?.isFile()) return null;
   const bytes = readFileSync(abs);
   return { sha256: sha256(bytes), bytes: bytes.length, kind: "file" };
 }
@@ -99,9 +93,8 @@ export function snapshotDirManifest(
   root: string,
   relDir: string,
 ): DirBound | null {
+  if (observeSafePath(root, relDir).kind !== "directory") return null;
   const abs = resolve(root, relDir);
-  const st = statSync(abs, { throwIfNoEntry: false });
-  if (!st?.isDirectory()) return null;
   return { manifest: recursiveDirectoryManifest(abs), kind: "dir" };
 }
 
@@ -117,8 +110,9 @@ export function snapshotFiles(
     if (entry) bound[p] = entry;
     else bound[p] = { kind: "absent", absent: true };
   }
-  for (const p of opts.absent ?? [])
+  for (const p of opts.absent ?? []) {
     bound[p] = { kind: "absent", absent: true };
+  }
   return bound;
 }
 
@@ -141,12 +135,9 @@ export function isCurrent(root: string, bound: Bound): boolean {
       if (!now || now.manifest !== expected.manifest) return false;
       continue;
     }
-    const abs = resolve(root, rel);
-    const exists = existsSync(abs);
+    const observation = observeSafePath(root, rel);
     if (expected.kind === "file") {
-      if (!exists) return false;
-      const st = statSync(abs);
-      if (!st.isFile()) return false;
+      if (observation.kind !== "file") return false;
       const now = snapshotFile(root, rel);
       if (
         !now ||
@@ -154,8 +145,8 @@ export function isCurrent(root: string, bound: Bound): boolean {
         now.bytes !== expected.bytes
       )
         return false;
-    } else if (expected.absent) {
-      if (exists) return false;
+    } else if (expected.absent && observation.kind !== "absent") {
+      return false;
     }
   }
   return true;

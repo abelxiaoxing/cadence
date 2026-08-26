@@ -4,6 +4,8 @@ import {
   type CandidateFailure,
   type DiffResult,
   type EvidenceResult,
+  type SubmitFinalCategory,
+  type SubmitSchemaState,
   validateDiffResult,
   validateEvidenceResult,
 } from "./contracts.ts";
@@ -74,12 +76,7 @@ const diffSchema = Type.Object({
   contractCompliant: Type.Literal(true),
 });
 
-export type FinalCategory =
-  | "no-final-assistant"
-  | "text-only"
-  | "mixed"
-  | "multiple-submit"
-  | "single-submit-only";
+export type FinalCategory = SubmitFinalCategory;
 
 export interface IdentityOutcome {
   request: boolean;
@@ -91,7 +88,7 @@ export interface IdentityOutcome {
 export interface SubmitClassification {
   finalCategory: FinalCategory;
   attempts: number;
-  schema: "valid" | "invalid";
+  schema: SubmitSchemaState;
   identity: IdentityOutcome;
 }
 
@@ -105,7 +102,7 @@ export function createSubmitTool(input: {
   let submitted: EvidenceResult | DiffResult | undefined;
   let failure: CandidateFailure | undefined;
   let attempts = 0;
-  let schema: "valid" | "invalid" = "invalid";
+  let schema: SubmitSchemaState = "not-submitted";
   const identity: IdentityOutcome = {
     request: true,
     role: true,
@@ -134,7 +131,11 @@ export function createSubmitTool(input: {
         identity.task = false;
         identity.phase = false;
         schema = "invalid";
-        failure = { kind: "artifact", code: "invalid-structural-result" };
+        failure = {
+          kind: "artifact",
+          code: "invalid-structural-result",
+          stage: "structural-submit",
+        };
         throw new Error("submitted result is not an object");
       }
       if (value.id !== input.requestId) identity.request = false;
@@ -158,15 +159,27 @@ export function createSubmitTool(input: {
       const matches =
         identity.request && identity.role && identity.task && identity.phase;
       if (!validation.ok || !matches) {
-        failure =
-          validation.failure ??
-          ({ kind: "artifact", code: "invalid-structural-result" } as const);
+        failure = validation.ok
+          ? {
+              kind: "artifact",
+              code: "structural-identity-mismatch",
+              stage: "structural-submit",
+            }
+          : (validation.failure ?? {
+              kind: "artifact",
+              code: "invalid-structural-result",
+              stage: "structural-submit",
+            });
         throw new Error(
           validation.reason ?? "submitted result identity does not match",
         );
       }
       if (submitted) {
-        failure = { kind: "artifact", code: "invalid-structural-result" };
+        failure = {
+          kind: "artifact",
+          code: "invalid-structural-result",
+          stage: "structural-submit",
+        };
         throw new Error("duplicate structural submission");
       }
       submitted = structuredClone(value) as unknown as

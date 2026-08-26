@@ -2,12 +2,13 @@ import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import {
   type AtomicVerificationContract,
-  isValidRelativePath,
+  type StructuredVerificationContract,
   type VerificationAdapterCode,
   validateVerificationContract,
   verificationInputPaths,
   verificationSteps,
 } from "./contracts.ts";
+import { isSafeRegularFile, observeSafePath } from "./safe-path.ts";
 
 export type VerificationCapabilityDiagnostic =
   | {
@@ -35,11 +36,6 @@ export interface VerificationRunnerBinding {
   command: string;
   executablePath: string;
   mountSource?: string;
-}
-
-export interface VerificationReadiness {
-  taskContractsExecutable: boolean;
-  diagnostics: VerificationCapabilityDiagnostic[];
 }
 
 const SHELL_OPERATOR = /[;&|`$<>\n\r\0]/u;
@@ -88,18 +84,9 @@ function fileStatus(
   root: string,
   relative: string,
 ): "regular" | "absent" | "unsafe" {
-  if (!isValidRelativePath(relative)) return "unsafe";
-  const resolvedRoot = path.resolve(root);
-  const absolute = path.resolve(resolvedRoot, relative);
-  if (
-    absolute === resolvedRoot ||
-    !absolute.startsWith(`${resolvedRoot}${path.sep}`)
-  ) {
-    return "unsafe";
-  }
-  const stat = lstatSync(absolute, { throwIfNoEntry: false });
-  if (!stat) return "absent";
-  return stat.isFile() && !stat.isSymbolicLink() ? "regular" : "unsafe";
+  const observation = observeSafePath(root, relative);
+  if (observation.kind === "file") return "regular";
+  return observation.kind === "absent" ? "absent" : "unsafe";
 }
 
 function regularFile(root: string, relative: string): boolean {
@@ -287,7 +274,7 @@ function validatePackageScript(
   verificationId: string,
   packageManager: string,
   script: string,
-  approvedCommand?: string,
+  approvedCommand: string,
   dependencyOwner = root,
 ): VerificationCapabilityResult {
   const packageRunner = resolveVerificationRunner(packageManager);
@@ -311,7 +298,7 @@ function validatePackageScript(
       `package.json script ${script} is missing`,
     );
   }
-  if (approvedCommand !== undefined && actual !== approvedCommand) {
+  if (actual !== approvedCommand) {
     return adapterFailure(
       verificationId,
       "script-command-mismatch",
@@ -336,21 +323,7 @@ function validateAtomicCapability(
   root: string,
   step: AtomicVerificationContract,
   dependencyOwner: string,
-  allowedMissingInputs: ReadonlySet<string>,
 ): VerificationCapabilityResult {
-  for (const input of verificationInputPaths(step)) {
-    const status = fileStatus(root, input);
-    if (
-      status !== "regular" &&
-      !(status === "absent" && allowedMissingInputs.has(input))
-    ) {
-      return adapterFailure(
-        step.id,
-        "input-missing",
-        `verification input ${input} is missing or unsafe`,
-      );
-    }
-  }
   if (step.kind === "package-script") {
     return validatePackageScript(
       root,
@@ -419,8 +392,24 @@ export function validateVerificationCapability(
   value: unknown,
   options: {
     dependencyOwner?: string;
-    allowedMissingInputs?: readonly string[];
   } = {},
+): VerificationCapabilityResult {
+  return validateCapability(root, value, options, true);
+}
+
+export function validateVerificationAdapterCapability(
+  root: string,
+  value: unknown,
+  options: { dependencyOwner?: string } = {},
+): VerificationCapabilityResult {
+  return validateCapability(root, value, options, false);
+}
+
+function validateCapability(
+  root: string,
+  value: unknown,
+  options: { dependencyOwner?: string },
+  requireInputAvailability: boolean,
 ): VerificationCapabilityResult {
   const validation = validateVerificationContract(value);
   if (!validation.ok) {
@@ -442,40 +431,36 @@ export function validateVerificationCapability(
     };
   }
   const dependencyOwner = options.dependencyOwner ?? root;
-  const allowedMissingInputs = new Set(options.allowedMissingInputs ?? []);
+  return validateAcceptedVerificationCapability(
+    root,
+    validation.value,
+    dependencyOwner,
+    requireInputAvailability,
+  );
+}
+
+function validateAcceptedVerificationCapability(
+  root: string,
+  verification: StructuredVerificationContract,
+  dependencyOwner: string,
+  requireInputAvailability: boolean,
+): VerificationCapabilityResult {
+  if (requireInputAvailability) {
+    for (const input of verificationInputPaths(verification)) {
+      if (!isSafeRegularFile(root, input)) {
+        return adapterFailure(
+          verification.id,
+          "input-missing",
+          `verification input ${input} is missing or unsafe`,
+        );
+      }
+    }
+  }
   const runnerBindings: VerificationRunnerBinding[] = [];
-  for (const step of verificationSteps(validation.value)) {
-    const capability = validateAtomicCapability(
-      root,
-      step,
-      dependencyOwner,
-      allowedMissingInputs,
-    );
+  for (const step of verificationSteps(verification)) {
+    const capability = validateAtomicCapability(root, step, dependencyOwner);
     if (!capability.ok) return capability;
     runnerBindings.push(...capability.runnerBindings);
   }
-  return capabilitySuccess(validation.value.id, runnerBindings);
-}
-
-export function assessVerificationReadiness(
-  root: string,
-  contracts: readonly unknown[],
-  options: {
-    dependencyOwner?: string;
-    allowedMissingInputs?: readonly string[];
-  } = {},
-): VerificationReadiness {
-  const diagnostics = contracts
-    .map((contract) => validateVerificationCapability(root, contract, options))
-    .filter(
-      (
-        result,
-      ): result is Extract<VerificationCapabilityResult, { ok: false }> =>
-        !result.ok,
-    )
-    .map((result) => result.diagnostic);
-  return {
-    taskContractsExecutable: diagnostics.length === 0,
-    diagnostics,
-  };
+  return capabilitySuccess(verification.id, runnerBindings);
 }

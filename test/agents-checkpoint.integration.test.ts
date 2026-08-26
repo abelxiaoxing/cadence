@@ -17,6 +17,12 @@ import { snapshotFiles } from "../src/file-snapshot.ts";
 import { applyAgentsCheckpoint } from "../src/patch.ts";
 import { Runtime } from "../src/runtime.ts";
 import { workerIdentity } from "../src/worker.ts";
+import {
+  admitGraph,
+  graphAdmissionFor,
+  type ImplementTaskFixture,
+  taskAttemptFor,
+} from "./helpers/implement-graph-fixture.ts";
 import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 const START = "<!-- ABEL:AGENTS-INDEX:START -->";
@@ -99,21 +105,20 @@ function checkpointAttempt(root: string, diff: string) {
 function docsTaskRequest(
   snapshot: unknown,
   options: { taskId?: string; document?: string } = {},
-) {
+): ImplementTaskFixture {
   const taskId = options.taskId ?? "docs-agents-checkpoint";
   const document = options.document ?? "README.md";
   return {
-    stage: "abel-implement",
-    kind: "open-task",
     boundary: {
       changeId: "agents-checkpoint-fixture",
       taskId,
+      dependsOn: [],
       objective: "Update approved README and environment documentation",
       roots: ["."],
       context: { agents: "root AGENTS", contract: "approved docs task" },
       phases: {
         red: {
-          read: [document],
+          read: [document, "package.json"],
           write: [document],
           verification: {
             kind: "static-check",
@@ -128,9 +133,10 @@ function docsTaskRequest(
             classification: "expected-red",
             expectedFailure: "[DOCS:missing-approved-route]",
           },
+          verificationInputs: [{ kind: "workspace", path: "package.json" }],
         },
         green: {
-          read: [document],
+          read: [document, "package.json"],
           write: [document],
           verification: {
             kind: "static-check",
@@ -144,6 +150,7 @@ function docsTaskRequest(
             args: [],
             classification: "expected-green",
           },
+          verificationInputs: [{ kind: "workspace", path: "package.json" }],
         },
       },
       scheduling: { conflicts: [], resources: [] },
@@ -176,7 +183,7 @@ function greenAttempt(
 ) {
   return {
     stage: "abel-implement",
-    kind: "phase-attempt",
+    kind: "task-attempt",
     attempt: {
       ...structuredClone(request.attempt),
       requestId: `${request.attempt.taskId}:green:0`,
@@ -188,6 +195,13 @@ function greenAttempt(
 
 function pinCheckpointWorker(runtime: Runtime, root: string): void {
   const request = docsTaskRequest({});
+  const admission = graphAdmissionFor([request]);
+  (runtime as any).registry.admitGraph(
+    admission.graph,
+    admission.graphHash,
+    root,
+    admission.state,
+  );
   const worker = (runtime as any).registry.open(
     request.boundary,
     workerIdentity({ provider: "test-provider", id: "test-model" }),
@@ -211,7 +225,7 @@ function runtimeFixture(): Runtime {
   });
 }
 
-function runtimeContext(root: string) {
+function runtimeContext(root: string): Parameters<Runtime["execute"]>[2] {
   return {
     cwd: root,
     model: {
@@ -220,7 +234,7 @@ function runtimeContext(root: string) {
       name: "test-model",
     },
     modelRegistry: {},
-  };
+  } as Parameters<Runtime["execute"]>[2];
 }
 
 function mockCandidateDelivery(runtime: Runtime, root: string) {
@@ -247,7 +261,9 @@ async function finalCandidateFixture() {
   const root = fixture();
   writeFileSync(path.join(root, "README.md"), "old docs\n");
   const runtime = runtimeFixture();
-  const request = docsTaskRequest(snapshotFiles(root, ["README.md"]));
+  const request = docsTaskRequest(
+    snapshotFiles(root, ["README.md", "package.json"]),
+  );
   const dispatch = vi.spyOn(runtime as any, "dispatchChild");
   const redResultId = runtime.results.retain({
     diff: [
@@ -269,7 +285,12 @@ async function finalCandidateFixture() {
     result: { kind: "diff" },
     resultId: redResultId,
   });
-  await (runtime.execute as any)("run", { request }, runtimeContext(root));
+  await admitGraph(runtime, [request], runtimeContext(root));
+  await (runtime.execute as any)(
+    "run",
+    { request: taskAttemptFor(request) },
+    runtimeContext(root),
+  );
   await (runtime.execute as any)(
     "apply",
     {
@@ -279,7 +300,7 @@ async function finalCandidateFixture() {
     runtimeContext(root),
   );
 
-  const greenSnapshot = snapshotFiles(root, ["README.md"]);
+  const greenSnapshot = snapshotFiles(root, ["README.md", "package.json"]);
   const green = greenAttempt(request, greenSnapshot);
   const greenResultId = runtime.results.retain({
     diff: [
@@ -378,7 +399,11 @@ describe("parent-owned AGENTS stable checkpoints", () => {
 
     expect(result).toEqual({
       ok: false,
-      failure: { kind: "artifact", code: "outside-managed-region" },
+      failure: {
+        kind: "artifact",
+        code: "outside-managed-region",
+        stage: "agents-checkpoint",
+      },
     });
     expect(readFileSync(path.join(root, "AGENTS.md"), "utf8")).toBe(before);
   });
@@ -404,7 +429,11 @@ describe("parent-owned AGENTS stable checkpoints", () => {
 
       expect(result).toEqual({
         ok: false,
-        failure: { kind: "artifact", code: "nonregular-mode" },
+        failure: {
+          kind: "artifact",
+          code: "nonregular-mode",
+          stage: "agents-checkpoint",
+        },
       });
       expect(lstatSync(target).isSymbolicLink()).toBe(kind === "symlink");
       expect(lstatSync(target).isDirectory()).toBe(kind === "directory");
@@ -464,7 +493,9 @@ describe("parent-owned AGENTS stable checkpoints", () => {
       parentPayloadBridge: new PassthroughParentPayloadBridge(),
     });
     mockCandidateDelivery(runtime, root);
-    const request = docsTaskRequest(snapshotFiles(root, ["README.md"]));
+    const request = docsTaskRequest(
+      snapshotFiles(root, ["README.md", "package.json"]),
+    );
     const context = {
       cwd: root,
       model: {
@@ -475,7 +506,12 @@ describe("parent-owned AGENTS stable checkpoints", () => {
       modelRegistry: {},
     };
 
-    const red = await runtime.execute("run", { request }, context as never);
+    await admitGraph(runtime, [request], context as never);
+    const red = await runtime.execute(
+      "run",
+      { request: taskAttemptFor(request) },
+      context as never,
+    );
     expect(red).toMatchObject({
       kind: "candidate",
       taskId: "docs-agents-checkpoint",
@@ -489,7 +525,12 @@ describe("parent-owned AGENTS stable checkpoints", () => {
     worker.state = { kind: "ready", phase: "green", launchIndex: 0 };
     const green = await runtime.execute(
       "run",
-      { request: greenAttempt(request, snapshotFiles(root, ["README.md"])) },
+      {
+        request: greenAttempt(
+          request,
+          snapshotFiles(root, ["README.md", "package.json"]),
+        ),
+      },
       context as never,
     );
     expect(green).toMatchObject({
@@ -791,6 +832,14 @@ describe("[SLICE-3:terminal-replay] bounded AGENTS checkpoint state", () => {
         failure: {
           kind: "checkpoint-attempts-exhausted",
           cause: failureKind,
+          attemptsUsed: 2,
+          lastFailure:
+            failureKind === "artifact"
+              ? {
+                  code: "git-apply-check-failed",
+                  stage: "agents-checkpoint",
+                }
+              : { code: "stale-snapshot", stage: "agents-checkpoint" },
         },
       });
       expect(worker.state).toEqual({
@@ -799,6 +848,14 @@ describe("[SLICE-3:terminal-replay] bounded AGENTS checkpoint state", () => {
         failure: {
           kind: "checkpoint-attempts-exhausted",
           cause: failureKind,
+          attemptsUsed: 2,
+          lastFailure:
+            failureKind === "artifact"
+              ? {
+                  code: "git-apply-check-failed",
+                  stage: "agents-checkpoint",
+                }
+              : { code: "stale-snapshot", stage: "agents-checkpoint" },
         },
       });
     },
@@ -925,7 +982,9 @@ describe("[SLICE-3:terminal-replay] bounded AGENTS checkpoint state", () => {
   it("throws a checkpoint before pending without changing task state", async () => {
     const root = fixture();
     const runtime = runtimeFixture();
-    const request = docsTaskRequest(snapshotFiles(root, ["README.md"]));
+    const request = docsTaskRequest(
+      snapshotFiles(root, ["README.md", "package.json"]),
+    );
     const worker = (runtime as any).registry.open(
       request.boundary,
       workerIdentity({ provider: "test-provider", id: "test-model" }),
@@ -989,7 +1048,7 @@ describe("[SLICE-3:terminal-replay] bounded AGENTS checkpoint state", () => {
       runtimeContext(root),
     );
     const before = structuredClone(worker.state);
-    const staleSnapshot = snapshotFiles(root, ["README.md"]);
+    const staleSnapshot = snapshotFiles(root, ["README.md", "package.json"]);
     writeFileSync(path.join(root, "README.md"), "changed after completion\n");
     const dispatch = vi.spyOn(runtime as any, "dispatchChild");
     dispatch.mockClear();
@@ -1029,14 +1088,26 @@ describe("[SLICE-4:task-lifetime-conflict] parent-owned AGENTS admission", () =>
     const runtime = runtimeFixture();
     const dispatch = mockCandidateDelivery(runtime, root);
     const schedule = vi.spyOn((runtime as any).scheduler, "schedule");
-    const ownerRequest = docsTaskRequest(snapshotFiles(root, ["README.md"]), {
-      taskId: "agents-owner",
-      document: "README.md",
-    });
+    const ownerRequest = docsTaskRequest(
+      snapshotFiles(root, ["README.md", "package.json"]),
+      {
+        taskId: "agents-owner",
+        document: "README.md",
+      },
+    );
+    const contenderRequest = docsTaskRequest(
+      snapshotFiles(root, ["CHANGELOG.md", "package.json"]),
+      { taskId: "agents-contender", document: "CHANGELOG.md" },
+    );
+    await admitGraph(
+      runtime,
+      [ownerRequest, contenderRequest],
+      runtimeContext(root),
+    );
 
     const admitted = await (runtime.execute as any)(
       "run",
-      { request: ownerRequest },
+      { request: taskAttemptFor(ownerRequest) },
       runtimeContext(root),
     );
 
@@ -1051,7 +1122,7 @@ describe("[SLICE-4:task-lifetime-conflict] parent-owned AGENTS admission", () =>
     const ownerEnvelope = dispatch.mock.calls[0]?.[1] as {
       declared: { read: string[]; write: string[] };
     };
-    expect(ownerEnvelope.declared.read).toEqual(["README.md"]);
+    expect(ownerEnvelope.declared.read).toEqual(["README.md", "package.json"]);
     expect(ownerEnvelope.declared.write).toEqual(["README.md"]);
     expect([
       ...ownerEnvelope.declared.read,
@@ -1066,10 +1137,6 @@ describe("[SLICE-4:task-lifetime-conflict] parent-owned AGENTS admission", () =>
       finalPhase: "green",
       attemptIndex: 0,
     };
-    const contenderRequest = docsTaskRequest(
-      snapshotFiles(root, ["CHANGELOG.md"]),
-      { taskId: "agents-contender", document: "CHANGELOG.md" },
-    );
     const callsBefore = {
       child: dispatch.mock.calls.length,
       scheduler: schedule.mock.calls.length,
@@ -1079,7 +1146,7 @@ describe("[SLICE-4:task-lifetime-conflict] parent-owned AGENTS admission", () =>
 
     const deferred = await (runtime.execute as any)(
       "run",
-      { request: contenderRequest },
+      { request: taskAttemptFor(contenderRequest) },
       runtimeContext(root),
     );
 
@@ -1109,10 +1176,22 @@ describe("[SLICE-4:task-lifetime-conflict] parent-owned AGENTS admission", () =>
       writeFileSync(path.join(root, "CHANGELOG.md"), "contender docs\n");
       const runtime = runtimeFixture();
       const dispatch = mockCandidateDelivery(runtime, root);
-      const ownerRequest = docsTaskRequest(snapshotFiles(root, ["README.md"]), {
-        taskId: `agents-${terminal}`,
-        document: "README.md",
-      });
+      const ownerRequest = docsTaskRequest(
+        snapshotFiles(root, ["README.md", "package.json"]),
+        {
+          taskId: `agents-${terminal}`,
+          document: "README.md",
+        },
+      );
+      const contenderRequest = docsTaskRequest(
+        snapshotFiles(root, ["CHANGELOG.md", "package.json"]),
+        { taskId: `after-${terminal}`, document: "CHANGELOG.md" },
+      );
+      await admitGraph(
+        runtime,
+        [ownerRequest, contenderRequest],
+        runtimeContext(root),
+      );
       const owner = (runtime as any).registry.open(
         ownerRequest.boundary,
         workerIdentity({ provider: "test-provider", id: "test-model" }),
@@ -1130,14 +1209,9 @@ describe("[SLICE-4:task-lifetime-conflict] parent-owned AGENTS admission", () =>
               },
             }
           : { kind: "completed", finalPhase: "green" };
-      const contenderRequest = docsTaskRequest(
-        snapshotFiles(root, ["CHANGELOG.md"]),
-        { taskId: `after-${terminal}`, document: "CHANGELOG.md" },
-      );
-
       const admitted = await (runtime.execute as any)(
         "run",
-        { request: contenderRequest },
+        { request: taskAttemptFor(contenderRequest) },
         runtimeContext(root),
       );
 

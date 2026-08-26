@@ -139,6 +139,7 @@ Implement apply and discard operations SHALL identify the current operation requ
 An artifact discard MAY provide bounded correction evidence but SHALL NOT change scope, verification, dependencies, or other stable boundary facts.
 
 Before application, the parent-owned runtime SHALL verify retained identity, exact phase path bounds, approved dependency changes, complete-diff consumption, current snapshot, source and test loadability, approved phase verification identity, and ordinary Git checkability in isolation from the main workspace.
+For a phase that declares graph outputs, isolated preflight SHALL confirm every output's regular-file postcondition after applying the candidate and before verification. After exact main-workspace application, the runtime SHALL confirm those outputs again before phase progression and SHALL confirm every task output before task completion.
 It SHALL apply exactly the retained unified diff with ordinary all-or-nothing Git application and MUST NOT use reject fragments, reconstruct Worker semantics, or implement a private rollback platform.
 Preflight, ordinary Git, and AGENTS-checkpoint producers SHALL return closed typed success or failure values without encoding control classes into free-form error strings.
 An unknown exception SHALL propagate as an internal error rather than being classified by regular expression or keyword.
@@ -181,9 +182,16 @@ For an applied phase, the parent SHALL return compact validation evidence contai
 
 ### Requirement: File-snapshot-aware bounded concurrency
 
-The dispatcher SHALL register each Implement task's complete immutable boundary before awaiting a child or Scheduler admission and SHALL retain one task record containing stable identity, phase-local scope, conflict declaration, and current state.
-The first task request SHALL be Red and later phase attempts SHALL contain only dynamic operation identity and a fresh approved snapshot.
+Before any task opens, the dispatcher SHALL admit exactly one immutable `ImplementGraphBoundary` containing the change, every task, every explicit `dependsOn` edge, every phase verification-input binding, and every generated output's unique id, safe relative path, producer task and phase, and regular-file postcondition.
+The admission request SHALL bind the graph with its canonical SHA-256 hash and current parent-owned completed and blocked task facts. The runtime SHALL reject a hash mismatch, invalid graph, or non-executable static verification closure before storing a process-local graph record.
+Each direct verification input SHALL bind exactly once to either a workspace path that is already a safe regular file or a graph output id. Output provenance SHALL NOT be inferred from write sets. An output path SHALL be approved by its producer phase write set, have one producer, and be consumable across tasks only through a transitive dependency path. A phase MAY consume an output produced by its own candidate or an earlier applied phase and MUST NOT consume an output produced only by a later phase.
+
+After graph admission, the dispatcher SHALL register each ready task's complete immutable boundary from that graph before awaiting a child or Scheduler admission and SHALL retain one task record containing stable identity, phase-local scope, conflict declaration, and current state.
+The first `task-attempt` SHALL be Red and every later `task-attempt` SHALL contain only dynamic operation identity and a fresh approved snapshot.
 The dispatcher SHALL reject duplicate task opens, invalid phase transitions, stable identity changes, repeated set members, duplicate roots, and overlapping root ancestry before a child launch.
+
+Graph closure, fresh-context admission, task opening, and candidate preflight SHALL use the same graph-readiness core with different current facts. A generated cross-task output SHALL become available only after its producer task completes. A blocked producer SHALL keep consumers dependency-blocked without a child launch; a completed producer whose output is absent, unsafe, or not a regular file SHALL produce `producer-output-unavailable`.
+Fresh-context reconstruction SHALL use only the receipt-bound graph and hash, parent-owned completed task facts, current in-process blocked facts, and a fresh safe workspace scan. It SHALL NOT infer task or phase completion from file existence or persist Runtime recovery state.
 
 The runtime SHALL derive a task-lifetime conflict declaration from the union of every approved phase read and exact write path, explicit conflict edge, resource, verification lock, and non-none parent-owned AGENTS target.
 It SHALL compare a new open with every registered nonterminal task before Scheduler queueing.
@@ -199,8 +207,8 @@ Each Red, Green, and optional Refactor phase SHALL receive and return a fresh sn
 
 #### Scenario: Task boundary is admitted
 
-- **WHEN** a valid first Red request has no task-lifetime conflict
-- **THEN** the runtime atomically registers its task record before any await or child launch and submits only the Red attempt to the Scheduler
+- **WHEN** a hash-valid graph has an executable verification closure and a ready task's valid first Red attempt has no task-lifetime conflict
+- **THEN** the runtime resolves the task only from that graph, atomically registers its task record before any await or child launch, and submits only the Red attempt to the Scheduler
 
 #### Scenario: Independent Design packets are ready
 
@@ -209,7 +217,7 @@ Each Red, Green, and optional Refactor phase SHALL receive and return a fresh sn
 
 #### Scenario: Compatible implementation tasks are ready
 
-- **WHEN** multiple task opens have accepted prerequisites and compatible task-lifetime declarations
+- **WHEN** multiple graph tasks have completed explicit dependencies and compatible task-lifetime declarations
 - **THEN** each may be admitted while their phase attempts remain subject to bounded Scheduler execution and serial parent application
 
 #### Scenario: Duplicate task open is submitted
@@ -249,15 +257,15 @@ Each Red, Green, and optional Refactor phase SHALL receive and return a fresh sn
 
 #### Scenario: Next phase begins after an accepted diff
 
-- **WHEN** exact application advances a task to its next approved phase
-- **THEN** the next attempt uses that phase's own scope, verification, and a fresh current snapshot without restating the stable boundary
+- **WHEN** exact application satisfies the phase's declared output postconditions and advances a task to its next approved phase
+- **THEN** the next task attempt uses that phase's own scope, verification, graph bindings, and a fresh current snapshot without restating the stable boundary
 
 ### Requirement: Single mechanical redispatch and branch isolation
 
 Provider-managed retry SHALL remain disabled with `maxRetries: 0`, and the private runtime SHALL implement no cooldown, circuit breaker, hidden request retry, waiting resume, or partial-result path.
 Each Implement phase SHALL allow at most two non-cancelled child launches shared by transport failure, stale refresh, and generated-artifact correction.
 After the first eligible transport failure the runtime MAY redispatch the identical phase within the same invocation; after the first eligible stale or artifact failure it MAY accept one later phase attempt with only refreshed dynamic facts or bounded artifact evidence.
-A second eligible failure SHALL terminally block the task as attempts exhausted and SHALL NOT start a third child.
+A second eligible failure SHALL terminally block the task as attempts exhausted, preserve the final safe closed failure code and stage, and SHALL NOT start a third child.
 Cancellation SHALL not consume a launch or become a blocker.
 An oversized child result, environment failure, or approval-boundary failure SHALL terminally block the current task without partial application or stage-routing metadata.
 
@@ -286,7 +294,7 @@ The runtime SHALL stop only the current task, preserve accepted independent sibl
 #### Scenario: Mechanical redispatch fails again
 
 - **WHEN** a second non-cancelled launch in one phase ends in transport, stale, or artifact failure
-- **THEN** the current task terminally blocks as attempts exhausted with no third launch or partial candidate
+- **THEN** the current task terminally blocks with cause, `attemptsUsed: 2`, and a `lastFailure` containing the final closed code and stage, with no third launch or partial candidate
 
 #### Scenario: Candidate artifact passes structural submission but cannot load
 
@@ -296,7 +304,7 @@ The runtime SHALL stop only the current task, preserve accepted independent sibl
 #### Scenario: Artifact correction budget is exhausted
 
 - **WHEN** the second non-cancelled launch in a phase also produces a typed artifact failure
-- **THEN** the current task terminally blocks as artifact attempts exhausted and no automatic workflow transition or third launch occurs
+- **THEN** the current task terminally blocks as artifact attempts exhausted, retains the final safe artifact code and stage, and no automatic workflow transition or third launch occurs
 
 #### Scenario: Cancellation occurs
 
@@ -325,7 +333,7 @@ The runtime SHALL stop only the current task, preserve accepted independent sibl
 
 ### Requirement: Ephemeral bounded runtime lifecycle
 
-The private Agent registry, Scheduler queue and runs, task records, conflict declarations, terminal facts, Worker sessions, retained candidates, parent payload bridge, and user-interface activity records SHALL exist only in the current Pi process memory.
+The private Agent registry, canonical graph records, Scheduler queue and runs, task records, conflict declarations, terminal facts, Worker sessions, retained candidates, parent payload bridge, and user-interface activity records SHALL exist only in the current Pi process memory.
 Each task record SHALL pin the canonical workspace root, change and task identity, resolved Provider/model identity, immutable approved boundary, derived lifetime conflict, and current task state for its process lifetime.
 The resolved Provider/model identity - inherited parent identity or the role's committed custom endpoint identity - SHALL be pinned at task admission and remain fixed across every phase launch for that task.
 Ready, candidate-pending, AGENTS-checkpoint-pending, blocked, and completed SHALL be the complete Implement task-state vocabulary.
@@ -338,7 +346,7 @@ Each child Provider request SHALL either reuse the selected parent Provider's ef
 For an `openai-responses` child, the final payload SHALL omit optional `max_output_tokens` after any applied payload-transform callback without substituting another child output-token cap.
 
 Cancellation, timeout, completion, failure, stage finish, reload, session replacement, and shutdown SHALL dispose affected child sessions and clear queued or retained state as applicable.
-Stage drain SHALL idempotently close admission, settle Scheduler work, erase retained candidates and task records including terminal facts and conflicts, invalidate the parent payload bridge, and remove only dispatcher activation owned by this extension.
+Stage drain SHALL idempotently close admission, settle Scheduler work, erase retained candidates, graph records, and task records including terminal facts and conflicts, invalidate the parent payload bridge, and remove only dispatcher activation owned by this extension.
 Nested model usage SHALL be aggregated once into the dispatcher ToolResult usage and SHALL not be double-counted.
 The runtime MUST NOT write child transcripts, model outputs, result files, queues, schedules, checkpoints, task records, terminal facts, or activity state to any filesystem location.
 OpenSpec Gate receipts remain design audit artifacts and are not orchestration runtime state.
@@ -350,8 +358,8 @@ Invalid requests MUST NOT enter the activity display, and session shutdown SHALL
 
 #### Scenario: Task identity is pinned
 
-- **WHEN** a valid Implement task open is admitted
-- **THEN** the runtime stores its canonical root, change, task, Provider/model, boundary, conflict, and ready Red state in one process-local record
+- **WHEN** a valid Implement graph and first Red task attempt are admitted
+- **THEN** the runtime stores the graph hash separately and pins the task's canonical root, change, task, Provider/model, graph-derived boundary, conflict, and ready Red state in one process-local record
 
 #### Scenario: Task identity changes
 
@@ -480,7 +488,7 @@ It MUST NOT add a Fleet, child-session viewer, public stop, resume, or steering 
 
 ### Requirement: Implement domain outcomes and Pi Tool errors
 
-The private extension SHALL return valid Implement domain outcomes normally for deferred, candidate, applied, checkpoint-required, retry, completed, blocked, and cancelled operations.
+The private extension SHALL return valid Implement domain outcomes normally for graph-admitted, graph-rejected, dependency-blocked, deferred, candidate, applied, checkpoint-required, retry, completed, blocked, and cancelled operations.
 Blocked and cancelled outcomes SHALL NOT be marked as Pi Tool errors merely because work did not complete.
 Unknown actions, invalid schemas, duplicate opens, illegal phase transitions, identity mismatches, missing or mismatched result identifiers, illegal candidate-pending operations, and internal invariant failures SHALL throw so the Pi Agent Loop produces a real Tool error.
 The extension SHALL NOT synthesize an `isError` flag inside ordinary ToolResult content as a substitute for throwing.

@@ -31,6 +31,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { snapshotFiles } from "../src/file-snapshot";
 import register from "../src/index";
 import { runtimeForProvider } from "../src/parent-provider";
+import {
+  graphAdmissionFor,
+  type ImplementTaskFixture,
+  taskAttemptFor,
+} from "./helpers/implement-graph-fixture.ts";
 
 type PayloadCallback = NonNullable<SimpleStreamOptions["onPayload"]>;
 
@@ -344,40 +349,46 @@ function implementationRoot(): string {
   return cwd;
 }
 
-function implementationRequest(id: string, cwd: string) {
-  const target = ["bun", "run", "test:target", "test/expected-red.mjs"];
+function implementationRequest(id: string, cwd: string): ImplementTaskFixture {
   return {
-    stage: "abel-implement",
-    kind: "open-task",
     boundary: {
       changeId: "responses-first-dispatch",
       taskId: id,
+      dependsOn: [],
       objective: "Return one bounded Red candidate",
       roots: ["."],
       context: { agents: "none", contract: "approved" },
       phases: {
         red: {
-          read: ["a.txt"],
+          read: ["a.txt", "test/expected-red.mjs"],
           write: ["a.txt"],
           verificationLock: "responses-first-dispatch-red",
           verification: {
+            kind: "static-check",
             id: `verify-${id}-red`,
-            argv: target,
+            runner: { kind: "node", script: "test/expected-red.mjs" },
+            args: [],
             classification: "expected-red",
             expectedFailure: "[RESPONSES-FIRST-DISPATCH:expected-red]",
-            minTests: 1,
           },
+          verificationInputs: [
+            { kind: "workspace", path: "test/expected-red.mjs" },
+          ],
         },
         green: {
-          read: ["a.txt"],
+          read: ["a.txt", "package.json"],
           write: ["a.txt"],
           verificationLock: "responses-first-dispatch-green",
           verification: {
+            kind: "package-script",
             id: `verify-${id}-green`,
-            argv: ["bun", "run", "check"],
+            packageManager: "bun",
+            script: "check",
+            command: 'node -e ""',
+            args: [],
             classification: "expected-green",
-            minTests: 1,
           },
+          verificationInputs: [{ kind: "workspace", path: "package.json" }],
         },
       },
       scheduling: { conflicts: [], resources: [] },
@@ -395,7 +406,7 @@ function implementationRequest(id: string, cwd: string) {
       taskId: id,
       requestId: `${id}-red-1`,
       phase: "red",
-      snapshot: snapshotFiles(cwd, ["a.txt"]),
+      snapshot: snapshotFiles(cwd, ["a.txt", "test/expected-red.mjs"]),
     },
   };
 }
@@ -450,10 +461,16 @@ describe("installed openai-responses child route", () => {
             : parentTurn++ === 0
               ? fauxToolCall(
                   "abel_dispatch",
-                  { action: "run", request },
-                  { id: "dispatch-first-worker" },
+                  { action: "run", request: graphAdmissionFor([request]) },
+                  { id: "admit-first-graph" },
                 )
-              : "parent completed";
+              : parentTurn === 2
+                ? fauxToolCall(
+                    "abel_dispatch",
+                    { action: "run", request: taskAttemptFor(request) },
+                    { id: "dispatch-first-worker" },
+                  )
+                : "parent completed";
           const stopReason = typeof content === "string" ? "stop" : "toolUse";
           const message: AssistantMessage = {
             ...fauxAssistantMessage(content, {
@@ -525,7 +542,7 @@ describe("installed openai-responses child route", () => {
       await session.bindExtensions({ mode: "tui", uiContext: ui as never });
       await session.prompt("/abel-implement first inherited dispatch");
 
-      const toolResult = session.state.messages.find(
+      const toolResult = session.state.messages.findLast(
         (message) =>
           message.role === "toolResult" && message.toolName === "abel_dispatch",
       );

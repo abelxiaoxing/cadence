@@ -56,19 +56,25 @@ Implement 不重新作出或请求 Gate A/B 决策；只有 Gate receipts、arti
 4. `openspec schema which <schemaName> --json` 读取解析出的 schema.yaml，提取 `apply.tracks` 并相对 `changeRoot` 解析；必须是 `changeRoot` 内一个已存在的具体常规文件。
    缺失/空/不具体/越界路径一律关闭失败；绝不从 apply 指令的 `contextFiles`/`tasks` 推断跟踪路径。
 5. `applyRequires` 中每个产物 id 状态必须为 `done`；数组存在或总体完成标记不算数。
-6. 校验 `changeRoot/gate-a.yaml` 与 `changeRoot/ready.yaml`：receipt 版本、change/schema 绑定、批准摘要、artifact 覆盖范围、`gate-a.yaml` hash，以及每个规范化相对路径的 SHA-256。
+6. 校验 `changeRoot/gate-a.yaml` 与 `changeRoot/ready.yaml`：当前 receipt 版本、change/schema 绑定、批准摘要、artifact 覆盖范围、`gate-a.yaml` hash，以及每个规范化相对路径的 SHA-256。
+   `ready.yaml` 必须只含一份 canonical `implementGraph`，且 `implementGraphHash` 必须等于 `hashImplementGraphBoundary(implementGraph)`；`verificationClosure` 必须精确为 `{ executable: true, diagnostics: [] }`。
    hash 使用文件原始字节；仅对 schema `apply.tracks` 指向的任务文件先把 `- [x]`/`- [X]` 规范化为 `- [ ]`。
    拒绝绝对路径、`..`、越界与符号链接逃逸。
    receipt 缺失或任一 hash 失效即关闭失败。
 7. `openspec validate <name> --strict --type change` 问题为零。
 8. 阅读 `artifactPaths` 报告的全部规划产物；运行 `openspec instructions apply --change <name> --json` 并遵循其 apply 契约。
-9. 校验稳定 Requirement/Scenario 引用、Requirement → Scenario → Verification → Task 追溯链，以及每个任务的前置条件、`depends_on`、计划写集、冲突/资源锁、派发上下文、验证、批准依赖、结构化 AGENTS 影响和影响闭包契约；缺失、含糊或不可判定时按下方矩阵关闭失败。
+9. 从 receipt 的 `implementGraph` 校验稳定 Requirement/Scenario 引用、Requirement → Scenario → Verification → Task 追溯链，以及每个任务的前置条件、`dependsOn`、计划写集、冲突/资源锁、派发上下文、验证、批准依赖、结构化 AGENTS 影响和影响闭包契约；缺失、含糊或不可判定时按下方矩阵关闭失败。
    每个 phase 必须是 Gate B 批准的结构化 `kind: "vitest" | "package-script" | "static-check" | "steps"`；Implement 不从命令固定下标猜测语义，也不隐式运行 `bun run check`、`bun run test:target` 或任何 consumer script。
    `steps` 按声明顺序执行；precheck 必须是显式 `expected-green` step，不得用 `&&` 或其他 shell operator 合成。
+   每个 phase 的直接 verification input 必须恰好绑定为 `workspace` path 或 graph `outputId`；每个 output 必须有唯一 id/path/producer phase 和 `regular-file` postcondition。
+   write set 只授予权限，不能推断 provenance。
 10. 影响闭包（impact closure）：若任务修改路由授权、页面状态、API 响应或公共 HTML，检查 URL/路由/handler/template 检索证据及全部相关既有测试归类。
     E2E、theme/layout、authorization、HTML/template、API contract 测试必须进入当前写集、明确后续回归任务或有不受影响证据；affected suite 不能只包含新增测试。
     `/videos`、`/api/videos` 等变化须检查全部这些测试面。
-11. 在注册任务和运行 Red 前，对 ready receipt 的 `taskContractsExecutable: true` 与所有 TaskBoundary verification 重跑共享 `assessVerificationReadiness`。
+11. 在 graph admission 前，使用 receipt 中同一个 `implementGraph` 重跑共享 `assessImplementGraphReadiness`。
+    fresh context 的 facts 只来自父代理在跟踪文件中拥有的 completed tasks、当前进程已知的 blocked tasks 与当前工作区安全扫描；不得因文件碰巧存在而推断 task/phase 完成。
+    静态 closure 必须继续为 `{ executable: true, diagnostics: [] }`；completed producer 的全部 outputs 必须实际为安全普通文件。
+    任一不一致都是 `delivery-invalid` stage blocker，不得调用方另算 missing inputs。
     package script 的 package manager、名称与完整 command 必须和当前 consumer `package.json` 一致；本地 executable 必须受 `node_modules` 约束；`npx` 只能用 `noInstall: true` 并编译为 `--no-install`，不允许下载。
     `vitest` 才注入 JSON reporter、应用 `minTests` 并解析 assertion Red identity；`package-script`/`static-check` 不附加 Vitest 参数，只使用退出码和批准的稳定输出 identity。
     parent-only AGENTS checkpoint 可使用合法的 Node/static contract。
@@ -84,14 +90,16 @@ Implement 不重新作出或请求 Gate A/B 决策；只有 Gate receipts、arti
 
 ## 执行图与并行调度（父代理专有）
 
-1. 从全部未完成任务的直接前置任务构建 DAG，拒绝未知任务、自依赖和环。
+1. 以 receipt-bound `ImplementGraphBoundary` 为唯一执行图；校验 hash 后先调用一次 `admit-graph`，不得另建 stage graph 或逐任务重述完整 boundary。
+   从 graph tasks 的 `dependsOn` 计算 DAG，拒绝未知任务、自依赖和环。
    非任务前置条件通过契约检查后，且所有前置任务均已由父代理验收并推进状态，任务才进入 ready 集合。
 2. 规范化每个计划写集、冲突集和资源锁；写集覆盖测试、fixture、快照与生成输出。
    拒绝绝对路径、`..`、符号链接逃逸和不可判定的宽泛 glob。
    Gate receipt、OpenSpec 跟踪文件和 `AGENTS.md` 不属于子代理写集，只能由父代理按契约写入。
 3. 父代理从 ready 集合计算受可用并发槽约束的批次；仅计划写集两两不相交、无冲突边且共享/验证资源锁兼容的任务可同批。
    相同路径、祖先/后代目录、共同生成输出或互斥资源均串行；Design 的建议波次只供核对，不替代重新计算。
-4. 每个 ready 任务绑定一个任务局部 worker，并在同一 worker 上通过后续派发连续完成 Red、Green、Refactor，避免把全局上下文复制给 worker。
+4. 每个 ready task 的首次 Red `task-attempt` 由 Runtime 从已 admitted graph 打开一个 immutable TaskRecord；后续 Green、Refactor、artifact correction 或 stale refresh 仍只提交 `task-attempt` 的 change/task/request/phase identity 与 fresh snapshot。
+   每个 ready 任务绑定一个任务局部 worker，并在同一 worker 上通过后续派发连续完成 Red、Green、Refactor，避免把全局上下文复制给 worker。
    首次派发只提供相关 AGENTS 内容、任务契约、允许读取/改动范围、可信基线标识与当前阶段；worker 不得广泛探索。
 5. 同批 worker 并行生成当前阶段的统一 diff 和说明，不得写入任何工作树。
    父代理按跟踪文件顺序校验基线、实际路径、契约与 diff，再机械应用合格 diff；父代理不得自行补写或修正实现。
@@ -102,6 +110,8 @@ Implement 不重新作出或请求 Gate A/B 决策；只有 Gate receipts、arti
    禁止无界重试。
 7. 一批任务稳定后，父代理逐任务完成 AGENTS 检查点和状态推进，再重新计算 ready 集合；任何后继不得提前调度。
    循环直至 DAG 全部完成。
+8. 当前 phase candidate 在隔离 checkout apply 后、verification 前必须满足该 phase 的全部 output postconditions；main workspace apply 后、phase progression 前再次检查。
+   跨任务 output 仅在 producer 整个 task completed 后发布；producer blocked/failed 时 consumer 保持 `dependency-blocked` 且不启动 child，producer completed 但 output 缺失或 unsafe 时返回 `producer-output-unavailable`。
 
 ## 每个任务的委派式 TDD 循环
 
@@ -130,12 +140,15 @@ Runtime 只报告当前任务事实，不选择用户恢复动作，也不控制
 
 - malformed diff、syntax/import/load、no-test/错误命令、wrong Red identity、重复/无效提交或 Red 候选意外通过：`{ kind: "artifact", code: <closed-artifact-code> }`，其中意外通过使用 `red-not-witnessed`；首次可在共享两次 launch 内修正，耗尽为 `attempts-exhausted`。
 - stale snapshot 使用 `{ kind: "stale", code: <closed-stale-code> }`；可机械重派的 transport failure 使用 `{ kind: "transport", code: "transport-failure" }`；首次可在共享两次 launch 内刷新或同调用重派，耗尽为 `attempts-exhausted`。
+- artifact、stale 或 transport 耗尽必须返回 `{ kind: "attempts-exhausted", cause, attemptsUsed: 2, lastFailure: { code, stage, details? } }`。
+  `lastFailure` 保留最终具体 closed code 与 `child-session-create | child-provider-stream | child-timeout | child-finalization | structural-submit | candidate-retention | candidate-diff | candidate-preflight | parent-review | candidate-apply | agents-checkpoint | phase-runtime` stage。
+  安全 details 只允许 final submit category、有界 submit attempts、schema state、request/role/task/phase 中不匹配的维度名和受约束 verification id；不得返回 prompt、diff、模型原始输出、excerpt、consumer 内容、command/argv、endpoint、credential、环境值或 identity 实际值。
 - Bubblewrap、依赖路径、测试沙箱或外部环境不可用：`{ kind: "environment", code: <closed-environment-code> }`，当前任务 terminal blocked。
 - 缺失/漂移的已批准 script、runner、本地 executable 或 verification input：`{ kind: "verification-adapter", code: <closed-adapter-code> }`；`script-missing` 不得误报为 `bubblewrap-or-dependency-unavailable`。
 - 新路径、依赖、行为、策略、架构、冲突、资源、verification 或 AGENTS 合同：对应 closed `approval-boundary` code，当前任务 terminal blocked，不扩大 boundary。
 - result size 超限：`{ kind: "result-limit", limitBytes }`，当前任务 terminal blocked，不接受 partial diff。
 
-可信 delivery 的 receipt/hash/trace/strict failure 发生在 `open-task` 前并成为 `delivery-invalid` stage blocker，不是 TaskFailure。
+可信 delivery 的 receipt/hash/trace/strict/graph closure failure 发生在 `admit-graph` 前并成为 `delivery-invalid` stage blocker，不是 TaskFailure。
 预期 Red 失败、artifact defect、stale snapshot、环境失败、已批准 AGENTS checkpoint、已批准文档/测试和 boundary 内兼容修复均不产生阶段选择。
 重试预算始终有限。
 

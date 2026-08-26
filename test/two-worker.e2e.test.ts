@@ -20,6 +20,11 @@ import { Activation } from "../src/activation";
 import { snapshotFiles } from "../src/file-snapshot";
 import { runtimeForProvider } from "../src/parent-provider";
 import { Runtime } from "../src/runtime";
+import {
+  admitGraph,
+  type ImplementTaskFixture,
+  taskAttemptFor,
+} from "./helpers/implement-graph-fixture.ts";
 import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 const roots: string[] = [];
@@ -101,39 +106,54 @@ function requestFor(
   read: string[],
   write: string[],
   snapshot: unknown,
-) {
+): ImplementTaskFixture {
   return {
-    stage: "abel-implement",
-    kind: "open-task",
     boundary: {
       changeId: "two-worker-fixture",
       taskId: id,
+      dependsOn: [],
       objective: `Complete ${id}`,
       roots: ["."],
       context: { agents: "root contract", contract: "approved" },
       phases: {
         red: {
-          read,
+          read: [...read, "test/expected-red.mjs", "package.json"],
           write,
           verificationLock: `e2e-${id}`,
           verification: {
+            kind: "vitest",
             id: `verify-${id}-red`,
-            argv: ["bun", "run", "test:target", "test/expected-red.mjs"],
+            runner: {
+              kind: "package-script",
+              packageManager: "bun",
+              script: "test:target",
+              command: "vitest run",
+            },
+            testFiles: ["test/expected-red.mjs"],
+            args: [],
             classification: "expected-red",
             expectedFailure: "[TWO-WORKER:expected-red]",
             minTests: 1,
           },
+          verificationInputs: [
+            { kind: "workspace", path: "test/expected-red.mjs" },
+            { kind: "workspace", path: "package.json" },
+          ],
         },
         green: {
-          read,
+          read: [...read, "package.json"],
           write,
           verificationLock: `e2e-${id}`,
           verification: {
+            kind: "package-script",
             id: `verify-${id}-green`,
-            argv: ["bun", "run", "check"],
+            packageManager: "bun",
+            script: "check",
+            command: 'node -e ""',
+            args: [],
             classification: "expected-green",
-            minTests: 1,
           },
+          verificationInputs: [{ kind: "workspace", path: "package.json" }],
         },
       },
       scheduling: { conflicts: [], resources: [] },
@@ -209,29 +229,28 @@ describe("two disjoint Workers converge", () => {
     const runtime = activeRuntime();
     const left = await runWorker(root, "worker-a", "a", "a0", "a1");
     const right = await runWorker(root, "worker-b", "b", "b0", "b1");
+    const leftRequest = requestFor(
+      "worker-a",
+      ["a"],
+      ["a"],
+      snapshotFiles(root, ["a", "test/expected-red.mjs", "package.json"]),
+    );
+    const rightRequest = requestFor(
+      "worker-b",
+      ["b"],
+      ["b"],
+      snapshotFiles(root, ["b", "test/expected-red.mjs", "package.json"]),
+    );
+    await admitGraph(runtime, [leftRequest, rightRequest], left.context);
     const [runA, runB] = await Promise.all([
       (runtime as any).execute(
         "run",
-        {
-          request: requestFor(
-            "worker-a",
-            ["a"],
-            ["a"],
-            snapshotFiles(root, ["a"]),
-          ),
-        },
+        { request: taskAttemptFor(leftRequest) },
         left.context,
       ),
       (runtime as any).execute(
         "run",
-        {
-          request: requestFor(
-            "worker-b",
-            ["b"],
-            ["b"],
-            snapshotFiles(root, ["b"]),
-          ),
-        },
+        { request: taskAttemptFor(rightRequest) },
         right.context,
       ),
     ]);

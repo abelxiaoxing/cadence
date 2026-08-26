@@ -77,7 +77,11 @@ describe("[SLICE-2:typed-failure] parent-owned exact patch application", () => {
     const result = await patch.applyRetainedPatch({ root, id, store });
     expect(result).toEqual({
       ok: false,
-      failure: { kind: "stale", code: "stale-snapshot" },
+      failure: {
+        kind: "stale",
+        code: "stale-snapshot",
+        stage: "candidate-retention",
+      },
     });
     expect(readFileSync(join(root, "a.txt"), "utf8")).toBe(before);
     expect(store.get(id)).toBeDefined();
@@ -242,7 +246,14 @@ describe("[SLICE-2:typed-failure] parent-owned exact patch application", () => {
       const result = await patch.applyRetainedPatch({ root, id, store });
       expect(result, candidate.slice(0, 40)).toEqual({
         ok: false,
-        failure: { kind: "artifact", code },
+        failure: {
+          kind: "artifact",
+          code,
+          stage:
+            code === "git-apply-check-failed"
+              ? "candidate-apply"
+              : "candidate-diff",
+        },
       });
       expect(readFileSync(join(root, "a.txt"), "utf8")).toBe(before);
     }

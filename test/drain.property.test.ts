@@ -25,10 +25,16 @@ import {
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 import { Activation, activateTool, deactivateTool } from "../src/activation";
-import type { ImplementRunRequest } from "../src/contracts";
 import { snapshotFiles } from "../src/file-snapshot";
 import { Runtime } from "../src/runtime";
 import { taskRecordKey, WorkerRegistry, workerIdentity } from "../src/worker";
+import {
+  admitGraph,
+  assertCandidateOutcome,
+  graphAdmissionFor,
+  type ImplementTaskFixture,
+  taskAttemptFor,
+} from "./helpers/implement-graph-fixture.ts";
 import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 let parentProvider: typeof import("../src/parent-provider") | null = null;
@@ -109,7 +115,7 @@ const submitResponse = (submitted: unknown) =>
     { stopReason: "toolUse" },
   );
 
-type OpenTaskRequest = Extract<ImplementRunRequest, { kind: "open-task" }>;
+type OpenTaskRequest = ImplementTaskFixture;
 
 function requestFor(
   id: string,
@@ -121,40 +127,47 @@ function requestFor(
     taskId: id,
     requestId: id,
     phase,
-    snapshot: snapshotFiles(root, ["a.txt"]),
+    snapshot: snapshotFiles(root, ["a.txt", "test/red-runner.mjs"]),
   };
   return {
-    stage: "abel-implement",
-    kind: "open-task",
     boundary: {
       changeId: "drain-fixture",
       taskId: id,
+      dependsOn: [],
       objective: "Change a.txt",
       roots: ["."],
       context: { agents: "none", contract: "approved" },
       phases: {
         red: {
-          read: ["a.txt"],
+          read: ["a.txt", "test/red-runner.mjs"],
           write: ["a.txt"],
           verificationLock: "drain-red",
           verification: {
+            kind: "static-check",
             id: `verify-${id}`,
-            argv: ["bun", "run", "test:target", "test/expected-red.test.mjs"],
+            runner: { kind: "node", script: "test/red-runner.mjs" },
+            args: [],
             classification: "expected-red" as const,
             expectedFailure: "[DRAIN:expected-red]",
-            minTests: 1,
           },
+          verificationInputs: [
+            { kind: "workspace", path: "test/red-runner.mjs" },
+          ],
         },
         green: {
-          read: ["a.txt"],
+          read: ["a.txt", "package.json"],
           write: ["a.txt"],
           verificationLock: "drain-green",
           verification: {
+            kind: "package-script",
             id: `verify-${id}-green`,
-            argv: ["bun", "run", "check"],
+            packageManager: "bun",
+            script: "check",
+            command: 'node -e ""',
+            args: [],
             classification: "expected-green" as const,
-            minTests: 1,
           },
+          verificationInputs: [{ kind: "workspace", path: "package.json" }],
         },
       },
       scheduling: {
@@ -172,6 +185,15 @@ function requestFor(
     },
     attempt,
   };
+}
+
+async function runFixture(
+  runtime: Runtime,
+  request: ImplementTaskFixture,
+  context: Parameters<Runtime["execute"]>[2],
+) {
+  await admitGraph(runtime, [request], context);
+  return runtime.execute("run", { request: taskAttemptFor(request) }, context);
 }
 
 function diffSubmit(id: string, phase: string) {
@@ -238,7 +260,11 @@ describe("drain property: single idempotent step closes admission", () => {
     fixture.runtime.drain();
     const blocked = await (fixture.runtime as any).execute(
       "run",
-      { request: requestFor("drain-quiescent", "red", fixture.cwd) },
+      {
+        request: graphAdmissionFor([
+          requestFor("drain-quiescent", "red", fixture.cwd),
+        ]),
+      },
       fixture.context,
     );
     expect(blocked.ok).toBe(false);
@@ -252,9 +278,9 @@ describe("drain property: finish erases results and worker", () => {
     fixture.faux.setResponses([
       submitResponse(diffSubmit("drain-erase", "red")),
     ]);
-    const run = await (fixture.runtime as any).execute(
-      "run",
-      { request: requestFor("drain-erase", "red", fixture.cwd) },
+    const run = await runFixture(
+      fixture.runtime,
+      requestFor("drain-erase", "red", fixture.cwd),
       fixture.context,
     );
     expect(run).toMatchObject({
@@ -263,6 +289,7 @@ describe("drain property: finish erases results and worker", () => {
       taskId: "drain-erase",
       phase: "red",
     });
+    assertCandidateOutcome(run);
     const resultId = run.resultId as string;
     expect((fixture.runtime as any).results.get(resultId)).toBeDefined();
     const finished = await (fixture.runtime as any).execute(
@@ -284,9 +311,9 @@ describe("drain property: finish erases results and worker", () => {
     ]);
     const registry = (fixture.runtime as any).registry as WorkerRegistry;
 
-    const first = await (fixture.runtime as any).execute(
-      "run",
-      { request: requestFor("before-drain", "red", fixture.cwd) },
+    const first = await runFixture(
+      fixture.runtime,
+      requestFor("before-drain", "red", fixture.cwd),
       fixture.context,
     );
     expect(first).toMatchObject({
@@ -302,9 +329,9 @@ describe("drain property: finish erases results and worker", () => {
     expect(fixture.runtime.activation.request()).toBe(true);
     expect(fixture.runtime.activation.activate()).toBe(true);
 
-    const later = await (fixture.runtime as any).execute(
-      "run",
-      { request: requestFor("after-drain", "red", fixture.cwd) },
+    const later = await runFixture(
+      fixture.runtime,
+      requestFor("after-drain", "red", fixture.cwd),
       fixture.context,
     );
 
@@ -335,9 +362,9 @@ describe("drain property: finish erases results and worker", () => {
     fixture.faux.setResponses([
       submitResponse(diffSubmit("drain-pending", "red")),
     ]);
-    const run = await (fixture.runtime as any).execute(
-      "run",
-      { request: requestFor("drain-pending", "red", fixture.cwd) },
+    const run = await runFixture(
+      fixture.runtime,
+      requestFor("drain-pending", "red", fixture.cwd),
       fixture.context,
     );
     expect(run).toMatchObject({
@@ -346,6 +373,7 @@ describe("drain property: finish erases results and worker", () => {
       taskId: "drain-pending",
       phase: "red",
     });
+    assertCandidateOutcome(run);
     const resultId = run.resultId as string;
     const registry = (fixture.runtime as any).registry as WorkerRegistry;
     const candidate = registry.values()[0];
@@ -417,7 +445,7 @@ describe("drain property: finish erases results and worker", () => {
           rejection: {
             kind: "artifact",
             code: "parent-review-rejected",
-            evidence: ["concurrent review decision"],
+            stage: "parent-review",
           },
         },
         fixture.context,
@@ -498,9 +526,9 @@ describe("drain property: cancel keeps the stage active", () => {
     fixture.faux.setResponses([
       submitResponse(diffSubmit("drain-cancel", "red")),
     ]);
-    const run = await (fixture.runtime as any).execute(
-      "run",
-      { request: requestFor("drain-cancel", "red", fixture.cwd) },
+    const run = await runFixture(
+      fixture.runtime,
+      requestFor("drain-cancel", "red", fixture.cwd),
       fixture.context,
     );
     expect(run).toMatchObject({
@@ -509,6 +537,7 @@ describe("drain property: cancel keeps the stage active", () => {
       taskId: "drain-cancel",
       phase: "red",
     });
+    assertCandidateOutcome(run);
     const resultId = run.resultId as string;
     const cancelled = await (fixture.runtime as any).execute(
       "cancel",

@@ -6,47 +6,70 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import register, { DISPATCH_TOOL } from "../src/index";
 import { Runtime } from "../src/runtime";
 import { ACTIVITY_DETAILS_KEY } from "../src/subagent-activity";
+import {
+  type ImplementTaskFixture,
+  taskAttemptFor,
+} from "./helpers/implement-graph-fixture.ts";
 
-const request = {
-  stage: "abel-implement",
-  kind: "open-task",
+const request: ImplementTaskFixture = {
   boundary: {
     changeId: "subagent-activity-fixture",
     taskId: "integration-task",
+    dependsOn: [],
     objective: "Inspect a bounded task",
     roots: ["."],
     context: { agents: "root", contract: "approved" },
     phases: {
       red: {
-        read: ["test/subagent-activity.integration.test.ts"],
+        read: ["test/subagent-activity.integration.test.ts", "package.json"],
         write: [],
         verification: {
+          kind: "vitest",
           id: "verify-subagent-activity-red",
-          argv: [
-            "bun",
-            "run",
-            "test:target",
-            "test/subagent-activity.integration.test.ts",
-          ],
+          runner: {
+            kind: "package-script",
+            packageManager: "bun",
+            script: "test:target",
+            command: "vitest run",
+          },
+          testFiles: ["test/subagent-activity.integration.test.ts"],
+          args: [],
           classification: "expected-red",
           expectedFailure: "[SUBAGENT-ACTIVITY:expected-red]",
           minTests: 1,
         },
+        verificationInputs: [
+          {
+            kind: "workspace",
+            path: "test/subagent-activity.integration.test.ts",
+          },
+          { kind: "workspace", path: "package.json" },
+        ],
       },
       green: {
-        read: ["test/subagent-activity.integration.test.ts"],
+        read: ["test/subagent-activity.integration.test.ts", "package.json"],
         write: [],
         verification: {
+          kind: "vitest",
           id: "verify-subagent-activity-green",
-          argv: [
-            "bun",
-            "run",
-            "test:target",
-            "test/subagent-activity.integration.test.ts",
-          ],
+          runner: {
+            kind: "package-script",
+            packageManager: "bun",
+            script: "test:target",
+            command: "vitest run",
+          },
+          testFiles: ["test/subagent-activity.integration.test.ts"],
+          args: [],
           classification: "expected-green",
           minTests: 1,
         },
+        verificationInputs: [
+          {
+            kind: "workspace",
+            path: "test/subagent-activity.integration.test.ts",
+          },
+          { kind: "workspace", path: "package.json" },
+        ],
       },
     },
     scheduling: { conflicts: [], resources: [] },
@@ -70,9 +93,15 @@ const request = {
         sha256: "a".repeat(64),
         bytes: 1,
       },
+      "package.json": {
+        kind: "file",
+        sha256: "a".repeat(64),
+        bytes: 1,
+      },
     },
   },
 };
+const runRequest = taskAttemptFor(request);
 
 const evidence = {
   id: "integration-request",
@@ -184,7 +213,7 @@ describe("Subagent activity extension integration", () => {
     const updates: unknown[] = [];
     const result = await pi.tool.execute(
       "tool-call-1",
-      { action: "run", request },
+      { action: "run", request: runRequest },
       undefined,
       (partial: unknown) => updates.push(partial),
       tuiContext(ui),
@@ -213,7 +242,7 @@ describe("Subagent activity extension integration", () => {
     expect(ui.setStatus).toHaveBeenCalledWith("abel-subagents", undefined);
 
     const callComponent = pi.tool.renderCall(
-      { action: "run", request },
+      { action: "run", request: runRequest },
       { fg: (_color: string, text: string) => text },
       {},
     );
@@ -258,7 +287,7 @@ describe("Subagent activity extension integration", () => {
     await expect(
       pi.tool.execute(
         "failed-call",
-        { action: "run", request },
+        { action: "run", request: runRequest },
         undefined,
         (partial: unknown) => updates.push(partial),
         tuiContext(ui),
@@ -301,7 +330,7 @@ describe("Subagent activity extension integration", () => {
 
     const print = await pi.tool.execute(
       "print-call",
-      { action: "run", request },
+      { action: "run", request: runRequest },
       undefined,
       vi.fn(),
       { mode: "print" } as any,
@@ -321,7 +350,7 @@ describe("Subagent activity extension integration", () => {
     const rejection = {
       kind: "artifact",
       code: "parent-review-rejected",
-      evidence: ["bounded rejection"],
+      stage: "parent-review",
     } as const;
     const execute = vi
       .spyOn(Runtime.prototype, "execute")
@@ -394,14 +423,14 @@ describe("Subagent activity extension integration", () => {
 
     const left = pi.tool.execute(
       "tool-call-left",
-      { action: "run", request },
+      { action: "run", request: runRequest },
       undefined,
       vi.fn(),
       tuiContext(ui),
     );
     const right = pi.tool.execute(
       "tool-call-right",
-      { action: "run", request },
+      { action: "run", request: runRequest },
       undefined,
       vi.fn(),
       tuiContext(ui),
@@ -442,7 +471,7 @@ describe("Subagent activity extension integration", () => {
 
       const result = await pi.tool.execute(
         `${mode}-call`,
-        { action: "run", request },
+        { action: "run", request: runRequest },
         undefined,
         onUpdate,
         { mode, ui } as any,
@@ -485,7 +514,7 @@ describe("Subagent activity extension integration", () => {
     drain.mockClear();
     const run = pi.tool.execute(
       "active-call",
-      { action: "run", request },
+      { action: "run", request: runRequest },
       undefined,
       vi.fn(),
       tuiContext(ui),
@@ -523,7 +552,7 @@ describe("Subagent activity extension integration", () => {
     const component = new ToolExecutionComponent(
       DISPATCH_TOOL,
       "tool-call-live",
-      { action: "run", request },
+      { action: "run", request: runRequest },
       {},
       pi.tool,
       { requestRender: vi.fn() } as never,
@@ -534,7 +563,7 @@ describe("Subagent activity extension integration", () => {
     let running = "";
     const result = await pi.tool.execute(
       "tool-call-live",
-      { action: "run", request },
+      { action: "run", request: runRequest },
       undefined,
       (partial: { content?: unknown; details?: unknown }) => {
         updates.push(partial);
@@ -598,7 +627,7 @@ describe("Subagent activity extension integration", () => {
     const component = new ToolExecutionComponent(
       DISPATCH_TOOL,
       "failed-live",
-      { action: "run", request },
+      { action: "run", request: runRequest },
       {},
       pi.tool,
       { requestRender: vi.fn() } as never,
@@ -608,7 +637,7 @@ describe("Subagent activity extension integration", () => {
     await expect(
       pi.tool.execute(
         "failed-live",
-        { action: "run", request },
+        { action: "run", request: runRequest },
         undefined,
         (partial: { content?: unknown; details?: unknown }) => {
           component.updateResult(

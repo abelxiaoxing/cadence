@@ -43,14 +43,14 @@ describe("Design stage contract", () => {
     expect(design).toMatch(/artifact[\s\S]*(inconsistent|invalid|earliest)/i);
   });
 
-  it("[SLICE-5:pi-tool-error] emits one fixed task boundary and phase-local attempts", () => {
-    expect(design).toMatch(/TaskBoundary/);
-    expect(design).toMatch(/open-task/);
-    expect(design).toMatch(/phase-attempt/);
+  it("[SLICE-5:pi-tool-error] emits one canonical graph and phase-local attempts", () => {
+    expect(design).toMatch(/ImplementGraphBoundary/);
+    expect(design).toMatch(/admit-graph/);
+    expect(design).toMatch(/task-attempt/);
     expect(design).toMatch(/first|initial|首次|初始/i);
     expect(design).toMatch(/Red/);
     expect(design).toMatch(
-      /(once|one time|exactly once|一次)[\s\S]{0,240}(boundary|边界)/i,
+      /(once|one time|exactly once|一次)[\s\S]{0,240}(graph|执行图)/i,
     );
     expect(design).toMatch(
       /(later|subsequent|后续)[\s\S]{0,220}(dynamic|snapshot|动态|快照)/i,
@@ -59,8 +59,12 @@ describe("Design stage contract", () => {
 
   it("proves structured verification capability before reporting readiness", () => {
     const text = `${design}\n${implement}\n${shared}`;
-    expect(design).toMatch(/assessVerificationReadiness/);
-    expect(design).toMatch(/taskContractsExecutable/);
+    expect(design).toMatch(/assessImplementGraphReadiness/);
+    expect(design).toMatch(/implementGraphHash/);
+    expect(design).toMatch(/verificationClosure/);
+    expect(design).toMatch(/verificationInputs/);
+    expect(design).toMatch(/outputId/);
+    expect(text).toMatch(/write set[^\n]*(?:不|never)[^\n]*(?:proof|证明)/i);
     expect(design).toMatch(/kind:\s*["'`]vitest["'`]/i);
     expect(design).toMatch(/kind:\s*["'`]package-script["'`]/i);
     expect(design).toMatch(/kind:\s*["'`]static-check["'`]/i);
@@ -140,6 +144,10 @@ describe("Implement stage contract", () => {
     expect(text).toMatch(
       /(artifact correction budget is exhausted|attempts-exhausted|产物修正预算耗尽)[\s\S]{0,300}(block|阻塞)/i,
     );
+    expect(text).toMatch(/attemptsUsed[\s\S]{0,120}lastFailure/i);
+    expect(text).toMatch(/lastFailure[\s\S]{0,160}code[\s\S]{0,160}stage/i);
+    expect(text).toMatch(/child-finalization/);
+    expect(text).toMatch(/candidate-preflight/);
   });
 
   it("does not route a generated or wrong-identity Red automatically to Design", () => {

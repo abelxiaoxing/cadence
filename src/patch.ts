@@ -199,7 +199,11 @@ export async function applyAgentsCheckpoint(
 ): Promise<AgentsCheckpointResult> {
   const validation = validateAgentsCheckpointRequest(value);
   if (!validation.ok) {
-    return failure({ kind: "artifact", code: "invalid-checkpoint-contract" });
+    return failure({
+      kind: "artifact",
+      code: "invalid-checkpoint-contract",
+      stage: "agents-checkpoint",
+    });
   }
   const request = validation.value;
   if (signal?.aborted) {
@@ -207,19 +211,35 @@ export async function applyAgentsCheckpoint(
   }
   const before = regularText(root, request.agentsTarget);
   if (before === NONREGULAR_AGENTS_TARGET) {
-    return failure({ kind: "artifact", code: "nonregular-mode" });
+    return failure({
+      kind: "artifact",
+      code: "nonregular-mode",
+      stage: "agents-checkpoint",
+    });
   }
   if (!isCurrent(root, request.snapshot as Bound)) {
-    return failure({ kind: "stale", code: "stale-snapshot" });
+    return failure({
+      kind: "stale",
+      code: "stale-snapshot",
+      stage: "agents-checkpoint",
+    });
   }
   let targets: string[];
   try {
     targets = diffWritePaths(request.diff).paths;
   } catch {
-    return failure({ kind: "artifact", code: "invalid-diff" });
+    return failure({
+      kind: "artifact",
+      code: "invalid-diff",
+      stage: "agents-checkpoint",
+    });
   }
   if (targets.length !== 1 || targets[0] !== request.agentsTarget) {
-    return failure({ kind: "artifact", code: "agents-target-mismatch" });
+    return failure({
+      kind: "artifact",
+      code: "agents-target-mismatch",
+      stage: "agents-checkpoint",
+    });
   }
 
   let temp: string | undefined;
@@ -228,7 +248,11 @@ export async function applyAgentsCheckpoint(
       (request.agentsImpact === "create-index" && before !== null) ||
       (request.agentsImpact !== "create-index" && before === null)
     ) {
-      return failure({ kind: "artifact", code: "agents-impact-mismatch" });
+      return failure({
+        kind: "artifact",
+        code: "agents-impact-mismatch",
+        stage: "agents-checkpoint",
+      });
     }
     temp = mkdtempSync(path.join(tmpdir(), "cadence-agents-checkpoint-"));
     if (before !== null) {
@@ -247,7 +271,11 @@ export async function applyAgentsCheckpoint(
       return cancellationFailure();
     }
     if (candidateCheck.code !== 0) {
-      return failure({ kind: "artifact", code: "git-apply-check-failed" });
+      return failure({
+        kind: "artifact",
+        code: "git-apply-check-failed",
+        stage: "agents-checkpoint",
+      });
     }
     const candidateApply = await git(
       temp,
@@ -259,17 +287,33 @@ export async function applyAgentsCheckpoint(
       return cancellationFailure();
     }
     if (candidateApply.code !== 0) {
-      return failure({ kind: "artifact", code: "git-apply-failed" });
+      return failure({
+        kind: "artifact",
+        code: "git-apply-failed",
+        stage: "agents-checkpoint",
+      });
     }
     const after = regularText(temp, request.agentsTarget);
     if (after === NONREGULAR_AGENTS_TARGET) {
-      return failure({ kind: "artifact", code: "nonregular-mode" });
+      return failure({
+        kind: "artifact",
+        code: "nonregular-mode",
+        stage: "agents-checkpoint",
+      });
     }
     if (!checkpointContentIsScoped(request.agentsImpact, before, after)) {
-      return failure({ kind: "artifact", code: "outside-managed-region" });
+      return failure({
+        kind: "artifact",
+        code: "outside-managed-region",
+        stage: "agents-checkpoint",
+      });
     }
     if (!isCurrent(root, request.snapshot as Bound)) {
-      return failure({ kind: "stale", code: "stale-snapshot" });
+      return failure({
+        kind: "stale",
+        code: "stale-snapshot",
+        stage: "agents-checkpoint",
+      });
     }
     const check = await git(
       root,
@@ -281,7 +325,11 @@ export async function applyAgentsCheckpoint(
       return cancellationFailure();
     }
     if (check.code !== 0) {
-      return failure({ kind: "stale", code: "git-apply-check-failed" });
+      return failure({
+        kind: "stale",
+        code: "git-apply-check-failed",
+        stage: "agents-checkpoint",
+      });
     }
     const apply = await git(
       root,
@@ -307,6 +355,7 @@ export async function applyRetainedPatch(input: {
   root: string;
   id: string;
   store: ResultStore;
+  candidateOutputsAvailable?: (checkoutRoot: string) => boolean;
   signal?: AbortSignal;
 }): Promise<ApplyCandidateResult> {
   if (input.signal?.aborted) return cancellationFailure();
@@ -314,16 +363,28 @@ export async function applyRetainedPatch(input: {
   if (retained.root !== input.root)
     throw new Error("retained result root mismatch");
   if (!retained.verification && !isCurrent(input.root, retained.snapshot))
-    return failure({ kind: "stale", code: "stale-snapshot" });
+    return failure({
+      kind: "stale",
+      code: "stale-snapshot",
+      stage: "candidate-retention",
+    });
 
   let targets: string[];
   try {
     targets = diffWritePaths(retained.diff.toString("utf8")).paths;
   } catch {
-    return failure({ kind: "artifact", code: "invalid-diff" });
+    return failure({
+      kind: "artifact",
+      code: "invalid-diff",
+      stage: "candidate-diff",
+    });
   }
   if (targets.some((path) => !retained.writeSet.includes(path))) {
-    return failure({ kind: "artifact", code: "write-set-mismatch" });
+    return failure({
+      kind: "artifact",
+      code: "write-set-mismatch",
+      stage: "candidate-diff",
+    });
   }
 
   if (retained.verification) {
@@ -345,6 +406,7 @@ export async function applyRetainedPatch(input: {
       packageManifest: retained.packageManifest,
       lockfile: retained.lockfile,
       dependencyTarget: retained.dependencyTarget,
+      candidateOutputsAvailable: input.candidateOutputsAvailable,
       signal: input.signal,
     });
     if (!preflight.ok) {
@@ -353,10 +415,14 @@ export async function applyRetainedPatch(input: {
           return failure({
             kind: preflight.kind,
             code: preflight.code,
-            ...(preflight.excerpt ? { evidence: [preflight.excerpt] } : {}),
+            stage: "candidate-preflight",
           });
         case "stale":
-          return failure({ kind: preflight.kind, code: preflight.code });
+          return failure({
+            kind: preflight.kind,
+            code: preflight.code,
+            stage: "candidate-preflight",
+          });
         case "environment":
           return failure({ kind: preflight.kind, code: preflight.code });
         case "verification-adapter":
@@ -368,7 +434,11 @@ export async function applyRetainedPatch(input: {
       }
     }
     if (!isCurrent(input.root, retained.snapshot)) {
-      return failure({ kind: "stale", code: "stale-snapshot" });
+      return failure({
+        kind: "stale",
+        code: "stale-snapshot",
+        stage: "candidate-preflight",
+      });
     }
   }
   if (input.signal?.aborted) return cancellationFailure();
@@ -381,7 +451,11 @@ export async function applyRetainedPatch(input: {
   );
   if (numstat.cancelled || input.signal?.aborted) return cancellationFailure();
   if (numstat.code !== 0 || numstat.stdout.includes(Buffer.from("-\t-\t"))) {
-    return failure({ kind: "artifact", code: "invalid-diff" });
+    return failure({
+      kind: "artifact",
+      code: "invalid-diff",
+      stage: "candidate-diff",
+    });
   }
   const summary = await git(
     input.root,
@@ -396,7 +470,11 @@ export async function applyRetainedPatch(input: {
       summary.stdout.toString("utf8"),
     )
   ) {
-    return failure({ kind: "artifact", code: "invalid-diff" });
+    return failure({
+      kind: "artifact",
+      code: "invalid-diff",
+      stage: "candidate-diff",
+    });
   }
   const check = await git(
     input.root,
@@ -406,7 +484,11 @@ export async function applyRetainedPatch(input: {
   );
   if (check.cancelled || input.signal?.aborted) return cancellationFailure();
   if (check.code !== 0)
-    return failure({ kind: "artifact", code: "git-apply-check-failed" });
+    return failure({
+      kind: "artifact",
+      code: "git-apply-check-failed",
+      stage: "candidate-apply",
+    });
   if (input.signal?.aborted) return cancellationFailure();
   const apply = await git(
     input.root,

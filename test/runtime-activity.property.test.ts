@@ -19,6 +19,11 @@ import { runChildSession } from "../src/child-session";
 import { snapshotFiles } from "../src/file-snapshot";
 import { runtimeForProvider } from "../src/parent-provider";
 import { Runtime } from "../src/runtime";
+import {
+  admitGraph,
+  type ImplementTaskFixture,
+  taskAttemptFor,
+} from "./helpers/implement-graph-fixture.ts";
 import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 const roots: string[] = [];
@@ -29,37 +34,44 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 
-function request(id: string, root: string) {
+function request(id: string, root: string): ImplementTaskFixture {
   return {
-    stage: "abel-implement",
-    kind: "open-task",
     boundary: {
       changeId: "runtime-activity-fixture",
       taskId: id,
+      dependsOn: [],
       objective: `Complete ${id}`,
       roots: ["."],
       context: { agents: "root", contract: "approved" },
       phases: {
         red: {
-          read: ["a.txt"],
+          read: ["a.txt", "package.json"],
           write: ["a.txt"],
           verification: {
+            kind: "package-script",
             id: `verify-${id}-red`,
-            argv: ["bun", "run", "test:target", "test/expected-red.mjs"],
+            packageManager: "bun",
+            script: "test:target",
+            command: "node",
+            args: ["test/expected-red.mjs"],
             classification: "expected-red",
             expectedFailure: "[RUNTIME-ACTIVITY:expected-red]",
-            minTests: 1,
           },
+          verificationInputs: [{ kind: "workspace", path: "package.json" }],
         },
         green: {
-          read: ["a.txt"],
+          read: ["a.txt", "package.json"],
           write: ["a.txt"],
           verification: {
+            kind: "package-script",
             id: `verify-${id}-green`,
-            argv: ["bun", "run", "check"],
+            packageManager: "bun",
+            script: "check",
+            command: 'node -e ""',
+            args: [],
             classification: "expected-green",
-            minTests: 1,
           },
+          verificationInputs: [{ kind: "workspace", path: "package.json" }],
         },
       },
       scheduling: { conflicts: [], resources: [] },
@@ -77,9 +89,26 @@ function request(id: string, root: string) {
       taskId: id,
       requestId: id,
       phase: "red",
-      snapshot: snapshotFiles(root, ["a.txt"]),
+      snapshot: snapshotFiles(root, ["a.txt", "package.json"]),
     },
   };
+}
+
+async function runFixture(
+  runtime: Runtime,
+  fixture: ImplementTaskFixture,
+  context: Parameters<Runtime["execute"]>[2],
+  signal?: AbortSignal,
+  observer?: unknown,
+) {
+  await admitGraph(runtime, [fixture], context);
+  return (runtime.execute as any)(
+    "run",
+    { request: taskAttemptFor(fixture) },
+    context,
+    signal,
+    observer,
+  );
 }
 
 function evidence(id: string) {
@@ -149,9 +178,9 @@ describe("request-scoped runtime activity", () => {
     const { runtime, context } = await runtimeFixture();
     const events: { state: string; requestId: string; sequence: number }[] = [];
 
-    const result = await (runtime.execute as any)(
-      "run",
-      { request: request("activity", context.cwd) },
+    const result = await runFixture(
+      runtime,
+      request("activity", context.cwd),
       context,
       undefined,
       (event: (typeof events)[number]) => {
@@ -204,9 +233,9 @@ describe("request-scoped runtime activity", () => {
       .mockImplementation(dispatchChild);
     const events: { state: string }[] = [];
 
-    const result = await (runtime.execute as any)(
-      "run",
-      { request: request("activity", context.cwd) },
+    const result = await runFixture(
+      runtime,
+      request("activity", context.cwd),
       context,
       undefined,
       (event: { state: string }) => events.push(event),
@@ -237,9 +266,9 @@ describe("request-scoped runtime activity", () => {
       });
     const events: Array<{ state: string; failureReason?: string }> = [];
 
-    const result = await (runtime.execute as any)(
-      "run",
-      { request: request("activity", context.cwd) },
+    const result = await runFixture(
+      runtime,
+      request("activity", context.cwd),
       context,
       undefined,
       (event: { state: string; failureReason?: string }) => events.push(event),
@@ -282,9 +311,9 @@ describe("request-scoped runtime activity", () => {
       },
     );
     const states: string[] = [];
-    const run = (runtime.execute as any)(
-      "run",
-      { request: request("activity", context.cwd) },
+    const run = runFixture(
+      runtime,
+      request("activity", context.cwd),
       context,
       controller.signal,
       (event: { state: string }) => states.push(event.state),
@@ -330,7 +359,12 @@ describe("request-scoped runtime activity", () => {
         });
       });
 
-    await (runtime.execute as any)("run", { request: initial }, context);
+    await admitGraph(runtime, [initial], context);
+    await (runtime.execute as any)(
+      "run",
+      { request: taskAttemptFor(initial) },
+      context,
+    );
     const stateBeforeCancellation = structuredClone(
       (runtime as any).registry.values()[0].state,
     );
@@ -338,14 +372,18 @@ describe("request-scoped runtime activity", () => {
       kind: "ready",
       phase: "red",
       launchIndex: 1,
-      correction: { kind: "artifact", code: "invalid-diff" },
+      correction: {
+        kind: "artifact",
+        code: "invalid-diff",
+        stage: "phase-runtime",
+      },
     });
 
     const controller = new AbortController();
     const states: string[] = [];
     const correction = {
       stage: "abel-implement",
-      kind: "phase-attempt",
+      kind: "task-attempt",
       attempt: {
         ...structuredClone(initial.attempt),
         requestId: "activity:artifact-correction",

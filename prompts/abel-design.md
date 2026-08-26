@@ -153,13 +153,16 @@ $ARGUMENTS
   - 每个 phase 的 Runtime verification contract：只使用 `kind: "vitest"`、`kind: "package-script"`、`kind: "static-check"` 或 `kind: "steps"`；Red 命令 + 预期失败原因；Green 预期行为
   - `vitest` 明确 runner、安全相对 `testFiles`、`args`、`minTests`；`package-script` 明确 `bun | npm | pnpm | yarn`、真实 script、Gate B 固定的完整 script command 与 `args`；`static-check` 明确本地 executable、`npx` + `noInstall: true` 或安全相对 Node script
   - 复合验证建模为有序 `steps`：前置检查为 `expected-green`，最后一步匹配 phase classification；不得使用 `&&` 或其他 shell operator
+  - 每个 phase 的 `verificationInputs`：每个直接输入恰好绑定为 Gate B 时已存在的 `workspace` 安全普通文件，或唯一 `outputId`
   - 受影响套件命令；目标范围；验证命令的并行资格及资源锁
   - 影响闭包（impact closure）：`changedSurfaces`、检索命令/命中证据、全部相关既有测试及其 `current-task | regression-task | unaffected` 归类、affected suite 中的既有测试证据
   - 已批准依赖变化清单（无则 `[]`）
   - AGENTS 影响：`none | update-existing | create-index | remove-index`
   - AGENTS 目标索引（`none` 时省略）+ 基于证据的原因；`agentsManagedOnly: true`；AGENTS 验证命令（可执行或静态）
-- 每个任务只生成一次固定 `TaskBoundary`：包含稳定 identity、objective/context、逐 phase 精确 read/write、verification、scheduling、dependency、impact closure 与 AGENTS 合同。
-  首次 Red 使用 `open-task`，同时携带完整 boundary 与初始 snapshot；后续 Green、Refactor、artifact correction 或 stale refresh 只能使用 `phase-attempt`，仅携带 phase/request identity 与新的动态 snapshot，不得重述或改变 boundary。
+- 将全部任务汇总成唯一、机器可读的 `ImplementGraphBoundary`：graph 持有 `changeId`、完整 tasks 与 outputs；每个 task 显式包含 `dependsOn` 和固定的 objective/context、逐 phase 精确 read/write、verification/verificationInputs、scheduling、impact closure 与 AGENTS 合同。
+  每个 output 显式声明 `id`、安全相对 `path`、producer `taskId/phase` 与 `regular-file` postcondition；同一路径只能有一个 producer，且路径必须在 producer phase write set 中。
+  write set 只授予写权限，不证明 artifact 已产生，provenance 不得从 write set 推断。
+  Runtime 首先接收一次 `admit-graph`；后续每个阶段只接收 `task-attempt`，包含 change/task/request/phase identity 和新的动态 snapshot，不得重述或改变 graph/task 稳定事实。
 - **影响闭包审计**：任务修改路由授权、页面状态、API 响应或公共 HTML 结构时，必须用 URL、路由名、handler/template 符号检索所有现有入口和测试。
   相关 E2E、theme/layout、authorization、HTML/template 与 API contract 测试必须纳入当前写集、绑定明确后续回归任务，或以引用证据证明不受影响。
   `affected suite` 不得只包含新增测试；例如 `/videos`、`/api/videos` 变化必须覆盖上述全部测试面。
@@ -168,25 +171,31 @@ $ARGUMENTS
 - 写集未知、过宽或可能重叠的任务不得标为并行；先重塑任务，或用 `conflict-order` 串行化。
 - 非行为变更任务的 Red 是变更前即可执行的静态验证。
   仅人工验证的任务不具备实施就绪性，绝不通过 Gate B 或退出；重塑任务直至具备可执行验证。
-- Gate B 呈现前，使用 Cadence 与 Implement Runtime 共用的 `src/verification-capability.ts::assessVerificationReadiness` 在 consumer root 校验全部 phase verification contracts。
-  仅允许 consumer 已存在且内容与合同完全一致的 package script、可用的显式 package manager、本地 `node_modules` executable，以及 `npx` 的 `noInstall: true`/`--no-install` 语义；绝不允许隐式联网下载、任意 shell 或 shell operator。
-  将来才由任务创建的测试/静态输入只有在其精确安全相对路径已列入批准写集时才可暂缺；绝对路径、路径逃逸和符号链接仍关闭失败。
+- Gate B 呈现前，使用 Cadence 与 Implement Runtime 共用的 `src/implement-graph.ts::assessImplementGraphReadiness` 在 consumer root 校验完整 canonical graph；初始 facts 为 completed/blocked tasks 与 applied phases 均为空，且无 candidate overlay。
+  Gate B 要求静态 `closure` 为 `{ executable: true, diagnostics: [] }`；尚待前置任务完成是动态 readiness，不使合法 closure 失败。
+  调用方不得自行构造 missing-input 集合或在 graph 外另算可执行性。
+  `workspace` binding 在 Gate B 时必须已经是安全普通文件。
+  缺失输入必须绑定唯一 output；跨任务 consumer 必须在 producer 的传递 DAG 后继中；suggested wave、conflict、resource 与 verification lock 均不能代替 `dependsOn`。
+  同一 phase candidate 可以创建并使用自己的 output，更早 phase output 必须先成功应用；Red 不得依赖仅由 Green/Refactor 生产的 output。
+  仅允许内容与合同完全一致的 package script、可用的显式 package manager、本地 `node_modules` executable，以及 `npx` 的 `noInstall: true`/`--no-install` 语义；绝不允许隐式联网下载、任意 shell 或 shell operator。
+  绝对路径、非规范路径、`..`、NUL、root escape、任一已存在组件 symlink、非目录父项及非普通最终输入/output 均关闭失败。
   不支持的合同以 `design-readiness/verification-contract-unsupported` 诊断关闭；脚本缺失以 `verification-adapter/script-missing` 关闭。
-  任何诊断存在时不得呈现 Gate B 为可批准、不得生成 `taskContractsExecutable: true`。
+  任何 closure 诊断存在时不得呈现 Gate B 为可批准，也不得写 ready receipt。
 - `vitest` 才允许 Runtime 注入 JSON reporter、要求 `minTests` 并用 assertion identity 判定 Red；`package-script` 与 `static-check` 只按退出码及批准的稳定输出 identity 判定，绝不附加 Vitest 参数。
   `bun run check`、`bun run test:target`、precheck 与 affected suite 都不得由 Runtime 隐式补充；需要时必须成为 Gate B 明确批准的 contract/step。
-  Design 不生成 argv-only legacy contract。
+  Design 只生成上述结构化 contract；argv-only shape 无效。
 - 范围内每个索引过期发现分配给一个任务，或报告为无关的既有过期问题。
 - 循环至未决技术决策为零；在内存中备好剩余产物内容/统一 diff。
 
 ## ⛔ Gate B —— 批准实施契约
 
 - 核实阶段 3/4 忠实展开 Gate A 契约，未引入未批准的新决策。
-- 重新运行共享 `assessVerificationReadiness`；只有结果为 `{ taskContractsExecutable: true, diagnostics: [] }` 才可请求 Gate B 批准。
+- 对将写入 receipt 的同一个 `ImplementGraphBoundary` 重新运行 `assessImplementGraphReadiness`；只有静态 closure 为 `{ executable: true, diagnostics: [] }` 才可请求 Gate B 批准。
   否则以精确 readiness/adapter 诊断返回阶段 3/4 修正，不把缺失 consumer capability 延迟到 Implement Red。
 - 呈现实质技术决策、任务 DAG/建议波次、前置条件、计划写集/冲突/资源锁、验证映射、AGENTS 影响矩阵与产物物化预览；用户显式批准。
 - 按写入协议逐个写入剩余就绪产物。
-- 最后写 `changeRoot/ready.yaml`：记录 receipt 版本、change/schema、Gate B 批准原文的忠实摘要（含任务 DAG、建议波次、前置条件、计划写集、冲突与资源锁）、共享 capability validator 产生的 `taskContractsExecutable: true` 与空 diagnostics、任务验证与 AGENTS 影响摘要、`gate-a.yaml` 的 SHA-256，以及全部规划产物的规范化相对路径与 SHA-256；排除 `ready.yaml` 自身。
+- 最后写 `changeRoot/ready.yaml`：记录当前 receipt 版本、change/schema、Gate B 批准原文的忠实摘要（含任务 DAG、建议波次、前置条件、计划写集、冲突与资源锁）、唯一 `implementGraph`、`hashImplementGraphBoundary(implementGraph)` 产生的 `implementGraphHash`、`verificationClosure: { executable: true, diagnostics: [] }`、任务验证与 AGENTS 影响摘要、`gate-a.yaml` 的 SHA-256，以及全部规划产物的规范化相对路径与 SHA-256；排除 `ready.yaml` 自身。
+  receipt 不保存另一份 task readiness 摘要、Runtime task/session 状态或 retry budget。
   任务跟踪文件计算 hash 前只将任务完成标记 `- [x]`/`- [X]` 规范化为 `- [ ]`，其余字节不得忽略。
 
 ## 回环规则
@@ -210,7 +219,7 @@ $ARGUMENTS
 - [ ] `openspec validate <name> --strict --type change` 问题为零
 - [ ] `applyRequires` 中每个产物 id 状态均为 `done`
 - [ ] `apply.tracks` 解析到 `changeRoot` 内生成的任务产物
-- [ ] 产物一致且可追溯；任务 DAG 无环、前置条件可判定、波次及冲突排序有效、计划写集与资源锁完整；每个任务验证契约完整且可执行，无仅人工任务
+- [ ] 产物一致且可追溯；canonical graph/hash 一致，静态 verification closure 无诊断；任务 DAG 无环、前置条件可判定、波次及冲突排序有效、计划写集与资源锁完整；每个任务验证契约完整且可执行，无仅人工任务
 - [ ] 每个任务的结构化 AGENTS 影响、批准依赖与影响闭包契约完整；仓库索引在 Design 阶段未被修改
 - [ ] BLOCKING_DECISIONS = 0
 - [ ] `gate-a.yaml` 与 `ready.yaml` 格式、覆盖范围及全部 hash 校验通过

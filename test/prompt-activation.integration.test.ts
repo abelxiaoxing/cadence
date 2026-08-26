@@ -23,6 +23,11 @@ import register, { DISPATCH_TOOL } from "../src/index";
 import { runtimeForProvider } from "../src/parent-provider";
 import { Runtime } from "../src/runtime";
 import { ACTIVITY_DETAILS_KEY } from "../src/subagent-activity";
+import {
+  graphAdmissionFor,
+  type ImplementTaskFixture,
+  taskAttemptFor,
+} from "./helpers/implement-graph-fixture.ts";
 
 const packageDir = join(import.meta.dirname, "..");
 const roots: string[] = [];
@@ -165,35 +170,49 @@ function packagePrompt(
   expect(prompt?.sourceInfo.baseDir).toBe(packageDir);
 }
 
-function implementRequest(taskId: string, requestId: string) {
+function implementRequest(
+  taskId: string,
+  requestId: string,
+): ImplementTaskFixture {
   const path = "test/prompt-activation.integration.test.ts";
   const verification = {
+    kind: "package-script",
     id: `verify-${taskId}`,
-    argv: ["bun", "run", "test:target", path],
+    packageManager: "bun",
+    script: "test:target",
+    command: "vitest run",
+    args: [path],
     classification: "expected-red",
     expectedFailure: "[SLICE-5:pi-tool-error]",
-    minTests: 1,
-  } as const;
+  } satisfies ImplementTaskFixture["boundary"]["phases"]["red"]["verification"];
   return {
-    stage: "abel-implement",
-    kind: "open-task",
     boundary: {
       changeId: "remove-implement-design-loop",
       taskId,
+      dependsOn: [],
       objective: "Observe Pi ToolResult classification",
       roots: ["."],
       context: { agents: "root", contract: "approved" },
       phases: {
-        red: { read: [path], write: [], verification },
+        red: {
+          read: [path, "package.json"],
+          write: [],
+          verification,
+          verificationInputs: [{ kind: "workspace", path: "package.json" }],
+        },
         green: {
-          read: [path],
+          read: [path, "package.json"],
           write: [],
           verification: {
+            kind: "package-script",
             id: `verify-${taskId}-green`,
-            argv: verification.argv,
+            packageManager: verification.packageManager,
+            script: verification.script,
+            command: verification.command,
+            args: verification.args,
             classification: "expected-green",
-            minTests: 1,
           },
+          verificationInputs: [{ kind: "workspace", path: "package.json" }],
         },
       },
       scheduling: { conflicts: [], resources: [] },
@@ -213,6 +232,11 @@ function implementRequest(taskId: string, requestId: string) {
       phase: "red",
       snapshot: {
         [path]: { kind: "file", sha256: "a".repeat(64), bytes: 1 },
+        "package.json": {
+          kind: "file",
+          sha256: "a".repeat(64),
+          bytes: 1,
+        },
       },
     },
   };
@@ -483,7 +507,7 @@ describe("package Prompt provenance activates abel_dispatch", () => {
       .mockRejectedValueOnce(new Error("internal invariant fixture"));
     const invalidRequest = {
       stage: "abel-implement",
-      kind: "phase-attempt",
+      kind: "task-attempt",
       attempt: {},
     };
     const tool = activePackageTool();
@@ -491,7 +515,22 @@ describe("package Prompt provenance activates abel_dispatch", () => {
       fauxAssistantMessage(
         fauxToolCall(
           "abel_dispatch",
-          { action: "run", request: blockedRequest },
+          {
+            action: "run",
+            request: graphAdmissionFor([
+              blockedRequest,
+              cancelledRequest,
+              internalRequest,
+            ]),
+          },
+          { id: "pi-graph-admission" },
+        ),
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage(
+        fauxToolCall(
+          "abel_dispatch",
+          { action: "run", request: taskAttemptFor(blockedRequest) },
           { id: "pi-blocked-call" },
         ),
         { stopReason: "toolUse" },
@@ -502,7 +541,18 @@ describe("package Prompt provenance activates abel_dispatch", () => {
       fauxAssistantMessage(
         fauxToolCall(
           "abel_dispatch",
-          { action: "run", request: cancelledRequest },
+          {
+            action: "run",
+            request: graphAdmissionFor([cancelledRequest]),
+          },
+          { id: "pi-cancelled-graph-admission" },
+        ),
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage(
+        fauxToolCall(
+          "abel_dispatch",
+          { action: "run", request: taskAttemptFor(cancelledRequest) },
           { id: "pi-cancelled-call" },
         ),
         { stopReason: "toolUse" },
@@ -524,7 +574,18 @@ describe("package Prompt provenance activates abel_dispatch", () => {
       fauxAssistantMessage(
         fauxToolCall(
           "abel_dispatch",
-          { action: "run", request: internalRequest },
+          {
+            action: "run",
+            request: graphAdmissionFor([internalRequest]),
+          },
+          { id: "pi-internal-graph-admission" },
+        ),
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage(
+        fauxToolCall(
+          "abel_dispatch",
+          { action: "run", request: taskAttemptFor(internalRequest) },
           { id: "pi-internal-call" },
         ),
         { stopReason: "toolUse" },
@@ -542,14 +603,14 @@ describe("package Prompt provenance activates abel_dispatch", () => {
       const cancelledResults = dispatchResults(cancelledSession);
       const protocolResults = dispatchResults(protocolSession);
       const internalResults = dispatchResults(internalSession);
-      expect(blockedResults).toHaveLength(1);
-      expect(cancelledResults).toHaveLength(1);
+      expect(blockedResults).toHaveLength(2);
+      expect(cancelledResults).toHaveLength(2);
       expect(protocolResults).toHaveLength(1);
-      expect(internalResults).toHaveLength(1);
-      const blockedResult = blockedResults[0];
-      const cancelledResult = cancelledResults[0];
+      expect(internalResults).toHaveLength(2);
+      const blockedResult = blockedResults.at(-1);
+      const cancelledResult = cancelledResults.at(-1);
       const protocolResult = protocolResults[0];
-      const internalResult = internalResults[0];
+      const internalResult = internalResults.at(-1);
       expect.soft(blockedResult?.isError).toBe(false);
       expect.soft(cancelledResult?.isError).toBe(false);
       expect.soft(protocolResult?.isError).toBe(true);
