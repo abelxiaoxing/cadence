@@ -476,10 +476,18 @@ describe("public parent payload lifecycle", () => {
     const harness = makeHarness("install");
     await start(harness);
     expect(harness.registry.registrations).toHaveLength(1);
+    const installed = harness.registry.registrations[0];
+    expect(installed).toBeDefined();
+    expect(harness.registry.getProvider(harness.context.model.provider)).toBe(
+      installed,
+    );
 
     await activate(harness);
     await beforeAgent(harness);
-    expect(harness.registry.registrations).toHaveLength(3);
+    expect(harness.registry.registrations).toHaveLength(1);
+    expect(harness.registry.getProvider(harness.context.model.provider)).toBe(
+      installed,
+    );
 
     await arm(harness, () => undefined, "stream");
     expect(harness.original.calls.filter((call) => !call.child)).toHaveLength(
@@ -502,8 +510,11 @@ describe("public parent payload lifecycle", () => {
       },
       harness.context,
     );
-    expect(harness.registry.registrations).toHaveLength(4);
+    expect(harness.registry.registrations).toHaveLength(2);
     expect(harness.registry.registrations.at(-1)?.id).toBe(nextModel.provider);
+    expect(harness.registry.getProvider(nextModel.provider)).toBe(
+      harness.registry.registrations.at(-1),
+    );
 
     nextId = "model-select-missing-capture";
     const sent = next.childSends.length;

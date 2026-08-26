@@ -716,7 +716,7 @@ describe("installed openai-responses child route", () => {
     expect(result.ok).toBe(true);
     expect(result.result).toEqual(evidence(requestId));
 
-    expect(registry.registrations).toHaveLength(2);
+    expect(registry.registrations).toHaveLength(1);
     expect(parentPayloads).toHaveLength(1);
     expect(parentCallbackKinds).toEqual(["parent", "child"]);
     expect(registry.authCalls).toBe(1);

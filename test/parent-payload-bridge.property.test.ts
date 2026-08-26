@@ -425,13 +425,10 @@ describe("parent payload bridge properties", () => {
     const secondWrapper = current;
     base.futureCapability = currentCapability;
 
-    expect(registrations).toHaveLength(2);
-    expect(registrations.map((provider) => provider.id)).toEqual([
-      base.id,
-      base.id,
-    ]);
+    expect(registrations).toHaveLength(1);
+    expect(registrations.map((provider) => provider.id)).toEqual([base.id]);
     expect(firstWrapper).not.toBe(base);
-    expect(secondWrapper).not.toBe(firstWrapper);
+    expect(secondWrapper).toBe(firstWrapper);
     expect(
       (secondWrapper as Provider & { futureCapability: unknown })
         .futureCapability,

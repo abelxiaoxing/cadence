@@ -46,6 +46,7 @@ export class ParentPayloadBridgeError extends Error {
 
 export interface ParentProviderRegistry {
   getProvider(provider: string): Provider | undefined;
+  getRegisteredNativeProvider?(provider: string): Provider | undefined;
   registerProvider(provider: Provider): void;
 }
 
@@ -198,9 +199,12 @@ export class ParentPayloadBridge {
     model: Model<string>,
     registry: ParentProviderRegistry,
   ): Provider | undefined {
-    const current = registry.getProvider(model.provider);
+    const current = this.nativeCarrier(model.provider, registry);
     if (!current) return undefined;
     const delegate = this.unwrapProvider(current);
+    const wrapped = this.isWrappedProvider(current)
+      ? current
+      : this.wrapProvider(delegate);
     const state = this.state;
     if (state?.active) {
       const key = modelKeyId(modelKeyFor(model));
@@ -210,14 +214,18 @@ export class ParentPayloadBridge {
         state.ready.delete(key);
       }
     }
-    const wrapped = this.wrapProvider(delegate);
-    registry.registerProvider(wrapped);
+    if (wrapped !== current) {
+      registry.registerProvider(wrapped);
+    }
     return wrapped;
   }
 
   capture(
     modelKey: ParentModelKey,
-    registry?: Pick<ParentProviderRegistry, "getProvider">,
+    registry?: Pick<
+      ParentProviderRegistry,
+      "getProvider" | "getRegisteredNativeProvider"
+    >,
   ): ParentPayloadCapture | undefined {
     const state = this.state;
     if (!state?.active) return undefined;
@@ -226,7 +234,7 @@ export class ParentPayloadBridge {
       return undefined;
     }
     if (registry) {
-      const current = registry.getProvider(modelKey.provider);
+      const current = this.nativeCarrier(modelKey.provider, registry);
       if (!current || this.unwrapProvider(current) !== capture.delegate) {
         return undefined;
       }
@@ -236,11 +244,14 @@ export class ParentPayloadBridge {
 
   diagnoseCapture(
     modelKey: ParentModelKey,
-    registry: Pick<ParentProviderRegistry, "getProvider">,
+    registry: Pick<
+      ParentProviderRegistry,
+      "getProvider" | "getRegisteredNativeProvider"
+    >,
   ): ParentBridgeFailureCode | undefined {
     const state = this.state;
     if (!state?.active) return "parent-bridge-session-unavailable";
-    const current = registry.getProvider(modelKey.provider);
+    const current = this.nativeCarrier(modelKey.provider, registry);
     if (!current || !this.isWrappedProvider(current)) {
       return "parent-bridge-provider-not-installed";
     }
@@ -466,6 +477,19 @@ export class ParentPayloadBridge {
       throw new ParentPayloadBridgeError("parent-bridge-capture-not-ready");
     }
     return state;
+  }
+
+  private nativeCarrier(
+    providerId: string,
+    registry: Pick<
+      ParentProviderRegistry,
+      "getProvider" | "getRegisteredNativeProvider"
+    >,
+  ): Provider | undefined {
+    const registered = registry.getRegisteredNativeProvider?.(providerId);
+    return registered && this.isWrappedProvider(registered)
+      ? registered
+      : registry.getProvider(providerId);
   }
 
   private isWrappedProvider(provider: Provider): boolean {

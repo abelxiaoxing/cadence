@@ -12,7 +12,10 @@ export class PassthroughParentPayloadBridge extends ParentPayloadBridge {
 
   override capture(
     modelKey: ParentModelKey,
-    registry?: Pick<ParentProviderRegistry, "getProvider">,
+    registry?: Pick<
+      ParentProviderRegistry,
+      "getProvider" | "getRegisteredNativeProvider"
+    >,
   ): ParentPayloadCapture | undefined {
     const delegate = registry?.getProvider(modelKey.provider);
     if (!delegate) return undefined;
