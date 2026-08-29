@@ -1,0 +1,345 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { describe, expect, it, vi } from "vitest";
+import { DISPATCH_TOOL, registerWorkflowControl } from "../src/index.ts";
+import {
+  ACTIVITY_DETAILS_KEY,
+  ActivityInlineComponent,
+  projectWorkflowActivity,
+  WORKFLOW_ACTIVITY_STATES,
+  type WorkflowActivityUpdate,
+} from "../src/subagent-activity.ts";
+
+const packageRoot = path.resolve(import.meta.dirname, "..");
+
+function packageText(relative: string): string {
+  return readFileSync(path.join(packageRoot, relative), "utf8");
+}
+
+function workflowHarness(
+  execute?: (
+    command: Record<string, unknown>,
+    onActivity?: (event: WorkflowActivityUpdate) => void,
+  ) => Promise<Record<string, unknown>>,
+) {
+  let tool: any;
+  let activeTools = ["read"];
+  const handlers = new Map<string, (...args: any[]) => any>();
+  const pi = {
+    registerTool(definition: unknown) {
+      tool = definition;
+    },
+    on(name: string, handler: (...args: any[]) => any) {
+      handlers.set(name, handler);
+    },
+    getCommands: () =>
+      ["abel-design", "abel-implement", "abel-diagnose"].map((name) => ({
+        name,
+        source: "prompt",
+        sourceInfo: {
+          origin: "package",
+          baseDir: packageRoot,
+          path: path.join(packageRoot, "prompts", `${name}.md`),
+        },
+      })),
+    getActiveTools: () => [...activeTools],
+    setActiveTools(next: string[]) {
+      activeTools = [...next];
+    },
+  };
+  registerWorkflowControl(
+    pi as never,
+    () =>
+      ({
+        async execute(
+          command: Record<string, unknown>,
+          _context: unknown,
+          _signal: unknown,
+          onActivity?: (event: WorkflowActivityUpdate) => void,
+        ) {
+          if (execute) return execute(command, onActivity);
+          return typeof command.operationId === "string" &&
+            command.operationId.includes("approval")
+            ? {
+                state: "approval-needed",
+                completed: false,
+                pause: { code: "repair-boundary-expansion" },
+              }
+            : {
+                state: "paused",
+                completed: false,
+                pause: { code: "transport-failure" },
+              };
+        },
+        async close() {},
+      }) as never,
+  );
+  return {
+    handlers,
+    tool: () => tool,
+    activeTools: () => [...activeTools],
+  };
+}
+
+function invokePrompt(
+  harness: ReturnType<typeof workflowHarness>,
+  name: string,
+  argument = "smooth-workflow",
+) {
+  harness.handlers.get("input")?.({ text: `/${name} ${argument}` });
+  harness.handlers.get("before_agent_start")?.(
+    {
+      prompt: `<abel-request>${argument}</abel-request> <!-- ABEL:PROMPT:${name} -->`,
+    },
+    { cwd: packageRoot },
+  );
+}
+
+describe("four-workflow user experience", () => {
+  it("does not activate Abel control for ordinary work or Init", () => {
+    const harness = workflowHarness();
+    harness.handlers.get("input")?.({ text: "please inspect this repository" });
+    harness.handlers.get("before_agent_start")?.(
+      { prompt: "please inspect this repository" },
+      { cwd: packageRoot },
+    );
+    expect(harness.activeTools()).toEqual(["read"]);
+
+    invokePrompt(harness, "abel-init", ".");
+    expect(harness.activeTools()).toEqual(["read"]);
+
+    const skill = packageText("skills/abel-workflow/SKILL.md");
+    expect(skill).toMatch(/only after an explicit \/abel-init/i);
+    expect(skill).toMatch(/ordinary engineering request/i);
+  });
+
+  it("activates workflow control only for a verified package prompt", () => {
+    const harness = workflowHarness();
+    invokePrompt(harness, "abel-implement");
+    expect(harness.activeTools()).toEqual(["read", DISPATCH_TOOL]);
+    expect(harness.tool()).toBeDefined();
+
+    const commandEnum = harness.tool().parameters.properties.command.enum;
+    expect(commandEnum).toEqual([
+      "start",
+      "status",
+      "resume",
+      "rebind",
+      "cancel",
+      "discard",
+    ]);
+  });
+
+  it("maps every semantic state truthfully and reserves success for completed", () => {
+    for (const state of WORKFLOW_ACTIVITY_STATES) {
+      const payload = {
+        version: 2,
+        runId: "run-smooth-workflow",
+        stage: "abel-implement",
+        change: "smooth-workflow",
+        state,
+        ...(state === "completed" ? { completed: true } : {}),
+        ...(state === "paused" || state === "approval-needed"
+          ? { pause: { code: "bounded-pause" } }
+          : {}),
+        legalCommands:
+          state === "completed" || state === "discarded" || state === "rejected"
+            ? ["status"]
+            : ["status", "resume", "cancel", "discard"],
+        tasks: [{ taskId: "task-one", state: "phase-running", phase: "green" }],
+      };
+      const display = projectWorkflowActivity(
+        {
+          version: 2,
+          command: "resume",
+          stage: "abel-implement",
+          change: "smooth-workflow",
+          operationId: "activity-projection-operation",
+        },
+        payload,
+        125,
+      );
+      const rendered = new ActivityInlineComponent(display)
+        .render(240)
+        .join("\n");
+      if (state === "completed") {
+        expect(display).toMatchObject({ state: "completed", tone: "success" });
+        expect(rendered).toContain("✓");
+      } else {
+        expect(display.tone).not.toBe("success");
+        expect(rendered).not.toContain("✓");
+      }
+      expect(rendered).not.toMatch(/provider|endpoint|credential|prompt/i);
+    }
+
+    expect(
+      projectWorkflowActivity(
+        { version: 2, command: "status", stage: "abel-implement" },
+        { state: "completed", completed: false, legalCommands: ["status"] },
+        0,
+      ),
+    ).toMatchObject({
+      state: "rejected",
+      tone: "error",
+      code: "completion-state-inconsistent",
+    });
+  });
+
+  it("streams activity into TUI and preserves a paused final state", async () => {
+    const semanticUpdates: WorkflowActivityUpdate[] = [
+      { state: "connecting", attempt: 1, maxAttempts: 2, wait: "connection" },
+      {
+        state: "waiting-first-response",
+        attempt: 1,
+        maxAttempts: 2,
+        wait: "first-response",
+      },
+      { state: "running", taskId: "task-one", phase: "green" },
+      { state: "validating", taskId: "task-one", phase: "green" },
+      {
+        state: "retrying",
+        taskId: "task-one",
+        phase: "green",
+        attempt: 1,
+        maxAttempts: 2,
+        code: "transport-failure",
+      },
+      { state: "verifying", taskId: "task-one", phase: "green" },
+      { state: "applying" },
+      { state: "recovering", code: "recovery-required" },
+    ];
+    const harness = workflowHarness(async (_command, onActivity) => {
+      for (const update of semanticUpdates) onActivity?.(update);
+      return {
+        version: 2,
+        runId: "run-smooth-workflow",
+        stage: "abel-implement",
+        change: "smooth-workflow",
+        state: "paused",
+        completed: false,
+        pause: { code: "transport-failure" },
+        legalCommands: ["status", "resume", "discard"],
+        tasks: [{ taskId: "task-one", state: "paused", phase: "green" }],
+        queue: [],
+      };
+    });
+    const ui = {
+      setWidget: vi.fn(),
+      setStatus: vi.fn(),
+    };
+    await harness.handlers.get("session_start")?.(
+      {},
+      { cwd: packageRoot, mode: "tui", ui },
+    );
+    invokePrompt(harness, "abel-implement");
+    const command = {
+      version: 2,
+      command: "resume",
+      stage: "abel-implement",
+      change: "smooth-workflow",
+      operationId: "activity-operation-001",
+    };
+    const updates: any[] = [];
+    const result = await harness
+      .tool()
+      .execute(
+        "activity-tool-call",
+        command,
+        undefined,
+        (update: unknown) => updates.push(update),
+        { cwd: packageRoot, mode: "tui", ui },
+      );
+
+    expect(
+      updates.map((update) => update.details?.[ACTIVITY_DETAILS_KEY]?.state),
+    ).toEqual([
+      "queued",
+      ...semanticUpdates.map((update) => update.state),
+      "paused",
+    ]);
+    expect(result.details[ACTIVITY_DETAILS_KEY]).toMatchObject({
+      state: "paused",
+      tone: "warning",
+      code: "transport-failure",
+      taskId: "task-one",
+      nextAction: "resume",
+    });
+    const rendered = harness
+      .tool()
+      .renderResult(result, { expanded: false }, undefined, { args: command })
+      .render(240)
+      .join("\n");
+    expect(rendered).toContain("paused");
+    expect(rendered).toContain("next resume");
+    expect(rendered).not.toContain("✓");
+    expect(ui.setWidget).toHaveBeenCalled();
+    expect(ui.setStatus).toHaveBeenCalled();
+  });
+
+  it("returns ordinary failure and boundary expansion without stage routing", async () => {
+    const harness = workflowHarness();
+    invokePrompt(harness, "abel-implement");
+    const execute = harness.tool().execute.bind(harness.tool());
+    const context = { cwd: packageRoot };
+
+    const paused = await execute(
+      "ordinary-call",
+      {
+        version: 2,
+        command: "resume",
+        stage: "abel-implement",
+        change: "smooth-workflow",
+        operationId: "ordinary-operation-001",
+      },
+      undefined,
+      undefined,
+      context,
+    );
+    expect(paused.details).toEqual({
+      state: "paused",
+      completed: false,
+      pause: { code: "transport-failure" },
+    });
+
+    const approval = await execute(
+      "approval-call",
+      {
+        version: 2,
+        command: "resume",
+        stage: "abel-implement",
+        change: "smooth-workflow",
+        operationId: "approval-operation-001",
+      },
+      undefined,
+      undefined,
+      context,
+    );
+    expect(approval.details).toEqual({
+      state: "approval-needed",
+      completed: false,
+      pause: { code: "repair-boundary-expansion" },
+    });
+    expect(JSON.stringify([paused.details, approval.details])).not.toMatch(
+      /abel-design|return-to-design|nextStep/i,
+    );
+  });
+
+  it("keeps Design, Diagnose, and Implement responsibilities disjoint", () => {
+    const init = packageText("prompts/abel-init.md");
+    const design = packageText("prompts/abel-design.md");
+    const diagnose = packageText("prompts/abel-diagnose.md");
+    const implement = packageText("prompts/abel-implement.md");
+
+    expect(init).toMatch(/performs no Subagent or `abel_dispatch` work/i);
+    expect(design).toMatch(/never launches an implementation Worker/i);
+    expect(design).toMatch(
+      /collects cited evidence[\s\S]{0,80}compiles one trusted delivery/i,
+    );
+    expect(diagnose).toMatch(/not an Implement recovery route/i);
+    expect(diagnose).toMatch(/reproduce[\s\S]*falsify[\s\S]*regression/i);
+    expect(implement).toMatch(
+      /Ordinary failures stay inside this Implement run/i,
+    );
+    expect(implement).not.toMatch(/\/abel-design|return-to-design|nextStep/i);
+  });
+});

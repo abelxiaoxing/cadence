@@ -1,6 +1,6 @@
 ## Why
 
-The current Design and Implement workflows bind execution progress to process-local task records, one-shot Worker sessions, manually assembled protocol envelopes, and terminal fail-closed outcomes. Transient endpoint, environment, artifact, verification, or boundary failures therefore strand otherwise valid work, while phase-by-phase application can leave the main workspace in a partially implemented state.
+The current Design and Implement workflows bind execution progress to process-local task records, one-shot Worker sessions, manually assembled protocol envelopes, and terminal fail-closed outcomes. Transient endpoint, environment, artifact, verification, or boundary failures therefore strand otherwise valid work, while phase-by-phase application can leave the main workspace in a partially implemented state. Their prompts also blur recovery with stage selection: an ordinary Implement failure can be presented as a reason to restart Design, and the shared Skill can be mistaken as active merely because Abel resources are present. Init and Diagnose lack equally explicit stage-isolation and truthful-result rules.
 
 The package is still in development and has no active OpenSpec changes to migrate, so this is the appropriate point to replace that MVP execution contract with a durable, resumable, transactional workflow rather than preserve its recovery limitations.
 
@@ -12,7 +12,9 @@ The package is still in development and has no active OpenSpec changes to migrat
 - Execute the complete Implement task DAG in a private change workspace. Keep the main workspace unchanged until every task, affected verification, full-suite comparison, output postcondition, and AGENTS checkpoint succeeds, then apply the cumulative change through a currentness-checked transaction.
 - Replace terminal handling of transport, environment, capacity, artifact, stale, conflict, and verification failures with typed recoverable states. Reserve run-terminal outcomes for completion, discard, and deterministic rejection; operation cancellation leaves the run recoverably paused after any required apply recovery.
 - Allow an Implement run that discovers an approval-boundary gap to pause with structured evidence, accept a newly approved Gate A or Gate B receipt revision, revalidate the retained change workspace, and continue without losing already valid work.
-- Consolidate Design questions at their owning Gate, keep reversible mechanical choices non-blocking, and make activity presentation reflect queued, connecting, running, verifying, paused, approval-needed, applying, and completed states truthfully.
+- Consolidate Design questions at their owning Gate, keep reversible mechanical choices non-blocking, and make activity presentation reflect queued, connecting, waiting-first-response, running, validating, retrying, verifying, paused, approval-needed, applying, recovering, operation-cancelled, discarded, rejected, and completed states truthfully; only completed is successful.
+- Make all four prompt contracts explicit and disjoint: Init is local/idempotent and never dispatches; Design gathers evidence and compiles delivery without implementation; Diagnose independently proves an existing defect before minimum repair; Implement retains ordinary failures and bounded repair inside one durable run. Merely discovering Abel files or an AGENTS entry never activates the shared workflow.
+- Reserve `approval-needed` for real behavior, architecture/policy, dependency, path, verification, resource, or AGENTS authority expansion. Delivery defects, wrong Red, transport, environment, stale, baseline, introduced in-boundary repair, and automatic-attempt exhaustion pause or retry without stage-routing metadata or an automatic `/abel-design` instruction.
 - Persist only private structural state and an isolated change workspace outside the repository, rejecting any resolved state path equal to or contained by the canonical consumer root; never persist credentials, environment values, raw prompts, or raw model output. Remove retained run data on completion or explicit discard, but settle any in-flight final application through recovery before destructive cleanup.
 
 ## Capabilities
@@ -23,13 +25,13 @@ The package is still in development and has no active OpenSpec changes to migrat
 
 ### Modified Capabilities
 
-- `abel-workflow-prompt-package`: Change Design and Implement user-visible workflow behavior, Gate interaction, delivery v2, recovery commands, completion criteria, and removal of the MVP prohibition on private persistence, isolation, status, resume, and transaction support.
+- `abel-workflow-prompt-package`: Change Init, Design, Implement, and Diagnose user-visible workflow behavior, explicit activation, stage isolation, Gate interaction, delivery v2, recovery commands, completion criteria, and removal of the MVP prohibition on private persistence, isolation, status, resume, and transaction support.
 - `private-agent-orchestration`: Replace process-local terminal task execution with Worker-independent context, recoverable task states, private change-workspace execution, cumulative verification, currentness-checked transactional apply, and truthful lifecycle activity.
 - `subagent-endpoint-config`: Replace one fixed per-role endpoint identity with a visible policy-controlled route set, capability and health selection, bounded external waits, and explicit run rebinding while preserving configuration precedence and secret handling.
 
 ## Impact
 
-- Workflow contracts and entrypoints: `skills/abel-workflow/SKILL.md`, `prompts/abel-design.md`, `prompts/abel-implement.md`, and private tool registration in `src/index.ts`.
+- Workflow contracts and entrypoints: `skills/abel-workflow/SKILL.md`, all four `prompts/abel-*.md` entrypoints, professional Agents, and private tool registration in `src/index.ts`.
 - Control and state: `src/contracts.ts`, `src/runtime.ts`, `src/worker.ts`, `src/scheduler.ts`, `src/drain.ts`, `src/result-store.ts`, and new private run-store/control-plane modules.
 - Execution isolation and delivery: `src/child-session.ts`, `src/candidate-preflight.ts`, `src/patch.ts`, `src/file-snapshot.ts`, `src/implement-graph.ts`, and new change-workspace/transaction adapters.
 - Provider routing and presentation: `src/subagent-endpoint.ts`, `src/parent-provider.ts`, `src/subagent-activity.ts`, configuration examples, README, and distribution metadata where new modules are shipped.

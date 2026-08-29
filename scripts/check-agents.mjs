@@ -34,7 +34,10 @@ const FORBIDDEN = [
     /gate[- ](a|b)[^\n]*(approved|pending|granted)|approval (state|status)|\breceipt\b[^\n]*(sha256|status)/i,
     "Gate/approval state",
   ],
-  [/runtime (id|state)|session (id|state)|ledger/i, "runtime state"],
+  [
+    /runtime (?:id|state value)|session (?:id|state value)|dirty-state (?:ledger|record)|run-state value/i,
+    "runtime state",
+  ],
   [/@gotgenes|pi-subagents/i, "reference package dependency"],
   [/pi-packages/i, "reference repository route"],
 ];
@@ -56,7 +59,12 @@ for (const route of routes) {
   if (route.startsWith("/") || route.includes("..")) {
     throw new Error(`route must stay inside the repository: ${route}`);
   }
-  if (route.includes("(") || route.startsWith("@")) continue; // function/API or package-name route
+  if (
+    route.includes("(") ||
+    route.startsWith("@") ||
+    /^[A-Z][A-Za-z0-9]*$/u.test(route)
+  )
+    continue; // function/type/API or package-name route
   if (/\s/.test(route)) {
     // command phrase: the first token must be on PATH
     const token = route.split(/\s+/)[0];

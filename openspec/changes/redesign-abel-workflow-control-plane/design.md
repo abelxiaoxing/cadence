@@ -21,6 +21,8 @@ The extension is loaded by a Node >=22 Pi host, has no runtime dependency other 
 - Preserve parent-owned approval, candidate validation, verification, AGENTS maintenance, and final application.
 - Keep status and lifecycle presentation locally available and semantically truthful.
 - Preserve scoped path, dependency, output-provenance, verification, and secret-handling protections.
+- Make explicit slash-prompt provenance the only workflow activation signal and keep Init, Design, Implement, and Diagnose responsibilities disjoint.
+- Eliminate automatic Implement-to-Design routing: recover ordinary failures in the same durable run and request approval only for a proven authority expansion.
 
 **Non-Goals:**
 
@@ -29,7 +31,6 @@ The extension is loaded by a Node >=22 Pi host, has no runtime dependency other 
 - A non-isolated fallback when the platform lacks an approved isolation backend.
 - Transparent v1 delivery, endpoint-configuration, or runtime-state migration.
 - Automatic Gate approval, implicit commit, archive, publication, release, or repair outside an approved boundary.
-- Redesigning the user-visible Init or Diagnose algorithms in this change.
 
 ## Decisions
 
@@ -197,6 +198,7 @@ The default bounds are:
 - accepted stream progress idle: 60 seconds;
 - total phase: 10 minutes;
 - one automatic attempt per eligible route per operation;
+- a sealed `artifactCorrection.maxAttempts` of 2-3 total candidate launches per task phase and operation, including the initial launch; the approved package plan uses 2;
 - one half-open probe after a 30-second route-health cooldown.
 
 The broker composes an AbortSignal for each bound and observes Provider `onResponse` plus child-session message deltas. Provider-managed retry stays disabled. An operation may advance only through routes already present in its allowed ordered policy. A change outside that set requires explicit `rebind`, capability validation and a new attempt; Provider/model identity is attempt provenance, not an immutable task-boundary field.
@@ -249,6 +251,14 @@ Property-based tests cover:
 
 Integration tests use temporary state roots, fake clocks, fake Providers and disposable repositories. The real developer route policy and user state are never read.
 
+### 13. Separate activation, recovery, and product authority
+
+The package prompt marker plus package provenance is the only signal that activates `abel_dispatch`; an ordinary request, repository file name, OpenSpec change, AGENTS entry, or the word Abel is insufficient. Init remains local and deterministic, Design may dispatch only bounded read-only evidence, Diagnose may dispatch only its own evidence/candidate packets, and Implement alone uses the closed v2 run-control commands.
+
+Implement outcomes carry state, safe code, retained progress, and legal same-run commands, never a workflow-stage recommendation. Artifact, wrong-Red, transport, environment, stale, capacity, baseline, conflict, introduced in-boundary repair, interruption, and exhausted automatic budgets remain resumable Implement facts. `approval-needed` is reserved for evidence that continuing requires behavior, architecture/policy, dependency, undeclared path, verification, conflict/resource, AGENTS, or irreversible authority absent from the sealed delivery. A revised receipt rebinds the same run and preserves compatible facts; it does not restart Design mechanically.
+
+Design repairs hashes, checkbox normalization, formatting, traceability, stale paths, and other mechanical delivery defects without reopening an unchanged Gate. Diagnose is not an Implement fallback: it proves an existing defect through reproduction, falsification and a failing regression before a minimum repair, while new product scope becomes an explicit user decision rather than an automatic stage transition.
+
 ## Risks / Trade-offs
 
 - **[Node 22.13 minimum]** `node:sqlite` is not available without the experimental gate in early Node 22 releases. → Raise `engines.node` to `>=22.13.0`, validate it in package tests and fail extension activation clearly on an older host.
@@ -269,7 +279,7 @@ Integration tests use temporary state roots, fake clocks, fake Providers and dis
 2. Implement route policy and workspace primitives behind new internal modules without changing the active dispatcher selector.
 3. Implement transactional preflight/apply, sealed artifacts and TaskLedger.
 4. Integrate WorkflowEngine, durable recovery and the typed v2 command schema behind the still-active, exact-receipt bootstrap selector; do not remove v1 activation or make v2 parse the v1 receipt.
-5. Update Design/Implement prompts, shared Skill, professional Agents, activity rendering, docs, example policy and distribution lists, including the root AGENTS managed-block checkpoint after the package surface is stable.
+5. Update all four prompts, shared Skill, professional Agents, activity rendering, docs, example policy and distribution lists, including explicit-only activation, same-run recovery, and the root AGENTS managed-block checkpoint after the package surface is stable.
 6. Run the complete v2 restart, rebind, stale workspace, transaction crash, activity and package acceptance matrix, followed by `bun run check`, `bun run lint`, `bun run test`, `bun run pack:check`, `bun run traceability:check`, `bun scripts/seed-acceptance.mjs`, and `bun run check:agents` as separate steps while v1 bootstrap activation remains selected.
 7. After every bootstrap task and acceptance fact is committed, transactionally write `BootstrapHandoff`, then switch the single activation selector by compare-and-swap and retire v1 graph/task-attempt handling. A reload on either side resumes the handoff; subsequent v2 activation rejects all v1 receipts and records.
 

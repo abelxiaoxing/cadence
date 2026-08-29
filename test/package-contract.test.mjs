@@ -22,7 +22,7 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     expect(pkg.name).toBe("@abelxiaoxing/cadence");
     expect(pkg.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(pkg.type).toBe("module");
-    expect(pkg.engines?.node).toBe(">=22");
+    expect(pkg.engines?.node).toBe(">=22.13.0");
     expect(pkg.license).toBe("MIT");
     expect(pkg.keywords).toContain("pi-package");
     expect(pkg.peerDependencies?.["@earendil-works/pi-coding-agent"]).toBe("*");
@@ -78,7 +78,7 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     expect(readme).not.toMatch(/@abel\/(?!xiaoxing)/i);
   });
 
-  it("exposes no host-version policy or compatibility module", () => {
+  it("keeps protocol validation local and ships no host compatibility shim", () => {
     const srcFiles = walkTs(path.join(root, "src"));
     expect(srcFiles.length).toBeGreaterThan(0);
     expect(srcFiles.map((file) => path.basename(file))).not.toEqual(
@@ -86,9 +86,12 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     );
     for (const file of srcFiles) {
       expect(read(file)).not.toMatch(
-        /version.*check|check.*version|unsupported.*version|from ["'][^"']*compatib/i,
+        /from ["'][^"']*compatib|checkHostVersion|supportedHostVersions|supportedPiVersions/i,
       );
     }
+    expect(read(path.join(root, "src", "control-contracts.ts"))).toMatch(
+      /unsupported-control-version/,
+    );
   });
 
   it("provides the standalone Bun commands and lockfile", () => {
@@ -109,13 +112,16 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     const reviewer = read(path.join(root, "agents", "contract-reviewer.md"));
 
     expect(implementation).toMatch(/complete unified diff/i);
-    expect(implementation).toMatch(/expected verification/i);
+    expect(implementation).toMatch(
+      /expected parent-owned verification contract/i,
+    );
+    expect(implementation).toMatch(/without claiming a result/i);
     expect(implementation).toMatch(/result-limit/i);
     expect(implementation).not.toMatch(
       /design-required|return-to-design|\/abel-design|recommended next (workflow )?step|nextStep|dependent successors?|split condition/i,
     );
 
-    expect(diagnosis).toMatch(/reproduced symptoms/i);
+    expect(diagnosis).toMatch(/reported symptoms/i);
     expect(diagnosis).toMatch(/falsif/i);
     expect(diagnosis).toMatch(/failing-regression[\s\S]{0,240}minimum-repair/i);
     expect(diagnosis).not.toMatch(

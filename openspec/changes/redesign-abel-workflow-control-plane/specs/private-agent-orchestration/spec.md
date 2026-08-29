@@ -161,6 +161,7 @@ A produced cross-task output SHALL publish only after its producer's required ph
 ### Requirement: Recoverable attempts and Worker replacement
 
 Provider-managed hidden retry SHALL remain disabled, while the control plane SHALL apply separately observable bounded policies for connection, first response, idle progress, total phase time, transport attempts, stale refresh, artifact correction, verification repair, and parent checkpoint correction.
+The canonical Implement plan SHALL seal `artifactCorrection.maxAttempts` as 2 or 3 total candidate launches per task phase and operation, including the initial launch; only typed artifact rejection SHALL consume that counter, and a later explicit operation SHALL start a fresh counter from the retained ledger.
 Each failure SHALL retain its safe closed code, stage, policy class, attempt count, and legal continuation without exposing endpoint secrets, prompts, code excerpts, or raw model output in public outcomes.
 Automatic policy exhaustion SHALL pause the affected task rather than terminally block it.
 Cancellation SHALL interrupt the active operation without consuming an automatic retry or accepting partial output.

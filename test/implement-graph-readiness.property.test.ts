@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -9,7 +10,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { validateRequestEnvelope } from "../src/contracts.ts";
 import * as graphReadiness from "../src/implement-graph.ts";
 
 type Phase = "red" | "green" | "refactor";
@@ -63,12 +63,14 @@ function task(
       red: {
         read: options.redWrite?.includes(script) ? [] : [script],
         write: options.redWrite ?? [],
+        delete: [],
         verification: verification(`${taskId}-red`, "red", script),
         verificationInputs: [source],
       },
       green: {
         read: options.greenWrite?.includes(script) ? [] : [script],
         write: options.greenWrite ?? [],
+        delete: [],
         verification: verification(`${taskId}-green`, "green", script),
         verificationInputs: [source],
       },
@@ -150,6 +152,66 @@ function phaseResult(
 
 describe("Implement graph verification closure", () => {
   const runner = "test/cugc_pytest.mjs";
+
+  it("admits an exact Windows npm/Vitest graph with zero execute bits", () => {
+    const root = workspace();
+    const runnerDirectory = path.join(root, "windows-runners");
+    mkdirSync(path.join(runnerDirectory, "node_modules/npm/bin"), {
+      recursive: true,
+    });
+    for (const relative of [
+      "node.exe",
+      "npm.cmd",
+      "node_modules/npm/bin/npm-cli.js",
+    ]) {
+      const target = path.join(runnerDirectory, relative);
+      writeFileSync(target, "fixture\n", { mode: 0o644 });
+      chmodSync(target, 0o644);
+    }
+    mkdirSync(path.join(root, "node_modules/.bin"), { recursive: true });
+    for (const relative of ["vitest", "vitest.cmd"]) {
+      const target = path.join(root, "node_modules/.bin", relative);
+      writeFileSync(target, "fixture\n", { mode: 0o644 });
+      chmodSync(target, 0o644);
+    }
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({ scripts: { "test:run": "vitest run" } }),
+    );
+    const boundary = task("T-windows", "package.json", {
+      kind: "workspace",
+      path: "package.json",
+    });
+    const phases = boundary.phases as Record<
+      "red" | "green",
+      Record<string, unknown>
+    >;
+    for (const phase of ["red", "green"] as const) {
+      phases[phase].verification = {
+        kind: "package-script",
+        id: `T-windows-${phase}`,
+        packageManager: "npm",
+        script: "test:run",
+        command: "vitest run",
+        args: [],
+        classification: `expected-${phase}`,
+        ...(phase === "red"
+          ? { expectedFailure: "expected Windows Red witness" }
+          : {}),
+      };
+    }
+
+    expect(
+      assess(root, graph([boundary]), {
+        verificationRunnerEnvironment: {
+          platform: "win32",
+          path: runnerDirectory,
+          pathExt: ".CMD;.EXE;.cmd;.exe",
+          pathDelimiter: path.delimiter,
+        },
+      }).closure,
+    ).toEqual({ executable: true, diagnostics: [] });
+  });
 
   it("rejects an absent workspace input without a producer proof", () => {
     const root = workspace();
@@ -449,69 +511,4 @@ describe("Implement graph verification closure", () => {
       );
     },
   );
-});
-
-describe("Implement graph admission contract", () => {
-  it("accepts one graph admission followed only by task attempts", () => {
-    const runner = "test/runner.mjs";
-    const boundary = graph([
-      task("T1", runner, { kind: "workspace", path: runner }),
-    ]);
-    const hash = (graphReadiness as Record<string, unknown>)
-      .hashImplementGraphBoundary;
-    expect(hash).toBeTypeOf("function");
-    const graphHash = (hash as (value: unknown) => string)(boundary);
-
-    expect(
-      validateRequestEnvelope({
-        stage: "abel-implement",
-        kind: "admit-graph",
-        graph: boundary,
-        graphHash,
-        state: { completedTasks: [], blockedTasks: [] },
-      }),
-    ).toMatchObject({ ok: true });
-    expect(
-      validateRequestEnvelope({
-        stage: "abel-implement",
-        kind: "task-attempt",
-        attempt: {
-          changeId: "graph-readiness",
-          taskId: "T1",
-          requestId: "T1:red:0",
-          phase: "red",
-          snapshot: {},
-        },
-      }),
-    ).toMatchObject({ ok: true });
-    expect(
-      validateRequestEnvelope({
-        stage: "abel-implement",
-        kind: "unsupported-request",
-        boundary: {
-          changeId: "graph-readiness",
-          ...((boundary.tasks as Record<string, unknown>[])[0] ?? {}),
-        },
-        attempt: {
-          changeId: "graph-readiness",
-          taskId: "T1",
-          requestId: "T1:red:0",
-          phase: "red",
-          snapshot: {},
-        },
-      }),
-    ).toMatchObject({ ok: false });
-  });
-
-  it("hashes canonical object keys and changes with graph facts", () => {
-    const hash = (graphReadiness as Record<string, unknown>)
-      .hashImplementGraphBoundary as ((value: unknown) => string) | undefined;
-    expect(hash).toBeTypeOf("function");
-    const left = { changeId: "hash", tasks: [], outputs: [] };
-    const reordered = { outputs: [], tasks: [], changeId: "hash" };
-    expect(hash?.(left)).toBe(hash?.(reordered));
-    expect(hash?.(left)).not.toBe(
-      hash?.({ changeId: "other", tasks: [], outputs: [] }),
-    );
-  });
 });

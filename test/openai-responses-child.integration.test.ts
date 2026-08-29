@@ -1,6 +1,4 @@
-import { execFileSync } from "node:child_process";
 import {
-  chmodSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -28,16 +26,21 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
-import { snapshotFiles } from "../src/file-snapshot";
-import register from "../src/index";
+import { registerWorkflowControl as register } from "../src/index";
 import { runtimeForProvider } from "../src/parent-provider";
-import {
-  graphAdmissionFor,
-  type ImplementTaskFixture,
-  taskAttemptFor,
-} from "./helpers/implement-graph-fixture.ts";
+import { serializeTaskLedgerProjection } from "../src/task-ledger.ts";
 
 type PayloadCallback = NonNullable<SimpleStreamOptions["onPayload"]>;
+
+it("rejects private ledger fields before an openai-responses child request", () => {
+  expect(() =>
+    serializeTaskLedgerProjection({
+      runId: "responses-private-ledger",
+      taskId: "responses-private-task",
+      rawTranscript: "must never reach the Provider",
+    }),
+  ).toThrow(/ledger-projection-private-field/u);
+});
 
 interface RegisteredTool {
   name: string;
@@ -81,12 +84,12 @@ class FakePi {
     const root = resolve(".");
     return [
       {
-        name: "abel-implement",
+        name: "abel-design",
         source: "prompt",
         sourceInfo: {
           origin: "package",
           baseDir: root,
-          path: join(root, "prompts", "abel-implement.md"),
+          path: join(root, "prompts", "abel-design.md"),
         },
       },
     ];
@@ -147,6 +150,35 @@ interface FetchRecord {
 }
 
 const roots: string[] = [];
+
+function declareInheritedRoute(cwd: string): void {
+  const directory = join(cwd, ".pi", "cadence");
+  mkdirSync(directory, { recursive: true });
+  const roles = [
+    "design-explorer",
+    "contract-reviewer",
+    "implementation-worker",
+    "diagnosis-worker",
+  ];
+  writeFileSync(
+    join(directory, "routes.json"),
+    `${JSON.stringify({
+      version: 2,
+      routes: {
+        inherited: {
+          kind: "inherited",
+          capabilities: {
+            roles,
+            dialects: ["openai-responses"],
+            contextWindow: 256_000,
+            maxTokens: 128_000,
+          },
+        },
+      },
+      roles: Object.fromEntries(roles.map((role) => [role, ["inherited"]])),
+    })}\n`,
+  );
+}
 
 afterEach(() => {
   for (const root of roots.splice(0)) {
@@ -317,121 +349,14 @@ function request(id: string) {
   };
 }
 
-const IMPLEMENT_DIFF = "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n";
-
-function implementationRoot(): string {
-  const cwd = mkdtempSync(join(tmpdir(), "cadence-responses-implement-"));
-  roots.push(cwd);
-  execFileSync("git", ["init", "-q"], { cwd });
-  execFileSync("git", ["config", "user.email", "test@example.invalid"], {
-    cwd,
-  });
-  execFileSync("git", ["config", "user.name", "Cadence Test"], { cwd });
-  writeFileSync(join(cwd, "a.txt"), "old\n");
-  mkdirSync(join(cwd, "node_modules/.bin"), { recursive: true });
-  mkdirSync(join(cwd, "test"));
-  writeFileSync(
-    join(cwd, "package.json"),
-    `${JSON.stringify({
-      private: true,
-      scripts: { check: 'node -e ""', "test:target": "node" },
-    })}\n`,
-  );
-  writeFileSync(join(cwd, "bun.lock"), "# fixture lock\n");
-  writeFileSync(
-    join(cwd, "test/expected-red.mjs"),
-    'console.error("[RESPONSES-FIRST-DISPATCH:expected-red]\\nTests 1 failed");\nprocess.exit(1);\n',
-  );
-  writeFileSync(join(cwd, "node_modules/.bin/vitest"), "#!/bin/sh\n");
-  chmodSync(join(cwd, "node_modules/.bin/vitest"), 0o755);
-  execFileSync("git", ["add", "a.txt"], { cwd });
-  execFileSync("git", ["commit", "-qm", "base"], { cwd });
-  return cwd;
-}
-
-function implementationRequest(id: string, cwd: string): ImplementTaskFixture {
-  return {
-    boundary: {
-      changeId: "responses-first-dispatch",
-      taskId: id,
-      dependsOn: [],
-      objective: "Return one bounded Red candidate",
-      roots: ["."],
-      context: { agents: "none", contract: "approved" },
-      phases: {
-        red: {
-          read: ["a.txt", "test/expected-red.mjs"],
-          write: ["a.txt"],
-          verificationLock: "responses-first-dispatch-red",
-          verification: {
-            kind: "static-check",
-            id: `verify-${id}-red`,
-            runner: { kind: "node", script: "test/expected-red.mjs" },
-            args: [],
-            classification: "expected-red",
-            expectedFailure: "[RESPONSES-FIRST-DISPATCH:expected-red]",
-          },
-          verificationInputs: [
-            { kind: "workspace", path: "test/expected-red.mjs" },
-          ],
-        },
-        green: {
-          read: ["a.txt", "package.json"],
-          write: ["a.txt"],
-          verificationLock: "responses-first-dispatch-green",
-          verification: {
-            kind: "package-script",
-            id: `verify-${id}-green`,
-            packageManager: "bun",
-            script: "check",
-            command: 'node -e ""',
-            args: [],
-            classification: "expected-green",
-          },
-          verificationInputs: [{ kind: "workspace", path: "package.json" }],
-        },
-      },
-      scheduling: { conflicts: [], resources: [] },
-      agents: { impact: "none", managedOnly: true },
-      approvedDependencies: [],
-      impactClosure: {
-        changedSurfaces: ["none"],
-        searchEvidence: [],
-        relatedTests: [],
-        affectedSuite: ["test/expected-red.mjs"],
-      },
-    },
-    attempt: {
-      changeId: "responses-first-dispatch",
-      taskId: id,
-      requestId: `${id}-red-1`,
-      phase: "red",
-      snapshot: snapshotFiles(cwd, ["a.txt", "test/expected-red.mjs"]),
-    },
-  };
-}
-
-function implementationDiff(id: string) {
-  return {
-    id: `${id}-red-1`,
-    role: "implementation-worker",
-    kind: "diff",
-    taskId: id,
-    phase: "red",
-    summary: "Change the bounded fixture",
-    diff: IMPLEMENT_DIFF,
-    expectedVerification: "bun run test:target test/expected-red.mjs",
-    risks: [],
-    contractCompliant: true,
-  };
-}
-
 describe("installed openai-responses child route", () => {
-  it("[RESPONSES-FIRST-DISPATCH:capture-ready] serves the first legal Implement tool call in the Pi lifecycle", async () => {
-    const cwd = implementationRoot();
-    const taskId = "responses-first-worker";
+  it("[RESPONSES-FIRST-DISPATCH:capture-ready] serves the first legal Design packet in the Pi lifecycle", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "cadence-responses-design-"));
+    roots.push(cwd);
+    writeFileSync(join(cwd, "sentinel.txt"), "unchanged\n");
+    declareInheritedRoute(cwd);
+    const requestId = "responses-first-design-packet";
     const model = modelFor("cadence-lifecycle-responses");
-    const request = implementationRequest(taskId, cwd);
     const calls: Array<{
       child: boolean;
       options: SimpleStreamOptions | undefined;
@@ -455,22 +380,16 @@ describe("installed openai-responses child route", () => {
             : { instructions: "bounded parent", input: [] };
           await options?.onPayload?.(payload, requestModel);
           const content = child
-            ? fauxToolCall("abel_submit_result", implementationDiff(taskId), {
-                id: "submit-first-worker",
+            ? fauxToolCall("abel_submit_result", evidence(requestId), {
+                id: "submit-first-design-packet",
               })
             : parentTurn++ === 0
               ? fauxToolCall(
                   "abel_dispatch",
-                  { action: "run", request: graphAdmissionFor([request]) },
-                  { id: "admit-first-graph" },
+                  { action: "run", request: request(requestId) },
+                  { id: "dispatch-first-design-packet" },
                 )
-              : parentTurn === 2
-                ? fauxToolCall(
-                    "abel_dispatch",
-                    { action: "run", request: taskAttemptFor(request) },
-                    { id: "dispatch-first-worker" },
-                  )
-                : "parent completed";
+              : "parent completed";
           const stopReason = typeof content === "string" ? "stop" : "toolUse";
           const message: AssistantMessage = {
             ...fauxAssistantMessage(content, {
@@ -540,7 +459,7 @@ describe("installed openai-responses child route", () => {
 
     try {
       await session.bindExtensions({ mode: "tui", uiContext: ui as never });
-      await session.prompt("/abel-implement first inherited dispatch");
+      await session.prompt("/abel-design first inherited dispatch");
 
       const toolResult = session.state.messages.findLast(
         (message) =>
@@ -554,10 +473,9 @@ describe("installed openai-responses child route", () => {
       expect(text?.type).toBe("text");
       const outcome = JSON.parse(text?.type === "text" ? text.text : "null");
       expect(outcome).toMatchObject({
-        kind: "candidate",
-        taskId,
-        requestId: `${taskId}-red-1`,
-        phase: "red",
+        ok: true,
+        action: "run",
+        result: evidence(requestId),
       });
       expect(calls.filter((call) => call.child)).toHaveLength(1);
       expect(calls.find((call) => call.child)?.options?.maxRetries).toBe(0);
@@ -570,6 +488,7 @@ describe("installed openai-responses child route", () => {
     const cwd = mkdtempSync(join(tmpdir(), "cadence-responses-child-"));
     roots.push(cwd);
     writeFileSync(join(cwd, "sentinel.txt"), "unchanged\n");
+    declareInheritedRoute(cwd);
     const beforeFiles = readdirSync(cwd).sort();
     const requestId = "responses-child-request";
     const model = modelFor("cadence-local-responses");
@@ -662,7 +581,7 @@ describe("installed openai-responses child route", () => {
     );
     await pi.emit(
       "input",
-      { type: "input", text: "/abel-implement responses" },
+      { type: "input", text: "/abel-design responses" },
       context,
     );
     await pi.emit(
@@ -671,7 +590,7 @@ describe("installed openai-responses child route", () => {
         type: "before_agent_start",
         prompt: [
           "<abel-request>responses child</abel-request>",
-          "<!-- ABEL:PROMPT:abel-implement -->",
+          "<!-- ABEL:PROMPT:abel-design -->",
         ].join("\n"),
         systemPrompt: "parent system",
         systemPromptOptions: {},

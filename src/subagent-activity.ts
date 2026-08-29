@@ -10,10 +10,10 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import type {
-  RuntimeActivityEvent,
-  RuntimeActivityObserver,
-  RuntimeActivityState,
-} from "./runtime.ts";
+  PacketActivityEvent,
+  PacketActivityObserver,
+  PacketActivityState,
+} from "./packet-runtime.ts";
 
 export const ACTIVITY_DETAILS_KEY = "activityDisplay" as const;
 export const ACTIVITY_WIDGET_KEY = "abel-subagents" as const;
@@ -22,10 +22,51 @@ export const ACTIVITY_REFRESH_MS = 100;
 export const ACTIVITY_WIDGET_MAX_LINES = 12;
 export const ACTIVITY_WIDGET_MIN_WIDTH = 3;
 
-export type TerminalActivityState = Exclude<
-  RuntimeActivityState,
-  "queued" | "running"
->;
+export const WORKFLOW_ACTIVITY_STATES = [
+  "queued",
+  "connecting",
+  "waiting-first-response",
+  "running",
+  "validating",
+  "retrying",
+  "verifying",
+  "paused",
+  "approval-needed",
+  "applying",
+  "recovering",
+  "operation-cancelled",
+  "discarded",
+  "rejected",
+  "completed",
+] as const;
+
+export type WorkflowActivityState = (typeof WORKFLOW_ACTIVITY_STATES)[number];
+export type ActivityState = PacketActivityState | WorkflowActivityState;
+export type TerminalActivityState =
+  | Exclude<
+      PacketActivityState,
+      | "queued"
+      | "connecting"
+      | "waiting-first-response"
+      | "running"
+      | "retrying"
+    >
+  | WorkflowActivityState;
+
+export interface WorkflowActivityUpdate {
+  state: WorkflowActivityState;
+  stage?: "abel-design" | "abel-implement";
+  runId?: string;
+  change?: string;
+  taskId?: string;
+  phase?: string;
+  objective?: string;
+  code?: string;
+  attempt?: number;
+  maxAttempts?: number;
+  wait?: string;
+  legalCommands?: string[];
+}
 
 export interface EvidenceActivitySummary {
   kind: "evidence";
@@ -43,7 +84,7 @@ export interface DiffActivitySummary {
 }
 
 export type ActivitySummary = EvidenceActivitySummary | DiffActivitySummary;
-export type ActivityTone = "success" | "warning" | "muted" | "error";
+export type ActivityTone = "accent" | "success" | "warning" | "muted" | "error";
 
 export interface ActivityDisplay {
   version: 1;
@@ -57,6 +98,13 @@ export interface ActivityDisplay {
   elapsedMs: number;
   summary?: ActivitySummary;
   reason?: string;
+  runId?: string;
+  taskId?: string;
+  code?: string;
+  nextAction?: string;
+  attempt?: number;
+  maxAttempts?: number;
+  wait?: string;
 }
 
 export interface ActivitySnapshot {
@@ -65,11 +113,19 @@ export interface ActivitySnapshot {
   role: string;
   phase: string;
   objective: string;
-  state: "queued" | "running";
+  state: ActivityState;
   sequence: number;
   startedAt: number;
   elapsedMs: number;
   spinnerFrame?: number;
+  tone?: ActivityTone;
+  runId?: string;
+  taskId?: string;
+  code?: string;
+  nextAction?: string;
+  attempt?: number;
+  maxAttempts?: number;
+  wait?: string;
 }
 
 interface ActivityEntry extends ActivitySnapshot {
@@ -131,6 +187,26 @@ export function sanitizeDisplayText(value: unknown, maxLength = 240): string {
   return safe.slice(0, Math.max(0, maxLength));
 }
 
+const SAFE_WORKFLOW_CODE = /^[a-z0-9](?:[a-z0-9._:-]{0,126}[a-z0-9])?$/iu;
+const SAFE_CONTROL_ACTIONS = new Set([
+  "start",
+  "status",
+  "resume",
+  "rebind",
+  "cancel",
+  "discard",
+]);
+
+export function sanitizeWorkflowCode(value: unknown): string {
+  const code = typeof value === "string" ? value : "";
+  return SAFE_WORKFLOW_CODE.test(code) ? code : "workflow-state-unavailable";
+}
+
+function sanitizeControlAction(value: unknown): string {
+  const action = typeof value === "string" ? value : "";
+  return SAFE_CONTROL_ACTIONS.has(action) ? action : "status";
+}
+
 const SAFE_FAILURE_REASONS = new Set([
   "subagent failed",
   "subagent cancelled",
@@ -159,18 +235,32 @@ export function formatElapsed(milliseconds: number): string {
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-function stateGlyph(state: RuntimeActivityState, spinnerFrame = 0): string {
+function stateGlyph(state: ActivityState, spinnerFrame = 0): string {
   switch (state) {
     case "queued":
       return "…";
+    case "connecting":
+    case "waiting-first-response":
     case "running":
+    case "validating":
+    case "retrying":
+    case "verifying":
+    case "applying":
+    case "recovering":
       return SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length] ?? "⠋";
     case "completed":
       return "✓";
     case "failed":
+    case "rejected":
       return "✗";
     case "cancelled":
+    case "operation-cancelled":
       return "⊘";
+    case "discarded":
+      return "◇";
+    case "paused":
+    case "approval-needed":
+      return "!";
     case "timed-out":
       return "⌛";
   }
@@ -183,8 +273,38 @@ function line(value: string, width: number): string {
     : truncateToWidth(bounded, boundedWidth(width), "");
 }
 
-function stateText(state: RuntimeActivityState): string {
+function stateText(state: ActivityState): string {
   return state;
+}
+
+function activityMetadata(
+  snapshot: ActivitySnapshot | ActivityDisplay,
+): string[] {
+  const metadata: string[] = [];
+  if (snapshot.taskId) {
+    metadata.push(`task ${sanitizeDisplayText(snapshot.taskId, 80)}`);
+  }
+  if (snapshot.code) {
+    metadata.push(`code ${sanitizeWorkflowCode(snapshot.code)}`);
+  }
+  if (
+    Number.isSafeInteger(snapshot.attempt) &&
+    (snapshot.attempt as number) > 0
+  ) {
+    metadata.push(
+      Number.isSafeInteger(snapshot.maxAttempts) &&
+        (snapshot.maxAttempts as number) >= (snapshot.attempt as number)
+        ? `attempt ${snapshot.attempt}/${snapshot.maxAttempts}`
+        : `attempt ${snapshot.attempt}`,
+    );
+  }
+  if (snapshot.wait) {
+    metadata.push(`wait ${sanitizeDisplayText(snapshot.wait, 80)}`);
+  }
+  if (snapshot.nextAction) {
+    metadata.push(`next ${sanitizeControlAction(snapshot.nextAction)}`);
+  }
+  return metadata;
 }
 
 function styled(
@@ -221,8 +341,10 @@ function renderActivityLines(
     stateText(snapshot.state),
     formatElapsed(elapsed),
   ].join(" · ");
-  const second = `  ${sanitizeDisplayText(snapshot.objective, 240)}`;
-  const color = "tone" in snapshot ? snapshot.tone : "accent";
+  const metadata = activityMetadata(snapshot);
+  const objective = sanitizeDisplayText(snapshot.objective, 240);
+  const second = `  ${[objective, ...metadata].filter(Boolean).join(" · ")}`;
+  const color = "tone" in snapshot && snapshot.tone ? snapshot.tone : "accent";
   return [
     line(styled(theme, color, first), width),
     line(styled(theme, "muted", second), width),
@@ -246,7 +368,7 @@ export function renderActivityWidgetLines(
     lines.push(...renderActivityLines(entry, width, undefined, _now));
   }
   if (hidden.length > 0) {
-    const running = hidden.filter((entry) => entry.state === "running").length;
+    const running = hidden.filter((entry) => entry.state !== "queued").length;
     const queued = hidden.filter((entry) => entry.state === "queued").length;
     const overflow = [
       `+${hidden.length} more (${running} running, ${queued} queued)`,
@@ -334,6 +456,243 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function workflowStateOf(
+  result: Record<string, unknown>,
+): WorkflowActivityState {
+  const pause = asRecord(result.pause);
+  const operation = asRecord(result.operation);
+  if (
+    pause?.code === "operation-cancelled" ||
+    operation?.kind === "operation-cancelled" ||
+    result.state === "operation-cancelled"
+  ) {
+    return "operation-cancelled";
+  }
+  const state = result.state;
+  switch (state) {
+    case "created":
+    case "ready":
+    case "queued":
+      return "queued";
+    case "connecting":
+      return "connecting";
+    case "waiting-first-response":
+      return "waiting-first-response";
+    case "running":
+      return "running";
+    case "validating-delivery":
+    case "validating":
+      return "validating";
+    case "retryable":
+    case "retrying":
+      return "retrying";
+    case "verifying":
+    case "change-verifying":
+    case "ready-to-apply":
+      return "verifying";
+    case "paused":
+      return "paused";
+    case "approval-needed":
+      return "approval-needed";
+    case "applying":
+      return "applying";
+    case "recovering":
+      return "recovering";
+    case "discarded":
+      return "discarded";
+    case "rejected":
+      return "rejected";
+    case "completed":
+      return result.completed === true ? "completed" : "rejected";
+    default:
+      return "running";
+  }
+}
+
+function workflowTone(state: WorkflowActivityState): ActivityTone {
+  switch (state) {
+    case "completed":
+      return "success";
+    case "rejected":
+      return "error";
+    case "retrying":
+    case "paused":
+    case "approval-needed":
+      return "warning";
+    case "operation-cancelled":
+    case "discarded":
+      return "muted";
+    default:
+      return "accent";
+  }
+}
+
+function legalWorkflowCommands(result: Record<string, unknown>): string[] {
+  return Array.isArray(result.legalCommands)
+    ? result.legalCommands.filter(
+        (command): command is string =>
+          typeof command === "string" && SAFE_CONTROL_ACTIONS.has(command),
+      )
+    : [];
+}
+
+function nextWorkflowAction(
+  state: WorkflowActivityState,
+  commands: readonly string[],
+): string | undefined {
+  const preferred =
+    state === "paused" ||
+    state === "approval-needed" ||
+    state === "retrying" ||
+    state === "operation-cancelled"
+      ? ["resume", "status", "discard"]
+      : state === "completed" || state === "discarded" || state === "rejected"
+        ? ["status"]
+        : ["status", "cancel", "discard"];
+  return preferred.find((command) => commands.includes(command)) ?? commands[0];
+}
+
+function firstWorkflowTask(result: Record<string, unknown>):
+  | {
+      taskId?: string;
+      phase?: string;
+    }
+  | undefined {
+  if (!Array.isArray(result.tasks)) return undefined;
+  const records = result.tasks
+    .map(asRecord)
+    .filter((task): task is Record<string, unknown> => task !== undefined);
+  const task =
+    records.find((candidate) => candidate.state !== "verified") ?? records[0];
+  return task
+    ? {
+        ...(typeof task.taskId === "string" ? { taskId: task.taskId } : {}),
+        ...(typeof task.phase === "string" ? { phase: task.phase } : {}),
+      }
+    : undefined;
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  return Number.isSafeInteger(value) && (value as number) > 0
+    ? (value as number)
+    : undefined;
+}
+
+function workflowWait(
+  state: WorkflowActivityState,
+  result: Record<string, unknown>,
+): string | undefined {
+  if (typeof result.wait === "string") {
+    return sanitizeDisplayText(result.wait, 80);
+  }
+  const approval = asRecord(result.approval);
+  if (
+    state === "approval-needed" &&
+    (approval?.gate === "gate-a" || approval?.gate === "gate-b")
+  ) {
+    return approval.gate;
+  }
+  if (state === "connecting") return "connection";
+  if (state === "waiting-first-response") return "first-response";
+  if (state === "retrying") return "bounded-policy";
+  const queue = Array.isArray(result.queue)
+    ? asRecord(result.queue[0])
+    : undefined;
+  const position = positiveInteger(queue?.position);
+  return state === "queued" && position ? `queue-${position}` : undefined;
+}
+
+function workflowCode(result: Record<string, unknown>): string | undefined {
+  const pause = asRecord(result.pause);
+  const raw =
+    typeof result.code === "string"
+      ? result.code
+      : typeof pause?.code === "string"
+        ? pause.code
+        : undefined;
+  return raw === undefined ? undefined : sanitizeWorkflowCode(raw);
+}
+
+export function projectWorkflowActivity(
+  args: unknown,
+  result: unknown,
+  elapsedMs: number,
+): ActivityDisplay {
+  const command = asRecord(args) ?? {};
+  const payload = asRecord(result) ?? {};
+  const state = workflowStateOf(payload);
+  const task = firstWorkflowTask(payload);
+  const stage =
+    payload.stage === "abel-design" || payload.stage === "abel-implement"
+      ? payload.stage
+      : command.stage === "abel-design" || command.stage === "abel-implement"
+        ? command.stage
+        : "abel-control";
+  const change =
+    typeof payload.change === "string"
+      ? payload.change
+      : typeof command.change === "string"
+        ? command.change
+        : undefined;
+  const runId = typeof payload.runId === "string" ? payload.runId : undefined;
+  const taskId =
+    typeof payload.taskId === "string" ? payload.taskId : task?.taskId;
+  const phase =
+    typeof payload.phase === "string"
+      ? payload.phase
+      : (task?.phase ??
+        (typeof command.command === "string" ? command.command : "control"));
+  const objective =
+    typeof payload.objective === "string"
+      ? payload.objective
+      : change
+        ? `change ${change}`
+        : `${String(command.command ?? "control")} workflow run`;
+  const legalCommands = legalWorkflowCommands(payload);
+  const policy = asRecord(payload.policy);
+  const attempt = positiveInteger(payload.attempt ?? policy?.attempt);
+  const maxAttempts = positiveInteger(
+    payload.maxAttempts ?? policy?.maxAttempts,
+  );
+  const code =
+    state === "rejected" && payload.state === "completed"
+      ? "completion-state-inconsistent"
+      : workflowCode(payload);
+  return {
+    version: 1,
+    kind: "activityDisplay",
+    requestId: sanitizeDisplayText(
+      runId ?? taskId ?? change ?? command.operationId ?? "pending",
+      128,
+    ),
+    role: sanitizeDisplayText(stage, 80),
+    phase: sanitizeDisplayText(phase, 40),
+    objective: sanitizeDisplayText(objective, 240),
+    state,
+    tone: workflowTone(state),
+    elapsedMs: Math.max(0, elapsedMs),
+    ...(runId ? { runId: sanitizeDisplayText(runId, 128) } : {}),
+    ...(taskId ? { taskId: sanitizeDisplayText(taskId, 128) } : {}),
+    ...(code ? { code } : {}),
+    ...(attempt ? { attempt } : {}),
+    ...(maxAttempts ? { maxAttempts } : {}),
+    ...(workflowWait(state, payload)
+      ? { wait: workflowWait(state, payload) }
+      : {}),
+    ...(nextWorkflowAction(state, legalCommands)
+      ? { nextAction: nextWorkflowAction(state, legalCommands) }
+      : {}),
+  };
+}
+
+function activityResultFromUpdate(update: WorkflowActivityUpdate): unknown {
+  return {
+    ...update,
+    ...(update.state === "completed" ? { completed: true } : {}),
+    ...(update.code ? { pause: { code: update.code } } : {}),
+  };
+}
+
 export function summarizeDispatchResult(
   result: unknown,
 ): ActivitySummary | undefined {
@@ -413,16 +772,22 @@ function toneForResult(result: unknown): ActivityTone | undefined {
 }
 
 function terminalState(
-  event: RuntimeActivityEvent,
-): event is RuntimeActivityEvent & {
+  event: PacketActivityEvent,
+): event is PacketActivityEvent & {
   state: TerminalActivityState;
 } {
-  return !["queued", "running"].includes(event.state);
+  return ![
+    "queued",
+    "connecting",
+    "waiting-first-response",
+    "running",
+    "retrying",
+  ].includes(event.state);
 }
 
 function displayFromEvent(
   entry: ActivityEntry,
-  event: RuntimeActivityEvent,
+  event: PacketActivityEvent,
   elapsedMs: number,
 ): ActivityDisplay {
   const reason = event.failureReason;
@@ -434,6 +799,10 @@ function displayFromEvent(
     phase: entry.phase,
     objective: sanitizeDisplayText(entry.objective),
     state: event.state as TerminalActivityState,
+    ...(entry.attempt ? { attempt: entry.attempt } : {}),
+    ...(entry.maxAttempts ? { maxAttempts: entry.maxAttempts } : {}),
+    ...(entry.code ? { code: entry.code } : {}),
+    ...(entry.wait ? { wait: entry.wait } : {}),
     tone:
       event.state === "failed" || event.state === "timed-out"
         ? "error"
@@ -446,7 +815,7 @@ function displayFromEvent(
 }
 
 export function createActivityDisplay(
-  event: RuntimeActivityEvent,
+  event: PacketActivityEvent,
   elapsedMs: number,
   result?: unknown,
 ): ActivityDisplay {
@@ -456,10 +825,14 @@ export function createActivityDisplay(
     role: event.role,
     phase: event.phase,
     objective: event.objective,
-    state: event.state === "queued" ? "queued" : "running",
+    state: event.state,
     sequence: event.sequence,
     startedAt: 0,
     elapsedMs,
+    ...(event.attempt ? { attempt: event.attempt } : {}),
+    ...(event.maxAttempts ? { maxAttempts: event.maxAttempts } : {}),
+    ...(event.code ? { code: event.code } : {}),
+    ...(event.wait ? { wait: event.wait } : {}),
   };
   const display = displayFromEvent(entry, event, elapsedMs);
   const summary = result ? summarizeDispatchResult(result) : undefined;
@@ -496,6 +869,7 @@ export class ActivityController {
   private timer?: TimerHandle | unknown;
   private requestRender?: () => void;
   private widgetInstalled = false;
+  private controlSequence = 0;
   private readonly now: () => number;
   private readonly setIntervalFn: (
     callback: () => void,
@@ -535,17 +909,113 @@ export class ActivityController {
     this.clearUi();
   }
 
+  beginWorkflow(
+    toolCallId: string,
+    args: unknown,
+    onUpdate?: (result: unknown) => void,
+  ): void {
+    if (!this.accepting || this.entries.has(toolCallId)) return;
+    const display = projectWorkflowActivity(args, { state: "queued" }, 0);
+    const entry: ActivityEntry = {
+      toolCallId,
+      requestId: display.requestId,
+      role: display.role,
+      phase: display.phase,
+      objective: display.objective,
+      state: display.state,
+      sequence: ++this.controlSequence,
+      startedAt: this.now(),
+      elapsedMs: 0,
+      spinnerFrame: this.spinnerFrame,
+      tone: display.tone,
+      onUpdate,
+    };
+    this.entries.set(toolCallId, entry);
+    this.emit(entry, entry);
+    this.syncUi();
+  }
+
+  updateWorkflow(
+    toolCallId: string,
+    args: unknown,
+    update: WorkflowActivityUpdate,
+  ): void {
+    const entry = this.entries.get(toolCallId);
+    if (!this.accepting || !entry) return;
+    const display = projectWorkflowActivity(
+      args,
+      activityResultFromUpdate(update),
+      Math.max(0, this.now() - entry.startedAt),
+    );
+    Object.assign(entry, {
+      requestId: display.requestId,
+      role: display.role,
+      phase: display.phase,
+      objective: display.objective,
+      state: display.state,
+      elapsedMs: display.elapsedMs,
+      tone: display.tone,
+      runId: display.runId,
+      taskId: display.taskId,
+      code: display.code,
+      nextAction: display.nextAction,
+      attempt: display.attempt,
+      maxAttempts: display.maxAttempts,
+      wait: display.wait,
+    });
+    this.emit(entry, entry);
+    this.syncUi();
+  }
+
+  finalizeWorkflow(
+    toolCallId: string,
+    args: unknown,
+    result: unknown,
+  ): ActivityDisplay | undefined {
+    const entry = this.entries.get(toolCallId);
+    if (!entry) return undefined;
+    const display = projectWorkflowActivity(
+      args,
+      result,
+      Math.max(0, this.now() - entry.startedAt),
+    );
+    this.emit(entry, display);
+    this.entries.delete(toolCallId);
+    this.syncUi();
+    return display;
+  }
+
+  failWorkflow(toolCallId: string): void {
+    const entry = this.entries.get(toolCallId);
+    if (!entry) return;
+    const display: ActivityDisplay = {
+      version: 1,
+      kind: "activityDisplay",
+      requestId: entry.requestId,
+      role: entry.role,
+      phase: entry.phase,
+      objective: entry.objective,
+      state: "failed",
+      tone: "error",
+      elapsedMs: Math.max(0, this.now() - entry.startedAt),
+      reason: "subagent failed",
+    };
+    this.emit(entry, display);
+    this.entries.delete(toolCallId);
+    this.syncUi();
+  }
+
   observe(
     toolCallId: string,
     onUpdate?: (result: unknown) => void,
-  ): RuntimeActivityObserver {
+  ): PacketActivityObserver {
     return (event) => this.accept(toolCallId, onUpdate, event);
   }
 
   accept(
     toolCallId: string,
     onUpdate: ((result: unknown) => void) | undefined,
-    event: RuntimeActivityEvent,
+    event: PacketActivityEvent,
   ): void {
     if (!this.accepting || this.terminals.has(toolCallId)) return;
     let entry = this.entries.get(toolCallId);
@@ -556,17 +1026,25 @@ export class ActivityController {
         role: event.role,
         phase: event.phase,
         objective: sanitizeDisplayText(event.objective),
-        state: event.state === "queued" ? "queued" : "running",
+        state: event.state,
         sequence: event.sequence,
         startedAt: this.now(),
         elapsedMs: 0,
         spinnerFrame: this.spinnerFrame,
+        ...(event.attempt ? { attempt: event.attempt } : {}),
+        ...(event.maxAttempts ? { maxAttempts: event.maxAttempts } : {}),
+        ...(event.code ? { code: event.code } : {}),
+        ...(event.wait ? { wait: event.wait } : {}),
         onUpdate,
       };
       this.entries.set(toolCallId, entry);
     } else {
       entry.onUpdate = onUpdate ?? entry.onUpdate;
-      if (event.state === "running") entry.state = "running";
+      entry.state = event.state;
+      entry.attempt = event.attempt;
+      entry.maxAttempts = event.maxAttempts;
+      entry.code = event.code;
+      entry.wait = event.wait;
     }
     if (terminalState(event)) {
       const display = displayFromEvent(
@@ -701,7 +1179,7 @@ export class ActivityController {
     this.startTimer();
     try {
       const running = [...this.entries.values()].filter(
-        (entry) => entry.state === "running",
+        (entry) => entry.state !== "queued",
       ).length;
       const queued = this.entries.size - running;
       this.ui.setStatus(
@@ -772,7 +1250,11 @@ export function renderActivityResult(
     return new ActivityInlineComponent(display, theme);
   }
   if (failed) {
-    return new Text(`${dispatchLabel(args?.action)} failed`, 0, 0);
+    return new Text(
+      `${dispatchLabel(args?.action ?? args?.command)} failed`,
+      0,
+      0,
+    );
   }
   const content = asRecord(result)?.content;
   const text = Array.isArray(content)
@@ -838,6 +1320,23 @@ export function renderActivityCall(
   context?: ActivityRenderContext,
 ): Component {
   const value = asRecord(args);
+  if (typeof value?.command === "string" && value.version === 2) {
+    if (context?.executionStarted || context?.isError) return new Text("");
+    const projected = projectWorkflowActivity(value, { state: "queued" }, 0);
+    const display: ActivitySnapshot = {
+      toolCallId: "call",
+      requestId: projected.requestId,
+      role: projected.role,
+      phase: projected.phase,
+      objective: projected.objective,
+      state: projected.state,
+      sequence: 0,
+      startedAt: Date.now(),
+      elapsedMs: 0,
+      tone: projected.tone,
+    };
+    return new ActivityInlineComponent(display, theme);
+  }
   if (value?.action !== "run") {
     return new Text(context?.isError ? "" : dispatchLabel(value?.action), 0, 0);
   }

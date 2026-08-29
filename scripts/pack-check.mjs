@@ -2,11 +2,13 @@
 // no symlinks, and the four prompt/skill/agent families. Mirrors the
 // distribution test's approved member list without re-running vitest.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,6 +25,7 @@ const expectedMembers = [
   "package/agents/diagnosis-worker.md",
   "package/agents/implementation-worker.md",
   "package/config/.env.example",
+  "package/config/routes.example.json",
   "package/licenses/pi-subagents-MIT.txt",
   "package/package.json",
   "package/prompts/abel-design.md",
@@ -40,27 +43,33 @@ const expectedMembers = [
   "package/skills/grok-search/grok-search.mjs",
   "package/src/activation.ts",
   "package/src/agent-registry.ts",
-  "package/src/candidate-preflight.ts",
+  "package/src/apply-transaction.ts",
+  "package/src/artifact-store.ts",
   "package/src/parent-payload-bridge.ts",
   "package/src/child-session.ts",
   "package/src/contracts.ts",
-  "package/src/drain.ts",
+  "package/src/control-contracts.ts",
+  "package/src/delivery-compiler.ts",
   "package/src/empty-resource-loader.ts",
   "package/src/file-snapshot.ts",
   "package/src/index.ts",
   "package/src/implement-graph.ts",
+  "package/src/isolation-backend.ts",
+  "package/src/packet-runtime.ts",
   "package/src/parent-provider.ts",
-  "package/src/patch.ts",
-  "package/src/result-store.ts",
-  "package/src/runtime.ts",
+  "package/src/route-policy.ts",
+  "package/src/run-state.ts",
+  "package/src/run-store.ts",
   "package/src/safe-path.ts",
-  "package/src/scheduler.ts",
   "package/src/scoped-tools.ts",
+  "package/src/state-root.ts",
   "package/src/subagent-activity.ts",
-  "package/src/subagent-endpoint.ts",
   "package/src/submit-tool.ts",
+  "package/src/task-ledger.ts",
   "package/src/verification-capability.ts",
-  "package/src/worker.ts",
+  "package/src/worker-broker.ts",
+  "package/src/workflow-engine.ts",
+  "package/src/workspace-store.ts",
 ].sort();
 
 const run = (command, args, options = {}) => {
@@ -96,6 +105,29 @@ try {
     !existsSync(path.join(packageDir, "provenance", "adapted-modules.yaml"))
   ) {
     throw new Error("provenance/adapted-modules.yaml missing");
+  }
+  const provenance = readFileSync(
+    path.join(packageDir, "provenance", "adapted-modules.yaml"),
+    "utf8",
+  );
+  for (const role of [
+    "contract-reviewer",
+    "design-explorer",
+    "diagnosis-worker",
+    "implementation-worker",
+  ]) {
+    const hash = createHash("sha256")
+      .update(readFileSync(path.join(packageDir, "agents", `${role}.md`)))
+      .digest("hex");
+    const binding = provenance.match(
+      new RegExp(
+        `path: agents/${role}\\.md[\\s\\S]{0,160}?role: ${role}[\\s\\S]{0,160}?sha256: ([0-9a-f]{64})`,
+        "u",
+      ),
+    );
+    if (binding?.[1] !== hash) {
+      throw new Error(`provenance hash mismatch: ${role}`);
+    }
   }
   console.log(`pack-check: ${members.length} members match the approved set`);
 } finally {

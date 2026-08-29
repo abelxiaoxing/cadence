@@ -3,8 +3,21 @@
 // the active set at session start. Eligible-stage activation is wired by the
 // workflow routing (abel-design/implement/diagnose provenance) in the prompts
 // integration; abel-init and ordinary prompts never activate dispatch.
-import { dirname, join } from "node:path";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
+import { homedir } from "node:os";
+import path, { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import type {
   AgentToolResult,
   AgentToolUpdateCallback,
@@ -14,15 +27,56 @@ import type {
   ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
 import { type Activation, activateTool, deactivateTool } from "./activation.ts";
-import { ACTIONS } from "./contracts.ts";
+import { loadAgentDefinitions } from "./agent-registry.ts";
+import { runChildSession } from "./child-session.ts";
+import {
+  type AtomicVerificationContract,
+  isValidRelativePath,
+  LIMITS,
+  type StructuredVerificationContract,
+  verificationSteps,
+} from "./contracts.ts";
+import { validateControlCommand } from "./control-contracts.ts";
+import {
+  assessDeliveryTraceability,
+  compileImplementPlan,
+  DeliveryValidationError,
+  IMPLEMENT_PLAN_SCHEMA_VERSION,
+  parseGateAReceipt,
+  parseImplementPlan,
+  parseReadyReceipt,
+} from "./delivery-compiler.ts";
+import { canonicalJson, hashCanonicalValue } from "./implement-graph.ts";
+import { BubblewrapIsolationBackend } from "./isolation-backend.ts";
+import { PACKET_ACTIONS, PacketRuntime } from "./packet-runtime.ts";
 import { ParentPayloadBridge } from "./parent-payload-bridge.ts";
-import { Runtime } from "./runtime.ts";
+import { runtimeForWorkerRoute } from "./parent-provider.ts";
+import {
+  inspectRoutePolicy,
+  loadRoutePolicy,
+  type RoutePolicyResolution,
+  unavailableRoutePolicy,
+  type WorkerRoutePolicy,
+} from "./route-policy.ts";
+import { observeSafePath } from "./safe-path.ts";
+import { resolveStateRoot } from "./state-root.ts";
 import {
   ACTIVITY_DETAILS_KEY,
   ActivityController,
   renderActivityCall,
   renderActivityResult,
+  type WorkflowActivityUpdate,
 } from "./subagent-activity.ts";
+import { classifyCandidateContextRequest } from "./submit-tool.ts";
+import {
+  bindCurrentVerificationCapability,
+  isVerificationCapabilityCurrent,
+  type VerificationRunnerBinding,
+} from "./verification-capability.ts";
+import {
+  openDurableWorkflowEngine,
+  type WorkflowDeliverySource,
+} from "./workflow-engine.ts";
 
 export const DISPATCH_TOOL = "abel_dispatch";
 
@@ -139,12 +193,6 @@ const DESIGN_REQUEST_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-function requestSchemaForStage(name?: EligiblePrompt): object {
-  return name === "abel-design"
-    ? DESIGN_REQUEST_SCHEMA
-    : GENERIC_REQUEST_SCHEMA;
-}
-
 function invokedPrompt(text: string): EligiblePrompt | undefined {
   const name = text.match(/^\/([^\s]+)(?:\s|$)/)?.[1];
   return ELIGIBLE_PROMPTS.find((candidate) => candidate === name);
@@ -218,68 +266,1303 @@ function splitUsage(result: unknown): { payload: unknown; usage?: unknown } {
   return { payload, usage };
 }
 
-export default function register(pi: ExtensionAPI): void {
-  const parentPayloadBridge = new ParentPayloadBridge();
-  const runtime = new Runtime({ parentPayloadBridge });
-  const activity = new ActivityController();
+export interface WorkflowControlEngine {
+  execute(
+    command: unknown,
+    context?: ExtensionContext,
+    signal?: AbortSignal,
+    onActivity?: (event: WorkflowActivityUpdate) => void,
+  ): Promise<Record<string, unknown>>;
+  close(): void | Promise<void>;
+}
 
-  const registerDispatchTool = (stage?: EligiblePrompt) => {
-    pi.registerTool({
-      name: DISPATCH_TOOL,
-      label: "Abel Dispatch",
-      description:
-        stage === "abel-design"
-          ? "Run exactly one bounded read-only design-explorer packet. When parallel packets are required, emit every sibling abel_dispatch call together in one assistant response before waiting for any result."
-          : "Private Abel workflow delegation: run bounded read-only evidence or Worker phase requests, apply or discard retained results, apply a parent-only stable AGENTS checkpoint, cancel work, or finish the stage. Inactive unless an eligible Abel stage verified its invocation.",
-      executionMode: "parallel",
-      renderShell: "self",
-      parameters: {
-        type: "object",
-        properties: {
-          action: { type: "string", enum: [...ACTIONS] },
-          request: requestSchemaForStage(stage),
-          resultId: {
-            type: "string",
-            description: "Retained result id for apply/discard",
-          },
-          requestId: {
-            type: "string",
-            description: "Current Implement apply/discard operation identity",
-          },
-          rejection: {
-            type: "object",
-            description: "Typed parent rejection for Implement discard",
-          },
-          agentsCheckpoint: {
-            type: "object",
-            description:
-              "Parent-owned approved managed-block checkpoint for action=apply (mutually exclusive with resultId)",
-          },
-        },
-        required: ["action"],
+export type WorkflowControlEngineFactory = (
+  ctx: ExtensionContext,
+  parentPayloadBridge: ParentPayloadBridge,
+) => WorkflowControlEngine | Promise<WorkflowControlEngine>;
+
+const PACKAGE_DELIVERY_MAX_BYTES = 16 * 1024 * 1024;
+const execFileAsync = promisify(execFile);
+
+export interface OpenSpecDeliveryInspection {
+  change: string;
+  schema: string;
+  planningComplete: boolean;
+  strictValid: boolean;
+  artifactPaths: string[];
+}
+
+export interface PackageDeliverySourceOptions {
+  inspectOpenSpec?: (
+    consumerRoot: string,
+    change: string,
+  ) => Promise<OpenSpecDeliveryInspection>;
+}
+
+function sha256(value: Uint8Array | string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function normalizedTrackingArtifact(
+  bytes: Uint8Array,
+  taskIds: readonly string[],
+): Buffer | undefined {
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return undefined;
+  }
+  const identities = taskIds.map((taskId) => ({
+    taskId,
+    pattern: new RegExp(
+      `(?:^|[^A-Za-z0-9._:-])${taskId.replace(
+        /[.*+?^${}()|[\]\\]/gu,
+        "\\$&",
+      )}(?![A-Za-z0-9._:-])`,
+      "u",
+    ),
+    matches: 0,
+  }));
+  const normalized = text
+    .split(/(?<=\n)/u)
+    .map((segment) => {
+      const line = segment.endsWith("\n") ? segment.slice(0, -1) : segment;
+      if (!/^\s*-\s+\[[ xX]\]/u.test(line)) return segment;
+      const matching = identities.filter(({ pattern }) => pattern.test(line));
+      if (matching.length !== 1) return segment;
+      matching[0].matches += 1;
+      return segment.replace(/^(\s*-\s+)\[[xX]\]/u, "$1[ ]");
+    })
+    .join("");
+  if (identities.some(({ matches }) => matches !== 1)) return undefined;
+  return Buffer.from(normalized, "utf8");
+}
+
+function readPackageDeliveryFile(
+  root: string,
+  relative: string,
+  maximumBytes = PACKAGE_DELIVERY_MAX_BYTES,
+): Buffer {
+  const observation = observeSafePath(root, relative);
+  if (observation.kind !== "file") {
+    throw new Error("delivery-file-unavailable");
+  }
+  const target = path.join(root, ...relative.split("/"));
+  const stat = lstatSync(target);
+  if (stat.size < 1 || stat.size > maximumBytes) {
+    throw new Error("delivery-file-size-invalid");
+  }
+  return readFileSync(target);
+}
+
+function deliveryRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function parseCommandJson(
+  value: string,
+  code: string,
+): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error(code);
+  }
+  const record = deliveryRecord(parsed);
+  if (!record) throw new Error(code);
+  return record;
+}
+
+export async function inspectOpenSpecDelivery(
+  consumerRoot: string,
+  change: string,
+): Promise<OpenSpecDeliveryInspection> {
+  const [statusExecution, validationExecution] = await Promise.all([
+    execFileAsync("openspec", ["status", "--change", change, "--json"], {
+      cwd: consumerRoot,
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024,
+    }),
+    execFileAsync(
+      "openspec",
+      ["validate", change, "--strict", "--json", "--no-interactive"],
+      {
+        cwd: consumerRoot,
+        encoding: "utf8",
+        maxBuffer: 4 * 1024 * 1024,
       },
-      async execute(
-        toolCallId: string,
-        params: {
-          action?: string;
-          request?: unknown;
-          resultId?: string;
-          requestId?: string;
-          rejection?: unknown;
-          agentsCheckpoint?: unknown;
-        },
-        signal: AbortSignal | undefined,
-        onUpdate: AgentToolUpdateCallback<unknown> | undefined,
-        ctx: ExtensionContext,
+    ),
+  ]);
+  const status = parseCommandJson(
+    statusExecution.stdout,
+    "delivery-openspec-status-invalid",
+  );
+  const validation = parseCommandJson(
+    validationExecution.stdout,
+    "delivery-openspec-validation-invalid",
+  );
+  const changeRoot = path.resolve(consumerRoot, "openspec", "changes", change);
+  const artifactPathsRecord = deliveryRecord(status.artifactPaths);
+  const artifactPaths = artifactPathsRecord
+    ? Object.values(artifactPathsRecord).flatMap((entry) => {
+        const record = deliveryRecord(entry);
+        if (!record || !Array.isArray(record.existingOutputPaths)) return [];
+        return record.existingOutputPaths.flatMap((candidate) => {
+          if (typeof candidate !== "string") return [];
+          const resolved = path.resolve(candidate);
+          const relative = path.relative(changeRoot, resolved);
+          return relative &&
+            !relative.startsWith(`..${path.sep}`) &&
+            relative !== ".." &&
+            !path.isAbsolute(relative)
+            ? [relative.split(path.sep).join("/")]
+            : [];
+        });
+      })
+    : [];
+  const items = Array.isArray(validation.items) ? validation.items : [];
+  const strictValid =
+    items.length === 1 &&
+    deliveryRecord(items[0])?.id === change &&
+    deliveryRecord(items[0])?.valid === true;
+  if (
+    status.changeName !== change ||
+    typeof status.schemaName !== "string" ||
+    artifactPaths.length === 0
+  ) {
+    throw new Error("delivery-openspec-status-invalid");
+  }
+  return {
+    change,
+    schema: status.schemaName,
+    planningComplete:
+      status.isPlanningComplete === true && status.isComplete === true,
+    strictValid,
+    artifactPaths: [...new Set(artifactPaths)].sort(),
+  };
+}
+
+export function packageDeliverySource(
+  consumerRoot: string,
+  options: PackageDeliverySourceOptions = {},
+): WorkflowDeliverySource {
+  const inspect = options.inspectOpenSpec ?? inspectOpenSpecDelivery;
+  return {
+    async load(input) {
+      if (input.stage !== "abel-implement") {
+        throw new DeliveryValidationError(["delivery-stage-invalid"]);
+      }
+      const changeRoot = `openspec/changes/${input.change}`;
+      const receiptRelative = `${changeRoot}/ready.yaml`;
+      const planRelative = `${changeRoot}/implement-plan.json`;
+      let receiptBytes: Buffer;
+      try {
+        receiptBytes = readPackageDeliveryFile(
+          consumerRoot,
+          receiptRelative,
+          4 * 1024 * 1024,
+        );
+      } catch {
+        throw new DeliveryValidationError(["delivery-receipt-unavailable"]);
+      }
+      let receipt: ReturnType<typeof parseReadyReceipt>;
+      try {
+        receipt = parseReadyReceipt(receiptBytes);
+      } catch {
+        throw new DeliveryValidationError(["delivery-receipt-invalid"]);
+      }
+      const diagnostics = new Set<string>();
+      if (receipt.change !== input.change) {
+        diagnostics.add("delivery-change-mismatch");
+      }
+      const receiptHash = sha256(receiptBytes);
+      if (
+        (input.deliveryRevision !== undefined &&
+          input.deliveryRevision !== receipt.deliveryRevision) ||
+        (input.receiptHash !== undefined && input.receiptHash !== receiptHash)
       ) {
-        const action = typeof params?.action === "string" ? params.action : "";
-        const validRun =
-          action === "run" && runtime.validateRequest(params.request).ok;
-        const tuiRun = ctx.mode === "tui" && validRun;
-        const { action: _action, ...operation } = params;
-        const result = tuiRun
-          ? await runtime.execute(
-              action,
+        diagnostics.add("delivery-revision-mismatch");
+      }
+
+      let inspection: OpenSpecDeliveryInspection | undefined;
+      try {
+        inspection = await inspect(consumerRoot, input.change);
+      } catch {
+        diagnostics.add("delivery-openspec-unavailable");
+      }
+      if (inspection) {
+        if (!inspection.strictValid) {
+          diagnostics.add("delivery-openspec-strict-invalid");
+        }
+        if (!inspection.planningComplete) {
+          diagnostics.add("delivery-openspec-incomplete");
+        }
+        if (inspection.schema !== receipt.schema) {
+          diagnostics.add("delivery-schema-mismatch");
+        }
+      }
+
+      let gateABytes: Buffer | undefined;
+      let gateA: ReturnType<typeof parseGateAReceipt> | undefined;
+      try {
+        gateABytes = readPackageDeliveryFile(
+          consumerRoot,
+          `${changeRoot}/${receipt.approvals.gateA.path}`,
+          4 * 1024 * 1024,
+        );
+        if (sha256(gateABytes) !== receipt.approvals.gateA.rawSha256) {
+          diagnostics.add("delivery-gate-a-hash-mismatch");
+        }
+        gateA = parseGateAReceipt(gateABytes);
+        if (
+          gateA.change !== receipt.change ||
+          gateA.schema !== receipt.schema
+        ) {
+          diagnostics.add("delivery-gate-a-binding-mismatch");
+        }
+      } catch {
+        diagnostics.add("delivery-gate-a-invalid");
+      }
+
+      const artifactBytes = new Map<string, Buffer>();
+      const artifactHashes = new Map(
+        receipt.artifacts.map((artifact) => [
+          artifact.path,
+          artifact.rawSha256,
+        ]),
+      );
+      for (const artifact of receipt.artifacts) {
+        try {
+          const bytes = readPackageDeliveryFile(
+            consumerRoot,
+            `${changeRoot}/${artifact.path}`,
+          );
+          artifactBytes.set(artifact.path, bytes);
+          if (
+            artifact.path !== receipt.traceability.taskPath &&
+            sha256(bytes) !== artifact.rawSha256
+          ) {
+            diagnostics.add(`delivery-artifact-hash-mismatch:${artifact.path}`);
+          }
+        } catch {
+          diagnostics.add(`delivery-artifact-unavailable:${artifact.path}`);
+        }
+      }
+      if (inspection) {
+        const covered = new Set(receipt.artifacts.map((entry) => entry.path));
+        const expected = new Set(inspection.artifactPaths);
+        for (const relative of expected) {
+          if (!isValidRelativePath(relative) || !covered.has(relative)) {
+            diagnostics.add(`delivery-artifact-unbound:${relative}`);
+          }
+        }
+        for (const relative of covered) {
+          if (!expected.has(relative)) {
+            diagnostics.add(`delivery-artifact-not-in-openspec:${relative}`);
+          }
+        }
+      }
+      if (gateA) {
+        for (const artifact of gateA.artifacts) {
+          if (artifactHashes.get(artifact.path) !== artifact.rawSha256) {
+            diagnostics.add(
+              `delivery-gate-a-artifact-mismatch:${artifact.path}`,
+            );
+          }
+        }
+      }
+
+      let plan: ReturnType<typeof parseImplementPlan> | undefined;
+      let planBytes: Buffer | undefined;
+      try {
+        planBytes = readPackageDeliveryFile(consumerRoot, planRelative);
+        plan = parseImplementPlan(planBytes);
+      } catch {
+        diagnostics.add("delivery-plan-invalid");
+      }
+      if (plan && planBytes) {
+        if (plan.changeId !== input.change) {
+          diagnostics.add("delivery-plan-change-mismatch");
+        }
+        let compiled: ReturnType<typeof compileImplementPlan> | undefined;
+        try {
+          compiled = compileImplementPlan(plan, { consumerRoot });
+        } catch {
+          diagnostics.add("delivery-verification-closure-invalid");
+        }
+        if (
+          receipt.plan.path !== "implement-plan.json" ||
+          receipt.plan.schemaVersion !== IMPLEMENT_PLAN_SCHEMA_VERSION ||
+          receipt.plan.rawSha256 !== sha256(planBytes) ||
+          receipt.plan.canonicalHash !== hashCanonicalValue(plan)
+        ) {
+          diagnostics.add("delivery-plan-binding-invalid");
+        }
+        if (
+          compiled &&
+          canonicalJson(compiled.closure) !==
+            canonicalJson(receipt.verificationClosure)
+        ) {
+          diagnostics.add("delivery-verification-closure-mismatch");
+        }
+      }
+
+      if (plan) {
+        const tasksBytes = artifactBytes.get(receipt.traceability.taskPath);
+        const expectedTasksHash = artifactHashes.get(
+          receipt.traceability.taskPath,
+        );
+        if (
+          tasksBytes &&
+          expectedTasksHash &&
+          sha256(tasksBytes) !== expectedTasksHash
+        ) {
+          const normalized = normalizedTrackingArtifact(
+            tasksBytes,
+            plan.tracking.taskIds,
+          );
+          if (!normalized || sha256(normalized) !== expectedTasksHash) {
+            diagnostics.add(
+              `delivery-artifact-hash-mismatch:${receipt.traceability.taskPath}`,
+            );
+          }
+        }
+        const specs = [...artifactBytes]
+          .filter(
+            ([relative]) =>
+              relative.startsWith("specs/") && relative.endsWith("/spec.md"),
+          )
+          .flatMap(([relative, bytes]) => {
+            try {
+              return [
+                {
+                  path: relative,
+                  text: new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+                },
+              ];
+            } catch {
+              diagnostics.add(`delivery-artifact-encoding-invalid:${relative}`);
+              return [];
+            }
+          });
+        if (!tasksBytes || specs.length === 0) {
+          diagnostics.add("delivery-traceability-input-unavailable");
+        } else {
+          try {
+            const traceability = assessDeliveryTraceability({
+              tasksMarkdown: new TextDecoder("utf-8", { fatal: true }).decode(
+                tasksBytes,
+              ),
+              specs,
+              plan,
+            });
+            if (!traceability.ok) {
+              for (const diagnostic of traceability.diagnostics) {
+                diagnostics.add(diagnostic);
+              }
+            } else if (
+              canonicalJson(traceability.value) !==
+              canonicalJson(receipt.traceability)
+            ) {
+              diagnostics.add("delivery-traceability-binding-mismatch");
+            }
+          } catch {
+            diagnostics.add("delivery-traceability-invalid");
+          }
+        }
+      }
+      if (!plan || diagnostics.size > 0) {
+        throw new DeliveryValidationError([...diagnostics]);
+      }
+      return {
+        version: 2,
+        gate: "gate-b",
+        revision: receipt.deliveryRevision,
+        receiptHash,
+        plan,
+      };
+    },
+  };
+}
+
+function packageScriptInvocation(
+  packageManager: string,
+  script: string,
+  args: string[],
+): string[] {
+  return packageManager === "npm" || packageManager === "pnpm"
+    ? ["run", script, "--", ...args]
+    : ["run", script, ...args];
+}
+
+function bindingFor(
+  bindings: readonly VerificationRunnerBinding[],
+  command: string,
+): VerificationRunnerBinding | undefined {
+  return bindings.find((binding) => binding.command === command);
+}
+
+function prepareRunnerBindings(
+  root: string,
+  bindings: readonly VerificationRunnerBinding[],
+): {
+  bindings: VerificationRunnerBinding[];
+  mounts: Array<{ source: string; target: string }>;
+  cleanupRoot?: string;
+} {
+  if (!bindings.some((binding) => binding.mountSource)) {
+    return {
+      bindings: bindings.map((binding) => ({
+        ...binding,
+        ...(binding.fixedArgs ? { fixedArgs: [...binding.fixedArgs] } : {}),
+      })),
+      mounts: [],
+    };
+  }
+  const cleanupRoot = mkdtempSync(path.join(root, ".cadence-runners-"));
+  try {
+    const mounted = new Map<
+      string,
+      { source: string; target: string; sandboxTarget: string }
+    >();
+    const prepared = bindings.map((binding) => {
+      if (!binding.mountSource) return { ...binding };
+      const source = path.resolve(binding.mountSource);
+      const sourceStat = lstatSync(source);
+      if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) {
+        throw new Error("runner-mount-unavailable");
+      }
+      let mount = mounted.get(source);
+      if (!mount) {
+        const target = path.join(cleanupRoot, String(mounted.size));
+        mkdirSync(target, { mode: 0o700 });
+        const sandboxRelative = path
+          .relative(root, target)
+          .split(path.sep)
+          .join("/");
+        mount = {
+          source,
+          target,
+          sandboxTarget: `/workspace/${sandboxRelative}`,
+        };
+        mounted.set(source, mount);
+      }
+      const executable = realpathSync(binding.executablePath);
+      const relative = path.relative(source, executable);
+      if (
+        relative === "" ||
+        relative.startsWith("..") ||
+        path.isAbsolute(relative)
+      ) {
+        throw new Error("runner-mount-unavailable");
+      }
+      return {
+        command: binding.command,
+        executablePath: path.posix.join(
+          mount.sandboxTarget,
+          ...relative.split(path.sep),
+        ),
+        ...(binding.fixedArgs ? { fixedArgs: [...binding.fixedArgs] } : {}),
+      };
+    });
+    return {
+      bindings: prepared,
+      mounts: [...mounted.values()].map(({ source, sandboxTarget }) => ({
+        source,
+        target: sandboxTarget,
+      })),
+      cleanupRoot,
+    };
+  } catch (error) {
+    rmSync(cleanupRoot, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function verificationInvocation(
+  step: AtomicVerificationContract,
+  bindings: readonly VerificationRunnerBinding[],
+): { executable: string; args: string[] } | undefined {
+  const reporter = step.kind === "vitest" ? ["--reporter=json"] : [];
+  if (step.kind === "package-script") {
+    const binding = bindingFor(bindings, step.packageManager);
+    return binding
+      ? {
+          executable: binding.executablePath,
+          args: [
+            ...(binding.fixedArgs ?? []),
+            ...packageScriptInvocation(
+              step.packageManager,
+              step.script,
+              step.args,
+            ),
+          ],
+        }
+      : undefined;
+  }
+  const runner = step.runner;
+  if (runner.kind === "package-script") {
+    const binding = bindingFor(bindings, runner.packageManager);
+    const args =
+      step.kind === "vitest"
+        ? [...step.testFiles, ...step.args, ...reporter]
+        : step.args;
+    return binding
+      ? {
+          executable: binding.executablePath,
+          args: [
+            ...(binding.fixedArgs ?? []),
+            ...packageScriptInvocation(
+              runner.packageManager,
+              runner.script,
+              args,
+            ),
+          ],
+        }
+      : undefined;
+  }
+  if (runner.kind === "local-binary") {
+    const binding = bindingFor(bindings, runner.executable);
+    return {
+      executable:
+        binding?.executablePath ??
+        `/workspace/node_modules/.bin/${runner.executable}`,
+      args: [
+        ...(binding?.fixedArgs ?? []),
+        ...(step.kind === "vitest"
+          ? [...step.testFiles, ...step.args, ...reporter]
+          : step.args),
+      ],
+    };
+  }
+  const command = runner.kind === "node" ? "node" : "npx";
+  const binding = bindingFor(bindings, command);
+  if (!binding) return undefined;
+  return {
+    executable: binding.executablePath,
+    args:
+      runner.kind === "node"
+        ? [...(binding.fixedArgs ?? []), runner.script, ...step.args]
+        : [
+            ...(binding.fixedArgs ?? []),
+            "--no-install",
+            runner.executable,
+            ...(step.kind === "vitest" ? step.testFiles : []),
+            ...step.args,
+            ...reporter,
+          ],
+  };
+}
+
+function vitestReport(stdout: string):
+  | {
+      total: number;
+      failed: number;
+      success: boolean;
+      failures: string[];
+      failedText: string[];
+    }
+  | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(stdout);
+  } catch {
+    return undefined;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const report = value as Record<string, unknown>;
+  if (
+    !Number.isSafeInteger(report.numTotalTests) ||
+    !Number.isSafeInteger(report.numFailedTests) ||
+    typeof report.success !== "boolean"
+  ) {
+    return undefined;
+  }
+  const failedAssertions = (
+    Array.isArray(report.testResults) ? report.testResults : []
+  ).flatMap((suite): Array<{ identity: string; text: string[] }> => {
+    if (!suite || typeof suite !== "object" || Array.isArray(suite)) return [];
+    const record = suite as Record<string, unknown>;
+    const suiteName =
+      typeof record.name === "string"
+        ? record.name.replace(/^\/workspace\//u, "")
+        : "unknown-suite";
+    if (!Array.isArray(record.assertionResults)) return [];
+    return record.assertionResults.flatMap(
+      (assertion): Array<{ identity: string; text: string[] }> => {
+        if (
+          !assertion ||
+          typeof assertion !== "object" ||
+          Array.isArray(assertion)
+        ) {
+          return [];
+        }
+        const entry = assertion as Record<string, unknown>;
+        if (entry.status !== "failed") return [];
+        const title =
+          typeof entry.fullName === "string"
+            ? entry.fullName
+            : typeof entry.title === "string"
+              ? entry.title
+              : "unknown-assertion";
+        const diagnostics = Array.isArray(entry.failureMessages)
+          ? entry.failureMessages.filter(
+              (message): message is string => typeof message === "string",
+            )
+          : [];
+        return [
+          {
+            identity: `${suiteName}\0${title}`,
+            text: [title, ...diagnostics],
+          },
+        ];
+      },
+    );
+  });
+  return {
+    total: report.numTotalTests as number,
+    failed: report.numFailedTests as number,
+    success: report.success,
+    failures: failedAssertions.map((failure) => failure.identity),
+    failedText: failedAssertions.flatMap((failure) => failure.text),
+  };
+}
+
+function normalizedFailureIdentities(input: {
+  step: AtomicVerificationContract;
+  report?: ReturnType<typeof vitestReport>;
+  output: string;
+  exitCode: number;
+}): string[] {
+  const vitestFailures = input.report?.failures ?? [];
+  if (vitestFailures.length > 0) {
+    return [...new Set(vitestFailures)]
+      .sort()
+      .map((failure) => sha256(`vitest-failure-v1\0${failure}`));
+  }
+  const normalizedOutput = input.output
+    .replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "gu"), "")
+    .replace(/\r\n?/gu, "\n")
+    .replace(/\b\d+(?:\.\d+)?(?:ms|s)\b/gu, "<duration>")
+    .slice(0, 64 * 1024);
+  return [
+    sha256(
+      canonicalJson({
+        version: 1,
+        verificationId: input.step.id,
+        exitCode: input.exitCode,
+        output: normalizedOutput,
+      }),
+    ),
+  ];
+}
+
+export async function executePackageVerification(input: {
+  root: string;
+  dependencyOwner: string;
+  verification: StructuredVerificationContract;
+  signal: AbortSignal;
+}) {
+  const capability = bindCurrentVerificationCapability(
+    input.root,
+    input.verification,
+    { dependencyOwner: input.dependencyOwner },
+  );
+  if (!capability.ok) {
+    return {
+      ok: false as const,
+      kind: "paused" as const,
+      code: capability.diagnostic.code,
+    };
+  }
+  let runners: ReturnType<typeof prepareRunnerBindings>;
+  try {
+    runners = prepareRunnerBindings(
+      input.root,
+      capability.value.runnerBindings,
+    );
+  } catch {
+    return {
+      ok: false as const,
+      kind: "paused" as const,
+      code: "runner-mount-unavailable",
+    };
+  }
+  try {
+    const nodeModules = path.join(input.dependencyOwner, "node_modules");
+    const dependency = lstatSync(nodeModules, { throwIfNoEntry: false });
+    const mounts = [] as Array<{
+      source: string;
+      target: string;
+      writable?: boolean;
+    }>;
+    if (dependency) {
+      if (!dependency.isDirectory() || dependency.isSymbolicLink()) {
+        return {
+          ok: false as const,
+          kind: "paused" as const,
+          code: "dependency-path-unsafe",
+        };
+      }
+      const target = path.join(input.root, "node_modules");
+      const targetStat = lstatSync(target, { throwIfNoEntry: false });
+      if (
+        targetStat &&
+        (!targetStat.isDirectory() || targetStat.isSymbolicLink())
+      ) {
+        return {
+          ok: false as const,
+          kind: "paused" as const,
+          code: "dependency-path-unsafe",
+        };
+      }
+      if (!targetStat) mkdirSync(target, { mode: 0o700 });
+      mounts.push({ source: nodeModules, target: "/workspace/node_modules" });
+    }
+    mounts.push(...runners.mounts);
+    const isolation = new BubblewrapIsolationBackend();
+    const steps = verificationSteps(input.verification);
+    let final:
+      | {
+          exitCode: number;
+          classification: AtomicVerificationContract["classification"];
+          diagnostic: { kind: "assertion" | "compiler"; id: string };
+        }
+      | undefined;
+    for (const step of steps) {
+      const invocation = verificationInvocation(step, runners.bindings);
+      if (!invocation) {
+        return {
+          ok: false as const,
+          kind: "paused" as const,
+          code: "runner-missing",
+        };
+      }
+      const executed = await isolation.run({
+        root: input.root,
+        executable: invocation.executable,
+        args: invocation.args,
+        mounts,
+        environment: { CI: "1" },
+        signal: input.signal,
+      });
+      if (!executed.ok) {
+        if (executed.state === "cancelled") throw input.signal.reason;
+        return {
+          ok: false as const,
+          kind: "paused" as const,
+          code: executed.code,
+        };
+      }
+      const report =
+        step.kind === "vitest" ? vitestReport(executed.stdout) : undefined;
+      const output = `${executed.stdout}\n${executed.stderr}`;
+      const identity =
+        step.classification !== "expected-red" ||
+        (step.kind === "vitest"
+          ? report?.failedText.some((text) =>
+              text.includes(step.expectedFailure ?? ""),
+            ) === true
+          : output.includes(step.expectedFailure ?? ""));
+      const accepted =
+        step.classification === "expected-red"
+          ? executed.exitCode !== 0 &&
+            identity &&
+            (step.kind !== "vitest" ||
+              (report !== undefined &&
+                report.failed > 0 &&
+                report.total >= step.minTests))
+          : executed.exitCode === 0 &&
+            (step.kind !== "vitest" ||
+              (report?.success === true && report.total >= step.minTests));
+      if (!accepted) {
+        return {
+          ok: false as const,
+          kind: "retryable" as const,
+          code:
+            step.classification === "expected-red" && executed.exitCode === 0
+              ? "red-not-witnessed"
+              : "verification-rejected",
+          failureIdentities: normalizedFailureIdentities({
+            step,
+            report,
+            output,
+            exitCode: executed.exitCode,
+          }),
+        };
+      }
+      if (!isVerificationCapabilityCurrent(input.root, capability.value)) {
+        return {
+          ok: false as const,
+          kind: "retryable" as const,
+          code: "verification-input-unavailable",
+        };
+      }
+      final = {
+        exitCode: executed.exitCode,
+        classification: step.classification,
+        diagnostic: {
+          kind: step.kind === "vitest" ? "assertion" : "compiler",
+          id: step.id,
+        },
+      };
+    }
+    return final
+      ? { ok: true as const, ...final }
+      : {
+          ok: false as const,
+          kind: "paused" as const,
+          code: "verification-contract-unsupported",
+        };
+  } finally {
+    if (runners.cleanupRoot) {
+      rmSync(runners.cleanupRoot, { recursive: true, force: true });
+    }
+  }
+}
+
+function affectedVerification(
+  task: Parameters<
+    Parameters<typeof openDurableWorkflowEngine>[0]["proposeCandidate"]
+  >[0]["task"],
+): StructuredVerificationContract {
+  if (task.affectedVerification) {
+    return structuredClone(task.affectedVerification);
+  }
+  const finalPhase = task.phases.refactor ?? task.phases.green;
+  const verification = structuredClone(finalPhase.verification);
+  const affected = [...new Set(task.impactClosure.affectedSuite)].sort();
+  if (affected.length === 0) return verification;
+  if (verification.kind === "vitest") {
+    return { ...verification, testFiles: affected };
+  }
+  if (verification.kind === "steps") {
+    return {
+      ...verification,
+      steps: verification.steps.map((step) =>
+        step.kind === "vitest" ? { ...step, testFiles: affected } : step,
+      ),
+    };
+  }
+  return verification;
+}
+
+function childRequestId(
+  operationId: string,
+  taskId: string,
+  phase: string,
+): string {
+  return `child-${sha256(`${operationId}\0${taskId}\0${phase}`).slice(0, 40)}`;
+}
+
+export function openPackageWorkflowControlEngine(
+  initialContext: ExtensionContext,
+  parentPayloadBridge: ParentPayloadBridge,
+): WorkflowControlEngine {
+  const consumerRoot = path.resolve(initialContext.cwd);
+  const routeResolution = loadRoutePolicy({
+    cwd: consumerRoot,
+    home: homedir(),
+  });
+  const stateRoot = resolveStateRoot({
+    consumerRoot,
+    xdgStateHome: process.env.XDG_STATE_HOME,
+  });
+  const contexts = new AsyncLocalStorage<ExtensionContext>();
+  const implementationAgent = loadAgentDefinitions().find(
+    (agent) => agent.role === "implementation-worker",
+  );
+  if (!implementationAgent) {
+    throw new Error("implementation-worker-agent-unavailable");
+  }
+  const engine = openDurableWorkflowEngine({
+    consumerRoot,
+    stateRoot,
+    deliverySource: packageDeliverySource(consumerRoot),
+    routePolicy: routeResolution.ok
+      ? routeResolution.policy
+      : unavailableRoutePolicy(),
+    proposeCandidate: async (input) => {
+      const context = contexts.getStore();
+      if (!context) {
+        return { kind: "paused", code: "parent-context-unavailable" };
+      }
+      const phaseRuntime = await runtimeForWorkerRoute(
+        input.route as WorkerRoutePolicy,
+        context,
+        parentPayloadBridge,
+        input.signal,
+      );
+      if (!phaseRuntime.ok) {
+        if (phaseRuntime.failure.kind === "cancelled") {
+          return { kind: "operation-cancelled", code: "cancelled" };
+        }
+        throw new Error(phaseRuntime.failure.code);
+      }
+      const phase = input.task.phases[input.phase];
+      if (!phase) {
+        return { kind: "paused", code: "task-phase-unavailable" };
+      }
+      const phaseContract = {
+        candidateId: input.candidateArtifact.identity.candidateId,
+        taskId: input.taskId,
+        phase: input.phase,
+        readSet: [...phase.read],
+        writeSet: [...phase.write],
+        deleteSet: [...phase.delete],
+        verification: structuredClone(phase.verification),
+        agentsImpact: input.task.agents.impact,
+        agentsTarget: input.task.agents.target ?? null,
+        agentsManagedOnly: true,
+        agentsWriteAllowed: false,
+        impactClosure: structuredClone(input.task.impactClosure),
+        ...(input.repair
+          ? {
+              repair: {
+                attempt: input.repair.attempt,
+                attribution: input.repair.attribution,
+                failureIdentities: [...input.repair.failureIdentities],
+                verification: structuredClone(input.task.repairVerification),
+                inBoundaryOnly: true,
+              },
+            }
+          : {}),
+      };
+      const child = await runChildSession({
+        cwd: input.workspaceRoot,
+        modelRuntime: phaseRuntime.modelRuntime,
+        model: phaseRuntime.model,
+        systemPrompt: [
+          implementationAgent.content,
+          input.task.objective,
+          input.task.context.agents,
+          input.task.context.contract,
+          `<phase-contract>${JSON.stringify(phaseContract)}</phase-contract>`,
+        ].join("\n\n"),
+        requestId: childRequestId(input.operationId, input.taskId, input.phase),
+        taskId: input.taskId,
+        role: "implementation-worker",
+        phase: input.phase,
+        output: "diff",
+        roots: input.task.roots.map((root) =>
+          path.resolve(input.workspaceRoot, root),
+        ),
+        allowedPaths: [
+          ...new Set([...phase.read, ...phase.write, ...phase.delete]),
+        ],
+        timeoutMs: LIMITS.phaseTimeoutMs,
+        signal: input.signal,
+        failureOverride: phaseRuntime.failureOverride,
+        ledgerProjection: input.ledgerProjection,
+        candidateArtifact: input.candidateArtifact,
+        onStreamStart: input.onHeaders,
+        onStreamProgress: input.onProgress,
+      });
+      if (!child.ok) {
+        if (child.failure.kind === "transport") {
+          throw new Error(child.failure.code);
+        }
+        if (child.failure.kind === "cancelled") {
+          return { kind: "operation-cancelled", code: "cancelled" };
+        }
+        if (child.failure.kind === "approval-boundary") {
+          return { kind: "approval-needed", code: child.failure.code };
+        }
+        if (child.failure.kind === "result-limit") {
+          return { kind: "paused", code: "needs-task-split" };
+        }
+        return child.failure.kind === "environment" ||
+          child.failure.kind === "verification-adapter"
+          ? { kind: "paused", code: child.failure.code }
+          : { kind: "retryable", code: child.failure.code };
+      }
+      const result = child.result;
+      if (result.kind === "context-request") {
+        return classifyCandidateContextRequest(result, [
+          ...phase.read,
+          ...phase.write,
+          ...phase.delete,
+        ]);
+      }
+      if (result.kind !== "sealed-candidate") {
+        return { kind: "retryable", code: "candidate-diff-invalid" };
+      }
+      return {
+        kind: "sealed-candidate",
+        candidateId: result.candidateId,
+        artifactHash: result.artifactHash,
+        bytes: result.bytes,
+        paths: [...result.paths],
+      };
+    },
+    verifyPhase: (input) =>
+      executePackageVerification({
+        root: input.root,
+        dependencyOwner: consumerRoot,
+        verification: input.verification,
+        signal: input.signal,
+      }),
+    verifyChange: async (input) => {
+      const verifications = input.verification
+        ? [input.verification]
+        : input.plan.tasks.map((task) => affectedVerification(task));
+      for (const verification of verifications) {
+        const result = await executePackageVerification({
+          root: input.root,
+          dependencyOwner: consumerRoot,
+          verification,
+          signal: input.signal,
+        });
+        if (!result.ok) {
+          const adapter = new Set([
+            "runner-missing",
+            "script-missing",
+            "script-command-mismatch",
+            "local-executable-missing",
+          ]).has(result.code);
+          return {
+            ok: false,
+            kind: adapter
+              ? ("verification-adapter" as const)
+              : result.kind === "paused"
+                ? ("environment" as const)
+                : ("verification" as const),
+            code: result.code,
+            ...(result.failureIdentities
+              ? { failureIdentities: result.failureIdentities }
+              : {}),
+          };
+        }
+      }
+      return {
+        ok: true,
+        exitCode: 0,
+        classification: "expected-green",
+      };
+    },
+  });
+  return {
+    async execute(
+      command: unknown,
+      context = initialContext,
+      signal,
+      onActivity,
+    ) {
+      const operationRouteResolution = loadRoutePolicy({
+        cwd: consumerRoot,
+        home: homedir(),
+      });
+      engine.updateRoutePolicy(
+        operationRouteResolution.ok
+          ? operationRouteResolution.policy
+          : unavailableRoutePolicy(),
+      );
+      const validation = validateControlCommand(command);
+      if (!validation.ok) {
+        const error = new Error(validation.code);
+        error.name = "ControlCommandError";
+        throw error;
+      }
+      return contexts.run(context, async () => {
+        const outcome = await engine.execute(
+          validation.value,
+          signal,
+          onActivity,
+        );
+        const routePolicy = visibleRoutePolicyStatus(
+          operationRouteResolution,
+          engine.routePolicyStatus(),
+        );
+        return { ...outcome, routePolicy };
+      });
+    },
+    async close() {
+      contexts.disable();
+      await engine.close();
+    },
+  };
+}
+
+function visibleRoutePolicyStatus(
+  resolution: RoutePolicyResolution,
+  brokerStatus: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (!resolution.ok) return inspectRoutePolicy(resolution);
+  const inspected = brokerStatus ?? inspectRoutePolicy(resolution);
+  return {
+    ...inspected,
+    source: { kind: resolution.source.kind },
+  };
+}
+
+export function registerWorkflowControl(
+  pi: ExtensionAPI,
+  engineFactory: WorkflowControlEngineFactory = openPackageWorkflowControlEngine,
+): void {
+  const parentPayloadBridge = new ParentPayloadBridge();
+  const activity = new ActivityController();
+  const engines = new Map<string, Promise<WorkflowControlEngine>>();
+  let pendingPrompt: EligiblePrompt | undefined;
+  let activePrompt: EligiblePrompt | undefined;
+  const activation = new (class implements Activation {
+    state: Activation["state"] = "inactive";
+
+    isActive(): boolean {
+      return this.state === "active";
+    }
+
+    request(): boolean {
+      if (this.state !== "inactive") return false;
+      this.state = "pending";
+      return true;
+    }
+
+    activate(): boolean {
+      if (this.state !== "pending") return false;
+      this.state = "active";
+      return true;
+    }
+
+    drain(): boolean {
+      if (this.state === "inactive" || this.state === "pending") return false;
+      this.state = "inactive";
+      return true;
+    }
+  })();
+  const packetRuntime = new PacketRuntime({ activation, parentPayloadBridge });
+
+  const engineFor = (ctx: ExtensionContext) => {
+    const key = ctx.cwd;
+    const existing = engines.get(key);
+    if (existing) return existing;
+    const opened = Promise.resolve(engineFactory(ctx, parentPayloadBridge));
+    engines.set(key, opened);
+    void opened.catch(() => {
+      if (engines.get(key) === opened) engines.delete(key);
+    });
+    return opened;
+  };
+  const closeEngines = async () => {
+    const current = [...engines.values()];
+    engines.clear();
+    const opened = await Promise.allSettled(current);
+    await Promise.allSettled(
+      opened.flatMap((result) =>
+        result.status === "fulfilled"
+          ? [Promise.resolve(result.value.close())]
+          : [],
+      ),
+    );
+  };
+  const deactivate = () => {
+    activation.drain();
+    const active = pi.getActiveTools();
+    if (active.includes(DISPATCH_TOOL)) {
+      pi.setActiveTools(deactivateTool(active, DISPATCH_TOOL));
+    }
+  };
+
+  pi.registerTool({
+    name: DISPATCH_TOOL,
+    label: "Abel Control",
+    description:
+      "Private stage-bound Abel workflow control. Implement accepts durable change commands; Design and Diagnose accept bounded packet commands.",
+    executionMode: "parallel",
+    parameters: {
+      type: "object",
+      properties: {
+        version: { type: "integer", enum: [2] },
+        command: {
+          type: "string",
+          enum: ["start", "status", "resume", "rebind", "cancel", "discard"],
+        },
+        stage: {
+          type: "string",
+          enum: ["abel-design", "abel-implement"],
+        },
+        change: { type: "string" },
+        provisionalKey: { type: "string" },
+        operationId: { type: "string" },
+        deliveryRevision: { type: "integer", minimum: 1 },
+        receiptHash: { type: "string" },
+        routeId: { type: "string" },
+        action: { type: "string", enum: [...PACKET_ACTIONS] },
+        request: {
+          anyOf: [DESIGN_REQUEST_SCHEMA, GENERIC_REQUEST_SCHEMA],
+        },
+      },
+      additionalProperties: false,
+      oneOf: [
+        {
+          required: ["version", "command", "stage"],
+          not: {
+            anyOf: [{ required: ["action"] }, { required: ["request"] }],
+          },
+        },
+        {
+          required: ["action"],
+          not: {
+            anyOf: [
+              { required: ["version"] },
+              { required: ["command"] },
+              { required: ["stage"] },
+              { required: ["change"] },
+              { required: ["provisionalKey"] },
+              { required: ["operationId"] },
+              { required: ["deliveryRevision"] },
+              { required: ["receiptHash"] },
+              { required: ["routeId"] },
+            ],
+          },
+        },
+      ],
+    },
+    async execute(
+      toolCallId: string,
+      params: unknown,
+      signal: AbortSignal | undefined,
+      onUpdate: AgentToolUpdateCallback<unknown> | undefined,
+      ctx: ExtensionContext,
+    ) {
+      const record =
+        params && typeof params === "object" && !Array.isArray(params)
+          ? (params as Record<string, unknown>)
+          : undefined;
+      if (record && typeof record.action === "string") {
+        if (
+          Object.keys(record).some(
+            (key) => key !== "action" && key !== "request",
+          )
+        ) {
+          throw new Error("control-envelope-ambiguous");
+        }
+        if (
+          activePrompt !== "abel-design" &&
+          activePrompt !== "abel-diagnose"
+        ) {
+          throw new Error("stage-control-mismatch");
+        }
+        if (record.action === "run") {
+          const packet = packetRuntime.validateRequest(record.request);
+          if (!packet.ok || packet.value.stage !== activePrompt) {
+            throw new Error(
+              packet.ok ? "stage-control-mismatch" : packet.reason,
+            );
+          }
+        }
+        const operation = {
+          request: record.request,
+        };
+        const tuiRun = ctx.mode === "tui" && record.action === "run";
+        const payload = tuiRun
+          ? await packetRuntime.execute(
+              record.action,
               operation,
               ctx,
               signal,
@@ -288,65 +1571,123 @@ export default function register(pi: ExtensionAPI): void {
                 onUpdate as ((result: unknown) => void) | undefined,
               ),
             )
-          : await runtime.execute(action, operation, ctx, signal);
+          : await packetRuntime.execute(record.action, operation, ctx, signal);
         const display = tuiRun
-          ? activity.finalize(toolCallId, result)
+          ? activity.finalize(toolCallId, payload)
           : undefined;
-        const { payload, usage } = splitUsage(result);
+        const { payload: publicPayload, usage } = splitUsage(payload);
         const details = display
           ? {
-              ...(payload as Record<string, unknown>),
+              ...(publicPayload as Record<string, unknown>),
               [ACTIVITY_DETAILS_KEY]: display,
             }
-          : payload;
+          : publicPayload;
         return {
-          content: [{ type: "text", text: JSON.stringify(payload) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(publicPayload) },
+          ],
           details,
           ...(usage === undefined ? {} : { usage }),
         };
-      },
-      renderCall(args: unknown, theme: Theme, context: unknown) {
-        return renderActivityCall(
-          args,
-          theme,
-          context as Parameters<typeof renderActivityCall>[2],
-        );
-      },
-      renderResult(
-        result: AgentToolResult<unknown>,
-        options: ToolRenderResultOptions,
-        theme: Theme,
-        context: unknown,
+      }
+      const validation = validateControlCommand(params);
+      if (!validation.ok) {
+        const error = new Error(validation.code);
+        error.name = "ControlCommandError";
+        throw error;
+      }
+      if (
+        activePrompt !== undefined &&
+        (activePrompt === "abel-diagnose" ||
+          validation.value.stage !== activePrompt)
       ) {
-        return renderActivityResult(
-          result,
-          options,
-          theme,
-          context as Parameters<typeof renderActivityResult>[3],
+        throw new Error("stage-control-mismatch");
+      }
+      const engine = await engineFor(ctx);
+      const tuiControl = ctx.mode === "tui";
+      if (tuiControl) {
+        try {
+          activity.beginWorkflow(
+            toolCallId,
+            validation.value,
+            onUpdate as ((result: unknown) => void) | undefined,
+          );
+        } catch {
+          // Presentation state must never alter workflow execution.
+        }
+      }
+      let payload: Record<string, unknown>;
+      try {
+        payload = await engine.execute(
+          validation.value,
+          ctx,
+          signal,
+          tuiControl
+            ? (event) => {
+                try {
+                  activity.updateWorkflow(toolCallId, validation.value, event);
+                } catch {
+                  // Presentation state must never alter workflow execution.
+                }
+              }
+            : undefined,
         );
-      },
-    } as never);
-  };
-
-  registerDispatchTool();
-
-  let pendingPrompt: EligiblePrompt | undefined;
-  let activePrompt: EligiblePrompt | undefined;
+      } catch (error) {
+        if (tuiControl) activity.failWorkflow(toolCallId);
+        throw error;
+      }
+      let display: ReturnType<typeof activity.finalizeWorkflow>;
+      if (tuiControl) {
+        try {
+          display = activity.finalizeWorkflow(
+            toolCallId,
+            validation.value,
+            payload,
+          );
+        } catch {
+          activity.failWorkflow(toolCallId);
+        }
+      }
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+        details: display
+          ? { ...payload, [ACTIVITY_DETAILS_KEY]: display }
+          : payload,
+      };
+    },
+    renderCall(args: unknown, theme: Theme, context: unknown) {
+      return renderActivityCall(
+        args,
+        theme,
+        context as Parameters<typeof renderActivityCall>[2],
+      );
+    },
+    renderResult(
+      result: AgentToolResult<unknown>,
+      options: ToolRenderResultOptions,
+      theme: Theme,
+      context: unknown,
+    ) {
+      return renderActivityResult(
+        result,
+        options,
+        theme,
+        context as Parameters<typeof renderActivityResult>[3],
+      );
+    },
+  } as never);
 
   pi.on("input", (event) => {
     pendingPrompt = invokedPrompt(event.text);
     return { action: "continue" };
   });
-
   pi.on("before_agent_start", (event, ctx) => {
     const prompt = pendingPrompt;
     pendingPrompt = undefined;
     const verified =
-      prompt &&
-      isVerifiedStageInvocation(pi, runtime.activation, prompt, event.prompt);
+      prompt && isVerifiedStageInvocation(pi, activation, prompt, event.prompt);
     if (verified) {
       activePrompt = prompt;
-      registerDispatchTool(prompt);
       const sessionId = ctx.sessionManager?.getSessionId?.();
       if (typeof sessionId === "string") {
         parentPayloadBridge.beginSession(sessionId);
@@ -357,10 +1698,18 @@ export default function register(pi: ExtensionAPI): void {
     if (ctx.model) {
       parentPayloadBridge.install(ctx.model, ctx.modelRegistry);
     }
-    if (prompt)
-      activateDispatcher(pi, runtime.activation, prompt, event.prompt);
+    if (prompt) activateDispatcher(pi, activation, prompt, event.prompt);
   });
-
+  pi.on("model_select", (event, ctx) => {
+    const sessionId = ctx.sessionManager?.getSessionId?.();
+    if (typeof sessionId !== "string") {
+      parentPayloadBridge.clear();
+      return;
+    }
+    parentPayloadBridge.beginSession(sessionId);
+    const model = event.model ?? ctx.model;
+    if (model) parentPayloadBridge.install(model, ctx.modelRegistry);
+  });
   pi.on("before_provider_request", (event, ctx) => {
     if (
       activePrompt !== "abel-design" ||
@@ -373,50 +1722,33 @@ export default function register(pi: ExtensionAPI): void {
     }
     return { ...event.payload, parallel_tool_calls: true };
   });
-
   pi.on("session_start", async (_event, ctx) => {
     pendingPrompt = undefined;
     activePrompt = undefined;
     activity.detach();
-    const active = pi.getActiveTools();
-    if (active.includes(DISPATCH_TOOL)) {
-      pi.setActiveTools(deactivateTool(active, DISPATCH_TOOL));
-    }
-    await runtime.drain();
-    activity.clear();
+    await packetRuntime.drain();
+    await closeEngines();
+    deactivate();
     const sessionId = ctx.sessionManager?.getSessionId?.();
     if (typeof sessionId === "string") {
       parentPayloadBridge.beginSession(sessionId);
-      if (ctx.model) {
-        parentPayloadBridge.install(ctx.model, ctx.modelRegistry);
-      }
+      if (ctx.model) parentPayloadBridge.install(ctx.model, ctx.modelRegistry);
     } else {
       parentPayloadBridge.clear();
     }
     if (ctx.mode === "tui") activity.attach(ctx.ui);
   });
-
-  pi.on("model_select", (event, ctx) => {
-    const sessionId = ctx.sessionManager?.getSessionId?.();
-    if (typeof sessionId !== "string") {
-      parentPayloadBridge.clear();
-      return;
-    }
-    parentPayloadBridge.beginSession(sessionId);
-    const model = event.model ?? ctx.model;
-    if (model) {
-      parentPayloadBridge.install(model, ctx.modelRegistry);
-    }
-  });
-
   pi.on("session_shutdown", async () => {
     activePrompt = undefined;
     activity.detach();
-    await runtime.drain();
+    await packetRuntime.drain();
+    await closeEngines();
     activity.clear();
-    const active = pi.getActiveTools();
-    if (active.includes(DISPATCH_TOOL)) {
-      pi.setActiveTools(deactivateTool(active, DISPATCH_TOOL));
-    }
+    deactivate();
+    parentPayloadBridge.clear();
   });
+}
+
+export default function register(pi: ExtensionAPI): void {
+  registerWorkflowControl(pi);
 }

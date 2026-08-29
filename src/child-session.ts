@@ -16,12 +16,21 @@ import type {
   SafeFailureDetails,
 } from "./contracts.ts";
 import { EmptyResourceLoader } from "./empty-resource-loader.ts";
-import { createScopedTools, TOOL_LIMITS } from "./scoped-tools.ts";
 import {
+  createScopedTools,
+  type Observation,
+  ScopedObservationCollector,
+  TOOL_LIMITS,
+} from "./scoped-tools.ts";
+import {
+  type CandidateArtifactSubmission,
+  type CandidateArtifactSubmissionResult,
+  createCandidateArtifactTool,
   createSubmitTool,
   type FinalCategory,
   type SubmitClassification,
 } from "./submit-tool.ts";
+import { serializeTaskLedgerProjection } from "./task-ledger.ts";
 
 function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   signal.throwIfAborted();
@@ -106,6 +115,7 @@ function wrapScopedTools(
   roots: string[],
   cwd: string,
   allowedPaths?: string[],
+  observer?: (observation: Observation) => void,
 ) {
   const order = ["read", "grep", "find", "ls"];
   return createScopedTools({
@@ -117,6 +127,7 @@ function wrapScopedTools(
           ),
         }
       : {}),
+    ...(observer ? { observer } : {}),
   })
     .sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name))
     .map((scoped) =>
@@ -173,6 +184,20 @@ function finalDeliveryContent(message: AssistantMessage | undefined) {
         !(content.type === "text" && content.text.trim().length === 0),
     ) ?? []
   );
+}
+
+function hasStructuralSubmit(message: AssistantMessage | undefined) {
+  return finalDeliveryContent(message).some(
+    (content) =>
+      content.type === "toolCall" && content.name === "abel_submit_result",
+  );
+}
+
+function structuralSubmitCount(message: AssistantMessage | undefined) {
+  return finalDeliveryContent(message).filter(
+    (content) =>
+      content.type === "toolCall" && content.name === "abel_submit_result",
+  ).length;
 }
 
 function isSingleStructuralSubmit(message: AssistantMessage | undefined) {
@@ -251,12 +276,13 @@ function withSubmitDetails(
 export type ChildSessionResult =
   | {
       ok: true;
-      result: EvidenceResult | DiffResult;
+      result: EvidenceResult | DiffResult | CandidateArtifactSubmissionResult;
       toolNames: string[];
       submitCount: number;
       disposeCount: number;
       usage: Usage;
       classification: SubmitClassification;
+      observations?: { observations: Observation[]; truncated: boolean };
     }
   | {
       ok: false;
@@ -267,6 +293,7 @@ export type ChildSessionResult =
       disposeCount: number;
       usage: Usage;
       classification: SubmitClassification;
+      observations?: { observations: Observation[]; truncated: boolean };
     };
 
 export async function runChildSession(input: {
@@ -284,19 +311,49 @@ export async function runChildSession(input: {
   timeoutMs: number;
   signal?: AbortSignal;
   failureOverride?: () => ChildFailure | undefined;
+  ledgerProjection?: unknown;
+  captureObservations?: boolean;
+  candidateArtifact?: CandidateArtifactSubmission;
+  onStreamStart?: () => void;
+  onStreamProgress?: () => void;
 }): Promise<ChildSessionResult> {
-  const submit = createSubmitTool({
-    requestId: input.requestId,
-    taskId: input.taskId,
-    role: input.role,
-    phase: input.phase ?? "red",
-    output: input.output,
-  });
-  const readTools = wrapScopedTools(input.roots, input.cwd, input.allowedPaths);
+  const segmentedCandidate = input.candidateArtifact !== undefined;
+  const submit = input.candidateArtifact
+    ? createCandidateArtifactTool(input.candidateArtifact)
+    : createSubmitTool({
+        requestId: input.requestId,
+        taskId: input.taskId,
+        role: input.role,
+        phase: input.phase ?? "red",
+        output: input.output,
+      });
+  const observationCollector = input.captureObservations
+    ? new ScopedObservationCollector()
+    : undefined;
+  const readTools = wrapScopedTools(
+    input.roots,
+    input.cwd,
+    input.allowedPaths,
+    observationCollector?.observe,
+  );
   const customTools = [...readTools, submit.tool];
   const toolNames = customTools.map((tool) => tool.name);
   let disposeCount = 0;
   const usage = new UsageAggregator();
+  const effectivePrompt =
+    input.ledgerProjection === undefined
+      ? input.systemPrompt
+      : [
+          input.systemPrompt,
+          "",
+          "<abel-task-ledger-projection>",
+          serializeTaskLedgerProjection(input.ledgerProjection),
+          "</abel-task-ledger-projection>",
+        ].join("\n");
+  const observationMetadata = () =>
+    observationCollector
+      ? { observations: observationCollector.projection() }
+      : {};
   const abort = new AbortController();
   const forwardCancellation = () =>
     abort.abort(input.signal?.reason ?? new Error("child phase cancelled"));
@@ -316,6 +373,24 @@ export async function runChildSession(input: {
   let unsubscribe: (() => void) | undefined;
   let abortSettlement: Promise<void> | undefined;
   let assistantSequence = 0;
+  let streamStarted = false;
+  const notifyStreamStart = () => {
+    if (streamStarted) return;
+    streamStarted = true;
+    try {
+      input.onStreamStart?.();
+    } catch {
+      // Stream observation cannot influence child execution.
+    }
+  };
+  const notifyStreamProgress = () => {
+    notifyStreamStart();
+    try {
+      input.onStreamProgress?.();
+    } catch {
+      // Stream observation cannot influence child execution.
+    }
+  };
   const disposeOnce = () => {
     if (session) {
       session.dispose();
@@ -332,7 +407,9 @@ export async function runChildSession(input: {
       finalCategory = "no-final-assistant";
     } else if (isSingleStructuralSubmit(last)) {
       finalCategory =
-        submit.getAttempts() > 1 ? "multiple-submit" : "single-submit-only";
+        !segmentedCandidate && submit.getAttempts() > 1
+          ? "multiple-submit"
+          : "single-submit-only";
     } else {
       const content = finalDeliveryContent(last);
       finalCategory =
@@ -383,8 +460,11 @@ export async function runChildSession(input: {
     }
     return undefined;
   };
-  const noStructuralSubmit = (): ChildFailure =>
-    submit.getAttempts() === 0
+  const noStructuralSubmit = (): ChildFailure => {
+    const final = session?.messages
+      .filter((message) => message.role === "assistant")
+      .at(-1);
+    return submit.getAttempts() === 0 && !hasStructuralSubmit(final)
       ? {
           kind: "artifact",
           code: "child-no-structural-submit",
@@ -395,6 +475,7 @@ export async function runChildSession(input: {
           code: "invalid-structural-result",
           stage: "structural-submit",
         };
+  };
   try {
     abort.signal.throwIfAborted();
     const creation = createAgentSession({
@@ -404,7 +485,7 @@ export async function runChildSession(input: {
       thinkingLevel: "off",
       tools: toolNames,
       customTools,
-      resourceLoader: new EmptyResourceLoader(input.systemPrompt),
+      resourceLoader: new EmptyResourceLoader(effectivePrompt),
       sessionManager: SessionManager.inMemory(input.cwd),
       settingsManager: SettingsManager.inMemory({
         compaction: { enabled: false },
@@ -419,7 +500,33 @@ export async function runChildSession(input: {
         .catch(() => undefined);
       throw error;
     }
+    const childAgent = session.agent;
+    if (childAgent) {
+      const previousShouldStopAfterTurn = childAgent.shouldStopAfterTurn;
+      childAgent.shouldStopAfterTurn = async (turn, signal) => {
+        if (
+          segmentedCandidate
+            ? submit.getResult() !== undefined
+            : hasStructuralSubmit(turn.message)
+        ) {
+          return true;
+        }
+        return (await previousShouldStopAfterTurn?.(turn, signal)) ?? false;
+      };
+    }
     unsubscribe = session.subscribe((event) => {
+      if (
+        event.type === "message_start" &&
+        event.message.role === "assistant"
+      ) {
+        notifyStreamStart();
+      }
+      if (
+        event.type === "message_update" &&
+        event.message.role === "assistant"
+      ) {
+        notifyStreamProgress();
+      }
       if (event.type === "message_end" && event.message.role === "assistant") {
         usage.add(`assistant:${assistantSequence++}`, event.message.usage);
       }
@@ -438,7 +545,7 @@ export async function runChildSession(input: {
         throw abort.signal.reason;
       }
       await Promise.race([
-        session.prompt(input.systemPrompt, { expandPromptTemplates: false }),
+        session.prompt(effectivePrompt, { expandPromptTemplates: false }),
         new Promise<never>((_, reject) =>
           abort.signal.addEventListener(
             "abort",
@@ -453,7 +560,11 @@ export async function runChildSession(input: {
     const result = submit.getResult();
     const attempts = submit.getAttempts();
     const classification = classifySession();
-    if (!result || attempts !== 1) {
+    const segmentedComplete =
+      segmentedCandidate &&
+      result !== undefined &&
+      (result.kind === "sealed-candidate" || result.kind === "context-request");
+    if (!result || (segmentedCandidate ? !segmentedComplete : attempts !== 1)) {
       const failure = withSubmitDetails(
         submit.getFailure() ??
           input.failureOverride?.() ??
@@ -472,11 +583,16 @@ export async function runChildSession(input: {
         disposeCount,
         usage: usage.total(),
         classification,
+        ...observationMetadata(),
       };
     }
     const assistants = session.messages.filter((m) => m.role === "assistant");
     const final = assistants.at(-1);
-    if (!isSingleStructuralSubmit(final)) {
+    if (
+      !(segmentedCandidate
+        ? segmentedComplete && structuralSubmitCount(final) === 1
+        : isSingleStructuralSubmit(final))
+    ) {
       const failure = {
         kind: "artifact",
         code: "invalid-structural-result",
@@ -493,6 +609,7 @@ export async function runChildSession(input: {
         disposeCount,
         usage: usage.total(),
         classification,
+        ...observationMetadata(),
       };
     }
     disposeOnce();
@@ -504,6 +621,7 @@ export async function runChildSession(input: {
       disposeCount,
       usage: usage.total(),
       classification,
+      ...observationMetadata(),
     };
   } catch (error) {
     if (abort.signal.aborted && session) {
@@ -553,6 +671,7 @@ export async function runChildSession(input: {
       disposeCount,
       usage: usage.total(),
       classification,
+      ...observationMetadata(),
     };
   } finally {
     clearTimeout(timer);

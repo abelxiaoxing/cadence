@@ -1,94 +1,76 @@
-// P-006 Red (R-09.30): pi lifecycle integration surface. Covers stage cleanup
-// restoring inactive state, session_shutdown finishing the stage, no private
-// state created on disk after delegation, and unique child usage returned once.
-// Failures are valid only at the lifecycle/drain boundary: leaked active state,
-// retained result, mis-restored tools, or double-counted usage.
-
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-} from "@earendil-works/pi-ai/providers/faux";
-import { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Activation } from "../src/activation";
-import { snapshotFiles } from "../src/file-snapshot";
-import { Runtime } from "../src/runtime";
-import {
-  admitGraph,
-  assertCandidateOutcome,
-  type ImplementTaskFixture,
-  taskAttemptFor,
-} from "./helpers/implement-graph-fixture.ts";
-import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
-
-let entrypoint: typeof import("../src/index") | null = null;
-let parentProvider: typeof import("../src/parent-provider") | null = null;
-try {
-  entrypoint = await import("../src/index");
-} catch {
-  entrypoint = null;
-}
-try {
-  parentProvider = await import("../src/parent-provider");
-} catch {
-  parentProvider = null;
-}
-
-class FakePi {
-  tools: { name: string }[] = [];
-  active: string[] = [];
-  handlers: Record<string, ((...args: unknown[]) => unknown)[]> = {};
-  registerTool(def: { name: string }) {
-    this.tools.push(def);
-  }
-  on(event: string, handler: (...args: unknown[]) => unknown) {
-    if (!this.handlers[event]) this.handlers[event] = [];
-    this.handlers[event].push(handler);
-  }
-  async emit(event: string, ...args: unknown[]) {
-    for (const h of this.handlers[event] ?? []) await h(...args, {});
-  }
-  getAllTools() {
-    return this.tools.map((t) => ({ name: t.name }));
-  }
-  getActiveTools() {
-    return [...this.active];
-  }
-  setActiveTools(names: string[]) {
-    this.active = [...names];
-  }
-}
-
-function deferred<T>() {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  const promise = new Promise<T>((accept) => {
-    resolve = accept;
-  });
-  return { promise, resolve };
-}
+import { RunStore } from "../src/run-store.ts";
+import { resolveStateRoot } from "../src/state-root.ts";
+import { WorkflowEngine } from "../src/workflow-engine.ts";
 
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
 });
+function workflowExpectedGreen(id: string) {
+  return {
+    kind: "package-script" as const,
+    id,
+    packageManager: "bun" as const,
+    script: "check",
+    command: 'node -e ""',
+    args: [],
+    classification: "expected-green" as const,
+  };
+}
 
-const notReady = (name: string): never =>
-  expect.fail(`not_ready: ${name} is not implemented`);
-
-const DIFF = "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n";
+function workflowPlanContracts(taskIds: string[]) {
+  return {
+    verification: {
+      baseline: {
+        target: "task-red-contracts" as const,
+        affected: "task-affected-contracts" as const,
+        fullSuite: workflowExpectedGreen("lifecycle-baseline-full"),
+        failureIdentity: "normalized-v1" as const,
+      },
+      change: {
+        affected: "task-affected-contracts" as const,
+        fullSuite: workflowExpectedGreen("lifecycle-change-full"),
+        postApply: workflowExpectedGreen("lifecycle-post-apply"),
+      },
+      artifactCorrection: { maxAttempts: 2 },
+      repair: {
+        maxAttempts: 2,
+        inBoundaryOnly: true as const,
+        approvalOnBoundaryExpansion: true as const,
+        attribution: [
+          "pre-existing",
+          "introduced",
+          "unresolved",
+          "environment",
+        ] as ["pre-existing", "introduced", "unresolved", "environment"],
+      },
+      agentsCheckpoint: {
+        required: false as const,
+        verification: null,
+        operations: [],
+      },
+    },
+    tracking: {
+      path: "tasks.md" as const,
+      format: "markdown-checkbox" as const,
+      taskIds,
+      completionOwner: "parent" as const,
+    },
+  };
+}
 
 function makeRoot(tag: string): string {
   const cwd = mkdtempSync(join(tmpdir(), `abel-lifecycle-${tag}-`));
@@ -119,333 +101,477 @@ function makeRoot(tag: string): string {
   execFileSync("git", ["commit", "-qm", "base"], { cwd });
   return cwd;
 }
-
-const submitResponse = (submitted: unknown) =>
-  fauxAssistantMessage(
-    fauxToolCall("abel_submit_result", submitted as Record<string, any>),
-    { stopReason: "toolUse" },
-  );
-
-function requestFor(
-  id: string,
-  phase: "red" | "green" | "refactor",
-  root: string,
-): ImplementTaskFixture {
-  return {
-    boundary: {
-      changeId: "lifecycle-fixture",
-      taskId: id,
-      dependsOn: [],
-      objective: "Change a.txt",
-      roots: ["."],
-      context: { agents: "none", contract: "approved" },
-      phases: {
-        red: {
-          read: ["a.txt", "test/expected-red.mjs"],
-          write: ["a.txt"],
-          verificationLock: "lifecycle-red",
-          verification: {
-            kind: "static-check",
-            id: `verify-${id}`,
-            runner: { kind: "node", script: "test/expected-red.mjs" },
-            args: [],
-            classification: "expected-red",
-            expectedFailure: "[LIFECYCLE:expected-red]",
+describe("durable Design run lifecycle", () => {
+  it("binds Gate A to the same provisional run and survives reload", async () => {
+    const consumerRoot = makeRoot("design-provisional");
+    const xdgStateHome = mkdtempSync(
+      join(tmpdir(), "abel-lifecycle-design-state-"),
+    );
+    const homeDir = mkdtempSync(join(tmpdir(), "abel-lifecycle-design-home-"));
+    roots.push(xdgStateHome, homeDir);
+    const stateRoot = resolveStateRoot({
+      consumerRoot,
+      xdgStateHome,
+      homeDir,
+    });
+    const change = "durable-design-run";
+    const plan = {
+      schemaVersion: 3 as const,
+      changeId: change,
+      tasks: [
+        {
+          taskId: "design-gate-a",
+          dependsOn: [],
+          objective: "Retain approved Design evidence",
+          context: { agents: "root", contract: "approved Gate A" },
+          roots: ["."],
+          phases: {
+            red: {
+              read: ["test/expected-red.mjs"],
+              write: [],
+              delete: [],
+              verification: {
+                kind: "static-check" as const,
+                id: "design-gate-a-red",
+                runner: {
+                  kind: "node" as const,
+                  script: "test/expected-red.mjs",
+                },
+                args: [],
+                classification: "expected-red" as const,
+                expectedFailure: "[LIFECYCLE:expected-red]",
+              },
+              verificationInputs: [
+                { kind: "workspace" as const, path: "test/expected-red.mjs" },
+              ],
+            },
+            green: {
+              read: ["package.json"],
+              write: [],
+              delete: [],
+              verification: {
+                kind: "package-script" as const,
+                id: "design-gate-a-green",
+                packageManager: "bun" as const,
+                script: "check",
+                command: 'node -e ""',
+                args: [],
+                classification: "expected-green" as const,
+              },
+              verificationInputs: [
+                { kind: "workspace" as const, path: "package.json" },
+              ],
+            },
           },
-          verificationInputs: [
-            { kind: "workspace", path: "test/expected-red.mjs" },
-          ],
-        },
-        green: {
-          read: ["a.txt", "package.json"],
-          write: ["a.txt"],
-          verificationLock: "lifecycle-green",
-          verification: {
-            kind: "package-script",
-            id: `verify-${id}-green`,
-            packageManager: "bun",
-            script: "check",
-            command: 'node -e ""',
-            args: [],
-            classification: "expected-green",
+          scheduling: { conflicts: [], resources: [] },
+          agents: { impact: "none" as const, managedOnly: true as const },
+          approvedDependencies: [],
+          impactClosure: {
+            changedSurfaces: ["none" as const],
+            searchEvidence: [],
+            relatedTests: [],
+            affectedSuite: [],
           },
-          verificationInputs: [{ kind: "workspace", path: "package.json" }],
+          affectedVerification: workflowExpectedGreen("design-gate-a-affected"),
+          repairVerification: workflowExpectedGreen("design-gate-a-repair"),
         },
+      ],
+      outputs: [],
+      ...workflowPlanContracts(["design-gate-a"]),
+    };
+    const deliverySource = {
+      load: vi.fn(async () => ({
+        version: 2 as const,
+        gate: "gate-a" as const,
+        revision: 1,
+        receiptHash: "a".repeat(64),
+        plan,
+      })),
+    };
+    const worker = {
+      runAttempt: vi.fn(async () => ({
+        kind: "paused" as const,
+        code: "design-parent-review",
+      })),
+      rebind: vi.fn(() => ({ ok: true as const, routeId: "inherited" })),
+    };
+    const changeVerifier = {
+      verify: vi.fn(async () => ({
+        kind: "paused" as const,
+        code: "design-parent-review",
+      })),
+    };
+    let engine = WorkflowEngine.open({
+      consumerRoot,
+      stateRoot,
+      deliverySource,
+      worker,
+      changeVerifier,
+    });
+
+    const provisional = await engine.execute({
+      version: 2,
+      command: "start",
+      stage: "abel-design",
+      provisionalKey: "b".repeat(64),
+      operationId: "design-provisional-start",
+    });
+    expect(provisional).toMatchObject({
+      stage: "abel-design",
+      state: "paused",
+      completed: false,
+      pause: { code: "design-awaiting-gate-a" },
+    });
+    expect(deliverySource.load).not.toHaveBeenCalled();
+
+    const bound = await engine.execute({
+      version: 2,
+      command: "start",
+      stage: "abel-design",
+      change,
+      provisionalKey: "b".repeat(64),
+      operationId: "design-gate-a-bind",
+    });
+    expect(bound).toMatchObject({
+      runId: provisional.runId,
+      stage: "abel-design",
+      change,
+      state: "paused",
+      completed: false,
+      pause: { code: "design-awaiting-evidence" },
+    });
+    expect(deliverySource.load).not.toHaveBeenCalled();
+    await engine.close();
+
+    engine = WorkflowEngine.open({
+      consumerRoot,
+      stateRoot,
+      deliverySource,
+      worker,
+      changeVerifier,
+    });
+    await expect(
+      engine.execute({
+        version: 2,
+        command: "status",
+        stage: "abel-design",
+        change,
+      }),
+    ).resolves.toMatchObject({
+      runId: provisional.runId,
+      state: "paused",
+      completed: false,
+    });
+    await engine.close();
+  });
+});
+
+describe("durable WorkflowEngine scheduling", () => {
+  it("runs independent ready tasks concurrently", async () => {
+    const consumerRoot = makeRoot("durable-independent-tasks");
+    mkdirSync(join(consumerRoot, "test"), { recursive: true });
+    writeFileSync(
+      join(consumerRoot, "package.json"),
+      `${JSON.stringify({ scripts: { check: 'node -e ""' } })}\n`,
+    );
+    writeFileSync(join(consumerRoot, "test/fixture.mjs"), "export {};\n");
+    execFileSync("git", ["init", "-q"], { cwd: consumerRoot });
+    execFileSync("git", ["add", "."], { cwd: consumerRoot });
+    const xdgStateHome = mkdtempSync(
+      join(tmpdir(), "abel-lifecycle-parallel-state-"),
+    );
+    const homeDir = mkdtempSync(
+      join(tmpdir(), "abel-lifecycle-parallel-home-"),
+    );
+    roots.push(xdgStateHome, homeDir);
+    const stateRoot = resolveStateRoot({
+      consumerRoot,
+      xdgStateHome,
+      homeDir,
+    });
+    const phase = (taskId: string, name: "red" | "green") => ({
+      read: ["package.json", "test/fixture.mjs"],
+      write: [`${taskId}.txt`],
+      delete: [],
+      verification: {
+        kind: "static-check" as const,
+        id: `${taskId}-${name}`,
+        runner: { kind: "node" as const, script: "test/fixture.mjs" },
+        args: [],
+        classification:
+          name === "red"
+            ? ("expected-red" as const)
+            : ("expected-green" as const),
+        ...(name === "red" ? { expectedFailure: "parallel-red" } : {}),
       },
-      scheduling: { conflicts: [], resources: [] },
-      agents: { impact: "none", managedOnly: true },
+      verificationInputs: [
+        { kind: "workspace" as const, path: "test/fixture.mjs" },
+      ],
+      verificationLock: `${taskId}-verification`,
+    });
+    const task = (taskId: string) => ({
+      taskId,
+      dependsOn: [],
+      objective: `Complete ${taskId}`,
+      context: { agents: "root", contract: `approved ${taskId}` },
+      roots: ["."],
+      phases: {
+        red: phase(taskId, "red"),
+        green: phase(taskId, "green"),
+      },
+      scheduling: { conflicts: [], resources: [`resource-${taskId}`] },
+      agents: { impact: "none" as const, managedOnly: true as const },
       approvedDependencies: [],
       impactClosure: {
-        changedSurfaces: ["none"],
+        changedSurfaces: ["none" as const],
         searchEvidence: [],
         relatedTests: [],
-        affectedSuite: [],
+        affectedSuite: ["test/fixture.mjs"],
       },
-    },
-    attempt: {
-      changeId: "lifecycle-fixture",
-      taskId: id,
-      requestId: id,
-      phase,
-      snapshot: snapshotFiles(root, ["a.txt", "test/expected-red.mjs"]),
-    },
-  };
-}
-
-async function runFixture(
-  runtime: Runtime,
-  request: ImplementTaskFixture,
-  context: Parameters<Runtime["execute"]>[2],
-) {
-  await admitGraph(runtime, [request], context);
-  return runtime.execute("run", { request: taskAttemptFor(request) }, context);
-}
-
-function diffSubmit(id: string, phase: string) {
-  return {
-    id,
-    role: "implementation-worker",
-    kind: "diff",
-    taskId: id,
-    phase,
-    summary: "change a.txt",
-    diff: DIFF,
-    expectedVerification: "cat a.txt",
-    risks: [],
-    contractCompliant: true,
-  };
-}
-
-async function modelFixture(tag: string) {
-  if (!parentProvider) return notReady("parent-provider");
-  const faux = fauxProvider({ provider: `abel-lifecycle-${tag}`, api: "faux" });
-  const modelRuntime = await parentProvider.runtimeForProvider(faux.provider);
-  return { faux, modelRuntime };
-}
-
-async function makeActive(tag: string) {
-  const cwd = makeRoot(tag);
-  const { faux, modelRuntime } = await modelFixture(tag);
-  const activation = new Activation();
-  activation.request();
-  activation.activate();
-  const runtime = new Runtime({
-    activation,
-    parentPayloadBridge: new PassthroughParentPayloadBridge(),
-  });
-  return {
-    cwd,
-    faux,
-    runtime,
-    context: {
-      cwd,
-      model: faux.getModel(),
-      modelRegistry: new ModelRegistry(modelRuntime),
-    } as const,
-  };
-}
-
-describe("stage cleanup restores inactive state", () => {
-  it("restores inactive state and clears retained state", async () => {
-    const { cwd, faux, runtime, context } = await makeActive("stage-clean");
-    faux.setResponses([submitResponse(diffSubmit("task-clean", "red"))]);
-    const run = await runFixture(
-      runtime,
-      requestFor("task-clean", "red", cwd),
-      context,
-    );
-    expect(run).toMatchObject({
-      kind: "candidate",
-      requestId: "task-clean",
-      taskId: "task-clean",
-      phase: "red",
+      affectedVerification: workflowExpectedGreen(`${taskId}-affected`),
+      repairVerification: workflowExpectedGreen(`${taskId}-repair`),
     });
-    assertCandidateOutcome(run);
-    const resultId = run.resultId as string;
-    expect((runtime as any).results.get(resultId)).toBeDefined();
-    expect((runtime as any).registry.find(cwd, "task-clean")).toBeDefined();
-
-    const finished = await (runtime as any).execute("finish", {}, context);
-    expect(finished.ok).toBe(true);
-    expect(runtime.state).toBe("inactive");
-    expect((runtime as any).results.get(resultId)).toBeUndefined();
-    expect((runtime as any).results.size).toBe(0);
-    expect((runtime as any).registry.find(cwd, "task-clean")).toBeUndefined();
-  });
-});
-
-describe("pi lifecycle end (session_shutdown) finishes the stage", () => {
-  it("removes only the dispatcher from the active tool set", async () => {
-    if (!entrypoint) return notReady("entrypoint");
-    const pi = new FakePi();
-    entrypoint.default(pi as never);
-    pi.active = ["read", "bash", "abel_dispatch"];
-    await pi.emit("session_shutdown", { reason: "end" });
-    expect(pi.getActiveTools()).toEqual(["read", "bash"]);
-  });
-
-  it("drains retained and active Runtime state before a replacement session starts", async () => {
-    if (!entrypoint) return notReady("entrypoint");
-    const pi = new FakePi();
-    const originalDrain = Runtime.prototype.drain;
-    let runtime: Runtime | undefined;
-    const drain = vi
-      .spyOn(Runtime.prototype, "drain")
-      .mockImplementation(function (this: Runtime) {
-        runtime = this;
-        return originalDrain.call(this);
-      });
-    entrypoint.default(pi as never);
-    await pi.emit("session_shutdown", { reason: "capture-runtime" });
-    expect(runtime).toBeDefined();
-    const activeRuntime = runtime!;
-    activeRuntime.activation.request();
-    activeRuntime.activation.activate();
-    const cwd = makeRoot("session-replacement");
-    const context = {
-      cwd,
-      model: {
-        provider: "lifecycle-session-replacement",
-        id: "fixture-model",
-        api: "faux",
-      },
-      modelRegistry: {},
-    } as Parameters<Runtime["execute"]>[2];
-    const activeStarted = deferred<void>();
-    let activePromise: Promise<unknown> | undefined;
-    const dispatch = vi
-      .spyOn(activeRuntime as any, "dispatchChild")
-      .mockImplementationOnce(async (_agent: any, envelope: any, ctx: any) => {
-        const resultId = activeRuntime.results.retain({
-          diff: DIFF,
-          writeSet: [...envelope.declared.write],
-          root: ctx.cwd,
-          snapshot: structuredClone(envelope.snapshot),
-        });
+    const change = "durable-independent-tasks";
+    const plan = {
+      schemaVersion: 3 as const,
+      changeId: change,
+      tasks: [task("parallel-a"), task("parallel-b")],
+      outputs: [],
+      ...workflowPlanContracts(["parallel-a", "parallel-b"]),
+    };
+    let active = 0;
+    let maximumActive = 0;
+    const worker = {
+      runAttempt: vi.fn(async ({ phase: currentPhase }: { phase: string }) => {
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        active -= 1;
         return {
-          ok: true,
-          action: "run",
-          result: diffSubmit(envelope.id, "red"),
-          resultId,
+          kind: "phase-committed" as const,
+          artifactHash: "a".repeat(64),
+          isolatedRevisionId: "b".repeat(64),
+          exitCode: currentPhase === "red" ? 1 : 0,
+          classification:
+            currentPhase === "red"
+              ? ("expected-red" as const)
+              : ("expected-green" as const),
         };
-      })
-      .mockImplementationOnce((async (...args: any[]) => {
-        const signal = args[3] as AbortSignal;
-        activeStarted.resolve();
-        return new Promise((resolve) => {
-          signal.addEventListener(
-            "abort",
-            () =>
-              resolve({
-                ok: false,
-                error: "replacement cancelled active child",
-                failure: { kind: "cancelled", code: "cancelled" },
-                failureKind: "cancelled",
-              }),
-            { once: true },
-          );
-        });
-      }) as any);
+      }),
+      rebind: vi.fn(() => ({ ok: true as const, routeId: "inherited" })),
+    };
+    const engine = WorkflowEngine.open({
+      consumerRoot,
+      stateRoot,
+      deliverySource: {
+        load: vi.fn(async () => ({
+          version: 2 as const,
+          gate: "gate-b" as const,
+          revision: 1,
+          receiptHash: "a".repeat(64),
+          plan,
+        })),
+      },
+      worker,
+      changeVerifier: {
+        verify: vi.fn(async () => ({
+          kind: "paused" as const,
+          code: "change-verification-held",
+        })),
+      },
+    });
 
     try {
-      const retained = await runFixture(
-        activeRuntime,
-        requestFor("replacement-retained", "red", cwd),
-        context,
-      );
-      expect(retained).toMatchObject({ kind: "candidate" });
-      expect(activeRuntime.results.size).toBe(1);
-      expect((activeRuntime as any).registry.values()).toHaveLength(1);
-
-      activePromise = (activeRuntime.execute as any)(
-        "run",
-        {
-          request: {
-            stage: "abel-design",
-            role: "design-explorer",
-            id: "replacement-active",
-            phase: "evidence",
-            objective: "hold one old-session child open",
-            roots: ["."],
-            context: { agents: "none", contract: "approved" },
-            declared: {
-              read: ["a.txt"],
-              write: [],
-              conflicts: [],
-              resources: [],
-            },
-            output: "evidence",
-          },
-        },
-        context,
-      );
-      await activeStarted.promise;
-
-      await pi.emit(
-        "session_start",
-        { type: "session_start", reason: "reload" },
-        {
-          mode: "rpc",
-          sessionManager: { getSessionId: () => "replacement-session" },
-        },
-      );
-
-      expect(drain).toHaveBeenCalledTimes(2);
-      expect(activeRuntime.results.size).toBe(0);
-      expect((activeRuntime as any).registry.values()).toHaveLength(0);
-      expect((activeRuntime as any).scheduler.batches).toHaveLength(0);
-      expect(activeRuntime.state).toBe("inactive");
-      expect(await activePromise).toMatchObject({ ok: false });
-      expect(dispatch).toHaveBeenCalledTimes(2);
+      await expect(
+        engine.execute({
+          version: 2,
+          command: "start",
+          stage: "abel-implement",
+          change,
+          operationId: "parallel-start",
+        }),
+      ).resolves.toMatchObject({
+        state: "paused",
+        completed: false,
+        pause: { code: "change-verification-held" },
+      });
+      expect(maximumActive).toBe(2);
     } finally {
-      await activeRuntime.drain();
-      if (activePromise) await activePromise;
-      drain.mockRestore();
+      await engine.close();
     }
   });
-});
 
-describe("no private state filesystem after delegation", () => {
-  it("leaves no private state on disk", async () => {
-    const { cwd, faux, runtime, context } = await makeActive("fs-scope");
-    faux.setResponses([submitResponse(diffSubmit("task-fs", "red"))]);
-    const run = await runFixture(
-      runtime,
-      requestFor("task-fs", "red", cwd),
-      context,
+  it("recovers an uncommitted running operation as an interrupted task", async () => {
+    const consumerRoot = makeRoot("durable-interrupted-operation");
+    mkdirSync(join(consumerRoot, "test"), { recursive: true });
+    writeFileSync(
+      join(consumerRoot, "package.json"),
+      `${JSON.stringify({ scripts: { check: 'node -e ""' } })}\n`,
     );
-    expect(run).toMatchObject({
-      kind: "candidate",
-      requestId: "task-fs",
-      taskId: "task-fs",
-      phase: "red",
+    writeFileSync(join(consumerRoot, "test/fixture.mjs"), "export {};\n");
+    execFileSync("git", ["init", "-q"], { cwd: consumerRoot });
+    execFileSync("git", ["add", "."], { cwd: consumerRoot });
+    const xdgStateHome = mkdtempSync(
+      join(tmpdir(), "abel-lifecycle-interrupted-state-"),
+    );
+    const homeDir = mkdtempSync(
+      join(tmpdir(), "abel-lifecycle-interrupted-home-"),
+    );
+    roots.push(xdgStateHome, homeDir);
+    const stateRoot = resolveStateRoot({
+      consumerRoot,
+      xdgStateHome,
+      homeDir,
     });
-    const entries = readdirSync(cwd);
-    expect(entries).not.toContain(".abel");
-    expect(entries).not.toContain("transcripts");
-    expect(entries).not.toContain("credentials");
-    expect(entries).not.toContain("sessions");
-  });
-});
+    const change = "durable-interrupted-operation";
+    const phase = (name: "red" | "green") => ({
+      read: ["package.json", "test/fixture.mjs"],
+      write: ["interrupted.txt"],
+      delete: [],
+      verification: {
+        kind: "static-check" as const,
+        id: `interrupted-${name}`,
+        runner: { kind: "node" as const, script: "test/fixture.mjs" },
+        args: [],
+        classification:
+          name === "red"
+            ? ("expected-red" as const)
+            : ("expected-green" as const),
+        ...(name === "red" ? { expectedFailure: "interrupted-red" } : {}),
+      },
+      verificationInputs: [
+        { kind: "workspace" as const, path: "test/fixture.mjs" },
+      ],
+    });
+    const plan = {
+      schemaVersion: 3 as const,
+      changeId: change,
+      tasks: [
+        {
+          taskId: "interrupted-task",
+          dependsOn: [],
+          objective: "Recover the interrupted task",
+          context: { agents: "root", contract: "approved interrupted task" },
+          roots: ["."],
+          phases: { red: phase("red"), green: phase("green") },
+          scheduling: { conflicts: [], resources: [] },
+          agents: { impact: "none" as const, managedOnly: true as const },
+          approvedDependencies: [],
+          impactClosure: {
+            changedSurfaces: ["none" as const],
+            searchEvidence: [],
+            relatedTests: [],
+            affectedSuite: ["test/fixture.mjs"],
+          },
+          affectedVerification: workflowExpectedGreen(
+            "interrupted-task-affected",
+          ),
+          repairVerification: workflowExpectedGreen("interrupted-task-repair"),
+        },
+      ],
+      outputs: [],
+      ...workflowPlanContracts(["interrupted-task"]),
+    };
+    const services = {
+      deliverySource: {
+        load: vi.fn(async () => ({
+          version: 2 as const,
+          gate: "gate-b" as const,
+          revision: 1,
+          receiptHash: "a".repeat(64),
+          plan,
+        })),
+      },
+      worker: {
+        runAttempt: vi.fn(async () => ({
+          kind: "paused" as const,
+          code: "fixture-paused",
+        })),
+        rebind: vi.fn(() => ({ ok: true as const, routeId: "inherited" })),
+      },
+      changeVerifier: {
+        verify: vi.fn(async () => ({
+          kind: "paused" as const,
+          code: "fixture-verification-paused",
+        })),
+      },
+    };
+    let engine = WorkflowEngine.open({
+      consumerRoot,
+      stateRoot,
+      ...services,
+    });
+    const started = await engine.execute({
+      version: 2,
+      command: "start",
+      stage: "abel-implement",
+      change,
+      operationId: "interrupted-start",
+    });
+    await engine.close();
 
-describe("unique child usage is returned exactly once", () => {
-  it("exposes the single child usage without double counting", async () => {
-    const { faux, runtime, context } = await makeActive("usage-once");
-    faux.setResponses([submitResponse(diffSubmit("task-usage", "red"))]);
-    const run = await runFixture(
-      runtime,
-      requestFor("task-usage", "red", context.cwd),
-      context,
-    );
-    expect(run).toMatchObject({
-      kind: "candidate",
-      requestId: "task-usage",
-      taskId: "task-usage",
-      phase: "red",
+    const store = RunStore.open(stateRoot);
+    store.transition({
+      runId: String(started.runId),
+      to: "running",
+      operationId: "simulate-process-stop",
     });
-    assertCandidateOutcome(run);
-    expect(run.usage).toBeDefined();
-    expect(run.usage).not.toBeInstanceOf(Array);
-    expect(run.usage?.totalTokens).toBeTypeOf("number");
+    store.close();
+    const database = new DatabaseSync(stateRoot.databasePath);
+    database
+      .prepare(
+        `UPDATE workflow_engine_operations
+         SET state = 'running', outcome_json = NULL, lease_token = ?,
+             lease_expires_at = ?
+         WHERE run_id = ? AND operation_id = ?`,
+      )
+      .run("expired-lease", 0, String(started.runId), "interrupted-start");
+    database
+      .prepare(
+        `UPDATE operations
+         SET state = 'running', outcome_json = NULL, lease_token = ?,
+             lease_expires_at = ?
+         WHERE run_id = ? AND operation_id LIKE 'engine-%'`,
+      )
+      .run("expired-authoritative-lease", 0, String(started.runId));
+    database
+      .prepare(
+        `UPDATE workflow_engine_tasks
+         SET state = 'phase-running', pause_code = NULL
+         WHERE run_id = ? AND task_id = 'interrupted-task'`,
+      )
+      .run(String(started.runId));
+    database.close();
+
+    engine = WorkflowEngine.open({
+      consumerRoot,
+      stateRoot,
+      ...services,
+    });
+    try {
+      await expect(
+        engine.execute({
+          version: 2,
+          command: "status",
+          stage: "abel-implement",
+          change,
+        }),
+      ).resolves.toMatchObject({
+        runId: started.runId,
+        state: "paused",
+        completed: false,
+        pause: { code: "operation-interrupted" },
+        tasks: [
+          {
+            taskId: "interrupted-task",
+            state: "paused",
+            phase: "red",
+          },
+        ],
+        legalCommands: expect.arrayContaining(["resume", "discard"]),
+      });
+    } finally {
+      await engine.close();
+    }
   });
 });

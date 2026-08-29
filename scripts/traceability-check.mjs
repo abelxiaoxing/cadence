@@ -1,66 +1,68 @@
-// P-007 traceability check: verify that every Requirement/Scenario reference
-// in tasks.md resolves to a heading in the two spec files, and that the 81
-// stable references are owned exactly once across the executable task IDs.
-// P-008 consumes this map for the read-only final audit.
-import { readFileSync } from "node:fs";
+// Verify that every Requirement/Scenario in the active control-plane change is
+// owned exactly once by tasks.md and that every task reference resolves to the
+// exact delta-spec heading it names.
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
-const tasks = readFileSync(
-  path.join(
-    root,
-    "openspec",
-    "changes",
-    "archive",
-    "2026-08-15-extract-workflow-add-private-agent-orchestration",
-    "tasks.md",
-  ),
-  "utf8",
-);
-
-const specPaths = [
-  "openspec/changes/archive/2026-08-15-extract-workflow-add-private-agent-orchestration/specs/abel-workflow-prompt-package/spec.md",
-  "openspec/changes/archive/2026-08-15-extract-workflow-add-private-agent-orchestration/specs/private-agent-orchestration/spec.md",
-];
+const changeName = "redesign-abel-workflow-control-plane";
+const changeRoot = path.join(root, "openspec", "changes", changeName);
+const tasks = readFileSync(path.join(changeRoot, "tasks.md"), "utf8");
+const specsRoot = path.join(changeRoot, "specs");
+const specPaths = readdirSync(specsRoot, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => path.join("specs", entry.name, "spec.md"))
+  .sort();
 
 const headings = new Set();
 for (const specPath of specPaths) {
-  const text = readFileSync(path.join(root, specPath), "utf8");
-  let section = "";
+  const text = readFileSync(path.join(changeRoot, specPath), "utf8");
+  let requirement = "";
   for (const line of text.split("\n")) {
-    const sectionMatch = line.match(/^### (?:Requirement|Scenario): (.+)$/);
-    if (sectionMatch) {
-      section = sectionMatch[1].trim();
+    const requirementMatch = line.match(/^### Requirement: (.+)$/);
+    if (requirementMatch) {
+      requirement = requirementMatch[1].trim();
       continue;
     }
-    const itemMatch = line.match(/^#### (Requirement|Scenario): (.+)$/);
-    if (itemMatch && section) {
-      headings.add(`${section}/${itemMatch[2].trim()}`);
+    const scenarioMatch = line.match(/^#### Scenario: (.+)$/);
+    if (scenarioMatch && requirement) {
+      const reference = `${specPath}#${requirement}/${scenarioMatch[1].trim()}`;
+      if (headings.has(reference)) {
+        throw new Error(`duplicate spec heading: ${reference}`);
+      }
+      headings.add(reference);
     }
   }
 }
 
-const references = [...tasks.matchAll(/spec\.md#([^\n`]+)/g)].map((m) =>
-  m[1].trim().replace(/\s+$/g, ""),
+const references = [
+  ...tasks.matchAll(/`(specs\/[^`\n]+\/spec\.md#[^`\n]+)`/g),
+].map((match) => match[1].trim());
+const referenceSet = new Set(references);
+const missing = references.filter((reference) => !headings.has(reference));
+const duplicates = references.filter(
+  (reference, index) => references.indexOf(reference) !== index,
+);
+const unowned = [...headings].filter(
+  (reference) => !referenceSet.has(reference),
 );
 
-const missing = references.filter((r) => !headings.has(r));
-const duplicates = references.filter((r, i) => references.indexOf(r) !== i);
-
-if (missing.length) {
+if (missing.length > 0) {
   throw new Error(
     `unresolved references: ${JSON.stringify([...new Set(missing)])}`,
   );
 }
-if (duplicates.length) {
+if (duplicates.length > 0) {
   throw new Error(
     `duplicate ownership: ${JSON.stringify([...new Set(duplicates)])}`,
   );
 }
+if (unowned.length > 0) {
+  throw new Error(`unowned scenarios: ${JSON.stringify(unowned)}`);
+}
 
 if (process.argv.includes("--review-json")) {
-  const fs = await import("node:fs");
-  const input = fs.readFileSync(0, "utf8");
+  const input = readFileSync(0, "utf8");
   let review;
   try {
     review = JSON.parse(input);
@@ -75,7 +77,7 @@ if (process.argv.includes("--review-json")) {
     "traceabilityFindings",
     "dagFindings",
     "unresolvedIssues",
-    "nextStep",
+    "outcome",
   ];
   for (const field of required) {
     if (!(field in review)) {
@@ -94,6 +96,9 @@ if (process.argv.includes("--review-json")) {
   ) {
     throw new Error("review evidence has no reviewed artifacts");
   }
+  if (review.outcome !== "accepted") {
+    throw new Error("review evidence outcome is not accepted");
+  }
   console.log(
     "review-check: structured evidence accepted with no unresolved issues",
   );
@@ -101,5 +106,5 @@ if (process.argv.includes("--review-json")) {
 }
 
 console.log(
-  `traceability-check: ${references.length} unique references resolve exactly once`,
+  `traceability-check: ${references.length} active Requirement/Scenario references resolve exactly once`,
 );

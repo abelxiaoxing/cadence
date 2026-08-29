@@ -1,4 +1,10 @@
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -13,7 +19,7 @@ import {
   type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
-import register from "../src/index";
+import { registerWorkflowControl as register } from "../src/index";
 
 type PayloadCallback = NonNullable<SimpleStreamOptions["onPayload"]>;
 
@@ -113,12 +119,12 @@ class FakePi {
     const root = resolve(".");
     return [
       {
-        name: "abel-implement",
+        name: "abel-design",
         source: "prompt",
         sourceInfo: {
           origin: "package",
           baseDir: root,
-          path: join(root, "prompts", "abel-implement.md"),
+          path: join(root, "prompts", "abel-design.md"),
         },
       },
     ];
@@ -151,6 +157,35 @@ interface Harness {
 }
 
 const roots: string[] = [];
+
+function declareInheritedRoute(cwd: string): void {
+  const directory = join(cwd, ".pi", "cadence");
+  mkdirSync(directory, { recursive: true });
+  const roles = [
+    "design-explorer",
+    "contract-reviewer",
+    "implementation-worker",
+    "diagnosis-worker",
+  ];
+  writeFileSync(
+    join(directory, "routes.json"),
+    `${JSON.stringify({
+      version: 2,
+      routes: {
+        inherited: {
+          kind: "inherited",
+          capabilities: {
+            roles,
+            dialects: ["openai-responses"],
+            contextWindow: 256_000,
+            maxTokens: 128_000,
+          },
+        },
+      },
+      roles: Object.fromEntries(roles.map((role) => [role, ["inherited"]])),
+    })}\n`,
+  );
+}
 
 afterEach(() => {
   for (const root of roots.splice(0)) {
@@ -313,6 +348,7 @@ function makeHarness(tag: string): Harness {
   const cwd = mkdtempSync(join(tmpdir(), `cadence-payload-${tag}-`));
   roots.push(cwd);
   writeFileSync(join(cwd, "sentinel.txt"), "unchanged\n");
+  declareInheritedRoute(cwd);
   const pi = new FakePi();
   const registry = new TestRegistry();
   let submittedId = "unset";
@@ -358,7 +394,7 @@ async function start(
 
 const expandedPrompt = [
   "<abel-request>exercise the approved lifecycle</abel-request>",
-  "<!-- ABEL:PROMPT:abel-implement -->",
+  "<!-- ABEL:PROMPT:abel-design -->",
 ].join("\n");
 
 async function beforeAgent(harness: Harness): Promise<void> {
@@ -377,7 +413,7 @@ async function beforeAgent(harness: Harness): Promise<void> {
 async function activate(harness: Harness): Promise<void> {
   await harness.pi.emit(
     "input",
-    { type: "input", text: "/abel-implement lifecycle" },
+    { type: "input", text: "/abel-design lifecycle" },
     harness.context,
   );
   await beforeAgent(harness);

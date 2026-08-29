@@ -64,3 +64,14 @@ export function observeSafePath(
 export function isSafeRegularFile(root: string, relative: string): boolean {
   return observeSafePath(root, relative).kind === "file";
 }
+
+/** Require an exact regular-file or absent workspace fact without following links. */
+export function requireSafeWorkspacePath(
+  root: string,
+  relative: string,
+  expected: "file" | "absent",
+): SafePathObservation {
+  const observation = observeSafePath(root, relative);
+  if (observation.kind !== expected) throw new Error("unsafe-workspace-path");
+  return observation;
+}

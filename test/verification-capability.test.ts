@@ -11,7 +11,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { validateVerificationCapability } from "../src/verification-capability.ts";
+import {
+  bindCurrentVerificationCapability,
+  isVerificationCapabilityCurrent,
+  resolveVerificationRunner,
+  validateVerificationAdapterCapability,
+  validateVerificationCapability,
+} from "../src/verification-capability.ts";
 
 const fixtures = fileURLToPath(
   new URL("./fixtures/verification-consumers", import.meta.url),
@@ -40,6 +46,32 @@ function consumer(kind: "npm" | "bun"): string {
   return root;
 }
 
+function windowsRunnerFixture(root: string) {
+  const runnerDirectory = path.join(root, "windows-runners");
+  const npmBin = path.join(runnerDirectory, "node_modules/npm/bin");
+  mkdirSync(npmBin, { recursive: true });
+  const node = path.join(runnerDirectory, "NODE.EXE");
+  const npm = path.join(runnerDirectory, "NPM.CMD");
+  const npx = path.join(runnerDirectory, "nPx.CmD");
+  const npmCli = path.join(npmBin, "npm-cli.js");
+  const npxCli = path.join(npmBin, "npx-cli.js");
+  for (const file of [node, npm, npx, npmCli, npxCli]) {
+    writeFileSync(file, "fixture\n", { mode: 0o644 });
+    chmodSync(file, 0o644);
+  }
+  return {
+    node,
+    npmCli,
+    npxCli,
+    environment: {
+      platform: "win32" as const,
+      path: `${runnerDirectory}${path.delimiter}${runnerDirectory}`,
+      pathExt: ".PS1;.EXE;.exe;.CMD;.cmd;.EXE",
+      pathDelimiter: path.delimiter,
+    },
+  };
+}
+
 const npmVitest = {
   kind: "vitest",
   id: "npm-vitest-target",
@@ -56,6 +88,182 @@ const npmVitest = {
 } as const;
 
 describe("cross-project verification capability", () => {
+  it("resolves Windows PATH runners case-insensitively without POSIX execute bits", () => {
+    const root = consumer("npm");
+    const fixture = windowsRunnerFixture(root);
+
+    expect(
+      resolveVerificationRunner("node", fixture.environment),
+    ).toMatchObject({ command: "node", executablePath: fixture.node });
+    expect(resolveVerificationRunner("npm", fixture.environment)).toMatchObject(
+      {
+        command: "npm",
+        executablePath: fixture.node,
+        fixedArgs: [fixture.npmCli],
+      },
+    );
+    expect(resolveVerificationRunner("npx", fixture.environment)).toMatchObject(
+      {
+        command: "npx",
+        executablePath: fixture.node,
+        fixedArgs: [fixture.npxCli],
+      },
+    );
+  });
+
+  it("rejects missing, directory, and unsupported Windows launcher candidates", () => {
+    const root = consumer("npm");
+    const runnerDirectory = path.join(root, "invalid-windows-runners");
+    mkdirSync(path.join(runnerDirectory, "folder.EXE"), { recursive: true });
+    writeFileSync(path.join(runnerDirectory, "script.PS1"), "fixture\n", {
+      mode: 0o644,
+    });
+    writeFileSync(path.join(runnerDirectory, "batch.BAT"), "fixture\n", {
+      mode: 0o644,
+    });
+    const environment = {
+      platform: "win32" as const,
+      path: runnerDirectory,
+      pathExt: ".PS1;.EXE;.CMD",
+      pathDelimiter: path.delimiter,
+    };
+
+    expect(resolveVerificationRunner("missing", environment)).toBeNull();
+    expect(resolveVerificationRunner("folder", environment)).toBeNull();
+    expect(resolveVerificationRunner("script.ps1", environment)).toBeNull();
+    expect(resolveVerificationRunner("batch", environment)).toBeNull();
+  });
+
+  it("keeps POSIX execute-bit enforcement", () => {
+    const root = consumer("npm");
+    const runnerDirectory = path.join(root, "posix-runners");
+    mkdirSync(runnerDirectory);
+    const runner = path.join(runnerDirectory, "custom-runner");
+    writeFileSync(runner, "#!/bin/sh\n", { mode: 0o644 });
+    chmodSync(runner, 0o644);
+    const environment = {
+      platform: "linux" as const,
+      path: runnerDirectory,
+      pathExt: "",
+      pathDelimiter: path.delimiter,
+    };
+
+    expect(resolveVerificationRunner("custom-runner", environment)).toBeNull();
+    chmodSync(runner, 0o755);
+    expect(
+      resolveVerificationRunner("custom-runner", environment),
+    ).toMatchObject({ command: "custom-runner", executablePath: runner });
+
+    const localRunner = path.join(root, "node_modules/.bin/local-check");
+    writeFileSync(localRunner, "#!/bin/sh\n", { mode: 0o644 });
+    chmodSync(localRunner, 0o644);
+    const contract = {
+      kind: "static-check",
+      id: "posix-local-check",
+      runner: { kind: "local-binary", executable: "local-check" },
+      args: [],
+      classification: "expected-green",
+    };
+    expect(
+      validateVerificationAdapterCapability(root, contract, {
+        runnerEnvironment: environment,
+      }),
+    ).toMatchObject({
+      ok: false,
+      diagnostic: { code: "local-executable-missing" },
+    });
+    chmodSync(localRunner, 0o755);
+    expect(
+      validateVerificationAdapterCapability(root, contract, {
+        runnerEnvironment: environment,
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("accepts a zero-execute-bit Windows local Vitest and exact package script", () => {
+    const root = consumer("npm");
+    const fixture = windowsRunnerFixture(root);
+    const localBin = path.join(root, "node_modules/.bin/vitest");
+    rmSync(localBin);
+    writeFileSync(localBin, "#!/bin/sh\n", { mode: 0o644 });
+    writeFileSync(`${localBin}.CMD`, "@echo off\r\n", { mode: 0o644 });
+    chmodSync(localBin, 0o644);
+
+    expect(
+      validateVerificationAdapterCapability(root, npmVitest, {
+        runnerEnvironment: fixture.environment,
+      }),
+    ).toMatchObject({ ok: true, runnerBindings: expect.any(Array) });
+  });
+
+  it("binds a Windows local binary to node and its contained package CLI", () => {
+    const root = consumer("npm");
+    const fixture = windowsRunnerFixture(root);
+    const localBin = path.join(root, "node_modules/.bin/vitest");
+    rmSync(localBin);
+    writeFileSync(localBin, "#!/bin/sh\n", { mode: 0o644 });
+    writeFileSync(`${localBin}.cmd`, "@echo off\r\n", { mode: 0o644 });
+    const packageRoot = path.join(root, "node_modules/vitest");
+    mkdirSync(packageRoot, { recursive: true });
+    const cli = path.join(packageRoot, "vitest.mjs");
+    writeFileSync(
+      path.join(packageRoot, "package.json"),
+      JSON.stringify({ name: "vitest", bin: { vitest: "./vitest.mjs" } }),
+    );
+    writeFileSync(cli, "export {};\n", { mode: 0o644 });
+
+    expect(
+      validateVerificationAdapterCapability(
+        root,
+        {
+          kind: "static-check",
+          id: "windows-local-vitest",
+          runner: { kind: "local-binary", executable: "vitest" },
+          args: ["--version"],
+          classification: "expected-green",
+        },
+        { runnerEnvironment: fixture.environment },
+      ),
+    ).toMatchObject({
+      ok: true,
+      runnerBindings: [
+        {
+          command: "vitest",
+          executablePath: fixture.node,
+          fixedArgs: [cli],
+        },
+      ],
+    });
+  });
+
+  it("keeps unsafe and networking package scripts rejected on Windows", () => {
+    const root = consumer("npm");
+    const fixture = windowsRunnerFixture(root);
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({ scripts: { "test:run": "npm exec vitest" } }),
+    );
+
+    expect(
+      validateVerificationAdapterCapability(
+        root,
+        {
+          kind: "package-script",
+          id: "windows-networking-script",
+          packageManager: "npm",
+          script: "test:run",
+          command: "npm exec vitest",
+          args: [],
+          classification: "expected-green",
+        },
+        { runnerEnvironment: fixture.environment },
+      ),
+    ).toMatchObject({
+      ok: false,
+      diagnostic: { code: "script-unsafe" },
+    });
+  });
+
   it("validates every approved npm consumer contract without check/test:target", () => {
     const root = consumer("npm");
     const contracts = [
@@ -125,6 +333,19 @@ describe("cross-project verification capability", () => {
       ok: false,
       diagnostic: { kind: "verification-adapter", code: "input-missing" },
     });
+  });
+
+  it("binds exact verification inputs and detects later drift", () => {
+    const root = consumer("npm");
+    const capability = bindCurrentVerificationCapability(root, npmVitest);
+    expect(capability).toMatchObject({ ok: true });
+    if (!capability.ok) return;
+    expect(isVerificationCapabilityCurrent(root, capability.value)).toBe(true);
+    writeFileSync(
+      path.join(root, "tests/utils/upstreamFetch.test.js"),
+      "changed after capability binding\n",
+    );
+    expect(isVerificationCapabilityCurrent(root, capability.value)).toBe(false);
   });
 
   it("classifies unsupported and downloading runners", () => {

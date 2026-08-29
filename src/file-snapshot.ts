@@ -30,6 +30,11 @@ function sha256(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+/** Hash bytes with the same identity used by file and workspace snapshots. */
+export function snapshotContentHash(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
 /** Snapshot one existing regular file under root. */
 export function snapshotFile(root: string, relPath: string): FileBound | null {
   if (observeSafePath(root, relPath).kind !== "file") return null;

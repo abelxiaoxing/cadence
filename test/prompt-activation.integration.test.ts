@@ -1,10 +1,4 @@
-import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -18,16 +12,9 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import register, { DISPATCH_TOOL } from "../src/index";
 import { runtimeForProvider } from "../src/parent-provider";
-import { Runtime } from "../src/runtime";
-import { ACTIVITY_DETAILS_KEY } from "../src/subagent-activity";
-import {
-  graphAdmissionFor,
-  type ImplementTaskFixture,
-  taskAttemptFor,
-} from "./helpers/implement-graph-fixture.ts";
 
 const packageDir = join(import.meta.dirname, "..");
 const roots: string[] = [];
@@ -77,50 +64,9 @@ async function promptSession(
   return { session };
 }
 
-async function controlledToolSession(
-  tool: unknown,
-  responses: Array<ReturnType<typeof fauxAssistantMessage>>,
-) {
-  const cwd = mkdtempSync(join(tmpdir(), "abel-pi-tool-error-"));
-  roots.push(cwd);
-  mkdirSync(join(cwd, "test"));
-  mkdirSync(join(cwd, "node_modules/.bin"), { recursive: true });
-  writeFileSync(
-    join(cwd, "test/prompt-activation.integration.test.ts"),
-    "// prompt activation fixture\n",
-  );
-  writeFileSync(
-    join(cwd, "package.json"),
-    JSON.stringify({ scripts: { "test:target": "vitest run" } }),
-  );
-  writeFileSync(join(cwd, "node_modules/.bin/vitest"), "#!/bin/sh\n");
-  chmodSync(join(cwd, "node_modules/.bin/vitest"), 0o755);
-  const faux = fauxProvider({
-    provider: `abel-pi-tool-error-${sequence++}`,
-    api: "faux",
-  });
-  faux.setResponses(responses);
-  const modelRuntime = await runtimeForProvider(faux.provider);
-  const settingsManager = SettingsManager.inMemory({
-    compaction: { enabled: false },
-    retry: { enabled: false },
-  });
-  const { session } = await createAgentSession({
-    cwd,
-    modelRuntime,
-    model: faux.getModel(),
-    noTools: "all",
-    tools: [DISPATCH_TOOL],
-    customTools: [tool as never],
-    sessionManager: SessionManager.inMemory(cwd),
-    settingsManager,
-  });
-  await session.bindExtensions({ mode: "print" });
-  return { session };
-}
-
 function activePackageTool(
   prompt: "abel-design" | "abel-implement" = "abel-implement",
+  registrar: typeof register = register,
 ) {
   let tool: unknown;
   const handlers = new Map<string, (...args: any[]) => unknown>();
@@ -148,7 +94,7 @@ function activePackageTool(
       active = next;
     },
   };
-  register(pi as never);
+  registrar(pi as never);
   handlers.get("input")?.({ text: `/${prompt} verified input` });
   handlers.get("before_agent_start")?.(
     {
@@ -170,97 +116,6 @@ function packagePrompt(
   expect(prompt?.sourceInfo.baseDir).toBe(packageDir);
 }
 
-function implementRequest(
-  taskId: string,
-  requestId: string,
-): ImplementTaskFixture {
-  const path = "test/prompt-activation.integration.test.ts";
-  const verification = {
-    kind: "package-script",
-    id: `verify-${taskId}`,
-    packageManager: "bun",
-    script: "test:target",
-    command: "vitest run",
-    args: [path],
-    classification: "expected-red",
-    expectedFailure: "[SLICE-5:pi-tool-error]",
-  } satisfies ImplementTaskFixture["boundary"]["phases"]["red"]["verification"];
-  return {
-    boundary: {
-      changeId: "remove-implement-design-loop",
-      taskId,
-      dependsOn: [],
-      objective: "Observe Pi ToolResult classification",
-      roots: ["."],
-      context: { agents: "root", contract: "approved" },
-      phases: {
-        red: {
-          read: [path, "package.json"],
-          write: [],
-          verification,
-          verificationInputs: [{ kind: "workspace", path: "package.json" }],
-        },
-        green: {
-          read: [path, "package.json"],
-          write: [],
-          verification: {
-            kind: "package-script",
-            id: `verify-${taskId}-green`,
-            packageManager: verification.packageManager,
-            script: verification.script,
-            command: verification.command,
-            args: verification.args,
-            classification: "expected-green",
-          },
-          verificationInputs: [{ kind: "workspace", path: "package.json" }],
-        },
-      },
-      scheduling: { conflicts: [], resources: [] },
-      agents: { impact: "none", managedOnly: true },
-      approvedDependencies: [],
-      impactClosure: {
-        changedSurfaces: ["none"],
-        searchEvidence: [],
-        relatedTests: [],
-        affectedSuite: [path],
-      },
-    },
-    attempt: {
-      changeId: "remove-implement-design-loop",
-      taskId,
-      requestId,
-      phase: "red",
-      snapshot: {
-        [path]: { kind: "file", sha256: "a".repeat(64), bytes: 1 },
-        "package.json": {
-          kind: "file",
-          sha256: "a".repeat(64),
-          bytes: 1,
-        },
-      },
-    },
-  };
-}
-
-function designRequest(id: string, read: string[]) {
-  return {
-    stage: "abel-design",
-    role: "design-explorer",
-    id,
-    phase: "evidence",
-    objective: `Inspect ${read.join(", ")} without writing`,
-    roots: ["."],
-    context: { agents: "root AGENTS.md", contract: "read-only evidence" },
-    declared: {
-      read,
-      write: [],
-      conflicts: [],
-      resources: [],
-    },
-    output: "evidence",
-  };
-}
-
 function objectSchemas(value: unknown): Array<Record<string, any>> {
   if (value === null || typeof value !== "object") return [];
   const current = value as Record<string, unknown>;
@@ -268,18 +123,6 @@ function objectSchemas(value: unknown): Array<Record<string, any>> {
     ...(current.type === "object" ? [current] : []),
     ...Object.values(current).flatMap(objectSchemas),
   ];
-}
-
-function dispatchResults(
-  session: Awaited<ReturnType<typeof promptSession>>["session"],
-) {
-  const messages = session.state.messages;
-  return messages.filter(
-    (
-      message,
-    ): message is Extract<(typeof messages)[number], { role: "toolResult" }> =>
-      message.role === "toolResult" && message.toolName === "abel_dispatch",
-  );
 }
 
 describe("package Prompt provenance activates abel_dispatch", () => {
@@ -369,6 +212,14 @@ describe("package Prompt provenance activates abel_dispatch", () => {
         additionalProperties: false,
       },
     });
+    expect(tool.parameters).toMatchObject({
+      additionalProperties: false,
+      oneOf: [
+        { required: ["version", "command", "stage"] },
+        { required: ["action"] },
+      ],
+    });
+    expect(tool.parameters).not.toHaveProperty("anyOf");
   });
 
   for (const name of ["abel-design", "abel-implement", "abel-diagnose"]) {
@@ -408,262 +259,6 @@ describe("package Prompt provenance activates abel_dispatch", () => {
       { type: "text", text: '{"ok":true,"action":"cancel"}' },
     ]);
     session.dispose();
-  });
-
-  it("admits two sibling Design tool calls concurrently", async () => {
-    const started: string[] = [];
-    let release: (() => void) | undefined;
-    const bothStarted = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const dispatch = vi
-      .spyOn(Runtime.prototype as any, "dispatchChild")
-      .mockImplementation(async (_agent, request: any) => {
-        started.push(request.id);
-        if (started.length === 2) release?.();
-        await bothStarted;
-        return {
-          ok: true,
-          action: "run",
-          result: { id: request.id, role: request.role, kind: "evidence" },
-        };
-      });
-    const tool = activePackageTool();
-    const { session } = await controlledToolSession(tool, [
-      fauxAssistantMessage(
-        [
-          fauxToolCall(
-            DISPATCH_TOOL,
-            {
-              action: "run",
-              request: designRequest("design-package", ["package.json"]),
-            },
-            { id: "design-package-call" },
-          ),
-          fauxToolCall(
-            DISPATCH_TOOL,
-            {
-              action: "run",
-              request: designRequest("design-readme", ["README.md"]),
-            },
-            { id: "design-readme-call" },
-          ),
-        ],
-        { stopReason: "toolUse" },
-      ),
-      fauxAssistantMessage("done"),
-    ]);
-
-    try {
-      await session.prompt("run both Design packets");
-      expect(started.sort()).toEqual(["design-package", "design-readme"]);
-      expect(dispatchResults(session)).toHaveLength(2);
-    } finally {
-      dispatch.mockRestore();
-      session.dispose();
-    }
-  });
-
-  it("[SLICE-5:pi-tool-error] uses real Agent Loop error flags for Implement domain and protocol outcomes", async () => {
-    const blockedRequest = implementRequest("pi-blocked", "pi-blocked:red:0");
-    const cancelledRequest = implementRequest(
-      "pi-cancelled",
-      "pi-cancelled:red:0",
-    );
-    const internalRequest = implementRequest(
-      "pi-internal",
-      "pi-internal:red:0",
-    );
-    const blocked = {
-      kind: "blocked",
-      requestId: blockedRequest.attempt.requestId,
-      taskId: blockedRequest.attempt.taskId,
-      phase: "red",
-      failure: {
-        kind: "approval-boundary",
-        code: "task-scope-insufficient",
-      },
-    } as const;
-    const cancelled = {
-      kind: "cancelled",
-      requestId: cancelledRequest.attempt.requestId,
-      taskId: cancelledRequest.attempt.taskId,
-      phase: "red",
-    } as const;
-    const dispatch = vi
-      .spyOn(Runtime.prototype as any, "dispatchChild")
-      .mockResolvedValueOnce({
-        ok: false,
-        error: "task is outside the approved boundary",
-        failureKind: "failed",
-        failure: blocked.failure,
-      } as never)
-      .mockResolvedValueOnce({
-        ok: false,
-        error: "child phase cancelled",
-        failureKind: "cancelled",
-        failure: { kind: "cancelled", code: "cancelled" },
-      } as never)
-      .mockRejectedValueOnce(new Error("internal invariant fixture"));
-    const invalidRequest = {
-      stage: "abel-implement",
-      kind: "task-attempt",
-      attempt: {},
-    };
-    const tool = activePackageTool();
-    const { session: blockedSession } = await controlledToolSession(tool, [
-      fauxAssistantMessage(
-        fauxToolCall(
-          "abel_dispatch",
-          {
-            action: "run",
-            request: graphAdmissionFor([
-              blockedRequest,
-              cancelledRequest,
-              internalRequest,
-            ]),
-          },
-          { id: "pi-graph-admission" },
-        ),
-        { stopReason: "toolUse" },
-      ),
-      fauxAssistantMessage(
-        fauxToolCall(
-          "abel_dispatch",
-          { action: "run", request: taskAttemptFor(blockedRequest) },
-          { id: "pi-blocked-call" },
-        ),
-        { stopReason: "toolUse" },
-      ),
-      fauxAssistantMessage("done"),
-    ]);
-    const { session: cancelledSession } = await controlledToolSession(tool, [
-      fauxAssistantMessage(
-        fauxToolCall(
-          "abel_dispatch",
-          {
-            action: "run",
-            request: graphAdmissionFor([cancelledRequest]),
-          },
-          { id: "pi-cancelled-graph-admission" },
-        ),
-        { stopReason: "toolUse" },
-      ),
-      fauxAssistantMessage(
-        fauxToolCall(
-          "abel_dispatch",
-          { action: "run", request: taskAttemptFor(cancelledRequest) },
-          { id: "pi-cancelled-call" },
-        ),
-        { stopReason: "toolUse" },
-      ),
-      fauxAssistantMessage("done"),
-    ]);
-    const { session: protocolSession } = await controlledToolSession(tool, [
-      fauxAssistantMessage(
-        fauxToolCall(
-          "abel_dispatch",
-          { action: "run", request: invalidRequest },
-          { id: "pi-protocol-call" },
-        ),
-        { stopReason: "toolUse" },
-      ),
-      fauxAssistantMessage("done"),
-    ]);
-    const { session: internalSession } = await controlledToolSession(tool, [
-      fauxAssistantMessage(
-        fauxToolCall(
-          "abel_dispatch",
-          {
-            action: "run",
-            request: graphAdmissionFor([internalRequest]),
-          },
-          { id: "pi-internal-graph-admission" },
-        ),
-        { stopReason: "toolUse" },
-      ),
-      fauxAssistantMessage(
-        fauxToolCall(
-          "abel_dispatch",
-          { action: "run", request: taskAttemptFor(internalRequest) },
-          { id: "pi-internal-call" },
-        ),
-        { stopReason: "toolUse" },
-      ),
-      fauxAssistantMessage("done"),
-    ]);
-
-    try {
-      await blockedSession.prompt("run blocked fixture");
-      await cancelledSession.prompt("run cancelled fixture");
-      await protocolSession.prompt("run invalid protocol fixture");
-      await internalSession.prompt("run internal error fixture");
-
-      const blockedResults = dispatchResults(blockedSession);
-      const cancelledResults = dispatchResults(cancelledSession);
-      const protocolResults = dispatchResults(protocolSession);
-      const internalResults = dispatchResults(internalSession);
-      expect(blockedResults).toHaveLength(2);
-      expect(cancelledResults).toHaveLength(2);
-      expect(protocolResults).toHaveLength(1);
-      expect(internalResults).toHaveLength(2);
-      const blockedResult = blockedResults.at(-1);
-      const cancelledResult = cancelledResults.at(-1);
-      const protocolResult = protocolResults[0];
-      const internalResult = internalResults.at(-1);
-      expect.soft(blockedResult?.isError).toBe(false);
-      expect.soft(cancelledResult?.isError).toBe(false);
-      expect.soft(protocolResult?.isError).toBe(true);
-      expect.soft(internalResult?.isError).toBe(true);
-
-      for (const [message, expected] of [
-        [blockedResult, blocked],
-        [cancelledResult, cancelled],
-      ] as const) {
-        expect(message?.role).toBe("toolResult");
-        if (message?.role !== "toolResult") continue;
-        expect.soft(message.content).toHaveLength(1);
-        const content = message.content[0];
-        expect.soft(content?.type).toBe("text");
-        if (content?.type !== "text") continue;
-        expect.soft(JSON.parse(content.text)).toEqual(expected);
-        expect.soft(message.details).toEqual(expected);
-        expect
-          .soft(message.details as Record<string, unknown>)
-          .not.toHaveProperty(ACTIVITY_DETAILS_KEY);
-      }
-
-      expect(protocolResult?.role).toBe("toolResult");
-      if (protocolResult?.role === "toolResult") {
-        expect(protocolResult.content).toEqual([
-          {
-            type: "text",
-            text: expect.stringContaining("Implement protocol error"),
-          },
-        ]);
-        expect(
-          protocolResult.details as Record<string, unknown>,
-        ).not.toHaveProperty(ACTIVITY_DETAILS_KEY);
-      }
-      expect(internalResult?.role).toBe("toolResult");
-      if (internalResult?.role === "toolResult") {
-        expect(internalResult.content).toEqual([
-          {
-            type: "text",
-            text: expect.stringContaining("internal invariant fixture"),
-          },
-        ]);
-        expect(
-          internalResult.details as Record<string, unknown>,
-        ).not.toHaveProperty(ACTIVITY_DETAILS_KEY);
-      }
-    } finally {
-      dispatch.mockRestore();
-      blockedSession.dispose();
-      cancelledSession.dispose();
-      protocolSession.dispose();
-      internalSession.dispose();
-    }
   });
 
   it("rejects a same-name prompt without package provenance", async () => {

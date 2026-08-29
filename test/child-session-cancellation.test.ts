@@ -89,13 +89,16 @@ describe("child session creation cancellation", () => {
 
   it("distinguishes a completed prompt with no final assistant", async () => {
     const dispose = vi.fn();
+    let receivedPrompt = "";
     fixture.setFactory(async () => ({
       session: {
         messages: [],
         subscribe() {
           return () => {};
         },
-        async prompt() {},
+        async prompt(prompt: string) {
+          receivedPrompt = prompt;
+        },
         abort: vi.fn(),
         dispose,
       },
@@ -111,6 +114,13 @@ describe("child session creation cancellation", () => {
       output: "evidence",
       roots: [process.cwd()],
       timeoutMs: 5_000,
+      ledgerProjection: {
+        version: 2,
+        runId: "replacement-run",
+        taskId: "replacement-task",
+        currentPhase: "green",
+        history: [{ phase: "red", kind: "phase-verified" }],
+      },
     });
 
     expect(outcome).toMatchObject({
@@ -122,6 +132,8 @@ describe("child session creation cancellation", () => {
       },
     });
     expect(dispose).toHaveBeenCalledTimes(1);
+    expect(receivedPrompt).toContain("<abel-task-ledger-projection>");
+    expect(receivedPrompt).toContain('"currentPhase":"green"');
   });
 
   it("settles immediately and disposes a session that is created late", async () => {

@@ -132,6 +132,42 @@ export type Observation =
   | { kind: "file"; path: string }
   | { kind: "dir"; path: string };
 
+export class ScopedObservationCollector {
+  readonly #observations = new Map<string, Observation>();
+  readonly #limit: number;
+  #truncated = false;
+
+  constructor(limit = 512) {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 4096) {
+      throw new Error("observation-limit-invalid");
+    }
+    this.#limit = limit;
+  }
+
+  readonly observe = (observation: Observation): void => {
+    const key = `${observation.kind}:${observation.path}`;
+    if (this.#observations.has(key)) return;
+    if (this.#observations.size >= this.#limit) {
+      this.#truncated = true;
+      return;
+    }
+    this.#observations.set(key, { ...observation });
+  };
+
+  projection(): { observations: Observation[]; truncated: boolean } {
+    return {
+      observations: [...this.#observations.values()]
+        .map((entry) => ({ ...entry }))
+        .sort(
+          (left, right) =>
+            left.path.localeCompare(right.path) ||
+            left.kind.localeCompare(right.kind),
+        ),
+      truncated: this.#truncated,
+    };
+  }
+}
+
 export interface ScopedToolDef {
   name: string;
   description: string;

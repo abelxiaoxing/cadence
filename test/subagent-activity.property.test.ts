@@ -1,6 +1,6 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
-import type { RuntimeActivityEvent } from "../src/runtime";
+import type { PacketActivityEvent } from "../src/packet-runtime";
 import {
   ACTIVITY_REFRESH_MS,
   ACTIVITY_WIDGET_MAX_LINES,
@@ -16,10 +16,10 @@ import {
 } from "../src/subagent-activity";
 
 function event(
-  state: RuntimeActivityEvent["state"],
+  state: PacketActivityEvent["state"],
   sequence: number,
   requestId = `request-${sequence}`,
-): RuntimeActivityEvent {
+): PacketActivityEvent {
   return {
     state,
     requestId,
@@ -69,6 +69,61 @@ describe("Subagent activity presentation", () => {
     expect(lines.join("\n")).toContain("request-1");
     expect(lines.join("\n")).toContain("request-5");
     expect(lines.at(-1)).toBe("+2 more (1 running, 1 queued)");
+  });
+
+  it("keeps broker transport states active and projects their bounded metadata", () => {
+    const controller = new ActivityController({
+      setInterval: () => 1,
+      clearInterval: () => undefined,
+    });
+    controller.attach({ setWidget: vi.fn(), setStatus: vi.fn() });
+    const onUpdate = vi.fn();
+    for (const update of [
+      {
+        ...event("connecting", 1),
+        attempt: 1,
+        maxAttempts: 2,
+        wait: "connection",
+      },
+      {
+        ...event("waiting-first-response", 1),
+        attempt: 1,
+        maxAttempts: 2,
+        wait: "first-response",
+      },
+      {
+        ...event("retrying", 1),
+        attempt: 1,
+        maxAttempts: 2,
+        code: "transport-failure",
+        wait: "bounded-policy",
+      },
+      {
+        ...event("running", 1),
+        attempt: 2,
+        maxAttempts: 2,
+        wait: "worker-progress",
+      },
+    ] as PacketActivityEvent[]) {
+      controller.accept("call-transport", onUpdate, update);
+      expect(controller.getActiveEntries()).toEqual([
+        expect.objectContaining({
+          state: update.state,
+          attempt: update.attempt,
+          maxAttempts: update.maxAttempts,
+          wait: update.wait,
+        }),
+      ]);
+    }
+    const rendered = new ActivityInlineComponent(
+      controller.getActiveEntries()[0] as never,
+    )
+      .render(160)
+      .join("\n");
+    expect(rendered).toContain("attempt 2/2");
+    expect(rendered).toContain("wait worker-progress");
+    controller.accept("call-transport", onUpdate, event("completed", 1));
+    expect(controller.getActiveEntries()).toEqual([]);
   });
 
   it("uses one refresh timer and removes terminal rows immediately", () => {

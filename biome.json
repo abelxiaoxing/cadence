@@ -51,6 +51,32 @@
           }
         }
       }
+    },
+    {
+      "includes": ["test/workflow-engine.integration.test.ts"],
+      "formatter": {
+        "enabled": false
+      },
+      "linter": {
+        "enabled": false
+      },
+      "assist": {
+        "enabled": false
+      }
+    },
+    {
+      "includes": [
+        "openspec/changes/redesign-abel-workflow-control-plane/implement-plan.json"
+      ],
+      "formatter": {
+        "enabled": false
+      },
+      "linter": {
+        "enabled": false
+      },
+      "assist": {
+        "enabled": false
+      }
     }
   ]
 }

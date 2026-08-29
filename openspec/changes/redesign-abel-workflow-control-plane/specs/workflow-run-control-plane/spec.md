@@ -73,6 +73,7 @@ The public run lifecycle SHALL distinguish at least ready, queued, connecting, r
 Transport, endpoint, environment, capacity, generated-artifact, stale-snapshot, resource-conflict, verification, and repairable compatibility failures SHALL NOT by themselves create an unrecoverable task terminal.
 Resource conflicts SHALL remain queued until their declared conflict clears.
 Retryable failures SHALL preserve separate policy counters and final typed evidence for transport, artifact correction, stale refresh, verification repair, and parent checkpoint work.
+Artifact correction SHALL use the canonical plan's 2-3 total candidate-attempt bound independently for each task phase and operation, SHALL count the initial candidate launch, and SHALL reset only after phase commitment or a later explicit operation.
 Exhausting an automatic policy SHALL pause the run for explicit resume, Worker rebinding, task reshaping, approval revision, or discard; it SHALL NOT erase already committed independent work.
 Only successful completion, explicit discard, or a deterministic contract or integrity rejection with no legal revision path SHALL terminate a run.
 

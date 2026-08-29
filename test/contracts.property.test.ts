@@ -1,10 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { PhaseAttempt, TaskBoundary } from "../src/contracts";
-import {
-  graphAdmissionFor,
-  type ImplementTaskFixture,
-  taskAttemptFor,
-} from "./helpers/implement-graph-fixture.ts";
 
 let contracts: typeof import("../src/contracts") | null = null;
 try {
@@ -49,130 +43,6 @@ function validEnvelope(overrides = {}) {
   };
 }
 
-function validTaskBoundary(): TaskBoundary {
-  const testFile = "test/contracts.property.test.ts";
-  const verificationInputs = [
-    { kind: "workspace" as const, path: testFile },
-    { kind: "workspace" as const, path: "package.json" },
-  ];
-  return {
-    changeId: "remove-implement-design-loop",
-    taskId: "S1",
-    dependsOn: [],
-    objective: "Replace repeated Implement envelopes with one task boundary",
-    context: {
-      agents: "bounded package context",
-      contract: "approved immutable task contract",
-    },
-    roots: ["."],
-    phases: {
-      red: {
-        read: ["src/contracts.ts", testFile, "package.json"],
-        write: [testFile],
-        verification: {
-          kind: "vitest",
-          id: "verify-s1-red",
-          runner: {
-            kind: "package-script",
-            packageManager: "bun",
-            script: "test:target",
-            command: "vitest run",
-          },
-          testFiles: [testFile],
-          args: [],
-          classification: "expected-red",
-          expectedFailure: "[SLICE-1:boundary-once]",
-          minTests: 1,
-        },
-        verificationInputs,
-        verificationLock: "vitest-implement-runtime",
-      },
-      green: {
-        read: ["src/contracts.ts", testFile, "package.json"],
-        write: ["src/contracts.ts"],
-        verification: {
-          kind: "vitest",
-          id: "verify-s1-green",
-          runner: {
-            kind: "package-script",
-            packageManager: "bun",
-            script: "test:target",
-            command: "vitest run",
-          },
-          testFiles: [testFile],
-          args: [],
-          classification: "expected-green",
-          minTests: 1,
-        },
-        verificationInputs,
-        verificationLock: "vitest-implement-runtime",
-      },
-    },
-    scheduling: {
-      conflicts: ["S2"],
-      resources: ["implement-runtime-core"],
-    },
-    agents: {
-      impact: "none",
-      managedOnly: true,
-    },
-    approvedDependencies: [] as string[],
-    impactClosure: {
-      changedSurfaces: ["none"],
-      searchEvidence: [],
-      relatedTests: [
-        {
-          path: "test/contracts.property.test.ts",
-          disposition: "current-task",
-          evidence: "S1 Red owns the strict request contract.",
-        },
-      ],
-      affectedSuite: ["test/contracts.property.test.ts"],
-    },
-  };
-}
-
-function phaseAttempt(
-  phase: "red" | "green" | "refactor" = "red",
-  requestId = `S1:${phase}:0`,
-): PhaseAttempt {
-  const paths =
-    phase === "red"
-      ? ["src/contracts.ts", "test/contracts.property.test.ts", "package.json"]
-      : ["src/contracts.ts", "test/contracts.property.test.ts", "package.json"];
-  return {
-    changeId: "remove-implement-design-loop",
-    taskId: "S1",
-    requestId,
-    phase,
-    snapshot: Object.fromEntries(
-      paths.map((path) => [
-        path,
-        { kind: "file", sha256: "a".repeat(64), bytes: 1 },
-      ]),
-    ),
-  };
-}
-
-function openTaskRequest(): ImplementTaskFixture {
-  return {
-    boundary: validTaskBoundary(),
-    attempt: phaseAttempt(),
-  };
-}
-
-function validImplementFixture(fixture: ImplementTaskFixture): boolean {
-  if (!contracts) return false;
-  return (
-    contracts.validateRequestEnvelope(graphAdmissionFor([fixture])).ok &&
-    contracts.validateRequestEnvelope(taskAttemptFor(fixture)).ok &&
-    contracts.validatePhaseAttemptAgainstBoundary(
-      fixture.boundary,
-      fixture.attempt,
-    ) === null
-  );
-}
-
 const REQUIRED_FIELDS = [
   "stage",
   "role",
@@ -183,271 +53,12 @@ const REQUIRED_FIELDS = [
   "output",
 ];
 
-describe("strict request envelope contracts", () => {
-  it("[SLICE-1:boundary-once] accepts only the strict Implement run union", () => {
-    if (!contracts) return notReady("contracts");
-    const fixture = openTaskRequest();
-    expect(
-      contracts.validateRequestEnvelope(graphAdmissionFor([fixture])).ok,
-    ).toBe(true);
-    expect(
-      contracts.validateRequestEnvelope(
-        taskAttemptFor({ ...fixture, attempt: phaseAttempt("green") }),
-      ).ok,
-    ).toBe(true);
-
-    const repeatedBoundary = {
-      stage: "abel-implement",
-      kind: "task-attempt",
-      boundary: validTaskBoundary(),
-      attempt: phaseAttempt("green"),
-    };
-    expect(contracts.validateRequestEnvelope(repeatedBoundary).ok).toBe(false);
-
-    expect(
-      contracts.validateRequestEnvelope({
-        stage: "abel-implement",
-        kind: "unknown-run-kind",
-        boundary: validTaskBoundary(),
-        attempt: phaseAttempt(),
-      }).ok,
-    ).toBe(false);
-  });
-
-  it("[SLICE-1:boundary-once] rejects stable facts on phase attempts", () => {
-    if (!contracts) return notReady("contracts");
-    const stableFacts: Array<[string, unknown]> = [
-      ["objective", "replayed objective"],
-      ["context", { agents: "replayed", contract: "replayed" }],
-      ["roots", ["."]],
-      ["phases", validTaskBoundary().phases],
-      ["scheduling", validTaskBoundary().scheduling],
-      ["agents", validTaskBoundary().agents],
-      ["approvedDependencies", []],
-      ["impactClosure", validTaskBoundary().impactClosure],
-      ["verification", validTaskBoundary().phases.green.verification],
-      ["evidence", ["caller verification"]],
-      ["role", "implementation-worker"],
-      ["output", "diff"],
-    ];
-
-    for (const [field, value] of stableFacts) {
-      const request = {
-        stage: "abel-implement",
-        kind: "task-attempt",
-        attempt: {
-          ...phaseAttempt("green"),
-          [field]: value,
-        },
-      };
-      expect(
-        contracts.validateRequestEnvelope(request).ok,
-        `${field} must not be replayed`,
-      ).toBe(false);
-    }
-  });
-
-  it("[SLICE-1:boundary-once] rejects duplicate or overlapping roots and set members", () => {
-    if (!contracts) return notReady("contracts");
-    const invalidBoundaries: Array<
-      [string, (boundary: ReturnType<typeof validTaskBoundary>) => void]
-    > = [
-      ["duplicate roots", (boundary) => (boundary.roots = ["src", "src"])],
-      [
-        "overlapping roots",
-        (boundary) => (boundary.roots = ["src", "src/runtime"]),
-      ],
-      [
-        "duplicate reads",
-        (boundary) =>
-          boundary.phases.red.read.push(boundary.phases.red.read[0]),
-      ],
-      [
-        "duplicate writes",
-        (boundary) =>
-          boundary.phases.red.write.push(boundary.phases.red.write[0]),
-      ],
-      [
-        "duplicate conflicts",
-        (boundary) =>
-          boundary.scheduling.conflicts.push(boundary.scheduling.conflicts[0]),
-      ],
-      [
-        "duplicate resources",
-        (boundary) =>
-          boundary.scheduling.resources.push(boundary.scheduling.resources[0]),
-      ],
-      [
-        "duplicate dependencies",
-        (boundary) => boundary.approvedDependencies.push("vitest", "vitest"),
-      ],
-      [
-        "duplicate impact surfaces",
-        (boundary) => boundary.impactClosure.changedSurfaces.push("none"),
-      ],
-      [
-        "duplicate affected tests",
-        (boundary) =>
-          boundary.impactClosure.affectedSuite.push(
-            boundary.impactClosure.affectedSuite[0],
-          ),
-      ],
-    ];
-
-    for (const [label, mutate] of invalidBoundaries) {
-      const request = openTaskRequest();
-      mutate(request.boundary);
-      expect(validImplementFixture(request), `${label} must fail closed`).toBe(
-        false,
-      );
-    }
-  });
-
-  it("[SLICE-1:boundary-once] contains every phase path within an approved root", () => {
-    if (!contracts) return notReady("contracts");
-    const request = openTaskRequest();
-    request.boundary.roots = ["src", "test", "package.json"];
-    for (const phase of [
-      request.boundary.phases.red,
-      request.boundary.phases.green,
-    ]) {
-      phase.read = [
-        "src/contracts.ts",
-        "test/contracts.property.test.ts",
-        "package.json",
-      ];
-      phase.write = ["src/contracts.ts"];
-    }
-    request.boundary.impactClosure = {
-      changedSurfaces: ["none"],
-      searchEvidence: [],
-      relatedTests: [],
-      affectedSuite: [],
-    };
-    request.attempt.snapshot = {
-      "src/contracts.ts": {
-        kind: "file",
-        sha256: "a".repeat(64),
-        bytes: 1,
-      },
-      "test/contracts.property.test.ts": {
-        kind: "file",
-        sha256: "c".repeat(64),
-        bytes: 1,
-      },
-      "package.json": {
-        kind: "file",
-        sha256: "d".repeat(64),
-        bytes: 1,
-      },
-    };
-    expect(validImplementFixture(request)).toBe(true);
-
-    request.boundary.phases.red.write = ["outside.ts"];
-    request.attempt.snapshot = {
-      "src/contracts.ts": {
-        kind: "file",
-        sha256: "a".repeat(64),
-        bytes: 1,
-      },
-      "outside.ts": {
-        kind: "file",
-        sha256: "b".repeat(64),
-        bytes: 1,
-      },
-      "test/contracts.property.test.ts": {
-        kind: "file",
-        sha256: "c".repeat(64),
-        bytes: 1,
-      },
-      "package.json": {
-        kind: "file",
-        sha256: "d".repeat(64),
-        bytes: 1,
-      },
-    };
-    expect(validImplementFixture(request)).toBe(false);
-  });
-
-  it("[SLICE-1:boundary-once] requires regular-file or absent write bounds", () => {
-    if (!contracts) return notReady("contracts");
-    const request = openTaskRequest();
-    (request.attempt.snapshot as Record<string, unknown>)[
-      "test/contracts.property.test.ts"
-    ] = {
-      kind: "dir",
-      manifest: "b".repeat(64),
-    };
-
-    expect(
-      contracts.validatePhaseAttemptAgainstBoundary(
-        request.boundary,
-        request.attempt,
-      ),
-    ).not.toBeNull();
-  });
-
-  it("[SLICE-1:boundary-once] rejects nested TaskBoundary and snapshot fields", () => {
-    if (!contracts) return notReady("contracts");
-    const mutations: Array<
-      [string, (request: ReturnType<typeof openTaskRequest>) => void]
-    > = [
-      [
-        "verification",
-        (request) => {
-          (
-            request.boundary.phases.red.verification as unknown as Record<
-              string,
-              unknown
-            >
-          ).evidence = ["hidden instruction"];
-        },
-      ],
-      [
-        "impact closure",
-        (request) => {
-          (
-            request.boundary.impactClosure as unknown as Record<string, unknown>
-          ).nextStep = "hidden";
-        },
-      ],
-      [
-        "related test",
-        (request) => {
-          (
-            request.boundary.impactClosure.relatedTests[0] as unknown as Record<
-              string,
-              unknown
-            >
-          ).nextStep = "hidden";
-        },
-      ],
-      [
-        "snapshot entry",
-        (request) => {
-          (
-            (request.attempt.snapshot as Record<string, unknown>)[
-              "src/contracts.ts"
-            ] as Record<string, unknown>
-          ).mode = "100644";
-        },
-      ],
-    ];
-
-    for (const [label, mutate] of mutations) {
-      const request = openTaskRequest();
-      mutate(request);
-      expect(validImplementFixture(request), `${label} must fail closed`).toBe(
-        false,
-      );
-    }
-  });
-
+describe("strict packet envelope contracts", () => {
   it("[SLICE-1:boundary-once] keeps Design and Diagnose run envelopes valid", () => {
     if (!contracts) return notReady("contracts");
-    expect(contracts.validateRequestEnvelope(validEnvelope()).ok).toBe(true);
+    expect(contracts.validatePacketEnvelope(validEnvelope()).ok).toBe(true);
     expect(
-      contracts.validateRequestEnvelope(
+      contracts.validatePacketEnvelope(
         validEnvelope({
           stage: "abel-diagnose",
           role: "diagnosis-worker",
@@ -462,15 +73,15 @@ describe("strict request envelope contracts", () => {
 
   it("accepts a valid evidence envelope", () => {
     if (!contracts) return notReady("contracts");
-    const result = contracts.validateRequestEnvelope(validEnvelope());
+    const result = contracts.validatePacketEnvelope(validEnvelope());
     expect(result.ok).toBe(true);
   });
 
   it("rejects an empty envelope", () => {
     if (!contracts) return notReady("contracts");
-    expect(contracts.validateRequestEnvelope({}).ok).toBe(false);
-    expect(contracts.validateRequestEnvelope(null).ok).toBe(false);
-    expect(contracts.validateRequestEnvelope(undefined).ok).toBe(false);
+    expect(contracts.validatePacketEnvelope({}).ok).toBe(false);
+    expect(contracts.validatePacketEnvelope(null).ok).toBe(false);
+    expect(contracts.validatePacketEnvelope(undefined).ok).toBe(false);
   });
 
   it("rejects envelopes missing any required field", () => {
@@ -478,7 +89,7 @@ describe("strict request envelope contracts", () => {
     for (const field of REQUIRED_FIELDS) {
       const env = validEnvelope() as Record<string, unknown>;
       delete env[field];
-      const result = contracts.validateRequestEnvelope(env);
+      const result = contracts.validatePacketEnvelope(env);
       expect(result.ok, `missing ${field} must be rejected`).toBe(false);
       expect((result as { ok: false; reason: string }).reason).toMatch(
         /missing|required/i,
@@ -489,22 +100,27 @@ describe("strict request envelope contracts", () => {
   it("rejects unknown stages and roles", () => {
     if (!contracts) return notReady("contracts");
     expect(
-      contracts.validateRequestEnvelope(validEnvelope({ stage: "abel-init" }))
+      contracts.validatePacketEnvelope(validEnvelope({ stage: "abel-init" }))
         .ok,
     ).toBe(false);
     expect(
-      contracts.validateRequestEnvelope(validEnvelope({ stage: "unknown" })).ok,
+      contracts.validatePacketEnvelope(validEnvelope({ stage: "unknown" })).ok,
     ).toBe(false);
     expect(
-      contracts.validateRequestEnvelope(validEnvelope({ role: "random-agent" }))
+      contracts.validatePacketEnvelope(validEnvelope({ role: "random-agent" }))
         .ok,
     ).toBe(false);
   });
 
   it("rejects envelopes over the 64 KiB serialized limit", () => {
     if (!contracts) return notReady("contracts");
-    const big = validEnvelope({ objective: "x".repeat(70 * 1024) });
-    const result = contracts.validateRequestEnvelope(big);
+    const big = validEnvelope({
+      context: {
+        agents: "## AGENTS excerpt",
+        contract: "x".repeat(70 * 1024),
+      },
+    });
+    const result = contracts.validatePacketEnvelope(big);
     expect(result.ok).toBe(false);
     expect((result as { ok: false; reason: string }).reason).toMatch(
       /64|limit|kib|large/i,
@@ -514,14 +130,14 @@ describe("strict request envelope contracts", () => {
   it("rejects path bounds that escape or are absolute", () => {
     if (!contracts) return notReady("contracts");
     for (const root of ["/etc", "..", "../src", "src/../../etc"]) {
-      const result = contracts.validateRequestEnvelope(
+      const result = contracts.validatePacketEnvelope(
         validEnvelope({ roots: [root] }),
       );
       expect(result.ok, `root ${root} must be rejected`).toBe(false);
     }
     const env = validEnvelope() as Record<string, unknown>;
     (env.declared as { write: string[] }).write = ["/tmp/out.patch"];
-    expect(contracts.validateRequestEnvelope(env).ok).toBe(false);
+    expect(contracts.validatePacketEnvelope(env).ok).toBe(false);
   });
 
   it("rejects equivalent noncanonical path spellings before scheduling", () => {
@@ -536,348 +152,9 @@ describe("strict request envelope contracts", () => {
       const design = validEnvelope();
       (design.declared as { read: string[] }).read = [path];
       expect(
-        contracts.validateRequestEnvelope(design).ok,
+        contracts.validatePacketEnvelope(design).ok,
         `Design declaration ${path} must fail closed`,
       ).toBe(false);
-
-      const implementation = openTaskRequest();
-      implementation.boundary.phases.red.read = [path];
-      expect(
-        validImplementFixture(implementation),
-        `Implement declaration ${path} must fail closed`,
-      ).toBe(false);
-    }
-  });
-
-  it("requires phase-matched verification for every implementation diff", () => {
-    if (!contracts) return notReady("contracts");
-    const implementation = openTaskRequest();
-    (implementation.boundary.phases as Record<string, unknown>).refactor = {
-      read: [
-        "src/contracts.ts",
-        "test/contracts.property.test.ts",
-        "package.json",
-      ],
-      write: ["src/contracts.ts"],
-      verificationLock: "vitest-implement-runtime",
-      verification: {
-        kind: "vitest",
-        id: "verify-refactor",
-        runner: {
-          kind: "package-script",
-          packageManager: "bun",
-          script: "test:target",
-          command: "vitest run",
-        },
-        testFiles: ["test/contracts.property.test.ts"],
-        args: [],
-        classification: "expected-refactor",
-        minTests: 1,
-      },
-      verificationInputs: [
-        { kind: "workspace", path: "test/contracts.property.test.ts" },
-        { kind: "workspace", path: "package.json" },
-      ],
-    };
-    expect(validImplementFixture(implementation)).toBe(true);
-
-    for (const phase of ["red", "green", "refactor"] as const) {
-      const missing = structuredClone(implementation);
-      delete (
-        missing.boundary.phases[phase] as unknown as Record<string, unknown>
-      ).verification;
-      expect(validImplementFixture(missing)).toBe(false);
-
-      const mismatched = structuredClone(implementation);
-      const verification = mismatched.boundary.phases[phase]!
-        .verification as unknown as Record<string, unknown>;
-      verification.classification =
-        phase === "red" ? "expected-green" : "expected-red";
-      delete verification.expectedFailure;
-      expect(validImplementFixture(mismatched)).toBe(false);
-    }
-
-    const missingTask = structuredClone(implementation) as unknown as {
-      boundary: Record<string, unknown>;
-    };
-    delete missingTask.boundary.taskId;
-    expect(
-      contracts.validateRequestEnvelope(
-        graphAdmissionFor([missingTask as unknown as ImplementTaskFixture]),
-      ).ok,
-    ).toBe(false);
-  });
-
-  it("accepts only structured cross-project verification kinds and safe runners", () => {
-    if (!contracts) return notReady("contracts");
-    const common = {
-      id: "consumer-verification",
-      classification: "expected-green",
-    } as const;
-    const supported = [
-      {
-        ...common,
-        kind: "vitest",
-        runner: {
-          kind: "package-script",
-          packageManager: "npm",
-          script: "test:run",
-          command: "vitest run",
-        },
-        testFiles: ["tests/utils/upstreamFetch.test.js"],
-        args: [],
-        minTests: 1,
-      },
-      {
-        ...common,
-        kind: "package-script",
-        packageManager: "npm",
-        script: "typecheck",
-        command: "tsc --noEmit",
-        args: [],
-      },
-      {
-        ...common,
-        kind: "static-check",
-        runner: { kind: "node", script: "scripts/check-agents.mjs" },
-        args: [],
-      },
-      {
-        ...common,
-        kind: "static-check",
-        runner: { kind: "npx", executable: "prisma", noInstall: true },
-        args: ["validate"],
-      },
-      {
-        ...common,
-        kind: "steps",
-        steps: [
-          {
-            id: "typecheck-first",
-            kind: "package-script",
-            packageManager: "npm",
-            script: "typecheck",
-            command: "tsc --noEmit",
-            args: [],
-            classification: "expected-green",
-          },
-          {
-            id: "target",
-            kind: "vitest",
-            runner: {
-              kind: "package-script",
-              packageManager: "npm",
-              script: "test:run",
-              command: "vitest run",
-            },
-            testFiles: ["tests/utils/upstreamFetch.test.js"],
-            args: [],
-            minTests: 1,
-            classification: "expected-green",
-          },
-        ],
-      },
-    ];
-    for (const verification of supported) {
-      expect(
-        contracts.validateVerificationContract(verification),
-        JSON.stringify(verification),
-      ).toMatchObject({ ok: true });
-    }
-
-    for (const verification of [
-      {
-        ...supported[0],
-        testFiles: ["../outside.test.ts"],
-      },
-      {
-        ...supported[0],
-        args: ["--config=/tmp/outside.ts"],
-      },
-      {
-        ...supported[0],
-        args: ["--dir=../outside"],
-      },
-      {
-        ...supported[0],
-        runner: { kind: "local-binary", executable: "jest" },
-      },
-      {
-        ...supported[0],
-        runner: {
-          kind: "package-script",
-          packageManager: "npm",
-          script: "test:run",
-          command: "jest --run",
-        },
-      },
-      {
-        ...supported[1],
-        args: ["&&", "node", "outside.js"],
-      },
-      {
-        ...supported[2],
-        runner: { kind: "node", script: "/tmp/outside.mjs" },
-      },
-      {
-        ...supported[3],
-        runner: { kind: "npx", executable: "prisma", noInstall: false },
-      },
-    ]) {
-      expect(
-        contracts.validateVerificationContract(verification),
-        JSON.stringify(verification),
-      ).toMatchObject({ ok: false });
-    }
-  });
-
-  it("rejects legacy argv verification contracts", () => {
-    if (!contracts) return notReady("contracts");
-    for (const argv of [
-      ["bun", "run", "test:target", "test/legacy.test.ts"],
-      ["bun", "run", "check"],
-    ]) {
-      expect(
-        contracts.validateVerificationContract({
-          id: "legacy-contract",
-          argv,
-          classification: "expected-green",
-          minTests: 1,
-        }),
-      ).toMatchObject({ ok: false });
-    }
-  });
-
-  it("requires a mechanical AGENTS impact contract and never delegates AGENTS writes", () => {
-    if (!contracts) return notReady("contracts");
-    const implementation = openTaskRequest();
-    implementation.boundary.agents = {
-      impact: "update-existing",
-      target: "AGENTS.md",
-      managedOnly: true,
-    };
-
-    expect(validImplementFixture(implementation)).toBe(true);
-
-    const missing = structuredClone(implementation);
-    delete (missing.boundary.agents as Record<string, unknown>).impact;
-    expect(validImplementFixture(missing)).toBe(false);
-
-    const noneWithTarget = structuredClone(implementation);
-    noneWithTarget.boundary.agents.impact = "none";
-    expect(validImplementFixture(noneWithTarget)).toBe(false);
-
-    for (const impact of [
-      "none",
-      "update-existing",
-      "create-index",
-      "remove-index",
-    ] as const) {
-      const delegated = structuredClone(implementation);
-      delegated.boundary.agents.impact = impact;
-      if (impact === "none") delete delegated.boundary.agents.target;
-      delegated.boundary.phases.green.write.push("AGENTS.md");
-      expect(
-        validImplementFixture(delegated),
-        `${impact} must not grant a child AGENTS write`,
-      ).toBe(false);
-    }
-
-    const designWrite = validEnvelope({
-      declared: {
-        read: [],
-        write: ["AGENTS.md"],
-        conflicts: [],
-        resources: [],
-      },
-    });
-    expect(contracts.validateRequestEnvelope(designWrite).ok).toBe(false);
-  });
-
-  it("requires existing-test impact closure for public route and authorization changes", () => {
-    if (!contracts) return notReady("contracts");
-    const routeTask = openTaskRequest();
-    for (const phase of [
-      routeTask.boundary.phases.red,
-      routeTask.boundary.phases.green,
-    ]) {
-      phase.read = [
-        "src/index.ts",
-        "test/contracts.property.test.ts",
-        "package.json",
-      ];
-      phase.write = ["src/index.ts"];
-    }
-    routeTask.attempt.snapshot = {
-      "src/index.ts": {
-        kind: "file",
-        sha256: "a".repeat(64),
-        bytes: 1,
-      },
-      "test/contracts.property.test.ts": {
-        kind: "file",
-        sha256: "b".repeat(64),
-        bytes: 1,
-      },
-      "package.json": {
-        kind: "file",
-        sha256: "c".repeat(64),
-        bytes: 1,
-      },
-    };
-    routeTask.boundary.impactClosure = {
-      changedSurfaces: ["route-authorization", "api-response"],
-      searchEvidence: ["rg -n '/videos|/api/videos' tests test templates src"],
-      relatedTests: [
-        {
-          path: "test/contracts.property.test.ts",
-          disposition: "unaffected",
-          evidence:
-            "Existing route contract remains valid under the approved policy.",
-        },
-      ],
-      affectedSuite: ["test/contracts.property.test.ts"],
-    };
-
-    expect(validImplementFixture(routeTask)).toBe(true);
-
-    const newTestOnly = structuredClone(routeTask);
-    for (const phase of [
-      newTestOnly.boundary.phases.red,
-      newTestOnly.boundary.phases.green,
-    ]) {
-      phase.read = ["src/index.ts"];
-      phase.write = ["src/index.ts", "test/new-videos-route.test.ts"];
-    }
-    newTestOnly.attempt.snapshot = {
-      "src/index.ts": {
-        kind: "file",
-        sha256: "a".repeat(64),
-        bytes: 1,
-      },
-      "test/new-videos-route.test.ts": { kind: "absent", absent: true },
-    };
-    newTestOnly.boundary.impactClosure = {
-      changedSurfaces: ["route-authorization"],
-      searchEvidence: ["rg -n '/videos' test tests"],
-      relatedTests: [
-        {
-          path: "test/new-videos-route.test.ts",
-          disposition: "current-task",
-          evidence: "new authorization test",
-        },
-      ],
-      affectedSuite: ["test/new-videos-route.test.ts"],
-    };
-    expect(validImplementFixture(newTestOnly)).toBe(false);
-  });
-
-  it("requires explicit targets for index creation and removal", () => {
-    if (!contracts) return notReady("contracts");
-    for (const impact of ["create-index", "remove-index"] as const) {
-      const request = openTaskRequest();
-      request.boundary.agents.impact = impact;
-      expect(validImplementFixture(request)).toBe(false);
     }
   });
 
@@ -937,7 +214,7 @@ describe("generated envelope fuzzing with a fixed seed", () => {
       if (rand() < 0.3) env.role = "random-agent";
       if (rand() < 0.3) delete env.id;
       if (rand() < 0.3) env.objective = "";
-      const result = contracts.validateRequestEnvelope(env);
+      const result = contracts.validatePacketEnvelope(env);
       const mutated =
         env.stage !== "abel-design" ||
         env.role !== "design-explorer" ||
@@ -956,14 +233,14 @@ const validEvidenceResult = () => ({
   id: "packet-001",
   role: "contract-reviewer",
   kind: "evidence",
-  conclusions: ["The scheduler owns bounded admission."],
-  citations: [{ path: "src/scheduler.ts", lines: "1-20" }],
+  conclusions: ["The packet runtime owns bounded admission."],
+  citations: [{ path: "src/packet-runtime.ts", lines: "1-20" }],
   constraints: ["Keep state in memory."],
   dependencies: [],
   risks: [],
   blockingQuestions: [],
   hints: {
-    writeSet: ["src/scheduler.ts"],
+    writeSet: ["src/packet-runtime.ts"],
     verification: "bun run check",
     agentsImpact: "none",
   },
@@ -1082,7 +359,7 @@ describe("strict evidence result schema", () => {
         "extra citation control",
         {
           citations: [
-            { path: "src/scheduler.ts", lines: "1", nextStep: "design" },
+            { path: "src/packet-runtime.ts", lines: "1", nextStep: "design" },
           ],
         },
       ],
@@ -1178,5 +455,46 @@ describe("strict diff result schema", () => {
       const result = contracts.validateDiffResult(mutate(overrides));
       expect(result.ok, `${label} must be rejected`).toBe(false);
     }
+  });
+});
+
+describe("workflow control command schema", () => {
+  it("accepts a provisional Design start without persisting the raw requirement", () => {
+    if (!contracts) return notReady("contracts");
+    expect(
+      contracts.validateControlCommand({
+        version: 2,
+        command: "start",
+        stage: "abel-design",
+        provisionalKey: "a".repeat(64),
+        operationId: "design-start-001",
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      contracts.validateControlCommand({
+        version: 2,
+        command: "start",
+        stage: "abel-design",
+        requirement: "raw private requirement",
+        operationId: "design-start-001",
+      }),
+    ).toMatchObject({ ok: false, code: "invalid-control-command" });
+  });
+
+  it("rejects unsupported versions and undeclared fields", () => {
+    if (!contracts) return notReady("contracts");
+    expect(
+      contracts.validateControlCommand({ version: 1, command: "start" }),
+    ).toMatchObject({ ok: false, code: "unsupported-control-version" });
+    expect(
+      contracts.validateControlCommand({
+        version: 2,
+        command: "resume",
+        stage: "abel-implement",
+        change: "durable-control-plane",
+        operationId: "resume-001",
+        graphHash: "undeclared",
+      }),
+    ).toMatchObject({ ok: false, code: "invalid-control-command" });
   });
 });

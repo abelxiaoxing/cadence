@@ -1,178 +1,166 @@
 ---
 name: abel-workflow
-description: Shared contract for the Abel Init, Design, Implement, and Diagnose workflow stages
+description: Shared contract loaded only after an explicit /abel-init, /abel-design, /abel-implement, or /abel-diagnose invocation; never activate it for ordinary engineering work
 ---
 
 # Abel workflow
 
-This Skill is the authoritative shared contract for `/abel-init`, `/abel-design`, `/abel-implement`, and `/abel-diagnose`.
-Load it before executing any stage; the package remains usable when no user-global `AGENTS.md` contains Abel-specific instructions.
-Stage prompts own their input contract and stage-specific procedure, while rules shared across stages live here.
+This Skill applies only after the user explicitly invokes `/abel-init`, `/abel-design`, `/abel-implement`, or `/abel-diagnose`.
+Merely finding these files, an OpenSpec change, an AGENTS index entry, or the word “Abel” does not activate a workflow.
+Load this Skill only for the invoked stage and do not carry stage authority into an ordinary engineering request.
+
+Stage prompts own their input and procedure.
+This file owns the cross-stage integrity, recovery, verification, and authority rules.
 
 ## Gates and trusted delivery
 
-Gate A approves the complete product behavior contract.
+Gate A approves the complete observable behavior contract.
 Gate B separately approves the complete technical implementation contract.
-Neither Gate authorizes a tool permission; they do not grant permission authorization, identity signing, or approval to bypass repository controls.
+Neither Gate grants tool permission, repository permission, identity, or authority outside its recorded scope.
 
-Design and Implement may run in different contexts.
-A handoff is trusted only when versioned Gate receipts bind the same change and schema, every covered artifact's normalized relative path and SHA-256 hash is valid, the Gate A receipt hash is valid, OpenSpec strict validation passes, and the artifact graph is complete.
-Normalize only the tracked task file's completed Markdown checkboxes before hashing; reject absolute paths, `..`, path escapes, and symbolic-link escapes.
-A missing receipt, invalid hash, or inconsistent artifact is a `delivery-invalid` stage blocker before Implement registers a task.
-The current `ready.yaml` receipt embeds one canonical `implementGraph`, its `implementGraphHash`, and the graph closure result; it has no alternate task-readiness summary.
+Design and Implement may run in fresh contexts.
+Trusted delivery requires:
 
-Every approved behavior must retain a stable trace from Requirement to Scenario to Verification to Task.
-Every task must state exactly one executable verification type, its Red command and expected target failure, Green behavior, affected suite, target files, approved dependency changes, impact-closure evidence, and structured AGENTS impact.
+- canonical Gate A and Gate B receipts for the same change/schema;
+- safe relative artifact paths and exact raw SHA-256 bindings;
+- a canonical `implement-plan.json` with schema version, raw hash, and canonical hash;
+- OpenSpec strict validity and planning completeness;
+- Requirement → Scenario → Verification → Task traceability exactly once;
+- executable verification closure and complete output/path/dependency/AGENTS contracts.
 
-### Graph-proven structured verification
+The loader aggregates all safe delivery diagnostics as `delivery-invalid` before a Worker starts.
+Only tracked task checkbox markers for sealed task ids may normalize `[x]`/`[X]` to `[ ]`; every other byte remains hash-bound.
 
-Design emits exactly one immutable `ImplementGraphBoundary` for the change.
-It contains every task, each task's explicit `dependsOn`, each phase's `verificationInputs`, and every generated output as an id, safe relative path, producer task and phase, and `regular-file` postcondition.
-A write set grants permission only; it never proves that an output exists.
+A fresh context validates existing approvals and never asks the user to approve unchanged decisions.
+A new receipt revision is needed only when approved authority changes.
 
-Every direct verification input binds exactly once to either an existing workspace path or a graph output id.
-A workspace binding must already be a safe regular file at Gate B. An output binding must resolve to one unique producer whose path is in that producer phase's write set.
-A cross-task consumer must have the producer as a transitive DAG dependency.
-Suggested waves, conflicts, resources, and verification locks do not create a dependency edge.
-A phase may consume an output created by its own candidate or an earlier applied phase, but never one produced only by a later phase.
+## Stage separation
 
-Design and Implement share `src/implement-graph.ts::assessImplementGraphReadiness`.
-The same core receives the canonical graph, consumer root, current completed and blocked task facts, applied phases, and an optional candidate overlay.
-Gate B and receipt creation require an executable static closure with no diagnostics; current dependency waiting is a dynamic readiness fact and does not invalidate that closure.
-`ready.yaml` stores the exact `implementGraph`, `hashImplementGraphBoundary(implementGraph)` as `implementGraphHash`, and `verificationClosure: { executable: true, diagnostics: [] }`.
+- **Init** is deterministic local setup/repair.
+  It uses no Subagent dispatch, preserves dirty/human content and nested repositories, and is idempotent.
+- **Design** is evidence and delivery compilation only.
+  Product code, tests, implementation candidates, and AGENTS files are read-only.
+  Design may use bounded read-only `design-explorer` packets.
+- **Implement** uses only the durable change command surface.
+  It executes the sealed plan in private immutable revisions and applies the complete change once.
+- **Diagnose** independently follows reproduce → falsify → failing regression → minimum repair.
+  It does not inherit Implement state, retry policy, or approval classification.
 
-Runtime admits that same graph once, recomputes readiness before a task launch, checks declared outputs in the isolated candidate before verification, checks them again after main-workspace application and before phase or task completion, and publishes a cross-task output only after its producer task completes.
-A blocked producer keeps its consumers `dependency-blocked`; a completed producer with an absent or unsafe output is `producer-output-unavailable`.
+Design and Diagnose bounded packets use `action: "run"` with their own stage.
+Implement never uses that packet protocol.
+Cross-stage calls fail closed.
 
-Fresh Implement reconstructs availability only from the receipt-bound graph and hash, parent-owned completed task facts, current in-process blocked facts, and a fresh safe scan of the workspace.
-It never infers phase completion merely because a file exists and never persists Runtime state, retry budgets, sessions, or model output.
-All path observations reject absolute or noncanonical paths, `..`, NUL, root escape, a symbolic link in any existing component, a non-directory parent, and a non-regular final input or output.
+## Canonical ImplementPlan
 
-Design emits only the structured Runtime kinds `kind: "vitest"`, `kind: "package-script"`, `kind: "static-check"`, and `kind: "steps"`:
+`ImplementPlan` is the only machine source for implementation mechanics.
+It seals:
 
-- `vitest` declares its runner, safe relative `testFiles`, explicit `args`, and `minTests`.
-  It uses a consumer-installed local Vitest.
-  Runtime alone injects the JSON reporter and checks assertion identity for Red.
-- `package-script` pins the package manager, script name, exact Gate-B-approved `package.json` command, and argument array.
-  The script and runner must already exist in the consumer repository.
-- `static-check` declares a local binary, `npx` with `noInstall: true`, or a safe relative Node script.
-  It covers static, typecheck, build, schema, and parent-only AGENTS checkpoint verification without Vitest arguments.
-- `steps` is an ordered list of atomic contracts.
-  Every precheck is an explicit expected-green step and only the final step carries the phase classification.
-  A compound command must not use `&&` or another shell operator.
+- exact task ids, dependencies, objectives, context, paths, deletes, conflicts, resources, and locks;
+- structured Red, Green, optional Refactor verification plus verification inputs;
+- unique regular-file outputs and their producer task/phase;
+- task-affected and repair verification;
+- target/affected/full-suite baselines and normalized failure identity;
+- change affected/full-suite/post-apply verification;
+- an explicit `artifactCorrection.maxAttempts` of 2-3 total candidate launches per task phase and operation, including the initial launch;
+- bounded repair policy with `pre-existing | introduced | unresolved | environment` attribution;
+- parent-owned Markdown checkbox tracking;
+- approved managed-only AGENTS operations and verification.
 
-No kind admits an arbitrary shell command.
-Tokens are passed without a shell; shell operators, path escapes, absolute paths, unsafe executable names, unapproved commands, and implicit download runners are rejected.
-`npx` is compiled with `--no-install` and still requires its executable in the approved local `node_modules`.
-Bun, npm, pnpm, and Yarn package scripts are allowed only when the named package manager and exact pinned script capability validate.
+The compiler, not prose parsing or the caller, canonicalizes and validates the plan.
+A write set grants authority only; it never proves output existence.
+An absent input must resolve to one declared output from a transitive dependency.
+Unsafe paths, symlink components, missing local capability, cycles, conflicts without ordering, unsupported verification, and unbound outputs close readiness before Gate B.
 
-Runtime never invents `bun run check`, `bun run test:target`, or another consumer script.
-A precheck or affected verification runs only as an explicit approved contract or ordered step.
-Argv-only verification contracts are invalid; there is no legacy normalizer or parallel verification schema.
+Impact closure must cover existing compatibility evidence, not only newly added tests.
+For public UI or API changes it seals the relevant route authorization, page state, API response and contract, public HTML/template/theme behavior, and approved browser E2E checks.
 
-An unsupported shape is `design-readiness/verification-contract-unsupported`.
-A missing approved script is `verification-adapter/script-missing`; other missing or drifted consumer capabilities use their closed `verification-adapter` code.
-Only an unavailable Bubblewrap launch, Bun resolution, dependency path, or sandbox runtime is an `environment` failure.
+Verification supports only shell-free `vitest`, `package-script`, `static-check`, and ordered `steps` contracts.
+Local runners/scripts, exact command bindings, args, classifications, verification inputs, `minTests`, and `noInstall` semantics are sealed.
+Arbitrary shell, `&&`, path escape, and implicit downloads are forbidden.
 
-## Verification discipline
+## Durable control
 
-Before writes, record target, affected-suite, and full-suite baselines with commands, exit codes, and normalized failure identities.
-A pre-existing baseline failure is separate evidence and never satisfies a target Red.
+Implement accepts only `start`, `status`, `resume`, `rebind`, `cancel`, and `discard` with protocol version 2, stage, change, and operation identity where required.
 
-Use Red-Green-Refactor for code, tests, and executable static contracts:
+- `start` is idempotent for one change run.
+- `status` is local and requires no Worker endpoint.
+- `resume` continues from durable facts; with a new approved `deliveryRevision` and `receiptHash`, it revalidates retained work and invalidates only incompatible tasks.
+- `rebind` selects another route already allowed by policy; it does not change the task contract.
+- `cancel` stops the active operation and preserves accepted progress.
+  It is budget-neutral.
+- `discard` is the only explicit destructive terminal command.
+  During apply it waits for safe recovery before cleanup.
 
-1. **Red:** add only the approved failing verification and run the exact command; it must fail for the specified target defect.
-2. **Green:** implement the minimum approved change and run the target verification after every code or test edit.
-3. **Refactor:** improve only in-scope structure or readability while target verification stays green; then run the affected suite.
+Repeated operation ids replay their committed outcomes.
+Private state retains run journals, plan bindings, normalized task evidence, artifacts, revisions, retry classification, and apply recovery facts; it never stores credentials, environment values, raw prompts, hidden reasoning, transcripts, or raw model output.
+Completed/discarded runs clean private change content after safe settlement.
 
-Syntax, import/load, no-test, malformed-diff, and wrong-Red-identity failures are generated implementation-artifact rejection.
-A wrong-Red result uses the same bounded artifact-correction path.
-Every artifact rejection receives a finite correction budget shared with the phase's mechanical redispatch budget.
-When the artifact correction budget is exhausted, terminally block the current Implement task as `attempts-exhausted`.
-A Red candidate that passes is `{ kind: "artifact", code: "red-not-witnessed" }`; Runtime returns a bounded `{ kind: "retry", scope: "worker", cause: "artifact", remainingAttempts: 1 }`, and candidate success alone does not prove a Design defect.
-If separate evidence proves that the approved command cannot witness the approved behavior without changing behavior, policy, dependency, architecture, scope, write-set, or verification contract, terminally block the current task as `verification-contract-insufficient` without consuming the artifact correction budget.
+## Red-Green-Refactor and attribution
 
-### Implement graph and fixed task boundary
+Before the first candidate, record target-contract, task-affected, and full-suite baselines.
+Pre-existing failures remain separate and never satisfy Red.
 
-This boundary applies only to Implement.
-The parent submits the receipt-bound graph once with `admit-graph`.
-A ready task's first Red `task-attempt` opens one process-local task record from the graph; every later Green, Refactor, correction, or stale refresh is another `task-attempt` with only change/task/request/phase identity and a fresh dynamic snapshot.
-The immutable task entry includes all phase-local exact read/write paths, verification input bindings, target and affected verification, scheduling declarations, explicit dependencies, approved dependency changes, impact closure, and AGENTS impact.
-Runtime never expands it.
-Keep each command, exit code, normalized failure identity, reproducibility result, attribution, and root-cause evidence in context and the final report, not in a state file.
-Every reproducible pre-existing affected failure remains separate from task Red and may be repaired only when its paths and behavior are already inside the approved boundary.
-Classify later affected failures as `pre-existing`, `introduced`, or `unresolved`; make the minimum in-boundary repair, repair or revert an introduced failure, and block the current task when attribution is unresolved.
-Environmental, transient, external-service-dependent, or non-reproducible failures terminally block the current task with typed evidence and never authorize speculative edits.
-A full-suite-only baseline failure outside the affected commands remains baseline evidence and outside task scope.
-Finish only when all target and affected verifications are green and the full suite has no new failure relative to baseline.
-Do not archive, publish, or commit implicitly.
+1. **Red:** the approved target must fail with its exact witness identity.
+   Syntax/setup/no-test/wrong-identity failures are artifact defects.
+2. **Green:** apply the minimum approved candidate in a disposable child revision and require target plus task-affected verification.
+3. **Refactor:** optional in-boundary improvement with behavior and verification unchanged.
 
-### Impact closure
+The parent control plane alone applies accepted candidate bytes to the private cumulative revision, records `phase-verified`/`repair-verified`, advances one task checkbox, verifies outputs, and schedules dependents.
+A Worker only proposes one complete diff within the declared path set.
 
-A task changing route authorization, page state, API response, or public HTML structure must search existing code and tests by all relevant URLs, route names, handlers, and templates.
-Classify every related existing E2E, theme/layout, authorization, HTML/template, and API contract test as current-task, explicit regression-task, or unaffected with cited evidence.
-The affected suite must contain existing-test evidence and must not cover only a new test file.
-Changes such as `/videos` and `/api/videos` require all five test surfaces to be checked.
-This is a task-contract evidence check, not a business-specific source scanner.
+After all tasks, re-run every affected contract, compare the full suite with baseline, apply and verify sealed AGENTS operations, verify output postconditions, then prepare one currentness-checked journaled transaction and post-apply verification.
+The main workspace remains unchanged before final application eligibility.
 
-## AGENTS indexes: stage-scoped authority
+Attribution behavior:
 
-In the Design stage, every repository `AGENTS.md` is read-only.
-Design may only audit stale routes and record `none | update-existing | create-index | remove-index`, an exact target, evidence, and `agentsManagedOnly: true` in the task contract; Design must not edit an index.
-This Design read-only rule is not inherited by and does not apply to Implement.
+- `pre-existing`: baseline evidence; do not blame or speculatively edit.
+- `introduced`: reopen the owning task as `repairable` and perform bounded minimum repair inside its sealed boundary.
+- `unresolved`: pause with normalized identities and retained cumulative state until ownership evidence is available.
+- `environment`: pause before speculative edits and resume after capability restoration.
 
-In Implement, the parent applies the approved contract at a stable task checkpoint:
+A full-suite-only baseline failure outside affected contracts does not block completion unless the change introduces or worsens it.
 
-- `none`: no AGENTS target or write is allowed.
-- `update-existing`: update the approved existing AGENTS path.
-- `create-index`: create the approved AGENTS path.
-- `remove-index`: remove the approved managed block, deleting the file only when no human content remains.
+## Recovery versus approval
 
-Treat indexes as verified routers, not architecture documents or session ledgers.
-The parent must preserve all human-authored text and edit only the managed region delimited by `<!-- ABEL:AGENTS-INDEX:START -->` and `<!-- ABEL:AGENTS-INDEX:END -->`.
-An approved AGENTS checkpoint is normal Implement work and must not become a boundary failure or stage-routing instruction.
-A subagent must never receive an AGENTS write path or edit any index.
+Artifact defects, wrong Red, stale revisions, transport errors, environment/adapter failures, capacity, conflicts, cancellation, process interruption, baseline failures, and introduced in-boundary repairs are recoverable Implement facts.
+They never select a workflow stage and never erase compatible progress.
 
-Before a parent index write, inspect the complete task diff and mechanically compare actual impact with the approved target and impact.
-An unapproved behavior/architecture diff or required task/AGENTS contract change terminally blocks the current task with the matching `approval-boundary` code.
-Validate paths, commands, removed references, marker uniqueness, and root-to-nested routes after every index update.
-Never persist runtime user/session state, dirty-state ledgers, timestamps, or approval status in an index.
+Automatic attempts are finite.
+Artifact correction uses the sealed `artifactCorrection.maxAttempts` independently for each task phase and operation; only typed artifact rejection consumes its 2-3 total-launch budget.
+Exhaustion pauses with the final safe code, scope, and last committed revision.
+A later `resume` starts a new operation budget while reusing durable baseline and phase facts.
+Oversized output becomes `needs-task-split`; partial diffs are never accepted.
 
-## Implement typed blockers
+Use `approval-needed` only when continuing requires new authority: observable behavior, architecture/policy, dependency, undeclared path, conflict/resource permission, verification contract, AGENTS target/impact/content, or another irreversible scope decision.
+Report the exact missing authority.
+After the user approves a new canonical delivery revision, resume the same run and preserve compatible work.
 
-Implement reports facts about only the current task.
-It does not select a user recovery action, recommend another workflow, or claim control over the parent-owned DAG.
+Do not label an approved AGENTS checkpoint, documentation/test edit, endpoint outage, artifact error, stale snapshot, environment problem, baseline failure, or in-boundary repair as approval-needed.
 
-- Generated artifact defects are closed typed failures: malformed diff, syntax/import/load, no-test or wrong command, wrong Red identity, duplicate/invalid structured result, and `red-not-witnessed`.
-- Artifact, stale-snapshot, and transport failures share two non-cancelled launches per phase; exhaustion is `{ kind: "attempts-exhausted", cause, attemptsUsed: 2, lastFailure: { code, stage, details? } }` and cancellation is budget-neutral.
-- `lastFailure` always preserves the final closed code and stage for artifact, stale, and transport exhaustion.
-  Optional details are limited to final submission category, a bounded submit-attempt count, schema state, mismatched identity dimension names, and a validated verification id.
-- Public outcomes never contain a prompt, diff, model output, excerpt, consumer file content, command or argv, endpoint, credential, environment value, or actual/expected identity value.
-- Bubblewrap, dependency-path, sandbox, or external runtime failure is `{ kind: "environment", code: <closed-environment-code> }` and terminally blocks the current task.
-- Unsupported verification contracts close Design readiness; missing scripts,
-  runners, local executables, or inputs are closed `verification-adapter` failures
-  and must not be reported as Bubblewrap or dependency environment failures.
-- Any required path, dependency, behavior, policy, architecture, conflict, resource, verification, or AGENTS expansion is the matching closed `approval-boundary` failure and never expands the boundary at runtime.
-- Oversized output is `{ kind: "result-limit", limitBytes }`, terminal, and never yields a partial diff.
+## AGENTS indexes
 
-Expected Red failure, artifact defects, stale snapshots, environment failures, approved AGENTS checkpoints, approved docs/tests, and in-boundary compatibility repairs never produce stage-routing metadata.
+Design audits AGENTS read-only.
+Gate B seals `none | update-existing | create-index | remove-index`, exact target, owner task ids, complete managed block, and verification.
 
-## Parent and subagent authority
+Implement applies the sealed operation code-first in the private cumulative revision.
+It preserves every byte outside `<!-- ABEL:AGENTS-INDEX:START -->` and `<!-- ABEL:AGENTS-INDEX:END -->`; `remove-index` deletes the file only when no human content remains.
+A Worker never receives an AGENTS write path.
+Runtime/session ids, timestamps, credentials, approval state, and dirty-state ledgers never enter an index.
 
-The parent agent owns Gate handling, patches, repository writes, AGENTS index updates, and task completion state.
-A subagent receives bounded relevant index context and may perform only the delegated read-only exploration or review.
-A subagent must not approve a Gate, apply a patch, edit an index, or advance a task checkbox.
+## Parent and Worker authority
 
-## External browser E2E
+The parent owns user decisions, Gates, delivery compilation, candidate acceptance, verification classification, cumulative revisions, tracking, AGENTS, final apply, recovery, and truthful status.
 
-`dev-browser` is external and is required only when an approved task verification contract explicitly names browser E2E.
-Its absence does not block another task or workflow stage whose approved contract has no browser E2E step.
-When an approved browser-E2E task requires `dev-browser` and it is missing or unavailable, stop that task, report the missing capability and an executable remediation, and do not report the verification as passing.
+Evidence/diagnosis/implementation Agents receive only bounded context and scoped tools.
+They cannot approve a Gate, expand a boundary, apply a patch, edit AGENTS, advance a checkbox, choose a user recovery action, or report completion.
 
-## Stage responsibilities
+`dev-browser` is required only by an explicitly approved browser-E2E contract.
+Its absence pauses that verification only and does not block unrelated tasks or stages.
 
-- **Init:** initialize or safely repair OpenSpec and verified AGENTS routes without destructive overwrite.
-- **Design:** resolve blocking decisions, obtain Gate A and Gate B, write only OpenSpec change artifacts after Gate A, and deliver a strictly validated traceable change.
-- **Implement:** validate the trusted delivery in a fresh context, execute task contracts in tracked order through Red-Green-Refactor, and maintain indexes at stable checkpoints.
-- **Diagnose:** reproduce existing bugs, falsify candidate causes, establish a failing regression, and make the minimum repair.
-  This regression-first algorithm is independent of Implement blockers; new behavior or substantive architecture is outside Diagnose scope.
+## Truthful finish
+
+`queued`, `connecting`, `waiting-first-response`, `running`, `validating`, `retrying`, `verifying`, `paused`, `approval-needed`, `applying`, and `recovering` are nonterminal activity states.
+`operation-cancelled` ends only the current operation; `discarded` and `rejected` are non-success terminal run states.
+Tool settlement is not completion.
+Only durable `completed` after cumulative apply and postconditions receives success.
+Never archive, publish, release, stage, or commit implicitly.

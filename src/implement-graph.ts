@@ -11,9 +11,12 @@ import {
   verificationInputPaths,
 } from "./contracts.ts";
 import { isSafeRegularFile } from "./safe-path.ts";
-import { validateVerificationAdapterCapability } from "./verification-capability.ts";
+import {
+  type VerificationRunnerEnvironment,
+  validateVerificationAdapterCapability,
+} from "./verification-capability.ts";
 
-function canonicalJson(value: unknown): string {
+export function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map(canonicalJson).join(",")}]`;
   }
@@ -28,7 +31,7 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 
-export function hashImplementGraphBoundary(value: unknown): string {
+export function hashCanonicalValue(value: unknown): string {
   return createHash("sha256").update(canonicalJson(value)).digest("hex");
 }
 
@@ -41,6 +44,7 @@ export interface ImplementExecutionFacts {
   }>;
   candidate?: { taskId: string; phase: ImplementationPhase };
   dependencyOwner?: string;
+  verificationRunnerEnvironment?: VerificationRunnerEnvironment;
 }
 
 export interface ImplementPhaseReadiness {
@@ -358,7 +362,10 @@ export function assessImplementGraphReadiness(
       const capability = validateVerificationAdapterCapability(
         root,
         boundary.verification,
-        { dependencyOwner: facts.dependencyOwner ?? root },
+        {
+          dependencyOwner: facts.dependencyOwner ?? root,
+          runnerEnvironment: facts.verificationRunnerEnvironment,
+        },
       );
       if (!capability.ok) {
         const { message: _message, ...diagnostic } = capability.diagnostic;

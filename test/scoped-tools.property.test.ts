@@ -110,6 +110,34 @@ describe("scoped read-only tools", () => {
     expect(many.truncated).toBe(true);
   });
 
+  it("projects bounded deduplicated read references without file content", async () => {
+    if (!scopedTools) return notReady("scoped-tools");
+    const root = makeRoot();
+    writeFileSync(path.join(root, "a.txt"), "private file content\n");
+    writeFileSync(path.join(root, "b.txt"), "second\n");
+    const collector = new scopedTools.ScopedObservationCollector(2);
+    const tools = scopedTools.createScopedTools({
+      roots: [root],
+      observer: collector.observe,
+    });
+    const read = tools.find((tool) => tool.name === "read")!;
+    const ls = tools.find((tool) => tool.name === "ls")!;
+    await read.execute({ path: "a.txt" });
+    await read.execute({ path: "a.txt" });
+    await ls.execute({ path: "." });
+    await read.execute({ path: "b.txt" });
+
+    const projection = collector.projection();
+    expect(projection).toEqual({
+      observations: [
+        { kind: "dir", path: "." },
+        { kind: "file", path: "a.txt" },
+      ],
+      truncated: true,
+    });
+    expect(JSON.stringify(projection)).not.toContain("private file content");
+  });
+
   it("rejects directories and non-regular files", async () => {
     if (!scopedTools) return notReady("scoped-tools");
     const root = makeRoot();

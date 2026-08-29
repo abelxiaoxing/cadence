@@ -1,11 +1,5 @@
-import { execFileSync } from "node:child_process";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -13,24 +7,14 @@ import {
   fauxProvider,
   fauxToolCall,
 } from "@earendil-works/pi-ai/providers/faux";
-import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
-import { Activation } from "../src/activation";
+import { ArtifactStore } from "../src/artifact-store";
 import { LIMITS } from "../src/contracts";
 import {
-  isCurrent,
-  mergeBounds,
-  snapshotDirManifests,
-  snapshotFiles,
-} from "../src/file-snapshot";
-import { Runtime } from "../src/runtime";
-import {
-  admitGraph,
-  assertCandidateOutcome,
-  type ImplementTaskFixture,
-  taskAttemptFor,
-} from "./helpers/implement-graph-fixture.ts";
-import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
+  classifyCandidateContextRequest,
+  createCandidateArtifactTool,
+} from "../src/submit-tool";
+import { TaskLedger } from "../src/task-ledger";
 
 let child: typeof import("../src/child-session") | null = null;
 let parentProvider: typeof import("../src/parent-provider") | null = null;
@@ -76,6 +60,123 @@ function evidence() {
 }
 
 describe("real isolated child session", () => {
+  it("seals raw Worker text larger than the complete-result limit without Worker-computed hashes", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const cwd = mkdtempSync(join(tmpdir(), "abel-child-segmented-"));
+    roots.push(cwd);
+    writeFileSync(join(cwd, "a.txt"), "old\n");
+    const privateRoot = join(cwd, ".candidate-state");
+    const artifacts = new ArtifactStore(join(privateRoot, "artifacts"));
+    const ledger = new TaskLedger({
+      root: join(privateRoot, "ledger"),
+      artifacts,
+    });
+    const candidateId = "candidate-segmented-large";
+    const identity = {
+      candidateId,
+      runId: "run-segmented-large",
+      deliveryRevision: 1,
+      taskId: "task-segmented-large",
+      phase: "green" as const,
+      attemptId: "attempt-segmented-large",
+      approvedPaths: ["a.txt"],
+      isolatedRevisionId: "a".repeat(64),
+      verificationId: "segmented-large-green",
+      routeId: "implementation-primary",
+      routeFingerprint: "b".repeat(64),
+    };
+    const diff = Buffer.from(
+      [
+        "--- a/a.txt",
+        "+++ b/a.txt",
+        "@@ -1 +1,2 @@",
+        " old",
+        `+${"x".repeat(LIMITS.maxCompleteResultBytes + 4096)}`,
+        "",
+      ].join("\n"),
+    );
+    expect(diff.byteLength).toBeGreaterThan(LIMITS.maxCompleteResultBytes);
+    const split = Math.ceil(diff.byteLength / 2);
+    const segments = [diff.subarray(0, split), diff.subarray(split)];
+    const sha256 = (bytes: Uint8Array) =>
+      createHash("sha256").update(bytes).digest("hex");
+    const faux = fauxProvider({
+      provider: "abel-faux-segmented-large",
+      api: "faux",
+    });
+    faux.setResponses([
+      fauxAssistantMessage(
+        fauxToolCall(
+          "abel_submit_result",
+          {
+            kind: "candidate-segment",
+            candidateId,
+            sequence: 0,
+            text: segments[0].toString("utf8"),
+          },
+          { id: "segment-0" },
+        ),
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage(
+        fauxToolCall(
+          "abel_submit_result",
+          {
+            kind: "candidate-segment",
+            candidateId,
+            sequence: 1,
+            text: segments[1].toString("utf8"),
+          },
+          { id: "segment-1" },
+        ),
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage(
+        fauxToolCall(
+          "abel_submit_result",
+          {
+            kind: "candidate-seal",
+            candidateId,
+          },
+          { id: "candidate-seal" },
+        ),
+        { stopReason: "toolUse" },
+      ),
+    ]);
+    const modelRuntime = await parentProvider.runtimeForProvider(faux.provider);
+    try {
+      const result = await child.runChildSession({
+        cwd,
+        modelRuntime,
+        model: faux.getModel(),
+        systemPrompt: "Submit the supplied candidate in ordered segments.",
+        requestId: "task-segmented-large",
+        taskId: "task-segmented-large",
+        role: "implementation-worker",
+        phase: "green",
+        output: "diff",
+        roots: [cwd],
+        timeoutMs: 5_000,
+        candidateArtifact: { ledger, identity },
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.submitCount).toBe(3);
+      expect(result.result).toMatchObject({
+        kind: "sealed-candidate",
+        candidateId,
+        artifactHash: sha256(diff),
+        bytes: diff.byteLength,
+        paths: ["a.txt"],
+      });
+      expect(Buffer.from(ledger.readSealedCandidate(candidateId))).toEqual(
+        diff,
+      );
+    } finally {
+      ledger.close();
+    }
+  });
+
   it("uses empty resources, exactly five scoped tools, one structural submit, usage, and disposal", async () => {
     if (!child || !parentProvider) return notReady("child session");
     const cwd = mkdtempSync(join(tmpdir(), "abel-child-"));
@@ -89,6 +190,7 @@ describe("real isolated child session", () => {
       ),
     ]);
     const modelRuntime = await parentProvider.runtimeForProvider(faux.provider);
+    const streamEvents: string[] = [];
     const result = await child.runChildSession({
       cwd,
       modelRuntime,
@@ -99,6 +201,16 @@ describe("real isolated child session", () => {
       output: "evidence",
       roots: [cwd],
       timeoutMs: 5_000,
+      ledgerProjection: {
+        version: 2,
+        runId: "run-child-projection",
+        taskId: "task-child-projection",
+        currentPhase: "red",
+        history: [],
+      },
+      captureObservations: true,
+      onStreamStart: () => streamEvents.push("start"),
+      onStreamProgress: () => streamEvents.push("progress"),
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -113,10 +225,16 @@ describe("real isolated child session", () => {
     expect(result.submitCount).toBe(1);
     expect(result.disposeCount).toBe(1);
     expect(result.usage.totalTokens).toBeGreaterThan(0);
+    expect(result.observations).toEqual({
+      observations: [],
+      truncated: false,
+    });
     expect(faux.state.callCount).toBe(1);
+    expect(streamEvents[0]).toBe("start");
+    expect(streamEvents).toContain("progress");
   });
 
-  it("rejects duplicate, mismatched, or non-structural completion", async () => {
+  it("stops after one invalid structural submit instead of asking the model again", async () => {
     if (!child || !parentProvider) return notReady("child session");
     const cwd = mkdtempSync(join(tmpdir(), "abel-child-bad-"));
     roots.push(cwd);
@@ -124,6 +242,10 @@ describe("real isolated child session", () => {
     faux.setResponses([
       fauxAssistantMessage(
         fauxToolCall("abel_submit_result", { ...evidence(), id: "wrong" }),
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage(
+        fauxToolCall("abel_submit_result", evidence(), { id: "submit-retry" }),
         { stopReason: "toolUse" },
       ),
     ]);
@@ -140,6 +262,19 @@ describe("real isolated child session", () => {
       timeoutMs: 5_000,
     });
     expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(faux.state.callCount).toBe(1);
+    expect(result.classification).toMatchObject({
+      attempts: 1,
+      schema: "invalid",
+      identity: { request: false },
+    });
+    expect(result.failure).toMatchObject({
+      kind: "artifact",
+      code: "invalid-structural-result",
+      stage: "structural-submit",
+      details: { submitAttempts: 1 },
+    });
     expect(result.usage.totalTokens).toBeGreaterThan(0);
   });
 
@@ -174,164 +309,164 @@ describe("real isolated child session", () => {
       stage: "child-timeout",
     });
   });
+});
 
-  it("routes one diff through Runtime run -> retain -> apply", async () => {
-    if (!parentProvider) return notReady("runtime facade");
-    const cwd = mkdtempSync(join(tmpdir(), "abel-runtime-"));
-    roots.push(cwd);
-    execFileSync("git", ["init", "-q"], { cwd });
-    execFileSync("git", ["config", "user.email", "test@example.invalid"], {
-      cwd,
+describe("implementation candidate protocol", () => {
+  it("publishes the attempt-bound candidate id in every submit schema branch", () => {
+    const candidateId = "candidate-worker-visible";
+    const submission = createCandidateArtifactTool({
+      ledger: {
+        beginCandidate: () => ({ accepted: true as const }),
+        appendCandidateSegment: () => ({ ok: true as const }),
+        sealCandidate: () => ({
+          ok: true as const,
+          artifactHash: "a".repeat(64),
+          bytes: 1,
+          paths: ["src/value.ts"],
+        }),
+      } as never,
+      identity: {
+        candidateId,
+        runId: "run-candidate-visible",
+        deliveryRevision: 1,
+        taskId: "task-candidate-visible",
+        phase: "green",
+        attemptId: "attempt-candidate-visible",
+        approvedPaths: ["src/value.ts"],
+        isolatedRevisionId: "b".repeat(64),
+        verificationId: "candidate-visible-green",
+        routeId: "implementation-primary",
+        routeFingerprint: "c".repeat(64),
+      },
     });
-    execFileSync("git", ["config", "user.name", "Abel Test"], { cwd });
-    writeFileSync(join(cwd, "a.txt"), "old\n");
-    mkdirSync(join(cwd, "node_modules"));
-    writeFileSync(
-      join(cwd, "package.json"),
-      `${JSON.stringify({
-        private: true,
-        scripts: {
-          check: "node test/check.mjs",
+
+    const schema = JSON.stringify(submission.tool.parameters);
+    expect(schema.split(`"const":"${candidateId}"`)).toHaveLength(4);
+  });
+
+  it("classifies context from refs instead of trusting the Worker-selected code", () => {
+    expect(
+      classifyCandidateContextRequest(
+        {
+          kind: "context-request",
+          candidateId: "candidate-context",
+          code: "approved-context-needed",
+          refs: ["src/approved.ts"],
         },
-      })}\n`,
-    );
-    mkdirSync(join(cwd, "test"));
-    writeFileSync(
-      join(cwd, "test/check.mjs"),
-      "console.error('[CHILD-SESSION:expected-red]');\nprocess.exit(1);\n",
-    );
-    writeFileSync(join(cwd, "bun.lock"), "# fixture lock\n");
-    execFileSync(
-      "git",
-      ["add", "a.txt", "package.json", "bun.lock", "test/check.mjs"],
-      { cwd },
-    );
-    execFileSync("git", ["commit", "-qm", "base"], { cwd });
-    const diff = "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n";
-    const submitted = {
-      id: "task-1",
-      role: "implementation-worker",
-      kind: "diff",
-      taskId: "task-1",
-      phase: "red",
-      summary: "change a.txt",
-      diff,
-      expectedVerification: "cat a.txt",
-      risks: [],
-      contractCompliant: true,
+        ["src"],
+      ),
+    ).toEqual({
+      kind: "paused",
+      code: "approved-context-needed",
+      contextRequest: {
+        code: "approved-context-needed",
+        refs: ["src/approved.ts"],
+      },
+    });
+    expect(
+      classifyCandidateContextRequest(
+        {
+          kind: "context-request",
+          candidateId: "candidate-context",
+          code: "task-split-needed",
+          refs: ["outside/authority.ts"],
+        },
+        ["src"],
+      ),
+    ).toEqual({
+      kind: "approval-needed",
+      code: "boundary-review-needed",
+      contextRequest: {
+        code: "task-split-needed",
+        refs: ["outside/authority.ts"],
+      },
+    });
+  });
+
+  it("keeps the first terminal candidate result when its tool batch also reads", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const cwd = mkdtempSync(join(tmpdir(), "abel-child-terminal-candidate-"));
+    roots.push(cwd);
+    writeFileSync(join(cwd, "a.txt"), "approved context\n");
+    const candidateId = "candidate-terminal-result";
+    const firstRequest = {
+      kind: "context-request" as const,
+      candidateId,
+      code: "approved-context-needed" as const,
+      refs: ["a.txt"],
     };
-    const faux = fauxProvider({ provider: "abel-faux-runtime", api: "faux" });
+    const faux = fauxProvider({
+      provider: "abel-faux-terminal-candidate",
+      api: "faux",
+    });
     faux.setResponses([
-      fauxAssistantMessage(fauxToolCall("abel_submit_result", submitted), {
-        stopReason: "toolUse",
-      }),
+      fauxAssistantMessage(
+        [
+          fauxToolCall("abel_submit_result", firstRequest, {
+            id: "terminal-context-request",
+          }),
+          fauxToolCall("read", { path: "a.txt" }, { id: "late-read" }),
+        ],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage(
+        fauxToolCall(
+          "abel_submit_result",
+          {
+            ...firstRequest,
+            code: "task-split-needed",
+          },
+          { id: "overwriting-context-request" },
+        ),
+        { stopReason: "toolUse" },
+      ),
     ]);
     const modelRuntime = await parentProvider.runtimeForProvider(faux.provider);
-    const activation = new Activation();
-    activation.request();
-    activation.activate();
-    const runtime = new Runtime({
-      activation,
-      parentPayloadBridge: new PassthroughParentPayloadBridge(),
-    });
-    const context = {
+    const result = await child.runChildSession({
       cwd,
+      modelRuntime,
       model: faux.getModel(),
-      modelRegistry: new ModelRegistry(modelRuntime),
-    };
-    const request: ImplementTaskFixture = {
-      boundary: {
-        changeId: "child-session-runtime",
-        taskId: "task-1",
-        dependsOn: [],
-        objective: "Change a.txt",
-        roots: ["."],
-        context: { agents: "none", contract: "approved" },
-        phases: {
-          red: {
-            read: ["a.txt", "package.json"],
-            write: ["a.txt"],
-            verification: {
-              kind: "package-script",
-              id: "verify-task-1-red",
-              packageManager: "bun",
-              script: "check",
-              command: "node test/check.mjs",
-              args: [],
-              classification: "expected-red",
-              expectedFailure: "[CHILD-SESSION:expected-red]",
-            },
-            verificationInputs: [{ kind: "workspace", path: "package.json" }],
-            verificationLock: "child-session-runtime",
-          },
-          green: {
-            read: ["a.txt", "package.json"],
-            write: ["a.txt"],
-            verification: {
-              kind: "package-script",
-              id: "verify-task-1-green",
-              packageManager: "bun",
-              script: "check",
-              command: "node test/check.mjs",
-              args: [],
-              classification: "expected-green",
-            },
-            verificationInputs: [{ kind: "workspace", path: "package.json" }],
-            verificationLock: "child-session-runtime",
-          },
-        },
-        scheduling: { conflicts: [], resources: [] },
-        agents: { impact: "none", managedOnly: true },
-        approvedDependencies: [],
-        impactClosure: {
-          changedSurfaces: ["none"],
-          searchEvidence: [],
-          relatedTests: [],
-          affectedSuite: [],
+      systemPrompt: "Request bounded context once.",
+      requestId: "task-terminal-result",
+      taskId: "task-terminal-result",
+      role: "implementation-worker",
+      phase: "green",
+      output: "diff",
+      roots: [cwd],
+      allowedPaths: ["a.txt"],
+      timeoutMs: 5_000,
+      candidateArtifact: {
+        ledger: {
+          beginCandidate: () => ({ ok: true as const }),
+          appendCandidateSegment: () => ({ ok: true as const }),
+          sealCandidate: () => ({
+            ok: true as const,
+            artifactHash: "a".repeat(64),
+            bytes: 1,
+            paths: ["a.txt"],
+          }),
+        } as never,
+        identity: {
+          candidateId,
+          runId: "run-terminal-result",
+          deliveryRevision: 1,
+          taskId: "task-terminal-result",
+          phase: "green",
+          attemptId: "attempt-terminal-result",
+          approvedPaths: ["a.txt"],
+          isolatedRevisionId: "b".repeat(64),
+          verificationId: "terminal-result-green",
+          routeId: "implementation-primary",
+          routeFingerprint: "c".repeat(64),
         },
       },
-      attempt: {
-        changeId: "child-session-runtime",
-        taskId: "task-1",
-        requestId: "task-1",
-        phase: "red",
-        snapshot: mergeBounds(
-          snapshotFiles(cwd, ["a.txt", "package.json", "bun.lock"]),
-          snapshotDirManifests(cwd, ["node_modules"]),
-        ),
-      },
-    };
-    await admitGraph(runtime, [request], context);
-    const run = await (runtime as any).execute(
-      "run",
-      { request: taskAttemptFor(request) },
-      context,
-    );
-    expect(run).toMatchObject({
-      kind: "candidate",
-      requestId: "task-1",
-      taskId: "task-1",
-      phase: "red",
-      result: submitted,
     });
-    assertCandidateOutcome(run);
-    expect(run.resultId).toBeTypeOf("string");
-    const retained = runtime.results.get(run.resultId);
-    expect(retained).toBeDefined();
-    expect(isCurrent(cwd, retained?.snapshot ?? {})).toBe(true);
-    const applied = await (runtime as any).execute(
-      "apply",
-      { resultId: run.resultId, requestId: "task-1:apply:0" },
-      context,
-    );
-    expect(applied, JSON.stringify(applied)).toMatchObject({
-      kind: "applied",
-      requestId: "task-1:apply:0",
-      taskId: "task-1",
-      phase: "red",
-      readyPhase: "green",
-    });
-    expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("new\n");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.result).toEqual(firstRequest);
+    expect(result.submitCount).toBe(1);
+    expect(faux.state.callCount).toBe(1);
   });
 });
 type ChildOutcome = {
@@ -684,7 +819,7 @@ describe("structural submission classification", () => {
       code: "invalid-diff",
       stage: "candidate-diff",
       details: {
-        finalCategory: "mixed",
+        finalCategory: "single-submit-only",
         submitAttempts: 1,
         schema: "invalid",
       },

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 const root = path.resolve(import.meta.dirname, "..");
 
 describe("traceability check", () => {
-  it("resolves the archived delivery traceability map", () => {
+  it("resolves the active control-plane delivery traceability map", () => {
     const result = spawnSync(
       process.execPath,
       [path.join(root, "scripts", "traceability-check.mjs")],
@@ -18,7 +18,7 @@ describe("traceability check", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout.trim()).toBe(
-      "traceability-check: 81 unique references resolve exactly once",
+      "traceability-check: 162 active Requirement/Scenario references resolve exactly once",
     );
   });
 });

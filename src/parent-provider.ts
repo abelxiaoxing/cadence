@@ -20,7 +20,12 @@ import {
   type ParentPayloadCallback,
   type ParentPayloadCapture,
 } from "./parent-payload-bridge.ts";
-import type { SubagentEndpoint } from "./subagent-endpoint.ts";
+import {
+  type CustomRoutePolicy,
+  type InheritedRoutePolicy,
+  type ResolvedCustomRoute,
+  resolveCustomRoute,
+} from "./route-policy.ts";
 
 const SUBAGENT_PROVIDER_ID = "abel-subagent";
 
@@ -71,7 +76,7 @@ const SUBAGENT_STREAMS = {
   },
 };
 
-function customSubagentModel(endpoint: SubagentEndpoint): Model<string> {
+function customSubagentModel(endpoint: ResolvedCustomRoute): Model<string> {
   return {
     id: endpoint.model,
     name: endpoint.model,
@@ -90,7 +95,7 @@ function customSubagentModel(endpoint: SubagentEndpoint): Model<string> {
 }
 
 function customSubagentProvider(
-  endpoint: SubagentEndpoint,
+  endpoint: ResolvedCustomRoute,
   model: Model<string>,
 ): Provider {
   return createProvider({
@@ -118,10 +123,12 @@ function customSubagentProvider(
 }
 
 export async function customPhaseRuntime(
-  endpoint: SubagentEndpoint,
+  route: CustomRoutePolicy,
   signal?: AbortSignal,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): Promise<PhaseRuntimeResult> {
   if (signal?.aborted) return cancelledPhaseRuntime();
+  const endpoint = resolveCustomRoute(route, environment);
   const model = customSubagentModel(endpoint);
   const provider = customSubagentProvider(endpoint, model);
   let modelRuntime: ModelRuntime;
@@ -417,6 +424,18 @@ export async function runtimeFromContext(
     model,
     failureOverride: () => diagnostic.failure,
   };
+}
+
+export async function runtimeForWorkerRoute(
+  route: CustomRoutePolicy | InheritedRoutePolicy,
+  ctx: Pick<ExtensionContext, "model" | "modelRegistry">,
+  payloadBridge: ParentPayloadBridge,
+  signal?: AbortSignal,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): Promise<PhaseRuntimeResult> {
+  return route.kind === "custom"
+    ? customPhaseRuntime(route, signal, environment)
+    : runtimeFromContext(ctx, payloadBridge, signal);
 }
 
 function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {

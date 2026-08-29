@@ -22,6 +22,7 @@ const expectedFiles = [
   "package/agents/diagnosis-worker.md",
   "package/agents/implementation-worker.md",
   "package/config/.env.example",
+  "package/config/routes.example.json",
   "package/licenses/pi-subagents-MIT.txt",
   "package/package.json",
   "package/prompts/abel-design.md",
@@ -39,27 +40,33 @@ const expectedFiles = [
   "package/skills/grok-search/grok-search.mjs",
   "package/src/activation.ts",
   "package/src/agent-registry.ts",
-  "package/src/candidate-preflight.ts",
+  "package/src/apply-transaction.ts",
+  "package/src/artifact-store.ts",
   "package/src/parent-payload-bridge.ts",
   "package/src/child-session.ts",
   "package/src/contracts.ts",
-  "package/src/drain.ts",
+  "package/src/control-contracts.ts",
+  "package/src/delivery-compiler.ts",
   "package/src/empty-resource-loader.ts",
   "package/src/file-snapshot.ts",
   "package/src/index.ts",
   "package/src/implement-graph.ts",
+  "package/src/isolation-backend.ts",
+  "package/src/packet-runtime.ts",
   "package/src/parent-provider.ts",
-  "package/src/patch.ts",
-  "package/src/result-store.ts",
-  "package/src/runtime.ts",
+  "package/src/route-policy.ts",
+  "package/src/run-state.ts",
+  "package/src/run-store.ts",
   "package/src/safe-path.ts",
-  "package/src/scheduler.ts",
   "package/src/scoped-tools.ts",
+  "package/src/state-root.ts",
   "package/src/subagent-activity.ts",
-  "package/src/subagent-endpoint.ts",
   "package/src/submit-tool.ts",
+  "package/src/task-ledger.ts",
   "package/src/verification-capability.ts",
-  "package/src/worker.ts",
+  "package/src/worker-broker.ts",
+  "package/src/workflow-engine.ts",
+  "package/src/workspace-store.ts",
 ].sort();
 
 const obsoleteControlPattern =
@@ -154,6 +161,10 @@ describe("real npm tarball", () => {
 
   it("verifies package-shipped Agent files by path/name/hash identity", async () => {
     const agentsDir = path.join(packedPackageDir, "agents");
+    const provenance = readFileSync(
+      path.join(packageDir, "provenance", "adapted-modules.yaml"),
+      "utf8",
+    );
     const shipped = [
       "contract-reviewer",
       "design-explorer",
@@ -168,6 +179,13 @@ describe("real npm tarball", () => {
         .update(readFileSync(file))
         .digest("hex");
       expect(hash).toMatch(/^[0-9a-f]{64}$/);
+      const binding = provenance.match(
+        new RegExp(
+          `path: agents/${name}\\.md[\\s\\S]{0,160}?role: ${name}[\\s\\S]{0,160}?sha256: ([0-9a-f]{64})`,
+          "u",
+        ),
+      );
+      expect(binding?.[1], `provenance hash for ${name}`).toBe(hash);
     }
     const shippedNames = readdirSync(agentsDir)
       .map((f) => f.replace(/\.md$/, ""))
@@ -180,8 +198,8 @@ describe("real npm tarball", () => {
       readFileSync(path.join(packedPackageDir, relative), "utf8");
     const skill = resource("skills/abel-workflow/SKILL.md");
     const implementSkill = skill.slice(
-      skill.indexOf("## Verification discipline"),
-      skill.indexOf("## Parent and subagent authority"),
+      skill.indexOf("## Recovery versus approval"),
+      skill.indexOf("## AGENTS indexes"),
     );
     expect(implementSkill).not.toBe("");
     const implementResources = [
@@ -192,8 +210,10 @@ describe("real npm tarball", () => {
     expect(implementResources).not.toMatch(
       /design-required|design-contract|return-to-design|\/abel-design|branchBlocked|dependentsBlocked|dependent successors?|recommended next (workflow )?step|nextStep|artifact-correction-required|reasonCode|artifact-invalid|transport-failed|environment-unavailable|result-too-large|split condition/i,
     );
-    expect(implementResources).toMatch(/red-not-witnessed/i);
-    expect(implementResources).toMatch(/kind:\s*["'`]?environment/i);
+    expect(implementResources).toMatch(/ordinary failures stay inside/i);
+    expect(implementResources).toMatch(/wrong-Red identity/i);
+    expect(implementResources).toMatch(/environment/i);
+    expect(implementResources).toMatch(/approval-needed` only/i);
     expect(implementResources).toMatch(/result-limit/i);
 
     const diagnosis = resource("agents/diagnosis-worker.md");

@@ -62,6 +62,9 @@ describe("file snapshot invariants", () => {
     expect(entry.sha256).toBe(sha("alpha"));
     expect(entry.bytes).toBe(5);
     expect(entry.kind).toBe("file");
+    expect(snapshots.snapshotContentHash(Buffer.from("alpha"))).toBe(
+      entry.sha256,
+    );
     expect(snapshots.isCurrent(root, bound)).toBe(true);
   });
 
