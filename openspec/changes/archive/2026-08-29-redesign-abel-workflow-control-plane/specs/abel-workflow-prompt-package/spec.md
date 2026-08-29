@@ -35,6 +35,8 @@ For this change's single bound bootstrap receipt only, v1 activation SHALL remai
 - **WHEN** Design presents Gate A or Gate B
 - **THEN** the user approves behavior or implementation contracts without an additional tool-permission flow
 
+## ADDED Requirements
+
 ### Requirement: Explicit invocation and stage isolation
 
 The shared Abel workflow Skill and private dispatch tool SHALL become active only after a user explicitly invokes a package-proven `/abel-design`, `/abel-implement`, or `/abel-diagnose` prompt; `/abel-init` SHALL remain local and dispatch-free.
@@ -55,6 +57,8 @@ Each active stage SHALL admit only its own command or bounded packet schema, and
 
 - **WHEN** a user explicitly invokes `/abel-init`
 - **THEN** Init executes its deterministic local procedure without activating Subagent dispatch
+
+## MODIFIED Requirements
 
 ### Requirement: Initialization behavior
 

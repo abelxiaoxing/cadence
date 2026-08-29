@@ -47,6 +47,11 @@ export interface DeliveryBindingProjection {
   gate: DeliveryGate;
   revision: number;
   receiptHash: string;
+  approvalProof?: {
+    revision: number;
+    contractHash: string;
+    recordHash: string;
+  };
 }
 
 export interface RunProjection {
@@ -133,6 +138,7 @@ const LEGAL_TRANSITIONS: Readonly<Record<RunState, readonly RunState[]>> = {
     "running",
     "approval-needed",
     "recovering",
+    "completed",
     "discarded",
     "rejected",
   ],
@@ -263,12 +269,31 @@ function applyVerifiedEvent(
       const gate = event.payload.gate;
       const revision = event.payload.revision;
       const receiptHash = event.payload.receiptHash;
+      const approvalProof = event.payload.approvalProof;
       if (
         (gate !== "gate-a" && gate !== "gate-b") ||
         !Number.isSafeInteger(revision) ||
         (revision as number) < 1 ||
         typeof receiptHash !== "string" ||
-        !SHA256.test(receiptHash)
+        !SHA256.test(receiptHash) ||
+        (approvalProof !== undefined &&
+          (!approvalProof ||
+            typeof approvalProof !== "object" ||
+            Array.isArray(approvalProof) ||
+            !Number.isSafeInteger(
+              (approvalProof as Record<string, unknown>).revision,
+            ) ||
+            Number((approvalProof as Record<string, unknown>).revision) < 1 ||
+            typeof (approvalProof as Record<string, unknown>).contractHash !==
+              "string" ||
+            !SHA256.test(
+              String((approvalProof as Record<string, unknown>).contractHash),
+            ) ||
+            typeof (approvalProof as Record<string, unknown>).recordHash !==
+              "string" ||
+            !SHA256.test(
+              String((approvalProof as Record<string, unknown>).recordHash),
+            )))
       ) {
         throw new Error("event-integrity-delivery-binding");
       }
@@ -276,13 +301,25 @@ function applyVerifiedEvent(
         gate: gate as DeliveryGate,
         revision: revision as number,
         receiptHash,
+        ...(approvalProof
+          ? {
+              approvalProof: structuredClone(
+                approvalProof as DeliveryBindingProjection["approvalProof"],
+              ),
+            }
+          : {}),
       };
       const existing = projection.deliveryBindings.find(
         (candidate) =>
           candidate.gate === binding.gate &&
           candidate.revision === binding.revision,
       );
-      if (existing && existing.receiptHash !== binding.receiptHash) {
+      if (
+        existing &&
+        (existing.receiptHash !== binding.receiptHash ||
+          canonicalJson(existing.approvalProof) !==
+            canonicalJson(binding.approvalProof))
+      ) {
         throw new Error("event-integrity-delivery-conflict");
       }
       const deliveryBindings = existing

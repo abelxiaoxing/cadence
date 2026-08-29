@@ -146,8 +146,10 @@ export const APPROVAL_BOUNDARY_CODES = [
   "behavior-contract-insufficient",
   "architecture-contract-insufficient",
   "task-scope-insufficient",
+  "conflict-resource-authority-insufficient",
   "verification-contract-insufficient",
   "agents-contract-insufficient",
+  "irreversible-scope-insufficient",
 ] as const;
 export const VERIFICATION_ADAPTER_CODES = [
   "input-missing",
@@ -439,6 +441,7 @@ export type ImplementGraphReadinessDiagnostic =
 export interface PacketEnvelope {
   stage: "abel-design" | "abel-diagnose";
   role: "design-explorer" | "diagnosis-worker";
+  runId?: string;
   id: string;
   phase: string;
   objective: string;
@@ -1230,7 +1233,7 @@ export function validatePacketEnvelope(
     return { ok: false, reason: "missing request envelope" };
   }
   const packet = value as Record<string, unknown>;
-  const required = [
+  const baseRequired = [
     "stage",
     "role",
     "id",
@@ -1241,6 +1244,14 @@ export function validatePacketEnvelope(
     "declared",
     "output",
   ] as const;
+  const required =
+    packet.stage === "abel-design"
+      ? ([
+          ...baseRequired.slice(0, 2),
+          "runId",
+          ...baseRequired.slice(2),
+        ] as const)
+      : baseRequired;
   for (const field of required) {
     if (packet[field] === undefined) {
       return { ok: false, reason: `missing required field: ${field}` };
@@ -1261,6 +1272,12 @@ export function validatePacketEnvelope(
     (packet.stage === "abel-diagnose" && packet.role !== "diagnosis-worker")
   ) {
     return { ok: false, reason: "packet role does not match stage" };
+  }
+  if (
+    (packet.stage === "abel-design" && !validIdentifier(packet.runId)) ||
+    (packet.stage === "abel-diagnose" && packet.runId !== undefined)
+  ) {
+    return { ok: false, reason: "invalid Design run identity" };
   }
   if (
     typeof packet.id !== "string" ||

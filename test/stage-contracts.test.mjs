@@ -21,7 +21,6 @@ const forbiddenStageRouting = [
   /design-required/i,
   /design-contract/i,
   /return-to-design/i,
-  /\/abel-design/i,
   /recommended next (workflow )?step/i,
   /nextStep/,
 ];
@@ -31,6 +30,7 @@ describe("Design stage contract", () => {
     expect(design).toMatch(/`abel_dispatch`/);
     expect(design).toMatch(/`action:\s*["']run["']`/);
     expect(design).toMatch(/["']stage["']:\s*["']abel-design["']/);
+    expect(design).toMatch(/["']runId["']:\s*["']<durable-design-run-id>["']/);
     expect(design).toMatch(/Each packet is one tool call/i);
     expect(design).toMatch(/sibling calls in the same assistant turn/i);
     expect(design).toMatch(/Do not wrap them in a `requests` array/i);
@@ -43,6 +43,14 @@ describe("Design stage contract", () => {
     expect(design).toMatch(/Before explicit Gate A approval[\s\S]*read-only/i);
     expect(design).toMatch(/After Gate A[\s\S]*change root/i);
     expect(design).toMatch(
+      /parent tool set[\s\S]{0,240}`read`, `grep`, `find`, and `ls`/i,
+    );
+    expect(design).toMatch(/"operation":"write-artifact"/);
+    expect(design).toMatch(/"operation":"delete-artifact"/);
+    expect(design).toMatch(/path relative to the active change root/i);
+    expect(design).toMatch(/gate-a\.yaml[\s\S]{0,160}ready\.yaml/i);
+    expect(design).toMatch(/implement-plan\.json[\s\S]{0,160}unreachable/i);
+    expect(design).toMatch(
       /Every repository `AGENTS\.md` remains read-only throughout Design/i,
     );
     expect(design).toMatch(/never edit the index here/i);
@@ -50,8 +58,8 @@ describe("Design stage contract", () => {
 
   it("compiles one executable delivery before reporting readiness", () => {
     expect(design).toMatch(/ImplementPlan/);
-    expect(design).toMatch(/compileImplementPlan/);
-    expect(design).toMatch(/compileReadyReceipt/);
+    expect(design).toMatch(/"operation":"compile-plan"/);
+    expect(design).toMatch(/"operation":"finalize-delivery"/);
     expect(design).toMatch(/implement-plan\.json/);
     expect(design).toMatch(/verification closure/i);
     expect(design).toMatch(/Requirement → Scenario → Verification → Task/);
@@ -161,6 +169,10 @@ describe("Implement stage contract", () => {
     expect(approval).toMatch(/never `approval-needed`/i);
     expect(approval).toMatch(/endpoint outage/i);
     expect(approval).toMatch(/introduced in-boundary repair/i);
+    expect(approval).toMatch(/\/abel-design --change <change>/i);
+    expect(approval).toMatch(/never invoke Design automatically/i);
+    expect(approval).toMatch(/`conditionalCommands`/i);
+    expect(approval).not.toMatch(/return-to-design|nextStep/i);
     for (const pattern of forbiddenStageRouting)
       expect(approval).not.toMatch(pattern);
   });

@@ -21,7 +21,7 @@ import { validateVerificationAdapterCapability } from "./verification-capability
 
 export const IMPLEMENT_PLAN_SCHEMA_VERSION = 3 as const;
 export const IMPLEMENT_PLAN_PATH = "implement-plan.json" as const;
-export const DELIVERY_RECEIPT_VERSION = 3 as const;
+export const DELIVERY_RECEIPT_VERSION = 4 as const;
 export const GATE_A_RECEIPT_PATH = "gate-a.yaml" as const;
 export const READY_RECEIPT_PATH = "ready.yaml" as const;
 
@@ -35,14 +35,17 @@ export interface DeliveryArtifactBinding {
   rawSha256: string;
 }
 
+export interface GateApprovalProof {
+  revision: number;
+  contractHash: string;
+  recordHash: string;
+}
+
 export interface GateAReceipt {
   receiptVersion: typeof DELIVERY_RECEIPT_VERSION;
   change: string;
   schema: string;
-  approval: {
-    approved: true;
-    blockingDecisions: 0;
-  };
+  approval: GateApprovalProof;
   artifacts: DeliveryArtifactBinding[];
 }
 
@@ -65,8 +68,9 @@ export interface ReadyReceipt {
       rawSha256: string;
     };
     gateB: {
-      approved: true;
-      blockingDecisions: 0;
+      revision: number;
+      contractHash: string;
+      recordHash: string;
     };
   };
   artifacts: DeliveryArtifactBinding[];
@@ -320,6 +324,22 @@ function requireReceiptIdentity(
   }
 }
 
+function normalizeGateProof(value: GateApprovalProof): GateApprovalProof {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, ["revision", "contractHash", "recordHash"]) ||
+    !Number.isSafeInteger(value.revision) ||
+    value.revision < 1 ||
+    typeof value.contractHash !== "string" ||
+    !SHA256.test(value.contractHash) ||
+    typeof value.recordHash !== "string" ||
+    !SHA256.test(value.recordHash)
+  ) {
+    throw new Error("delivery-gate-proof-invalid");
+  }
+  return structuredClone(value);
+}
+
 function parseCanonicalReceipt<T>(bytes: Uint8Array, code: string): T {
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   let parsed: unknown;
@@ -335,6 +355,7 @@ function parseCanonicalReceipt<T>(bytes: Uint8Array, code: string): T {
 export function compileGateAReceipt(input: {
   change: string;
   schema: string;
+  approval: GateApprovalProof;
   artifacts: readonly DeliveryArtifactBinding[];
 }): { receipt: GateAReceipt; bytes: Uint8Array; rawSha256: string } {
   requireReceiptIdentity(input.change, input.schema);
@@ -342,7 +363,7 @@ export function compileGateAReceipt(input: {
     receiptVersion: DELIVERY_RECEIPT_VERSION,
     change: input.change,
     schema: input.schema,
-    approval: { approved: true, blockingDecisions: 0 },
+    approval: normalizeGateProof(input.approval),
     artifacts: normalizeArtifactBindings(input.artifacts),
   };
   const bytes = canonicalBytes(receipt);
@@ -369,15 +390,17 @@ export function parseGateAReceipt(bytes: Uint8Array): GateAReceipt {
     ]) ||
     receipt.receiptVersion !== DELIVERY_RECEIPT_VERSION ||
     !isRecord(receipt.approval) ||
-    !exactKeys(receipt.approval, ["approved", "blockingDecisions"]) ||
-    receipt.approval.approved !== true ||
-    receipt.approval.blockingDecisions !== 0
+    !exactKeys(receipt.approval, ["revision", "contractHash", "recordHash"])
   ) {
     throw new Error("gate-a-receipt-invalid");
   }
   requireReceiptIdentity(receipt.change, receipt.schema);
+  const approval = normalizeGateProof(receipt.approval);
   const artifacts = normalizeArtifactBindings(receipt.artifacts);
-  if (canonicalJson(artifacts) !== canonicalJson(receipt.artifacts)) {
+  if (
+    canonicalJson(approval) !== canonicalJson(receipt.approval) ||
+    canonicalJson(artifacts) !== canonicalJson(receipt.artifacts)
+  ) {
     throw new Error("gate-a-receipt-invalid");
   }
   return structuredClone(receipt);
@@ -415,6 +438,7 @@ export function compileReadyReceipt(input: {
   schema: string;
   deliveryRevision: number;
   gateA: { rawSha256: string };
+  gateB: GateApprovalProof;
   artifacts: readonly DeliveryArtifactBinding[];
   compiledPlan: CompiledDelivery;
   traceability: DeliveryTraceability;
@@ -424,7 +448,8 @@ export function compileReadyReceipt(input: {
     !Number.isSafeInteger(input.deliveryRevision) ||
     input.deliveryRevision < 1 ||
     !SHA256.test(input.gateA.rawSha256) ||
-    input.compiledPlan.plan.changeId !== input.change
+    input.compiledPlan.plan.changeId !== input.change ||
+    input.gateB.contractHash !== input.compiledPlan.planHash
   ) {
     throw new Error("delivery-receipt-invalid");
   }
@@ -438,7 +463,7 @@ export function compileReadyReceipt(input: {
         path: GATE_A_RECEIPT_PATH,
         rawSha256: input.gateA.rawSha256,
       },
-      gateB: { approved: true, blockingDecisions: 0 },
+      gateB: normalizeGateProof(input.gateB),
     },
     artifacts: normalizeArtifactBindings(input.artifacts),
     plan: structuredClone(input.compiledPlan.receipt.plan),
@@ -485,9 +510,11 @@ export function parseReadyReceipt(bytes: Uint8Array): ReadyReceipt {
     receipt.approvals.gateA.path !== GATE_A_RECEIPT_PATH ||
     !SHA256.test(receipt.approvals.gateA.rawSha256) ||
     !isRecord(receipt.approvals.gateB) ||
-    !exactKeys(receipt.approvals.gateB, ["approved", "blockingDecisions"]) ||
-    receipt.approvals.gateB.approved !== true ||
-    receipt.approvals.gateB.blockingDecisions !== 0 ||
+    !exactKeys(receipt.approvals.gateB, [
+      "revision",
+      "contractHash",
+      "recordHash",
+    ]) ||
     !isRecord(receipt.plan) ||
     !exactKeys(receipt.plan, [
       "path",
@@ -513,8 +540,11 @@ export function parseReadyReceipt(bytes: Uint8Array): ReadyReceipt {
   }
   requireReceiptIdentity(receipt.change, receipt.schema);
   const artifacts = normalizeArtifactBindings(receipt.artifacts);
+  const gateB = normalizeGateProof(receipt.approvals.gateB);
   const traceability = normalizeTraceability(receipt.traceability);
   if (
+    gateB.contractHash !== receipt.plan.canonicalHash ||
+    canonicalJson(gateB) !== canonicalJson(receipt.approvals.gateB) ||
     canonicalJson(artifacts) !== canonicalJson(receipt.artifacts) ||
     canonicalJson(traceability) !== canonicalJson(receipt.traceability)
   ) {

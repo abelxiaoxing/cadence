@@ -2,100 +2,7 @@
 
 ## Purpose
 Defines the per-role custom endpoint configuration contract for Cadence Subagents: the configuration key surface, three-tier whole-layer resolution, fail-closed configuration errors, request behavior under a custom endpoint identity, and endpoint key privacy.
-
 ## Requirements
-
-### Requirement: Per-role endpoint configuration key surface
-
-The system SHALL read Subagent endpoint configuration from the cadence env file: the project file `<project>/.pi/cadence/.env` wins over the user file `~/.pi/agent/cadence/.env` as a whole file, with no merging and no interpolation.
-The global layer SHALL consist of the keys `SUBAGENT_API_URL`, `SUBAGENT_API_KEY`, `SUBAGENT_MODEL`, `SUBAGENT_API`, `SUBAGENT_CONTEXT_WINDOW`, and `SUBAGENT_MAX_TOKENS`.
-Each of the four closed roles SHALL have a same-shaped role layer whose key prefix is `SUBAGENT_` followed by the role name with hyphens converted to underscores: `SUBAGENT_DESIGN_EXPLORER_*`, `SUBAGENT_CONTRACT_REVIEWER_*`, `SUBAGENT_IMPLEMENTATION_WORKER_*`, and `SUBAGENT_DIAGNOSIS_WORKER_*`.
-A key whose value is empty SHALL be treated as absent.
-
-#### Scenario: Project file wins as a whole
-
-- **WHEN** both the project cadence env file and the user cadence env file exist
-- **THEN** only values from the project file are considered and no user-file value is merged or substituted
-
-#### Scenario: Empty value is absent
-
-- **WHEN** a layer key exists with an empty value
-- **THEN** it is treated as absent and does not commit its layer
-
-#### Scenario: Role key mapping
-
-- **WHEN** `SUBAGENT_IMPLEMENTATION_WORKER_MODEL` and `SUBAGENT_IMPLEMENTATION_WORKER_API_URL` are set
-- **THEN** those values apply to the `implementation-worker` role and to no other role
-
-### Requirement: Three-tier whole-layer resolution
-
-The system SHALL resolve each dispatch's endpoint identity in exactly three tiers: the dispatching role's layer commits when any of its six keys is non-empty; otherwise the global layer commits when any of its six keys is non-empty; otherwise the dispatch inherits the parent identity unchanged, with fresh phase-local parent authentication and capture-required parent payload composition.
-A committed layer SHALL be evaluated as a whole; missing values are never merged or substituted from another layer.
-A committed layer without `CONTEXT_WINDOW` or `MAX_TOKENS` SHALL use the internal defaults of 256000 context window and 128000 max output tokens, and the resulting custom model identity SHALL declare reasoning support; these defaults are not layer values and do not merge layers.
-For an Implement task, the resolved identity SHALL be pinned at task admission and remain fixed across every phase launch for that task; later configuration edits do not change an admitted task's identity.
-One-shot evidence requests SHALL resolve their identity at dispatch.
-
-#### Scenario: Role layer commits
-
-- **WHEN** the role layer has a complete committed configuration
-- **THEN** that role's Subagent dispatch uses the role layer values and ignores the global layer
-
-#### Scenario: Global layer commits when role absent
-
-- **WHEN** no key of the role layer is non-empty and the global layer is committed
-- **THEN** the dispatch uses the global layer values
-
-#### Scenario: No committed layer inherits parent identity
-
-- **WHEN** neither layer has any non-empty key
-- **THEN** the dispatch inherits the parent model with fresh phase-local parent authentication and capture-required parent payload composition, exactly as before configuration existed
-
-#### Scenario: Committed layer does not merge missing values
-
-- **WHEN** the role layer sets model and URL but not dialect while the global layer sets a dialect
-- **THEN** the dispatch uses the default dialect and ignores the global dialect value
-
-#### Scenario: Absent bounds use internal defaults
-
-- **WHEN** a committed layer omits both bounds keys
-- **THEN** the resolved identity uses context window 256000 and max output tokens 128000 with reasoning support declared, without reading any value from another layer
-
-#### Scenario: Admitted task identity is stable
-
-- **WHEN** an Implement task is admitted with a resolved identity and the configuration file changes before a later phase launch
-- **THEN** every phase launch for that task continues to use the identity pinned at admission
-
-### Requirement: Fail-closed configuration errors
-
-When a committed layer lacks `MODEL` or `API_URL`, when `API_URL` is not a parseable http or https URL, when `API` holds a value other than `openai-completions`, `openai-responses`, or `anthropic-messages`, or when `CONTEXT_WINDOW` or `MAX_TOKENS` is present but not a positive safely representable integer, the dispatch SHALL fail immediately with a typed configuration error before any child launch.
-A configuration error SHALL NOT be retried and SHALL NOT consume a transport-shared child launch.
-The failure SHALL be deterministic for identical configuration state.
-
-#### Scenario: Partial layer fails dispatch
-
-- **WHEN** a committed layer contains a model but no URL
-- **THEN** the dispatch fails immediately with a typed configuration error and no child session is launched
-
-#### Scenario: Configuration error is not retried
-
-- **WHEN** a dispatch fails with a configuration error
-- **THEN** the runtime performs no retry and consumes no transport-shared child launch
-
-#### Scenario: Invalid URL fails closed
-
-- **WHEN** a committed layer's `API_URL` is not a parseable http or https URL
-- **THEN** the dispatch fails immediately with a typed configuration error
-
-#### Scenario: Unknown dialect fails closed
-
-- **WHEN** a committed layer's `API` value is not one of the three supported dialects
-- **THEN** the dispatch fails immediately with a typed configuration error
-
-#### Scenario: Invalid bounds fail closed
-
-- **WHEN** a committed layer's `CONTEXT_WINDOW` or `MAX_TOKENS` is zero, negative, non-integer, infinite after parsing, or larger than the largest safely representable integer
-- **THEN** the dispatch fails immediately with a typed configuration error
-
 ### Requirement: Endpoint key privacy
 
 Configured endpoint key values SHALL never appear in dispatch results, Subagent activity display, error messages, or logs.
@@ -111,35 +18,143 @@ Configuration error text SHALL identify offending configuration key names only.
 - **WHEN** a dispatch runs under a committed configuration that includes an API key
 - **THEN** the key value appears in no dispatch result, activity display, error message, or log
 
-### Requirement: Custom endpoint request behavior
+### Requirement: Visible route-policy configuration
 
-When a dispatch resolves a custom endpoint identity, the child request SHALL be sent to the configured URL with the configured model, credentials, and dialect, and SHALL bypass the parent payload-transform chain; parent payload bridge availability SHALL NOT affect such a dispatch.
-When the committed layer has no API key, the request SHALL be sent without an API-key credential.
-When the committed layer has no dialect, `openai-completions` SHALL be used.
-The child model identity SHALL use the configured context window and max output tokens, or the internal defaults when those keys are absent.
-Provider retry SHALL remain disabled and phase timeout, cancellation, and complete-result bounds SHALL remain unchanged for custom endpoint dispatches.
+Cadence SHALL resolve one complete route-policy source for a project, with project-local policy taking precedence over user policy as a whole and no secret or partial-value merging across sources.
+The policy SHALL define an ordered set of allowed routes for each closed package-owned role and MAY include inherited-parent identity as an explicit route.
+Each route SHALL declare enough non-secret capability metadata to determine supported dialect, context and output bounds, and eligibility for its role.
+Users SHALL be able to inspect the selected policy source, route names, route kinds, capabilities, health state, and ordering without exposing URL values, API keys, credentials, or raw environment values.
+The v2 policy format SHALL replace the v1 single-endpoint key contract without implicit migration or dual-stack resolution.
 
-#### Scenario: Request reaches configured endpoint
+#### Scenario: Project policy exists
 
-- **WHEN** a role with a complete committed configuration dispatches
-- **THEN** the child request is sent to the configured URL with the configured model and credentials
+- **WHEN** both project and user route policies exist
+- **THEN** only the complete project policy participates and no missing project value is filled from user policy
 
-#### Scenario: Payload bridge is bypassed
+#### Scenario: Parent identity is allowed
 
-- **WHEN** a dispatch runs under a custom endpoint identity
-- **THEN** the parent payload callback is never invoked and parent payload bridge unavailability does not fail the dispatch
+- **WHEN** a role's ordered policy explicitly includes inherited-parent identity
+- **THEN** that route is eligible according to its declared order and capability checks
 
-#### Scenario: Optional API key endpoint
+#### Scenario: Effective policy is inspected
 
-- **WHEN** a committed layer has model and URL but no API key
-- **THEN** the child request is sent to the configured URL without an API-key credential
+- **WHEN** local status presents endpoint routing
+- **THEN** it reports the policy source and non-secret route metadata without URL, key, credential, or environment values
 
-#### Scenario: Default dialect
+#### Scenario: V1 keys are present
 
-- **WHEN** a committed layer has no dialect value
-- **THEN** the child request uses `openai-completions`
+- **WHEN** only the obsolete v1 single-endpoint configuration is supplied
+- **THEN** v2 reports an unsupported configuration version and does not silently translate it
 
-#### Scenario: Configured bounds shape the child model
+### Requirement: Capability and health aware route selection
 
-- **WHEN** a committed layer sets `CONTEXT_WINDOW` and `MAX_TOKENS`
-- **THEN** the child model identity uses those configured bounds
+Before a Worker attempt, the route broker SHALL filter the role's allowed ordered routes by configuration validity, required dialect and context capability, current policy health, and any approved run constraint.
+It SHALL select only from routes explicitly present in the effective policy and SHALL NOT silently fall back to an undeclared endpoint, model, Provider, or parent identity.
+Health and circuit state SHALL affect new attempts but SHALL NOT alter an already committed candidate or verification fact.
+If no route is currently eligible, the owning packet or task SHALL pause as endpoint-unavailable while the run and committed independent work remain resumable.
+Route health SHALL be observable through safe typed status without revealing endpoint or credential data.
+
+#### Scenario: First route is unhealthy
+
+- **WHEN** the first allowed route is in an open health state and a later allowed route satisfies the task capability
+- **THEN** the broker selects the later route and records the non-secret selection fact
+
+#### Scenario: No route is eligible
+
+- **WHEN** every allowed route is invalid, unhealthy, incapable, or unavailable
+- **THEN** the affected work pauses as endpoint-unavailable and no undeclared fallback is attempted
+
+#### Scenario: Route recovers
+
+- **WHEN** an allowed route later passes its required health and capability checks
+- **THEN** a paused compatible operation may resume without repeating committed Gate or task facts
+
+#### Scenario: Health changes after candidate acceptance
+
+- **WHEN** a route becomes unhealthy after its candidate was sealed and accepted
+- **THEN** the accepted artifact and control-plane verification facts remain valid independently of route health
+
+### Requirement: Route-policy validation and recoverable unavailability
+
+The broker SHALL validate the entire selected policy and each referenced route before network transmission.
+An invalid URL, unsupported dialect, missing required identity field, invalid bound, duplicate route identity, inconsistent role reference, or unreadable policy SHALL produce a deterministic typed policy diagnostic without exposing configured values.
+A policy diagnostic SHALL prevent a new Worker request under the invalid route but SHALL NOT corrupt or terminally block an existing durable run.
+The run SHALL retain local status, permit corrected-policy resume, and require explicit rebinding when the corrected effective route set changes a paused task's selected identity outside already approved automatic policy.
+
+#### Scenario: Route is partially configured
+
+- **WHEN** an allowed route omits a field required for its route kind
+- **THEN** no request is sent through it and status reports only the offending field name and typed policy code
+
+#### Scenario: Policy is corrected
+
+- **WHEN** the user corrects an invalid effective policy for a paused run
+- **THEN** local validation succeeds and the run can resume or explicitly rebind without losing committed workflow facts
+
+#### Scenario: Existing run is inspected under invalid policy
+
+- **WHEN** current policy is invalid while a run is paused
+- **THEN** `status` remains available and reports the run independently of endpoint parsing or network access
+
+### Requirement: Bounded route-attempt behavior
+
+Every route attempt SHALL have separately observable finite bounds for connection, first response, idle progress, and total phase duration, all cancellable through the owning operation signal.
+A request SHALL use the selected route's configured model, credentials, dialect, context, and output capabilities.
+Inherited-parent routes SHALL preserve the effective parent authentication and payload-composition contract; custom routes SHALL bypass parent payload transformation and use only their own configured request contract.
+Provider-managed hidden retry SHALL remain disabled; route failover and retry SHALL be controlled and recorded by the route broker.
+Timeout or transport failure SHALL update route health and the owning transport policy only and SHALL NOT consume stale, artifact, verification, or checkpoint policy.
+Partial model output SHALL remain unusable unless it formed a valid sealed artifact under the delivery contract.
+
+#### Scenario: Connection bound expires
+
+- **WHEN** a selected route does not establish its request within the connection bound
+- **THEN** the attempt is cancelled, transport evidence is recorded, and broker policy selects another allowed route or pauses the work
+
+#### Scenario: First response never arrives
+
+- **WHEN** connection succeeds but no first response arrives within its bound
+- **THEN** the attempt ends as first-response-timeout without waiting for the total phase bound
+
+#### Scenario: Stream becomes idle
+
+- **WHEN** a response begins and then makes no accepted progress for the idle bound
+- **THEN** the attempt ends as idle-timeout and no partial unsealed output is accepted
+
+#### Scenario: Custom route sends a request
+
+- **WHEN** a valid custom route is selected
+- **THEN** the request uses only that route's dialect, model, optional credential, and bounds and does not invoke the parent payload callback
+
+#### Scenario: Inherited route sends a request
+
+- **WHEN** an inherited-parent route is selected
+- **THEN** the request uses fresh parent authentication and effective parent payload composition for that attempt
+
+### Requirement: Explicit run route rebinding
+
+A durable task ledger SHALL NOT treat Provider or model identity as part of the immutable approved task boundary.
+The route selected for one Worker attempt SHALL remain bound to that attempt and its sealed artifact provenance, while a later attempt MAY select another compatible allowed route.
+Automatic route changes SHALL occur only within the effective ordered policy approved for the run.
+A route or model change outside that automatic set SHALL require the versioned control surface's typed `rebind` command, identifying the stable run, paused task or evidence packet, and a named route from the corrected effective policy without accepting a caller-supplied URL, credential, task boundary, or delivery revision.
+The command SHALL display non-secret old and new route identities, validate required capability, cancel the active attempt if any, and preserve the approved task contract and committed ledger.
+Rebinding SHALL NOT validate prior Worker claims, expand paths, alter Gate authority, or bypass candidate preflight.
+
+#### Scenario: Automatic allowed failover occurs
+
+- **WHEN** an attempt fails and another compatible route is already in the run's allowed ordered policy
+- **THEN** the next attempt may use that route without a Provider identity protocol error
+
+#### Scenario: User explicitly rebinds
+
+- **WHEN** a paused task is rebound to a compatible route outside its prior automatic selection set but inside the corrected effective policy
+- **THEN** the control plane records the rebind and the replacement Worker resumes from the same approved ledger and boundary
+
+#### Scenario: Rebind route lacks capability
+
+- **WHEN** the requested replacement cannot satisfy the task's dialect, context, output, or role capability
+- **THEN** rebinding is rejected before a child request and the prior paused state remains intact
+
+#### Scenario: Rebind attempts to widen authority
+
+- **WHEN** a rebind request also changes a task path, dependency, verification, behavior, or Gate contract
+- **THEN** the control plane rejects it as an approval-boundary violation

@@ -65,6 +65,21 @@ describe("shared Abel workflow and Init contracts", () => {
     expect(stages).toMatch(/Cross-stage calls fail closed/i);
   });
 
+  it("enforces the parent Design tool and artifact boundary", () => {
+    const skill = read(skillPath);
+    const design = section(
+      skill,
+      "## Durable Design control",
+      "## Canonical ImplementPlan",
+    );
+    expect(design).toMatch(/`write-artifact`/);
+    expect(design).toMatch(/`delete-artifact`/);
+    expect(design).toMatch(/`read`, `grep`, `find`, and `ls`/i);
+    expect(design).toMatch(/finalization lease/i);
+    expect(design).toMatch(/gate-a\.yaml[\s\S]{0,160}ready\.yaml/i);
+    expect(design).toMatch(/implement-plan\.json[\s\S]{0,160}unreachable/i);
+  });
+
   it("keeps recoverable Implement failures free of workflow routing", () => {
     const skill = read(skillPath);
     const recovery = section(
@@ -79,8 +94,10 @@ describe("shared Abel workflow and Init contracts", () => {
       /approval-needed` only when continuing requires new authority/i,
     );
     expect(recovery).toMatch(/in-boundary repair as approval-needed/i);
+    expect(recovery).toMatch(/\/abel-design --change <change>/i);
+    expect(recovery).toMatch(/never invokes Design automatically/i);
     expect(recovery).not.toMatch(
-      /design-required|return-to-design|\/abel-design|nextStep|recommended next/i,
+      /design-required|return-to-design|nextStep|recommended next/i,
     );
   });
 

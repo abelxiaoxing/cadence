@@ -340,6 +340,8 @@ describe("four-workflow user experience", () => {
     expect(implement).toMatch(
       /Ordinary failures stay inside this Implement run/i,
     );
-    expect(implement).not.toMatch(/\/abel-design|return-to-design|nextStep/i);
+    expect(implement).toMatch(/\/abel-design --change <change>/i);
+    expect(implement).toMatch(/never invoke Design automatically/i);
+    expect(implement).not.toMatch(/return-to-design|nextStep/i);
   });
 });

@@ -21,11 +21,21 @@ Implement 只暴露 `start`、`status`、`resume`、`rebind`、`cancel` 和 `dis
 
 普通 artifact、错误 Red、transport、environment、stale、conflict、baseline 与验证失败都留在同一 Implement run 中恢复。
 累计验证发现 introduced failure 时会自动重开责任任务做有界修复；自动预算耗尽后 `resume` 复用已有 baseline 和 phase facts。
-只有继续工作确实需要新增行为、架构/策略、依赖、路径、资源、验证或 AGENTS 权限时才进入 `approval-needed`；结果不会携带返回 `/abel-design` 的阶段路由。
+Design 证据包必须绑定 durable `runId`；接受后的有界证据、决策版本、Gate 证明与 canonical plan 身份写入 owner-private journal。
+Design 激活期间，父模型只保留进入前已启用的 `read`、`grep`、`find`、`ls` 与 `abel_dispatch`；原工具集合会在 finalize、finish、切换阶段或 session 结束时精确恢复。
+OpenSpec change 制品只能通过私有 `write-artifact` / `delete-artifact` 原子操作变更；产品文件、AGENTS、`gate-a.yaml`、`ready.yaml` 和 `implement-plan.json` 对该通道不可达。
+Gate A/B 收据使用 schema v4，并在 Implement admission 时同时对照同一 root/change 的私有批准事实与 finalization revision/hash 事实验证。
+
+只有继续工作确实需要新增行为、架构/策略、依赖、路径、资源、验证或 AGENTS 权限时才进入 `approval-needed`。
+结果保留原 Implement run，明确给出 authority category、所需 Gate、引用和 `/abel-design --change <change>` 用户指引；不会自动调用另一阶段。
+`resume` 只作为带有更高 `deliveryRevision` 与匹配 `receiptHash` 的条件命令出现。
+用户显式完成 Design 后，新的 Implement 上下文会通过本地 `status` 自动发现 proof-bound 的精确 revision/hash，再对同一 run 做完整 admission 与 resume；不依赖复制上一次会话内容。
 
 交互式 TUI、print、JSON 和 RPC 都以 durable semantic state 为准。
 queued、connecting、waiting-first-response、running、validating、retrying、verifying、paused、approval-needed、applying 和 recovering 都不是完成；operation-cancelled 表示本次操作取消但 run 仍可恢复，discarded 与 rejected 是非成功终态。
 只有最终 apply 与 post-apply verification 提交后的 `completed` 才显示成功。
+Design finalization、Implement 终态、Diagnose/显式 `finish` 或 session shutdown 会清除 active stage 与 parent bridge；Design 还会恢复进入前的精确父工具集合，其他阶段只撤下 `abel_dispatch`。
+Gate 等待和可恢复暂停保持激活以接收直接后续操作。
 
 私有 journal、artifact 与 change workspace 位于 consumer repository 之外的 owner-private state root。
 暂停会保留最小结构化恢复事实；完成或显式 discard 后安全清理。

@@ -17,7 +17,7 @@ import {
   StateRootError,
 } from "./state-root.ts";
 
-export const RUN_STORE_SCHEMA_VERSION = 2 as const;
+export const RUN_STORE_SCHEMA_VERSION = 4 as const;
 
 const CHANGE_NAME = /^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$/u;
 const IDENTIFIER = /^[a-z0-9](?:[a-z0-9._:-]{0,126}[a-z0-9])?$/iu;
@@ -60,6 +60,11 @@ export interface BindDeliveryInput {
   gate: DeliveryGate;
   revision: number;
   receiptHash: string;
+  approvalProof?: {
+    revision: number;
+    contractHash: string;
+    recordHash: string;
+  };
   operationId: string;
   lease?: OperationLease;
 }
@@ -79,7 +84,7 @@ export interface OperationLeaseStatus {
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS schema_meta (
-    version INTEGER PRIMARY KEY CHECK (version = 2)
+    version INTEGER PRIMARY KEY CHECK (version = 4)
   ) STRICT;
 
   CREATE TABLE IF NOT EXISTS runs (
@@ -103,6 +108,9 @@ const SCHEMA = `
     gate TEXT NOT NULL,
     revision INTEGER NOT NULL,
     receipt_hash TEXT NOT NULL,
+    approval_revision INTEGER,
+    contract_hash TEXT,
+    record_hash TEXT,
     operation_id TEXT NOT NULL,
     PRIMARY KEY (run_id, gate, revision),
     UNIQUE (run_id, operation_id)
@@ -433,7 +441,7 @@ export class RunStore {
     }
     const key = lookupKey(input);
     return this.#transaction(() => {
-      const existing = this.#database
+      let existing = this.#database
         .prepare(
           `SELECT run_id, projection_json FROM runs
            WHERE root_hash = ? AND stage = ? AND lookup_key = ?`,
@@ -441,6 +449,18 @@ export class RunStore {
         .get(this.stateRoot.consumerRootHash, input.stage, key) as
         | RunRow
         | undefined;
+      if (existing) {
+        const projection = parseProjection(existing.projection_json);
+        if (
+          input.stage === "abel-design" &&
+          ["completed", "discarded", "rejected"].includes(projection.state)
+        ) {
+          this.#database
+            .prepare("UPDATE runs SET lookup_key = ? WHERE run_id = ?")
+            .run(`terminal:${existing.run_id}`, existing.run_id);
+          existing = undefined;
+        }
+      }
       if (existing) {
         const replay = this.#operationOutcome(
           existing.run_id,
@@ -561,7 +581,12 @@ export class RunStore {
       (input.gate !== "gate-a" && input.gate !== "gate-b") ||
       !Number.isSafeInteger(input.revision) ||
       input.revision < 1 ||
-      !SHA256.test(input.receiptHash)
+      !SHA256.test(input.receiptHash) ||
+      (input.approvalProof !== undefined &&
+        (!Number.isSafeInteger(input.approvalProof.revision) ||
+          input.approvalProof.revision < 1 ||
+          !SHA256.test(input.approvalProof.contractHash) ||
+          !SHA256.test(input.approvalProof.recordHash)))
     ) {
       throw new Error("invalid-delivery-binding");
     }
@@ -576,14 +601,27 @@ export class RunStore {
     if (replay) return replay;
     const existing = this.#database
       .prepare(
-        `SELECT receipt_hash FROM delivery_bindings
+        `SELECT receipt_hash, approval_revision, contract_hash, record_hash
+         FROM delivery_bindings
          WHERE run_id = ? AND gate = ? AND revision = ?`,
       )
       .get(input.runId, input.gate, input.revision) as
-      | { receipt_hash: string }
+      | {
+          receipt_hash: string;
+          approval_revision: number | null;
+          contract_hash: string | null;
+          record_hash: string | null;
+        }
       | undefined;
     if (existing) {
-      if (existing.receipt_hash !== input.receiptHash) {
+      if (
+        existing.receipt_hash !== input.receiptHash ||
+        existing.approval_revision !==
+          (input.approvalProof?.revision ?? null) ||
+        existing.contract_hash !==
+          (input.approvalProof?.contractHash ?? null) ||
+        existing.record_hash !== (input.approvalProof?.recordHash ?? null)
+      ) {
         throw new Error("delivery-revision-conflict");
       }
       const projection = this.status(input.runId);
@@ -599,20 +637,27 @@ export class RunStore {
     this.#database
       .prepare(
         `INSERT INTO delivery_bindings(
-           run_id, gate, revision, receipt_hash, operation_id
-         ) VALUES (?, ?, ?, ?, ?)`,
+           run_id, gate, revision, receipt_hash, approval_revision,
+           contract_hash, record_hash, operation_id
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.runId,
         input.gate,
         input.revision,
         input.receiptHash,
+        input.approvalProof?.revision ?? null,
+        input.approvalProof?.contractHash ?? null,
+        input.approvalProof?.recordHash ?? null,
         input.operationId,
       );
     const projection = this.#appendEvent(input.runId, "delivery-bound", {
       gate: input.gate,
       revision: input.revision,
       receiptHash: input.receiptHash,
+      ...(input.approvalProof
+        ? { approvalProof: structuredClone(input.approvalProof) }
+        : {}),
     });
     this.#recordOperation(
       input.runId,
@@ -639,6 +684,33 @@ export class RunStore {
     return this.#transaction(() => {
       const projection = this.#bindDelivery(input);
       write(this.#database);
+      return projection;
+    });
+  }
+
+  bindDeliveriesAtomically(
+    inputs: readonly BindDeliveryInput[],
+    write: (database: DatabaseSync) => void,
+  ): RunProjection {
+    if (inputs.length === 0) throw new Error("delivery-binding-empty");
+    for (const input of inputs) this.#requireDeliveryBinding(input);
+    const runId = inputs[0]?.runId;
+    if (
+      !runId ||
+      inputs.some(
+        (input) =>
+          input.runId !== runId ||
+          (input.lease?.token ?? null) !== (inputs[0]?.lease?.token ?? null),
+      ) ||
+      typeof write !== "function"
+    ) {
+      throw new Error("delivery-binding-write-invalid");
+    }
+    return this.#transaction(() => {
+      let projection: RunProjection | undefined;
+      for (const input of inputs) projection = this.#bindDelivery(input);
+      write(this.#database);
+      if (!projection) throw new Error("delivery-binding-empty");
       return projection;
     });
   }

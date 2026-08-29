@@ -188,6 +188,7 @@ describe("package Prompt provenance activates abel_dispatch", () => {
     expect(design?.required).toEqual([
       "stage",
       "role",
+      "runId",
       "id",
       "phase",
       "objective",
@@ -199,6 +200,7 @@ describe("package Prompt provenance activates abel_dispatch", () => {
     expect(design?.additionalProperties).toBe(false);
     expect(design?.properties).toMatchObject({
       phase: { enum: ["evidence"] },
+      runId: { type: "string" },
       output: { enum: ["evidence"] },
       roots: { type: "array", items: { type: "string" } },
       context: {
@@ -212,6 +214,22 @@ describe("package Prompt provenance activates abel_dispatch", () => {
         additionalProperties: false,
       },
     });
+    const designOperations = objectSchemas(requestSchema).flatMap((schema) => {
+      const operation = (
+        schema.properties as Record<string, Record<string, unknown>> | undefined
+      )?.operation;
+      return Array.isArray(operation?.enum) ? operation.enum : [];
+    });
+    expect(designOperations).toEqual(
+      expect.arrayContaining([
+        "record-decision",
+        "approve-gate",
+        "write-artifact",
+        "delete-artifact",
+        "compile-plan",
+        "finalize-delivery",
+      ]),
+    );
     expect(tool.parameters).toMatchObject({
       additionalProperties: false,
       oneOf: [

@@ -2,9 +2,7 @@
 
 ## Purpose
 Provide a self-contained, installable Pi package that exposes the Abel four-stage workflow and its required skills without depending on a subagent runtime or machine-local workflow configuration.
-
 ## Requirements
-
 ### Requirement: Standalone installable workflow package
 
 The system SHALL provide the standalone package as `@abelxiaoxing/cadence` and make it independently loadable from local absolute and relative package directories, from the published npm registry package, and from an isolated package directory produced by installing or unpacking its real tarball.
@@ -105,20 +103,15 @@ Gate A and Gate B SHALL approve behavioral and technical contracts respectively 
 
 ### Requirement: Initialization behavior
 
-`abel-init` SHALL accept an optional project path and use the current directory when it is omitted.
-It SHALL preserve unrelated files, human-authored AGENTS content, baseline dirty state, and nested repository boundaries.
-It SHALL select Bun when available and otherwise npm as the single JavaScript toolchain for that run.
-If OpenSpec is missing, it SHALL install `@fission-ai/openspec@latest` globally with the selected toolchain, recheck the required CLI capabilities, and stop with the original error and an executable remediation when installation or recheck fails.
-It SHALL load `abel-workflow` before modifying OpenSpec or AGENTS files and stop if that core skill is unavailable.
-It SHALL inspect the discoverability of `context7-auto-research` and `grok-search`, report their resolved paths when present, and report actionable remediation when either is absent.
-A missing research skill SHALL NOT prevent OpenSpec initialization or AGENTS repair, but the final report SHALL mark the environment as not fully ready.
-Initialization SHALL NOT treat `git-commit`, `dev-browser`, or the removed `time` skill as required checks.
-It SHALL initialize or safely update OpenSpec without a destructive force option, validate the resolved schema and templates, and create or repair only the managed portions of appropriate AGENTS indexes.
-It MUST NOT edit `openspec/AGENTS.md`.
+`abel-init` SHALL resolve one canonical target root, preserve baseline dirty and human-authored content, respect nested repository boundaries, select exactly one usable Bun-or-npm toolchain, and probe OpenSpec capability before and after any write.
+It SHALL load the bundled `abel-workflow` Skill before modifying OpenSpec or AGENTS and stop with executable package-resource remediation when that core Skill is unavailable.
+It SHALL initialize only an absent OpenSpec root and otherwise repair only missing or mechanically invalid configuration without `--force` or wholesale replacement.
+It SHALL create or update only verified marker-bounded AGENTS regions, preserve every byte outside those regions, never edit `openspec/AGENTS.md`, and be idempotent for a second identical invocation.
+Missing optional bundled research Skills SHALL make final readiness partial with executable remediation but SHALL NOT prevent safe OpenSpec or AGENTS repair.
 
 #### Scenario: Core workflow skill is unavailable
 
-- **WHEN** `abel-init` cannot load the bundled `abel-workflow` skill
+- **WHEN** `abel-init` cannot load the bundled `abel-workflow` Skill
 - **THEN** initialization stops before modifying OpenSpec or AGENTS files and reports how to restore or reinstall the package resource
 
 #### Scenario: Research skills are available
@@ -128,12 +121,12 @@ It MUST NOT edit `openspec/AGENTS.md`.
 
 #### Scenario: Research skill is missing
 
-- **WHEN** either bundled research skill cannot be discovered
-- **THEN** initialization can still complete OpenSpec and AGENTS repair, but its final report marks the environment not fully ready and gives an actionable resource remediation
+- **WHEN** either bundled research Skill cannot be discovered
+- **THEN** initialization can still complete OpenSpec and AGENTS repair, but reports partial readiness and actionable resource remediation
 
 #### Scenario: Non-init skills are absent
 
-- **WHEN** `git-commit`, `dev-browser`, or a dedicated `time` skill is unavailable during initialization
+- **WHEN** `git-commit`, `dev-browser`, or a dedicated `time` Skill is unavailable during initialization
 - **THEN** their absence does not affect the Init readiness check
 
 #### Scenario: Default project path
@@ -161,252 +154,336 @@ It MUST NOT edit `openspec/AGENTS.md`.
 - **WHEN** an AGENTS file contains human-authored content and a managed Abel index block
 - **THEN** `abel-init` preserves the human content and makes only the minimum verified managed-block repair
 
+#### Scenario: Existing project is initialized twice
+
+- **WHEN** Init completes successfully and the same request is invoked again without an external project change
+- **THEN** the second run performs the same post-write capability checks and produces no additional repository change
+
+#### Scenario: Optional research Skill is missing
+
+- **WHEN** OpenSpec and AGENTS repair can succeed but a bundled research Skill cannot be resolved
+- **THEN** Init completes the safe repair, reports partial readiness, and supplies package-resource remediation rather than failing or dispatching a Worker
+
 ### Requirement: Design behavior and trusted delivery
 
-`abel-design` SHALL accept either a requirement or `--change <change_name>`, run before product implementation, and validate the root and relevant nested AGENTS indexes.
-Before Gate A it SHALL remain read-only, decompose broad exploration into bounded evidence packets, dispatch independent packets concurrently through package-owned read-only professional Agents, validate their compact structured evidence, and submit every blocking non-mechanical decision to the user.
-The parent Agent SHALL NOT silently replace failed delegated exploration with its own broad exploration.
-It SHALL separately obtain Gate A for the behavioral contract and Gate B for the technical implementation contract.
-After Gate A it SHALL write only inside the resolved OpenSpec change root according to the artifact graph.
-It SHALL define exactly one machine-readable `ImplementGraphBoundary` containing every implementation task, explicit task dependencies, phase verification-input bindings, generated output provenance and postconditions, executable verification, and AGENTS-impact contracts.
-Before Gate B and again before writing the ready receipt, it SHALL use the shared graph-readiness core and require an executable static verification closure with no diagnostics. The ready receipt SHALL embed that exact graph, its canonical hash, and the successful closure result without a second task-readiness summary.
-It SHALL report `READY_TO_IMPLEMENT` only when strict validation, receipts, hashes, traceability, artifact completeness, trusted delegated evidence, and zero blocking decisions all pass.
+`abel-design` SHALL accept either a requirement or `--change <change_name>`, validate the root and relevant AGENTS indexes, and create or recover one durable Design run.
+Before Gate A it SHALL keep the repository and OpenSpec change artifacts read-only while permitting only private structural run state outside the repository.
+It SHALL decompose broad exploration into bounded evidence packets, dispatch independent packets concurrently through package-owned read-only professional Agents, validate their structured evidence, and retain accepted evidence in the run ledger independently of any child session.
+A transport, endpoint, environment, capacity, cancellation, or malformed-evidence failure SHALL pause only the affected evidence packet and SHALL permit policy-authorized Worker replacement; it SHALL NOT force completed independent evidence to be repeated.
+The parent Agent SHALL remain responsible for evidence validation and SHALL NOT silently treat an untrusted packet as proof.
+
+Design SHALL submit only unresolved behavior decisions to Gate A and unresolved substantive technical decisions to Gate B.
+Reversible mechanical decisions uniquely determined by repository facts or an approved contract SHALL be recorded without interrupting the user, and related decisions owned by one Gate SHALL be presented together.
+After Gate A it SHALL write only inside the resolved OpenSpec change root according to the artifact graph and approved behavior contract.
+
+Design SHALL produce one versioned, machine-readable implementation plan containing every task, explicit dependency, phase scope, verification-input binding, output provenance and postcondition, approved dependency, impact closure, scheduling declaration, and AGENTS-impact contract.
+A code-owned delivery compiler SHALL validate and canonicalize that plan, calculate its identity and verification closure, and generate the receipt bindings; the parent model SHALL NOT hand-assemble a Runtime graph admission, graph hash, dynamic file snapshot, or operation identity.
+Before Gate B and again before final readiness, Design SHALL require strict OpenSpec validation, a complete trace from Requirement to Scenario to Verification to Task, and an executable static verification closure with no diagnostics.
+The ready receipt SHALL bind the exact compiled plan artifact and its canonical identity by safe relative path and hash rather than embedding an alternate caller-supplied graph copy.
+Design SHALL report `READY_TO_IMPLEMENT` only when both Gates, receipts, artifact hashes, traceability, plan compilation, closure, and zero blocking decisions all pass.
+Design SHALL NOT launch an implementation Worker, create or apply a product candidate, run product validation, execute Red-Green-Refactor, or modify AGENTS indexes.
+Mechanical receipt, hash, formatting, tracked-checkbox, traceability, or stale-artifact repair SHALL invalidate only the affected artifact and SHALL NOT reopen an unchanged Gate.
 
 #### Scenario: New design reaches Gate A
 
-- **WHEN** all behavior decisions are resolved and every required evidence packet is trusted
-- **THEN** `abel-design` presents the behavioral contract and waits for explicit Gate A approval before creating a new change
+- **WHEN** behavior evidence is trusted and all behavior decisions are resolved
+- **THEN** Design presents one consolidated behavior contract and waits for explicit Gate A approval before creating a new OpenSpec change
 
 #### Scenario: Independent Design packets run concurrently
 
 - **WHEN** broad exploration has independent bounded evidence packets
-- **THEN** Design dispatches them concurrently within the runtime limit and validates every returned packet before synthesis
+- **THEN** Design may run them concurrently and durably retain each trusted result independent of sibling or Provider failure
 
 #### Scenario: Delegated Design evidence remains untrusted
 
-- **WHEN** a required packet is malformed, uncited, out of scope, cancelled, incomplete, or still untrusted after its allowed mechanical redispatch
-- **THEN** Design blocks the affected decision path without entering its next Gate or silently performing broad replacement exploration
+- **WHEN** a required packet is malformed, uncited, out of scope, cancelled, incomplete, or still untrusted after its automatic policy
+- **THEN** only that evidence path pauses and Design does not treat it as proof or enter a Gate that depends on it
+
+#### Scenario: Evidence Worker becomes unavailable
+
+- **WHEN** an evidence packet cannot complete under its current Worker route
+- **THEN** that packet pauses with typed status and may resume under an allowed replacement without invalidating trusted sibling evidence
+
+#### Scenario: Mechanical choices remain non-blocking
+
+- **WHEN** a reversible design detail is uniquely determined by repository convention and changes no approved observable behavior
+- **THEN** Design records it for Gate review without creating a separate blocking question
 
 #### Scenario: Existing change is resumed
 
-- **WHEN** a user invokes `abel-design --change <change_name>`
-- **THEN** the workflow validates the resolved change, receipts, artifact hashes, traceability, and strict delivery before trusting completed Gates
+- **WHEN** a user invokes `abel-design --change <change_name>` after process or model replacement
+- **THEN** Design validates durable run state, receipts, artifact hashes, traceability, and current OpenSpec status and continues from the earliest valid checkpoint
 
 #### Scenario: Artifact integrity is invalid
 
-- **WHEN** a receipt is missing, a covered artifact hash differs, or the artifact graph is inconsistent
-- **THEN** Design resumes from the earliest affected stage and does not report implementation readiness
+- **WHEN** a receipt is missing, a covered artifact hash differs, or the compiled plan and artifact graph are inconsistent
+- **THEN** Design pauses at the earliest affected Gate, retains unrelated trusted evidence, and does not report implementation readiness
+
+#### Scenario: Delivery is compiled
+
+- **WHEN** the approved technical plan is complete
+- **THEN** the code-owned compiler produces its canonical identity and closure while the caller supplies neither graph hashes nor file snapshots
 
 #### Scenario: Design is complete
 
-- **WHEN** both Gates are approved, the canonical Implement graph has an executable verification closure, and all delivery checks pass
-- **THEN** the workflow binds that graph and hash in the ready receipt and reports `READY_TO_IMPLEMENT` without modifying product code or repository AGENTS indexes
+- **WHEN** both Gates are approved and all delivery checks pass
+- **THEN** Design binds the compiled plan artifact in the ready receipt and reports `READY_TO_IMPLEMENT` without modifying product code or AGENTS indexes
+
+#### Scenario: Mechanical delivery evidence changes
+
+- **WHEN** a resumed Design run finds a mechanical receipt, hash, formatting, checkbox, traceability, or stale-artifact defect while approved behavior and technical authority are unchanged
+- **THEN** it regenerates only the invalidated artifacts, preserves compatible decisions and evidence, and does not request Gate A or Gate B again
+
+#### Scenario: Design evidence is collected
+
+- **WHEN** Design needs repository evidence for an approved question
+- **THEN** it may use bounded read-only evidence packets but never starts an implementation phase or runs product validation
 
 ### Requirement: Implementation behavior
 
-`abel-implement` SHALL require a unique change name and SHALL validate receipts, artifact hashes, traceability, strict validation, and complete task contracts before registering any task or modifying code or tests.
-Invalid trusted delivery SHALL produce one stage-level blocker before task registration and SHALL NOT be represented as a task failure or an automatic workflow transition.
-Before writing, the parent SHALL record target, affected-suite, and full-suite baselines with stable failure identities and SHALL keep every pre-existing failure separate from the task Red.
+`abel-implement` SHALL require a unique change name and SHALL create, return, or resume one durable Implement run through the change-oriented control protocol.
+Before creating a private change workspace it SHALL validate the v2 receipts, covered artifact hashes, traceability, strict OpenSpec status, compiled plan identity, static verification closure, and complete task contracts.
+Invalid delivery SHALL reject or pause the run before Worker execution and SHALL NOT modify the main workspace.
+Invalid or mechanically stale delivery SHALL NOT be classified as approval-needed unless its diagnostics separately prove missing authority.
+The control plane SHALL load the approved plan, derive current snapshots and operation identities, and compute ready DAG work without requiring the parent model to submit or repeat stable graph facts.
 
-The parent SHALL validate the receipt's one canonical Implement graph and hash, call the same graph-readiness core used by Design, and admit that graph once before opening any task. Fresh-context facts SHALL come only from parent-owned completed task state, current in-process blocked state, and a safe current workspace scan; file existence alone SHALL NOT prove task or phase completion.
-For each ready task, the parent SHALL submit a phase-local task attempt, and the runtime SHALL resolve one immutable approved boundary from the admitted graph containing stable identity, explicit dependencies, phase-local read and exact write sets, verification-input bindings, target verification, scheduling declarations, approved dependency changes, impact closure, and structured AGENTS impact.
-Later phase attempts, stale refreshes, candidate decisions, and AGENTS checkpoints SHALL carry only their operation identity and dynamic facts and SHALL NOT restate or alter the stable graph or task boundary.
-Every foreseeable compatibility test, fixture, and repair path SHALL be included in the approved phase boundary; discovering a required path, dependency, behavior, architecture, policy, or verification outside that boundary SHALL terminally block the task as an approval-boundary failure without expanding it at runtime.
+Before candidate work, the parent SHALL record target, affected-suite, and full-suite baselines with stable normalized failure identities and SHALL keep pre-existing failures separate from task Red.
+The run SHALL create a private cumulative change workspace from the approved current baseline.
+Every Red, Green, Refactor, generated output, compatibility repair, AGENTS checkpoint, and verification operation SHALL occur in that workspace until change-level verification succeeds.
+Professional Agents SHALL remain unable to mutate either workspace or run validation commands; the parent-owned control plane SHALL exclusively validate and apply sealed candidates to the private change workspace.
 
-A workspace verification-input binding SHALL already be a safe regular file at Gate B. A generated input SHALL bind to a unique output id whose explicit producer path is in that phase's write set. Cross-task consumption SHALL require a transitive `dependsOn` path; suggested waves, conflicts, resources, and verification locks SHALL NOT substitute for that dependency. A phase MAY consume an output created by its own candidate or an earlier successfully applied phase and MUST NOT consume an output created only by a later phase. Write-set membership SHALL NOT prove provenance or availability.
-The runtime SHALL check declared outputs after applying a candidate in isolation and before verification, after exact main-workspace application, before phase progression, and before task completion. Cross-task outputs SHALL publish only after producer task completion. A blocked producer SHALL keep a consumer dependency-blocked without a child launch, and a completed producer with a missing or unsafe output SHALL fail as producer-output-unavailable.
+Each task SHALL retain an authoritative structured context ledger containing the approved objective and boundary, previous phase commands and normalized results, accepted candidate identities, current isolated snapshot, produced outputs, and bounded correction evidence.
+A later phase or replacement Worker SHALL receive the relevant ledger facts and SHALL NOT depend on a prior child session remaining alive.
+Red SHALL commit only after the approved verification witnesses the target failure for the approved identity.
+Green SHALL implement the minimum approved behavior and keep the target verification green after every accepted edit.
+Refactor SHALL remain inside the approved behavior and paths while target and affected verification remain green.
 
-Implementation SHALL recompute ready work from the trusted parent-owned task DAG and MAY dispatch compatible ready tasks concurrently only when their prerequisites and task-lifetime read/write, conflict, resource, validation-lock, and AGENTS-target declarations permit it.
-A conflicting task open SHALL return immediately as deferred without registration, queueing, or consuming an Agent launch.
-A registered task SHALL retain its conflict declaration across phase gaps and candidate or AGENTS-checkpoint review and SHALL release it only when the task becomes blocked or completed or the stage drains.
-An independent task SHALL remain eligible after a sibling blocks or completes.
+The durable scheduler SHALL derive readiness from the approved DAG and committed run facts.
+Conflicting work SHALL remain queued and automatically become eligible when its declared path, resource, verification, or AGENTS conflict clears.
+Independent work SHALL remain valid after a sibling pauses, retries, requires approval, or completes.
+Declared outputs SHALL become available to dependent tasks only after their producer and required task verification commit in the cumulative workspace.
 
-Task-local professional Agents SHALL return complete candidate unified diffs without writing the workspace, running validation, recommending another workflow stage, or selecting a recovery path.
-The parent SHALL exclusively review candidates, execute isolated preflight, apply exact accepted diffs, run approved commands, update AGENTS indexes, compare affected and full suites, and advance tracked tasks.
-Each candidate SHALL bind its stage, change, task, originating request, phase, launch, exact paths, and current file snapshot.
-A sibling candidate SHALL remain current after unrelated changes and SHALL become stale before application if a bound read or write file changes.
+Transport, endpoint, environment, capacity, artifact, stale, resource, verification, and repairable compatibility failures SHALL produce typed recoverable states rather than terminal task blockers.
+Automatic policies SHALL be bounded and independently accounted; exhaustion SHALL pause for explicit resume, typed route `rebind`, Worker replacement, task reshaping, or approval revision without erasing committed work.
+Cancellation SHALL interrupt the active operation, reject partial output, and preserve the last committed resumable checkpoint; after final apply mutates any main-workspace file, cancellation or discard SHALL first settle the journaled transaction through recovery.
+A required behavior, policy, dependency, architecture, path, conflict, resource, verification, or AGENTS expansion SHALL pause as approval-needed and SHALL NOT expand authority automatically.
+No ordinary failure outcome SHALL contain workflow-stage routing metadata, a `nextStep`, or an automatic instruction to invoke `/abel-design`.
+Only a proven expansion of sealed authority SHALL use approval-needed; artifact, wrong-Red, transport, endpoint, environment, capacity, stale, conflict, cancellation, baseline, verification-attribution, approved AGENTS checkpoint, and introduced in-boundary repair failures SHALL remain paused, retryable, queued, repairable, or recovering in the same Implement run.
 
-Only Runtime-owned isolated preflight and exact application SHALL advance Red, Green, Refactor, or the AGENTS checkpoint.
-Caller-supplied verification claims SHALL NOT advance a phase.
-Each phase SHALL allow at most two non-cancelled Agent launches shared by transport, stale, and artifact correction; cancellation SHALL preserve state without consuming a launch.
-Retry and terminal exhaustion outcomes for artifact, stale, and transport failures SHALL retain the final safe closed code and stage. Terminal exhaustion SHALL include `attemptsUsed: 2` and `lastFailure`; optional details SHALL be limited to a closed final-submit category, bounded submit-attempt count, schema state, mismatched identity dimension names, and a validated verification id. Public outcomes SHALL NOT contain prompts, diffs, model output, excerpts, consumer content, commands, endpoints, credentials, environment values, or actual identity values.
-AGENTS checkpoint correction SHALL have a separate maximum of two parent attempts.
-An oversized result SHALL terminally block the task and SHALL NOT be truncated, partially applied, or converted into a request to select another workflow stage.
-
-Blocked and completed task states SHALL be idempotent process-local terminal facts with no further child, preflight, apply, or budget-consuming transition.
-A valid replay against a terminal task SHALL return the terminal fact with the current operation request identity, while a duplicate open or invalid transition SHALL remain a protocol error.
-Task completion SHALL mean that every approved phase and required AGENTS checkpoint completed; it SHALL NOT replace the parent-owned affected-suite and full-suite completion gate.
-
-Implement outcomes SHALL describe only the current task or operation and SHALL NOT claim that parent-owned dependent successors are blocked, recommend a next workflow stage, return a Design-routing action, or invoke another workflow.
-Implementation SHALL finish only when all target and affected verifications pass and the full suite has no new failure relative to baseline.
-It SHALL NOT modify unrelated dirty files, preserve an alias for the unreleased request or recovery protocol, or implicitly archive, commit, publish, or release the change.
+When every task and affected verification is green, the control plane SHALL run the approved full-suite comparison and output postconditions against the cumulative private workspace.
+An introduced failure SHALL return the owning in-boundary task to repairable work; an unresolved or out-of-boundary failure SHALL pause with typed attribution evidence.
+Only after the cumulative change, full suite, output postconditions, and AGENTS checkpoint succeed SHALL final application become eligible.
+Final application SHALL compare the main workspace with its bound baseline, preserve unrelated dirty files, reject stale bound files, and commit the cumulative change through a recoverable transaction.
+The run SHALL become completed only after application and required post-apply checks commit.
+Implement SHALL NOT implicitly archive, commit, publish, release, or modify unrelated user files.
 
 #### Scenario: Valid cross-context handoff
 
-- **WHEN** receipts, artifact hashes, traceability, strict validation, canonical graph hash, closure, and task contracts are valid in a fresh context
-- **THEN** implementation records baselines, admits the graph once, and may submit the first ready task attempt without requesting either Gate again
+- **WHEN** the caller supplies a unique change name whose v2 delivery is valid
+- **THEN** the control plane derives the compiled plan and creates or returns the one matching durable run without caller-supplied graph or snapshots
 
 #### Scenario: Invalid trusted delivery
 
-- **WHEN** a receipt, covered artifact hash, traceability edge, strict validation result, or required task contract is invalid
-- **THEN** implementation emits a stage blocker before task registration and neither improvises a decision nor represents the failure as a task outcome
+- **WHEN** a receipt, artifact hash, traceability link, plan identity, closure, or strict validation is invalid
+- **THEN** Implement reports a typed paused or rejected delivery state before Worker execution, changes no main-workspace file, and does not request approval unless a separate diagnostic proves missing authority
 
-#### Scenario: Task boundary is opened
+#### Scenario: Ordinary Implement failure occurs
 
-- **WHEN** a ready graph task submits its first approved Red task attempt
-- **THEN** the runtime resolves and registers its stable boundary exactly once from the admitted graph and derives the Red Worker request from that boundary
-
-#### Scenario: Stable facts are replayed
-
-- **WHEN** a later phase attempt or operation restates or changes the graph, stable objective, scope, verification, dependency, output, impact, or AGENTS facts
-- **THEN** the request fails as a protocol error before a child launch or state transition
-
-#### Scenario: Conflicting task is opened
-
-- **WHEN** a new task conflicts with a registered nonterminal task through a read/write path, edge, resource, validation lock, or AGENTS target
-- **THEN** the new open returns deferred immediately without registration, queueing, waiting, or launch consumption
-
-#### Scenario: Compatible tasks produce parallel results
-
-- **WHEN** multiple ready tasks have accepted prerequisites and compatible task-lifetime declarations
-- **THEN** their read-only Workers may run concurrently while the parent retains serial candidate review and application
-
-#### Scenario: Unrelated sibling application preserves currency
-
-- **WHEN** two concurrent candidates bind disjoint file snapshots and the parent applies the first candidate
-- **THEN** the second candidate remains eligible because none of its bound read or write files changed
-
-#### Scenario: Related file change makes a result stale
-
-- **WHEN** a file in a candidate's bound read or write snapshot changes before application
-- **THEN** the runtime rejects the candidate as stale and permits only the remaining launch within the unchanged approved boundary
+- **WHEN** an approved in-boundary task encounters an artifact, wrong-Red, transport, environment, stale, conflict, baseline, or verification-attribution failure
+- **THEN** the same run retains compatible progress and exposes a typed pause, retry, repair, rebind, or resume outcome without selecting Design or another workflow stage
 
 #### Scenario: Worker delivers a task phase
 
-- **WHEN** a task Worker returns a complete in-scope candidate bound to its originating request, phase, launch, paths, and current snapshot
-- **THEN** the parent may review it without trusting Worker verification claims or recovery recommendations
+- **WHEN** a sealed Red candidate passes parent-owned isolated validation and witnesses the approved target failure
+- **THEN** it advances Red only in the private change workspace and records normalized evidence in the task ledger
 
-#### Scenario: Candidate artifact cannot load or has the wrong Red identity
+#### Scenario: Stable facts are replayed
 
-- **WHEN** isolated preflight finds an incomplete or malformed diff, source or test load failure, no target test, wrong command, or wrong Red identity
-- **THEN** none of the candidate is applied and the typed artifact failure may consume only the phase's remaining shared launch
+- **WHEN** Green starts under a new child session or replacement Worker
+- **THEN** it receives the approved Red command, normalized failure identity, accepted Red artifact facts, current isolated snapshot, and unchanged task boundary
 
-#### Scenario: Artifact correction budget is exhausted
+#### Scenario: Worker route fails
 
-- **WHEN** two non-cancelled launches in one phase end in artifact, stale, or transport failure
-- **THEN** the task becomes terminally blocked with cause, `attemptsUsed: 2`, and the final safe `lastFailure` code and stage, with no third launch or partial result
+- **WHEN** the current implementation Worker route exhausts its bounded transport policy
+- **THEN** the task pauses and may resume under an allowed replacement while committed Red, sibling work, and retry classifications remain intact
 
-#### Scenario: Worker diff exceeds its result boundary
+#### Scenario: Conflicting task is opened
 
-- **WHEN** a Worker cannot submit its complete candidate within the configured result-size limit
-- **THEN** the task becomes terminally blocked and no partial candidate or workflow-stage recommendation is usable
+- **WHEN** a ready task conflicts with active task-lifetime declarations
+- **THEN** the scheduler keeps it durably queued and admits it automatically after the conflict clears
 
-#### Scenario: Cancellation interrupts a launch
+#### Scenario: Related file change makes a result stale
 
-- **WHEN** a phase launch is cancelled before a candidate is accepted
-- **THEN** the runtime returns cancelled while preserving the phase state and remaining non-cancelled launch budget
+- **WHEN** a file bound by a candidate changes before private-workspace acceptance
+- **THEN** none of that candidate is accepted, the task becomes retryable with a fresh snapshot, and no main-workspace file changes
 
-#### Scenario: Runtime apply advances a phase
+#### Scenario: Verification finds an introduced failure
 
-- **WHEN** isolated preflight, candidate output checks, exact application, and post-apply output checks all succeed for the current candidate
-- **THEN** the runtime advances only to the next approved phase or the required AGENTS checkpoint
-
-#### Scenario: Parent reports verification without apply
-
-- **WHEN** a caller submits a verification claim without a successful Runtime-owned candidate application
-- **THEN** no task phase advances
-
-#### Scenario: Approved compatibility path fails
-
-- **WHEN** an affected test or fixture within the fixed approved boundary exposes a reproducible compatibility failure
-- **THEN** the task may make the minimum behavior-preserving repair within its remaining approved phase scope
-
-#### Scenario: Affected-suite baseline is green
-
-- **WHEN** every exact affected-suite command passes before task writes
-- **THEN** implementation proceeds within the approved phase boundary without adding a repair path
-
-#### Scenario: Existing affected failure is present
-
-- **WHEN** an exact affected-suite command exposes a reproducible pre-existing failure whose test, fixture, and repair paths are already in the approved boundary
-- **THEN** the parent records it separately from task Red and the task may make only the minimum approved compatibility repair
-
-#### Scenario: Later run reveals a previously masked failure
-
-- **WHEN** a later affected-suite run reveals a failure that an earlier run did not report
-- **THEN** the parent attributes it as pre-existing or introduced and the task blocks if attribution or an in-boundary repair cannot be established
-
-#### Scenario: Affected failure is environmental
-
-- **WHEN** an affected failure is environmental, transient, external-service dependent, or non-reproducible
-- **THEN** the task terminally blocks with typed environment evidence and no speculative product edit
-
-#### Scenario: Affected repair requires a substantive decision
-
-- **WHEN** an affected failure requires new behavior, policy, dependency, architecture, irreversibility, path scope, or verification contract
-- **THEN** the task terminally blocks with the matching approval-boundary code and does not select another workflow stage
-
-#### Scenario: Full-suite-only baseline failure exists
-
-- **WHEN** the full-suite baseline has a pre-existing failure outside every exact affected-suite command
-- **THEN** the failure remains baseline evidence and does not enter the task or satisfy its Red
-
-#### Scenario: Task Red fails for the wrong reason
-
-- **WHEN** the Red candidate cannot load, runs no target test, uses the wrong command, or fails with an identity other than the approved defect
-- **THEN** isolated preflight rejects it as a typed artifact failure without applying it or changing the task boundary
-
-#### Scenario: Task Red contract is invalid
-
-- **WHEN** separate evidence proves that the approved Red command cannot witness the approved behavior within the fixed boundary
-- **THEN** the task terminally blocks with `verification-contract-insufficient` without consuming an artifact correction launch or choosing another workflow stage
+- **WHEN** target, affected, or change-level verification finds a failure attributable to in-boundary cumulative work
+- **THEN** the owning task becomes repairable and cannot be marked completed until the repair is verified
 
 #### Scenario: Repair requires boundary expansion
 
-- **WHEN** a failure requires a new path, dependency, behavior, policy, architecture, conflict, resource, or verification contract
-- **THEN** the task becomes terminally blocked as an approval-boundary failure without dynamically expanding its boundary
+- **WHEN** a repair requires unapproved behavior or technical authority
+- **THEN** Implement pauses as approval-needed, retains the private workspace, and applies no wider change until the required Gate revision is approved
+
+#### Scenario: Main workspace changed
+
+- **WHEN** a bound main-workspace path differs from the baseline used by the verified cumulative change
+- **THEN** final application preserves that user change, writes none of the stale cumulative transaction, and pauses for rebase and revalidation
+
+#### Scenario: Task boundary is opened
+
+- **WHEN** the compiled plan makes a Red task ready for its first Worker attempt
+- **THEN** the control plane derives and durably binds its immutable approved boundary before dispatch without accepting caller-restated stable facts
+
+#### Scenario: Compatible tasks produce parallel results
+
+- **WHEN** two ready tasks have satisfied dependencies and disjoint path, resource, verification-lock, and AGENTS declarations
+- **THEN** they may run against isolated child workspaces and merge independently after currentness checks
+
+#### Scenario: Unrelated sibling application preserves currency
+
+- **WHEN** one accepted task merges into the cumulative workspace without changing a file bound by an independent sibling candidate
+- **THEN** the sibling remains current and may continue without redispatch
+
+#### Scenario: Candidate artifact cannot load or has the wrong Red identity
+
+- **WHEN** disposable-workspace preflight finds an incomplete artifact, source or test load failure, missing target test, wrong command, wrong Red identity, or unexpectedly passing Red
+- **THEN** none of the candidate is accepted and the task enters typed artifact correction or paused state inside its approved boundary
+
+#### Scenario: Artifact correction budget is exhausted
+
+- **WHEN** the canonical plan's 2-3 total candidate-attempt bound for one task phase and operation is exhausted by typed artifact rejection
+- **THEN** the task pauses with the final safe artifact evidence and may resume under a replacement Worker without becoming a permanent blocker
+
+#### Scenario: Repair budget is exhausted
+
+- **WHEN** bounded automatic in-boundary repair attempts are exhausted
+- **THEN** the run pauses at its last committed phase, and a later `resume` starts a fresh operation budget while reusing durable baseline, phase, and compatible repair facts
+
+#### Scenario: Worker diff exceeds its result boundary
+
+- **WHEN** a complete candidate cannot fit one configured result envelope
+- **THEN** the Worker uses approved sealed segments or the task pauses for reshaping, and no truncated or partial candidate is accepted
+
+#### Scenario: Cancellation interrupts a launch
+
+- **WHEN** cancellation interrupts a child launch, preflight, verification, or apply preparation before commit
+- **THEN** partial output is rejected and the run returns to its last durable resumable checkpoint without consuming an unrelated policy budget
+
+#### Scenario: Runtime apply advances a phase
+
+- **WHEN** a sealed candidate passes parent-owned preflight, is applied to the private cumulative workspace, and its approved verification and outputs succeed
+- **THEN** only the Runtime-owned committed fact advances the task phase
+
+#### Scenario: Parent reports verification without apply
+
+- **WHEN** a caller reports successful verification without a matching Runtime-owned candidate acceptance and execution fact
+- **THEN** no phase, output, checkpoint, task, or change state advances
+
+#### Scenario: Approved compatibility path fails
+
+- **WHEN** an approved existing compatibility test or fixture fails because of cumulative in-boundary work
+- **THEN** the owning task becomes repairable in the private workspace and cannot complete until the failure is repaired or reverted
+
+#### Scenario: Affected-suite baseline is green
+
+- **WHEN** the affected-suite baseline is green and later cumulative verification fails
+- **THEN** the failure is classified as introduced and final application remains ineligible until repair succeeds
+
+#### Scenario: Existing affected failure is present
+
+- **WHEN** affected verification has a reproducible baseline failure before candidate work
+- **THEN** the control plane records it separately and does not use it as task Red or attribute it to the cumulative change without evidence
+
+#### Scenario: Later run reveals a previously masked failure
+
+- **WHEN** a later affected run exposes a baseline failure that was previously masked by ordering or environment
+- **THEN** the control plane rechecks attribution and pauses unresolved ownership rather than guessing or marking completion
+
+#### Scenario: Affected failure is environmental
+
+- **WHEN** affected verification fails because of a reproducible environment capability problem
+- **THEN** the run pauses as environment-unavailable with its private workspace intact and does not authorize speculative code changes
+
+#### Scenario: Affected repair requires a substantive decision
+
+- **WHEN** repairing an affected failure changes approved behavior, architecture, policy, dependency, or scope
+- **THEN** the run becomes approval-needed at the owning Gate and preserves the cumulative workspace without applying wider authority
+
+#### Scenario: Full-suite-only baseline failure exists
+
+- **WHEN** full-suite baseline contains a reproducible failure outside every affected contract
+- **THEN** it remains baseline evidence outside task scope and does not prevent completion unless the cumulative change introduces or worsens it
+
+#### Scenario: Task Red fails for the wrong reason
+
+- **WHEN** the approved Red command fails without witnessing its approved target identity
+- **THEN** Red does not advance and the candidate enters typed artifact correction or verification-contract review
+
+#### Scenario: Task Red contract is invalid
+
+- **WHEN** separate evidence proves the approved verification cannot witness the approved behavior under the current contract
+- **THEN** the run becomes approval-needed for a verification-contract revision without consuming artifact-correction policy
 
 #### Scenario: AGENTS checkpoint is required
 
-- **WHEN** the final code phase applies successfully and the approved task declares an AGENTS index impact
-- **THEN** the task remains incomplete until the parent completes the exact managed-only checkpoint within its separate bounded attempts
+- **WHEN** cumulative task work declares an approved AGENTS impact
+- **THEN** the parent-owned managed-only checkpoint and its verification must succeed in the private change workspace before final application eligibility
 
 #### Scenario: Terminal task is replayed
 
-- **WHEN** a valid phase attempt targets a blocked or completed task identity
-- **THEN** the runtime returns the cached terminal fact with the current request identity without checking snapshot currency or starting more work
+- **WHEN** a valid command replays a completed, discarded, or deterministically rejected run fact
+- **THEN** the control plane returns that committed terminal fact idempotently without launching a child or mutating the workspace
 
 #### Scenario: Implementation completes
 
-- **WHEN** every task's approved phases and AGENTS checkpoint complete, every target and affected verification passes, and the full suite has no new failure relative to baseline
-- **THEN** the workflow reports completion without claiming successor control or automatically archiving, committing, publishing, or invoking another workflow
+- **WHEN** every task, output, affected verification, full-suite comparison, AGENTS checkpoint, final application, and required post-apply check succeeds
+- **THEN** the run becomes completed, cleans private change content, and reports no new failure relative to baseline
 
 ### Requirement: Diagnosis behavior
 
-`abel-diagnose` SHALL require a description of one or more existing bugs, delegate bounded read-only evidence collection and candidate-cause falsification to package-owned professional Agents, reproduce each issue, and verify each root cause before generating a fix.
-For every verified root cause, a task-local Worker SHALL first return a complete failing-regression diff and, only after the parent applies it and confirms the approved Red command, return a minimum-repair diff bound to a fresh current file snapshot.
-The parent SHALL remain solely responsible for applying diffs, running target and affected suites, returning compact validation evidence, updating AGENTS indexes at a stable checkpoint, and confirming no new full-suite failures relative to baseline.
-If resolution requires new behavior, a substantive architecture decision, or a choice not uniquely determined by an existing contract, it SHALL stop and return the work to Design.
+`abel-diagnose` SHALL operate independently from Implement run state, delivery revisions, retry budgets, approval codes, and recovery routing.
+For each existing defect it SHALL keep the order reproduction, active falsification of plausible causes, an executable failing regression that witnesses the defect, and the minimum in-contract repair.
+The parent SHALL run reproduction and verification and apply accepted candidates; a diagnosis Worker SHALL remain read-only, submit one cited evidence object or one complete candidate diff, and SHALL NOT claim an unobserved command result.
+If evidence is insufficient or an external capability is unavailable, Diagnose SHALL pause with the exact retained evidence and resume condition rather than inventing a repair.
+A request that actually requires new observable behavior, dependency, path, architecture, or policy SHALL produce a user scope decision; an ordinary diagnosis or repair failure SHALL NOT be transformed into a stage transition.
 
 #### Scenario: Root cause is unverified
 
 - **WHEN** a reported bug cannot be reproduced or its candidate root cause lacks confirming evidence
-- **THEN** diagnosis marks it blocked and does not generate a repair
+- **THEN** Diagnose pauses with the evidence gap and does not generate a repair
 
 #### Scenario: Regression-first repair
 
 - **WHEN** a root cause is verified
-- **THEN** the Worker proposes a complete failing-regression diff before the minimum implementation fix
+- **THEN** the Worker proposes one complete failing-regression diff before any minimum implementation repair is requested
 
 #### Scenario: Parent confirms regression Red
 
 - **WHEN** the parent accepts and applies the regression diff and the approved command fails for the expected defect
-- **THEN** the next repair request uses compact validation evidence and a fresh file snapshot
+- **THEN** the separate minimum-repair request receives compact validation evidence and a fresh current snapshot
 
 #### Scenario: Requested fix changes behavior
 
 - **WHEN** fixing the report requires a new behavioral contract or substantive architecture
-- **THEN** diagnosis stops and directs the requirement to `abel-design`
+- **THEN** Diagnose reports the exact user scope decision without selecting another workflow stage or silently expanding authority
+
+#### Scenario: Existing defect is repaired
+
+- **WHEN** the symptom is reproduced, competing causes are materially falsified, and the smallest regression fails for the verified root cause
+- **THEN** Diagnose applies the minimum repair, proves the regression and affected suite green relative to baseline, and reports only evidenced results
+
+#### Scenario: Root cause is not proven
+
+- **WHEN** reproduction is unavailable, falsification remains inconclusive, or the regression fails for setup or another reason
+- **THEN** Diagnose pauses with the evidence gap and concrete resume condition and does not invent or apply a repair
+
+#### Scenario: Diagnosis requires new product scope
+
+- **WHEN** resolving the request requires new behavior, architecture, policy, dependency, or wider paths rather than repairing the existing contract
+- **THEN** Diagnose reports the exact scope decision for the user without selecting Design, inheriting Implement state, or silently widening authority
 
 ### Requirement: Bundled and external skills
 
@@ -437,10 +514,14 @@ The dedicated `time` skill SHALL NOT be a distributed or validated prerequisite.
 
 ### Requirement: Safe package contents and independence
 
-The package MUST NOT contain credentials, real `.env` files, virtual environments, backup files, user or session state, scheduling state, child-session transcripts, model outputs, or symbolic links to external workflow, configuration, or reference-repository locations.
+The package MUST NOT contain credentials, real `.env` files, virtual environments, backup files, user run data, child-session transcripts, model outputs, or symbolic links to external workflow, configuration, state, or reference-repository locations.
 It MUST NOT load, import, link to, or reference as a runtime, development, test, packing, or installation dependency `/home/abelxiaoxing/work/AbelWorkflow`, `/home/abelxiaoxing/.agents/`, either reference-repository path, `@gotgenes/pi-subagents`, or another `@gotgenes/*` package.
 Read-only implementation evidence citations and required third-party attribution or license text SHALL not constitute product resolution dependencies.
-Its tarball SHALL contain package metadata, user documentation, license and attribution, four prompts, four skills, the private extension runtime, package-owned professional Agent definitions, and required skill runtime resources while excluding development indexes, tests, OpenSpec artifacts, toolchain configuration, credentials, and runtime state.
+Its tarball SHALL contain package metadata, user documentation, license and attribution, four prompts, four skills, the private extension runtime, package-owned professional Agent definitions, and required runtime resources while excluding development indexes, tests, OpenSpec artifacts, toolchain configuration, credentials, and runtime state.
+
+At runtime the package MAY create only the approved owner-private control-plane journal, sealed artifacts, and change workspace outside the package, project repository, and OpenSpec change root.
+It MUST NOT persist raw prompts, hidden reasoning, complete child transcripts, raw model outputs, credentials, endpoint secrets, or environment values.
+Completed and discarded runs SHALL clean their private code and artifact content idempotently; paused and approval-needed runs SHALL retain only the data authorized by the run-retention contract.
 
 #### Scenario: Tarball is inspected
 
@@ -449,23 +530,33 @@ Its tarball SHALL contain package metadata, user documentation, license and attr
 
 #### Scenario: Global deployment files are absent
 
-- **WHEN** the package is loaded without the current machine-local deployment configuration
+- **WHEN** the package is loaded without machine-local deployment configuration
 - **THEN** no package resource resolves through `/home/abelxiaoxing/.agents/`
 
 #### Scenario: Forbidden workflow checkout is absent
 
-- **WHEN** the package is built, packed, installed, or loaded without `/home/abelxiaoxing/work/AbelWorkflow` and the reference repository
+- **WHEN** the package is built, packed, installed, or loaded without the reference workflow checkouts
 - **THEN** no supported resource resolves through those external locations
 
 #### Scenario: Reference attribution remains self-contained
 
 - **WHEN** the standalone package includes attribution or license material for adapted reference code
-- **THEN** that material is packaged locally and does not require the reference checkout at runtime or during validation
+- **THEN** that material is packaged locally and does not require a reference checkout at runtime or during validation
+
+#### Scenario: Paused run state is inspected
+
+- **WHEN** an eligible Abel run is paused
+- **THEN** its approved private journal and change workspace exist only in the owner-private runtime location and contain no credential, raw prompt, or raw child transcript
+
+#### Scenario: Finished run state is inspected
+
+- **WHEN** a run completes or is explicitly discarded and cleanup settles
+- **THEN** no private code workspace, sealed candidate, child transcript, raw model output, queue, or retry ledger for that run remains in package or repository locations
 
 #### Scenario: Delegation leaves no private state files
 
-- **WHEN** professional Agent runs complete, fail, are cancelled, or the stage ends
-- **THEN** the filesystem contains no private-runtime-created child transcript, result, model-output, queue, schedule, checkpoint, or Worker-session state file beyond Pi's ordinary host-owned parent transcript
+- **WHEN** a run completes or is discarded and recoverable cleanup finishes
+- **THEN** delegation leaves no private-runtime-created code workspace, sealed result, child transcript, model output, queue, schedule, or task ledger for that run in package, project, or OpenSpec locations
 
 ### Requirement: Standalone repository extraction
 
@@ -522,3 +613,86 @@ This change SHALL NOT publish the package, create a remote repository, or config
 
 - **WHEN** this change is completed
 - **THEN** no npm publication, registry-install success claim, remote-repository creation, or automatic-publication configuration has occurred
+
+### Requirement: Explicit invocation and stage isolation
+
+The shared Abel workflow Skill and private dispatch tool SHALL become active only after a user explicitly invokes a package-proven `/abel-design`, `/abel-implement`, or `/abel-diagnose` prompt; `/abel-init` SHALL remain local and dispatch-free.
+Merely discovering prompt or Skill files, an OpenSpec change, an AGENTS index entry, or ordinary text mentioning Abel SHALL NOT activate workflow authority.
+Each active stage SHALL admit only its own command or bounded packet schema, and no stage SHALL inherit another stage's write, Gate, retry, or recovery authority.
+
+#### Scenario: Ordinary engineering work mentions Abel
+
+- **WHEN** a user asks for ordinary engineering work without invoking an `/abel-*` prompt, even if repository context contains Abel resources
+- **THEN** the dispatch tool remains inactive and no Gate or Abel stage contract is applied
+
+#### Scenario: Verified workflow prompt is invoked
+
+- **WHEN** a user explicitly invokes a package-proven Design, Implement, or Diagnose prompt whose expanded marker is valid
+- **THEN** only that stage's private control surface becomes available and unrelated active tools remain unchanged
+
+#### Scenario: Init is invoked
+
+- **WHEN** a user explicitly invokes `/abel-init`
+- **THEN** Init executes its deterministic local procedure without activating Subagent dispatch
+
+### Requirement: Closed four-entrypoint approval handoff
+
+The package SHALL continue to expose exactly `/abel-init`, `/abel-design`, `/abel-implement`, and `/abel-diagnose` as its Abel prompt entrypoints. An Implement run that lacks approved authority SHALL remain the same durable run, expose the missing-authority category and required Gate revision, and wait for a newer receipt produced through `/abel-design --change <change>`. The workflow SHALL distinguish this explicit user-owned Design revision from ordinary Implement recovery and SHALL NOT automatically invoke another stage.
+
+#### Scenario: Ordinary Implement failure remains local
+
+- **WHEN** Implement encounters an artifact, transport, environment, stale, baseline, or in-boundary repair failure
+- **THEN** it exposes a same-run resume or rebind condition without requiring Design
+
+#### Scenario: Technical authority is missing
+
+- **WHEN** Implement proves that a new path, dependency, verification, resource, or AGENTS boundary is required without changing behavior
+- **THEN** it retains the run, identifies Gate B as required, and tells the user to revise that change through Design before resuming with the new receipt
+
+#### Scenario: Behavior authority is missing
+
+- **WHEN** Implement proves that observable behavior, compatibility, safety, or scope must change
+- **THEN** it retains the run, identifies Gate A and Gate B as required, and waits for an explicitly approved revised delivery
+
+#### Scenario: Revised delivery resumes implementation
+
+- **WHEN** Design finalizes a newer receipt for an approval-needed Implement run
+- **THEN** the user resumes that same Implement run with the new revision and receipt hash and compatible committed work is preserved
+
+### Requirement: Explicit stage completion
+
+Each eligible stage SHALL keep private dispatch active only while a multi-turn workflow interaction is in progress. Design readiness, Implement terminal settlement, Diagnose completion, or an explicit finish SHALL remove only `abel_dispatch`, clear the active stage identity, and preserve unrelated active tools. A nonterminal Gate wait or resumable pause SHALL remain active for its immediate user follow-up.
+
+#### Scenario: Design becomes ready
+
+- **WHEN** Design finalizes a valid delivery and reports `READY_TO_IMPLEMENT`
+- **THEN** its private dispatch activation ends before an unrelated later request
+
+#### Scenario: Implement pauses for a follow-up
+
+- **WHEN** Implement returns a nonterminal pause or approval-needed state
+- **THEN** the same verified stage remains active for a direct resume, approval, or inspection follow-up
+
+#### Scenario: Implement terminates
+
+- **WHEN** an Implement run becomes completed, discarded, or rejected
+- **THEN** private dispatch is deactivated without changing other active tools
+
+### Requirement: Self-contained explicit approval round trip
+
+The package SHALL retain exactly `/abel-init`, `/abel-design`, `/abel-implement`, and `/abel-diagnose` as public entrypoints. Implement SHALL never invoke Design automatically. After the user explicitly completes a requested Design revision, a later explicit `/abel-implement <change>` in the same or a fresh context SHALL discover the verified newer receipt through local status and resume the original Implement run without requiring copied conversational state.
+
+#### Scenario: Ordinary Implement failure remains in stage
+
+- **WHEN** Implement encounters a recoverable artifact, transport, environment, stale, baseline, verification, or in-boundary repair failure
+- **THEN** it stays in the same run and exposes no Design request or available cross-stage delivery
+
+#### Scenario: User performs the approval round trip
+
+- **WHEN** Implement reports missing authority, the user explicitly invokes Design for that change, and then explicitly invokes Implement after Design finalization
+- **THEN** the second Implement invocation uses the locally discovered revision/hash to resume the retained run and preserves compatible committed work
+
+#### Scenario: Public command inventory is inspected
+
+- **WHEN** the installed package prompts are enumerated
+- **THEN** exactly the same four Abel commands are present and no resume, approval, or handoff slash command has been added

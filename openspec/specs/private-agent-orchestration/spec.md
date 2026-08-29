@@ -2,47 +2,7 @@
 
 ## Purpose
 Provide workflow-owned professional Agent registration and a small bounded in-memory delegation kernel so Abel stages can use specialized read-only Workers without an external Subagent package.
-
 ## Requirements
-
-### Requirement: Private workflow-only Agent surface
-
-The package SHALL load one private orchestration extension and four immutable package-owned professional Agent definitions for Design exploration, contract review, implementation, and diagnosis.
-It SHALL register `abel_dispatch` but keep that tool inactive by default.
-Only a verified invocation of `abel-design`, `abel-implement`, or `abel-diagnose` SHALL activate it; `abel-init` and ordinary non-Abel prompts SHALL NOT.
-Stage finish, cancellation, replacement, reload, session replacement, or shutdown SHALL remove `abel_dispatch` from the active set while preserving unrelated active tools.
-The package SHALL expose no general Subagent command, supported public orchestration API, cross-extension service, or external Agent override mechanism and MUST NOT depend on an `@gotgenes/*` package.
-
-#### Scenario: Package load registers an inactive dispatcher
-
-- **WHEN** Pi loads the package outside an eligible Abel stage
-- **THEN** `abel_dispatch` appears in the registered tool catalogue but not in the active tool set
-
-#### Scenario: Eligible Abel stage activates dispatch
-
-- **WHEN** a verified Design, Implement, or Diagnose prompt begins
-- **THEN** the extension adds `abel_dispatch` to the active tools without removing another extension's or built-in tool
-
-#### Scenario: Init does not activate dispatch
-
-- **WHEN** `abel-init` runs
-- **THEN** `abel_dispatch` remains inactive
-
-#### Scenario: Stage cleanup restores inactive state
-
-- **WHEN** an eligible stage finishes, is cancelled or replaced, or its extension reloads or shuts down
-- **THEN** active and queued work is drained and `abel_dispatch` is inactive while unrelated tool activation is preserved
-
-#### Scenario: External Agent has the same name
-
-- **WHEN** a user or project supplies an Agent definition matching a package-owned role name
-- **THEN** Abel uses the immutable package-owned definition and does not load the external definition
-
-#### Scenario: General orchestration surface is inspected
-
-- **WHEN** a user or another extension inspects supported commands, exports, and services
-- **THEN** it finds no general Subagent command, supported public orchestration API, or cross-extension orchestration service
-
 ### Requirement: Bounded read-only requests
 
 Every dispatch request SHALL identify its eligible stage, package-owned role, packet or task identifier, bounded path scope, relevant AGENTS and approved-contract context, declared read and write sets where applicable, output contract, and cancellation signal.
@@ -75,446 +35,355 @@ An empty request, unknown role, missing bound, path escape, symbolic-link escape
 - **WHEN** a professional Agent attempts to write, execute a command, change Git, use an undeclared tool, or alter a persistent resource
 - **THEN** the attempt fails closed and no mutation is applied
 
-### Requirement: Compact structured delivery
+### Requirement: Private workflow control surface
 
-Design and review Agents SHALL return a structured evidence object containing request identity and scope, concise conclusions, exact file-and-line citations, constraints and dependencies, risks, blocking questions, and write-set, verification, and AGENTS-impact hints.
-Implement and Diagnose Workers SHALL return task and phase identity, concise summary, contract-compliance statement, complete unified diff, expected verification result, and risks or blockers.
-Worker results SHALL NOT contain a recommended next workflow step or another control field that selects parent recovery.
-A successful result MUST come through the structural final-submission tool, match its originating request identity, and satisfy its schema and configured complete-result size limit.
-Delivery MUST NOT expose hidden reasoning, a child transcript, tool-call history, or unfiltered raw logs.
-A unified diff MUST be complete and MUST NOT be truncated or reconstructed from a summary.
-An oversized result SHALL be a terminal typed task failure and SHALL NOT produce a partial result or Design-routing instruction.
+The package SHALL load one private orchestration extension and four immutable package-owned professional Agent definitions for Design exploration, contract review, implementation, and diagnosis.
+It SHALL register one private Abel control tool but keep it inactive outside a verified `abel-design`, `abel-implement`, or `abel-diagnose` invocation; `abel-init` and ordinary prompts SHALL NOT activate it.
+The v2 tool schema SHALL discriminate the closed change-oriented `start`, `status`, `resume`, `rebind`, `cancel`, and `discard` commands from Worker-internal operations so invalid or irrelevant fields are rejected before state mutation.
+An initial parent caller SHALL identify the stage and either a unique change name or a raw Design requirement; the control plane SHALL return an immutable run id used by later commands, and Gate-approved delivery revisions SHALL bind to rather than replace that run. Callers SHALL NOT construct graph admissions, phase snapshots, retained candidate identities, or stable task boundaries.
+Stage finish, replacement, reload, session replacement, or shutdown SHALL deactivate the tool and interrupt active operations while preserving a resumable durable run unless it completed or was explicitly discarded.
+The package SHALL expose no general Subagent command, public orchestration API, cross-extension service, external Agent override, or public raw run-store access.
 
-In interactive TUI mode, each valid Subagent run SHALL additionally provide a compact inline activity presentation containing its package-owned role, request identifier, phase, single-line objective summary, elapsed time, and current or terminal state.
-The inline state vocabulary SHALL distinguish queued, running, completed, failed, cancelled, and timed-out runs.
-A failed inline presentation SHALL include a sanitized, width-bounded single-line reason without exposing Provider or model identity, accessed paths, or terminal control sequences.
-Every inline presentation line SHALL remain within the available terminal width.
-Expanded successful presentation SHALL expose only a compact evidence-count summary or compact diff summary and risk count; it MUST NOT expose a next-step field, complete diff, or complete citations through the display layer.
+#### Scenario: Eligible stage activates control
 
-#### Scenario: Structured evidence succeeds
+- **WHEN** a verified Design, Implement, or Diagnose prompt begins
+- **THEN** the extension activates the private control tool without removing another active tool
+
+#### Scenario: Ordinary prompt inspects tools
+
+- **WHEN** no eligible Abel stage is active
+- **THEN** the private control tool is inactive and no public workflow-run API or Agent override is exposed
+
+#### Scenario: Parent submits graph mechanics
+
+- **WHEN** a v2 Design or Implement caller attempts to supply a graph hash, dynamic snapshot, launch identity, or stable task boundary
+- **THEN** the operation is rejected before run mutation because those facts belong to the control plane
+
+#### Scenario: Stage ends with paused work
+
+- **WHEN** an eligible stage session ends while its run is paused or interrupted
+- **THEN** active children are disposed and tool activation is removed while the durable run remains available to a later verified resume
+
+### Requirement: Sealed structured artifact delivery
+
+Design and review Agents SHALL return structured evidence with originating identity, bounded scope, concise claims, exact citations, constraints, dependencies, risks, open questions, and implementation-boundary hints.
+Implementation Workers SHALL return either a complete candidate artifact, a bounded artifact segment for an unsealed candidate, or a typed request for context, task reshaping, boundary approval, or capacity handling.
+Candidate segments SHALL bind one originating run, task, phase, Worker attempt, approved path set, and isolated snapshot; no segment SHALL be usable until the control plane validates ordering, total bounds, complete coverage, and an atomic final seal.
+A Worker SHALL NOT select a workflow Gate result, approve authority, apply a candidate, or declare verification success.
+Delivery MUST NOT expose hidden reasoning, a child transcript, tool-call history, credential, or unfiltered raw logs in public outcomes.
+Capacity exhaustion SHALL pause or request approved task reshaping and SHALL NOT yield a truncated candidate or terminally destroy the task.
+
+#### Scenario: Evidence packet succeeds
 
 - **WHEN** an evidence Agent completes a bounded packet
-- **THEN** the parent receives the required compact fields and exact citations without the child conversation or tool trace
+- **THEN** the parent receives the required structured claims and exact citations without the child conversation or tool trace
 
-#### Scenario: Complete diff delivery succeeds
+#### Scenario: Candidate is sealed
 
-- **WHEN** an Implement or Diagnose Worker completes an approved phase
-- **THEN** the parent receives candidate facts and the complete unified diff without a Worker-selected recovery or workflow step
+- **WHEN** every bounded segment of one candidate is present, ordered, identity-consistent, complete, and within the approved path set
+- **THEN** the control plane seals one immutable candidate artifact that may enter parent-owned validation
 
-#### Scenario: Result schema is invalid
+#### Scenario: Candidate remains incomplete
 
-- **WHEN** a result misses required fields, contradicts its request identity, bypasses structural submission, includes a forbidden control field, or contains an invalid diff
-- **THEN** the parent treats it as untrusted and neither applies a patch nor advances workflow state
+- **WHEN** a Worker stops before a candidate is completely sealed
+- **THEN** no segment can be applied or treated as a diff and the task remains resumable from its last committed checkpoint
 
-#### Scenario: Complete result exceeds its limit
+#### Scenario: Worker needs more context
 
-- **WHEN** a Worker cannot submit its complete diff within the configured complete-result size limit
-- **THEN** the task terminally blocks with a typed result-limit failure and no partial result or stage-routing instruction is usable
+- **WHEN** a Worker cannot safely produce an approved candidate from its supplied context
+- **THEN** it returns a typed bounded context request and the control plane either supplies already approved facts or pauses without inventing authority
 
-#### Scenario: Interactive run is visibly delegated
+### Requirement: Parent-owned change-workspace acceptance
 
-- **WHEN** a valid Subagent request is queued or running in interactive TUI mode
-- **THEN** its inline tool presentation identifies the role, request, phase, objective summary, elapsed time, and queued or running state
+The parent-owned control plane SHALL exclusively own Gate decisions, candidate acceptance and rejection, command execution, validation classification, isolated-workspace mutation, AGENTS checkpoint production, final transaction application, and completion tracking.
+A sealed candidate SHALL bind its run, delivery revision, task, phase, Worker attempt, exact approved paths, approved dependencies, originating isolated snapshot, and verification identity in the private artifact store.
+Before acceptance, the control plane SHALL verify the sealed artifact, retained identity, exact phase paths, dependency policy, current isolated snapshot, source and test loadability, approved verification identity, declared output postconditions, and ordinary patch applicability against a disposable child of the change workspace.
+An accepted candidate SHALL be applied exactly to the private cumulative change workspace and SHALL NOT directly modify the main workspace.
+Caller-supplied verification claims, restated stable facts, or raw Worker output SHALL NOT advance a phase.
+Unknown exceptions SHALL remain internal errors rather than being classified through message parsing.
 
-#### Scenario: Interactive run reaches a terminal state
+#### Scenario: Current candidate is accepted
 
-- **WHEN** a visible Subagent run completes, fails, is cancelled, or reaches its phase timeout
-- **THEN** its inline tool presentation retains the corresponding completed, failed, cancelled, or timed-out terminal state
+- **WHEN** a sealed candidate passes identity, path, dependency, snapshot, loadability, verification, output, and patch checks
+- **THEN** the control plane may apply exactly that candidate to the private change workspace and advance only from Runtime-owned verification facts
 
-#### Scenario: Interactive run fails with an unsafe reason
+#### Scenario: Candidate preflight fails
 
-- **WHEN** a failed Subagent reason contains multiple lines, terminal controls, Provider or model identity, or accessed paths
-- **THEN** the inline presentation shows a sanitized single-line reason within the available width without exposing those values
+- **WHEN** disposable-workspace preflight returns a typed artifact, stale, environment, approval, cancellation, or capacity result
+- **THEN** none of the candidate reaches the cumulative or main workspace and the run enters the matching recoverable state
 
-#### Scenario: Successful result is expanded
+#### Scenario: Caller claims verification
 
-- **WHEN** a user expands a completed Subagent tool result
-- **THEN** the display shows a compact evidence count or diff summary and risk count without next-step metadata, complete citations, or the complete diff
+- **WHEN** a caller reports that a command passed without a matching control-plane execution fact
+- **THEN** no phase, task, output, checkpoint, or change state advances
 
-### Requirement: Parent-owned review application and validation
+#### Scenario: Candidate reaches the main workspace early
 
-The parent Agent SHALL exclusively own Gate decisions, candidate acceptance and typed rejection, patch review and application, command execution, validation classification, AGENTS index changes, and task completion tracking.
-A trusted candidate SHALL be retained only in process memory and SHALL bind its result identifier, stage, canonical root, change, task, originating request, phase, launch, exact paths, approved dependencies, and current snapshot.
-Implement apply and discard operations SHALL identify the current operation request without restating candidate identity or the stable task boundary; the runtime SHALL resolve and verify retained identity itself.
-An artifact discard MAY provide bounded correction evidence but SHALL NOT change scope, verification, dependencies, or other stable boundary facts.
+- **WHEN** a task phase succeeds before complete change verification
+- **THEN** its accepted content remains only in the private change workspace
 
-Before application, the parent-owned runtime SHALL verify retained identity, exact phase path bounds, approved dependency changes, complete-diff consumption, current snapshot, source and test loadability, approved phase verification identity, and ordinary Git checkability in isolation from the main workspace.
-For a phase that declares graph outputs, isolated preflight SHALL confirm every output's regular-file postcondition after applying the candidate and before verification. After exact main-workspace application, the runtime SHALL confirm those outputs again before phase progression and SHALL confirm every task output before task completion.
-It SHALL apply exactly the retained unified diff with ordinary all-or-nothing Git application and MUST NOT use reject fragments, reconstruct Worker semantics, or implement a private rollback platform.
-Preflight, ordinary Git, and AGENTS-checkpoint producers SHALL return closed typed success or failure values without encoding control classes into free-form error strings.
-An unknown exception SHALL propagate as an internal error rather than being classified by regular expression or keyword.
-For an applied phase, the parent SHALL return compact validation evidence containing the approved command identifier, exit code, expected classification, normalized failure identity, expected-reason match, and minimum output excerpt.
+### Requirement: Durable graph scheduling and conflict queueing
 
-#### Scenario: Parent accepts a current result
+The control plane SHALL load exactly one approved compiled implementation plan per delivery revision and SHALL durably bind every task, dependency, phase verification input, generated output, path scope, conflict, resource, verification lock, and AGENTS target.
+It SHALL derive current readiness from that plan, committed phase and task facts, published outputs in the private change workspace, and safe current snapshots.
+It SHALL NOT infer readiness from caller-supplied completed or blocked arrays or from file existence alone.
+Conflicting ready tasks SHALL remain in a durable FIFO queue without consuming a Worker attempt and SHALL become eligible automatically when the conflicting declaration clears.
+Independent tasks MAY execute concurrently against isolated child snapshots and SHALL merge into the cumulative change workspace only after currentness and declared conflict checks succeed.
+A produced cross-task output SHALL publish only after its producer's required phase and task verification commits, and a consumer SHALL require an explicit transitive dependency.
 
-- **WHEN** a retained candidate passes identity, exact-path, dependency, snapshot, complete-diff, loadability, verification-identity, and ordinary Git checks
-- **THEN** the runtime may apply exactly that diff and advance only from the resulting Runtime-owned apply fact
+#### Scenario: Approved plan is loaded twice
 
-#### Scenario: Typed preflight rejects a candidate
+- **WHEN** the same run and delivery revision is started or resumed repeatedly
+- **THEN** the control plane returns the existing plan admission and does not duplicate graph or task state
 
-- **WHEN** isolated preflight returns an artifact, stale, environment, approval-boundary, cancellation, or result-limit failure
-- **THEN** the runtime branches exhaustively on the typed value without parsing free-form text and applies none of the candidate
+#### Scenario: Conflicting task becomes ready
 
-#### Scenario: Patch check or application fails
+- **WHEN** a task ahead of it releases the last conflicting declaration
+- **THEN** the queued task becomes eligible automatically in stable order without parent polling or a new task registration
 
-- **WHEN** ordinary Git screening or exact application rejects the retained candidate
-- **THEN** no phase, AGENTS checkpoint, or tracked task advances and the runtime returns the producer's typed failure
+#### Scenario: Independent tasks finish concurrently
 
-#### Scenario: Worker output is untrusted
+- **WHEN** two isolated task candidates have disjoint approved snapshots and declarations
+- **THEN** both may merge into the cumulative workspace after currentness checks without invalidating each other
 
-- **WHEN** output is invalid, out of scope, inconsistent with the approved boundary, truncated, stale, or bound to another identity
-- **THEN** the parent applies none of it and does not silently author replacement semantic content
+#### Scenario: Producer output is unavailable
 
-#### Scenario: Caller restates retained identity
+- **WHEN** a dependency claims completion but its declared regular-file output is absent or unsafe in the cumulative workspace
+- **THEN** the producer returns to repairable or integrity-paused state and the consumer does not launch
 
-- **WHEN** an Implement apply or discard operation attempts to override stage, root, change, task, phase, launch, scope, or verification facts
-- **THEN** the request fails before candidate application and task state does not advance
+### Requirement: Recoverable attempts and Worker replacement
 
-#### Scenario: Parent returns validation evidence
+Provider-managed hidden retry SHALL remain disabled, while the control plane SHALL apply separately observable bounded policies for connection, first response, idle progress, total phase time, transport attempts, stale refresh, artifact correction, verification repair, and parent checkpoint correction.
+The canonical Implement plan SHALL seal `artifactCorrection.maxAttempts` as 2 or 3 total candidate launches per task phase and operation, including the initial launch; only typed artifact rejection SHALL consume that counter, and a later explicit operation SHALL start a fresh counter from the retained ledger.
+Each failure SHALL retain its safe closed code, stage, policy class, attempt count, and legal continuation without exposing endpoint secrets, prompts, code excerpts, or raw model output in public outcomes.
+Automatic policy exhaustion SHALL pause the affected task rather than terminally block it.
+Cancellation SHALL interrupt the active operation without consuming an automatic retry or accepting partial output.
+An environment or endpoint failure SHALL permit resume after capability recovery.
+An approved route-policy change or explicit rebind SHALL permit a replacement Worker to continue from the structured task ledger without changing the approved task contract.
+An approval-boundary gap SHALL become approval-needed and SHALL never authorize spontaneous scope expansion.
 
-- **WHEN** an accepted phase's approved command completes
-- **THEN** later parent processing receives compact normalized evidence rather than a raw command log or child transcript
+#### Scenario: Connection deadline expires
 
-#### Scenario: Non-text task is approved
+- **WHEN** a configured route does not connect within its bounded connection policy
+- **THEN** the control plane records a transport attempt, selects another already allowed route when policy permits, or pauses with an explicit continuation
 
-- **WHEN** approved work cannot be represented by an ordinary textual unified diff
-- **THEN** the technical contract must define an exact deterministic parent-mechanical task and a Worker does not improvise it
+#### Scenario: Automatic attempts are exhausted
 
-### Requirement: File-snapshot-aware bounded concurrency
+- **WHEN** one policy class reaches its automatic attempt bound
+- **THEN** the task pauses with that class's final evidence while counters for unrelated artifact, verification, stale, and checkpoint work remain unchanged
 
-Before any task opens, the dispatcher SHALL admit exactly one immutable `ImplementGraphBoundary` containing the change, every task, every explicit `dependsOn` edge, every phase verification-input binding, and every generated output's unique id, safe relative path, producer task and phase, and regular-file postcondition.
-The admission request SHALL bind the graph with its canonical SHA-256 hash and current parent-owned completed and blocked task facts. The runtime SHALL reject a hash mismatch, invalid graph, or non-executable static verification closure before storing a process-local graph record.
-Each direct verification input SHALL bind exactly once to either a workspace path that is already a safe regular file or a graph output id. Output provenance SHALL NOT be inferred from write sets. An output path SHALL be approved by its producer phase write set, have one producer, and be consumable across tasks only through a transitive dependency path. A phase MAY consume an output produced by its own candidate or an earlier applied phase and MUST NOT consume an output produced only by a later phase.
+#### Scenario: Replacement Worker resumes
 
-After graph admission, the dispatcher SHALL register each ready task's complete immutable boundary from that graph before awaiting a child or Scheduler admission and SHALL retain one task record containing stable identity, phase-local scope, conflict declaration, and current state.
-The first `task-attempt` SHALL be Red and every later `task-attempt` SHALL contain only dynamic operation identity and a fresh approved snapshot.
-The dispatcher SHALL reject duplicate task opens, invalid phase transitions, stable identity changes, repeated set members, duplicate roots, and overlapping root ancestry before a child launch.
+- **WHEN** the user or approved route policy rebinds a paused task to a compatible Worker
+- **THEN** the next attempt receives the same approved boundary and committed ledger and the former Provider identity is not treated as a protocol mismatch
 
-Graph closure, fresh-context admission, task opening, and candidate preflight SHALL use the same graph-readiness core with different current facts. A generated cross-task output SHALL become available only after its producer task completes. A blocked producer SHALL keep consumers dependency-blocked without a child launch; a completed producer whose output is absent, unsafe, or not a regular file SHALL produce `producer-output-unavailable`.
-Fresh-context reconstruction SHALL use only the receipt-bound graph and hash, parent-owned completed task facts, current in-process blocked facts, and a fresh safe workspace scan. It SHALL NOT infer task or phase completion from file existence or persist Runtime recovery state.
+#### Scenario: Result capacity is insufficient
 
-The runtime SHALL derive a task-lifetime conflict declaration from the union of every approved phase read and exact write path, explicit conflict edge, resource, verification lock, and non-none parent-owned AGENTS target.
-It SHALL compare a new open with every registered nonterminal task before Scheduler queueing.
-A conflict SHALL return immediate deferral without registration, queueing, waiting, or launch consumption.
-An admitted declaration SHALL remain active across phase gaps and candidate or checkpoint review and SHALL be released only at blocked, completed, or drain.
-The Scheduler MAY serialize admitted attempts but SHALL NOT own the cross-invocation task lifetime.
+- **WHEN** a complete candidate cannot fit one configured result envelope
+- **THEN** the Worker may use bounded sealed segments or the task pauses for approved reshaping, and no truncated artifact is accepted
 
-Each completed candidate SHALL bind content hashes for every file actually read and every existing file it proposes to modify or delete and SHALL bind an explicit absent marker for every proposed new path.
-The parent SHALL apply accepted candidates serially and compare only that candidate's bound files immediately before application.
-A change outside those files SHALL NOT make the candidate stale.
-A content or existence change to a bound read or write file SHALL make it stale and prohibit application.
-Each Red, Green, and optional Refactor phase SHALL receive and return a fresh snapshot after the preceding accepted phase.
+### Requirement: Task context ledger continuity
 
-#### Scenario: Task boundary is admitted
+For every task, the control plane SHALL durably retain the approved objective and context references, delivery revision, phase state, exact command identifiers, exit codes, normalized expected and actual classifications, bounded safe failure identity, accepted artifact identity, isolated snapshot identity, output facts, and correction category needed by a later phase.
+The ledger SHALL distinguish control-plane verified facts from Worker claims and SHALL preserve the order of Red, Green, Refactor, affected verification, repair, and checkpoint events.
+Each Worker attempt SHALL receive only the relevant approved ledger projection and scoped repository context.
+Raw command logs, raw prompts, hidden reasoning, and complete model output SHALL NOT be persisted in the ledger.
+A warm child session MAY improve efficiency but SHALL NOT be authoritative; disposing or replacing it SHALL NOT erase task context or prevent resume.
 
-- **WHEN** a hash-valid graph has an executable verification closure and a ready task's valid first Red attempt has no task-lifetime conflict
-- **THEN** the runtime resolves the task only from that graph, atomically registers its task record before any await or child launch, and submits only the Red attempt to the Scheduler
+#### Scenario: Green follows Red in a new session
 
-#### Scenario: Independent Design packets are ready
+- **WHEN** Red committed and its child session was disposed before Green
+- **THEN** Green receives the verified Red command identity, exit classification, bounded failure evidence, accepted artifact identity, and current isolated snapshot from the ledger
 
-- **WHEN** multiple Design evidence packets have independent scopes and no ordered dependency
-- **THEN** they may run concurrently within the existing package-wide limit without creating an Implement task record
+#### Scenario: Artifact correction starts
 
-#### Scenario: Compatible implementation tasks are ready
+- **WHEN** preflight rejects a candidate with a typed artifact defect
+- **THEN** the replacement attempt receives the exact safe defect category, affected approved identity dimensions, and current phase context rather than a generic failure label
 
-- **WHEN** multiple graph tasks have completed explicit dependencies and compatible task-lifetime declarations
-- **THEN** each may be admitted while their phase attempts remain subject to bounded Scheduler execution and serial parent application
+#### Scenario: Worker claim conflicts with the ledger
 
-#### Scenario: Duplicate task open is submitted
+- **WHEN** a Worker claims a phase or verification fact not committed by the control plane
+- **THEN** the claim is ignored and cannot alter task state
 
-- **WHEN** a task identity already has a registered record and another open is submitted
-- **THEN** the runtime rejects the duplicate as a protocol error without comparing or replacing the stored boundary
+#### Scenario: Warm session is lost
 
-#### Scenario: Phase-local write scope is enforced
+- **WHEN** a Provider, model, child session, or Pi session is replaced
+- **THEN** the durable task context remains sufficient to resume under a compatible Worker
 
-- **WHEN** a Red candidate writes a path approved only for Green or Refactor
-- **THEN** the candidate is rejected even if the path belongs to the task's lifetime conflict union
+### Requirement: Transactional cumulative delivery
 
-#### Scenario: Declared tasks conflict
+The control plane SHALL maintain one private cumulative change workspace per active Implement run and disposable child workspaces for candidate preflight or concurrent task work.
+Every accepted phase SHALL update only the cumulative workspace after currentness checks, and every affected verification SHALL execute against that cumulative state.
+After all task work succeeds, the control plane SHALL run full-suite comparison, required output checks, and the approved AGENTS checkpoint before final application eligibility.
+The final cumulative patch SHALL bind every main-workspace input and target on which it depends.
+Final application SHALL be serialized, journaled before mutation, currentness-checked, and recoverable after interruption.
+Once any main-workspace file has been mutated, cancellation or discard SHALL become a pending recovery intent; rollback material and transaction facts SHALL remain retained until recovery establishes a safe roll-forward or rollback, after which the run MAY pause or discard cleanup MAY begin.
+A successful completion SHALL expose the entire approved cumulative result; stale or failed application SHALL preserve user changes and SHALL NOT report completion.
 
-- **WHEN** a new task has a read/write, write/write, edge, resource, validation-lock, or AGENTS-target conflict with a registered nonterminal task
-- **THEN** the runtime immediately defers the new open without queueing or consuming a launch
+#### Scenario: Task phase succeeds
 
-#### Scenario: Conflict persists between phases
+- **WHEN** an accepted Green or Refactor phase passes its verification
+- **THEN** its result is committed to the cumulative workspace and no main-workspace file is changed
 
-- **WHEN** an admitted task waits for a later phase, candidate decision, or AGENTS checkpoint
-- **THEN** its complete task-lifetime declaration continues to block conflicting opens
+#### Scenario: Full suite fails
 
-#### Scenario: Terminal task releases conflict
+- **WHEN** full-suite comparison finds an introduced failure
+- **THEN** the cumulative workspace remains available, the responsible in-boundary task becomes repairable, and final application is ineligible
 
-- **WHEN** a task becomes blocked or completed
-- **THEN** its terminal record remains replayable but no longer participates in conflict admission
+#### Scenario: Final currentness passes
 
-#### Scenario: Unrelated sibling change is applied
+- **WHEN** the fully verified cumulative patch still matches every bound main-workspace baseline fact
+- **THEN** the control plane begins one journaled final application
 
-- **WHEN** one parallel candidate is applied and it changes no file bound by an independent sibling candidate
-- **THEN** the sibling candidate remains current and may be reviewed without redispatch
+#### Scenario: Final application is interrupted
 
-#### Scenario: Bound file changed
+- **WHEN** the host stops or cancel/discard is requested after the final transaction mutates its first file
+- **THEN** recovery retains transaction material and finishes a safe roll-forward or rollback before permitting pause, destructive cleanup, another run transition, or a completed result
 
-- **WHEN** a file in a candidate's read or write snapshot changes content or existence before application
-- **THEN** the parent rejects that candidate as stale and applies none of it
+### Requirement: Durable run and ephemeral child lifecycle
 
-#### Scenario: Next phase begins after an accepted diff
+Run journals, plan bindings, task ledgers, sealed artifacts, cumulative workspace facts, retry classifications, and terminal cleanup facts SHALL follow the private durable control-plane contract.
+Child sessions, Provider request objects, parent payload capture, live Scheduler promises, AbortControllers, and active UI widgets SHALL remain process-local and disposable.
+Each child session SHALL use package-owned prompts and scoped tools with no external resource discovery, disabled Provider-managed retry, and cancellation forwarded through creation, prompting, and disposal.
+Inherited Provider requests SHALL preserve effective parent payload composition; custom endpoint requests SHALL use only their selected configured route behavior.
+Stage exit or process shutdown SHALL cancel and dispose live resources, durably mark uncommitted operations interrupted, and leave paused runs recoverable.
+Nested model usage SHALL be aggregated exactly once into the owning operation facts.
+Completion or discard SHALL idempotently clean private code and artifact state without deleting unrelated runs.
 
-- **WHEN** exact application satisfies the phase's declared output postconditions and advances a task to its next approved phase
-- **THEN** the next task attempt uses that phase's own scope, verification, graph bindings, and a fresh current snapshot without restating the stable boundary
+#### Scenario: Child session is disposed
 
-### Requirement: Single mechanical redispatch and branch isolation
+- **WHEN** a child completes, fails, is cancelled, times out, or its route is replaced
+- **THEN** live session and Provider resources are disposed while committed run and task facts remain recoverable
 
-Provider-managed retry SHALL remain disabled with `maxRetries: 0`, and the private runtime SHALL implement no cooldown, circuit breaker, hidden request retry, waiting resume, or partial-result path.
-Each Implement phase SHALL allow at most two non-cancelled child launches shared by transport failure, stale refresh, and generated-artifact correction.
-After the first eligible transport failure the runtime MAY redispatch the identical phase within the same invocation; after the first eligible stale or artifact failure it MAY accept one later phase attempt with only refreshed dynamic facts or bounded artifact evidence.
-A second eligible failure SHALL terminally block the task as attempts exhausted, preserve the final safe closed failure code and stage, and SHALL NOT start a third child.
-Cancellation SHALL not consume a launch or become a blocker.
-An oversized child result, environment failure, or approval-boundary failure SHALL terminally block the current task without partial application or stage-routing metadata.
+#### Scenario: Process shuts down
 
-Generated implementation artifacts SHALL NOT be trusted or applied until parent-owned isolated preflight proves complete-diff consumption, current snapshot and exact phase-path conformance, source and test loadability, and the approved phase verification identity.
-Syntax, import/load, no-test, wrong-command, malformed-diff, wrong-Red-identity, and unexpectedly passing Red candidates SHALL be typed artifact failures rather than target Red or approval-boundary failures.
-Artifact correction evidence SHALL be bounded and SHALL NOT alter the immutable task boundary.
+- **WHEN** Pi reloads, replaces the session, or shuts down with an active operation
+- **THEN** the operation becomes interrupted, live queues and widgets drain, and the durable run can resume from its prior checkpoint
 
-An approval-boundary failure SHALL use a closed code for an unapproved dependency, insufficient behavior or architecture contract, insufficient task scope, insufficient verification contract, or insufficient AGENTS contract.
-The runtime SHALL stop only the current task, preserve accepted independent sibling candidates, and SHALL NOT claim authority over parent-owned dependent successors, recommend another workflow, or select a user recovery action.
+#### Scenario: One run completes
 
-#### Scenario: First request fails within an unchanged contract
+- **WHEN** a run completes cleanup while another run is paused
+- **THEN** only the completed run's private code and artifact state is removed
 
-- **WHEN** the first non-cancelled child launch fails in transport and the approved phase is unchanged
-- **THEN** the runtime may make one identical redispatch within the same invocation
+#### Scenario: Nested usage is recorded
 
-#### Scenario: First stale candidate occurs
+- **WHEN** one operation invokes one or more child model calls
+- **THEN** their usage is aggregated exactly once without making usage data the source of lifecycle truth
 
-- **WHEN** the first non-cancelled launch produces a candidate whose bound snapshot becomes stale
-- **THEN** the runtime may accept one later attempt for the same phase with only refreshed dynamic snapshot facts
+### Requirement: Truthful private lifecycle activity
 
-#### Scenario: First artifact rejection occurs
+Interactive activity SHALL render the authoritative control-plane state rather than infer success from Tool-call completion.
+The visible vocabulary SHALL distinguish queued, connecting, waiting-first-response, running, validating, retrying with policy count, verifying, paused with safe code, approval-needed, applying, recovering, cancelled operation, discarded run, rejected run, and completed run.
+A blocked, paused, retryable, deferred, dependency-waiting, approval-needed, or failed-verification outcome MUST NOT display a completed check mark or completed label.
+Every visible item SHALL identify the stage or role, run or task, phase, concise objective, elapsed time, current bounded wait or policy when applicable, and one legal next action without exposing Provider identity, endpoint, path, code, credential, prompt, or raw failure output.
+Print, JSON, and RPC modes SHALL receive the same semantic lifecycle states without ANSI or Widget data.
+Presentation failure SHALL NOT alter scheduling, cancellation, recovery, verification, or application behavior.
 
-- **WHEN** the first non-cancelled launch produces a typed generated-artifact failure
-- **THEN** the runtime may accept one correction attempt with bounded evidence and the unchanged task boundary
+#### Scenario: Transport policy is retrying
 
-#### Scenario: Mechanical redispatch fails again
+- **WHEN** a task is between bounded transport attempts
+- **THEN** activity displays retrying with the transport attempt count and never displays completed
 
-- **WHEN** a second non-cancelled launch in one phase ends in transport, stale, or artifact failure
-- **THEN** the current task terminally blocks with cause, `attemptsUsed: 2`, and a `lastFailure` containing the final closed code and stage, with no third launch or partial candidate
+#### Scenario: Task needs approval
 
-#### Scenario: Candidate artifact passes structural submission but cannot load
+- **WHEN** a boundary gap pauses a task
+- **THEN** activity displays approval-needed with a safe boundary code and the Gate required to continue
 
-- **WHEN** isolated preflight finds an unconsumed diff suffix, syntax or import/load failure, no target test, wrong command, wrong Red identity, or an unexpectedly passing Red
-- **THEN** none of the candidate is applied and the typed artifact failure can consume only the phase's shared bounded launch
+#### Scenario: Tool call returns a paused outcome
 
-#### Scenario: Artifact correction budget is exhausted
+- **WHEN** the owning Tool invocation settles while the durable run remains paused
+- **THEN** re-rendering preserves paused state rather than converting Tool settlement into workflow completion
 
-- **WHEN** the second non-cancelled launch in a phase also produces a typed artifact failure
-- **THEN** the current task terminally blocks as artifact attempts exhausted, retains the final safe artifact code and stage, and no automatic workflow transition or third launch occurs
+#### Scenario: Non-TUI status is requested
 
-#### Scenario: Cancellation occurs
+- **WHEN** print, JSON, or RPC mode requests status
+- **THEN** it receives the same semantic state and legal commands without presentation-only fields or network activity
 
-- **WHEN** a child launch or interruptible preflight is cancelled
-- **THEN** the runtime preserves the task's current state and launch budget and returns cancelled without accepting partial output
+### Requirement: Control-plane domain outcomes and Tool errors
 
-#### Scenario: Complete result exceeds its limit
+The private extension SHALL return valid domain outcomes normally for run-created, run-resumed, route-rebound, status, queued, connecting, candidate-sealed, candidate-rejected, phase-committed, retryable, paused, approval-needed, verifying, applying, recovering, completed, operation-cancelled, discarded, and rejected operations.
+Recoverable, paused, approval-needed, verification-failed, and operation-cancelled outcomes SHALL NOT be Pi Tool errors merely because the run did not complete.
+Unknown actions, invalid v2 schemas, incompatible run identity, illegal state transitions, forged mechanical identities, missing retained artifacts, journal integrity failure at mutation time, and internal invariant violations SHALL throw so Pi reports a real Tool error.
+The extension SHALL NOT synthesize an `isError` flag inside a normal domain payload as a substitute for throwing.
+TUI presentation SHALL NOT change domain or Tool-error classification.
 
-- **WHEN** a Worker cannot submit its complete candidate within the configured limit
-- **THEN** the current task terminally blocks with a typed result-limit failure and no partial diff is usable
+#### Scenario: Run pauses normally
 
-#### Scenario: Recovery would expand the contract
+- **WHEN** a valid operation produces a typed recoverable pause
+- **THEN** Pi receives a normal Tool result containing the pause state and legal commands
 
-- **WHEN** continuing requires an unapproved dependency, behavior, architecture, path, conflict, resource, verification, or AGENTS contract
-- **THEN** the runtime terminally blocks the current task with the matching approval-boundary code and performs no redispatch
+#### Scenario: Operation is cancelled
 
-#### Scenario: One parallel branch fails
-
-- **WHEN** one concurrent task terminally blocks while an independent sibling candidate or completed task exists
-- **THEN** the blocked task does not invalidate the independent sibling and the runtime makes no claim about parent-owned successor scheduling
-
-#### Scenario: User cancels a batch
-
-- **WHEN** the user cancels active delegation
-- **THEN** active runs receive cancellation, queued Scheduler attempts do not start, partial outputs remain unusable, and independently accepted candidates remain available
-
-### Requirement: Ephemeral bounded runtime lifecycle
-
-The private Agent registry, canonical graph records, Scheduler queue and runs, task records, conflict declarations, terminal facts, Worker sessions, retained candidates, parent payload bridge, and user-interface activity records SHALL exist only in the current Pi process memory.
-Each task record SHALL pin the canonical workspace root, change and task identity, resolved Provider/model identity, immutable approved boundary, derived lifetime conflict, and current task state for its process lifetime.
-The resolved Provider/model identity - inherited parent identity or the role's committed custom endpoint identity - SHALL be pinned at task admission and remain fixed across every phase launch for that task.
-Ready, candidate-pending, AGENTS-checkpoint-pending, blocked, and completed SHALL be the complete Implement task-state vocabulary.
-Blocked and completed states SHALL have no child, preflight, apply, budget-consuming, or reclassification transition; a valid terminal replay SHALL return the cached fact with the current operation request identity.
-
-The runtime SHALL use one package-wide active-run limit, one batch-size limit, one phase timeout, one complete-result size limit, at most two non-cancelled child launches per phase, and at most two parent attempts for an AGENTS checkpoint.
-It SHALL not implement role-specific budget tiers, context-percentage thresholds, scan-byte accounting, Worker lifetime ledgers, a persistent recovery platform, or waiting resume.
-Each child session SHALL use an empty package-defined resource loader plus in-memory Session and Settings managers, with Provider retry disabled.
-Each child Provider request SHALL either reuse the selected parent Provider's effective stream behavior and parent-session payload-transform callback when the resolved identity is inherited, or send directly to the role's committed custom endpoint with its configured credentials and dialect without the parent payload-transform callback when the resolved identity is a custom endpoint, while discovering no external resource.
-For an `openai-responses` child, the final payload SHALL omit optional `max_output_tokens` after any applied payload-transform callback without substituting another child output-token cap.
-
-Cancellation, timeout, completion, failure, stage finish, reload, session replacement, and shutdown SHALL dispose affected child sessions and clear queued or retained state as applicable.
-Stage drain SHALL idempotently close admission, settle Scheduler work, erase retained candidates, graph records, and task records including terminal facts and conflicts, invalidate the parent payload bridge, and remove only dispatcher activation owned by this extension.
-Nested model usage SHALL be aggregated once into the dispatcher ToolResult usage and SHALL not be double-counted.
-The runtime MUST NOT write child transcripts, model outputs, result files, queues, schedules, checkpoints, task records, terminal facts, or activity state to any filesystem location.
-OpenSpec Gate receipts remain design audit artifacts and are not orchestration runtime state.
-
-In interactive TUI mode, the package SHALL maintain a temporary above-editor Agents activity display containing only valid queued and running top-level Subagent requests in stable admission order.
-Each visible item SHALL identify the role, request, phase, single-line objective summary, elapsed time, and queued or running state.
-The display SHALL remove a request immediately after a terminal outcome, clear itself when no active request remains, and accurately report hidden active counts.
-Invalid requests MUST NOT enter the activity display, and session shutdown SHALL clear it while work drains.
-
-#### Scenario: Task identity is pinned
-
-- **WHEN** a valid Implement graph and first Red task attempt are admitted
-- **THEN** the runtime stores the graph hash separately and pins the task's canonical root, change, task, Provider/model, graph-derived boundary, conflict, and ready Red state in one process-local record
-
-#### Scenario: Task identity changes
-
-- **WHEN** a later attempt supplies a different root, change, task, Provider, or model identity
-- **THEN** the runtime throws a protocol error before a child launch or state transition
-
-#### Scenario: Task reaches a terminal state
-
-- **WHEN** an Implement task becomes blocked or completed
-- **THEN** it releases conflict admission while retaining an idempotently replayable process-local terminal fact with no child out-edge
-
-#### Scenario: AGENTS checkpoint correction is bounded
-
-- **WHEN** the first parent-owned AGENTS checkpoint attempt returns an eligible typed artifact or stale failure
-- **THEN** one final checkpoint attempt remains without consuming a child launch
-
-#### Scenario: AGENTS checkpoint attempts are exhausted
-
-- **WHEN** the second AGENTS checkpoint attempt returns an eligible artifact or stale failure
-- **THEN** the task terminally blocks as checkpoint attempts exhausted
-
-#### Scenario: Child session is created
-
-- **WHEN** a valid Agent request starts
-- **THEN** it uses package-owned prompts and tools with empty resource discovery, in-memory session and settings, disabled Provider retry, the pinned resolved Provider/model identity, and, for an inherited identity, the parent-session payload callback
-
-#### Scenario: Parent payload compatibility rewrites a child request
-
-- **WHEN** the effective parent callback inspects or replaces a serialized child request
-- **THEN** the child sends the final transformed payload rather than a separately reconstructed request
-
-#### Scenario: Parent payload compatibility cannot complete
-
-- **WHEN** the inherited payload bridge is unavailable or stale, callback invocation rejects, or its final payload cannot be sent safely
-- **THEN** the child request fails before network transmission and only the phase's remaining bounded launch can continue
-
-#### Scenario: Pi contains an internal parent handler error
-
-- **WHEN** Pi catches an individual parent payload handler error internally and the effective callback exposed to the Provider completes without exposing that error
-- **THEN** the child observes the same effective callback result and Cadence neither inspects private handler state nor loads the parent extension into the child
-
-#### Scenario: OpenAI Responses child request has no optional output cap
-
-- **WHEN** a child request is serialized for an `openai-responses` model
-- **THEN** the final network payload omits `max_output_tokens` while timeout, cancellation, retry-disablement, and complete-result bounds remain active
-
-#### Scenario: Runtime bound is reached
-
-- **WHEN** a batch or active-run request exceeds the existing package-wide bound
-- **THEN** the dispatcher rejects or queues it according to that bound without creating another budget tier or changing a task boundary
-
-#### Scenario: Phase times out
-
-- **WHEN** an Agent phase exceeds the configured timeout
-- **THEN** its signal aborts, its partial output is unusable, its session is disposed, and its TUI state is timed out
-
-#### Scenario: Dispatcher returns nested usage
-
-- **WHEN** one dispatcher invocation runs one or more child model calls
-- **THEN** their usage is aggregated exactly once in the dispatcher ToolResult
-
-#### Scenario: Pi lifecycle ends the stage
-
-- **WHEN** the stage finishes or Pi reloads, replaces the session, or shuts down
-- **THEN** admission closes, active work is cancelled, queued and retained work, task records, conflicts, terminal facts, bridge state, and visible activity are cleared, and dispatcher activation returns to its prior state
-
-#### Scenario: Filesystem is inspected after delegation
-
-- **WHEN** package, project, user, and temporary locations are inspected after Agent execution
-- **THEN** no private child transcript, result, model output, queue, schedule, checkpoint, task record, terminal fact, or activity file exists
-
-#### Scenario: Multiple Subagents are active
-
-- **WHEN** two or more valid requests are queued or running concurrently in interactive TUI mode
-- **THEN** the temporary Agents display lists them in stable admission order and preserves every still-active request when a sibling terminates
-
-#### Scenario: Activity display overflows
-
-- **WHEN** terminal space cannot show every queued or running item
-- **THEN** every rendered line remains within the available width and an overflow summary accounts for all hidden active items
-
-#### Scenario: Invalid request is rejected
-
-- **WHEN** a dispatch run fails structural validation before admission
-- **THEN** no Subagent activity item or task record is created and the protocol error remains observable
-
-### Requirement: TUI-only private activity compatibility
-
-Subagent activity enhancements SHALL affect only interactive TUI presentation.
-For an interactive TUI run, the ordinary parent ToolResult details MAY retain one presentation-only field containing only the approved compact terminal metadata needed to reproduce the inline terminal state; this field MUST NOT contain active Widget state, child transcripts, tool activity, accessed paths, Provider or model identity, hidden reasoning, complete citations, or complete diffs.
-Print, JSON, and RPC modes SHALL preserve their existing tool-result content, details, usage, result identifiers, error semantics, and lifecycle event behavior, and their ToolResult details MUST NOT contain the presentation-only field.
-Non-TUI modes MUST NOT receive added activity messages, ANSI styling, Widget output, or lifecycle events.
-Presentation failure MUST NOT alter request validation, admission order, conflict serialization, cancellation, timeout, mechanical redispatch, result retention, nested usage aggregation, patch application, or stage cleanup outcomes.
-The display layer MUST NOT expose child transcripts, child tool activity, accessed file paths, Provider or model identity, hidden reasoning, complete citations, or complete diffs.
-It MUST NOT add a Fleet, child-session viewer, public stop, resume, or steering control, general Subagent command, public orchestration API, or persistent display setting.
-
-#### Scenario: Interactive TUI receives activity presentation
-
-- **WHEN** a valid Subagent request runs in interactive TUI mode
-- **THEN** the inline presentation and temporary Agents display expose only the approved compact activity metadata
-
-#### Scenario: TUI result is rendered again
-
-- **WHEN** Pi re-renders an interactive parent ToolResult after its Subagent run reached a terminal state
-- **THEN** the presentation-only details reproduce the approved compact terminal state without reconstructing it from an error string or exposing private child data
-
-#### Scenario: Non-TUI request runs
-
-- **WHEN** the same valid request runs in print, JSON, or RPC mode
-- **THEN** its tool-result and event behavior remain unchanged, its details contain no presentation-only field, and no presentation-only output or ANSI styling is emitted
-
-#### Scenario: Display layer encounters an error
-
-- **WHEN** activity rendering or Widget refresh cannot complete
-- **THEN** the underlying Subagent run, cancellation, result, usage, and cleanup outcomes remain governed solely by the existing orchestration contract
-
-#### Scenario: Private child data is inspected through the display
-
-- **WHEN** a user expands an inline result or observes the temporary Agents display
-- **THEN** no child transcript, tool activity, accessed path, model identity, hidden reasoning, complete citation set, or complete diff is exposed
-
-#### Scenario: Public controls are inspected
-
-- **WHEN** a user or extension inspects commands, tools, settings, and activity controls after this change
-- **THEN** it finds no new Fleet, child viewer, stop, resume, steering, general Subagent, public orchestration, or persistent display control
-
-### Requirement: Implement domain outcomes and Pi Tool errors
-
-The private extension SHALL return valid Implement domain outcomes normally for graph-admitted, graph-rejected, dependency-blocked, deferred, candidate, applied, checkpoint-required, retry, completed, blocked, and cancelled operations.
-Blocked and cancelled outcomes SHALL NOT be marked as Pi Tool errors merely because work did not complete.
-Unknown actions, invalid schemas, duplicate opens, illegal phase transitions, identity mismatches, missing or mismatched result identifiers, illegal candidate-pending operations, and internal invariant failures SHALL throw so the Pi Agent Loop produces a real Tool error.
-The extension SHALL NOT synthesize an `isError` flag inside ordinary ToolResult content as a substitute for throwing.
-A presentation hook MAY render status metadata but MUST NOT change the final Tool error classification or add TUI-only data to print, JSON, or RPC domain payloads.
-
-#### Scenario: Task is blocked within its boundary
-
-- **WHEN** a valid Implement operation returns a terminal blocked outcome
-- **THEN** the Pi Agent Loop reports a normal Tool result whose domain payload contains the typed blocker and whose Tool error flag is false
-
-#### Scenario: Task is cancelled
-
-- **WHEN** a valid Implement operation returns cancelled
-- **THEN** the Pi Agent Loop reports a normal Tool result with a false Tool error flag
+- **WHEN** cancellation interrupts a valid active operation
+- **THEN** Pi receives a normal operation-cancelled result and the run remains at its last resumable checkpoint
 
 #### Scenario: Protocol request is invalid
 
-- **WHEN** an Implement request violates its schema, identity, transition, result binding, or duplicate-open rule
-- **THEN** the extension throws and the Pi Agent Loop reports a real Tool error
+- **WHEN** a request violates the v2 schema, run identity, transition, or artifact binding
+- **THEN** the extension throws and Pi reports a real Tool error before unauthorized state mutation
 
 #### Scenario: Internal invariant fails
 
-- **WHEN** the runtime encounters an unknown exception or impossible state
-- **THEN** the exception propagates as a real Tool error without keyword-based domain classification
+- **WHEN** the control plane encounters an impossible or unclassified internal state
+- **THEN** the exception propagates as a Tool error without keyword-based domain classification
 
-#### Scenario: Non-TUI mode receives an outcome
+### Requirement: Run-bound durable Design evidence
 
-- **WHEN** the dispatcher runs in print, JSON, or RPC mode
-- **THEN** its domain payload, details, usage, and error semantics contain no presentation-only status metadata
+Every Design evidence packet SHALL bind the durable Design run that requested it. Only a structurally valid, in-scope result accepted by the parent SHALL be recorded as a bounded evidence fact; packet failure SHALL record no trusted evidence. Repeating the same packet identity with the same result SHALL be idempotent, while a conflicting result for that identity SHALL fail closed. Status after process or session replacement SHALL expose the accepted evidence identities and hashes without depending on a child session.
+
+#### Scenario: Evidence survives a restart
+
+- **WHEN** an accepted Design packet completes and the host process restarts
+- **THEN** Design status for the bound run exposes the same accepted evidence fact without rerunning the child
+
+#### Scenario: Packet targets another run
+
+- **WHEN** a Design packet supplies an absent, non-Design, or different-root run identity
+- **THEN** the packet is rejected before trusted evidence is recorded
+
+#### Scenario: Evidence replay conflicts
+
+- **WHEN** an existing packet identity is submitted with different structured evidence
+- **THEN** the new result is rejected and the original durable fact remains unchanged
+
+### Requirement: Minimal durable Design control data
+
+The private journal SHALL retain only normalized Design evidence, decision records, Gate approvals, compiled-plan identity, idempotent operation outcomes, and hashes needed for recovery. It MUST NOT retain raw prompts, hidden reasoning, child transcripts, credentials, environment values, or unfiltered model output.
+
+#### Scenario: Design state is inspected
+
+- **WHEN** a Design run is resumed in a fresh context
+- **THEN** status exposes bounded evidence, latest decisions, current Gate proofs, and compiled-plan identity but none of the prohibited raw data
+
+### Requirement: Enforced parent Design tool boundary
+
+During a verified Design stage, the parent SHALL receive only the package's read-only workspace tools and `abel_dispatch`; previously active write-capable or unknown tools SHALL be unavailable to the model. The extension SHALL restore the exact pre-Design non-dispatch tool set when Design completes, explicitly finishes, switches to another verified stage, or the session shuts down. Tool isolation SHALL NOT affect Implement or Diagnose activation.
+
+#### Scenario: Design starts with write tools active
+
+- **WHEN** a verified Design invocation begins while shell, edit, write, or an unknown tool is active
+- **THEN** those tools are removed for Design while read, grep, find, ls when previously active, and `abel_dispatch` remain available
+
+#### Scenario: Design exits
+
+- **WHEN** Design finalizes, explicitly finishes, switches to Implement or Diagnose, or the session ends
+- **THEN** the exact pre-Design non-dispatch tool set is restored and only the stage-owned dispatcher lifecycle is changed
+
+### Requirement: Safe private Design artifact mutation
+
+The Design control surface SHALL provide code-owned write and delete operations only for the active run's OpenSpec change artifacts. It SHALL accept bounded UTF-8 content and safe relative paths limited to the change metadata, proposal, design, tasks, delta specs, and fixed plan draft; it SHALL create safe missing directories atomically, reject symlink components, and forbid product files plus code-owned Gate, ready, and compiled-plan artifacts. Operation replay SHALL be idempotent and conflicting reuse SHALL fail closed.
+
+#### Scenario: Parent writes a Design artifact
+
+- **WHEN** the active Design run writes an allowed proposal, design, tasks, delta spec, metadata, or plan-draft path through private control
+- **THEN** the exact bytes are installed beneath that run's change root and a bounded hash outcome is recorded
+
+#### Scenario: Parent targets product code
+
+- **WHEN** the Design write operation targets a path outside its change root or a reserved Gate, ready, or compiled-plan file
+- **THEN** the operation is rejected before any filesystem mutation
+
+#### Scenario: Parent deletes an obsolete delta spec
+
+- **WHEN** the active Design run requests deletion of an allowed existing delta-spec file
+- **THEN** only that safe regular file is removed, operation replay is idempotent, and no parent directory or unrelated artifact is removed

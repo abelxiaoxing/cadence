@@ -153,6 +153,7 @@ interface Harness {
   registry: TestRegistry;
   context: HarnessContext;
   original: LocalProvider;
+  designRunId?: string;
   setSessionId(id: string): void;
 }
 
@@ -450,9 +451,10 @@ async function arm(
   await Promise.resolve();
 }
 
-function request(id: string) {
+function request(id: string, runId: string) {
   return {
     stage: "abel-design",
+    runId,
     role: "design-explorer",
     id,
     phase: "evidence",
@@ -477,9 +479,30 @@ function dispatchTool(harness: Harness): RegisteredTool {
 
 async function dispatch(harness: Harness, id: string): Promise<DispatchResult> {
   Reflect.set(harness.context, "submittedId", id);
+  if (!harness.designRunId) {
+    const started = await dispatchTool(harness).execute(
+      `call-start-${id}`,
+      {
+        version: 2,
+        command: "start",
+        stage: "abel-design",
+        change: "payload-lifecycle",
+        operationId: `start-${id}`,
+      },
+      undefined,
+      undefined,
+      harness.context,
+    );
+    const runId = Reflect.get(
+      (started.details ?? {}) as Record<string, unknown>,
+      "runId",
+    );
+    if (typeof runId !== "string") throw new Error("design run did not start");
+    harness.designRunId = runId;
+  }
   const result = await dispatchTool(harness).execute(
     `call-${id}`,
-    { action: "run", request: request(id) },
+    { action: "run", request: request(id, harness.designRunId) },
     undefined,
     undefined,
     harness.context,

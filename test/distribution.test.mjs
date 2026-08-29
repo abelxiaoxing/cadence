@@ -47,6 +47,8 @@ const expectedFiles = [
   "package/src/contracts.ts",
   "package/src/control-contracts.ts",
   "package/src/delivery-compiler.ts",
+  "package/src/design-control.ts",
+  "package/src/design-journal.ts",
   "package/src/empty-resource-loader.ts",
   "package/src/file-snapshot.ts",
   "package/src/index.ts",
@@ -208,12 +210,16 @@ describe("real npm tarball", () => {
       resource("agents/implementation-worker.md"),
     ].join("\n");
     expect(implementResources).not.toMatch(
-      /design-required|design-contract|return-to-design|\/abel-design|branchBlocked|dependentsBlocked|dependent successors?|recommended next (workflow )?step|nextStep|artifact-correction-required|reasonCode|artifact-invalid|transport-failed|environment-unavailable|result-too-large|split condition/i,
+      /design-required|design-contract|return-to-design|branchBlocked|dependentsBlocked|dependent successors?|recommended next (workflow )?step|nextStep|artifact-correction-required|reasonCode|artifact-invalid|transport-failed|environment-unavailable|result-too-large|split condition/i,
     );
     expect(implementResources).toMatch(/ordinary failures stay inside/i);
     expect(implementResources).toMatch(/wrong-Red identity/i);
     expect(implementResources).toMatch(/environment/i);
     expect(implementResources).toMatch(/approval-needed` only/i);
+    expect(implementResources).toMatch(/\/abel-design --change <change>/i);
+    expect(implementResources).toMatch(
+      /never invoke[s]? Design automatically/i,
+    );
     expect(implementResources).toMatch(/result-limit/i);
 
     const diagnosis = resource("agents/diagnosis-worker.md");

@@ -50,6 +50,8 @@ const expectedMembers = [
   "package/src/contracts.ts",
   "package/src/control-contracts.ts",
   "package/src/delivery-compiler.ts",
+  "package/src/design-control.ts",
+  "package/src/design-journal.ts",
   "package/src/empty-resource-loader.ts",
   "package/src/file-snapshot.ts",
   "package/src/index.ts",

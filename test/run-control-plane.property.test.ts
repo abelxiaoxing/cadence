@@ -395,13 +395,18 @@ describe("canonical delivery compilation", () => {
     const gate = compileGateA({
       change: "durable-control-plane",
       schema: "spec-driven",
+      approval: {
+        revision: 1,
+        contractHash: "b".repeat(64),
+        recordHash: "c".repeat(64),
+      },
       artifacts: [{ path: "proposal.md", rawSha256: "a".repeat(64) }],
     });
-    expect(gate.receipt.receiptVersion).toBe(3);
+    expect(gate.receipt.receiptVersion).toBe(4);
     const legacyReceipt = Buffer.from(
       Buffer.from(gate.bytes)
         .toString("utf8")
-        .replace('"receiptVersion":3', '"receiptVersion":2'),
+        .replace('"receiptVersion":4', '"receiptVersion":3'),
     );
     expect(() => parseGateA(legacyReceipt)).toThrow(/gate-a-receipt-invalid/u);
   });

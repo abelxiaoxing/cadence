@@ -26,6 +26,7 @@ function validEnvelope(overrides = {}) {
   return {
     stage: "abel-design",
     role: "design-explorer",
+    runId: "design-run-001",
     id: "packet-001",
     phase: "evidence",
     objective: "Inspect the layout of src/",
@@ -46,6 +47,7 @@ function validEnvelope(overrides = {}) {
 const REQUIRED_FIELDS = [
   "stage",
   "role",
+  "runId",
   "id",
   "phase",
   "objective",
@@ -57,18 +59,16 @@ describe("strict packet envelope contracts", () => {
   it("[SLICE-1:boundary-once] keeps Design and Diagnose run envelopes valid", () => {
     if (!contracts) return notReady("contracts");
     expect(contracts.validatePacketEnvelope(validEnvelope()).ok).toBe(true);
-    expect(
-      contracts.validatePacketEnvelope(
-        validEnvelope({
-          stage: "abel-diagnose",
-          role: "diagnosis-worker",
-          id: "diagnose-001",
-          phase: "red",
-          objective: "Diagnose the bounded regression",
-          output: "diff",
-        }),
-      ).ok,
-    ).toBe(true);
+    const diagnose = validEnvelope({
+      stage: "abel-diagnose",
+      role: "diagnosis-worker",
+      id: "diagnose-001",
+      phase: "red",
+      objective: "Diagnose the bounded regression",
+      output: "diff",
+    }) as Record<string, unknown>;
+    delete diagnose.runId;
+    expect(contracts.validatePacketEnvelope(diagnose).ok).toBe(true);
   });
 
   it("accepts a valid evidence envelope", () => {

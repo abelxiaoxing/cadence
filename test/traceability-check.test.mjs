@@ -17,8 +17,8 @@ describe("traceability check", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe("");
-    expect(result.stdout.trim()).toBe(
-      "traceability-check: 162 active Requirement/Scenario references resolve exactly once",
+    expect(result.stdout.trim()).toMatch(
+      /^traceability-check: \d+ active Requirement\/Scenario references across \d+ change\(s\) resolve exactly once$/,
     );
   });
 });

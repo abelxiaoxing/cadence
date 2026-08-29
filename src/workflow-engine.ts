@@ -16,6 +16,7 @@ import {
 } from "./apply-transaction.ts";
 import { ArtifactStore } from "./artifact-store.ts";
 import {
+  type ApprovalBoundaryCode,
   diffWritePaths,
   isValidRelativePath,
   type StructuredVerificationContract,
@@ -26,6 +27,7 @@ import {
   type ControlCommand,
   type ControlStage,
 } from "./control-contracts.ts";
+import type { GateApprovalProof } from "./delivery-compiler.ts";
 import {
   DeliveryValidationError,
   IMPLEMENT_PLAN_SCHEMA_VERSION,
@@ -172,6 +174,88 @@ interface WorkflowContextRequest {
   refs: string[];
 }
 
+export const APPROVAL_AUTHORITY_CATEGORIES = [
+  "observable-behavior",
+  "architecture-policy",
+  "dependency",
+  "path-boundary",
+  "conflict-resource",
+  "verification-contract",
+  "agents-contract",
+  "irreversible-scope",
+] as const;
+
+export type ApprovalAuthorityCategory =
+  (typeof APPROVAL_AUTHORITY_CATEGORIES)[number];
+
+interface ApprovalRequirement {
+  category: ApprovalAuthorityCategory;
+  requiredGates: Array<"gate-a" | "gate-b">;
+  refs: string[];
+}
+
+const INTERNAL_APPROVAL_CODES = [
+  "boundary-review-needed",
+  "repair-boundary-expansion",
+  "task-write-set-empty",
+] as const;
+
+type InternalApprovalCode = (typeof INTERNAL_APPROVAL_CODES)[number];
+export type WorkflowApprovalCode = ApprovalBoundaryCode | InternalApprovalCode;
+
+const APPROVAL_REQUIREMENT_BY_CODE = {
+  "agents-contract-insufficient": {
+    category: "agents-contract",
+    requiredGates: ["gate-b"],
+  },
+  "architecture-contract-insufficient": {
+    category: "architecture-policy",
+    requiredGates: ["gate-b"],
+  },
+  "behavior-contract-insufficient": {
+    category: "observable-behavior",
+    requiredGates: ["gate-a", "gate-b"],
+  },
+  "boundary-review-needed": {
+    category: "path-boundary",
+    requiredGates: ["gate-b"],
+  },
+  "conflict-resource-authority-insufficient": {
+    category: "conflict-resource",
+    requiredGates: ["gate-b"],
+  },
+  "irreversible-scope-insufficient": {
+    category: "irreversible-scope",
+    requiredGates: ["gate-a", "gate-b"],
+  },
+  "repair-boundary-expansion": {
+    category: "path-boundary",
+    requiredGates: ["gate-b"],
+  },
+  "task-scope-insufficient": {
+    category: "path-boundary",
+    requiredGates: ["gate-b"],
+  },
+  "task-write-set-empty": {
+    category: "path-boundary",
+    requiredGates: ["gate-b"],
+  },
+  "unapproved-dependency-change": {
+    category: "dependency",
+    requiredGates: ["gate-b"],
+  },
+  "verification-contract-insufficient": {
+    category: "verification-contract",
+    requiredGates: ["gate-b"],
+  },
+} as const satisfies Record<
+  WorkflowApprovalCode,
+  {
+    category: ApprovalAuthorityCategory;
+    requiredGates: readonly ("gate-a" | "gate-b")[];
+  }
+>;
+
 type WorkflowRetryPolicy = "artifact" | "stale" | "verification" | "checkpoint";
 
 export type WorkflowAttemptOutcome = (
@@ -261,6 +345,15 @@ export interface WorkflowDelivery {
   revision: number;
   receiptHash: string;
   plan: ImplementPlan;
+  approvalProofs?: {
+    gateA: GateApprovalProof;
+    gateB: GateApprovalProof;
+  };
+}
+
+export interface WorkflowAvailableDelivery {
+  deliveryRevision: number;
+  receiptHash: string;
 }
 
 export interface WorkflowDeliverySource {
@@ -270,6 +363,10 @@ export interface WorkflowDeliverySource {
     deliveryRevision?: number;
     receiptHash?: string;
   }): Promise<WorkflowDelivery>;
+  discoverLatest?(input: {
+    stage: ControlStage;
+    change: string;
+  }): Promise<WorkflowAvailableDelivery | undefined>;
 }
 
 export interface WorkflowChangeVerifier {
@@ -487,6 +584,27 @@ function normalizeWorkflowContextRequest(
     code: value.code as WorkflowContextRequest["code"],
     refs: [...(value.refs as string[])],
   };
+}
+
+function approvalRequirement(
+  code: string,
+  contextRequest?: WorkflowContextRequest,
+): ApprovalRequirement {
+  const requirement = Object.hasOwn(APPROVAL_REQUIREMENT_BY_CODE, code)
+    ? APPROVAL_REQUIREMENT_BY_CODE[
+        code as keyof typeof APPROVAL_REQUIREMENT_BY_CODE
+      ]
+    : undefined;
+  if (!requirement) throw new Error("approval-code-invalid");
+  return {
+    category: requirement.category,
+    requiredGates: [...requirement.requiredGates],
+    refs: contextRequest ? [...contextRequest.refs] : [],
+  };
+}
+
+function isWorkflowApprovalCode(code: string): code is WorkflowApprovalCode {
+  return Object.hasOwn(APPROVAL_REQUIREMENT_BY_CODE, code);
 }
 
 function hash(...values: string[]): string {
@@ -846,6 +964,23 @@ function assertDelivery(
     throw new Error("delivery-invalid");
   }
   assertPlan(value.plan);
+  if (value.approvalProofs !== undefined) {
+    if (!isRecord(value.approvalProofs)) throw new Error("delivery-invalid");
+    for (const gate of ["gateA", "gateB"] as const) {
+      const proof = value.approvalProofs[gate];
+      if (
+        !isRecord(proof) ||
+        !Number.isSafeInteger(proof.revision) ||
+        (proof.revision as number) < 1 ||
+        typeof proof.contractHash !== "string" ||
+        !SHA256.test(proof.contractHash) ||
+        typeof proof.recordHash !== "string" ||
+        !SHA256.test(proof.recordHash)
+      ) {
+        throw new Error("delivery-invalid");
+      }
+    }
+  }
   if (stage === "abel-implement" && value.gate !== "gate-b") {
     throw new Error("delivery-gate-b-required");
   }
@@ -5187,35 +5322,69 @@ export class WorkflowEngine {
         };
       }
     }
-    this.#runStore.bindDeliveryAtomically(
-      {
-        runId,
-        gate: delivery.gate,
-        revision: delivery.revision,
-        receiptHash: delivery.receiptHash,
-        operationId: `bind-${hash(runId, String(delivery.revision), delivery.receiptHash).slice(0, 40)}`,
-        lease,
-      },
-      (database) => {
-        const engineLease = database
-          .prepare(
-            `SELECT state, lease_expires_at
+    const deliveryBindings = delivery.approvalProofs
+      ? ([
+          {
+            runId,
+            gate: "gate-a" as const,
+            revision: delivery.revision,
+            receiptHash: delivery.receiptHash,
+            approvalProof: structuredClone(delivery.approvalProofs.gateA),
+            operationId: `bind-a-${hash(
+              runId,
+              String(delivery.revision),
+              delivery.approvalProofs.gateA.recordHash,
+            ).slice(0, 40)}`,
+            lease,
+          },
+          {
+            runId,
+            gate: "gate-b" as const,
+            revision: delivery.revision,
+            receiptHash: delivery.receiptHash,
+            approvalProof: structuredClone(delivery.approvalProofs.gateB),
+            operationId: `bind-b-${hash(
+              runId,
+              String(delivery.revision),
+              delivery.approvalProofs.gateB.recordHash,
+            ).slice(0, 40)}`,
+            lease,
+          },
+        ] as const)
+      : ([
+          {
+            runId,
+            gate: delivery.gate,
+            revision: delivery.revision,
+            receiptHash: delivery.receiptHash,
+            operationId: `bind-${hash(
+              runId,
+              String(delivery.revision),
+              delivery.receiptHash,
+            ).slice(0, 40)}`,
+            lease,
+          },
+        ] as const);
+    this.#runStore.bindDeliveriesAtomically(deliveryBindings, (database) => {
+      const engineLease = database
+        .prepare(
+          `SELECT state, lease_expires_at
              FROM workflow_engine_operations
              WHERE run_id = ? AND lease_token = ?`,
-          )
-          .get(runId, lease.token) as
-          | { state: string; lease_expires_at: number | null }
-          | undefined;
-        if (
-          engineLease?.state !== "running" ||
-          engineLease.lease_expires_at === null ||
-          engineLease.lease_expires_at < this.#now()
-        ) {
-          throw new Error("lease-fenced");
-        }
-        database
-          .prepare(
-            `INSERT INTO workflow_engine_runs(
+        )
+        .get(runId, lease.token) as
+        | { state: string; lease_expires_at: number | null }
+        | undefined;
+      if (
+        engineLease?.state !== "running" ||
+        engineLease.lease_expires_at === null ||
+        engineLease.lease_expires_at < this.#now()
+      ) {
+        throw new Error("lease-fenced");
+      }
+      database
+        .prepare(
+          `INSERT INTO workflow_engine_runs(
              run_id, current_revision, delivery_diagnostics_json,
              next_queue_position
            ) VALUES (?, ?, NULL, 1)
@@ -5223,85 +5392,84 @@ export class WorkflowEngine {
              current_revision = excluded.current_revision,
              verification_json = NULL,
              delivery_diagnostics_json = NULL`,
-          )
-          .run(runId, delivery.revision);
-        if (revalidatedWorkspace) {
-          database
-            .prepare(
-              `UPDATE workflow_engine_runs
+        )
+        .run(runId, delivery.revision);
+      if (revalidatedWorkspace) {
+        database
+          .prepare(
+            `UPDATE workflow_engine_runs
              SET baseline_workspace_revision = ?,
                  current_workspace_revision = ?, cleanup_state = 'retained'
              WHERE run_id = ?`,
-            )
-            .run(
-              revalidatedWorkspace.baselineRevisionId,
-              revalidatedWorkspace.currentWorkspaceRevisionId,
-              runId,
-            );
-        }
-        database
-          .prepare(
-            `INSERT INTO workflow_engine_deliveries(
+          )
+          .run(
+            revalidatedWorkspace.baselineRevisionId,
+            revalidatedWorkspace.currentWorkspaceRevisionId,
+            runId,
+          );
+      }
+      database
+        .prepare(
+          `INSERT INTO workflow_engine_deliveries(
              run_id, revision, gate, receipt_hash, plan_json
            ) VALUES (?, ?, ?, ?, ?)
            ON CONFLICT(run_id, revision) DO NOTHING`,
-          )
-          .run(
-            runId,
-            delivery.revision,
-            delivery.gate,
-            delivery.receiptHash,
-            serializedPlan,
-          );
+        )
+        .run(
+          runId,
+          delivery.revision,
+          delivery.gate,
+          delivery.receiptHash,
+          serializedPlan,
+        );
 
-        const admitted = new Set<string>();
-        delivery.plan.tasks.forEach((task, taskOrder) => {
-          admitted.add(task.taskId);
-          const taskJson = JSON.stringify(task);
-          const prior = priorById.get(task.taskId);
-          if (!prior) {
-            database
-              .prepare(
-                `INSERT INTO workflow_engine_tasks(
+      const admitted = new Set<string>();
+      delivery.plan.tasks.forEach((task, taskOrder) => {
+        admitted.add(task.taskId);
+        const taskJson = JSON.stringify(task);
+        const prior = priorById.get(task.taskId);
+        if (!prior) {
+          database
+            .prepare(
+              `INSERT INTO workflow_engine_tasks(
                  run_id, task_id, task_order, delivery_revision, plan_json,
                  state, phase
                ) VALUES (?, ?, ?, ?, ?, 'pending', 'red')`,
-              )
-              .run(runId, task.taskId, taskOrder, delivery.revision, taskJson);
-            return;
-          }
-          if (compatible.has(task.taskId) && !invalidated.has(task.taskId)) {
-            database
-              .prepare(
-                `UPDATE workflow_engine_tasks
-               SET task_order = ?, plan_json = ?
-               WHERE run_id = ? AND task_id = ?`,
-              )
-              .run(taskOrder, taskJson, runId, task.taskId);
-            return;
-          }
+            )
+            .run(runId, task.taskId, taskOrder, delivery.revision, taskJson);
+          return;
+        }
+        if (compatible.has(task.taskId) && !invalidated.has(task.taskId)) {
           database
             .prepare(
               `UPDATE workflow_engine_tasks
+               SET task_order = ?, plan_json = ?
+               WHERE run_id = ? AND task_id = ?`,
+            )
+            .run(taskOrder, taskJson, runId, task.taskId);
+          return;
+        }
+        database
+          .prepare(
+            `UPDATE workflow_engine_tasks
              SET task_order = ?, delivery_revision = ?, plan_json = ?,
                  state = 'pending', phase = 'red', pause_code = NULL,
                  context_request_json = NULL, queue_position = NULL
              WHERE run_id = ? AND task_id = ?`,
-            )
-            .run(taskOrder, delivery.revision, taskJson, runId, task.taskId);
-        });
-        for (const row of priorRows) {
-          if (!admitted.has(row.task_id)) {
-            database
-              .prepare(
-                `DELETE FROM workflow_engine_tasks
+          )
+          .run(taskOrder, delivery.revision, taskJson, runId, task.taskId);
+      });
+      for (const row of priorRows) {
+        if (!admitted.has(row.task_id)) {
+          database
+            .prepare(
+              `DELETE FROM workflow_engine_tasks
                WHERE run_id = ? AND task_id = ?`,
-              )
-              .run(runId, row.task_id);
-          }
+            )
+            .run(runId, row.task_id);
         }
-      },
-    );
+      }
+    });
   }
 
   #deliveryFailure(
@@ -5797,16 +5965,22 @@ export class WorkflowEngine {
         if (typeof outcome.code !== "string" || outcome.code.length === 0) {
           throw new Error("workflow-attempt-outcome-invalid");
         }
+        const approvalCodeInvalid =
+          outcome.kind === "approval-needed" &&
+          !isWorkflowApprovalCode(outcome.code);
         this.#setTask(
           runId,
           row.task_id,
           {
-            state: outcome.kind,
+            state: approvalCodeInvalid ? "paused" : outcome.kind,
             phase,
-            pauseCode: outcome.code,
-            contextRequest: outcome.contextRequest
-              ? normalizeWorkflowContextRequest(outcome.contextRequest)
-              : null,
+            pauseCode: approvalCodeInvalid
+              ? "approval-code-invalid"
+              : outcome.code,
+            contextRequest:
+              !approvalCodeInvalid && outcome.contextRequest
+                ? normalizeWorkflowContextRequest(outcome.contextRequest)
+                : null,
             queuePosition: null,
           },
           lease,
@@ -5936,13 +6110,21 @@ export class WorkflowEngine {
           );
         }
       }
+      const approvalCodeInvalid =
+        verification.kind === "approval-needed" &&
+        !isWorkflowApprovalCode(verification.code);
       const state =
-        verification.kind === "approval-needed" ? "approval-needed" : "paused";
+        verification.kind === "approval-needed" && !approvalCodeInvalid
+          ? "approval-needed"
+          : "paused";
+      const code = approvalCodeInvalid
+        ? "approval-code-invalid"
+        : verification.code;
       this.#transition(
         runId,
         state,
         `${operationId}:change-verification-${state}`,
-        verification.code,
+        code,
         lease,
       );
       return this.#statusByRun(runId);
@@ -6406,6 +6588,18 @@ export class WorkflowEngine {
     } catch {
       engineRun = undefined;
     }
+    const contextRequest = firstPaused?.context_request_json
+      ? normalizeWorkflowContextRequest(
+          JSON.parse(firstPaused.context_request_json) as unknown,
+        )
+      : undefined;
+    const pauseCode =
+      projection.pauseCode ?? firstPaused?.pause_code ?? "task-paused";
+    const approval =
+      projection.state === "approval-needed"
+        ? approvalRequirement(pauseCode, contextRequest)
+        : undefined;
+    const currentRevision = projection.deliveryRevision ?? 0;
     return {
       version: 2,
       runId: projection.runId,
@@ -6415,21 +6609,53 @@ export class WorkflowEngine {
       ...(projection.deliveryRevision === undefined
         ? {}
         : { deliveryRevision: projection.deliveryRevision }),
+      ...(projection.deliveryBindings.length > 0
+        ? { deliveryBindings: structuredClone(projection.deliveryBindings) }
+        : {}),
       completed: projection.state === "completed",
       ...(projection.terminal ? { terminal: projection.terminal } : {}),
       ...(projection.pauseCode || firstPaused?.pause_code
         ? {
             pause: {
-              code:
-                projection.pauseCode ??
-                firstPaused?.pause_code ??
-                "task-paused",
+              code: pauseCode,
             },
           }
         : {}),
-      legalCommands: legalControlCommands(projection.state).filter(
-        (command) => command !== "rebind" || firstPaused !== undefined,
-      ),
+      legalCommands:
+        projection.state === "approval-needed"
+          ? ["status", "discard"]
+          : legalControlCommands(projection.state).filter(
+              (command) => command !== "rebind" || firstPaused !== undefined,
+            ),
+      ...(approval && projection.change
+        ? {
+            approval: {
+              category: approval.category,
+              requiredGates: approval.requiredGates,
+              refs: approval.refs,
+              designRequest: `/abel-design --change ${projection.change}`,
+              retainedRun: {
+                runId: projection.runId,
+                deliveryRevision: currentRevision,
+              },
+              receiptPrecondition: {
+                deliveryRevision: { greaterThan: currentRevision },
+                receiptHash: "matching-ready-receipt",
+              },
+            },
+            conditionalCommands: [
+              {
+                command: "resume",
+                stage: "abel-implement",
+                change: projection.change,
+                requires: {
+                  deliveryRevision: { greaterThan: currentRevision },
+                  receiptHash: "matching-ready-receipt",
+                },
+              },
+            ],
+          }
+        : {}),
       tasks: rows.map((row) => ({
         taskId: row.task_id,
         state: row.state,
@@ -6499,6 +6725,59 @@ export class WorkflowEngine {
               },
             }
           : {}),
+    };
+  }
+
+  async #withAvailableDelivery(
+    outcome: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (
+      outcome.stage !== "abel-implement" ||
+      outcome.state !== "approval-needed" ||
+      typeof outcome.change !== "string" ||
+      !this.#deliverySource.discoverLatest
+    ) {
+      return outcome;
+    }
+    let available: WorkflowAvailableDelivery | undefined;
+    try {
+      available = await this.#deliverySource.discoverLatest({
+        stage: "abel-implement",
+        change: outcome.change,
+      });
+    } catch {
+      return outcome;
+    }
+    const currentRevision =
+      typeof outcome.deliveryRevision === "number"
+        ? outcome.deliveryRevision
+        : 0;
+    if (
+      !available ||
+      !Number.isSafeInteger(available.deliveryRevision) ||
+      available.deliveryRevision <= currentRevision ||
+      !SHA256.test(available.receiptHash)
+    ) {
+      return outcome;
+    }
+    const conditionalCommands = Array.isArray(outcome.conditionalCommands)
+      ? outcome.conditionalCommands.map((entry) =>
+          isRecord(entry) && entry.command === "resume"
+            ? {
+                ...entry,
+                satisfiedBy: {
+                  deliveryRevision: available.deliveryRevision,
+                  receiptHash: available.receiptHash,
+                },
+              }
+            : entry,
+        )
+      : outcome.conditionalCommands;
+    return {
+      ...outcome,
+      legalCommands: ["status", "resume", "discard"],
+      availableDelivery: structuredClone(available),
+      ...(conditionalCommands === undefined ? {} : { conditionalCommands }),
     };
   }
 
@@ -6644,6 +6923,40 @@ export class WorkflowEngine {
       existingRun !== requestedProvisionalRun
     ) {
       throw new Error("provisional-design-run-conflict");
+    }
+    if (
+      existingRun &&
+      command.stage === "abel-design" &&
+      ["completed", "discarded", "rejected"].includes(
+        this.#runStore.status(existingRun).state,
+      )
+    ) {
+      const restarted = this.#runStore.startRun({
+        stage: command.stage,
+        change: command.change,
+        operationId: command.operationId,
+      });
+      existingRun = restarted.runId;
+      this.#ensureEngineRun(existingRun);
+      const begun = this.#beginOperation(
+        existingRun,
+        command.operationId,
+        command.command,
+      );
+      if (begun) return begun;
+      const lease = this.#operationLease(existingRun, command.operationId);
+      this.#transition(
+        existingRun,
+        "paused",
+        `${command.operationId}:awaiting-design-evidence`,
+        "design-awaiting-evidence",
+        lease,
+      );
+      return this.#commitOperation(
+        existingRun,
+        command.operationId,
+        this.#statusByRun(existingRun),
+      );
     }
     if (existingRun) {
       this.#ensureEngineRun(existingRun);
@@ -6830,15 +7143,13 @@ export class WorkflowEngine {
         projectedRevision !== undefined && projectedRevision !== engineRevision;
       if (
         current.state === "approval-needed" &&
-        command.deliveryRevision === undefined &&
-        engineRevision !== null &&
-        !deliveryOutOfSync
+        (command.deliveryRevision === undefined ||
+          command.receiptHash === undefined ||
+          command.deliveryRevision <=
+            (engineRevision ?? projectedRevision ?? 0))
       ) {
-        return this.#commitOperation(
-          runId,
-          command.operationId,
-          this.#statusByRun(runId),
-        );
+        this.#interruptOperation(runId, command.operationId);
+        throw new Error("approval-receipt-required");
       }
       if (
         command.deliveryRevision !== undefined ||
@@ -6922,12 +7233,12 @@ export class WorkflowEngine {
     if (replay) return replay;
     const lease = this.#operationLease(runId, command.operationId);
     const state = this.#runStore.status(runId).state;
-    if (!["paused", "retryable", "approval-needed"].includes(state)) {
+    if (!["paused", "retryable"].includes(state)) {
       this.#interruptOperation(runId, command.operationId);
       throw new Error("rebind-not-allowed");
     }
     const task = this.#tasks(runId).find((row) =>
-      ["paused", "retryable", "approval-needed"].includes(row.state),
+      ["paused", "retryable"].includes(row.state),
     );
     if (!task) {
       this.#interruptOperation(runId, command.operationId);
@@ -7169,14 +7480,18 @@ export class WorkflowEngine {
     const command = assertControlCommand(value);
     switch (command.command) {
       case "start":
-        return this.#start(command, signal, onActivity);
+        return this.#withAvailableDelivery(
+          await this.#start(command, signal, onActivity),
+        );
       case "status": {
         const runId = this.#lookupRun(command.stage, command.change);
         if (!runId) throw new Error("run-not-found");
-        return this.#statusByRun(runId);
+        return this.#withAvailableDelivery(this.#statusByRun(runId));
       }
       case "resume":
-        return this.#resume(command, signal, onActivity);
+        return this.#withAvailableDelivery(
+          await this.#resume(command, signal, onActivity),
+        );
       case "rebind":
         return this.#rebind(command);
       case "cancel":

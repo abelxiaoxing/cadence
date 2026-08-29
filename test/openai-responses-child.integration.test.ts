@@ -327,9 +327,10 @@ function responseEvents(argumentsJson: string): string {
     .join("")}data: [DONE]\n\n`;
 }
 
-function request(id: string) {
+function request(id: string, runId: string) {
   return {
     stage: "abel-design",
+    runId,
     role: "design-explorer",
     id,
     phase: "evidence",
@@ -347,6 +348,41 @@ function request(id: string) {
     },
     output: "evidence",
   };
+}
+
+function designRunIdFromContext(context: Context): string {
+  const messages = Array.isArray(context.messages) ? context.messages : [];
+  for (const message of [...messages].reverse()) {
+    const record = message as unknown as Record<string, unknown>;
+    if (
+      record.role !== "toolResult" ||
+      record.toolName !== "abel_dispatch" ||
+      !Array.isArray(record.content)
+    ) {
+      continue;
+    }
+    for (const part of record.content) {
+      if (
+        !part ||
+        typeof part !== "object" ||
+        Array.isArray(part) ||
+        Reflect.get(part, "type") !== "text" ||
+        typeof Reflect.get(part, "text") !== "string"
+      ) {
+        continue;
+      }
+      try {
+        const outcome = JSON.parse(Reflect.get(part, "text")) as Record<
+          string,
+          unknown
+        >;
+        if (typeof outcome.runId === "string") return outcome.runId;
+      } catch {
+        // A non-control text result cannot bind the Design packet.
+      }
+    }
+  }
+  throw new Error("Design start result is unavailable");
 }
 
 describe("installed openai-responses child route", () => {
@@ -379,17 +415,37 @@ describe("installed openai-responses child route", () => {
             ? { input: [{ role: "user", content: "bounded child" }] }
             : { instructions: "bounded parent", input: [] };
           await options?.onPayload?.(payload, requestModel);
-          const content = child
-            ? fauxToolCall("abel_submit_result", evidence(requestId), {
-                id: "submit-first-design-packet",
-              })
-            : parentTurn++ === 0
-              ? fauxToolCall(
-                  "abel_dispatch",
-                  { action: "run", request: request(requestId) },
-                  { id: "dispatch-first-design-packet" },
-                )
-              : "parent completed";
+          let content: Parameters<typeof fauxAssistantMessage>[0];
+          if (child) {
+            content = fauxToolCall("abel_submit_result", evidence(requestId), {
+              id: "submit-first-design-packet",
+            });
+          } else if (parentTurn === 0) {
+            parentTurn += 1;
+            content = fauxToolCall(
+              "abel_dispatch",
+              {
+                version: 2,
+                command: "start",
+                stage: "abel-design",
+                provisionalKey: "a".repeat(64),
+                operationId: "start-responses-first-design",
+              },
+              { id: "start-first-design" },
+            );
+          } else if (parentTurn === 1) {
+            parentTurn += 1;
+            content = fauxToolCall(
+              "abel_dispatch",
+              {
+                action: "run",
+                request: request(requestId, designRunIdFromContext(context)),
+              },
+              { id: "dispatch-first-design-packet" },
+            );
+          } else {
+            content = "parent completed";
+          }
           const stopReason = typeof content === "string" ? "stop" : "toolUse";
           const message: AssistantMessage = {
             ...fauxAssistantMessage(content, {
@@ -641,9 +697,28 @@ describe("installed openai-responses child route", () => {
       (candidate) => candidate.name === "abel_dispatch",
     );
     expect(tool).toBeDefined();
+    const started = await tool!.execute(
+      "responses-design-start",
+      {
+        version: 2,
+        command: "start",
+        stage: "abel-design",
+        change: "responses-child",
+        operationId: "start-responses-child",
+      },
+      undefined,
+      undefined,
+      context,
+    );
+    const runId = Reflect.get(
+      (started.details ?? {}) as Record<string, unknown>,
+      "runId",
+    );
+    expect(runId).toEqual(expect.any(String));
+    if (typeof runId !== "string") throw new Error("Design run did not start");
     const rendered = await tool!.execute(
       "responses-dispatch",
-      { action: "run", request: request(requestId) },
+      { action: "run", request: request(requestId, runId) },
       undefined,
       undefined,
       context,

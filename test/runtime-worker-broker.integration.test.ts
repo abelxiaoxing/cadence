@@ -28,12 +28,16 @@ import {
   compileReadyReceipt,
   DeliveryValidationError,
   type ImplementPlan,
+  parseGateAReceipt,
+  parseReadyReceipt,
 } from "../src/delivery-compiler.ts";
+import { DesignJournal } from "../src/design-journal.ts";
 import {
   runtimeForProvider,
   runtimeForWorkerRoute,
 } from "../src/parent-provider.ts";
 import { parseRoutePolicy } from "../src/route-policy.ts";
+import { RunStore } from "../src/run-store.ts";
 import { resolveStateRoot } from "../src/state-root.ts";
 import { RunWorkerBroker } from "../src/worker-broker.ts";
 import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
@@ -290,6 +294,11 @@ function writeTrustedDeliveryFixture(input: {
   const gateA = compileGateAReceipt({
     change: input.change,
     schema: "spec-driven",
+    approval: {
+      revision: 1,
+      contractHash: "a".repeat(64),
+      recordHash: "b".repeat(64),
+    },
     artifacts: bindings.filter((binding) =>
       ["proposal.md", specRelative].includes(binding.path),
     ),
@@ -319,6 +328,11 @@ function writeTrustedDeliveryFixture(input: {
     schema: "spec-driven",
     deliveryRevision: 1,
     gateA: { rawSha256: gateA.rawSha256 },
+    gateB: {
+      revision: 1,
+      contractHash: compiled.planHash,
+      recordHash: "c".repeat(64),
+    },
     artifacts: bindings,
     compiledPlan: compiled,
     traceability: traceability.value,
@@ -336,6 +350,96 @@ function writeTrustedDeliveryFixture(input: {
       artifactPaths: bindings.map((binding) => binding.path).sort(),
     }),
   };
+}
+
+function bindTrustedDeliveryProofs(input: {
+  consumerRoot: string;
+  stateBase: string;
+  change: string;
+  trusted: ReturnType<typeof writeTrustedDeliveryFixture>;
+}) {
+  const stateRoot = resolveStateRoot({
+    consumerRoot: input.consumerRoot,
+    xdgStateHome: input.stateBase,
+  });
+  const runs = RunStore.open(stateRoot);
+  const run = runs.startRun({
+    stage: "abel-design",
+    change: input.change,
+    operationId: "fixture-design-start",
+  });
+  runs.transition({
+    runId: run.runId,
+    to: "paused",
+    operationId: "fixture-design-paused",
+  });
+  const journal = DesignJournal.open(stateRoot);
+  journal.recordDecision({
+    runId: run.runId,
+    operationId: "fixture-behavior",
+    decisionId: "fixture-contract",
+    category: "behavior",
+    contractHash: "a".repeat(64),
+    refs: ["proposal.md"],
+  });
+  const gateA = journal.approveGate({
+    runId: run.runId,
+    operationId: "fixture-gate-a",
+    gate: "gate-a",
+    contractHash: "a".repeat(64),
+  });
+  journal.recordCompiledPlan({
+    runId: run.runId,
+    operationId: "fixture-plan",
+    bytes: input.trusted.compiled.bytes,
+    rawSha256: input.trusted.compiled.rawSha256,
+    canonicalHash: input.trusted.compiled.planHash,
+  });
+  const gateB = journal.approveGate({
+    runId: run.runId,
+    operationId: "fixture-gate-b",
+    gate: "gate-b",
+    contractHash: input.trusted.compiled.planHash,
+  });
+  const gateAPath = path.join(input.trusted.changeRoot, "gate-a.yaml");
+  const readyPath = path.join(input.trusted.changeRoot, "ready.yaml");
+  const priorGateA = parseGateAReceipt(readFileSync(gateAPath));
+  const priorReady = parseReadyReceipt(readFileSync(readyPath));
+  const nextGateA = compileGateAReceipt({
+    change: input.change,
+    schema: priorGateA.schema,
+    approval: gateA.proof,
+    artifacts: priorGateA.artifacts,
+  });
+  const nextReady = compileReadyReceipt({
+    change: input.change,
+    schema: priorReady.schema,
+    deliveryRevision: priorReady.deliveryRevision,
+    gateA: { rawSha256: nextGateA.rawSha256 },
+    gateB: gateB.proof,
+    artifacts: priorReady.artifacts,
+    compiledPlan: input.trusted.compiled,
+    traceability: priorReady.traceability,
+  });
+  writeFileSync(gateAPath, nextGateA.bytes);
+  writeFileSync(readyPath, nextReady.bytes);
+  const lease = journal.acquireFinalizationLease({
+    runId: run.runId,
+    operationId: "fixture-finalization",
+  });
+  journal.recordFinalization({
+    runId: run.runId,
+    operationId: "fixture-finalization",
+    lease,
+    deliveryRevision: 1,
+    receiptHash: nextReady.rawSha256,
+    gateA: gateA.proof,
+    gateB: gateB.proof,
+    planCanonicalHash: input.trusted.compiled.planHash,
+  });
+  journal.releaseFinalizationLease(lease);
+  journal.close();
+  runs.close();
 }
 
 describe("run-bound Worker attempts", () => {
@@ -735,6 +839,8 @@ describe("durable WorkflowEngine service composition", () => {
 
     const delivery = await packageDeliverySource?.(consumerRoot, {
       inspectOpenSpec: trusted.inspectOpenSpec,
+      verifyGateProof: () => true,
+      verifyFinalizedDelivery: () => true,
     }).load({ stage: "abel-implement", change });
     expect(delivery).toMatchObject({
       version: 2,
@@ -742,6 +848,59 @@ describe("durable WorkflowEngine service composition", () => {
       revision: 1,
       receiptHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
       plan: trusted.compiled.plan,
+    });
+  });
+
+  it("aggregates private proof verifier failures as delivery diagnostics", async () => {
+    const module = (await import("../src/index.ts")) as Record<string, unknown>;
+    const packageDeliverySource = module.packageDeliverySource as (
+      consumerRoot: string,
+      options?: Record<string, unknown>,
+    ) => {
+      load(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+    };
+    const consumerRoot = mkdtempSync(
+      path.join(tmpdir(), "cadence-proof-verifier-failure-consumer-"),
+    );
+    roots.push(consumerRoot);
+    const change = "proof-verifier-failure";
+    mkdirSync(path.join(consumerRoot, "test"), { recursive: true });
+    mkdirSync(path.join(consumerRoot, "node_modules/.bin"), {
+      recursive: true,
+    });
+    writeFileSync(
+      path.join(consumerRoot, "package.json"),
+      `${JSON.stringify({ scripts: { "test:target": "vitest run" } })}\n`,
+    );
+    writeFileSync(
+      path.join(consumerRoot, "test/fixture.test.ts"),
+      "export {};\n",
+    );
+    writeFileSync(
+      path.join(consumerRoot, "node_modules/.bin/vitest"),
+      "#!/bin/sh\n",
+    );
+    chmodSync(path.join(consumerRoot, "node_modules/.bin/vitest"), 0o755);
+    writeFileSync(path.join(consumerRoot, "value.txt"), "base\n");
+    const trusted = writeTrustedDeliveryFixture({ consumerRoot, change });
+    const source = packageDeliverySource(consumerRoot, {
+      inspectOpenSpec: trusted.inspectOpenSpec,
+      verifyGateProof: () => {
+        throw new Error("private-gate-store-corrupt");
+      },
+      verifyFinalizedDelivery: () => {
+        throw new Error("private-finalization-store-corrupt");
+      },
+    });
+
+    await expect(
+      source.load({ stage: "abel-implement", change }),
+    ).rejects.toMatchObject({
+      diagnostics: expect.arrayContaining([
+        "delivery-gate-a-proof-invalid",
+        "delivery-gate-b-proof-invalid",
+        "delivery-finalization-proof-invalid",
+      ]),
     });
   });
 
@@ -787,6 +946,8 @@ describe("durable WorkflowEngine service composition", () => {
     );
     const source = packageDeliverySource(consumerRoot, {
       inspectOpenSpec: trusted.inspectOpenSpec,
+      verifyGateProof: () => true,
+      verifyFinalizedDelivery: () => true,
     });
     await expect(
       source.load({ stage: "abel-implement", change }),
@@ -845,6 +1006,8 @@ describe("durable WorkflowEngine service composition", () => {
       "# Proposal\n\nChanged after approval.\n",
     );
     const source = packageDeliverySource(consumerRoot, {
+      verifyGateProof: () => true,
+      verifyFinalizedDelivery: () => true,
       inspectOpenSpec: async () => ({
         change,
         schema: "spec-driven",
@@ -969,6 +1132,12 @@ describe("durable WorkflowEngine service composition", () => {
     chmodSync(path.join(consumerRoot, "node_modules/.bin/vitest"), 0o755);
     writeFileSync(path.join(consumerRoot, "value.txt"), "base\n");
     const trusted = writeTrustedDeliveryFixture({ consumerRoot, change });
+    bindTrustedDeliveryProofs({
+      consumerRoot,
+      stateBase,
+      change,
+      trusted,
+    });
     const roles = [
       "design-explorer",
       "contract-reviewer",
@@ -1901,15 +2070,14 @@ describe("durable WorkflowEngine service composition", () => {
           throw new Error("rejected phase must not verify the change");
         },
       });
-      await expect(
-        engine.execute({
-          version: 2,
-          command: "start",
-          stage: "abel-implement",
-          change,
-          operationId: `candidate-start-${fixture.label}`,
-        }),
-      ).resolves.toMatchObject({
+      const started = await engine.execute({
+        version: 2,
+        command: "start",
+        stage: "abel-implement",
+        change,
+        operationId: `candidate-start-${fixture.label}`,
+      });
+      expect(started).toMatchObject({
         state: fixture.expectedRunState,
         completed: false,
         pause: { code: fixture.expectedCode },
@@ -1935,6 +2103,44 @@ describe("durable WorkflowEngine service composition", () => {
         ).dependencies,
       ).toBeUndefined();
       if (fixture.expectedTaskState === "approval-needed") {
+        expect(started).toMatchObject({
+          legalCommands: ["status", "discard"],
+          approval: {
+            category: "dependency",
+            requiredGates: ["gate-b"],
+            refs: [],
+            designRequest: `/abel-design --change ${change}`,
+            retainedRun: {
+              runId: expect.any(String),
+              deliveryRevision: 1,
+            },
+            receiptPrecondition: {
+              deliveryRevision: { greaterThan: 1 },
+              receiptHash: "matching-ready-receipt",
+            },
+          },
+          conditionalCommands: [
+            {
+              command: "resume",
+              stage: "abel-implement",
+              change,
+              requires: {
+                deliveryRevision: { greaterThan: 1 },
+                receiptHash: "matching-ready-receipt",
+              },
+            },
+          ],
+        });
+        await expect(
+          engine.execute({
+            version: 2,
+            command: "rebind",
+            stage: "abel-implement",
+            change,
+            operationId: `candidate-rebind-${fixture.label}`,
+            routeId: "primary",
+          }),
+        ).rejects.toThrow(/rebind-not-allowed/u);
         await expect(
           engine.execute({
             version: 2,
@@ -1943,11 +2149,7 @@ describe("durable WorkflowEngine service composition", () => {
             change,
             operationId: `candidate-resume-${fixture.label}`,
           }),
-        ).resolves.toMatchObject({
-          state: "approval-needed",
-          completed: false,
-          pause: { code: fixture.expectedCode },
-        });
+        ).rejects.toThrow(/approval-receipt-required/u);
         expect(proposalCalls).toBe(1);
         await engine.close();
         return;
@@ -4658,7 +4860,7 @@ describe("durable verification lifecycle", () => {
     await engine.close();
   });
 
-  it("classifies an out-of-bound repair as approval-needed without Design routing", async () => {
+  it("classifies an out-of-bound repair as an explicit user-owned Design revision", async () => {
     const module = await import("../src/workflow-engine.ts");
     const fixture = lifecycleFixture("repair-boundary");
     const outsidePatch = Buffer.from(
@@ -4735,10 +4937,19 @@ describe("durable verification lifecycle", () => {
       state: "approval-needed",
       completed: false,
       pause: { code: "repair-boundary-expansion" },
+      legalCommands: ["status", "discard"],
+      approval: {
+        category: "path-boundary",
+        requiredGates: ["gate-b"],
+        refs: [],
+        designRequest: `/abel-design --change ${fixture.change}`,
+        receiptPrecondition: {
+          deliveryRevision: { greaterThan: 1 },
+          receiptHash: "matching-ready-receipt",
+        },
+      },
     });
-    expect(JSON.stringify(approval)).not.toMatch(
-      /abel-design|return-to-design/u,
-    );
+    expect(JSON.stringify(approval)).not.toMatch(/return-to-design/u);
     expect(
       readFileSync(path.join(fixture.consumerRoot, "value.txt"), "utf8"),
     ).toBe("base\n");

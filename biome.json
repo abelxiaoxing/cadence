@@ -65,9 +65,7 @@
       }
     },
     {
-      "includes": [
-        "openspec/changes/redesign-abel-workflow-control-plane/implement-plan.json"
-      ],
+      "includes": ["openspec/changes/**/implement-plan.json"],
       "formatter": {
         "enabled": false
       },

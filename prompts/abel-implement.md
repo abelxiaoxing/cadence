@@ -55,6 +55,11 @@ The engine revalidates retained phase/repair facts, invalidates only incompatibl
 Repeating the same operation id returns its committed outcome.
 Use a new operation id for a new attempt.
 
+For an approval-needed retained run, a later explicit Implement invocation must inspect local `status`.
+When a newer owner-private-proof-bound receipt is present, status exposes its exact pair in `availableDelivery`, adds `resume` to `legalCommands`, and fills the matching `conditionalCommands` arguments.
+Resume with that discovered pair; do not require the user to copy revision or hash data from a prior Design conversation.
+Discovery never admits the delivery: `resume` still performs the full artifact, traceability, capability, and currentness validation before any Worker starts.
+
 ## Execution and verification
 
 Before any candidate, the engine records target-contract, task-affected, and full-suite baselines with normalized failure identities.
@@ -98,9 +103,14 @@ No item above carries stage-routing metadata or asks the user to restart the app
 
 Use `approval-needed` only when continuing requires authority not present in the sealed delivery: new observable behavior, architecture or policy; a new/changed dependency; an undeclared write/delete/read target; expanded conflict/resource authority; a changed verification contract; an AGENTS target/impact/managed block change; or another irreversible scope decision.
 
+Classify only codes in the closed authority table.
+An unknown Worker, verifier, or internal approval code is an `approval-code-invalid` integrity pause; never guess a category or Gate from keywords.
+
 Report the exact missing authority and retained run state.
 Do not discard compatible work.
-If the user supplies a newly approved receipt revision, resume that same run with the revision/hash pair.
+Expose `approval.category`, `approval.requiredGates`, safe `approval.refs`, and `approval.designRequest` as `/abel-design --change <change>` user guidance only; never invoke Design automatically.
+Bare `resume` is not immediately executable progress while approval is missing, so keep it out of `legalCommands` and expose it only in `conditionalCommands` with a `deliveryRevision` greater than the retained revision and the matching `receiptHash` precondition.
+If the user supplies that newly approved receipt revision, resume the same run with the revision/hash pair.
 A generated artifact defect, endpoint outage, stale snapshot, environment failure, pre-existing failure, introduced in-boundary repair, approved documentation/test edit, or approved AGENTS checkpoint is never `approval-needed`.
 
 ## AGENTS and tracking
@@ -118,6 +128,7 @@ Treat `queued`, `connecting`, `waiting-first-response`, `running`, `validating`,
 `operation-cancelled` ends only the current operation; `discarded` and `rejected` are non-success terminal run states.
 Tool-call settlement is not success.
 Report success only when the durable state is `completed`, final application and post-apply verification committed, and private run content was cleaned.
+Terminal `completed`, `discarded`, or `rejected` settlement deactivates private dispatch; a nonterminal pause or approval wait keeps it active for direct follow-up.
 
 On a nonterminal result, report the safe code, affected task/scope when present, retained progress, and the exact legal command that continues or inspects the same run.
 Never hide an incomplete run behind a success checkmark.

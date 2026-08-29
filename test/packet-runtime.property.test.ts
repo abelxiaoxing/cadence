@@ -36,6 +36,7 @@ function packet(
   const design = stage === "abel-design";
   return {
     stage,
+    ...(design ? { runId: "design-run" } : {}),
     role: design ? "design-explorer" : "diagnosis-worker",
     id,
     phase: design ? "evidence" : "red",

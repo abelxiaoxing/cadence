@@ -31,6 +31,7 @@ import { loadAgentDefinitions } from "./agent-registry.ts";
 import { runChildSession } from "./child-session.ts";
 import {
   type AtomicVerificationContract,
+  type DesignEvidenceResult,
   isValidRelativePath,
   LIMITS,
   type StructuredVerificationContract,
@@ -41,11 +42,16 @@ import {
   assessDeliveryTraceability,
   compileImplementPlan,
   DeliveryValidationError,
+  type GateApprovalProof,
   IMPLEMENT_PLAN_SCHEMA_VERSION,
   parseGateAReceipt,
   parseImplementPlan,
   parseReadyReceipt,
 } from "./delivery-compiler.ts";
+import {
+  DesignController,
+  validateDesignControlRequest,
+} from "./design-control.ts";
 import { canonicalJson, hashCanonicalValue } from "./implement-graph.ts";
 import { BubblewrapIsolationBackend } from "./isolation-backend.ts";
 import { PACKET_ACTIONS, PacketRuntime } from "./packet-runtime.ts";
@@ -75,10 +81,12 @@ import {
 } from "./verification-capability.ts";
 import {
   openDurableWorkflowEngine,
+  type WorkflowAvailableDelivery,
   type WorkflowDeliverySource,
 } from "./workflow-engine.ts";
 
 export const DISPATCH_TOOL = "abel_dispatch";
+const DESIGN_PARENT_READ_TOOLS = new Set(["read", "grep", "find", "ls"]);
 
 const PACKAGE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const ELIGIBLE_PROMPTS = [
@@ -108,6 +116,10 @@ const DESIGN_REQUEST_SCHEMA = {
       type: "string",
       enum: ["design-explorer"],
       description: "Exact package-owned read-only Agent role.",
+    },
+    runId: {
+      type: "string",
+      description: "Durable Design run identity returned by Design start.",
     },
     id: {
       type: "string",
@@ -182,6 +194,7 @@ const DESIGN_REQUEST_SCHEMA = {
   required: [
     "stage",
     "role",
+    "runId",
     "id",
     "phase",
     "objective",
@@ -191,6 +204,90 @@ const DESIGN_REQUEST_SCHEMA = {
     "output",
   ],
   additionalProperties: false,
+} as const;
+
+const DESIGN_CONTROL_REQUEST_SCHEMA = {
+  description:
+    "One closed durable Design control operation. The operation body is strict and idempotent by operationId.",
+  oneOf: [
+    {
+      type: "object",
+      properties: {
+        operation: { type: "string", enum: ["record-decision"] },
+        runId: { type: "string" },
+        operationId: { type: "string" },
+        decisionId: { type: "string" },
+        category: { type: "string", enum: ["behavior", "technical"] },
+        contractHash: { type: "string" },
+        refs: { type: "array", items: { type: "string" } },
+      },
+      required: [
+        "operation",
+        "runId",
+        "operationId",
+        "decisionId",
+        "category",
+        "contractHash",
+        "refs",
+      ],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: {
+        operation: { type: "string", enum: ["approve-gate"] },
+        runId: { type: "string" },
+        operationId: { type: "string" },
+        gate: { type: "string", enum: ["gate-a", "gate-b"] },
+        contractHash: { type: "string" },
+      },
+      required: ["operation", "runId", "operationId", "gate", "contractHash"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: {
+        operation: { type: "string", enum: ["write-artifact"] },
+        runId: { type: "string" },
+        operationId: { type: "string" },
+        path: {
+          type: "string",
+          description: "Allowed path relative to this Design change root.",
+        },
+        content: {
+          type: "string",
+          maxLength: 16 * 1024 * 1024,
+          description: "Exact bounded UTF-8 artifact content.",
+        },
+      },
+      required: ["operation", "runId", "operationId", "path", "content"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: {
+        operation: { type: "string", enum: ["delete-artifact"] },
+        runId: { type: "string" },
+        operationId: { type: "string" },
+        path: {
+          type: "string",
+          description: "Allowed path relative to this Design change root.",
+        },
+      },
+      required: ["operation", "runId", "operationId", "path"],
+      additionalProperties: false,
+    },
+    ...(["compile-plan", "finalize-delivery"] as const).map((operation) => ({
+      type: "object" as const,
+      properties: {
+        operation: { type: "string" as const, enum: [operation] },
+        runId: { type: "string" as const },
+        operationId: { type: "string" as const },
+      },
+      required: ["operation", "runId", "operationId"],
+      additionalProperties: false,
+    })),
+  ],
 } as const;
 
 function invokedPrompt(text: string): EligiblePrompt | undefined {
@@ -273,6 +370,12 @@ export interface WorkflowControlEngine {
     signal?: AbortSignal,
     onActivity?: (event: WorkflowActivityUpdate) => void,
   ): Promise<Record<string, unknown>>;
+  executeDesign?(request: unknown): Promise<Record<string, unknown>>;
+  assertDesignRun?(runId: string): void;
+  recordDesignEvidence?(input: {
+    runId: string;
+    evidence: DesignEvidenceResult;
+  }): unknown;
   close(): void | Promise<void>;
 }
 
@@ -297,10 +400,38 @@ export interface PackageDeliverySourceOptions {
     consumerRoot: string,
     change: string,
   ) => Promise<OpenSpecDeliveryInspection>;
+  verifyGateProof?: (input: {
+    change: string;
+    gate: "gate-a" | "gate-b";
+    proof: GateApprovalProof;
+  }) => boolean;
+  verifyFinalizedDelivery?: (input: {
+    change: string;
+    deliveryRevision: number;
+    receiptHash: string;
+    gateA: GateApprovalProof;
+    gateB: GateApprovalProof;
+    planCanonicalHash: string;
+  }) => boolean;
+}
+
+export interface PackageWorkflowDeliverySource extends WorkflowDeliverySource {
+  discoverLatest(input: {
+    stage: "abel-design" | "abel-implement";
+    change: string;
+  }): Promise<WorkflowAvailableDelivery | undefined>;
 }
 
 function sha256(value: Uint8Array | string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function proofVerified(verify: () => boolean): boolean {
+  try {
+    return verify() === true;
+  } catch {
+    return false;
+  }
 }
 
 function normalizedTrackingArtifact(
@@ -449,9 +580,80 @@ export async function inspectOpenSpecDelivery(
 export function packageDeliverySource(
   consumerRoot: string,
   options: PackageDeliverySourceOptions = {},
-): WorkflowDeliverySource {
+): PackageWorkflowDeliverySource {
   const inspect = options.inspectOpenSpec ?? inspectOpenSpecDelivery;
+  const verifyGateProof = options.verifyGateProof;
+  const verifyFinalizedDelivery = options.verifyFinalizedDelivery;
   return {
+    async discoverLatest(input) {
+      if (
+        input.stage !== "abel-implement" ||
+        !verifyGateProof ||
+        !verifyFinalizedDelivery
+      ) {
+        return undefined;
+      }
+      try {
+        const changeRoot = `openspec/changes/${input.change}`;
+        const receiptBytes = readPackageDeliveryFile(
+          consumerRoot,
+          `${changeRoot}/ready.yaml`,
+          4 * 1024 * 1024,
+        );
+        const receipt = parseReadyReceipt(receiptBytes);
+        if (receipt.change !== input.change) return undefined;
+        const gateABytes = readPackageDeliveryFile(
+          consumerRoot,
+          `${changeRoot}/${receipt.approvals.gateA.path}`,
+          4 * 1024 * 1024,
+        );
+        if (sha256(gateABytes) !== receipt.approvals.gateA.rawSha256) {
+          return undefined;
+        }
+        const gateA = parseGateAReceipt(gateABytes);
+        if (
+          gateA.change !== receipt.change ||
+          gateA.schema !== receipt.schema ||
+          !proofVerified(() =>
+            verifyGateProof({
+              change: input.change,
+              gate: "gate-a",
+              proof: gateA.approval,
+            }),
+          ) ||
+          !proofVerified(() =>
+            verifyGateProof({
+              change: input.change,
+              gate: "gate-b",
+              proof: receipt.approvals.gateB,
+            }),
+          )
+        ) {
+          return undefined;
+        }
+        const receiptHash = sha256(receiptBytes);
+        if (
+          !proofVerified(() =>
+            verifyFinalizedDelivery({
+              change: input.change,
+              deliveryRevision: receipt.deliveryRevision,
+              receiptHash,
+              gateA: gateA.approval,
+              gateB: receipt.approvals.gateB,
+              planCanonicalHash: receipt.plan.canonicalHash,
+            }),
+          )
+        ) {
+          return undefined;
+        }
+        return {
+          deliveryRevision: receipt.deliveryRevision,
+          receiptHash,
+        };
+      } catch {
+        return undefined;
+      }
+    },
     async load(input) {
       if (input.stage !== "abel-implement") {
         throw new DeliveryValidationError(["delivery-stage-invalid"]);
@@ -567,12 +769,55 @@ export function packageDeliverySource(
         }
       }
       if (gateA) {
+        if (!verifyGateProof) {
+          diagnostics.add("delivery-gate-proof-verifier-unavailable");
+        } else if (
+          !proofVerified(() =>
+            verifyGateProof({
+              change: input.change,
+              gate: "gate-a",
+              proof: gateA.approval,
+            }),
+          )
+        ) {
+          diagnostics.add("delivery-gate-a-proof-invalid");
+        }
         for (const artifact of gateA.artifacts) {
           if (artifactHashes.get(artifact.path) !== artifact.rawSha256) {
             diagnostics.add(
               `delivery-gate-a-artifact-mismatch:${artifact.path}`,
             );
           }
+        }
+      }
+      if (
+        verifyGateProof &&
+        !proofVerified(() =>
+          verifyGateProof({
+            change: input.change,
+            gate: "gate-b",
+            proof: receipt.approvals.gateB,
+          }),
+        )
+      ) {
+        diagnostics.add("delivery-gate-b-proof-invalid");
+      }
+      if (gateA) {
+        if (!verifyFinalizedDelivery) {
+          diagnostics.add("delivery-finalization-verifier-unavailable");
+        } else if (
+          !proofVerified(() =>
+            verifyFinalizedDelivery({
+              change: input.change,
+              deliveryRevision: receipt.deliveryRevision,
+              receiptHash,
+              gateA: gateA.approval,
+              gateB: receipt.approvals.gateB,
+              planCanonicalHash: receipt.plan.canonicalHash,
+            }),
+          )
+        ) {
+          diagnostics.add("delivery-finalization-proof-invalid");
         }
       }
 
@@ -675,7 +920,7 @@ export function packageDeliverySource(
           }
         }
       }
-      if (!plan || diagnostics.size > 0) {
+      if (!plan || !gateA || diagnostics.size > 0) {
         throw new DeliveryValidationError([...diagnostics]);
       }
       return {
@@ -684,6 +929,10 @@ export function packageDeliverySource(
         revision: receipt.deliveryRevision,
         receiptHash,
         plan,
+        approvalProofs: {
+          gateA: structuredClone(gateA.approval),
+          gateB: structuredClone(receipt.approvals.gateB),
+        },
       };
     },
   };
@@ -1175,6 +1424,11 @@ export function openPackageWorkflowControlEngine(
     xdgStateHome: process.env.XDG_STATE_HOME,
   });
   const contexts = new AsyncLocalStorage<ExtensionContext>();
+  const design = DesignController.open({
+    consumerRoot,
+    stateRoot,
+    inspectOpenSpec: inspectOpenSpecDelivery,
+  });
   const implementationAgent = loadAgentDefinitions().find(
     (agent) => agent.role === "implementation-worker",
   );
@@ -1184,7 +1438,10 @@ export function openPackageWorkflowControlEngine(
   const engine = openDurableWorkflowEngine({
     consumerRoot,
     stateRoot,
-    deliverySource: packageDeliverySource(consumerRoot),
+    deliverySource: packageDeliverySource(consumerRoot, {
+      verifyGateProof: (input) => design.verifyGateProof(input),
+      verifyFinalizedDelivery: (input) => design.verifyFinalizedDelivery(input),
+    }),
     routePolicy: routeResolution.ok
       ? routeResolution.policy
       : unavailableRoutePolicy(),
@@ -1379,12 +1636,27 @@ export function openPackageWorkflowControlEngine(
           operationRouteResolution,
           engine.routePolicyStatus(),
         );
-        return { ...outcome, routePolicy };
+        const designStatus =
+          validation.value.stage === "abel-design" &&
+          typeof outcome.runId === "string"
+            ? { design: design.status(outcome.runId) }
+            : {};
+        return { ...outcome, ...designStatus, routePolicy };
       });
+    },
+    executeDesign(request: unknown) {
+      return design.execute(request);
+    },
+    assertDesignRun(runId: string) {
+      design.assertDesignRun(runId);
+    },
+    recordDesignEvidence(input) {
+      return design.recordEvidence(input);
     },
     async close() {
       contexts.disable();
       await engine.close();
+      design.close();
     },
   };
 }
@@ -1410,6 +1682,7 @@ export function registerWorkflowControl(
   const engines = new Map<string, Promise<WorkflowControlEngine>>();
   let pendingPrompt: EligiblePrompt | undefined;
   let activePrompt: EligiblePrompt | undefined;
+  let designToolSnapshot: string[] | undefined;
   const activation = new (class implements Activation {
     state: Activation["state"] = "inactive";
 
@@ -1460,12 +1733,41 @@ export function registerWorkflowControl(
       ),
     );
   };
+  const restoreDesignTools = () => {
+    if (!designToolSnapshot) return;
+    const snapshot = designToolSnapshot;
+    designToolSnapshot = undefined;
+    pi.setActiveTools([...snapshot]);
+  };
+  const enforceDesignTools = () => {
+    if (!designToolSnapshot) {
+      designToolSnapshot = pi
+        .getActiveTools()
+        .filter((name) => name !== DISPATCH_TOOL);
+    }
+    pi.setActiveTools(
+      activateTool(
+        designToolSnapshot.filter((name) => DESIGN_PARENT_READ_TOOLS.has(name)),
+        DISPATCH_TOOL,
+      ),
+    );
+  };
   const deactivate = () => {
     activation.drain();
+    if (designToolSnapshot) {
+      restoreDesignTools();
+      return;
+    }
     const active = pi.getActiveTools();
     if (active.includes(DISPATCH_TOOL)) {
       pi.setActiveTools(deactivateTool(active, DISPATCH_TOOL));
     }
+  };
+  const deactivateStage = async () => {
+    activePrompt = undefined;
+    await packetRuntime.drain();
+    deactivate();
+    parentPayloadBridge.clear();
   };
 
   pi.registerTool({
@@ -1492,9 +1794,13 @@ export function registerWorkflowControl(
         deliveryRevision: { type: "integer", minimum: 1 },
         receiptHash: { type: "string" },
         routeId: { type: "string" },
-        action: { type: "string", enum: [...PACKET_ACTIONS] },
+        action: { type: "string", enum: [...PACKET_ACTIONS, "design"] },
         request: {
-          anyOf: [DESIGN_REQUEST_SCHEMA, GENERIC_REQUEST_SCHEMA],
+          anyOf: [
+            DESIGN_REQUEST_SCHEMA,
+            DESIGN_CONTROL_REQUEST_SCHEMA,
+            GENERIC_REQUEST_SCHEMA,
+          ],
         },
       },
       additionalProperties: false,
@@ -1548,6 +1854,28 @@ export function registerWorkflowControl(
         ) {
           throw new Error("stage-control-mismatch");
         }
+        if (record.action === "design") {
+          if (activePrompt !== "abel-design") {
+            throw new Error("stage-control-mismatch");
+          }
+          const designRequest = validateDesignControlRequest(record.request);
+          if (!designRequest.ok) throw new Error(designRequest.code);
+          const engine = await engineFor(ctx);
+          if (!engine.executeDesign)
+            throw new Error("design-control-unavailable");
+          const payload = await engine.executeDesign(designRequest.value);
+          if (
+            designRequest.value.operation === "finalize-delivery" &&
+            payload.state === "completed"
+          ) {
+            await deactivateStage();
+          }
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+            details: payload,
+          };
+        }
+        let designEngine: WorkflowControlEngine | undefined;
         if (record.action === "run") {
           const packet = packetRuntime.validateRequest(record.request);
           if (!packet.ok || packet.value.stage !== activePrompt) {
@@ -1555,12 +1883,19 @@ export function registerWorkflowControl(
               packet.ok ? "stage-control-mismatch" : packet.reason,
             );
           }
+          if (packet.value.stage === "abel-design") {
+            designEngine = await engineFor(ctx);
+            if (!designEngine.assertDesignRun || !packet.value.runId) {
+              throw new Error("design-control-unavailable");
+            }
+            designEngine.assertDesignRun(packet.value.runId);
+          }
         }
         const operation = {
           request: record.request,
         };
         const tuiRun = ctx.mode === "tui" && record.action === "run";
-        const payload = tuiRun
+        const packetPayload = tuiRun
           ? await packetRuntime.execute(
               record.action,
               operation,
@@ -1572,6 +1907,33 @@ export function registerWorkflowControl(
               ),
             )
           : await packetRuntime.execute(record.action, operation, ctx, signal);
+        let payload:
+          | typeof packetPayload
+          | (typeof packetPayload & {
+              recordedEvidence: unknown;
+            }) = packetPayload;
+        if (
+          packetPayload.ok &&
+          record.action === "run" &&
+          activePrompt === "abel-design"
+        ) {
+          const packet = packetRuntime.validateRequest(record.request);
+          if (
+            !packet.ok ||
+            !packet.value.runId ||
+            !designEngine?.recordDesignEvidence
+          ) {
+            throw new Error("design-control-unavailable");
+          }
+          const recordedEvidence = designEngine.recordDesignEvidence({
+            runId: packet.value.runId,
+            evidence: packetPayload.result as DesignEvidenceResult,
+          });
+          payload = { ...packetPayload, recordedEvidence };
+        }
+        if (record.action === "finish" && packetPayload.ok) {
+          await deactivateStage();
+        }
         const display = tuiRun
           ? activity.finalize(toolCallId, payload)
           : undefined;
@@ -1636,6 +1998,11 @@ export function registerWorkflowControl(
         if (tuiControl) activity.failWorkflow(toolCallId);
         throw error;
       }
+      if (
+        ["completed", "discarded", "rejected"].includes(String(payload.state))
+      ) {
+        await deactivateStage();
+      }
       let display: ReturnType<typeof activity.finalizeWorkflow>;
       if (tuiControl) {
         try {
@@ -1687,6 +2054,9 @@ export function registerWorkflowControl(
     const verified =
       prompt && isVerifiedStageInvocation(pi, activation, prompt, event.prompt);
     if (verified) {
+      if (activePrompt === "abel-design" && prompt !== "abel-design") {
+        restoreDesignTools();
+      }
       activePrompt = prompt;
       const sessionId = ctx.sessionManager?.getSessionId?.();
       if (typeof sessionId === "string") {
@@ -1699,6 +2069,7 @@ export function registerWorkflowControl(
       parentPayloadBridge.install(ctx.model, ctx.modelRegistry);
     }
     if (prompt) activateDispatcher(pi, activation, prompt, event.prompt);
+    if (verified && prompt === "abel-design") enforceDesignTools();
   });
   pi.on("model_select", (event, ctx) => {
     const sessionId = ctx.sessionManager?.getSessionId?.();

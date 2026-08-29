@@ -51,4 +51,6 @@ Do not silently widen Diagnose and do not transform an ordinary repair failure i
 When an approved browser E2E check requires `dev-browser` and it is unavailable, pause only that check and provide executable remediation; continue independent non-browser evidence when safe.
 
 Finish only when reproduction, falsification, failing regression, minimum repair, affected verification, and baseline comparison are all evidenced.
+After presenting the final structural diagnosis/repair result, send `{"action":"finish"}` so private dispatch is deactivated.
+A resumable evidence or capability pause remains active for direct follow-up and must not send finish.
 Never archive, publish, or commit implicitly.
