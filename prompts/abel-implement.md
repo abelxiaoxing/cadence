@@ -37,15 +37,15 @@ A fresh context validates existing approval facts and does not ask the user to a
 
 ## Closed control surface
 
-Use `abel_dispatch` only with the versioned change commands below; never send `action: "run"`, `admit-graph`, `task-attempt`, caller-owned snapshots, completed/blocked arrays, or apply identities.
+Use `abel_dispatch` only with the change commands below; never send `version`; never send `action: "run"`; and never send `admit-graph`, `task-attempt`, caller-owned snapshots, completed/blocked arrays, or apply identities.
 
 ```json
-{"version":2,"command":"start","stage":"abel-implement","change":"<change>","operationId":"<unique-operation>"}
-{"version":2,"command":"status","stage":"abel-implement","change":"<change>"}
-{"version":2,"command":"resume","stage":"abel-implement","change":"<change>","operationId":"<unique-operation>"}
-{"version":2,"command":"rebind","stage":"abel-implement","change":"<change>","operationId":"<unique-operation>","routeId":"<approved-route>"}
-{"version":2,"command":"cancel","stage":"abel-implement","change":"<change>","operationId":"<unique-operation>"}
-{"version":2,"command":"discard","stage":"abel-implement","change":"<change>","operationId":"<unique-operation>"}
+{"command":"start","stage":"abel-implement","change":"<change>","operationId":"<unique-operation>"}
+{"command":"status","stage":"abel-implement","change":"<change>"}
+{"command":"resume","stage":"abel-implement","change":"<change>","operationId":"<unique-operation>"}
+{"command":"rebind","stage":"abel-implement","change":"<change>","operationId":"<unique-operation>","routeId":"<approved-route>"}
+{"command":"cancel","stage":"abel-implement","change":"<change>","operationId":"<unique-operation>"}
+{"command":"discard","stage":"abel-implement","change":"<change>","operationId":"<unique-operation>"}
 ```
 
 When the user approves a revised delivery boundary, resume the same run with both `deliveryRevision` and `receiptHash`.

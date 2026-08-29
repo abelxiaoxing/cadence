@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   bindCurrentVerificationCapability,
+  commonDirectory,
   isVerificationCapabilityCurrent,
   resolveVerificationRunner,
   validateVerificationAdapterCapability,
@@ -109,6 +110,23 @@ describe("cross-project verification capability", () => {
         fixedArgs: [fixture.npxCli],
       },
     );
+  });
+
+  it("does not duplicate a Windows drive while finding a common directory", () => {
+    expect(
+      commonDirectory(
+        "C:\\Program Files\\nodejs",
+        "c:\\Program Files\\nodejs\\node_modules\\npm",
+        "win32",
+      ),
+    ).toBe("C:\\Program Files\\nodejs");
+    expect(
+      commonDirectory(
+        "C:\\Program Files\\nodejs",
+        "D:\\Program Files\\nodejs",
+        "win32",
+      ),
+    ).toBe("C:\\");
   });
 
   it("rejects missing, directory, and unsupported Windows launcher candidates", () => {

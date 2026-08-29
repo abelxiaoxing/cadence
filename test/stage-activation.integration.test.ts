@@ -180,7 +180,6 @@ describe("semantic stage activation teardown", () => {
     );
     const item = harness("abel-implement", engine);
     const command = {
-      version: 2,
       command: "status",
       stage: "abel-implement",
       change: "activation-lifecycle",

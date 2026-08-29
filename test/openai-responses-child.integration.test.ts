@@ -425,7 +425,6 @@ describe("installed openai-responses child route", () => {
             content = fauxToolCall(
               "abel_dispatch",
               {
-                version: 2,
                 command: "start",
                 stage: "abel-design",
                 provisionalKey: "a".repeat(64),
@@ -700,7 +699,6 @@ describe("installed openai-responses child route", () => {
     const started = await tool!.execute(
       "responses-design-start",
       {
-        version: 2,
         command: "start",
         stage: "abel-design",
         change: "responses-child",

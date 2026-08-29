@@ -483,7 +483,6 @@ async function dispatch(harness: Harness, id: string): Promise<DispatchResult> {
     const started = await dispatchTool(harness).execute(
       `call-start-${id}`,
       {
-        version: 2,
         command: "start",
         stage: "abel-design",
         change: "payload-lifecycle",

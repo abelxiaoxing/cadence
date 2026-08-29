@@ -55,9 +55,9 @@ These commands record lifecycle only and do not execute implementation work.
 A completed Design run is immutable; an explicit later `--change <change>` starts the next durable Design revision for that change while preserving prior approval facts for receipt verification.
 
 ```json
-{"version":2,"command":"start","stage":"abel-design","provisionalKey":"<sha256>","operationId":"<unique-operation>"}
-{"version":2,"command":"start","stage":"abel-design","change":"<change>","provisionalKey":"<same-sha256>","operationId":"<unique-operation>"}
-{"version":2,"command":"status","stage":"abel-design","change":"<change>"}
+{"command":"start","stage":"abel-design","provisionalKey":"<sha256>","operationId":"<unique-operation>"}
+{"command":"start","stage":"abel-design","change":"<change>","provisionalKey":"<same-sha256>","operationId":"<unique-operation>"}
+{"command":"status","stage":"abel-design","change":"<change>"}
 ```
 
 ## Read-only evidence packets

@@ -3,12 +3,12 @@
 ## Purpose
 Provide a durable private control plane that makes Abel Design and Implement runs observable, resumable, idempotent, approval-bound, and transactionally complete without making Worker availability the owner of workflow progress.
 ## Requirements
-### Requirement: Versioned change-oriented run commands
+### Requirement: Change-oriented run commands
 
 The control plane SHALL assign every run one immutable identity that does not contain an approved delivery revision.
 For a named run, the stable lookup key SHALL be canonical project root, eligible Abel stage, and unique change name; a raw-requirement Design start SHALL receive a durable provisional identity and SHALL bind the Gate-A-approved change name to that same run rather than replacing it.
 Approved Gate A and Gate B delivery revisions SHALL be versioned bindings on the stable run, not run-identity components.
-Design and Implement callers SHALL operate on that run through versioned `start`, `status`, `resume`, `rebind`, `cancel`, and `discard` commands without supplying a canonical graph, graph hash, task boundary, file snapshot, launch identity, or apply identity.
+Design and Implement callers SHALL operate on that run through the default `start`, `status`, `resume`, `rebind`, `cancel`, and `discard` commands without supplying a protocol version, canonical graph, graph hash, task boundary, file snapshot, launch identity, or apply identity.
 The control plane SHALL derive and validate all mechanical identities from the canonical project, approved OpenSpec delivery, and durable run state.
 Every state-changing command SHALL be idempotent for the same operation identity, and a repeated command SHALL return the committed fact rather than duplicate work.
 `status` SHALL be served from local authoritative state without requiring a Worker, Provider, endpoint, or model request.
@@ -44,7 +44,7 @@ Every accepted Gate, plan revision, task transition, candidate decision, verific
 After process reload, session replacement, model replacement, or host restart, the control plane SHALL reconstruct the run from its journal and private change workspace, revalidate current receipts and workspace facts, and continue from the last valid committed checkpoint.
 Recovery SHALL NOT infer a completed task or phase solely from file existence, an unchecked diff, a child transcript, or a model claim.
 An operation that was active but not committed when execution stopped SHALL recover as interrupted and resumable rather than completed or terminally blocked.
-The v2 journal and delivery protocol SHALL reject v1 runtime records and v1 embedded-graph receipts without a dual-protocol compatibility path.
+The current journal and delivery format SHALL reject obsolete runtime records and embedded-graph receipts without a dual-protocol compatibility path.
 
 #### Scenario: Host restarts between phases
 
@@ -61,10 +61,10 @@ The v2 journal and delivery protocol SHALL reject v1 runtime records and v1 embe
 - **WHEN** journal integrity, delivery binding, or private workspace provenance cannot be revalidated
 - **THEN** the run pauses with a typed integrity reason, preserves evidence for inspection, changes no main-workspace file, and does not guess a completed state
 
-#### Scenario: A v1 delivery is supplied
+#### Scenario: An obsolete delivery is supplied
 
-- **WHEN** Implement receives a v1 embedded-graph receipt or an obsolete runtime protocol record
-- **THEN** the control plane rejects it with a versioned delivery error before creating or modifying a run and does not invoke a v1 compatibility adapter
+- **WHEN** Implement receives an embedded-graph receipt or an obsolete runtime protocol record
+- **THEN** the control plane rejects it with a delivery-format error before creating or modifying a run and does not invoke a compatibility adapter
 
 ### Requirement: Recoverable lifecycle classification
 

@@ -13,7 +13,7 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
-import register, { DISPATCH_TOOL } from "../src/index";
+import register, { DISPATCH_TOOL, registerWorkflowControl } from "../src/index";
 import { runtimeForProvider } from "../src/parent-provider";
 
 const packageDir = join(import.meta.dirname, "..");
@@ -167,10 +167,69 @@ describe("package Prompt provenance activates abel_dispatch", () => {
     expect(payload).toMatchObject({ parallel_tool_calls: true });
   });
 
-  it("publishes a discoverable strict Design request envelope", () => {
-    const tool = activePackageTool("abel-design") as {
-      parameters: Record<string, unknown>;
+  it("publishes a discoverable strict Design request envelope", async () => {
+    let tool: { parameters: Record<string, unknown> } | undefined;
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    let active: string[] = [];
+    const pi = {
+      registerTool(definition: unknown) {
+        tool = definition as { parameters: Record<string, unknown> };
+      },
+      on(name: string, handler: (...args: any[]) => unknown) {
+        handlers.set(name, handler);
+      },
+      getCommands: () => [
+        {
+          name: "abel-design",
+          source: "prompt",
+          sourceInfo: {
+            origin: "package",
+            baseDir: packageDir,
+            path: join(packageDir, "prompts", "abel-design.md"),
+          },
+        },
+      ],
+      getActiveTools: () => active,
+      setActiveTools(next: string[]) {
+        active = next;
+      },
     };
+    registerWorkflowControl(pi as never, () => ({
+      async execute() {
+        return { state: "ready", runId: "design-envelope-run" };
+      },
+      close() {},
+    }));
+    handlers.get("input")?.({ text: "/abel-design verified input" });
+    handlers.get("before_agent_start")?.(
+      {
+        prompt:
+          "<abel-request>verified input</abel-request> <!-- ABEL:PROMPT:abel-design -->",
+      },
+      {},
+    );
+    const commandTool = tool;
+    expect(commandTool?.parameters).toMatchObject({
+      required: ["command", "stage"],
+    });
+    expect(commandTool).toBeDefined();
+    const execute = (commandTool as any).execute as (
+      ...args: any[]
+    ) => Promise<unknown>;
+    await execute(
+      "design-start",
+      {
+        command: "start",
+        stage: "abel-design",
+        provisionalKey: "a".repeat(64),
+        operationId: "design-start-envelope",
+      },
+      undefined,
+      undefined,
+      {},
+    );
+    expect(tool).toBeDefined();
+    if (!tool) throw new Error("Design packet schema was not registered");
     const requestSchema = (
       tool.parameters.properties as Record<string, unknown>
     ).request;
@@ -231,13 +290,32 @@ describe("package Prompt provenance activates abel_dispatch", () => {
       ]),
     );
     expect(tool.parameters).toMatchObject({
+      required: ["action"],
       additionalProperties: false,
-      oneOf: [
-        { required: ["version", "command", "stage"] },
-        { required: ["action"] },
-      ],
     });
-    expect(tool.parameters).not.toHaveProperty("anyOf");
+    expect(
+      (tool.parameters.properties as Record<string, unknown> | undefined) ?? {},
+    ).not.toHaveProperty("command");
+    expect(tool.parameters).not.toHaveProperty("oneOf");
+  });
+
+  it("publishes only the default command surface during Implement", () => {
+    const tool = activePackageTool("abel-implement") as {
+      parameters: Record<string, any>;
+    };
+    expect(tool.parameters).toMatchObject({
+      required: ["command", "stage"],
+      additionalProperties: false,
+      properties: {
+        command: {
+          enum: ["start", "status", "resume", "rebind", "cancel", "discard"],
+        },
+        stage: { enum: ["abel-design", "abel-implement"] },
+      },
+    });
+    expect(tool.parameters.properties).not.toHaveProperty("version");
+    expect(tool.parameters.properties).not.toHaveProperty("action");
+    expect(tool.parameters).not.toHaveProperty("oneOf");
   });
 
   for (const name of ["abel-design", "abel-implement", "abel-diagnose"]) {
@@ -256,7 +334,12 @@ describe("package Prompt provenance activates abel_dispatch", () => {
   it("makes abel_dispatch callable on the eligible stage's first turn", async () => {
     const { session } = await promptSession([
       fauxAssistantMessage(
-        fauxToolCall("abel_dispatch", { action: "cancel" }),
+        fauxToolCall("abel_dispatch", {
+          command: "start",
+          stage: "abel-design",
+          provisionalKey: "a".repeat(64),
+          operationId: "first-design-start",
+        }),
         { stopReason: "toolUse" },
       ),
       fauxAssistantMessage("done"),
@@ -273,9 +356,7 @@ describe("package Prompt provenance activates abel_dispatch", () => {
       throw new Error("abel_dispatch did not execute");
     }
     expect(result.isError).toBe(false);
-    expect(result.content).toEqual([
-      { type: "text", text: '{"ok":true,"action":"cancel"}' },
-    ]);
+    expect(result.content).toEqual([expect.objectContaining({ type: "text" })]);
     session.dispose();
   });
 

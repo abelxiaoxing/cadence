@@ -166,17 +166,39 @@ function localExecutable(
   }
 }
 
+function pathApi(
+  platform: NodeJS.Platform,
+  ...values: readonly string[]
+): typeof path.posix {
+  if (platform !== "win32") return path.posix;
+  if (
+    process.platform === "win32" ||
+    values.some(
+      (value) => /^[a-z]:[\\/]/iu.test(value) || value.startsWith("\\\\"),
+    )
+  ) {
+    return path.win32;
+  }
+  // Tests may model Windows executable semantics over a POSIX fixture tree.
+  return path.posix;
+}
+
 function pathWithin(
   root: string,
   candidate: string,
   platform: NodeJS.Platform,
 ): boolean {
-  const normalizedRoot = platform === "win32" ? root.toLowerCase() : root;
-  const normalizedCandidate =
-    platform === "win32" ? candidate.toLowerCase() : candidate;
+  const platformPath = pathApi(platform, root, candidate);
+  const normalizedRoot = platformPath.resolve(root);
+  const relative = platformPath.relative(
+    normalizedRoot,
+    platformPath.resolve(candidate),
+  );
   return (
-    normalizedCandidate === normalizedRoot ||
-    normalizedCandidate.startsWith(`${normalizedRoot}${path.sep}`)
+    relative === "" ||
+    (relative !== ".." &&
+      !relative.startsWith(`..${platformPath.sep}`) &&
+      !platformPath.isAbsolute(relative))
   );
 }
 
@@ -261,13 +283,24 @@ function within(root: string, candidate: string): boolean {
   return candidate === root || candidate.startsWith(`${root}${path.sep}`);
 }
 
-function commonDirectory(
+export function commonDirectory(
   left: string,
   right: string,
   platform: NodeJS.Platform = process.platform,
 ): string {
-  const leftParts = path.resolve(left).split(path.sep).filter(Boolean);
-  const rightParts = path.resolve(right).split(path.sep).filter(Boolean);
+  const platformPath = pathApi(platform, left, right);
+  const leftResolved = platformPath.resolve(left);
+  const rightResolved = platformPath.resolve(right);
+  const leftRoot = platformPath.parse(leftResolved).root;
+  const rightRoot = platformPath.parse(rightResolved).root;
+  const comparable = (value: string) =>
+    platform === "win32" ? value.toLowerCase() : value;
+  if (comparable(leftRoot) !== comparable(rightRoot)) return leftRoot;
+
+  const parts = (value: string, root: string) =>
+    platformPath.relative(root, value).split(platformPath.sep).filter(Boolean);
+  const leftParts = parts(leftResolved, leftRoot);
+  const rightParts = parts(rightResolved, rightRoot);
   const common: string[] = [];
   for (
     let index = 0;
@@ -276,15 +309,10 @@ function commonDirectory(
   ) {
     const leftPart = leftParts[index] as string;
     const rightPart = rightParts[index] as string;
-    if (
-      (platform === "win32" ? leftPart.toLowerCase() : leftPart) !==
-      (platform === "win32" ? rightPart.toLowerCase() : rightPart)
-    ) {
-      break;
-    }
+    if (comparable(leftPart) !== comparable(rightPart)) break;
     common.push(leftPart);
   }
-  return path.join(path.parse(path.resolve(left)).root, ...common);
+  return platformPath.join(leftRoot, ...common);
 }
 
 function unsafeMountSource(source: string): boolean {

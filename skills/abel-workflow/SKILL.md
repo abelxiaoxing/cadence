@@ -105,7 +105,8 @@ Arbitrary shell, `&&`, path escape, and implicit downloads are forbidden.
 
 ## Durable control
 
-Implement accepts only `start`, `status`, `resume`, `rebind`, `cancel`, and `discard` with protocol version 2, stage, change, and operation identity where required.
+Implement accepts only `start`, `status`, `resume`, `rebind`, `cancel`, and `discard` with stage, change, and operation identity where required.
+The internal-development command surface has no caller-supplied protocol version.
 
 - `start` is idempotent for one change run.
 - `status` is local and requires no Worker endpoint.

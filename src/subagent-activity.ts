@@ -1320,7 +1320,7 @@ export function renderActivityCall(
   context?: ActivityRenderContext,
 ): Component {
   const value = asRecord(args);
-  if (typeof value?.command === "string" && value.version === 2) {
+  if (typeof value?.command === "string") {
     if (context?.executionStarted || context?.isError) return new Text("");
     const projected = projectWorkflowActivity(value, { state: "queued" }, 0);
     const display: ActivitySnapshot = {

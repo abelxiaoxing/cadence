@@ -737,7 +737,6 @@ describe("durable WorkflowEngine service composition", () => {
     const result = await registeredTool?.execute(
       "tool-call-v2",
       {
-        version: 2,
         command: "start",
         stage: "abel-implement",
         change: "tool-signal-binding",
@@ -1224,7 +1223,6 @@ describe("durable WorkflowEngine service composition", () => {
       );
       await expect(
         engine.execute({
-          version: 2,
           command: "start",
           stage: "abel-implement",
           change,
@@ -1279,7 +1277,6 @@ describe("durable WorkflowEngine service composition", () => {
     try {
       engine = openPackageWorkflowControlEngine({ cwd: consumerRoot }, {});
       const started = await engine.execute({
-        version: 2,
         command: "start",
         stage: "abel-design",
         change: "policy-recovery",
@@ -1321,7 +1318,6 @@ describe("durable WorkflowEngine service composition", () => {
       );
       await expect(
         engine.execute({
-          version: 2,
           command: "status",
           stage: "abel-design",
           change: "policy-recovery",
@@ -1392,7 +1388,6 @@ describe("durable WorkflowEngine service composition", () => {
     });
     try {
       const paused = await engine.execute({
-        version: 2,
         command: "start",
         stage: "abel-implement",
         change,
@@ -1407,7 +1402,6 @@ describe("durable WorkflowEngine service composition", () => {
       engine.updateRoutePolicy(policy());
       await expect(
         engine.execute({
-          version: 2,
           command: "resume",
           stage: "abel-implement",
           change,
@@ -1469,7 +1463,6 @@ describe("durable WorkflowEngine service composition", () => {
       },
     });
     const started = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change,
@@ -1498,7 +1491,6 @@ describe("durable WorkflowEngine service composition", () => {
     });
     await expect(
       engine.execute({
-        version: 2,
         command: "resume",
         stage: "abel-implement",
         change,
@@ -1512,7 +1504,6 @@ describe("durable WorkflowEngine service composition", () => {
     expect(replacementCalls).toBe(0);
 
     const rebound = await engine.execute({
-      version: 2,
       command: "rebind",
       stage: "abel-implement",
       change,
@@ -1539,7 +1530,6 @@ describe("durable WorkflowEngine service composition", () => {
     );
     await expect(
       engine.execute({
-        version: 2,
         command: "resume",
         stage: "abel-implement",
         change,
@@ -1875,7 +1865,6 @@ describe("durable WorkflowEngine service composition", () => {
       const controller = new AbortController();
       const running = engine.execute(
         {
-          version: 2,
           command: "start",
           stage: "abel-implement",
           change,
@@ -1887,7 +1876,6 @@ describe("durable WorkflowEngine service composition", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
       await expect(
         engine.execute({
-          version: 2,
           command: "status",
           stage: "abel-implement",
           change,
@@ -2071,7 +2059,6 @@ describe("durable WorkflowEngine service composition", () => {
         },
       });
       const started = await engine.execute({
-        version: 2,
         command: "start",
         stage: "abel-implement",
         change,
@@ -2133,7 +2120,6 @@ describe("durable WorkflowEngine service composition", () => {
         });
         await expect(
           engine.execute({
-            version: 2,
             command: "rebind",
             stage: "abel-implement",
             change,
@@ -2143,7 +2129,6 @@ describe("durable WorkflowEngine service composition", () => {
         ).rejects.toThrow(/rebind-not-allowed/u);
         await expect(
           engine.execute({
-            version: 2,
             command: "resume",
             stage: "abel-implement",
             change,
@@ -2171,7 +2156,6 @@ describe("durable WorkflowEngine service composition", () => {
       });
       await expect(
         engine.execute({
-          version: 2,
           command: "resume",
           stage: "abel-implement",
           change,
@@ -2384,7 +2368,6 @@ describe("durable WorkflowEngine service composition", () => {
       verifyChange: changeVerification,
     });
     const paused = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change,
@@ -2456,7 +2439,6 @@ describe("durable WorkflowEngine service composition", () => {
       },
     });
     const verificationPaused = await engine.execute({
-      version: 2,
       command: "resume",
       stage: "abel-implement",
       change,
@@ -2493,7 +2475,6 @@ describe("durable WorkflowEngine service composition", () => {
       },
     });
     const completed = await engine.execute({
-      version: 2,
       command: "resume",
       stage: "abel-implement",
       change,
@@ -2536,7 +2517,6 @@ describe("durable WorkflowEngine service composition", () => {
     });
     await expect(
       engine.execute({
-        version: 2,
         command: "status",
         stage: "abel-implement",
         change,
@@ -2709,7 +2689,6 @@ describe("durable WorkflowEngine service composition", () => {
       },
     });
     const first = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change,
@@ -2731,7 +2710,6 @@ describe("durable WorkflowEngine service composition", () => {
 
     revision = 2;
     const resumed = await engine.execute({
-      version: 2,
       command: "resume",
       stage: "abel-implement",
       change,
@@ -2875,7 +2853,6 @@ describe("durable WorkflowEngine service composition", () => {
       },
     });
     const starting = engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change,
@@ -2887,7 +2864,6 @@ describe("durable WorkflowEngine service composition", () => {
     );
 
     const cancelled = await engine.execute({
-      version: 2,
       command: "cancel",
       stage: "abel-implement",
       change,
@@ -2919,7 +2895,6 @@ describe("durable WorkflowEngine service composition", () => {
     );
 
     const resumed = await engine.execute({
-      version: 2,
       command: "resume",
       stage: "abel-implement",
       change,
@@ -3062,7 +3037,6 @@ describe("durable WorkflowEngine service composition", () => {
       },
     });
     const paused = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change,
@@ -3102,7 +3076,6 @@ describe("durable WorkflowEngine service composition", () => {
     });
     await expect(
       engine.execute({
-        version: 2,
         command: "resume",
         stage: "abel-implement",
         change,
@@ -3175,7 +3148,6 @@ describe("durable WorkflowEngine service composition", () => {
       ...services,
     });
     const running = owner.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change,
@@ -3193,7 +3165,6 @@ describe("durable WorkflowEngine service composition", () => {
     try {
       await expect(
         observer.execute({
-          version: 2,
           command: "status",
           stage: "abel-implement",
           change,
@@ -3268,7 +3239,6 @@ describe("durable WorkflowEngine service composition", () => {
       ...services,
     });
     const staleExecution = stale.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change,
@@ -3285,7 +3255,6 @@ describe("durable WorkflowEngine service composition", () => {
       ...services,
     });
     const discarded = await replacement.execute({
-      version: 2,
       command: "discard",
       stage: "abel-implement",
       change,
@@ -3300,7 +3269,6 @@ describe("durable WorkflowEngine service composition", () => {
     await expect(staleExecution).rejects.toThrow(/lease-fenced/u);
     await expect(
       replacement.execute({
-        version: 2,
         command: "status",
         stage: "abel-implement",
         change,
@@ -3393,7 +3361,6 @@ describe("durable WorkflowEngine service composition", () => {
       },
     });
     const execution = engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change,
@@ -3402,7 +3369,6 @@ describe("durable WorkflowEngine service composition", () => {
     await expect(preparing).resolves.toMatch(/^apply-[a-f0-9]{40}$/u);
     await expect(
       engine.execute({
-        version: 2,
         command: "status",
         stage: "abel-implement",
         change,
@@ -3413,7 +3379,6 @@ describe("durable WorkflowEngine service composition", () => {
     await applying;
     await expect(
       engine.execute({
-        version: 2,
         command: "status",
         stage: "abel-implement",
         change,
@@ -3464,7 +3429,6 @@ describe("durable WorkflowEngine service composition", () => {
       },
     });
     const started = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-design",
       change: "design-stage-separation",
@@ -3478,7 +3442,6 @@ describe("durable WorkflowEngine service composition", () => {
     });
     await expect(
       engine.execute({
-        version: 2,
         command: "resume",
         stage: "abel-design",
         change: "design-stage-separation",
@@ -3521,14 +3484,12 @@ describe("durable WorkflowEngine service composition", () => {
     const firstKey = "1".repeat(64);
     const secondKey = "2".repeat(64);
     const first = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-design",
       provisionalKey: firstKey,
       operationId: "provisional-first",
     });
     const second = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-design",
       provisionalKey: secondKey,
@@ -3538,7 +3499,6 @@ describe("durable WorkflowEngine service composition", () => {
 
     await expect(
       engine.execute({
-        version: 2,
         command: "start",
         stage: "abel-design",
         change: "bound-second-design",
@@ -3552,7 +3512,6 @@ describe("durable WorkflowEngine service composition", () => {
     });
     await expect(
       engine.execute({
-        version: 2,
         command: "start",
         stage: "abel-design",
         change: "missing-provisional-design",
@@ -3591,7 +3550,6 @@ describe("durable WorkflowEngine service composition", () => {
     });
     await expect(
       engine.execute({
-        version: 2,
         command: "start",
         stage: "abel-implement",
         change,
@@ -3665,7 +3623,6 @@ describe("durable WorkflowEngine service composition", () => {
       },
     });
     await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change,
@@ -3673,7 +3630,6 @@ describe("durable WorkflowEngine service composition", () => {
     });
     revision = 2;
     await engine.execute({
-      version: 2,
       command: "resume",
       stage: "abel-implement",
       change,
@@ -3747,7 +3703,6 @@ describe("durable WorkflowEngine service composition", () => {
     let engine = WorkflowEngine.open(options);
     await expect(
       engine.execute({
-        version: 2,
         command: "start",
         stage: "abel-implement",
         change: "typed-delivery-failure",
@@ -3771,7 +3726,6 @@ describe("durable WorkflowEngine service composition", () => {
     engine = WorkflowEngine.open(options);
     await expect(
       engine.execute({
-        version: 2,
         command: "status",
         stage: "abel-implement",
         change: "typed-delivery-failure",
@@ -3790,7 +3744,6 @@ describe("durable WorkflowEngine service composition", () => {
       tasks: [],
     });
     const resumed = await engine.execute({
-      version: 2,
       command: "resume",
       stage: "abel-implement",
       change: "typed-delivery-failure",
@@ -3889,7 +3842,6 @@ describe("durable WorkflowEngine service composition", () => {
         "diagnose-ambiguous-envelope",
         {
           action: "cancel",
-          version: 2,
           command: "discard",
           stage: "abel-implement",
           change: "diagnose-stage-routing",
@@ -3904,7 +3856,6 @@ describe("durable WorkflowEngine service composition", () => {
       registeredTool?.execute(
         "diagnose-cross-stage-call",
         {
-          version: 2,
           command: "start",
           stage: "abel-implement",
           change: "diagnose-stage-routing",
@@ -4015,7 +3966,6 @@ describe("durable verification lifecycle", () => {
       verifyChange,
     });
     const first = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change: fixture.change,
@@ -4064,7 +4014,6 @@ describe("durable verification lifecycle", () => {
       verifyChange,
     });
     const resumed = await engine.execute({
-      version: 2,
       command: "resume",
       stage: "abel-implement",
       change: fixture.change,
@@ -4150,7 +4099,6 @@ describe("durable verification lifecycle", () => {
     });
 
     const paused = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change: fixture.change,
@@ -4265,7 +4213,6 @@ describe("durable verification lifecycle", () => {
     });
 
     const completed = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change: fixture.change,
@@ -4403,7 +4350,6 @@ describe("durable verification lifecycle", () => {
     });
 
     const starting = engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change: fixture.change,
@@ -4413,7 +4359,6 @@ describe("durable verification lifecycle", () => {
     let siblingVerified = false;
     for (let attempt = 0; attempt < 200 && !siblingVerified; attempt += 1) {
       const status = await engine.execute({
-        version: 2,
         command: "status",
         stage: "abel-implement",
         change: fixture.change,
@@ -4437,7 +4382,6 @@ describe("durable verification lifecycle", () => {
     failAffected = false;
     await expect(
       engine.execute({
-        version: 2,
         command: "resume",
         stage: "abel-implement",
         change: fixture.change,
@@ -4556,7 +4500,6 @@ describe("durable verification lifecycle", () => {
     };
     let engine = module.openDurableWorkflowEngine(services);
     const first = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change,
@@ -4585,7 +4528,6 @@ describe("durable verification lifecycle", () => {
     engine = module.openDurableWorkflowEngine(services);
     await expect(
       engine.execute({
-        version: 2,
         command: "resume",
         stage: "abel-implement",
         change,
@@ -4673,7 +4615,6 @@ describe("durable verification lifecycle", () => {
     });
 
     const paused = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change: fixture.change,
@@ -4695,7 +4636,6 @@ describe("durable verification lifecycle", () => {
 
     fullSuiteIntroduced = false;
     const completed = await engine.execute({
-      version: 2,
       command: "resume",
       stage: "abel-implement",
       change: fixture.change,
@@ -4757,7 +4697,6 @@ describe("durable verification lifecycle", () => {
 
     await expect(
       engine.execute({
-        version: 2,
         command: "start",
         stage: "abel-implement",
         change: fixture.change,
@@ -4774,7 +4713,6 @@ describe("durable verification lifecycle", () => {
     environmentReady = true;
     await expect(
       engine.execute({
-        version: 2,
         command: "resume",
         stage: "abel-implement",
         change: fixture.change,
@@ -4843,7 +4781,6 @@ describe("durable verification lifecycle", () => {
     });
 
     const completed = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change: fixture.change,
@@ -4927,7 +4864,6 @@ describe("durable verification lifecycle", () => {
     });
 
     const approval = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change: fixture.change,
@@ -5030,7 +4966,6 @@ describe("durable verification lifecycle", () => {
 
     await expect(
       engine.execute({
-        version: 2,
         command: "start",
         stage: "abel-implement",
         change: fixture.change,
@@ -5046,7 +4981,6 @@ describe("durable verification lifecycle", () => {
 
     await expect(
       engine.execute({
-        version: 2,
         command: "resume",
         stage: "abel-implement",
         change: fixture.change,
@@ -5114,7 +5048,6 @@ describe("durable verification lifecycle", () => {
     const first = module.openDurableWorkflowEngine(options());
     await expect(
       first.execute({
-        version: 2,
         command: "start",
         stage: "abel-implement",
         change: fixture.change,
@@ -5130,7 +5063,6 @@ describe("durable verification lifecycle", () => {
     const restarted = module.openDurableWorkflowEngine(options());
     await expect(
       restarted.execute({
-        version: 2,
         command: "resume",
         stage: "abel-implement",
         change: fixture.change,
@@ -5235,7 +5167,6 @@ describe("durable verification lifecycle", () => {
 
     await expect(
       engine.execute({
-        version: 2,
         command: "start",
         stage: "abel-implement",
         change: fixture.change,
@@ -5375,7 +5306,6 @@ describe("durable verification lifecycle", () => {
 
     await expect(
       engine.execute({
-        version: 2,
         command: "start",
         stage: "abel-implement",
         change: fixture.change,
@@ -5388,7 +5318,6 @@ describe("durable verification lifecycle", () => {
     fullSuiteFails = false;
     await expect(
       engine.execute({
-        version: 2,
         command: "resume",
         stage: "abel-implement",
         change: fixture.change,

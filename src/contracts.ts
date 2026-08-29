@@ -10,7 +10,6 @@ export type {
 export {
   assertControlCommand,
   CONTROL_COMMANDS,
-  CONTROL_PROTOCOL_VERSION,
   CONTROL_STAGES,
   controlRunKey,
   validateControlCommand,

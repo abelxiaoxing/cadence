@@ -150,7 +150,6 @@ describe("four-workflow user experience", () => {
       };
       const display = projectWorkflowActivity(
         {
-          version: 2,
           command: "resume",
           stage: "abel-implement",
           change: "smooth-workflow",
@@ -174,7 +173,7 @@ describe("four-workflow user experience", () => {
 
     expect(
       projectWorkflowActivity(
-        { version: 2, command: "status", stage: "abel-implement" },
+        { command: "status", stage: "abel-implement" },
         { state: "completed", completed: false, legalCommands: ["status"] },
         0,
       ),
@@ -233,7 +232,6 @@ describe("four-workflow user experience", () => {
     );
     invokePrompt(harness, "abel-implement");
     const command = {
-      version: 2,
       command: "resume",
       stage: "abel-implement",
       change: "smooth-workflow",
@@ -285,7 +283,6 @@ describe("four-workflow user experience", () => {
     const paused = await execute(
       "ordinary-call",
       {
-        version: 2,
         command: "resume",
         stage: "abel-implement",
         change: "smooth-workflow",
@@ -304,7 +301,6 @@ describe("four-workflow user experience", () => {
     const approval = await execute(
       "approval-call",
       {
-        version: 2,
         command: "resume",
         stage: "abel-implement",
         change: "smooth-workflow",

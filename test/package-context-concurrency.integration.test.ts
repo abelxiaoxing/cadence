@@ -127,7 +127,6 @@ describe("package operation context isolation", () => {
       {} as never,
     );
     const command = {
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change: "context-isolation",

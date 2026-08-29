@@ -179,7 +179,6 @@ function command(
   extra: Record<string, unknown> = {},
 ) {
   return {
-    version: 2,
     command: name,
     stage: "abel-implement",
     change,

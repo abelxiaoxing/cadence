@@ -45,7 +45,7 @@ afterEach(() => {
 });
 
 function temporaryRoot(label: string): string {
-  const root = mkdtempSync(path.join(tmpdir(), `cadence-v2-${label}-`));
+  const root = mkdtempSync(path.join(tmpdir(), `cadence-control-${label}-`));
   roots.push(root);
   return root;
 }
@@ -101,7 +101,7 @@ function planDraft(reverseSets = false): Record<string, unknown> {
     "package.json",
     "test/run-control-plane.property.test.ts",
   ];
-  const resources = ["control-store-schema", "delivery-v2"];
+  const resources = ["control-store-schema", "delivery-current"];
   if (reverseSets) {
     sourcePaths.reverse();
     resources.reverse();
@@ -113,7 +113,7 @@ function planDraft(reverseSets = false): Record<string, unknown> {
       {
         taskId: "T1-control-store-delivery",
         dependsOn: [],
-        objective: "Compile and persist the v2 control contract",
+        objective: "Compile and persist the current control contract",
         context: {
           agents: "root AGENTS applies",
           contract: "approved T1 boundary",
@@ -132,7 +132,7 @@ function planDraft(reverseSets = false): Record<string, unknown> {
               { kind: "output", outputId: "T1-red-test" },
               { kind: "workspace", path: "package.json" },
             ],
-            verificationLock: "vitest-cadence-v2",
+            verificationLock: "vitest-cadence-control",
           },
           green: {
             read: sourcePaths,
@@ -152,7 +152,7 @@ function planDraft(reverseSets = false): Record<string, unknown> {
               { kind: "output", outputId: "T1-red-test" },
               { kind: "workspace", path: "package.json" },
             ],
-            verificationLock: "vitest-cadence-v2",
+            verificationLock: "vitest-cadence-control",
           },
         },
         scheduling: { conflicts: [], resources },
@@ -165,7 +165,7 @@ function planDraft(reverseSets = false): Record<string, unknown> {
             {
               path: "test/run-control-plane.property.test.ts",
               disposition: "current-task",
-              evidence: "T1 owns its v2 Red witness",
+              evidence: "T1 owns its current Red witness",
             },
           ],
           affectedSuite: ["test/run-control-plane.property.test.ts"],
@@ -247,7 +247,6 @@ describe("change-oriented control contract", () => {
 
     expect(
       validate({
-        version: 2,
         command: "rebind",
         stage: "abel-implement",
         change: "durable-control-plane",
@@ -258,7 +257,6 @@ describe("change-oriented control contract", () => {
 
     expect(
       validate({
-        version: 2,
         command: "resume",
         stage: "abel-implement",
         change: "durable-control-plane",
@@ -268,17 +266,17 @@ describe("change-oriented control contract", () => {
     ).toMatchObject({ ok: false, code: "invalid-control-command" });
     expect(
       validate({
-        version: 1,
+        version: 2,
         command: "start",
         stage: "abel-implement",
         change: "durable-control-plane",
+        operationId: "version-field-rejected",
       }),
-    ).toMatchObject({ ok: false, code: "unsupported-control-version" });
+    ).toMatchObject({ ok: false, code: "invalid-control-command" });
 
     const provisionalKey = "a".repeat(64);
     expect(
       validate({
-        version: 2,
         command: "start",
         stage: "abel-design",
         change: "durable-control-plane",
@@ -288,7 +286,6 @@ describe("change-oriented control contract", () => {
     ).toMatchObject({ ok: true });
     expect(
       validate({
-        version: 2,
         command: "start",
         stage: "abel-implement",
         change: "durable-control-plane",

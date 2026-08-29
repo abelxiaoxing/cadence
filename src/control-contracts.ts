@@ -2,8 +2,6 @@
 // Mechanical graph, snapshot, task, and apply identities are intentionally not
 // part of this surface: the control plane derives them from approved delivery.
 
-export const CONTROL_PROTOCOL_VERSION = 2 as const;
-
 export const CONTROL_COMMANDS = [
   "start",
   "status",
@@ -23,7 +21,6 @@ const CHANGE_NAME = /^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 
 interface ControlBase {
-  version: typeof CONTROL_PROTOCOL_VERSION;
   command: ControlCommandName;
   stage: ControlStage;
 }
@@ -86,10 +83,7 @@ export type ControlCommand =
 
 export type ControlCommandValidation =
   | { ok: true; value: ControlCommand }
-  | {
-      ok: false;
-      code: "invalid-control-command" | "unsupported-control-version";
-    };
+  | { ok: false; code: "invalid-control-command" };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -110,7 +104,6 @@ function hasExactKeys(
 
 function validCommon(value: Record<string, unknown>): boolean {
   return (
-    value.version === CONTROL_PROTOCOL_VERSION &&
     (CONTROL_COMMANDS as readonly unknown[]).includes(value.command) &&
     (CONTROL_STAGES as readonly unknown[]).includes(value.stage)
   );
@@ -128,17 +121,11 @@ export function validateControlCommand(
   value: unknown,
 ): ControlCommandValidation {
   if (!isRecord(value)) return { ok: false, code: "invalid-control-command" };
-  if (
-    Object.hasOwn(value, "version") &&
-    value.version !== CONTROL_PROTOCOL_VERSION
-  ) {
-    return { ok: false, code: "unsupported-control-version" };
-  }
   if (!validCommon(value)) {
     return { ok: false, code: "invalid-control-command" };
   }
 
-  const common = ["version", "command", "stage"] as const;
+  const common = ["command", "stage"] as const;
   const named = [...common, "change"] as const;
   switch (value.command) {
     case "status":

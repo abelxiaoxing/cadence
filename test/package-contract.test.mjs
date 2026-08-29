@@ -89,8 +89,8 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
         /from ["'][^"']*compatib|checkHostVersion|supportedHostVersions|supportedPiVersions/i,
       );
     }
-    expect(read(path.join(root, "src", "control-contracts.ts"))).toMatch(
-      /unsupported-control-version/,
+    expect(read(path.join(root, "src", "control-contracts.ts"))).not.toMatch(
+      /CONTROL_PROTOCOL_VERSION|unsupported-control-version/,
     );
   });
 

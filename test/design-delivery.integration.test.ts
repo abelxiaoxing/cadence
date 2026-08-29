@@ -626,7 +626,6 @@ describe("explicit four-entrypoint approval round trip", () => {
       "abel-implement",
     );
     const approval = await first.execute("implement-v1", {
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change: item.change,
@@ -647,7 +646,6 @@ describe("explicit four-entrypoint approval round trip", () => {
     first.invoke("abel-design");
     expect(first.active()).toEqual(["read", DISPATCH_TOOL]);
     const designStart = await first.execute("design-v2", {
-      version: 2,
       command: "start",
       stage: "abel-design",
       change: item.change,
@@ -742,7 +740,6 @@ describe("explicit four-entrypoint approval round trip", () => {
       "abel-implement",
     );
     const status = await fresh.execute("fresh-status", {
-      version: 2,
       command: "status",
       stage: "abel-implement",
       change: item.change,
@@ -758,7 +755,6 @@ describe("explicit four-entrypoint approval round trip", () => {
     });
 
     const resumed = await fresh.execute("implement-v2", {
-      version: 2,
       command: "resume",
       stage: "abel-implement",
       change: item.change,
@@ -848,7 +844,6 @@ describe("code-owned Design delivery compilation", () => {
       },
     });
     const nextDesign = await reopened.execute({
-      version: 2,
       command: "start",
       stage: "abel-design",
       change: item.change,
@@ -1095,7 +1090,6 @@ describe("private Gate proofs bind Implement admission", () => {
       },
     });
     const admitted = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change: item.change,
@@ -1209,7 +1203,6 @@ describe("private Gate proofs bind Implement admission", () => {
       },
     });
     const approval = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change: item.change,
@@ -1226,7 +1219,6 @@ describe("private Gate proofs bind Implement admission", () => {
     });
 
     const nextDesign = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-design",
       change: item.change,
@@ -1287,7 +1279,6 @@ describe("private Gate proofs bind Implement admission", () => {
     design.close();
 
     const freshStatus = await engine.execute({
-      version: 2,
       command: "status",
       stage: "abel-implement",
       change: item.change,
@@ -1312,7 +1303,6 @@ describe("private Gate proofs bind Implement admission", () => {
     });
 
     const resumed = await engine.execute({
-      version: 2,
       command: "resume",
       stage: "abel-implement",
       change: item.change,
@@ -1363,7 +1353,6 @@ describe("private Gate proofs bind Implement admission", () => {
     });
     await expect(
       engine.execute({
-        version: 2,
         command: "start",
         stage: "abel-implement",
         change: item.change,
@@ -1414,7 +1403,6 @@ describe("private Gate proofs bind Implement admission", () => {
     });
     await expect(
       engine.execute({
-        version: 2,
         command: "start",
         stage: "abel-implement",
         change: item.change,
@@ -1476,7 +1464,6 @@ describe("private Gate proofs bind Implement admission", () => {
       });
       await expect(
         engine.execute({
-          version: 2,
           command: "start",
           stage: "abel-implement",
           change: item.change,
@@ -1523,7 +1510,6 @@ describe("private Gate proofs bind Implement admission", () => {
     });
     await expect(
       engine.execute({
-        version: 2,
         command: "start",
         stage: "abel-implement",
         change: item.change,
@@ -1534,7 +1520,6 @@ describe("private Gate proofs bind Implement admission", () => {
       pause: { code: "approval-code-invalid" },
     });
     const status = await engine.execute({
-      version: 2,
       command: "status",
       stage: "abel-implement",
       change: item.change,

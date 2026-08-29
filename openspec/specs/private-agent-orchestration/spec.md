@@ -39,7 +39,7 @@ An empty request, unknown role, missing bound, path escape, symbolic-link escape
 
 The package SHALL load one private orchestration extension and four immutable package-owned professional Agent definitions for Design exploration, contract review, implementation, and diagnosis.
 It SHALL register one private Abel control tool but keep it inactive outside a verified `abel-design`, `abel-implement`, or `abel-diagnose` invocation; `abel-init` and ordinary prompts SHALL NOT activate it.
-The v2 tool schema SHALL discriminate the closed change-oriented `start`, `status`, `resume`, `rebind`, `cancel`, and `discard` commands from Worker-internal operations so invalid or irrelevant fields are rejected before state mutation.
+The stage-specific tool schema SHALL expose only the closed change-oriented `start`, `status`, `resume`, `rebind`, `cancel`, and `discard` commands during Implement, and only bounded packet operations during Design or Diagnose, so invalid or irrelevant fields are rejected before state mutation.
 An initial parent caller SHALL identify the stage and either a unique change name or a raw Design requirement; the control plane SHALL return an immutable run id used by later commands, and Gate-approved delivery revisions SHALL bind to rather than replace that run. Callers SHALL NOT construct graph admissions, phase snapshots, retained candidate identities, or stable task boundaries.
 Stage finish, replacement, reload, session replacement, or shutdown SHALL deactivate the tool and interrupt active operations while preserving a resumable durable run unless it completed or was explicitly discarded.
 The package SHALL expose no general Subagent command, public orchestration API, cross-extension service, external Agent override, or public raw run-store access.
@@ -56,7 +56,7 @@ The package SHALL expose no general Subagent command, public orchestration API, 
 
 #### Scenario: Parent submits graph mechanics
 
-- **WHEN** a v2 Design or Implement caller attempts to supply a graph hash, dynamic snapshot, launch identity, or stable task boundary
+- **WHEN** a Design or Implement caller attempts to supply a protocol version, graph hash, dynamic snapshot, launch identity, or stable task boundary
 - **THEN** the operation is rejected before run mutation because those facts belong to the control plane
 
 #### Scenario: Stage ends with paused work
@@ -303,7 +303,7 @@ Presentation failure SHALL NOT alter scheduling, cancellation, recovery, verific
 
 The private extension SHALL return valid domain outcomes normally for run-created, run-resumed, route-rebound, status, queued, connecting, candidate-sealed, candidate-rejected, phase-committed, retryable, paused, approval-needed, verifying, applying, recovering, completed, operation-cancelled, discarded, and rejected operations.
 Recoverable, paused, approval-needed, verification-failed, and operation-cancelled outcomes SHALL NOT be Pi Tool errors merely because the run did not complete.
-Unknown actions, invalid v2 schemas, incompatible run identity, illegal state transitions, forged mechanical identities, missing retained artifacts, journal integrity failure at mutation time, and internal invariant violations SHALL throw so Pi reports a real Tool error.
+Unknown actions, invalid command or packet schemas, incompatible run identity, illegal state transitions, forged mechanical identities, missing retained artifacts, journal integrity failure at mutation time, and internal invariant violations SHALL throw so Pi reports a real Tool error.
 The extension SHALL NOT synthesize an `isError` flag inside a normal domain payload as a substitute for throwing.
 TUI presentation SHALL NOT change domain or Tool-error classification.
 
@@ -319,7 +319,7 @@ TUI presentation SHALL NOT change domain or Tool-error classification.
 
 #### Scenario: Protocol request is invalid
 
-- **WHEN** a request violates the v2 schema, run identity, transition, or artifact binding
+- **WHEN** a request violates the active stage schema, run identity, transition, or artifact binding
 - **THEN** the extension throws and Pi reports a real Tool error before unauthorized state mutation
 
 #### Scenario: Internal invariant fails

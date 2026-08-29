@@ -463,7 +463,6 @@ describe("workflow control command schema", () => {
     if (!contracts) return notReady("contracts");
     expect(
       contracts.validateControlCommand({
-        version: 2,
         command: "start",
         stage: "abel-design",
         provisionalKey: "a".repeat(64),
@@ -472,7 +471,6 @@ describe("workflow control command schema", () => {
     ).toMatchObject({ ok: true });
     expect(
       contracts.validateControlCommand({
-        version: 2,
         command: "start",
         stage: "abel-design",
         requirement: "raw private requirement",
@@ -481,14 +479,19 @@ describe("workflow control command schema", () => {
     ).toMatchObject({ ok: false, code: "invalid-control-command" });
   });
 
-  it("rejects unsupported versions and undeclared fields", () => {
+  it("rejects caller-supplied versions and undeclared fields", () => {
     if (!contracts) return notReady("contracts");
-    expect(
-      contracts.validateControlCommand({ version: 1, command: "start" }),
-    ).toMatchObject({ ok: false, code: "unsupported-control-version" });
     expect(
       contracts.validateControlCommand({
         version: 2,
+        command: "start",
+        stage: "abel-implement",
+        change: "durable-control-plane",
+        operationId: "start-with-version",
+      }),
+    ).toMatchObject({ ok: false, code: "invalid-control-command" });
+    expect(
+      contracts.validateControlCommand({
         command: "resume",
         stage: "abel-implement",
         change: "durable-control-plane",

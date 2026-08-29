@@ -1770,279 +1770,290 @@ export function registerWorkflowControl(
     parentPayloadBridge.clear();
   };
 
-  pi.registerTool({
-    name: DISPATCH_TOOL,
-    label: "Abel Control",
-    description:
-      "Private stage-bound Abel workflow control. Implement accepts durable change commands; Design and Diagnose accept bounded packet commands.",
-    executionMode: "parallel",
-    parameters: {
-      type: "object",
-      properties: {
-        version: { type: "integer", enum: [2] },
-        command: {
-          type: "string",
-          enum: ["start", "status", "resume", "rebind", "cancel", "discard"],
-        },
-        stage: {
-          type: "string",
-          enum: ["abel-design", "abel-implement"],
-        },
-        change: { type: "string" },
-        provisionalKey: { type: "string" },
-        operationId: { type: "string" },
-        deliveryRevision: { type: "integer", minimum: 1 },
-        receiptHash: { type: "string" },
-        routeId: { type: "string" },
-        action: { type: "string", enum: [...PACKET_ACTIONS, "design"] },
-        request: {
-          anyOf: [
-            DESIGN_REQUEST_SCHEMA,
-            DESIGN_CONTROL_REQUEST_SCHEMA,
-            GENERIC_REQUEST_SCHEMA,
-          ],
-        },
+  // Pi validates tool arguments before execute(), so expose only the schema
+  // legal for the active stage instead of one ambiguous command/packet union.
+  const CONTROL_COMMAND_PARAMETERS = {
+    type: "object",
+    properties: {
+      command: {
+        type: "string",
+        enum: ["start", "status", "resume", "rebind", "cancel", "discard"],
       },
-      additionalProperties: false,
-      oneOf: [
-        {
-          required: ["version", "command", "stage"],
-          not: {
-            anyOf: [{ required: ["action"] }, { required: ["request"] }],
-          },
-        },
-        {
-          required: ["action"],
-          not: {
-            anyOf: [
-              { required: ["version"] },
-              { required: ["command"] },
-              { required: ["stage"] },
-              { required: ["change"] },
-              { required: ["provisionalKey"] },
-              { required: ["operationId"] },
-              { required: ["deliveryRevision"] },
-              { required: ["receiptHash"] },
-              { required: ["routeId"] },
-            ],
-          },
-        },
-      ],
+      stage: {
+        type: "string",
+        enum: ["abel-design", "abel-implement"],
+      },
+      change: { type: "string" },
+      provisionalKey: { type: "string" },
+      operationId: { type: "string" },
+      deliveryRevision: { type: "integer", minimum: 1 },
+      receiptHash: { type: "string" },
+      routeId: { type: "string" },
     },
-    async execute(
-      toolCallId: string,
-      params: unknown,
-      signal: AbortSignal | undefined,
-      onUpdate: AgentToolUpdateCallback<unknown> | undefined,
-      ctx: ExtensionContext,
-    ) {
-      const record =
-        params && typeof params === "object" && !Array.isArray(params)
-          ? (params as Record<string, unknown>)
-          : undefined;
-      if (record && typeof record.action === "string") {
-        if (
-          Object.keys(record).some(
-            (key) => key !== "action" && key !== "request",
-          )
-        ) {
-          throw new Error("control-envelope-ambiguous");
+    required: ["command", "stage"],
+    additionalProperties: false,
+  } as const;
+  const PACKET_PARAMETERS = {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: [...PACKET_ACTIONS, "design"] },
+      request: {
+        anyOf: [
+          DESIGN_REQUEST_SCHEMA,
+          DESIGN_CONTROL_REQUEST_SCHEMA,
+          GENERIC_REQUEST_SCHEMA,
+        ],
+      },
+    },
+    required: ["action"],
+    additionalProperties: false,
+  } as const;
+  let registeredParameterKind: "command" | "packet" | undefined;
+
+  const registerDispatchTool = (kind: "command" | "packet") => {
+    if (registeredParameterKind === kind) return;
+    registeredParameterKind = kind;
+    pi.registerTool({
+      name: DISPATCH_TOOL,
+      label: "Abel Control",
+      description:
+        kind === "command"
+          ? "Private stage-bound Abel workflow control. Accepts durable Design and Implement change commands."
+          : "Private stage-bound Abel packet control. Accepts bounded Design and Diagnose packet operations.",
+      executionMode: "parallel",
+      parameters:
+        kind === "command" ? CONTROL_COMMAND_PARAMETERS : PACKET_PARAMETERS,
+      async execute(
+        toolCallId: string,
+        params: unknown,
+        signal: AbortSignal | undefined,
+        onUpdate: AgentToolUpdateCallback<unknown> | undefined,
+        ctx: ExtensionContext,
+      ) {
+        const record =
+          params && typeof params === "object" && !Array.isArray(params)
+            ? (params as Record<string, unknown>)
+            : undefined;
+        if (record && typeof record.action === "string") {
+          if (
+            Object.keys(record).some(
+              (key) => key !== "action" && key !== "request",
+            )
+          ) {
+            throw new Error("control-envelope-ambiguous");
+          }
+          if (
+            activePrompt !== "abel-design" &&
+            activePrompt !== "abel-diagnose"
+          ) {
+            throw new Error("stage-control-mismatch");
+          }
+          if (record.action === "design") {
+            if (activePrompt !== "abel-design") {
+              throw new Error("stage-control-mismatch");
+            }
+            const designRequest = validateDesignControlRequest(record.request);
+            if (!designRequest.ok) throw new Error(designRequest.code);
+            const engine = await engineFor(ctx);
+            if (!engine.executeDesign)
+              throw new Error("design-control-unavailable");
+            const payload = await engine.executeDesign(designRequest.value);
+            if (
+              designRequest.value.operation === "finalize-delivery" &&
+              payload.state === "completed"
+            ) {
+              await deactivateStage();
+            }
+            return {
+              content: [
+                { type: "text" as const, text: JSON.stringify(payload) },
+              ],
+              details: payload,
+            };
+          }
+          let designEngine: WorkflowControlEngine | undefined;
+          if (record.action === "run") {
+            const packet = packetRuntime.validateRequest(record.request);
+            if (!packet.ok || packet.value.stage !== activePrompt) {
+              throw new Error(
+                packet.ok ? "stage-control-mismatch" : packet.reason,
+              );
+            }
+            if (packet.value.stage === "abel-design") {
+              designEngine = await engineFor(ctx);
+              if (!designEngine.assertDesignRun || !packet.value.runId) {
+                throw new Error("design-control-unavailable");
+              }
+              designEngine.assertDesignRun(packet.value.runId);
+            }
+          }
+          const operation = {
+            request: record.request,
+          };
+          const tuiRun = ctx.mode === "tui" && record.action === "run";
+          const packetPayload = tuiRun
+            ? await packetRuntime.execute(
+                record.action,
+                operation,
+                ctx,
+                signal,
+                activity.observe(
+                  toolCallId,
+                  onUpdate as ((result: unknown) => void) | undefined,
+                ),
+              )
+            : await packetRuntime.execute(
+                record.action,
+                operation,
+                ctx,
+                signal,
+              );
+          let payload:
+            | typeof packetPayload
+            | (typeof packetPayload & {
+                recordedEvidence: unknown;
+              }) = packetPayload;
+          if (
+            packetPayload.ok &&
+            record.action === "run" &&
+            activePrompt === "abel-design"
+          ) {
+            const packet = packetRuntime.validateRequest(record.request);
+            if (
+              !packet.ok ||
+              !packet.value.runId ||
+              !designEngine?.recordDesignEvidence
+            ) {
+              throw new Error("design-control-unavailable");
+            }
+            const recordedEvidence = designEngine.recordDesignEvidence({
+              runId: packet.value.runId,
+              evidence: packetPayload.result as DesignEvidenceResult,
+            });
+            payload = { ...packetPayload, recordedEvidence };
+          }
+          if (record.action === "finish" && packetPayload.ok) {
+            await deactivateStage();
+          }
+          const display = tuiRun
+            ? activity.finalize(toolCallId, payload)
+            : undefined;
+          const { payload: publicPayload, usage } = splitUsage(payload);
+          const details = display
+            ? {
+                ...(publicPayload as Record<string, unknown>),
+                [ACTIVITY_DETAILS_KEY]: display,
+              }
+            : publicPayload;
+          return {
+            content: [
+              { type: "text" as const, text: JSON.stringify(publicPayload) },
+            ],
+            details,
+            ...(usage === undefined ? {} : { usage }),
+          };
+        }
+        const validation = validateControlCommand(params);
+        if (!validation.ok) {
+          const error = new Error(validation.code);
+          error.name = "ControlCommandError";
+          throw error;
         }
         if (
-          activePrompt !== "abel-design" &&
-          activePrompt !== "abel-diagnose"
+          activePrompt !== undefined &&
+          (activePrompt === "abel-diagnose" ||
+            validation.value.stage !== activePrompt)
         ) {
           throw new Error("stage-control-mismatch");
         }
-        if (record.action === "design") {
-          if (activePrompt !== "abel-design") {
-            throw new Error("stage-control-mismatch");
-          }
-          const designRequest = validateDesignControlRequest(record.request);
-          if (!designRequest.ok) throw new Error(designRequest.code);
-          const engine = await engineFor(ctx);
-          if (!engine.executeDesign)
-            throw new Error("design-control-unavailable");
-          const payload = await engine.executeDesign(designRequest.value);
-          if (
-            designRequest.value.operation === "finalize-delivery" &&
-            payload.state === "completed"
-          ) {
-            await deactivateStage();
-          }
-          return {
-            content: [{ type: "text" as const, text: JSON.stringify(payload) }],
-            details: payload,
-          };
-        }
-        let designEngine: WorkflowControlEngine | undefined;
-        if (record.action === "run") {
-          const packet = packetRuntime.validateRequest(record.request);
-          if (!packet.ok || packet.value.stage !== activePrompt) {
-            throw new Error(
-              packet.ok ? "stage-control-mismatch" : packet.reason,
+        const engine = await engineFor(ctx);
+        const tuiControl = ctx.mode === "tui";
+        if (tuiControl) {
+          try {
+            activity.beginWorkflow(
+              toolCallId,
+              validation.value,
+              onUpdate as ((result: unknown) => void) | undefined,
             );
-          }
-          if (packet.value.stage === "abel-design") {
-            designEngine = await engineFor(ctx);
-            if (!designEngine.assertDesignRun || !packet.value.runId) {
-              throw new Error("design-control-unavailable");
-            }
-            designEngine.assertDesignRun(packet.value.runId);
+          } catch {
+            // Presentation state must never alter workflow execution.
           }
         }
-        const operation = {
-          request: record.request,
-        };
-        const tuiRun = ctx.mode === "tui" && record.action === "run";
-        const packetPayload = tuiRun
-          ? await packetRuntime.execute(
-              record.action,
-              operation,
-              ctx,
-              signal,
-              activity.observe(
-                toolCallId,
-                onUpdate as ((result: unknown) => void) | undefined,
-              ),
-            )
-          : await packetRuntime.execute(record.action, operation, ctx, signal);
-        let payload:
-          | typeof packetPayload
-          | (typeof packetPayload & {
-              recordedEvidence: unknown;
-            }) = packetPayload;
-        if (
-          packetPayload.ok &&
-          record.action === "run" &&
-          activePrompt === "abel-design"
-        ) {
-          const packet = packetRuntime.validateRequest(record.request);
-          if (
-            !packet.ok ||
-            !packet.value.runId ||
-            !designEngine?.recordDesignEvidence
-          ) {
-            throw new Error("design-control-unavailable");
-          }
-          const recordedEvidence = designEngine.recordDesignEvidence({
-            runId: packet.value.runId,
-            evidence: packetPayload.result as DesignEvidenceResult,
-          });
-          payload = { ...packetPayload, recordedEvidence };
-        }
-        if (record.action === "finish" && packetPayload.ok) {
-          await deactivateStage();
-        }
-        const display = tuiRun
-          ? activity.finalize(toolCallId, payload)
-          : undefined;
-        const { payload: publicPayload, usage } = splitUsage(payload);
-        const details = display
-          ? {
-              ...(publicPayload as Record<string, unknown>),
-              [ACTIVITY_DETAILS_KEY]: display,
-            }
-          : publicPayload;
-        return {
-          content: [
-            { type: "text" as const, text: JSON.stringify(publicPayload) },
-          ],
-          details,
-          ...(usage === undefined ? {} : { usage }),
-        };
-      }
-      const validation = validateControlCommand(params);
-      if (!validation.ok) {
-        const error = new Error(validation.code);
-        error.name = "ControlCommandError";
-        throw error;
-      }
-      if (
-        activePrompt !== undefined &&
-        (activePrompt === "abel-diagnose" ||
-          validation.value.stage !== activePrompt)
-      ) {
-        throw new Error("stage-control-mismatch");
-      }
-      const engine = await engineFor(ctx);
-      const tuiControl = ctx.mode === "tui";
-      if (tuiControl) {
+        let payload: Record<string, unknown>;
         try {
-          activity.beginWorkflow(
-            toolCallId,
+          payload = await engine.execute(
             validation.value,
-            onUpdate as ((result: unknown) => void) | undefined,
-          );
-        } catch {
-          // Presentation state must never alter workflow execution.
-        }
-      }
-      let payload: Record<string, unknown>;
-      try {
-        payload = await engine.execute(
-          validation.value,
-          ctx,
-          signal,
-          tuiControl
-            ? (event) => {
-                try {
-                  activity.updateWorkflow(toolCallId, validation.value, event);
-                } catch {
-                  // Presentation state must never alter workflow execution.
+            ctx,
+            signal,
+            tuiControl
+              ? (event) => {
+                  try {
+                    activity.updateWorkflow(
+                      toolCallId,
+                      validation.value,
+                      event,
+                    );
+                  } catch {
+                    // Presentation state must never alter workflow execution.
+                  }
                 }
-              }
-            : undefined,
-        );
-      } catch (error) {
-        if (tuiControl) activity.failWorkflow(toolCallId);
-        throw error;
-      }
-      if (
-        ["completed", "discarded", "rejected"].includes(String(payload.state))
-      ) {
-        await deactivateStage();
-      }
-      let display: ReturnType<typeof activity.finalizeWorkflow>;
-      if (tuiControl) {
-        try {
-          display = activity.finalizeWorkflow(
-            toolCallId,
-            validation.value,
-            payload,
+              : undefined,
           );
-        } catch {
-          activity.failWorkflow(toolCallId);
+        } catch (error) {
+          if (tuiControl) activity.failWorkflow(toolCallId);
+          throw error;
         }
-      }
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(payload) }],
-        details: display
-          ? { ...payload, [ACTIVITY_DETAILS_KEY]: display }
-          : payload,
-      };
-    },
-    renderCall(args: unknown, theme: Theme, context: unknown) {
-      return renderActivityCall(
-        args,
-        theme,
-        context as Parameters<typeof renderActivityCall>[2],
-      );
-    },
-    renderResult(
-      result: AgentToolResult<unknown>,
-      options: ToolRenderResultOptions,
-      theme: Theme,
-      context: unknown,
-    ) {
-      return renderActivityResult(
-        result,
-        options,
-        theme,
-        context as Parameters<typeof renderActivityResult>[3],
-      );
-    },
-  } as never);
+        if (
+          ["completed", "discarded", "rejected"].includes(String(payload.state))
+        ) {
+          await deactivateStage();
+        } else if (validation.value.stage === "abel-design") {
+          // Design starts/statuses through the command surface, then switches to
+          // its bounded evidence and artifact packet surface for the next turn.
+          registerDispatchTool("packet");
+        }
+        let display: ReturnType<typeof activity.finalizeWorkflow>;
+        if (tuiControl) {
+          try {
+            display = activity.finalizeWorkflow(
+              toolCallId,
+              validation.value,
+              payload,
+            );
+          } catch {
+            activity.failWorkflow(toolCallId);
+          }
+        }
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+          details: display
+            ? { ...payload, [ACTIVITY_DETAILS_KEY]: display }
+            : payload,
+        };
+      },
+      renderCall(args: unknown, theme: Theme, context: unknown) {
+        return renderActivityCall(
+          args,
+          theme,
+          context as Parameters<typeof renderActivityCall>[2],
+        );
+      },
+      renderResult(
+        result: AgentToolResult<unknown>,
+        options: ToolRenderResultOptions,
+        theme: Theme,
+        context: unknown,
+      ) {
+        return renderActivityResult(
+          result,
+          options,
+          theme,
+          context as Parameters<typeof renderActivityResult>[3],
+        );
+      },
+    } as never);
+  };
+  registerDispatchTool("packet");
 
   pi.on("input", (event) => {
     pendingPrompt = invokedPrompt(event.text);
@@ -2057,6 +2068,7 @@ export function registerWorkflowControl(
       if (activePrompt === "abel-design" && prompt !== "abel-design") {
         restoreDesignTools();
       }
+      registerDispatchTool(prompt === "abel-diagnose" ? "packet" : "command");
       activePrompt = prompt;
       const sessionId = ctx.sessionManager?.getSessionId?.();
       if (typeof sessionId === "string") {

@@ -210,7 +210,6 @@ describe("durable Design run lifecycle", () => {
     });
 
     const provisional = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-design",
       provisionalKey: "b".repeat(64),
@@ -225,7 +224,6 @@ describe("durable Design run lifecycle", () => {
     expect(deliverySource.load).not.toHaveBeenCalled();
 
     const bound = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-design",
       change,
@@ -252,7 +250,6 @@ describe("durable Design run lifecycle", () => {
     });
     await expect(
       engine.execute({
-        version: 2,
         command: "status",
         stage: "abel-design",
         change,
@@ -384,7 +381,6 @@ describe("durable WorkflowEngine scheduling", () => {
     try {
       await expect(
         engine.execute({
-          version: 2,
           command: "start",
           stage: "abel-implement",
           change,
@@ -502,7 +498,6 @@ describe("durable WorkflowEngine scheduling", () => {
       ...services,
     });
     const started = await engine.execute({
-      version: 2,
       command: "start",
       stage: "abel-implement",
       change,
@@ -551,7 +546,6 @@ describe("durable WorkflowEngine scheduling", () => {
     try {
       await expect(
         engine.execute({
-          version: 2,
           command: "status",
           stage: "abel-implement",
           change,

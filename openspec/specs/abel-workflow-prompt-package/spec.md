@@ -242,7 +242,7 @@ Mechanical receipt, hash, formatting, tracked-checkbox, traceability, or stale-a
 ### Requirement: Implementation behavior
 
 `abel-implement` SHALL require a unique change name and SHALL create, return, or resume one durable Implement run through the change-oriented control protocol.
-Before creating a private change workspace it SHALL validate the v2 receipts, covered artifact hashes, traceability, strict OpenSpec status, compiled plan identity, static verification closure, and complete task contracts.
+Before creating a private change workspace it SHALL validate the current receipts, covered artifact hashes, traceability, strict OpenSpec status, compiled plan identity, static verification closure, and complete task contracts.
 Invalid delivery SHALL reject or pause the run before Worker execution and SHALL NOT modify the main workspace.
 Invalid or mechanically stale delivery SHALL NOT be classified as approval-needed unless its diagnostics separately prove missing authority.
 The control plane SHALL load the approved plan, derive current snapshots and operation identities, and compute ready DAG work without requiring the parent model to submit or repeat stable graph facts.
@@ -279,7 +279,7 @@ Implement SHALL NOT implicitly archive, commit, publish, release, or modify unre
 
 #### Scenario: Valid cross-context handoff
 
-- **WHEN** the caller supplies a unique change name whose v2 delivery is valid
+- **WHEN** the caller supplies a unique change name whose current delivery is valid
 - **THEN** the control plane derives the compiled plan and creates or returns the one matching durable run without caller-supplied graph or snapshots
 
 #### Scenario: Invalid trusted delivery
