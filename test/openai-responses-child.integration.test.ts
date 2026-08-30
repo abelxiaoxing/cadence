@@ -156,7 +156,6 @@ function declareInheritedRoute(cwd: string): void {
   mkdirSync(directory, { recursive: true });
   const roles = [
     "design-explorer",
-    "contract-reviewer",
     "implementation-worker",
     "diagnosis-worker",
   ];
@@ -425,10 +424,12 @@ describe("installed openai-responses child route", () => {
             content = fauxToolCall(
               "abel_dispatch",
               {
-                command: "start",
-                stage: "abel-design",
-                provisionalKey: "a".repeat(64),
-                operationId: "start-responses-first-design",
+                action: "design",
+                request: {
+                  operation: "start",
+                  requirement: "Exercise the first inherited Design dispatch",
+                  operationId: "start-responses-first-design",
+                },
               },
               { id: "start-first-design" },
             );
@@ -699,10 +700,12 @@ describe("installed openai-responses child route", () => {
     const started = await tool!.execute(
       "responses-design-start",
       {
-        command: "start",
-        stage: "abel-design",
-        change: "responses-child",
-        operationId: "start-responses-child",
+        action: "design",
+        request: {
+          operation: "start",
+          change: "responses-child",
+          operationId: "start-responses-child",
+        },
       },
       undefined,
       undefined,

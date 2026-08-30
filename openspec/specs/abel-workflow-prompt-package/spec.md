@@ -167,6 +167,7 @@ Missing optional bundled research Skills SHALL make final readiness partial with
 ### Requirement: Design behavior and trusted delivery
 
 `abel-design` SHALL accept either a requirement or `--change <change_name>`, validate the root and relevant AGENTS indexes, and create or recover one durable Design run.
+It SHALL use one Design action envelope from the initial start onward: the caller supplies transient requirement and canonical contract text, the control plane derives provisional and contract hashes without persisting that raw text, and Gate B automatically binds the current compiled plan hash.
 Before Gate A it SHALL keep the repository and OpenSpec change artifacts read-only while permitting only private structural run state outside the repository.
 It SHALL decompose broad exploration into bounded evidence packets, dispatch independent packets concurrently through package-owned read-only professional Agents, validate their structured evidence, and retain accepted evidence in the run ledger independently of any child session.
 A transport, endpoint, environment, capacity, cancellation, or malformed-evidence failure SHALL pause only the affected evidence packet and SHALL permit policy-authorized Worker replacement; it SHALL NOT force completed independent evidence to be repeated.
@@ -188,6 +189,11 @@ Mechanical receipt, hash, formatting, tracked-checkbox, traceability, or stale-a
 
 - **WHEN** behavior evidence is trusted and all behavior decisions are resolved
 - **THEN** Design presents one consolidated behavior contract and waits for explicit Gate A approval before creating a new OpenSpec change
+
+#### Scenario: Design begins without caller hashing tools
+
+- **WHEN** a parent starts Design from a raw requirement or records a decision or Gate A approval
+- **THEN** the control plane derives the required canonical hash and persists no raw transient contract text
 
 #### Scenario: Independent Design packets run concurrently
 
@@ -222,7 +228,7 @@ Mechanical receipt, hash, formatting, tracked-checkbox, traceability, or stale-a
 #### Scenario: Delivery is compiled
 
 - **WHEN** the approved technical plan is complete
-- **THEN** the code-owned compiler produces its canonical identity and closure while the caller supplies neither graph hashes nor file snapshots
+- **THEN** the code-owned compiler produces its canonical identity and closure while the caller supplies neither graph hashes, Gate B hashes, nor file snapshots
 
 #### Scenario: Design is complete
 
@@ -362,10 +368,10 @@ Implement SHALL NOT implicitly archive, commit, publish, release, or modify unre
 - **WHEN** bounded automatic in-boundary repair attempts are exhausted
 - **THEN** the run pauses at its last committed phase, and a later `resume` starts a fresh operation budget while reusing durable baseline, phase, and compatible repair facts
 
-#### Scenario: Worker diff exceeds its result boundary
+#### Scenario: Worker patch exceeds its candidate boundary
 
-- **WHEN** a complete candidate cannot fit one configured result envelope
-- **THEN** the Worker uses approved sealed segments or the task pauses for reshaping, and no truncated or partial candidate is accepted
+- **WHEN** the generated diff for one complete structured patch exceeds the configured candidate byte limit
+- **THEN** the trusted submit tool internally chunks and seals one complete Worker submission or the task pauses for reshaping, and no truncated or partial candidate is accepted
 
 #### Scenario: Cancellation interrupts a launch
 

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { ROLES } from "./contracts.ts";
@@ -17,6 +17,11 @@ export type RouteDialect = (typeof ROUTE_DIALECTS)[number];
 export interface RouteCapabilities {
   roles: WorkerRole[];
   dialects: RouteDialect[];
+  contextWindow: number;
+  maxTokens: number;
+}
+
+export interface ParentModelCapabilities {
   contextWindow: number;
   maxTokens: number;
 }
@@ -50,10 +55,9 @@ export interface RoutePolicy {
 
 export type RoutePolicySource =
   | { kind: "project" | "user"; path: string }
-  | { kind: "none" };
+  | { kind: "default" };
 
 export type RoutePolicyDiagnosticCode =
-  | "policy-missing"
   | "policy-unreadable"
   | "policy-invalid-json"
   | "policy-invalid"
@@ -77,7 +81,7 @@ export type ParsedRoutePolicy =
 export type RoutePolicyResolution =
   | {
       ok: true;
-      source: Extract<RoutePolicySource, { kind: "project" | "user" }>;
+      source: RoutePolicySource;
       policy: RoutePolicy;
     }
   | {
@@ -87,8 +91,8 @@ export type RoutePolicyResolution =
     };
 
 /**
- * Internal fail-closed policy used while the selected external policy is
- * missing or invalid. It deliberately contains no inherited-parent route:
+ * Internal fail-closed policy used while a selected explicit policy is
+ * invalid. It deliberately contains no inherited-parent route:
  * the broker therefore reports endpoint-unavailable without making a Worker
  * request, while the local durable control plane remains available.
  *
@@ -351,8 +355,16 @@ export function parseRoutePolicy(value: unknown): ParsedRoutePolicy {
   };
 }
 
-/** Parent-model route used by read-only Design and Diagnose packets. */
-export function parentRoutePolicy(): RoutePolicy {
+/** Default parent-model route used when no explicit policy file exists. */
+export function parentRoutePolicy(
+  parentModel?: ParentModelCapabilities,
+): RoutePolicy {
+  const contextWindow = positiveInteger(parentModel?.contextWindow)
+    ? parentModel.contextWindow
+    : 1;
+  const maxTokens = positiveInteger(parentModel?.maxTokens)
+    ? Math.min(parentModel.maxTokens, contextWindow)
+    : 1;
   const parsed = parseRoutePolicy({
     version: ROUTE_POLICY_VERSION,
     routes: {
@@ -361,8 +373,8 @@ export function parentRoutePolicy(): RoutePolicy {
         capabilities: {
           roles: [...ROLES],
           dialects: [...ROUTE_DIALECTS],
-          contextWindow: 1_000_000,
-          maxTokens: 500_000,
+          contextWindow,
+          maxTokens,
         },
       },
     },
@@ -372,25 +384,41 @@ export function parentRoutePolicy(): RoutePolicy {
   return parsed.policy;
 }
 
-function selectedSource(cwd: string, home: string): RoutePolicySource {
+function selectedSource(
+  cwd: string,
+  home: string,
+): { kind: "project" | "user"; path: string } | { kind: "none" } {
+  const mayExist = (candidate: string): boolean => {
+    try {
+      return lstatSync(candidate, { throwIfNoEntry: false }) !== undefined;
+    } catch {
+      // Permission and path-observation failures are explicit unreadable
+      // policy candidates, not proof that the policy is absent.
+      return true;
+    }
+  };
   const projectPath = path.join(cwd, ".pi", "cadence", "routes.json");
-  if (existsSync(projectPath)) return { kind: "project", path: projectPath };
+  if (mayExist(projectPath)) return { kind: "project", path: projectPath };
   const userPath = path.join(home, ".pi", "agent", "cadence", "routes.json");
-  if (existsSync(userPath)) return { kind: "user", path: userPath };
+  if (mayExist(userPath)) return { kind: "user", path: userPath };
   return { kind: "none" };
 }
 
 export function loadRoutePolicy(
-  options: { cwd?: string; home?: string } = {},
+  options: {
+    cwd?: string;
+    home?: string;
+    parentModel?: ParentModelCapabilities;
+  } = {},
 ): RoutePolicyResolution {
   const cwd = path.resolve(options.cwd ?? process.cwd());
   const home = path.resolve(options.home ?? homedir());
   const source = selectedSource(cwd, home);
   if (source.kind === "none") {
     return {
-      ok: false,
-      source,
-      diagnostics: [{ code: "policy-missing" }],
+      ok: true,
+      source: { kind: "default" },
+      policy: parentRoutePolicy(options.parentModel),
     };
   }
   let bytes: string;

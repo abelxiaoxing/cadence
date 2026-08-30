@@ -31,7 +31,12 @@ import { resolveStateRoot } from "../src/state-root.ts";
 import { WorkflowEngine } from "../src/workflow-engine.ts";
 
 const roots: string[] = [];
-const BEHAVIOR_HASH = "a".repeat(64);
+const BEHAVIOR_DECISION = "Closed delivery observable behavior";
+const BEHAVIOR_APPROVAL = "Approved closed delivery WHAT contract";
+const BEHAVIOR_HASH = createHash("sha256")
+  .update("abel-design-gate-a-v1\0")
+  .update(BEHAVIOR_APPROVAL)
+  .digest("hex");
 
 afterEach(() => {
   for (const root of roots.splice(0)) {
@@ -198,7 +203,10 @@ function fixture(label: string) {
     strictValid: true,
     artifactPaths,
   });
-  const stateRoot = resolveStateRoot({ consumerRoot, xdgStateHome: stateHome });
+  const stateRoot = resolveStateRoot({
+    consumerRoot,
+    xdgStateHome: stateHome,
+  });
   const runs = RunStore.open(stateRoot);
   const run = runs.startRun({
     stage: "abel-design",
@@ -237,13 +245,11 @@ async function approveAndCompile(
     runId: item.runId,
     operationId: "compile-v1",
   });
-  const plan = compiled.plan as { canonicalHash: string };
   await item.controller.execute({
     operation: "approve-gate",
     runId: item.runId,
     operationId: "approve-b-v1",
     gate: "gate-b",
-    contractHash: plan.canonicalHash,
   });
   return compiled;
 }
@@ -257,7 +263,7 @@ async function approveGateAOnly(
     operationId: "behavior-v1",
     decisionId: "observable-contract",
     category: "behavior",
-    contractHash: BEHAVIOR_HASH,
+    contract: BEHAVIOR_DECISION,
     refs: ["specs/example/spec.md#Closed delivery"],
   });
   await item.controller.execute({
@@ -265,7 +271,7 @@ async function approveGateAOnly(
     runId: item.runId,
     operationId: "approve-a-v1",
     gate: "gate-a",
-    contractHash: BEHAVIOR_HASH,
+    contract: BEHAVIOR_APPROVAL,
   });
 }
 
@@ -415,6 +421,125 @@ function extensionJourneyHarness(
 }
 
 describe("safe private Design artifact mutation", () => {
+  it("owns provisional identity, change binding, and approval hashes in code", async () => {
+    const consumerRoot = mkdtempSync(
+      path.join(tmpdir(), "abel-design-lifecycle-consumer-"),
+    );
+    const stateHome = mkdtempSync(
+      path.join(tmpdir(), "abel-design-lifecycle-state-"),
+    );
+    roots.push(consumerRoot, stateHome);
+    mkdirSync(path.join(consumerRoot, "openspec/changes"), { recursive: true });
+    const stateRoot = resolveStateRoot({
+      consumerRoot,
+      xdgStateHome: stateHome,
+    });
+    const controller = DesignController.open({
+      consumerRoot,
+      stateRoot,
+      inspectOpenSpec: async (_root, change) => ({
+        change,
+        schema: "spec-driven",
+        planningComplete: false,
+        strictValid: false,
+        artifactPaths: [],
+      }),
+    });
+    const requirement = "Keep the raw requirement out of durable state";
+    try {
+      const started = await controller.execute({
+        operation: "start",
+        operationId: "start-from-requirement",
+        requirement,
+      });
+      expect(started).toMatchObject({
+        state: "paused",
+        completed: false,
+        pause: { code: "design-awaiting-gate-a" },
+        runId: expect.any(String),
+        legalActions: ["status", "record-decision", "approve-gate", "finish"],
+      });
+      const runId = String(started.runId);
+
+      const decision = await controller.execute({
+        operation: "record-decision",
+        runId,
+        operationId: "record-behavior",
+        decisionId: "observable-contract",
+        category: "behavior",
+        contract: "The workflow remains recoverable and non-blocking.",
+        refs: ["proposal.md#What Changes"],
+      });
+      expect(decision).toMatchObject({
+        decision: { contractHash: expect.stringMatching(/^[a-f0-9]{64}$/u) },
+      });
+      const approved = await controller.execute({
+        operation: "approve-gate",
+        runId,
+        operationId: "approve-behavior",
+        gate: "gate-a",
+        contract: "Approved WHAT contract",
+      });
+      expect(approved).toMatchObject({
+        proof: { contractHash: expect.stringMatching(/^[a-f0-9]{64}$/u) },
+      });
+      const bound = await controller.execute({
+        operation: "bind-change",
+        runId,
+        operationId: "bind-friendly-design",
+        change: "friendly-design-control",
+      });
+      expect(bound).toMatchObject({
+        runId,
+        change: "friendly-design-control",
+        state: "paused",
+        legalActions: [
+          "status",
+          "record-decision",
+          "write-artifact",
+          "delete-artifact",
+          "compile-plan",
+          "finish",
+        ],
+      });
+      expect(
+        await controller.execute({
+          operation: "bind-change",
+          runId,
+          operationId: "bind-friendly-design",
+          change: "friendly-design-control",
+        }),
+      ).toMatchObject({ runId, change: "friendly-design-control" });
+      await expect(
+        controller.execute({
+          operation: "bind-change",
+          runId,
+          operationId: "bind-friendly-design",
+          change: "conflicting-design-control",
+        }),
+      ).rejects.toThrow(/design-operation-conflict/u);
+
+      const database = new DatabaseSync(stateRoot.databasePath, {
+        readOnly: true,
+      });
+      const durable =
+        JSON.stringify(database.prepare("SELECT * FROM runs").all()) +
+        JSON.stringify(database.prepare("SELECT * FROM design_facts").all()) +
+        JSON.stringify(
+          database.prepare("SELECT * FROM design_operations").all(),
+        ) +
+        JSON.stringify(database.prepare("SELECT * FROM operations").all());
+      database.close();
+      expect(durable).not.toContain(requirement);
+      expect(durable).not.toContain("Approved WHAT contract");
+      expect(durable).not.toContain(
+        "The workflow remains recoverable and non-blocking.",
+      );
+    } finally {
+      controller.close();
+    }
+  });
+
   it("writes every admitted artifact kind with exact UTF-8 bytes", async () => {
     const item = fixture("artifact-write");
     await expect(
@@ -543,7 +668,7 @@ describe("safe private Design artifact mutation", () => {
       operationId: "behavior-after-delete",
       decisionId: "observable-contract",
       category: "behavior",
-      contractHash: "b".repeat(64),
+      contract: "Changed observable contract after artifact deletion",
       refs: ["proposal.md#Changed"],
     });
     await expect(item.controller.execute(request)).resolves.toEqual(deleted);
@@ -646,10 +771,12 @@ describe("explicit four-entrypoint approval round trip", () => {
     first.invoke("abel-design");
     expect(first.active()).toEqual(["read", DISPATCH_TOOL]);
     const designStart = await first.execute("design-v2", {
-      command: "start",
-      stage: "abel-design",
-      change: item.change,
-      operationId: "design-v2",
+      action: "design",
+      request: {
+        operation: "start",
+        change: item.change,
+        operationId: "design-v2",
+      },
     });
     const designRunId = String(designStart.runId);
     await first.execute("behavior-v2", {
@@ -660,7 +787,7 @@ describe("explicit four-entrypoint approval round trip", () => {
         operationId: "behavior-v2",
         decisionId: "observable-contract",
         category: "behavior",
-        contractHash: BEHAVIOR_HASH,
+        contract: BEHAVIOR_DECISION,
         refs: ["specs/example/spec.md#Closed delivery"],
       },
     });
@@ -672,7 +799,7 @@ describe("explicit four-entrypoint approval round trip", () => {
         operationId: "dependency-v2",
         decisionId: "dependency-authority",
         category: "technical",
-        contractHash: "f".repeat(64),
+        contract: "Approved dependency authority",
         refs: ["design.md#Decisions"],
       },
     });
@@ -683,7 +810,7 @@ describe("explicit four-entrypoint approval round trip", () => {
         runId: designRunId,
         operationId: "approve-a-v2",
         gate: "gate-a",
-        contractHash: BEHAVIOR_HASH,
+        contract: BEHAVIOR_APPROVAL,
       },
     });
     await first.execute("write-plan-v2", {
@@ -714,7 +841,6 @@ describe("explicit four-entrypoint approval round trip", () => {
         runId: designRunId,
         operationId: "approve-b-v2",
         gate: "gate-b",
-        contractHash: planHash,
       },
     });
     const revised = await first.execute("finalize-v2", {
@@ -828,24 +954,13 @@ describe("code-owned Design delivery compilation", () => {
     });
     item.controller.close();
 
-    const reopened = WorkflowEngine.open({
+    const reopened = DesignController.open({
       consumerRoot: item.consumerRoot,
       stateRoot: item.stateRoot,
-      deliverySource: { load: async () => Promise.reject(new Error("unused")) },
-      worker: {
-        runAttempt: async () => ({
-          kind: "paused" as const,
-          code: "unused",
-        }),
-        rebind: () => ({ ok: true as const }),
-      },
-      changeVerifier: {
-        verify: async () => ({ kind: "paused" as const, code: "unused" }),
-      },
+      inspectOpenSpec: item.inspectOpenSpec,
     });
     const nextDesign = await reopened.execute({
-      command: "start",
-      stage: "abel-design",
+      operation: "start",
       change: item.change,
       operationId: "start-design-revision-2",
     });
@@ -856,7 +971,7 @@ describe("code-owned Design delivery compilation", () => {
       pause: { code: "design-awaiting-evidence" },
     });
     expect(nextDesign.runId).not.toBe(item.runId);
-    await reopened.close();
+    reopened.close();
   });
 
   it("leaves no new ready receipt when final validation fails", async () => {
@@ -1218,9 +1333,13 @@ describe("private Gate proofs bind Implement admission", () => {
       },
     });
 
-    const nextDesign = await engine.execute({
-      command: "start",
-      stage: "abel-design",
+    const design = DesignController.open({
+      consumerRoot: item.consumerRoot,
+      stateRoot: item.stateRoot,
+      inspectOpenSpec: item.inspectOpenSpec,
+    });
+    const nextDesign = await design.execute({
+      operation: "start",
       change: item.change,
       operationId: "design-v2",
     });
@@ -1228,18 +1347,13 @@ describe("private Gate proofs bind Implement admission", () => {
       path.join(item.changeRoot, "plan-draft.json"),
       `${JSON.stringify(planDraft(item.change), null, 2)}\n`,
     );
-    const design = DesignController.open({
-      consumerRoot: item.consumerRoot,
-      stateRoot: item.stateRoot,
-      inspectOpenSpec: item.inspectOpenSpec,
-    });
     await design.execute({
       operation: "record-decision",
       runId: nextDesign.runId,
       operationId: "behavior-v2",
       decisionId: "observable-contract",
       category: "behavior",
-      contractHash: BEHAVIOR_HASH,
+      contract: BEHAVIOR_DECISION,
       refs: ["specs/example/spec.md#Closed delivery"],
     });
     await design.execute({
@@ -1248,7 +1362,7 @@ describe("private Gate proofs bind Implement admission", () => {
       operationId: "dependency-v2",
       decisionId: "dependency-authority",
       category: "technical",
-      contractHash: "f".repeat(64),
+      contract: "Approved dependency authority",
       refs: ["design.md#Decisions"],
     });
     await design.execute({
@@ -1256,9 +1370,9 @@ describe("private Gate proofs bind Implement admission", () => {
       runId: nextDesign.runId,
       operationId: "approve-a-v2",
       gate: "gate-a",
-      contractHash: BEHAVIOR_HASH,
+      contract: BEHAVIOR_APPROVAL,
     });
-    const compiled = await design.execute({
+    await design.execute({
       operation: "compile-plan",
       runId: nextDesign.runId,
       operationId: "compile-v2",
@@ -1268,7 +1382,6 @@ describe("private Gate proofs bind Implement admission", () => {
       runId: nextDesign.runId,
       operationId: "approve-b-v2",
       gate: "gate-b",
-      contractHash: (compiled.plan as { canonicalHash: string }).canonicalHash,
     });
     const revised = await design.execute({
       operation: "finalize-delivery",

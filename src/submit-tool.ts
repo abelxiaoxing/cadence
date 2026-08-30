@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
+  type CandidatePatchOperation,
+  compileCandidatePatch,
+} from "./candidate-patch.ts";
+import {
   type CandidateFailure,
   type DiffResult,
   type EvidenceResult,
@@ -11,7 +15,11 @@ import {
   validateDiffResult,
   validateEvidenceResult,
 } from "./contracts.ts";
-import type { BeginCandidateInput, TaskLedger } from "./task-ledger.ts";
+import {
+  type BeginCandidateInput,
+  TASK_LEDGER_LIMITS,
+  type TaskLedger,
+} from "./task-ledger.ts";
 
 const compactEvidenceSchema = Type.Object({
   id: Type.String(),
@@ -83,17 +91,49 @@ function candidateArtifactSchema(candidateId: string) {
   return Type.Union([
     Type.Object(
       {
-        kind: Type.Literal("candidate-segment"),
+        kind: Type.Literal("candidate-patch"),
         candidateId: Type.Literal(candidateId),
-        sequence: Type.Integer({ minimum: 0 }),
-        text: Type.String({ minLength: 1 }),
-      },
-      { additionalProperties: false },
-    ),
-    Type.Object(
-      {
-        kind: Type.Literal("candidate-seal"),
-        candidateId: Type.Literal(candidateId),
+        operations: Type.Array(
+          Type.Union([
+            Type.Object(
+              {
+                kind: Type.Literal("replace"),
+                path: Type.String(),
+                oldText: Type.String({ minLength: 1 }),
+                newText: Type.String(),
+              },
+              { additionalProperties: false },
+            ),
+            Type.Object(
+              {
+                kind: Type.Literal("rewrite"),
+                path: Type.String(),
+                content: Type.String(),
+              },
+              { additionalProperties: false },
+            ),
+            Type.Object(
+              {
+                kind: Type.Literal("create"),
+                path: Type.String(),
+                content: Type.String({ minLength: 1 }),
+                mode: Type.Union([
+                  Type.Literal("regular"),
+                  Type.Literal("executable"),
+                ]),
+              },
+              { additionalProperties: false },
+            ),
+            Type.Object(
+              {
+                kind: Type.Literal("delete"),
+                path: Type.String(),
+              },
+              { additionalProperties: false },
+            ),
+          ]),
+          { minItems: 1, maxItems: 128 },
+        ),
       },
       { additionalProperties: false },
     ),
@@ -188,6 +228,9 @@ export interface CandidateArtifactSubmission {
     "beginCandidate" | "appendCandidateSegment" | "sealCandidate"
   >;
   identity: BeginCandidateInput;
+  workspaceRoot: string;
+  writePaths: readonly string[];
+  deletePaths: readonly string[];
 }
 
 export function createCandidateArtifactTool(
@@ -199,10 +242,7 @@ export function createCandidateArtifactTool(
   let failure: CandidateFailure | undefined;
   let attempts = 0;
   let schema: SubmitSchemaState = "not-submitted";
-  let segmentCount = 0;
-  let totalBytes = 0;
-  const candidateHash = createHash("sha256");
-  const identity: IdentityOutcome = {
+  let identity: IdentityOutcome = {
     request: true,
     role: true,
     task: true,
@@ -212,7 +252,7 @@ export function createCandidateArtifactTool(
     name: "abel_submit_result",
     label: "Submit Abel Candidate Artifact",
     description:
-      "Submit ordered raw-text candidate segments, atomically seal the complete candidate, or request bounded approved context. Encoding and hashes are computed by this trusted tool.",
+      "Submit one complete structured candidate patch or request bounded approved context. Diff generation, chunking, encoding, hashes, and atomic sealing are owned by this trusted tool.",
     executionMode: "sequential",
     parameters,
     async execute(_toolCallId, params) {
@@ -220,6 +260,22 @@ export function createCandidateArtifactTool(
         throw new Error("candidate terminal result already submitted");
       }
       attempts++;
+      if (attempts > 2) {
+        schema = "invalid";
+        failure = {
+          kind: "artifact",
+          code: "invalid-structural-result",
+          stage: "structural-submit",
+        };
+        throw new Error("structural submission correction limit exceeded");
+      }
+      identity = {
+        request: true,
+        role: true,
+        task: true,
+        phase: true,
+      };
+      failure = undefined;
       const value = params as unknown as Record<string, unknown>;
       if (value.candidateId !== input.identity.candidateId) {
         identity.request = false;
@@ -232,18 +288,15 @@ export function createCandidateArtifactTool(
         throw new Error("candidate identity mismatch");
       }
       schema = "valid";
-      if (value.kind === "candidate-segment") {
-        const bytes = Buffer.from(value.text as string, "utf8");
-        const segmentHash = createHash("sha256").update(bytes).digest("hex");
-        let accepted: ReturnType<
-          CandidateArtifactSubmission["ledger"]["appendCandidateSegment"]
-        >;
+      if (value.kind === "candidate-patch") {
+        let diff: string;
         try {
-          accepted = input.ledger.appendCandidateSegment({
-            ...input.identity,
-            sequence: value.sequence as number,
-            bytes,
-            segmentHash,
+          diff = compileCandidatePatch({
+            root: input.workspaceRoot,
+            writePaths: input.writePaths,
+            deletePaths: input.deletePaths,
+            operations: value.operations as CandidatePatchOperation[],
+            maxBytes: TASK_LEDGER_LIMITS.maxCandidateBytes,
           });
         } catch (error) {
           schema = "invalid";
@@ -254,34 +307,59 @@ export function createCandidateArtifactTool(
           };
           throw error;
         }
-        if (!accepted.ok) {
-          failure = {
-            kind: "result-limit",
-            limitBytes: accepted.limitBytes,
-          };
-        } else {
-          candidateHash.update(bytes);
-          segmentCount = accepted.nextSequence;
-          totalBytes = accepted.totalBytes;
+        const bytes = Buffer.from(diff, "utf8");
+        const candidateHash = createHash("sha256").update(bytes).digest("hex");
+        let sequence = 0;
+        for (
+          let offset = 0;
+          offset < bytes.length;
+          offset += TASK_LEDGER_LIMITS.maxSegmentBytes
+        ) {
+          const segment = bytes.subarray(
+            offset,
+            Math.min(offset + TASK_LEDGER_LIMITS.maxSegmentBytes, bytes.length),
+          );
+          let accepted: ReturnType<
+            CandidateArtifactSubmission["ledger"]["appendCandidateSegment"]
+          >;
+          try {
+            accepted = input.ledger.appendCandidateSegment({
+              ...input.identity,
+              sequence,
+              bytes: segment,
+              segmentHash: createHash("sha256").update(segment).digest("hex"),
+            });
+          } catch (error) {
+            schema = "invalid";
+            failure = {
+              kind: "artifact",
+              code: "invalid-diff",
+              stage: "candidate-diff",
+            };
+            throw error;
+          }
+          if (!accepted.ok) {
+            failure = {
+              kind: "result-limit",
+              limitBytes: accepted.limitBytes,
+            };
+            return {
+              content: [],
+              details: accepted,
+              terminate: true,
+            };
+          }
+          sequence = accepted.nextSequence;
         }
-        return {
-          content: [
-            { type: "text" as const, text: "Candidate segment accepted." },
-          ],
-          details: accepted,
-          ...(!accepted.ok ? { terminate: true } : {}),
-        };
-      }
-      if (value.kind === "candidate-seal") {
         let sealed: ReturnType<
           CandidateArtifactSubmission["ledger"]["sealCandidate"]
         >;
         try {
           sealed = input.ledger.sealCandidate({
             ...input.identity,
-            segmentCount,
-            totalBytes,
-            candidateHash: candidateHash.digest("hex"),
+            segmentCount: sequence,
+            totalBytes: bytes.length,
+            candidateHash,
           });
         } catch (error) {
           schema = "invalid";
@@ -318,6 +396,12 @@ export function createCandidateArtifactTool(
         refs.some((relative) => !isValidRelativePath(relative)) ||
         new Set(refs).size !== refs.length
       ) {
+        schema = "invalid";
+        failure = {
+          kind: "artifact",
+          code: "invalid-structural-result",
+          stage: "structural-submit",
+        };
         throw new Error("context request refs are invalid");
       }
       result = {
@@ -377,7 +461,7 @@ export function createSubmitTool(input: {
   let failure: CandidateFailure | undefined;
   let attempts = 0;
   let schema: SubmitSchemaState = "not-submitted";
-  const identity: IdentityOutcome = {
+  let identity: IdentityOutcome = {
     request: true,
     role: true,
     task: true,
@@ -398,6 +482,22 @@ export function createSubmitTool(input: {
         : diffSchema,
     async execute(_toolCallId, params) {
       attempts++;
+      if (attempts > 2) {
+        schema = "invalid";
+        failure = {
+          kind: "artifact",
+          code: "invalid-structural-result",
+          stage: "structural-submit",
+        };
+        throw new Error("structural submission correction limit exceeded");
+      }
+      identity = {
+        request: true,
+        role: true,
+        task: true,
+        phase: true,
+      };
+      failure = undefined;
       const value = params as unknown as Record<string, unknown>;
       if (value === null || typeof value !== "object") {
         identity.request = false;

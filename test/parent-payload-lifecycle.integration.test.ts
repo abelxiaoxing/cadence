@@ -164,7 +164,6 @@ function declareInheritedRoute(cwd: string): void {
   mkdirSync(directory, { recursive: true });
   const roles = [
     "design-explorer",
-    "contract-reviewer",
     "implementation-worker",
     "diagnosis-worker",
   ];
@@ -483,10 +482,12 @@ async function dispatch(harness: Harness, id: string): Promise<DispatchResult> {
     const started = await dispatchTool(harness).execute(
       `call-start-${id}`,
       {
-        command: "start",
-        stage: "abel-design",
-        change: "payload-lifecycle",
-        operationId: `start-${id}`,
+        action: "design",
+        request: {
+          operation: "start",
+          change: "payload-lifecycle",
+          operationId: `start-${id}`,
+        },
       },
       undefined,
       undefined,

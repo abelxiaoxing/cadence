@@ -57,7 +57,6 @@ function policy(
 ): Record<string, unknown> {
   const allRoles = [
     "design-explorer",
-    "contract-reviewer",
     "implementation-worker",
     "diagnosis-worker",
   ];
@@ -89,7 +88,6 @@ function policy(
     },
     roles: {
       "design-explorer": ["parent-fallback"],
-      "contract-reviewer": ["parent-fallback"],
       "implementation-worker": implementationRoutes,
       "diagnosis-worker": ["parent-fallback"],
     },

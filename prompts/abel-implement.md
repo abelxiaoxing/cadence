@@ -74,7 +74,8 @@ For each ready task the engine runs:
 
 Independent tasks may merge only after currentness and declared conflict checks.
 Conflicting tasks remain durably queued without spending a Worker attempt.
-Workers only propose complete diffs inside their exact write/delete sets; they never write the workspace, AGENTS, task state, or the main repository.
+Workers make one atomic structured-patch submission whose operations stay within their approved write/delete sets; unused authorized paths need not be touched.
+The trusted submit tool validates exact replacements and file operations, generates the unified diff, and owns internal chunking, hashes, byte limits, and sealing; Workers never hand-author hunk ranges or write the workspace, AGENTS, task state, or the main repository.
 
 After all tasks, run every task-affected contract, the approved full suite, output postconditions, and the code-owned managed-only AGENTS checkpoint.
 Only then prepare one journaled, currentness-checked cumulative apply and the declared post-apply verification.
@@ -84,7 +85,7 @@ The main workspace stays unchanged before that transaction.
 
 Ordinary failures stay inside this Implement run:
 
-- `artifact`, wrong-Red identity, malformed/incomplete diff, stale candidate, or transport failure: use the bounded automatic attempt policy; after exhaustion pause with the last safe code and retain the last committed revision.
+- `artifact`, wrong-Red identity, invalid/incomplete patch operation, stale candidate, or transport failure: use the bounded automatic attempt policy; after exhaustion pause with the last safe code and retain the last committed revision.
 - Artifact correction alone consumes the sealed `artifactCorrection.maxAttempts` of 2-3 total candidate launches per task phase and operation, including the initial launch; a later `resume` starts a fresh operation budget.
 - `environment` or `verification-adapter`: pause without speculative edits.
   Resume after the capability is restored; baseline facts and completed phases are reused.
@@ -95,7 +96,7 @@ Ordinary failures stay inside this Implement run:
 - `workspace-revision-stale`, conflict, cancellation, process interruption, or apply recovery: preserve user edits and resume from the last durable checkpoint.
   Cancellation is budget-neutral.
   During a partially visible final apply, recovery must settle before pause or discard.
-- `result-limit`: pause as `needs-task-split`; never accept a partial diff.
+- `result-limit`: pause as `needs-task-split`; never accept a partial patch.
 
 No item above carries stage-routing metadata or asks the user to restart the approved workflow.
 

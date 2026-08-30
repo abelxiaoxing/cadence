@@ -11,7 +11,7 @@ export const CONTROL_COMMANDS = [
   "discard",
 ] as const;
 
-export const CONTROL_STAGES = ["abel-design", "abel-implement"] as const;
+export const CONTROL_STAGES = ["abel-implement"] as const;
 
 export type ControlCommandName = (typeof CONTROL_COMMANDS)[number];
 export type ControlStage = (typeof CONTROL_STAGES)[number];
@@ -23,52 +23,37 @@ const SHA256 = /^[a-f0-9]{64}$/u;
 interface ControlBase {
   command: ControlCommandName;
   stage: ControlStage;
-}
-
-interface NamedControlBase extends ControlBase {
   change: string;
 }
 
-export interface NamedStartControlCommand extends NamedControlBase {
+export interface StartControlCommand extends ControlBase {
   command: "start";
-  operationId: string;
-  provisionalKey?: string;
-}
-
-export interface ProvisionalDesignStartControlCommand extends ControlBase {
-  command: "start";
-  stage: "abel-design";
-  provisionalKey: string;
   operationId: string;
 }
 
-export type StartControlCommand =
-  | NamedStartControlCommand
-  | ProvisionalDesignStartControlCommand;
-
-export interface StatusControlCommand extends NamedControlBase {
+export interface StatusControlCommand extends ControlBase {
   command: "status";
 }
 
-export interface ResumeControlCommand extends NamedControlBase {
+export interface ResumeControlCommand extends ControlBase {
   command: "resume";
   operationId: string;
   deliveryRevision?: number;
   receiptHash?: string;
 }
 
-export interface RebindControlCommand extends NamedControlBase {
+export interface RebindControlCommand extends ControlBase {
   command: "rebind";
   operationId: string;
   routeId: string;
 }
 
-export interface CancelControlCommand extends NamedControlBase {
+export interface CancelControlCommand extends ControlBase {
   command: "cancel";
   operationId: string;
 }
 
-export interface DiscardControlCommand extends NamedControlBase {
+export interface DiscardControlCommand extends ControlBase {
   command: "discard";
   operationId: string;
 }
@@ -125,11 +110,10 @@ export function validateControlCommand(
     return { ok: false, code: "invalid-control-command" };
   }
 
-  const common = ["command", "stage"] as const;
-  const named = [...common, "change"] as const;
+  const common = ["command", "stage", "change"] as const;
   switch (value.command) {
     case "status":
-      if (!hasExactKeys(value, named) || !validChange(value.change)) break;
+      if (!hasExactKeys(value, common) || !validChange(value.change)) break;
       return {
         ok: true,
         value: structuredClone(value) as unknown as StatusControlCommand,
@@ -137,7 +121,7 @@ export function validateControlCommand(
     case "cancel":
     case "discard":
       if (
-        hasExactKeys(value, [...named, "operationId"]) &&
+        hasExactKeys(value, [...common, "operationId"]) &&
         validChange(value.change) &&
         validOperationId(value.operationId)
       ) {
@@ -149,37 +133,19 @@ export function validateControlCommand(
       break;
     case "start":
       if (
-        hasExactKeys(value, [...named, "operationId"], ["provisionalKey"]) &&
+        hasExactKeys(value, [...common, "operationId"]) &&
         validChange(value.change) &&
-        validOperationId(value.operationId) &&
-        (value.provisionalKey === undefined ||
-          (value.stage === "abel-design" &&
-            typeof value.provisionalKey === "string" &&
-            SHA256.test(value.provisionalKey)))
-      ) {
-        return {
-          ok: true,
-          value: structuredClone(value) as unknown as NamedStartControlCommand,
-        };
-      }
-      if (
-        hasExactKeys(value, [...common, "provisionalKey", "operationId"]) &&
-        value.stage === "abel-design" &&
-        typeof value.provisionalKey === "string" &&
-        SHA256.test(value.provisionalKey) &&
         validOperationId(value.operationId)
       ) {
         return {
           ok: true,
-          value: structuredClone(
-            value,
-          ) as unknown as ProvisionalDesignStartControlCommand,
+          value: structuredClone(value) as unknown as StartControlCommand,
         };
       }
       break;
     case "rebind":
       if (
-        hasExactKeys(value, [...named, "operationId", "routeId"]) &&
+        hasExactKeys(value, [...common, "operationId", "routeId"]) &&
         validChange(value.change) &&
         validOperationId(value.operationId) &&
         typeof value.routeId === "string" &&
@@ -195,7 +161,7 @@ export function validateControlCommand(
       if (
         !hasExactKeys(
           value,
-          [...named, "operationId"],
+          [...common, "operationId"],
           ["deliveryRevision", "receiptHash"],
         ) ||
         !validChange(value.change) ||

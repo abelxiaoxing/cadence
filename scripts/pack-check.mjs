@@ -20,7 +20,6 @@ const expectedMembers = [
   "package/THIRD_PARTY_NOTICES.md",
   "package/LICENSE",
   "package/README.md",
-  "package/agents/contract-reviewer.md",
   "package/agents/design-explorer.md",
   "package/agents/diagnosis-worker.md",
   "package/agents/implementation-worker.md",
@@ -45,6 +44,7 @@ const expectedMembers = [
   "package/src/agent-registry.ts",
   "package/src/apply-transaction.ts",
   "package/src/artifact-store.ts",
+  "package/src/candidate-patch.ts",
   "package/src/parent-payload-bridge.ts",
   "package/src/child-session.ts",
   "package/src/contracts.ts",
@@ -113,7 +113,6 @@ try {
     "utf8",
   );
   for (const role of [
-    "contract-reviewer",
     "design-explorer",
     "diagnosis-worker",
     "implementation-worker",

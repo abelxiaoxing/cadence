@@ -11,6 +11,7 @@ const SHA256 = /^[a-f0-9]{64}$/u;
 const IDENTIFIER = /^[a-z0-9](?:[a-z0-9._:-]{0,126}[a-z0-9])?$/iu;
 const ZERO_HASH = "0".repeat(64);
 const MAX_PLAN_BYTES = 16 * 1024 * 1024;
+const MAX_CONTRACT_BYTES = 256 * 1024;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS design_facts (
@@ -144,6 +145,7 @@ export interface DesignGateProjection {
     | "behavior-decision-changed"
     | "technical-decision-changed"
     | "plan-recompiled"
+    | "gate-a-reapproved"
     | "gate-a-stale"
     | "plan-missing";
 }
@@ -221,6 +223,21 @@ export interface DesignArtifactOperationState {
 
 function sha256(value: Uint8Array | string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function contractHash(domain: string, value: string): string {
+  if (
+    typeof value !== "string" ||
+    value.trim().length === 0 ||
+    Buffer.byteLength(value, "utf8") > MAX_CONTRACT_BYTES
+  ) {
+    throw new Error("design-transient-input-invalid");
+  }
+  return createHash("sha256")
+    .update(domain)
+    .update("\0")
+    .update(value.replace(/\r\n?/gu, "\n").trim())
+    .digest("hex");
 }
 
 function requireIdentifier(value: string, label: string): void {
@@ -877,11 +894,14 @@ export class DesignJournal {
     operationId: string;
     decisionId: string;
     category: DecisionCategory;
-    contractHash: string;
+    contract: string;
     refs: string[];
   }): Record<string, unknown> {
     requireIdentifier(input.decisionId, "design-decision-id");
-    requireHash(input.contractHash, "design-decision-hash");
+    const decisionContractHash = contractHash(
+      "abel-design-decision-v1",
+      input.contract,
+    );
     if (input.category !== "behavior" && input.category !== "technical") {
       throw new Error("design-decision-category-invalid");
     }
@@ -890,7 +910,7 @@ export class DesignJournal {
       operation: "record-decision",
       decisionId: input.decisionId,
       category: input.category,
-      contractHash: input.contractHash,
+      contractHash: decisionContractHash,
       refs,
     };
     return this.#transaction(() => {
@@ -909,7 +929,7 @@ export class DesignJournal {
       let decision: DesignDecisionProjection;
       if (
         prior &&
-        prior.contractHash === input.contractHash &&
+        prior.contractHash === decisionContractHash &&
         canonicalJson(prior.refs) === canonicalJson(refs)
       ) {
         decision = prior;
@@ -919,7 +939,7 @@ export class DesignJournal {
           decisionId: input.decisionId,
           category: input.category,
           revision,
-          contractHash: input.contractHash,
+          contractHash: decisionContractHash,
           refs,
         };
         const fact = this.#appendFact(
@@ -980,12 +1000,20 @@ export class DesignJournal {
     return undefined;
   }
 
-  approveGate(input: {
-    runId: string;
-    operationId: string;
-    gate: DesignGate;
-    contractHash: string;
-  }): {
+  approveGate(
+    input:
+      | {
+          runId: string;
+          operationId: string;
+          gate: "gate-a";
+          contract: string;
+        }
+      | {
+          runId: string;
+          operationId: string;
+          gate: "gate-b";
+        },
+  ): {
     operation: "approve-gate";
     runId: string;
     gate: DesignGate;
@@ -994,14 +1022,17 @@ export class DesignJournal {
     if (input.gate !== "gate-a" && input.gate !== "gate-b") {
       throw new Error("design-gate-invalid");
     }
-    requireHash(input.contractHash, "design-decision-hash");
-    const request = {
-      operation: "approve-gate",
-      gate: input.gate,
-      contractHash: input.contractHash,
-    };
+    const gateAContractHash =
+      input.gate === "gate-a"
+        ? contractHash("abel-design-gate-a-v1", input.contract)
+        : undefined;
     return this.#transaction(() => {
       this.#run(input.runId, true);
+      const request = {
+        operation: "approve-gate",
+        gate: input.gate,
+        ...(gateAContractHash ? { contractHash: gateAContractHash } : {}),
+      };
       const replay = this.#operationReplay(
         input.runId,
         input.operationId,
@@ -1012,15 +1043,26 @@ export class DesignJournal {
         return structuredClone(replay) as ReturnType<
           DesignJournal["approveGate"]
         >;
+      let approvedContractHash = gateAContractHash;
       if (input.gate === "gate-b") {
         const current = this.#gateStatus(input.runId);
         if (!current.gateA.current) throw new Error("design-gate-a-required");
         const plan = this.#currentPlanProjection(input.runId);
         if (!plan) throw new Error("design-plan-required");
-        if (plan.canonicalHash !== input.contractHash) {
-          throw new Error("design-gate-b-plan-mismatch");
+        const latestDecisionSequence = this.#facts(input.runId)
+          .filter((fact) => fact.kind === "decision")
+          .at(-1)?.sequence;
+        if (
+          plan.sequence <= (current.gateA.approvedSequence ?? 0) ||
+          (latestDecisionSequence !== undefined &&
+            plan.sequence <= latestDecisionSequence)
+        ) {
+          throw new Error("design-plan-stale");
         }
+        approvedContractHash = plan.canonicalHash;
       }
+      if (!approvedContractHash)
+        throw new Error("design-transient-input-invalid");
       const existing = this.#latestApproval(input.runId, input.gate);
       const currentGate = this.#gateStatus(input.runId)[
         input.gate === "gate-a" ? "gateA" : "gateB"
@@ -1029,7 +1071,7 @@ export class DesignJournal {
       if (
         existing &&
         currentGate.current &&
-        existing.proof.contractHash === input.contractHash
+        existing.proof.contractHash === approvedContractHash
       ) {
         proof = existing.proof;
       } else {
@@ -1037,7 +1079,7 @@ export class DesignJournal {
         const payload = {
           gate: input.gate,
           revision,
-          contractHash: input.contractHash,
+          contractHash: approvedContractHash,
         };
         const fact = this.#appendFact(
           input.runId,
@@ -1047,7 +1089,7 @@ export class DesignJournal {
         );
         proof = {
           revision,
-          contractHash: input.contractHash,
+          contractHash: approvedContractHash,
           recordHash: fact.record_hash,
         };
       }
@@ -1506,6 +1548,11 @@ export class DesignJournal {
         latestTechnical > gateBApproval.sequence
       ) {
         staleReason = "technical-decision-changed";
+      } else if (
+        gateAApproval !== undefined &&
+        gateAApproval.sequence > gateBApproval.sequence
+      ) {
+        staleReason = "gate-a-reapproved";
       } else if (plan && plan.sequence > gateBApproval.sequence) {
         staleReason = "plan-recompiled";
       } else if (!plan) {

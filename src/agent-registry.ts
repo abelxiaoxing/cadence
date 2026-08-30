@@ -8,7 +8,6 @@ import { fileURLToPath } from "node:url";
 
 export const AGENT_FILES = [
   "design-explorer.md",
-  "contract-reviewer.md",
   "implementation-worker.md",
   "diagnosis-worker.md",
 ] as const;

@@ -11,18 +11,22 @@
 - `/abel-diagnose <problem-description>` — 独立执行“复现 → 证伪 → 失败回归 → 最小修复”，不充当 Implement 的失败路由。
 
 包是独立的：单一仓库、单一清单、单一 lockfile，无 workspace、无参考仓库检出、不依赖任何外部 Subagent 包。
-加载本包会注册一个私有扩展与四个包内专业 Agent；`abel_dispatch` 工具注册但保持未激活，只有用户显式调用且包来源验证通过的 Design、Implement 或 Diagnose prompt 才会激活它。
+加载本包会注册一个私有扩展与三个包内专业 Agent；`abel_dispatch` 工具注册但保持未激活，只有用户显式调用且包来源验证通过的 Design、Implement 或 Diagnose prompt 才会激活它。
 仓库中存在 Abel 文件、OpenSpec change、AGENTS 索引或普通文本都不会启动工作流；Init 也不会激活派发工具。
 
 共享工作流规则统一收录于包内 `abel-workflow` Skill；其发现信息同样明确要求先有显式 `/abel-*` 调用。
 
 Implement 只暴露 `start`、`status`、`resume`、`rebind`、`cancel` 和 `discard` 控制命令。
 `status` 完全本地可用；相同 operation id 幂等重放，进程、会话或 Worker 更换后仍从 durable checkpoint 继续。
+Design 从第一步起统一使用 `action: "design"`：新需求通过 `start(requirement)` 进入，已有 change 通过 `start(change)` 进入，后续只携带返回的 `runId`。
+需求、决策合同与 Gate A 合同由控制面规范化并计算哈希，调用方无需 SHA-256 工具；Gate B 自动绑定当前已编译 canonical plan，原始瞬时文本不会写入 durable journal。
 
 普通 artifact、错误 Red、transport、environment、stale、conflict、baseline 与验证失败都留在同一 Implement run 中恢复。
 累计验证发现 introduced failure 时会自动重开责任任务做有界修复；自动预算耗尽后 `resume` 复用已有 baseline 和 phase facts。
 Design 证据包必须绑定 durable `runId`；接受后的有界证据、决策版本、Gate 证明与 canonical plan 身份写入 owner-private journal。
 Design 激活期间，父模型只保留进入前已启用的 `read`、`grep`、`find`、`ls` 与 `abel_dispatch`；原工具集合会在 finalize、finish、切换阶段或 session 结束时精确恢复。
+Implementation Worker 不再手写 unified-diff header、hunk range、分段或哈希；它一次提交有序的 `replace`、`rewrite`、`create`、`delete` 操作。
+可信控制面在隔离 workspace 中校验精确文本、批准路径和 symlink 安全，生成并内部分块 sealed candidate；超限时保留可恢复状态而不接受截断 patch。
 OpenSpec change 制品只能通过私有 `write-artifact` / `delete-artifact` 原子操作变更；产品文件、AGENTS、`gate-a.yaml`、`ready.yaml` 和 `implement-plan.json` 对该通道不可达。
 Gate A/B 收据使用 schema v4，并在 Implement admission 时同时对照同一 root/change 的私有批准事实与 finalization revision/hash 事实验证。
 
@@ -67,8 +71,10 @@ npm install -g @abelxiaoxing/cadence
 
 ## Worker 路由（Worker routes）
 
-复制 [`config/routes.example.json`](config/routes.example.json) 到项目级 `.pi/cadence/routes.json` 或用户级 `~/.pi/agent/cadence/routes.json`。
+路由配置是可选的：没有项目级或用户级文件时，三个包内 Agent 默认继承当前父模型，因此首次 Design、Implement 或 Diagnose 不需要预先配置 endpoint。
+只有需要自定义模型、显式顺序或 failover 时，才复制 [`config/routes.example.json`](config/routes.example.json) 到项目级 `.pi/cadence/routes.json` 或用户级 `~/.pi/agent/cadence/routes.json`。
 项目文件按整文件优先；route 必须显式列入对应角色，custom route 只引用 `apiKeyEnv` 的变量名，不能把凭据值写进 JSON。
+一旦显式文件存在，它就是完整策略；损坏、缺字段或角色引用不一致会 fail closed，不会悄悄退回默认父模型。
 `rebind` 只能选择已获 policy 授权且能力匹配的 route，不会扩大任务边界。
 
 ## 跨项目验证合同（Cross-project verification）

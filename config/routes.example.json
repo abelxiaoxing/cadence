@@ -6,7 +6,6 @@
       "capabilities": {
         "roles": [
           "design-explorer",
-          "contract-reviewer",
           "implementation-worker",
           "diagnosis-worker"
         ],
@@ -35,7 +34,6 @@
   },
   "roles": {
     "design-explorer": ["parent"],
-    "contract-reviewer": ["parent"],
     "implementation-worker": ["custom-worker", "parent"],
     "diagnosis-worker": ["parent"]
   }

@@ -9,6 +9,7 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import { afterEach, describe, expect, it } from "vitest";
 import { ArtifactStore } from "../src/artifact-store";
+import { compileCandidatePatch } from "../src/candidate-patch";
 import { LIMITS } from "../src/contracts";
 import {
   classifyCandidateContextRequest,
@@ -60,7 +61,7 @@ function evidence() {
 }
 
 describe("real isolated child session", () => {
-  it("seals raw Worker text larger than the complete-result limit without Worker-computed hashes", async () => {
+  it("generates, chunks, and seals a large patch from one structured Worker submission", async () => {
     if (!child || !parentProvider) return notReady("child session");
     const cwd = mkdtempSync(join(tmpdir(), "abel-child-segmented-"));
     roots.push(cwd);
@@ -71,33 +72,38 @@ describe("real isolated child session", () => {
       root: join(privateRoot, "ledger"),
       artifacts,
     });
-    const candidateId = "candidate-segmented-large";
+    const candidateId = "candidate-structured-large";
     const identity = {
       candidateId,
-      runId: "run-segmented-large",
+      runId: "run-structured-large",
       deliveryRevision: 1,
-      taskId: "task-segmented-large",
+      taskId: "task-structured-large",
       phase: "green" as const,
-      attemptId: "attempt-segmented-large",
+      attemptId: "attempt-structured-large",
       approvedPaths: ["a.txt"],
       isolatedRevisionId: "a".repeat(64),
-      verificationId: "segmented-large-green",
+      verificationId: "structured-large-green",
       routeId: "implementation-primary",
       routeFingerprint: "b".repeat(64),
     };
+    const operations = [
+      {
+        kind: "replace" as const,
+        path: "a.txt",
+        oldText: "old\n",
+        newText: `old\n${"x".repeat(LIMITS.maxCompleteResultBytes + 4096)}\n`,
+      },
+    ];
     const diff = Buffer.from(
-      [
-        "--- a/a.txt",
-        "+++ b/a.txt",
-        "@@ -1 +1,2 @@",
-        " old",
-        `+${"x".repeat(LIMITS.maxCompleteResultBytes + 4096)}`,
-        "",
-      ].join("\n"),
+      compileCandidatePatch({
+        root: cwd,
+        writePaths: ["a.txt"],
+        deletePaths: [],
+        operations,
+        maxBytes: 8 * 1024 * 1024,
+      }),
     );
     expect(diff.byteLength).toBeGreaterThan(LIMITS.maxCompleteResultBytes);
-    const split = Math.ceil(diff.byteLength / 2);
-    const segments = [diff.subarray(0, split), diff.subarray(split)];
     const sha256 = (bytes: Uint8Array) =>
       createHash("sha256").update(bytes).digest("hex");
     const faux = fauxProvider({
@@ -109,36 +115,11 @@ describe("real isolated child session", () => {
         fauxToolCall(
           "abel_submit_result",
           {
-            kind: "candidate-segment",
+            kind: "candidate-patch",
             candidateId,
-            sequence: 0,
-            text: segments[0].toString("utf8"),
+            operations,
           },
-          { id: "segment-0" },
-        ),
-        { stopReason: "toolUse" },
-      ),
-      fauxAssistantMessage(
-        fauxToolCall(
-          "abel_submit_result",
-          {
-            kind: "candidate-segment",
-            candidateId,
-            sequence: 1,
-            text: segments[1].toString("utf8"),
-          },
-          { id: "segment-1" },
-        ),
-        { stopReason: "toolUse" },
-      ),
-      fauxAssistantMessage(
-        fauxToolCall(
-          "abel_submit_result",
-          {
-            kind: "candidate-seal",
-            candidateId,
-          },
-          { id: "candidate-seal" },
+          { id: "candidate-patch" },
         ),
         { stopReason: "toolUse" },
       ),
@@ -149,19 +130,25 @@ describe("real isolated child session", () => {
         cwd,
         modelRuntime,
         model: faux.getModel(),
-        systemPrompt: "Submit the supplied candidate in ordered segments.",
-        requestId: "task-segmented-large",
-        taskId: "task-segmented-large",
+        systemPrompt: "Submit the supplied structured candidate patch once.",
+        requestId: "task-structured-large",
+        taskId: "task-structured-large",
         role: "implementation-worker",
         phase: "green",
         output: "diff",
         roots: [cwd],
         timeoutMs: 5_000,
-        candidateArtifact: { ledger, identity },
+        candidateArtifact: {
+          ledger,
+          identity,
+          workspaceRoot: cwd,
+          writePaths: ["a.txt"],
+          deletePaths: [],
+        },
       });
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      expect(result.submitCount).toBe(3);
+      expect(result.submitCount).toBe(1);
       expect(result.result).toMatchObject({
         kind: "sealed-candidate",
         candidateId,
@@ -234,7 +221,7 @@ describe("real isolated child session", () => {
     expect(streamEvents).toContain("progress");
   });
 
-  it("stops after one invalid structural submit instead of asking the model again", async () => {
+  it("accepts one corrected structural submit without restarting the child", async () => {
     if (!child || !parentProvider) return notReady("child session");
     const cwd = mkdtempSync(join(tmpdir(), "abel-child-bad-"));
     roots.push(cwd);
@@ -261,19 +248,14 @@ describe("real isolated child session", () => {
       roots: [cwd],
       timeoutMs: 5_000,
     });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(faux.state.callCount).toBe(1);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(faux.state.callCount).toBe(2);
     expect(result.classification).toMatchObject({
-      attempts: 1,
-      schema: "invalid",
-      identity: { request: false },
-    });
-    expect(result.failure).toMatchObject({
-      kind: "artifact",
-      code: "invalid-structural-result",
-      stage: "structural-submit",
-      details: { submitAttempts: 1 },
+      finalCategory: "multiple-submit",
+      attempts: 2,
+      schema: "valid",
+      identity: { request: true },
     });
     expect(result.usage.totalTokens).toBeGreaterThan(0);
   });
@@ -338,10 +320,13 @@ describe("implementation candidate protocol", () => {
         routeId: "implementation-primary",
         routeFingerprint: "c".repeat(64),
       },
+      workspaceRoot: process.cwd(),
+      writePaths: ["src/value.ts"],
+      deletePaths: [],
     });
 
     const schema = JSON.stringify(submission.tool.parameters);
-    expect(schema.split(`"const":"${candidateId}"`)).toHaveLength(4);
+    expect(schema.split(`"const":"${candidateId}"`)).toHaveLength(3);
   });
 
   it("classifies context from refs instead of trusting the Worker-selected code", () => {
@@ -381,6 +366,102 @@ describe("implementation candidate protocol", () => {
         refs: ["outside/authority.ts"],
       },
     });
+  });
+
+  it("lets an implementation Worker correct one invalid structured patch", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const cwd = mkdtempSync(join(tmpdir(), "abel-child-patch-correction-"));
+    roots.push(cwd);
+    writeFileSync(join(cwd, "a.txt"), "old\n");
+    const candidateId = "candidate-patch-correction";
+    let retained = Buffer.alloc(0);
+    const faux = fauxProvider({
+      provider: "abel-faux-patch-correction",
+      api: "faux",
+    });
+    faux.setResponses([
+      fauxAssistantMessage(
+        fauxToolCall("abel_submit_result", {
+          kind: "candidate-patch",
+          candidateId,
+          operations: [
+            {
+              kind: "replace",
+              path: "a.txt",
+              oldText: "missing",
+              newText: "new",
+            },
+          ],
+        }),
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage(
+        fauxToolCall("abel_submit_result", {
+          kind: "candidate-patch",
+          candidateId,
+          operations: [
+            {
+              kind: "replace",
+              path: "a.txt",
+              oldText: "old",
+              newText: "new",
+            },
+          ],
+        }),
+        { stopReason: "toolUse" },
+      ),
+    ]);
+    const modelRuntime = await parentProvider.runtimeForProvider(faux.provider);
+    const result = await child.runChildSession({
+      cwd,
+      modelRuntime,
+      model: faux.getModel(),
+      systemPrompt: "Correct one rejected structured patch.",
+      requestId: "task-patch-correction",
+      taskId: "task-patch-correction",
+      role: "implementation-worker",
+      phase: "green",
+      output: "diff",
+      roots: [cwd],
+      timeoutMs: 5_000,
+      candidateArtifact: {
+        ledger: {
+          beginCandidate: () => ({ ok: true as const }),
+          appendCandidateSegment: (input: { bytes: Uint8Array }) => {
+            retained = Buffer.concat([retained, Buffer.from(input.bytes)]);
+            return { ok: true as const, nextSequence: 1 };
+          },
+          sealCandidate: () => ({
+            ok: true as const,
+            artifactHash: createHash("sha256").update(retained).digest("hex"),
+            bytes: retained.byteLength,
+            paths: ["a.txt"],
+          }),
+        } as never,
+        identity: {
+          candidateId,
+          runId: "run-patch-correction",
+          deliveryRevision: 1,
+          taskId: "task-patch-correction",
+          phase: "green",
+          attemptId: "attempt-patch-correction",
+          approvedPaths: ["a.txt"],
+          isolatedRevisionId: "b".repeat(64),
+          verificationId: "patch-correction-green",
+          routeId: "implementation-primary",
+          routeFingerprint: "c".repeat(64),
+        },
+        workspaceRoot: cwd,
+        writePaths: ["a.txt"],
+        deletePaths: [],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.submitCount).toBe(2);
+    expect(result.classification.finalCategory).toBe("multiple-submit");
+    expect(faux.state.callCount).toBe(2);
   });
 
   it("keeps the first terminal candidate result when its tool batch also reads", async () => {
@@ -459,6 +540,9 @@ describe("implementation candidate protocol", () => {
           routeId: "implementation-primary",
           routeFingerprint: "c".repeat(64),
         },
+        workspaceRoot: cwd,
+        writePaths: ["a.txt"],
+        deletePaths: [],
       },
     });
 
@@ -518,6 +602,31 @@ async function runChildSessionFixture(
   })) as unknown as ChildOutcome;
 }
 
+async function runChildSessionResponses(
+  childRef: ChildModule,
+  parentRef: ParentModule,
+  tag: string,
+  responses: FauxResponse[],
+) {
+  const cwd = mkdtempSync(join(tmpdir(), `abel-fc-${tag}-`));
+  roots.push(cwd);
+  writeFileSync(join(cwd, "a.txt"), "old\n");
+  const faux = fauxProvider({ provider: `abel-fc-${tag}`, api: "faux" });
+  faux.setResponses(responses);
+  const modelRuntime = await parentRef.runtimeForProvider(faux.provider);
+  return (await childRef.runChildSession({
+    cwd,
+    modelRuntime,
+    model: faux.getModel(),
+    systemPrompt: "Submit the supplied diff through abel_submit_result.",
+    requestId: "task-1",
+    role: "implementation-worker",
+    output: "diff",
+    roots: [cwd],
+    timeoutMs: 5_000,
+  })) as unknown as ChildOutcome;
+}
+
 const validDiffSubmit = {
   id: "task-1",
   role: "implementation-worker",
@@ -559,6 +668,62 @@ describe("structural submission fixture precheck", () => {
 });
 
 describe("structural submission classification", () => {
+  it("accepts a validated submit accompanied by harmless assistant text", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const result = await runChildSessionFixture(
+      child,
+      parentProvider,
+      "submit-with-text",
+      fauxAssistantMessage(
+        [
+          { type: "text", text: "Submitting the validated result." },
+          fauxToolCall("abel_submit_result", validDiffSubmit),
+        ],
+        { stopReason: "toolUse" },
+      ),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.submitCount).toBe(1);
+  });
+
+  it("lets a child correct one rejected structural submission in the same session", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const result = await runChildSessionResponses(
+      child,
+      parentProvider,
+      "submit-correction",
+      [
+        submitResponse({ ...validDiffSubmit, taskId: "wrong-task" }),
+        submitResponse(validDiffSubmit),
+      ],
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.submitCount).toBe(2);
+  });
+
+  it("stops after the one in-session structural correction is also rejected", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const result = await runChildSessionResponses(
+      child,
+      parentProvider,
+      "submit-correction-limit",
+      [
+        submitResponse({ ...validDiffSubmit, taskId: "wrong-task-one" }),
+        submitResponse({ ...validDiffSubmit, taskId: "wrong-task-two" }),
+        submitResponse(validDiffSubmit),
+      ],
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.classification).toMatchObject({
+      attempts: 2,
+      schema: "valid",
+      identity: { task: false },
+    });
+  });
+
   it("[SLICE-2:typed-failure] measures non-ASCII evidence limits in UTF-8 bytes", async () => {
     if (!child || !parentProvider) return notReady("child session");
     const submitted = {
@@ -794,7 +959,7 @@ describe("structural submission classification", () => {
       child,
       parentProvider,
       "wrong-phase",
-      submitResponse({ ...validDiffSubmit, phase: "review" }),
+      submitResponse({ ...validDiffSubmit, phase: "green" }),
     );
     expect.soft(wrongPhase.ok).toBe(false);
     expect.soft(classification(wrongPhase)?.identity?.phase).toBe(false);

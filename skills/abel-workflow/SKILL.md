@@ -54,7 +54,9 @@ Cross-stage calls fail closed.
 
 ## Durable Design control
 
-Design uses one closed private `action: "design"` family with `record-decision`, `approve-gate`, `write-artifact`, `delete-artifact`, `compile-plan`, and `finalize-delivery`.
+Design uses one closed private `action: "design"` family from its first operation onward: `start`, `status`, `bind-change`, `record-decision`, `approve-gate`, `write-artifact`, `delete-artifact`, `compile-plan`, and `finalize-delivery`.
+`start` accepts either the complete transient requirement or an existing change name; `status` uses the returned run id; `bind-change` names a provisional run only after current Gate A approval.
+The control plane normalizes and hashes transient requirement, decision-contract, and Gate-A contract text itself, and Gate B binds a plan compiled after the current Gate A approval and latest substantive decisions without a caller-supplied hash.
 The owner-private SQLite journal retains only normalized evidence identities/hashes, versioned decision hashes and refs, Gate proof facts, canonical compiled-plan identity/bytes, finalization identity, and idempotent operation outcomes.
 It never retains prompts, transcripts, hidden reasoning, credentials, environment values, or raw model output.
 
@@ -132,7 +134,8 @@ Pre-existing failures remain separate and never satisfy Red.
 3. **Refactor:** optional in-boundary improvement with behavior and verification unchanged.
 
 The parent control plane alone applies accepted candidate bytes to the private cumulative revision, records `phase-verified`/`repair-verified`, advances one task checkbox, verifies outputs, and schedules dependents.
-A Worker only proposes one complete diff within the declared path set.
+A Worker submits one complete structured patch within the declared path set; trusted code validates its exact replacements and file operations, generates the unified diff, and seals the candidate.
+One rejected structural submission may be corrected once inside the same disposable child session; a second rejection ends that session without creating an unbounded model loop or accepting partial output.
 
 After all tasks, re-run every affected contract, compare the full suite with baseline, apply and verify sealed AGENTS operations, verify output postconditions, then prepare one currentness-checked journaled transaction and post-apply verification.
 The main workspace remains unchanged before final application eligibility.
@@ -155,7 +158,7 @@ Automatic attempts are finite.
 Artifact correction uses the sealed `artifactCorrection.maxAttempts` independently for each task phase and operation; only typed artifact rejection consumes its 2-3 total-launch budget.
 Exhaustion pauses with the final safe code, scope, and last committed revision.
 A later `resume` starts a new operation budget while reusing durable baseline and phase facts.
-Oversized output becomes `needs-task-split`; partial diffs are never accepted.
+Oversized output becomes `needs-task-split`; partial patches are never accepted.
 
 Use `approval-needed` only when continuing requires new authority: observable behavior, architecture/policy, dependency, undeclared path, conflict/resource permission, verification contract, AGENTS target/impact/content, or another irreversible scope decision.
 Report the exact missing authority.

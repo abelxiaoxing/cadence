@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { chmodSync, closeSync, lstatSync, openSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import type { ControlStage } from "./control-contracts.ts";
 import {
   createRunEvent,
   type DeliveryGate,
   type RunEvent,
   type RunProjection,
+  type RunStage,
   type RunState,
   reduceRunEvents,
   ZERO_EVENT_HASH,
@@ -37,6 +37,7 @@ interface EventRow {
 }
 
 interface OperationRow {
+  kind: string;
   state: string;
   outcome_json: string | null;
   lease_token: string | null;
@@ -49,7 +50,7 @@ export interface RunStoreOptions {
 }
 
 export interface StartRunInput {
-  stage: ControlStage;
+  stage: RunStage;
   change?: string;
   provisionalKey?: string;
   operationId: string;
@@ -338,7 +339,7 @@ export class RunStore {
   #operation(runId: string, operationId: string): OperationRow | undefined {
     return this.#database
       .prepare(
-        `SELECT state, outcome_json, lease_token, lease_expires_at
+        `SELECT kind, state, outcome_json, lease_token, lease_expires_at
          FROM operations WHERE run_id = ? AND operation_id = ?`,
       )
       .get(runId, operationId) as OperationRow | undefined;
@@ -347,8 +348,10 @@ export class RunStore {
   #operationOutcome(
     runId: string,
     operationId: string,
+    kind: string,
   ): RunProjection | undefined {
     const row = this.#operation(runId, operationId);
+    if (row && row.kind !== kind) throw new Error("operation-id-conflict");
     if (row?.state !== "committed" || row.outcome_json === null)
       return undefined;
     return parseProjection(row.outcome_json);
@@ -465,6 +468,7 @@ export class RunStore {
         const replay = this.#operationOutcome(
           existing.run_id,
           input.operationId,
+          "start",
         );
         if (replay) return replay;
         const projection = parseProjection(existing.projection_json);
@@ -539,7 +543,11 @@ export class RunStore {
     requireIdentifier(input.operationId, "operation-id");
     if (!CHANGE_NAME.test(input.change)) throw new Error("invalid-change");
     return this.#transaction(() => {
-      const replay = this.#operationOutcome(input.runId, input.operationId);
+      const replay = this.#operationOutcome(
+        input.runId,
+        input.operationId,
+        "change-bound",
+      );
       if (replay) return replay;
       const current = this.status(input.runId);
       if (current.stage !== "abel-design" || !current.provisionalKey) {
@@ -597,7 +605,11 @@ export class RunStore {
       if (input.lease.runId !== input.runId) throw new Error("lease-fenced");
       this.#assertLease(input.lease);
     }
-    const replay = this.#operationOutcome(input.runId, input.operationId);
+    const replay = this.#operationOutcome(
+      input.runId,
+      input.operationId,
+      "delivery-bound",
+    );
     if (replay) return replay;
     const existing = this.#database
       .prepare(
@@ -911,7 +923,11 @@ export class RunStore {
         if (input.lease.runId !== input.runId) throw new Error("lease-fenced");
         this.#assertLease(input.lease);
       }
-      const replay = this.#operationOutcome(input.runId, input.operationId);
+      const replay = this.#operationOutcome(
+        input.runId,
+        input.operationId,
+        "state-transitioned",
+      );
       if (replay) return replay;
       const current = this.status(input.runId);
       const projection = this.#appendEvent(input.runId, "state-transitioned", {

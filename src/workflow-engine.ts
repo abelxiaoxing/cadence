@@ -2833,13 +2833,14 @@ class DurableWorkflowComposition
     const phase = request.task.phases[request.phase];
     if (!phase) throw new Error("workflow-task-phase-invalid");
     const allPhases = Object.values(request.task.phases);
+    const approvedWritePaths = [
+      ...new Set(allPhases.flatMap((boundary) => boundary.write)),
+    ].sort();
+    const approvedDeletePaths = [
+      ...new Set(allPhases.flatMap((boundary) => boundary.delete)),
+    ].sort();
     const approvedPaths = [
-      ...new Set(
-        allPhases.flatMap((boundary) => [
-          ...boundary.write,
-          ...boundary.delete,
-        ]),
-      ),
+      ...new Set([...approvedWritePaths, ...approvedDeletePaths]),
     ].sort();
     const boundPaths = [
       ...new Set(
@@ -2915,7 +2916,13 @@ class DurableWorkflowComposition
             task: structuredClone(request.task),
             workspaceRoot: proposalRoot,
             ledgerProjection,
-            candidateArtifact: { ledger, identity },
+            candidateArtifact: {
+              ledger,
+              identity,
+              workspaceRoot: proposalRoot,
+              writePaths: approvedWritePaths,
+              deletePaths: approvedDeletePaths,
+            },
             route: attempt.route,
             repair,
             signal: attempt.signal,
@@ -3684,7 +3691,13 @@ class DurableWorkflowComposition
             task: structuredClone(input.task),
             workspaceRoot: proposalRoot,
             ledgerProjection,
-            candidateArtifact: { ledger, identity },
+            candidateArtifact: {
+              ledger,
+              identity,
+              workspaceRoot: proposalRoot,
+              writePaths: phase.write,
+              deletePaths: phase.delete,
+            },
             route: attempt.route,
             signal: attempt.signal,
             onHeaders: attempt.onHeaders,
@@ -4808,21 +4821,6 @@ export class WorkflowEngine {
         .get(this.#stateRoot.consumerRootHash, stage, `change:${change}`) as
         | { run_id: string }
         | undefined
-    )?.run_id;
-  }
-
-  #lookupProvisionalRun(provisionalKey: string): string | undefined {
-    return (
-      this.#database
-        .prepare(
-          `SELECT run_id FROM runs
-           WHERE root_hash = ? AND stage = 'abel-design'
-             AND lookup_key = ?`,
-        )
-        .get(
-          this.#stateRoot.consumerRootHash,
-          `provisional:${provisionalKey}`,
-        ) as { run_id: string } | undefined
     )?.run_id;
   }
 
@@ -6846,118 +6844,7 @@ export class WorkflowEngine {
     signal?: AbortSignal,
     onActivity?: (event: WorkflowActivityUpdate) => void,
   ) {
-    if (!("change" in command)) {
-      const existingRun = this.#lookupProvisionalRun(command.provisionalKey);
-      if (existingRun) {
-        this.#ensureEngineRun(existingRun);
-        const replay = this.#operationReplay(
-          existingRun,
-          command.operationId,
-          command.command,
-        );
-        if (replay) return replay;
-        const restarted = this.#runStore.startRun({
-          stage: "abel-design",
-          provisionalKey: command.provisionalKey,
-          operationId: command.operationId,
-        });
-        const begun = this.#beginOperation(
-          existingRun,
-          command.operationId,
-          command.command,
-        );
-        if (begun) return begun;
-        if (restarted.state === "created") {
-          const lease = this.#operationLease(existingRun, command.operationId);
-          this.#transition(
-            existingRun,
-            "paused",
-            `${command.operationId}:awaiting-gate-a`,
-            "design-awaiting-gate-a",
-            lease,
-          );
-        }
-        return this.#commitOperation(
-          existingRun,
-          command.operationId,
-          this.#statusByRun(existingRun),
-        );
-      }
-      const created = this.#runStore.startRun({
-        stage: "abel-design",
-        provisionalKey: command.provisionalKey,
-        operationId: command.operationId,
-      });
-      this.#ensureEngineRun(created.runId);
-      const begun = this.#beginOperation(
-        created.runId,
-        command.operationId,
-        command.command,
-      );
-      if (begun) return begun;
-      const lease = this.#operationLease(created.runId, command.operationId);
-      this.#transition(
-        created.runId,
-        "paused",
-        `${command.operationId}:awaiting-gate-a`,
-        "design-awaiting-gate-a",
-        lease,
-      );
-      return this.#commitOperation(
-        created.runId,
-        command.operationId,
-        this.#statusByRun(created.runId),
-      );
-    }
-    let existingRun = this.#lookupRun(command.stage, command.change);
-    const requestedProvisionalRun =
-      command.stage === "abel-design" && command.provisionalKey
-        ? this.#lookupProvisionalRun(command.provisionalKey)
-        : undefined;
-    if (command.provisionalKey && !requestedProvisionalRun) {
-      throw new Error("provisional-design-run-not-found");
-    }
-    if (
-      existingRun &&
-      requestedProvisionalRun &&
-      existingRun !== requestedProvisionalRun
-    ) {
-      throw new Error("provisional-design-run-conflict");
-    }
-    if (
-      existingRun &&
-      command.stage === "abel-design" &&
-      ["completed", "discarded", "rejected"].includes(
-        this.#runStore.status(existingRun).state,
-      )
-    ) {
-      const restarted = this.#runStore.startRun({
-        stage: command.stage,
-        change: command.change,
-        operationId: command.operationId,
-      });
-      existingRun = restarted.runId;
-      this.#ensureEngineRun(existingRun);
-      const begun = this.#beginOperation(
-        existingRun,
-        command.operationId,
-        command.command,
-      );
-      if (begun) return begun;
-      const lease = this.#operationLease(existingRun, command.operationId);
-      this.#transition(
-        existingRun,
-        "paused",
-        `${command.operationId}:awaiting-design-evidence`,
-        "design-awaiting-evidence",
-        lease,
-      );
-      return this.#commitOperation(
-        existingRun,
-        command.operationId,
-        this.#statusByRun(existingRun),
-      );
-    }
+    const existingRun = this.#lookupRun(command.stage, command.change);
     if (existingRun) {
       this.#ensureEngineRun(existingRun);
       const replay = this.#operationReplay(
@@ -6986,17 +6873,6 @@ export class WorkflowEngine {
       }
     }
 
-    if (requestedProvisionalRun) {
-      this.#runStore.bindChange({
-        runId: requestedProvisionalRun,
-        change: command.change,
-        operationId: `bind-change-${hash(
-          requestedProvisionalRun,
-          command.change,
-        ).slice(0, 40)}`,
-      });
-      existingRun = requestedProvisionalRun;
-    }
     const runId =
       existingRun ??
       this.#runStore.startRun({
@@ -7012,20 +6888,6 @@ export class WorkflowEngine {
     );
     if (begun) return begun;
     const lease = this.#operationLease(runId, command.operationId);
-    if (command.stage === "abel-design") {
-      this.#transition(
-        runId,
-        "paused",
-        `${command.operationId}:awaiting-design-evidence`,
-        "design-awaiting-evidence",
-        lease,
-      );
-      return this.#commitOperation(
-        runId,
-        command.operationId,
-        this.#statusByRun(runId),
-      );
-    }
     this.#transition(
       runId,
       "validating-delivery",
@@ -7087,17 +6949,6 @@ export class WorkflowEngine {
     if (replay) return replay;
     const lease = this.#operationLease(runId, command.operationId);
     const current = this.#runStore.status(runId);
-    if (current.stage === "abel-design") {
-      if (current.state !== "paused") {
-        this.#interruptOperation(runId, command.operationId);
-        throw new Error("resume-not-allowed");
-      }
-      return this.#commitOperation(
-        runId,
-        command.operationId,
-        this.#statusByRun(runId),
-      );
-    }
     if (current.state === "recovering") {
       emitWorkflowActivity(onActivity, {
         state: "recovering",

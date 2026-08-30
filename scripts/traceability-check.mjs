@@ -86,50 +86,6 @@ for (const changeName of activeChanges) {
   referenceCount += references.length;
 }
 
-if (process.argv.includes("--review-json")) {
-  const input = readFileSync(0, "utf8");
-  let review;
-  try {
-    review = JSON.parse(input);
-  } catch {
-    throw new Error("review evidence is not valid JSON");
-  }
-  const required = [
-    "reviewer",
-    "identity",
-    "reviewedArtifacts",
-    "suiteEvidence",
-    "traceabilityFindings",
-    "dagFindings",
-    "unresolvedIssues",
-    "outcome",
-  ];
-  for (const field of required) {
-    if (!(field in review)) {
-      throw new Error(`review evidence missing field: ${field}`);
-    }
-  }
-  if (
-    !Array.isArray(review.unresolvedIssues) ||
-    review.unresolvedIssues.length > 0
-  ) {
-    throw new Error("review evidence has unresolved issues");
-  }
-  if (
-    !Array.isArray(review.reviewedArtifacts) ||
-    review.reviewedArtifacts.length === 0
-  ) {
-    throw new Error("review evidence has no reviewed artifacts");
-  }
-  if (review.outcome !== "accepted") {
-    throw new Error("review evidence outcome is not accepted");
-  }
-  console.log(
-    "review-check: structured evidence accepted with no unresolved issues",
-  );
-  process.exit(0);
-}
-
 console.log(
   `traceability-check: ${referenceCount} active Requirement/Scenario references across ${checkedChanges} change(s) resolve exactly once`,
 );

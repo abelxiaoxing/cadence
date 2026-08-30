@@ -231,7 +231,7 @@ describe("generated envelope fuzzing with a fixed seed", () => {
 
 const validEvidenceResult = () => ({
   id: "packet-001",
-  role: "contract-reviewer",
+  role: "diagnosis-worker",
   kind: "evidence",
   conclusions: ["The packet runtime owns bounded admission."],
   citations: [{ path: "src/packet-runtime.ts", lines: "1-20" }],
@@ -459,14 +459,14 @@ describe("strict diff result schema", () => {
 });
 
 describe("workflow control command schema", () => {
-  it("accepts a provisional Design start without persisting the raw requirement", () => {
+  it("reserves command control for Implement and rejects Design envelopes", () => {
     if (!contracts) return notReady("contracts");
     expect(
       contracts.validateControlCommand({
         command: "start",
-        stage: "abel-design",
-        provisionalKey: "a".repeat(64),
-        operationId: "design-start-001",
+        stage: "abel-implement",
+        change: "clean-control-surface",
+        operationId: "implement-start-001",
       }),
     ).toMatchObject({ ok: true });
     expect(

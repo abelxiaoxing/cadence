@@ -210,6 +210,42 @@ const DESIGN_CONTROL_REQUEST_SCHEMA = {
   description:
     "One closed durable Design control operation. The operation body is strict and idempotent by operationId.",
   oneOf: [
+    ...(["requirement", "change"] as const).map((field) => ({
+      type: "object" as const,
+      properties: {
+        operation: { type: "string" as const, enum: ["start"] },
+        operationId: { type: "string" as const },
+        [field]: {
+          type: "string" as const,
+          description:
+            field === "requirement"
+              ? "Raw Design requirement; code derives and stores only its stable hash."
+              : "Existing canonical change name to resume or revise.",
+        },
+      },
+      required: ["operation", "operationId", field],
+      additionalProperties: false,
+    })),
+    {
+      type: "object",
+      properties: {
+        operation: { type: "string", enum: ["status"] },
+        runId: { type: "string" },
+      },
+      required: ["operation", "runId"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: {
+        operation: { type: "string", enum: ["bind-change"] },
+        runId: { type: "string" },
+        operationId: { type: "string" },
+        change: { type: "string" },
+      },
+      required: ["operation", "runId", "operationId", "change"],
+      additionalProperties: false,
+    },
     {
       type: "object",
       properties: {
@@ -218,7 +254,11 @@ const DESIGN_CONTROL_REQUEST_SCHEMA = {
         operationId: { type: "string" },
         decisionId: { type: "string" },
         category: { type: "string", enum: ["behavior", "technical"] },
-        contractHash: { type: "string" },
+        contract: {
+          type: "string",
+          description:
+            "Normalized decision contract; code hashes it and never persists the text.",
+        },
         refs: { type: "array", items: { type: "string" } },
       },
       required: [
@@ -227,7 +267,7 @@ const DESIGN_CONTROL_REQUEST_SCHEMA = {
         "operationId",
         "decisionId",
         "category",
-        "contractHash",
+        "contract",
         "refs",
       ],
       additionalProperties: false,
@@ -238,10 +278,25 @@ const DESIGN_CONTROL_REQUEST_SCHEMA = {
         operation: { type: "string", enum: ["approve-gate"] },
         runId: { type: "string" },
         operationId: { type: "string" },
-        gate: { type: "string", enum: ["gate-a", "gate-b"] },
-        contractHash: { type: "string" },
+        gate: { type: "string", enum: ["gate-a"] },
+        contract: {
+          type: "string",
+          description:
+            "Complete approved WHAT contract; code hashes it and never persists the text.",
+        },
       },
-      required: ["operation", "runId", "operationId", "gate", "contractHash"],
+      required: ["operation", "runId", "operationId", "gate", "contract"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: {
+        operation: { type: "string", enum: ["approve-gate"] },
+        runId: { type: "string" },
+        operationId: { type: "string" },
+        gate: { type: "string", enum: ["gate-b"] },
+      },
+      required: ["operation", "runId", "operationId", "gate"],
       additionalProperties: false,
     },
     {
@@ -417,7 +472,7 @@ export interface PackageDeliverySourceOptions {
 
 export interface PackageWorkflowDeliverySource extends WorkflowDeliverySource {
   discoverLatest(input: {
-    stage: "abel-design" | "abel-implement";
+    stage: "abel-implement";
     change: string;
   }): Promise<WorkflowAvailableDelivery | undefined>;
 }
@@ -1418,6 +1473,7 @@ export function openPackageWorkflowControlEngine(
   const routeResolution = loadRoutePolicy({
     cwd: consumerRoot,
     home: homedir(),
+    ...(initialContext.model ? { parentModel: initialContext.model } : {}),
   });
   const stateRoot = resolveStateRoot({
     consumerRoot,
@@ -1614,6 +1670,7 @@ export function openPackageWorkflowControlEngine(
       const operationRouteResolution = loadRoutePolicy({
         cwd: consumerRoot,
         home: homedir(),
+        ...(context.model ? { parentModel: context.model } : {}),
       });
       engine.updateRoutePolicy(
         operationRouteResolution.ok
@@ -1636,12 +1693,7 @@ export function openPackageWorkflowControlEngine(
           operationRouteResolution,
           engine.routePolicyStatus(),
         );
-        const designStatus =
-          validation.value.stage === "abel-design" &&
-          typeof outcome.runId === "string"
-            ? { design: design.status(outcome.runId) }
-            : {};
-        return { ...outcome, ...designStatus, routePolicy };
+        return { ...outcome, routePolicy };
       });
     },
     executeDesign(request: unknown) {
@@ -1781,10 +1833,9 @@ export function registerWorkflowControl(
       },
       stage: {
         type: "string",
-        enum: ["abel-design", "abel-implement"],
+        enum: ["abel-implement"],
       },
       change: { type: "string" },
-      provisionalKey: { type: "string" },
       operationId: { type: "string" },
       deliveryRevision: { type: "integer", minimum: 1 },
       receiptHash: { type: "string" },
@@ -1818,7 +1869,7 @@ export function registerWorkflowControl(
       label: "Abel Control",
       description:
         kind === "command"
-          ? "Private stage-bound Abel workflow control. Accepts durable Design and Implement change commands."
+          ? "Private stage-bound Abel workflow control. Accepts durable Implement change commands."
           : "Private stage-bound Abel packet control. Accepts bounded Design and Diagnose packet operations.",
       executionMode: "parallel",
       parameters:
@@ -2007,10 +2058,6 @@ export function registerWorkflowControl(
           ["completed", "discarded", "rejected"].includes(String(payload.state))
         ) {
           await deactivateStage();
-        } else if (validation.value.stage === "abel-design") {
-          // Design starts/statuses through the command surface, then switches to
-          // its bounded evidence and artifact packet surface for the next turn.
-          registerDispatchTool("packet");
         }
         let display: ReturnType<typeof activity.finalizeWorkflow>;
         if (tuiControl) {
@@ -2068,7 +2115,7 @@ export function registerWorkflowControl(
       if (activePrompt === "abel-design" && prompt !== "abel-design") {
         restoreDesignTools();
       }
-      registerDispatchTool(prompt === "abel-diagnose" ? "packet" : "command");
+      registerDispatchTool(prompt === "abel-implement" ? "command" : "packet");
       activePrompt = prompt;
       const sessionId = ctx.sessionManager?.getSessionId?.();
       if (typeof sessionId === "string") {

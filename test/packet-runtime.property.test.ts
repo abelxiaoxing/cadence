@@ -157,7 +157,6 @@ describe("PacketRuntime", () => {
   it("fails over when inherited route setup is unavailable", async () => {
     const roles = [
       "design-explorer",
-      "contract-reviewer",
       "implementation-worker",
       "diagnosis-worker",
     ];
@@ -239,7 +238,7 @@ describe("PacketRuntime", () => {
     );
   });
 
-  it("fails closed when no packet route policy is declared", async () => {
+  it("uses the inherited parent route when no packet policy is declared", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "cadence-packet-no-route-"));
     const home = mkdtempSync(path.join(tmpdir(), "cadence-packet-no-home-"));
     try {
@@ -257,7 +256,7 @@ describe("PacketRuntime", () => {
           { request: packet("missing-route") },
           { ...context, cwd },
         ),
-      ).resolves.toMatchObject({ ok: false, error: "endpoint-unavailable" });
+      ).resolves.toMatchObject({ ok: false, error: "transport-failure" });
     } finally {
       rmSync(cwd, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });
@@ -285,13 +284,12 @@ describe("PacketRuntime", () => {
           { request: packet("route-missing") },
           { ...context, cwd },
         ),
-      ).resolves.toMatchObject({ ok: false, error: "endpoint-unavailable" });
+      ).resolves.toMatchObject({ ok: false, error: "transport-failure" });
 
       const routeDirectory = path.join(cwd, ".pi", "cadence");
       mkdirSync(routeDirectory, { recursive: true });
       const roles = [
         "design-explorer",
-        "contract-reviewer",
         "implementation-worker",
         "diagnosis-worker",
       ];

@@ -8,6 +8,7 @@ const harness = vi.hoisted(() => ({
   started: undefined as (() => void) | undefined,
   release: Promise.resolve() as Promise<void>,
   observedContext: undefined as Record<string, unknown> | undefined,
+  routePolicies: [] as Record<string, any>[],
 }));
 
 vi.mock("../src/parent-provider.ts", async (importOriginal) => {
@@ -38,7 +39,9 @@ vi.mock("../src/workflow-engine.ts", async (importOriginal) => {
   return {
     ...actual,
     openDurableWorkflowEngine: (options: Record<string, any>) => ({
-      updateRoutePolicy() {},
+      updateRoutePolicy(policy: Record<string, any>) {
+        harness.routePolicies.push(policy);
+      },
       routePolicyStatus: () => ({}),
       async execute(command: Record<string, unknown>) {
         if (harness.active) throw new Error("operation-already-running");
@@ -96,12 +99,55 @@ afterEach(() => {
   harness.started = undefined;
   harness.release = Promise.resolve();
   harness.observedContext = undefined;
+  harness.routePolicies = [];
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
 describe("package operation context isolation", () => {
+  it("refreshes the default inherited route from the owning model bounds", async () => {
+    const module = await import("../src/index.ts");
+    const consumerRoot = mkdtempSync(
+      path.join(tmpdir(), "cadence-parent-bounds-consumer-"),
+    );
+    const stateRoot = mkdtempSync(
+      path.join(tmpdir(), "cadence-parent-bounds-state-"),
+    );
+    roots.push(consumerRoot, stateRoot);
+    const previousStateHome = process.env.XDG_STATE_HOME;
+    process.env.XDG_STATE_HOME = stateRoot;
+    const engine = module.openPackageWorkflowControlEngine(
+      {
+        cwd: consumerRoot,
+        model: { contextWindow: 256_000, maxTokens: 128_000 },
+      } as never,
+      {} as never,
+    );
+
+    try {
+      await engine.execute(
+        {
+          command: "start",
+          stage: "abel-implement",
+          change: "parent-bounds",
+          operationId: "parent-bounds-start",
+        },
+        {
+          cwd: consumerRoot,
+          model: { contextWindow: 32_768, maxTokens: 8_192 },
+        } as never,
+      );
+      expect(
+        harness.routePolicies.at(-1)?.routes.parent.capabilities,
+      ).toMatchObject({ contextWindow: 32_768, maxTokens: 8_192 });
+    } finally {
+      await engine.close();
+      if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME;
+      else process.env.XDG_STATE_HOME = previousStateHome;
+    }
+  });
+
   it("keeps the owning context when an idempotent retry overlaps", async () => {
     const module = await import("../src/index.ts");
     const consumerRoot = mkdtempSync(

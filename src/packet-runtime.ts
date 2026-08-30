@@ -20,7 +20,6 @@ import { runtimeForWorkerRoute } from "./parent-provider.ts";
 import {
   loadRoutePolicy,
   type RoutePolicy,
-  unavailableRoutePolicy,
   type WorkerRole,
 } from "./route-policy.ts";
 import { type BrokerActivityUpdate, RunWorkerBroker } from "./worker-broker.ts";
@@ -319,7 +318,7 @@ export class PacketRuntime {
     if (!agent) {
       throw new Error("packet agent definition is unavailable");
     }
-    const broker = this.#brokerFor(context.cwd);
+    const broker = this.#brokerFor(context);
     const routed = await broker.run({
       runId: `${packet.stage}:${packet.id}`,
       operationId: packet.id,
@@ -405,8 +404,8 @@ export class PacketRuntime {
     return routed.value.child;
   }
 
-  #brokerFor(cwd: string): RunWorkerBroker {
-    const root = path.resolve(cwd);
+  #brokerFor(context: PacketContext): RunWorkerBroker {
+    const root = path.resolve(context.cwd);
     const existing = this.#brokers.get(root);
     let policy = this.#routePolicy;
     if (policy && existing) return existing;
@@ -414,12 +413,13 @@ export class PacketRuntime {
       const resolution = loadRoutePolicy({
         cwd: root,
         ...(this.#routePolicyHome ? { home: this.#routePolicyHome } : {}),
+        ...(context.model ? { parentModel: context.model } : {}),
       });
-      if (!resolution.ok && resolution.source.kind !== "none") {
+      if (!resolution.ok) {
         const code = resolution.diagnostics[0]?.code ?? "policy-invalid";
         throw new Error(`route-policy-unavailable:${code}`);
       }
-      policy = resolution.ok ? resolution.policy : unavailableRoutePolicy();
+      policy = resolution.policy;
     }
     const serializedPolicy = JSON.stringify(policy);
     if (existing && this.#brokerPolicies.get(root) === serializedPolicy) {

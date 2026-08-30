@@ -10,7 +10,6 @@ import { RunStore } from "../src/run-store.ts";
 import { resolveStateRoot } from "../src/state-root.ts";
 
 const roots: string[] = [];
-const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
 const HASH_C = "c".repeat(64);
 
@@ -215,14 +214,14 @@ describe("durable Design decisions and Gate currentness", () => {
       operationId: "behavior-v1",
       decisionId: "observable-contract",
       category: "behavior",
-      contractHash: HASH_A,
+      contract: "Initial observable behavior contract",
       refs: ["specs/example/spec.md#Behavior/First"],
     });
     const gateA = journal.approveGate({
       runId: run.runId,
       operationId: "approve-a-v1",
       gate: "gate-a",
-      contractHash: HASH_A,
+      contract: "Approved observable behavior contract",
     });
     const planBytes = Buffer.from('{"plan":"one"}\n');
     journal.recordCompiledPlan({
@@ -236,7 +235,6 @@ describe("durable Design decisions and Gate currentness", () => {
       runId: run.runId,
       operationId: "approve-b-v1",
       gate: "gate-b",
-      contractHash: HASH_B,
     });
     expect(journal.status(run.runId).gates).toMatchObject({
       gateA: { current: true, proof: gateA.proof },
@@ -248,32 +246,98 @@ describe("durable Design decisions and Gate currentness", () => {
       operationId: "technical-v2",
       decisionId: "storage-contract",
       category: "technical",
-      contractHash: HASH_C,
+      contract: "Updated technical storage contract",
       refs: ["design.md#Decisions"],
     });
     expect(journal.status(run.runId).gates).toMatchObject({
       gateA: { current: true },
       gateB: { current: false, staleReason: "technical-decision-changed" },
     });
+    expect(
+      journal.approveGate({
+        runId: run.runId,
+        operationId: "approve-b-v1",
+        gate: "gate-b",
+      }),
+    ).toEqual(gateB);
 
-    journal.approveGate({
+    expect(() =>
+      journal.approveGate({
+        runId: run.runId,
+        operationId: "approve-b-before-recompile",
+        gate: "gate-b",
+      }),
+    ).toThrow(/design-plan-stale/u);
+    const revisedPlanBytes = Buffer.from('{"plan":"two"}\n');
+    journal.recordCompiledPlan({
+      runId: run.runId,
+      operationId: "compile-v2",
+      bytes: revisedPlanBytes,
+      rawSha256: createHash("sha256").update(revisedPlanBytes).digest("hex"),
+      canonicalHash: HASH_C,
+    });
+    const revisedGateB = journal.approveGate({
       runId: run.runId,
       operationId: "approve-b-v2",
       gate: "gate-b",
-      contractHash: HASH_B,
     });
+    expect(revisedGateB.proof.contractHash).toBe(HASH_C);
     journal.recordDecision({
       runId: run.runId,
       operationId: "behavior-v2",
       decisionId: "observable-contract",
       category: "behavior",
-      contractHash: HASH_C,
+      contract: "Updated observable behavior contract",
       refs: ["specs/example/spec.md#Behavior/Second"],
     });
     expect(journal.status(run.runId).gates).toMatchObject({
       gateA: { current: false, staleReason: "behavior-decision-changed" },
       gateB: { current: false, staleReason: "behavior-decision-changed" },
     });
+    journal.close();
+    runs.close();
+  });
+
+  it("requires a plan compiled after the current Gate A approval", () => {
+    const { stateRoot, runs, run } = fixture("gate-a-plan-order");
+    const journal = DesignJournal.open(stateRoot);
+    journal.approveGate({
+      runId: run.runId,
+      operationId: "approve-a-v1",
+      gate: "gate-a",
+      contract: "Initial approved behavior",
+    });
+    const planBytes = Buffer.from('{"plan":"one"}\n');
+    journal.recordCompiledPlan({
+      runId: run.runId,
+      operationId: "compile-v1",
+      bytes: planBytes,
+      rawSha256: createHash("sha256").update(planBytes).digest("hex"),
+      canonicalHash: HASH_B,
+    });
+    journal.approveGate({
+      runId: run.runId,
+      operationId: "approve-b-v1",
+      gate: "gate-b",
+    });
+
+    journal.approveGate({
+      runId: run.runId,
+      operationId: "approve-a-v2",
+      gate: "gate-a",
+      contract: "Revised approved behavior",
+    });
+    expect(journal.status(run.runId).gates.gateB).toMatchObject({
+      current: false,
+      staleReason: "gate-a-reapproved",
+    });
+    expect(() =>
+      journal.approveGate({
+        runId: run.runId,
+        operationId: "approve-b-with-old-plan",
+        gate: "gate-b",
+      }),
+    ).toThrow(/design-plan-stale/u);
     journal.close();
     runs.close();
   });
@@ -285,13 +349,16 @@ describe("durable Design decisions and Gate currentness", () => {
       runId: run.runId,
       operationId: "approve-a-once",
       gate: "gate-a" as const,
-      contractHash: HASH_A,
+      contract: "Approved Gate A contract",
     };
     const first = journal.approveGate(input);
     expect(journal.approveGate(input)).toEqual(first);
     expect(journal.status(run.runId).gates.gateA.proof?.revision).toBe(1);
     expect(() =>
-      journal.approveGate({ ...input, contractHash: HASH_B }),
+      journal.approveGate({
+        ...input,
+        contract: "Conflicting Gate A contract",
+      }),
     ).toThrow(/design-operation-conflict/u);
     journal.close();
     runs.close();
@@ -310,7 +377,7 @@ describe("durable Design decisions and Gate currentness", () => {
       operationId: "bounded-decision",
       decisionId: "behavior-contract",
       category: "behavior",
-      contractHash: HASH_A,
+      contract: "Bounded behavior contract",
       refs: ["proposal.md#What Changes"],
     });
     const status = journal.status(run.runId);
@@ -320,7 +387,7 @@ describe("durable Design decisions and Gate currentness", () => {
           decisionId: "behavior-contract",
           category: "behavior",
           revision: 1,
-          contractHash: HASH_A,
+          contractHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
         },
       ],
       plan: null,

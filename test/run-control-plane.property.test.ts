@@ -274,22 +274,20 @@ describe("change-oriented control contract", () => {
       }),
     ).toMatchObject({ ok: false, code: "invalid-control-command" });
 
-    const provisionalKey = "a".repeat(64);
     expect(
       validate({
         command: "start",
         stage: "abel-design",
         change: "durable-control-plane",
-        provisionalKey,
         operationId: "bind-provisional-design",
       }),
-    ).toMatchObject({ ok: true });
+    ).toMatchObject({ ok: false, code: "invalid-control-command" });
     expect(
       validate({
         command: "start",
         stage: "abel-implement",
         change: "durable-control-plane",
-        provisionalKey,
+        provisionalKey: "a".repeat(64),
         operationId: "invalid-implement-provisional",
       }),
     ).toMatchObject({ ok: false, code: "invalid-control-command" });
@@ -712,6 +710,7 @@ describe("durable run journal", () => {
       ): {
         startRun(input: Record<string, unknown>): Record<string, unknown>;
         bindDelivery(input: Record<string, unknown>): Record<string, unknown>;
+        transition(input: Record<string, unknown>): Record<string, unknown>;
         status(runId: string): Record<string, unknown>;
         listEvents(runId: string): Array<Record<string, unknown>>;
         rebuildProjection(runId: string): Record<string, unknown>;
@@ -740,6 +739,13 @@ describe("durable run journal", () => {
       operationId: "start-002",
     });
     expect(repeated.runId).toBe(created.runId);
+    expect(() =>
+      store.transition({
+        runId: created.runId,
+        to: "paused",
+        operationId: "start-001",
+      }),
+    ).toThrow(/operation-id-conflict/u);
 
     const gateA = store.bindDelivery({
       runId: created.runId,

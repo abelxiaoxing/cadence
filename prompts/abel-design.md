@@ -49,15 +49,18 @@ Identical replay is idempotent and conflicting reuse of an operation id fails cl
 
 ## Durable Design identity
 
-Use `start` once to create or recover the Design run identity and `status` to inspect it.
-A new requirement may begin with a code-generated SHA-256 `provisionalKey`; after Gate A fixes the change name, a named `start` binds the same provisional run.
-These commands record lifecycle only and do not execute implementation work.
+Use the same `action: "design"` envelope from the first call through finalization.
+Call `start` once with either the complete new requirement or an explicit existing change name, then use the returned `runId` for every later Design operation.
+For a new requirement, the control plane normalizes and hashes the transient text itself; the raw requirement is not written to the durable journal.
+After Gate A fixes its name, bind that same provisional run with `bind-change` rather than starting a second run.
+Use `status` by `runId` to recover local lifecycle and Design facts without a model or endpoint request.
 A completed Design run is immutable; an explicit later `--change <change>` starts the next durable Design revision for that change while preserving prior approval facts for receipt verification.
 
 ```json
-{"command":"start","stage":"abel-design","provisionalKey":"<sha256>","operationId":"<unique-operation>"}
-{"command":"start","stage":"abel-design","change":"<change>","provisionalKey":"<same-sha256>","operationId":"<unique-operation>"}
-{"command":"status","stage":"abel-design","change":"<change>"}
+{"action":"design","request":{"operation":"start","requirement":"<complete-requirement>","operationId":"<unique-operation>"}}
+{"action":"design","request":{"operation":"start","change":"<existing-change>","operationId":"<unique-operation>"}}
+{"action":"design","request":{"operation":"status","runId":"<run-id>"}}
+{"action":"design","request":{"operation":"bind-change","runId":"<run-id>","operationId":"<unique-operation>","change":"<gate-a-approved-change>"}}
 ```
 
 ## Read-only evidence packets
@@ -97,13 +100,14 @@ Design may inspect manifests and verification capability statically; it must not
 ## Decision ledger and Gate A
 
 Maintain the conversational decision presentation with id, `behavior | technical`, question, cited evidence, alternatives, recommendation, user decision, status, and affected artifacts.
-After the user resolves a substantive decision, record only its normalized identity, category, canonical contract hash, and artifact references through the durable private journal:
+After the user resolves a substantive decision, send its concise canonical contract text and artifact references through the private control operation.
+The control plane normalizes and hashes that transient text and persists only the hash, identity, category, and refs:
 
 ```json
-{"action":"design","request":{"operation":"record-decision","runId":"<run-id>","operationId":"<unique-operation>","decisionId":"<stable-id>","category":"behavior","contractHash":"<sha256>","refs":["<artifact-anchor>"]}}
+{"action":"design","request":{"operation":"record-decision","runId":"<run-id>","operationId":"<unique-operation>","decisionId":"<stable-id>","category":"behavior","contract":"<canonical-decision-contract>","refs":["<artifact-anchor>"]}}
 ```
 
-Do not put prompts, transcripts, hidden reasoning, credentials, environment values, or raw model output in this request.
+Do not put prompts, transcripts, hidden reasoning, credentials, environment values, or raw model output in this request; `contract` is only the concise decision being bound.
 
 Ask the user only for substantive choices: observable behavior, scope/non-goals, data/security/privacy/compatibility/migration policy, new dependencies, architecture/policy, irreversible changes, and technical choices with real trade-offs.
 Resolve reversible details mechanically from one established repository convention and do not ask them repeatedly.
@@ -113,15 +117,15 @@ Before approval, present the unresolved behavior decisions together.
 After explicit approval:
 
 1. resolve the final kebab-case change name and schema;
-2. create the change only if it does not already exist and bind the named Design run;
-3. materialize schema-ready behavior artifacts one at a time;
-4. compute the canonical behavior-contract hash and record approval with:
+2. approve the complete WHAT contract through the transient-text operation below;
+3. bind the final change name to the same run with `bind-change`, creating the change root only through later artifact writes;
+4. materialize schema-ready behavior artifacts one at a time.
 
 ```json
-{"action":"design","request":{"operation":"approve-gate","runId":"<run-id>","operationId":"<unique-operation>","gate":"gate-a","contractHash":"<behavior-contract-sha256>"}}
+{"action":"design","request":{"operation":"approve-gate","runId":"<run-id>","operationId":"<unique-operation>","gate":"gate-a","contract":"<complete-approved-what-contract>"}}
 ```
 
-The returned proof contains the approval revision, contract hash, and owner-private record hash.
+The control plane generates the canonical behavior-contract hash; the returned proof contains its approval revision, contract hash, and owner-private record hash.
 `gate-a.yaml` is installed later by code-owned finalization, not hand-authored here.
 
 Gate A is not tool permission and carries no session/model/timestamp identity.
@@ -176,10 +180,10 @@ Gate B approves the complete HOW: substantive technical choices, task DAG, exact
 Do not request approval while any capability, closure, traceability, or blocking decision is unresolved.
 
 After explicit approval, materialize any remaining schema artifacts through `write-artifact` one at a time and complete the code-owned sequence below.
-First record Gate B against the exact canonical plan hash returned by `compile-plan`:
+First approve Gate B; the control plane accepts only a plan compiled after the current Gate A approval and latest substantive decisions, then binds that stored canonical hash so the caller never copies or recomputes it:
 
 ```json
-{"action":"design","request":{"operation":"approve-gate","runId":"<run-id>","operationId":"<unique-operation>","gate":"gate-b","contractHash":"<exact-plan-canonical-sha256>"}}
+{"action":"design","request":{"operation":"approve-gate","runId":"<run-id>","operationId":"<unique-operation>","gate":"gate-b"}}
 ```
 
 Then request finalization:

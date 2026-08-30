@@ -17,7 +17,6 @@ const expectedFiles = [
   "package/THIRD_PARTY_NOTICES.md",
   "package/LICENSE",
   "package/README.md",
-  "package/agents/contract-reviewer.md",
   "package/agents/design-explorer.md",
   "package/agents/diagnosis-worker.md",
   "package/agents/implementation-worker.md",
@@ -42,6 +41,7 @@ const expectedFiles = [
   "package/src/agent-registry.ts",
   "package/src/apply-transaction.ts",
   "package/src/artifact-store.ts",
+  "package/src/candidate-patch.ts",
   "package/src/parent-payload-bridge.ts",
   "package/src/child-session.ts",
   "package/src/contracts.ts",
@@ -168,7 +168,6 @@ describe("real npm tarball", () => {
       "utf8",
     );
     const shipped = [
-      "contract-reviewer",
       "design-explorer",
       "diagnosis-worker",
       "implementation-worker",
@@ -228,13 +227,6 @@ describe("real npm tarball", () => {
     );
     expect(diagnosis).not.toMatch(
       /recommended next (workflow )?step|nextStep/i,
-    );
-
-    const reviewer = resource("agents/contract-reviewer.md");
-    expect(reviewer).toMatch(/delivery-invalid/);
-    expect(reviewer).toMatch(/approval-boundary/);
-    expect(reviewer).not.toMatch(
-      /returns?[\s\S]{0,80}(defects?|issues?)[\s\S]{0,80}to Design|recommended next (workflow )?step|nextStep/i,
     );
   });
 

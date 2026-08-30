@@ -200,14 +200,8 @@ function structuralSubmitCount(message: AssistantMessage | undefined) {
   ).length;
 }
 
-function isSingleStructuralSubmit(message: AssistantMessage | undefined) {
-  const content = finalDeliveryContent(message);
-  return (
-    message?.role === "assistant" &&
-    content.length === 1 &&
-    content[0]?.type === "toolCall" &&
-    content[0].name === "abel_submit_result"
-  );
+function hasOneStructuralSubmit(message: AssistantMessage | undefined) {
+  return message?.role === "assistant" && structuralSubmitCount(message) === 1;
 }
 
 function safeChildError(failure: ChildFailure): string {
@@ -317,7 +311,7 @@ export async function runChildSession(input: {
   onStreamStart?: () => void;
   onStreamProgress?: () => void;
 }): Promise<ChildSessionResult> {
-  const segmentedCandidate = input.candidateArtifact !== undefined;
+  const candidateProtocol = input.candidateArtifact !== undefined;
   const submit = input.candidateArtifact
     ? createCandidateArtifactTool(input.candidateArtifact)
     : createSubmitTool({
@@ -402,14 +396,19 @@ export async function runChildSession(input: {
     const assistants =
       session?.messages.filter((m) => m.role === "assistant") ?? [];
     const last = assistants.at(-1);
+    const lastSubmit = assistants.findLast((message) =>
+      hasStructuralSubmit(message),
+    );
+    const structuralAttempts = assistants.reduce(
+      (count, message) => count + structuralSubmitCount(message),
+      0,
+    );
     let finalCategory: FinalCategory;
     if (!last) {
       finalCategory = "no-final-assistant";
-    } else if (isSingleStructuralSubmit(last)) {
+    } else if (hasOneStructuralSubmit(lastSubmit)) {
       finalCategory =
-        !segmentedCandidate && submit.getAttempts() > 1
-          ? "multiple-submit"
-          : "single-submit-only";
+        structuralAttempts > 1 ? "multiple-submit" : "single-submit-only";
     } else {
       const content = finalDeliveryContent(last);
       finalCategory =
@@ -504,13 +503,17 @@ export async function runChildSession(input: {
     if (childAgent) {
       const previousShouldStopAfterTurn = childAgent.shouldStopAfterTurn;
       childAgent.shouldStopAfterTurn = async (turn, signal) => {
-        if (
-          segmentedCandidate
-            ? submit.getResult() !== undefined
-            : hasStructuralSubmit(turn.message)
-        ) {
+        if (submit.getResult() !== undefined) {
           return true;
         }
+        const structuralAttempts =
+          session?.messages
+            .filter((message) => message.role === "assistant")
+            .reduce(
+              (count, message) => count + structuralSubmitCount(message),
+              0,
+            ) ?? 0;
+        if (structuralAttempts >= 2) return true;
         return (await previousShouldStopAfterTurn?.(turn, signal)) ?? false;
       };
     }
@@ -560,11 +563,11 @@ export async function runChildSession(input: {
     const result = submit.getResult();
     const attempts = submit.getAttempts();
     const classification = classifySession();
-    const segmentedComplete =
-      segmentedCandidate &&
+    const candidateComplete =
+      candidateProtocol &&
       result !== undefined &&
       (result.kind === "sealed-candidate" || result.kind === "context-request");
-    if (!result || (segmentedCandidate ? !segmentedComplete : attempts !== 1)) {
+    if (!result || (candidateProtocol && !candidateComplete)) {
       const failure = withSubmitDetails(
         submit.getFailure() ??
           input.failureOverride?.() ??
@@ -589,9 +592,9 @@ export async function runChildSession(input: {
     const assistants = session.messages.filter((m) => m.role === "assistant");
     const final = assistants.at(-1);
     if (
-      !(segmentedCandidate
-        ? segmentedComplete && structuralSubmitCount(final) === 1
-        : isSingleStructuralSubmit(final))
+      !(candidateProtocol
+        ? candidateComplete && structuralSubmitCount(final) === 1
+        : hasOneStructuralSubmit(final))
     ) {
       const failure = {
         kind: "artifact",

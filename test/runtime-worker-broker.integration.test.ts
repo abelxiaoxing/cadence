@@ -52,7 +52,6 @@ afterEach(() => {
 function policy(primaryModel = "primary-worker") {
   const roles = [
     "design-explorer",
-    "contract-reviewer",
     "implementation-worker",
     "diagnosis-worker",
   ];
@@ -379,14 +378,14 @@ function bindTrustedDeliveryProofs(input: {
     operationId: "fixture-behavior",
     decisionId: "fixture-contract",
     category: "behavior",
-    contractHash: "a".repeat(64),
+    contract: "Trusted delivery behavior contract",
     refs: ["proposal.md"],
   });
   const gateA = journal.approveGate({
     runId: run.runId,
     operationId: "fixture-gate-a",
     gate: "gate-a",
-    contractHash: "a".repeat(64),
+    contract: "Approved trusted delivery WHAT contract",
   });
   journal.recordCompiledPlan({
     runId: run.runId,
@@ -399,7 +398,6 @@ function bindTrustedDeliveryProofs(input: {
     runId: run.runId,
     operationId: "fixture-gate-b",
     gate: "gate-b",
-    contractHash: input.trusted.compiled.planHash,
   });
   const gateAPath = path.join(input.trusted.changeRoot, "gate-a.yaml");
   const readyPath = path.join(input.trusted.changeRoot, "ready.yaml");
@@ -1049,7 +1047,6 @@ describe("durable WorkflowEngine service composition", () => {
     roots.push(consumerRoot, stateBase);
     const roles = [
       "design-explorer",
-      "contract-reviewer",
       "implementation-worker",
       "diagnosis-worker",
     ];
@@ -1139,7 +1136,6 @@ describe("durable WorkflowEngine service composition", () => {
     });
     const roles = [
       "design-explorer",
-      "contract-reviewer",
       "implementation-worker",
       "diagnosis-worker",
     ];
@@ -1278,12 +1274,12 @@ describe("durable WorkflowEngine service composition", () => {
       engine = openPackageWorkflowControlEngine({ cwd: consumerRoot }, {});
       const started = await engine.execute({
         command: "start",
-        stage: "abel-design",
+        stage: "abel-implement",
         change: "policy-recovery",
         operationId: "policy-recovery-start",
       });
       expect(started).toMatchObject({
-        stage: "abel-design",
+        stage: "abel-implement",
         state: "paused",
         routePolicy: {
           ok: false,
@@ -1294,7 +1290,6 @@ describe("durable WorkflowEngine service composition", () => {
 
       const roles = [
         "design-explorer",
-        "contract-reviewer",
         "implementation-worker",
         "diagnosis-worker",
       ];
@@ -1319,7 +1314,7 @@ describe("durable WorkflowEngine service composition", () => {
       await expect(
         engine.execute({
           command: "status",
-          stage: "abel-design",
+          stage: "abel-implement",
           change: "policy-recovery",
         }),
       ).resolves.toMatchObject({
@@ -3392,7 +3387,7 @@ describe("durable WorkflowEngine service composition", () => {
     await engine.close();
   });
 
-  it("keeps named Design runs out of the implementation delivery path", async () => {
+  it("rejects Design commands before the implementation delivery path", async () => {
     const module = (await import("../src/workflow-engine.ts")) as Record<
       string,
       unknown
@@ -3428,97 +3423,16 @@ describe("durable WorkflowEngine service composition", () => {
         },
       },
     });
-    const started = await engine.execute({
-      command: "start",
-      stage: "abel-design",
-      change: "design-stage-separation",
-      operationId: "design-stage-start",
-    });
-    expect(started).toMatchObject({
-      stage: "abel-design",
-      state: "paused",
-      pause: { code: "design-awaiting-evidence" },
-      tasks: [],
-    });
     await expect(
       engine.execute({
-        command: "resume",
+        command: "start",
         stage: "abel-design",
         change: "design-stage-separation",
-        operationId: "design-stage-resume",
+        operationId: "design-stage-start",
       }),
-    ).resolves.toMatchObject({
-      runId: started.runId,
-      stage: "abel-design",
-      state: "paused",
-      tasks: [],
-    });
+    ).rejects.toThrow(/invalid-control-command/u);
     expect(deliveryCalls).toBe(0);
     expect(workerCalls).toBe(0);
-    await engine.close();
-  });
-
-  it("binds a named Design start to its explicit provisional identity", async () => {
-    const module = await import("../src/workflow-engine.ts");
-    const fixture = directEngineFixture("provisional-design-binding");
-    const engine = module.WorkflowEngine.open({
-      consumerRoot: fixture.consumerRoot,
-      stateRoot: fixture.stateRoot,
-      deliverySource: {
-        load: async () => {
-          throw new Error("Design must not load Implement delivery");
-        },
-      },
-      worker: {
-        runAttempt: async () => {
-          throw new Error("Design must not run a Worker");
-        },
-        rebind: () => ({ ok: true as const, routeId: "inherited" }),
-      },
-      changeVerifier: {
-        verify: async () => {
-          throw new Error("Design must not verify Implement delivery");
-        },
-      },
-    });
-    const firstKey = "1".repeat(64);
-    const secondKey = "2".repeat(64);
-    const first = await engine.execute({
-      command: "start",
-      stage: "abel-design",
-      provisionalKey: firstKey,
-      operationId: "provisional-first",
-    });
-    const second = await engine.execute({
-      command: "start",
-      stage: "abel-design",
-      provisionalKey: secondKey,
-      operationId: "provisional-second",
-    });
-    expect(first.runId).not.toBe(second.runId);
-
-    await expect(
-      engine.execute({
-        command: "start",
-        stage: "abel-design",
-        change: "bound-second-design",
-        provisionalKey: secondKey,
-        operationId: "bind-provisional-second",
-      }),
-    ).resolves.toMatchObject({
-      runId: second.runId,
-      change: "bound-second-design",
-      state: "paused",
-    });
-    await expect(
-      engine.execute({
-        command: "start",
-        stage: "abel-design",
-        change: "missing-provisional-design",
-        provisionalKey: "3".repeat(64),
-        operationId: "bind-missing-provisional",
-      }),
-    ).rejects.toThrow(/provisional-design-run-not-found/u);
     await engine.close();
   });
 

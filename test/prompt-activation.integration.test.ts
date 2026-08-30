@@ -208,28 +208,8 @@ describe("package Prompt provenance activates abel_dispatch", () => {
       },
       {},
     );
-    const commandTool = tool;
-    expect(commandTool?.parameters).toMatchObject({
-      required: ["command", "stage"],
-    });
-    expect(commandTool).toBeDefined();
-    const execute = (commandTool as any).execute as (
-      ...args: any[]
-    ) => Promise<unknown>;
-    await execute(
-      "design-start",
-      {
-        command: "start",
-        stage: "abel-design",
-        provisionalKey: "a".repeat(64),
-        operationId: "design-start-envelope",
-      },
-      undefined,
-      undefined,
-      {},
-    );
     expect(tool).toBeDefined();
-    if (!tool) throw new Error("Design packet schema was not registered");
+    if (!tool) throw new Error("Design control schema was not registered");
     const requestSchema = (
       tool.parameters.properties as Record<string, unknown>
     ).request;
@@ -281,6 +261,9 @@ describe("package Prompt provenance activates abel_dispatch", () => {
     });
     expect(designOperations).toEqual(
       expect.arrayContaining([
+        "start",
+        "status",
+        "bind-change",
         "record-decision",
         "approve-gate",
         "write-artifact",
@@ -310,7 +293,7 @@ describe("package Prompt provenance activates abel_dispatch", () => {
         command: {
           enum: ["start", "status", "resume", "rebind", "cancel", "discard"],
         },
-        stage: { enum: ["abel-design", "abel-implement"] },
+        stage: { enum: ["abel-implement"] },
       },
     });
     expect(tool.parameters.properties).not.toHaveProperty("version");
@@ -335,10 +318,12 @@ describe("package Prompt provenance activates abel_dispatch", () => {
     const { session } = await promptSession([
       fauxAssistantMessage(
         fauxToolCall("abel_dispatch", {
-          command: "start",
-          stage: "abel-design",
-          provisionalKey: "a".repeat(64),
-          operationId: "first-design-start",
+          action: "design",
+          request: {
+            operation: "start",
+            requirement: "verified input",
+            operationId: "first-design-start",
+          },
         }),
         { stopReason: "toolUse" },
       ),

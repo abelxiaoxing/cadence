@@ -97,7 +97,7 @@ describe("semantic stage activation teardown", () => {
           runId: "design-run-1",
           operationId: "approve-a",
           gate: "gate-a",
-          contractHash: "a".repeat(64),
+          contract: "Approved activation behavior contract",
         },
       },
       undefined,

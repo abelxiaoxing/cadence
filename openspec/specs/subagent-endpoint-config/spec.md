@@ -21,6 +21,8 @@ Configuration error text SHALL identify offending configuration key names only.
 ### Requirement: Visible route-policy configuration
 
 Cadence SHALL resolve one complete route-policy source for a project, with project-local policy taking precedence over user policy as a whole and no secret or partial-value merging across sources.
+When neither source exists, Cadence SHALL synthesize a complete default policy that routes every package-owned role through the current inherited parent identity so a fresh installation can dispatch immediately.
+An explicit project or user file SHALL replace that default as a whole; an invalid explicit file SHALL fail closed and SHALL NOT silently fall back to the parent.
 The policy SHALL define an ordered set of allowed routes for each closed package-owned role and MAY include inherited-parent identity as an explicit route.
 Each route SHALL declare enough non-secret capability metadata to determine supported dialect, context and output bounds, and eligibility for its role.
 Users SHALL be able to inspect the selected policy source, route names, route kinds, capabilities, health state, and ordering without exposing URL values, API keys, credentials, or raw environment values.
@@ -31,9 +33,14 @@ The v2 policy format SHALL replace the v1 single-endpoint key contract without i
 - **WHEN** both project and user route policies exist
 - **THEN** only the complete project policy participates and no missing project value is filled from user policy
 
+#### Scenario: No policy file exists
+
+- **WHEN** neither project nor user route policy is configured
+- **THEN** every package-owned role uses the synthesized inherited-parent route without reporting endpoint-unavailable solely because configuration is absent
+
 #### Scenario: Parent identity is allowed
 
-- **WHEN** a role's ordered policy explicitly includes inherited-parent identity
+- **WHEN** the synthesized default or an explicit role policy includes inherited-parent identity
 - **THEN** that route is eligible according to its declared order and capability checks
 
 #### Scenario: Effective policy is inspected
@@ -78,6 +85,7 @@ Route health SHALL be observable through safe typed status without revealing end
 
 The broker SHALL validate the entire selected policy and each referenced route before network transmission.
 An invalid URL, unsupported dialect, missing required identity field, invalid bound, duplicate route identity, inconsistent role reference, or unreadable policy SHALL produce a deterministic typed policy diagnostic without exposing configured values.
+A present but invalid explicit policy SHALL remain the selected failing source until corrected and SHALL NOT be treated as if no file existed.
 A policy diagnostic SHALL prevent a new Worker request under the invalid route but SHALL NOT corrupt or terminally block an existing durable run.
 The run SHALL retain local status, permit corrected-policy resume, and require explicit rebinding when the corrected effective route set changes a paused task's selected identity outside already approved automatic policy.
 

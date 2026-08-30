@@ -22,18 +22,11 @@ export const STAGES = [
 ] as const;
 export const ROLES = [
   "design-explorer",
-  "contract-reviewer",
   "implementation-worker",
   "diagnosis-worker",
 ] as const;
 export const OUTPUT_KINDS = ["evidence", "diff"] as const;
-export const PHASES = [
-  "evidence",
-  "red",
-  "green",
-  "refactor",
-  "review",
-] as const;
+export const PHASES = ["evidence", "red", "green", "refactor"] as const;
 
 export const AGENTS_IMPACTS = [
   "none",

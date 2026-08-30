@@ -32,9 +32,10 @@ import type { ResolvedStateRoot } from "./state-root.ts";
 
 const CHANGE_NAME = /^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$/u;
 const IDENTIFIER = /^[a-z0-9](?:[a-z0-9._:-]{0,126}[a-z0-9])?$/iu;
-const SHA256 = /^[a-f0-9]{64}$/u;
 const ARTIFACT_SEGMENT = /^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$/iu;
 const MAX_DESIGN_FILE_BYTES = 16 * 1024 * 1024;
+const MAX_DESIGN_REQUIREMENT_BYTES = 64 * 1024;
+const MAX_DESIGN_CONTRACT_BYTES = 256 * 1024;
 
 export interface DesignOpenSpecInspection {
   change: string;
@@ -46,20 +47,46 @@ export interface DesignOpenSpecInspection {
 
 export type DesignControlRequest =
   | {
+      operation: "start";
+      operationId: string;
+      requirement: string;
+    }
+  | {
+      operation: "start";
+      operationId: string;
+      change: string;
+    }
+  | {
+      operation: "status";
+      runId: string;
+    }
+  | {
+      operation: "bind-change";
+      runId: string;
+      operationId: string;
+      change: string;
+    }
+  | {
       operation: "record-decision";
       runId: string;
       operationId: string;
       decisionId: string;
       category: "behavior" | "technical";
-      contractHash: string;
+      contract: string;
       refs: string[];
     }
   | {
       operation: "approve-gate";
       runId: string;
       operationId: string;
-      gate: "gate-a" | "gate-b";
-      contractHash: string;
+      gate: "gate-a";
+      contract: string;
+    }
+  | {
+      operation: "approve-gate";
+      runId: string;
+      operationId: string;
+      gate: "gate-b";
     }
   | {
       operation: "compile-plan";
@@ -121,6 +148,25 @@ function exactKeys(
   );
 }
 
+function normalizedTransientText(value: string): string {
+  return value.replace(/\r\n?/gu, "\n").trim();
+}
+
+function transientHash(domain: string, value: string): string {
+  return createHash("sha256")
+    .update(domain)
+    .update("\0")
+    .update(normalizedTransientText(value))
+    .digest("hex");
+}
+
+function lifecycleOperationId(kind: string, runId: string): string {
+  return `design-${kind}-${createHash("sha256")
+    .update(runId)
+    .digest("hex")
+    .slice(0, 32)}`;
+}
+
 export function validateDesignControlRequest(
   value: unknown,
 ):
@@ -128,6 +174,37 @@ export function validateDesignControlRequest(
   | { ok: false; code: "invalid-design-control-request" } {
   if (!isRecord(value))
     return { ok: false, code: "invalid-design-control-request" };
+  if (value.operation === "start") {
+    const operationValid =
+      typeof value.operationId === "string" &&
+      IDENTIFIER.test(value.operationId);
+    if (!operationValid)
+      return { ok: false, code: "invalid-design-control-request" };
+    if (
+      exactKeys(value, ["operation", "operationId", "requirement"]) &&
+      typeof value.requirement === "string" &&
+      value.requirement.trim().length > 0 &&
+      Buffer.byteLength(value.requirement, "utf8") <=
+        MAX_DESIGN_REQUIREMENT_BYTES
+    ) {
+      return {
+        ok: true,
+        value: structuredClone(value) as DesignControlRequest,
+      };
+    }
+    return exactKeys(value, ["operation", "operationId", "change"]) &&
+      typeof value.change === "string" &&
+      CHANGE_NAME.test(value.change)
+      ? { ok: true, value: structuredClone(value) as DesignControlRequest }
+      : { ok: false, code: "invalid-design-control-request" };
+  }
+  if (value.operation === "status") {
+    return exactKeys(value, ["operation", "runId"]) &&
+      typeof value.runId === "string" &&
+      IDENTIFIER.test(value.runId)
+      ? { ok: true, value: structuredClone(value) as DesignControlRequest }
+      : { ok: false, code: "invalid-design-control-request" };
+  }
   const commonValid =
     typeof value.runId === "string" &&
     IDENTIFIER.test(value.runId) &&
@@ -135,6 +212,13 @@ export function validateDesignControlRequest(
     IDENTIFIER.test(value.operationId);
   if (!commonValid)
     return { ok: false, code: "invalid-design-control-request" };
+  if (value.operation === "bind-change") {
+    return exactKeys(value, ["operation", "runId", "operationId", "change"]) &&
+      typeof value.change === "string" &&
+      CHANGE_NAME.test(value.change)
+      ? { ok: true, value: structuredClone(value) as DesignControlRequest }
+      : { ok: false, code: "invalid-design-control-request" };
+  }
   if (value.operation === "write-artifact") {
     return exactKeys(value, [
       "operation",
@@ -163,16 +247,22 @@ export function validateDesignControlRequest(
       : { ok: false, code: "invalid-design-control-request" };
   }
   if (value.operation === "approve-gate") {
-    return exactKeys(value, [
-      "operation",
-      "runId",
-      "operationId",
-      "gate",
-      "contractHash",
-    ]) &&
-      (value.gate === "gate-a" || value.gate === "gate-b") &&
-      typeof value.contractHash === "string" &&
-      SHA256.test(value.contractHash)
+    if (value.gate === "gate-b") {
+      return exactKeys(value, ["operation", "runId", "operationId", "gate"])
+        ? { ok: true, value: structuredClone(value) as DesignControlRequest }
+        : { ok: false, code: "invalid-design-control-request" };
+    }
+    return value.gate === "gate-a" &&
+      exactKeys(value, [
+        "operation",
+        "runId",
+        "operationId",
+        "gate",
+        "contract",
+      ]) &&
+      typeof value.contract === "string" &&
+      value.contract.trim().length > 0 &&
+      Buffer.byteLength(value.contract, "utf8") <= MAX_DESIGN_CONTRACT_BYTES
       ? { ok: true, value: structuredClone(value) as DesignControlRequest }
       : { ok: false, code: "invalid-design-control-request" };
   }
@@ -185,14 +275,15 @@ export function validateDesignControlRequest(
     "operationId",
     "decisionId",
     "category",
-    "contractHash",
+    "contract",
     "refs",
   ]) &&
     typeof value.decisionId === "string" &&
     IDENTIFIER.test(value.decisionId) &&
     (value.category === "behavior" || value.category === "technical") &&
-    typeof value.contractHash === "string" &&
-    SHA256.test(value.contractHash) &&
+    typeof value.contract === "string" &&
+    value.contract.trim().length > 0 &&
+    Buffer.byteLength(value.contract, "utf8") <= MAX_DESIGN_CONTRACT_BYTES &&
     Array.isArray(value.refs) &&
     value.refs.every((ref) => typeof ref === "string")
     ? { ok: true, value: structuredClone(value) as DesignControlRequest }
@@ -407,6 +498,12 @@ export class DesignController {
     if (!validation.ok) throw new Error(validation.code);
     const request = validation.value;
     switch (request.operation) {
+      case "start":
+        return this.#start(request);
+      case "status":
+        return this.#statusOutcome(request.runId);
+      case "bind-change":
+        return this.#bindChange(request);
       case "record-decision":
         return this.#journal.recordDecision(request);
       case "approve-gate":
@@ -420,6 +517,116 @@ export class DesignController {
       case "delete-artifact":
         return this.#deleteArtifact(request);
     }
+  }
+
+  #statusOutcome(runId: string): Record<string, unknown> {
+    const run = this.#runs.status(runId);
+    if (run.stage !== "abel-design") throw new Error("design-run-invalid");
+    const terminal = ["completed", "discarded", "rejected"].includes(run.state);
+    const design = this.#journal.status(runId);
+    const latestDecisionSequence = design.decisions.reduce(
+      (latest, decision) => Math.max(latest, decision.sequence),
+      0,
+    );
+    const planReadyForGateB =
+      design.gates.gateA.current &&
+      design.plan !== null &&
+      design.plan.sequence >
+        Math.max(
+          design.gates.gateA.approvedSequence ?? 0,
+          latestDecisionSequence,
+        );
+    const canApproveGate =
+      !design.gates.gateA.current ||
+      (planReadyForGateB && !design.gates.gateB.current);
+    const legalActions = terminal
+      ? ["status"]
+      : [
+          "status",
+          "record-decision",
+          ...(canApproveGate ? ["approve-gate"] : []),
+          ...(design.gates.gateA.current && !design.change
+            ? ["bind-change"]
+            : []),
+          ...(design.gates.gateA.current && design.change
+            ? ["write-artifact", "delete-artifact", "compile-plan"]
+            : []),
+          ...(design.change &&
+          design.plan &&
+          design.gates.gateA.current &&
+          design.gates.gateB.current
+            ? ["finalize-delivery"]
+            : []),
+          "finish",
+        ];
+    return {
+      runId: run.runId,
+      stage: run.stage,
+      ...(run.change ? { change: run.change } : {}),
+      state: run.state,
+      completed: run.state === "completed",
+      ...(run.pauseCode ? { pause: { code: run.pauseCode } } : {}),
+      legalActions,
+      design,
+    };
+  }
+
+  #start(request: Extract<DesignControlRequest, { operation: "start" }>) {
+    const fromRequirement = "requirement" in request;
+    const run = this.#runs.startRun({
+      stage: "abel-design",
+      ...(fromRequirement
+        ? {
+            provisionalKey: transientHash(
+              "abel-design-requirement-v1",
+              request.requirement,
+            ),
+          }
+        : { change: request.change }),
+      operationId: request.operationId,
+    });
+    if (run.state === "created") {
+      this.#runs.transition({
+        runId: run.runId,
+        to: "paused",
+        operationId: lifecycleOperationId(
+          fromRequirement ? "await-gate-a" : "await-evidence",
+          run.runId,
+        ),
+        code: fromRequirement
+          ? "design-awaiting-gate-a"
+          : "design-awaiting-evidence",
+      });
+    }
+    return this.#statusOutcome(run.runId);
+  }
+
+  #bindChange(
+    request: Extract<DesignControlRequest, { operation: "bind-change" }>,
+  ) {
+    const run = this.#runs.status(request.runId);
+    if (run.change && run.change !== request.change) {
+      throw new Error("design-operation-conflict");
+    }
+    if (!run.change) {
+      const design = this.#journal.status(request.runId);
+      if (!design.gates.gateA.current)
+        throw new Error("design-gate-a-required");
+    }
+    const bound = this.#runs.bindChange({
+      runId: request.runId,
+      change: request.change,
+      operationId: request.operationId,
+    });
+    if (bound.state === "paused") {
+      this.#runs.transition({
+        runId: request.runId,
+        to: "paused",
+        operationId: lifecycleOperationId("bound", request.runId),
+        code: "design-awaiting-evidence",
+      });
+    }
+    return this.#statusOutcome(request.runId);
   }
 
   #artifactRun(runId: string): { change: string; gateACurrent: boolean } {

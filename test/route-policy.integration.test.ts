@@ -1,4 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,6 +14,7 @@ import {
   parseRoutePolicy,
   resolveCustomRoute,
 } from "../src/route-policy.ts";
+import { RunWorkerBroker } from "../src/worker-broker.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -25,7 +32,6 @@ function root(label: string): string {
 function completePolicy(): Record<string, unknown> {
   const roles = [
     "design-explorer",
-    "contract-reviewer",
     "implementation-worker",
     "diagnosis-worker",
   ];
@@ -62,20 +68,66 @@ function completePolicy(): Record<string, unknown> {
 }
 
 describe("route policy loading", () => {
-  it("reports a missing policy without inventing an inherited route", () => {
+  it("uses the inherited parent model when no route policy is configured", () => {
     const cwd = root("missing");
     const home = root("empty-home");
     const resolution = loadRoutePolicy({ cwd, home });
     expect(resolution).toMatchObject({
-      ok: false,
-      source: { kind: "none" },
-      diagnostics: [{ code: "policy-missing" }],
+      ok: true,
+      source: { kind: "default" },
+      policy: {
+        routes: { parent: { kind: "inherited" } },
+      },
     });
-    expect(inspectRoutePolicy(resolution)).toEqual({
-      ok: false,
-      source: { kind: "none" },
-      diagnostics: [{ code: "policy-missing" }],
+    expect(inspectRoutePolicy(resolution)).toMatchObject({
+      ok: true,
+      source: { kind: "default" },
+      routes: [{ id: "parent", kind: "inherited" }],
     });
+  });
+
+  it("uses the current parent bounds and rejects an incapable default route before launch", async () => {
+    const cwd = root("low-capability-parent");
+    const home = root("low-capability-home");
+    const resolution = loadRoutePolicy({
+      cwd,
+      home,
+      parentModel: { contextWindow: 32_768, maxTokens: 8_192 },
+    });
+    expect(resolution).toMatchObject({
+      ok: true,
+      source: { kind: "default" },
+      policy: {
+        routes: {
+          parent: {
+            capabilities: { contextWindow: 32_768, maxTokens: 8_192 },
+          },
+        },
+      },
+    });
+    if (!resolution.ok) throw new Error("default policy fixture must load");
+
+    let launches = 0;
+    const broker = new RunWorkerBroker(resolution.policy);
+    await expect(
+      broker.run({
+        runId: "low-capability-run",
+        operationId: "low-capability-operation",
+        role: "implementation-worker",
+        requirements: {
+          minContextWindow: 128_000,
+          minOutputTokens: 64_000,
+        },
+        execute: async () => {
+          launches += 1;
+        },
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      state: "paused",
+      code: "endpoint-unavailable",
+    });
+    expect(launches).toBe(0);
   });
 
   it("uses a user policy only when no project policy exists", () => {
@@ -92,6 +144,29 @@ describe("route policy loading", () => {
       source: { kind: "user" },
     });
   });
+
+  it.each(["project", "user"] as const)(
+    "fails closed when the explicit %s policy is a dangling symlink",
+    (source) => {
+      const cwd = root(`dangling-${source}-cwd`);
+      const home = root(`dangling-${source}-home`);
+      const routePath =
+        source === "project"
+          ? path.join(cwd, ".pi", "cadence", "routes.json")
+          : path.join(home, ".pi", "agent", "cadence", "routes.json");
+      mkdirSync(path.dirname(routePath), { recursive: true });
+      symlinkSync(
+        path.join(path.dirname(routePath), "missing.json"),
+        routePath,
+      );
+
+      expect(loadRoutePolicy({ cwd, home })).toMatchObject({
+        ok: false,
+        source: { kind: source },
+        diagnostics: [{ code: "policy-unreadable" }],
+      });
+    },
+  );
 
   it("resolves a custom credential only at attempt time", () => {
     const parsed = parseRoutePolicy(completePolicy());

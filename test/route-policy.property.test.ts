@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseRoutePolicy } from "../src/route-policy.ts";
 
-const ROLES = [
-  "design-explorer",
-  "contract-reviewer",
-  "implementation-worker",
-  "diagnosis-worker",
-];
+const ROLES = ["design-explorer", "implementation-worker", "diagnosis-worker"];
 
 function validPolicy(): Record<string, unknown> {
   return {

@@ -104,14 +104,14 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     expect(lock).not.toMatch(/@gotgenes/);
   });
 
-  it("[SLICE-5:pi-tool-error] ships fact-only worker and reviewer contracts", () => {
+  it("[SLICE-5:pi-tool-error] ships fact-only worker contracts", () => {
     const implementation = read(
       path.join(root, "agents", "implementation-worker.md"),
     );
     const diagnosis = read(path.join(root, "agents", "diagnosis-worker.md"));
-    const reviewer = read(path.join(root, "agents", "contract-reviewer.md"));
 
-    expect(implementation).toMatch(/complete unified diff/i);
+    expect(implementation).toMatch(/complete structured patch/i);
+    expect(implementation).toMatch(/never write unified-diff headers/i);
     expect(implementation).toMatch(
       /expected parent-owned verification contract/i,
     );
@@ -120,18 +120,11 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     expect(implementation).not.toMatch(
       /design-required|return-to-design|\/abel-design|recommended next (workflow )?step|nextStep|dependent successors?|split condition/i,
     );
-
     expect(diagnosis).toMatch(/reported symptoms/i);
     expect(diagnosis).toMatch(/falsif/i);
     expect(diagnosis).toMatch(/failing-regression[\s\S]{0,240}minimum-repair/i);
     expect(diagnosis).not.toMatch(
       /recommended next (workflow )?step|nextStep/i,
-    );
-
-    expect(reviewer).toMatch(/delivery-invalid/);
-    expect(reviewer).toMatch(/approval-boundary/);
-    expect(reviewer).not.toMatch(
-      /returns?[\s\S]{0,80}(defects?|issues?)[\s\S]{0,80}to Design|recommended next (workflow )?step|nextStep/i,
     );
   });
 });

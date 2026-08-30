@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
-import type { ControlStage } from "./control-contracts.ts";
+
+export const RUN_STAGES = ["abel-design", "abel-implement"] as const;
+export type RunStage = (typeof RUN_STAGES)[number];
 
 export const RUN_STATES = [
   "created",
@@ -57,7 +59,7 @@ export interface DeliveryBindingProjection {
 export interface RunProjection {
   runId: string;
   rootHash: string;
-  stage: ControlStage;
+  stage: RunStage;
   change?: string;
   provisionalKey?: string;
   state: RunState;

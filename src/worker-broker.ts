@@ -113,7 +113,6 @@ class RouteAttemptStop extends Error {
 function isRole(value: unknown): value is WorkerRole {
   return [
     "design-explorer",
-    "contract-reviewer",
     "implementation-worker",
     "diagnosis-worker",
   ].includes(String(value));

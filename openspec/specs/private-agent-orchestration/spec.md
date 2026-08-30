@@ -15,10 +15,10 @@ An empty request, unknown role, missing bound, path escape, symbolic-link escape
 - **WHEN** Design or Diagnose dispatches a valid bounded evidence packet
 - **THEN** the selected Agent can inspect only the permitted scope and return evidence without workspace mutation
 
-#### Scenario: Diff-generation request is dispatched
+#### Scenario: Structured-patch request is dispatched
 
-- **WHEN** Implement or Diagnose dispatches a valid bounded task phase
-- **THEN** the Worker returns proposed text without editing the workspace or running validation
+- **WHEN** Implement dispatches a valid bounded task phase
+- **THEN** the Worker returns exact structured file operations without authoring diff hunks, editing the workspace, or running validation
 
 #### Scenario: Request is structurally invalid
 
@@ -37,17 +37,17 @@ An empty request, unknown role, missing bound, path escape, symbolic-link escape
 
 ### Requirement: Private workflow control surface
 
-The package SHALL load one private orchestration extension and four immutable package-owned professional Agent definitions for Design exploration, contract review, implementation, and diagnosis.
+The package SHALL load one private orchestration extension and three immutable package-owned professional Agent definitions for Design exploration, implementation, and diagnosis.
 It SHALL register one private Abel control tool but keep it inactive outside a verified `abel-design`, `abel-implement`, or `abel-diagnose` invocation; `abel-init` and ordinary prompts SHALL NOT activate it.
-The stage-specific tool schema SHALL expose only the closed change-oriented `start`, `status`, `resume`, `rebind`, `cancel`, and `discard` commands during Implement, and only bounded packet operations during Design or Diagnose, so invalid or irrelevant fields are rejected before state mutation.
-An initial parent caller SHALL identify the stage and either a unique change name or a raw Design requirement; the control plane SHALL return an immutable run id used by later commands, and Gate-approved delivery revisions SHALL bind to rather than replace that run. Callers SHALL NOT construct graph admissions, phase snapshots, retained candidate identities, or stable task boundaries.
+The stage-specific tool schema SHALL expose only the closed change-oriented `start`, `status`, `resume`, `rebind`, `cancel`, and `discard` commands during Implement; one closed Design action family plus bounded evidence-packet operations during Design; and bounded packet operations during Diagnose, so invalid or irrelevant fields are rejected before state mutation.
+A Design start SHALL accept either a unique change name or a transient raw requirement and return an immutable run id used by every later Design action; an Implement start SHALL accept a unique change name. Gate-approved delivery revisions SHALL bind to rather than replace the owning run. Callers SHALL NOT construct provisional hashes, contract hashes, graph admissions, phase snapshots, retained candidate identities, or stable task boundaries.
 Stage finish, replacement, reload, session replacement, or shutdown SHALL deactivate the tool and interrupt active operations while preserving a resumable durable run unless it completed or was explicitly discarded.
 The package SHALL expose no general Subagent command, public orchestration API, cross-extension service, external Agent override, or public raw run-store access.
 
 #### Scenario: Eligible stage activates control
 
 - **WHEN** a verified Design, Implement, or Diagnose prompt begins
-- **THEN** the extension activates the private control tool without removing another active tool
+- **THEN** the extension activates the private control tool and, for Design only, enforces its separately specified read-only parent-tool boundary
 
 #### Scenario: Ordinary prompt inspects tools
 
@@ -66,9 +66,10 @@ The package SHALL expose no general Subagent command, public orchestration API, 
 
 ### Requirement: Sealed structured artifact delivery
 
-Design and review Agents SHALL return structured evidence with originating identity, bounded scope, concise claims, exact citations, constraints, dependencies, risks, open questions, and implementation-boundary hints.
-Implementation Workers SHALL return either a complete candidate artifact, a bounded artifact segment for an unsealed candidate, or a typed request for context, task reshaping, boundary approval, or capacity handling.
-Candidate segments SHALL bind one originating run, task, phase, Worker attempt, approved path set, and isolated snapshot; no segment SHALL be usable until the control plane validates ordering, total bounds, complete coverage, and an atomic final seal.
+Design and diagnosis Agents SHALL return structured evidence with originating identity, bounded scope, concise claims, exact citations, constraints, dependencies, risks, open questions, and implementation-boundary hints.
+Implementation Workers SHALL make one terminal submission containing either a complete ordered structured patch or a typed request for context, task reshaping, boundary approval, or capacity handling.
+One structurally rejected submission MAY be corrected once inside the same disposable child session; a second rejection SHALL end that session, and only one accepted terminal result may survive.
+The trusted submit tool SHALL bind that submission to one originating run, task, phase, Worker attempt, approved path set, and isolated snapshot; validate exact replacements, rewrites, creates, and deletions against the isolated workspace and approved phase boundary; generate the unified diff; and own internal chunking, byte limits, hashing, and atomic sealing. The Worker SHALL NOT supply diff headers or hunks, sequence, byte-count, encoding, hash, or separate seal metadata.
 A Worker SHALL NOT select a workflow Gate result, approve authority, apply a candidate, or declare verification success.
 Delivery MUST NOT expose hidden reasoning, a child transcript, tool-call history, credential, or unfiltered raw logs in public outcomes.
 Capacity exhaustion SHALL pause or request approved task reshaping and SHALL NOT yield a truncated candidate or terminally destroy the task.
@@ -80,13 +81,13 @@ Capacity exhaustion SHALL pause or request approved task reshaping and SHALL NOT
 
 #### Scenario: Candidate is sealed
 
-- **WHEN** every bounded segment of one candidate is present, ordered, identity-consistent, complete, and within the approved path set
+- **WHEN** one identity-consistent complete structured patch compiles within its byte and approved-path bounds
 - **THEN** the control plane seals one immutable candidate artifact that may enter parent-owned validation
 
 #### Scenario: Candidate remains incomplete
 
 - **WHEN** a Worker stops before a candidate is completely sealed
-- **THEN** no segment can be applied or treated as a diff and the task remains resumable from its last committed checkpoint
+- **THEN** no partial bytes can be applied or treated as a candidate and the task remains resumable from its last committed checkpoint
 
 #### Scenario: Worker needs more context
 
@@ -180,7 +181,7 @@ An approval-boundary gap SHALL become approval-needed and SHALL never authorize 
 #### Scenario: Result capacity is insufficient
 
 - **WHEN** a complete candidate cannot fit one configured result envelope
-- **THEN** the Worker may use bounded sealed segments or the task pauses for approved reshaping, and no truncated artifact is accepted
+- **THEN** the trusted submit tool may internally chunk and seal one complete artifact or the task pauses for approved reshaping, and no truncated artifact is accepted
 
 ### Requirement: Task context ledger continuity
 
@@ -348,7 +349,7 @@ Every Design evidence packet SHALL bind the durable Design run that requested it
 
 ### Requirement: Minimal durable Design control data
 
-The private journal SHALL retain only normalized Design evidence, decision records, Gate approvals, compiled-plan identity, idempotent operation outcomes, and hashes needed for recovery. It MUST NOT retain raw prompts, hidden reasoning, child transcripts, credentials, environment values, or unfiltered model output.
+The private journal SHALL retain only normalized Design evidence, decision records, Gate approvals, compiled-plan identity, idempotent operation outcomes, and hashes needed for recovery. Raw requirement text and transient decision or Gate contract text SHALL be normalized and hashed in-process and MUST NOT be persisted. The journal also MUST NOT retain raw prompts, hidden reasoning, child transcripts, credentials, environment values, or unfiltered model output.
 
 #### Scenario: Design state is inspected
 

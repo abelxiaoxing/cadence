@@ -2,9 +2,6 @@
 # Package-shipped professional Agent files are private extension resources,
 # not Pi-discovered Agent resources. Identity is pinned by path/name/SHA-256.
 agents:
-  - path: agents/contract-reviewer.md
-    role: contract-reviewer
-    sha256: 85eeab53b0d5d5627692a9d583f269059844fa76fc0e567fe02787d10bedea22
   - path: agents/design-explorer.md
     role: design-explorer
     sha256: aa4bdaed14b75be0a803b0067b252c43f5dbdb0c1084db896d767ebc8a0ed611
@@ -13,7 +10,7 @@ agents:
     sha256: fb7586a10b32038ad8d4c20853a03dfb9072a4c869777b715b1df1cb0e887f4a
   - path: agents/implementation-worker.md
     role: implementation-worker
-    sha256: add2f9689995dfa35aa8f2c514f3b1a01fa10f77ec80f5d53e433c44087017e6
+    sha256: d19d09d00ac390a48acf8fe5ce821f04e96e8ecf644ea36dd83533bb6bd08dd4
 reference:
   attribution: THIRD_PARTY_NOTICES.md
   license: licenses/pi-subagents-MIT.txt
