@@ -228,6 +228,120 @@ function planDraft(reverseSets = false): Record<string, unknown> {
 }
 
 describe("change-oriented control contract", () => {
+  it("canonicalizes only strict-provider padding before exact validation", () => {
+    const canonicalize = requiredFunction<(value: unknown) => unknown>(
+      controlContracts,
+      "canonicalizeControlCommandToolInput",
+    );
+    const validate = requiredFunction<
+      (value: unknown) => Record<string, unknown>
+    >(controlContracts, "validateControlCommand");
+    const common = {
+      stage: "abel-implement",
+      change: "strict-provider-padding",
+    };
+    const cases = [
+      {
+        input: {
+          ...common,
+          command: "start",
+          operationId: "strict-start",
+          deliveryRevision: 1,
+          receiptHash: "",
+          routeId: "",
+        },
+        expected: { ...common, command: "start", operationId: "strict-start" },
+      },
+      {
+        input: {
+          ...common,
+          command: "status",
+          operationId: null,
+          deliveryRevision: null,
+          receiptHash: null,
+          routeId: null,
+        },
+        expected: { ...common, command: "status" },
+      },
+      {
+        input: {
+          ...common,
+          command: "resume",
+          operationId: "strict-resume",
+          deliveryRevision: null,
+          receiptHash: null,
+          routeId: null,
+        },
+        expected: {
+          ...common,
+          command: "resume",
+          operationId: "strict-resume",
+        },
+      },
+      {
+        input: {
+          ...common,
+          command: "rebind",
+          operationId: "strict-rebind",
+          deliveryRevision: null,
+          receiptHash: null,
+          routeId: "implementation-primary",
+        },
+        expected: {
+          ...common,
+          command: "rebind",
+          operationId: "strict-rebind",
+          routeId: "implementation-primary",
+        },
+      },
+      ...(["cancel", "discard"] as const).map((command) => ({
+        input: {
+          ...common,
+          command,
+          operationId: `strict-${command}`,
+          deliveryRevision: null,
+          receiptHash: null,
+          routeId: null,
+        },
+        expected: {
+          ...common,
+          command,
+          operationId: `strict-${command}`,
+        },
+      })),
+    ];
+
+    for (const { input, expected } of cases) {
+      const canonical = canonicalize(input);
+      expect(canonical).toEqual(expected);
+      expect(validate(canonical)).toMatchObject({ ok: true });
+    }
+
+    const malformedResume = canonicalize({
+      ...common,
+      command: "resume",
+      operationId: "strict-malformed-resume",
+      deliveryRevision: 1,
+      receiptHash: "",
+      routeId: null,
+    });
+    expect(validate(malformedResume)).toMatchObject({
+      ok: false,
+      code: "invalid-control-command",
+    });
+
+    const unknown = canonicalize(
+      JSON.parse(
+        '{"command":"start","stage":"abel-implement","change":"strict-provider-padding","operationId":"strict-unknown","__proto__":{"polluted":true}}',
+      ),
+    );
+    expect(Object.hasOwn(unknown as object, "__proto__")).toBe(true);
+    expect(validate(unknown)).toMatchObject({
+      ok: false,
+      code: "invalid-control-command",
+    });
+  });
+
   it("accepts the closed command surface and rejects undeclared mechanics", () => {
     const validate = requiredFunction<
       (value: unknown) => Record<string, unknown>

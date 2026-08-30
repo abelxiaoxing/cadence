@@ -37,7 +37,10 @@ import {
   type StructuredVerificationContract,
   verificationSteps,
 } from "./contracts.ts";
-import { validateControlCommand } from "./control-contracts.ts";
+import {
+  canonicalizeControlCommandToolInput,
+  validateControlCommand,
+} from "./control-contracts.ts";
 import {
   assessDeliveryTraceability,
   compileImplementPlan,
@@ -1841,7 +1844,7 @@ export function registerWorkflowControl(
       receiptHash: { type: "string" },
       routeId: { type: "string" },
     },
-    required: ["command", "stage"],
+    required: ["command", "stage", "change"],
     additionalProperties: false,
   } as const;
   const PACKET_PARAMETERS = {
@@ -1872,6 +1875,12 @@ export function registerWorkflowControl(
           ? "Private stage-bound Abel workflow control. Accepts durable Implement change commands."
           : "Private stage-bound Abel packet control. Accepts bounded Design and Diagnose packet operations.",
       executionMode: "parallel",
+      ...(kind === "command"
+        ? {
+            prepareArguments: (args: unknown) =>
+              canonicalizeControlCommandToolInput(args) as never,
+          }
+        : {}),
       parameters:
         kind === "command" ? CONTROL_COMMAND_PARAMETERS : PACKET_PARAMETERS,
       async execute(
@@ -2004,7 +2013,9 @@ export function registerWorkflowControl(
             ...(usage === undefined ? {} : { usage }),
           };
         }
-        const validation = validateControlCommand(params);
+        const validation = validateControlCommand(
+          canonicalizeControlCommandToolInput(params),
+        );
         if (!validation.ok) {
           const error = new Error(validation.code);
           error.name = "ControlCommandError";

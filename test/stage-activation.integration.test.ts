@@ -204,6 +204,78 @@ describe("semantic stage activation teardown", () => {
     expect(item.active()).toEqual(["read", "bash"]);
   });
 
+  it("canonicalizes strict-provider padding before Implement validation", async () => {
+    const execute = vi.fn(async (_command: unknown) => ({
+      state: "paused",
+      completed: false,
+    }));
+    const item = harness("abel-implement", baseEngine(execute));
+
+    await item.tool.execute(
+      "strict-start-call",
+      {
+        command: "start",
+        stage: "abel-implement",
+        change: "strict-provider-padding",
+        operationId: "strict-start",
+        deliveryRevision: 1,
+        receiptHash: "",
+        routeId: "",
+      },
+      undefined,
+      undefined,
+      item.context,
+    );
+    expect(execute.mock.calls[0]?.[0]).toEqual({
+      command: "start",
+      stage: "abel-implement",
+      change: "strict-provider-padding",
+      operationId: "strict-start",
+    });
+
+    await item.tool.execute(
+      "strict-resume-call",
+      {
+        command: "resume",
+        stage: "abel-implement",
+        change: "strict-provider-padding",
+        operationId: "strict-resume",
+        deliveryRevision: null,
+        receiptHash: null,
+        routeId: null,
+      },
+      undefined,
+      undefined,
+      item.context,
+    );
+    expect(execute.mock.calls[1]?.[0]).toEqual({
+      command: "resume",
+      stage: "abel-implement",
+      change: "strict-provider-padding",
+      operationId: "strict-resume",
+    });
+
+    await expect(
+      item.tool.execute(
+        "unknown-field-call",
+        {
+          command: "start",
+          stage: "abel-implement",
+          change: "strict-provider-padding",
+          operationId: "strict-unknown",
+          deliveryRevision: null,
+          receiptHash: null,
+          routeId: null,
+          graphHash: "must-remain-rejected",
+        },
+        undefined,
+        undefined,
+        item.context,
+      ),
+    ).rejects.toThrow(/invalid-control-command/u);
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
   it("deactivates Diagnose on explicit finish and preserves unrelated tools", async () => {
     const item = harness("abel-diagnose", baseEngine());
     await item.tool.execute(

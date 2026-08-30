@@ -39,7 +39,7 @@ An empty request, unknown role, missing bound, path escape, symbolic-link escape
 
 The package SHALL load one private orchestration extension and three immutable package-owned professional Agent definitions for Design exploration, implementation, and diagnosis.
 It SHALL register one private Abel control tool but keep it inactive outside a verified `abel-design`, `abel-implement`, or `abel-diagnose` invocation; `abel-init` and ordinary prompts SHALL NOT activate it.
-The stage-specific tool schema SHALL expose only the closed change-oriented `start`, `status`, `resume`, `rebind`, `cancel`, and `discard` commands during Implement; one closed Design action family plus bounded evidence-packet operations during Design; and bounded packet operations during Diagnose, so invalid or irrelevant fields are rejected before state mutation.
+The stage-specific tool schema SHALL expose only the closed change-oriented `start`, `status`, `resume`, `rebind`, `cancel`, and `discard` commands during Implement; one closed Design action family plus bounded evidence-packet operations during Design; and bounded packet operations during Diagnose. At the Implement tool boundary, provider-required padding for known fields owned by another command SHALL be projected away and nullable absent fields SHALL be canonicalized before exact command validation; unknown fields and malformed fields owned by the selected command SHALL still be rejected before durable-engine execution or state mutation.
 A Design start SHALL accept either a unique change name or a transient raw requirement and return an immutable run id used by every later Design action; an Implement start SHALL accept a unique change name. Gate-approved delivery revisions SHALL bind to rather than replace the owning run. Callers SHALL NOT construct provisional hashes, contract hashes, graph admissions, phase snapshots, retained candidate identities, or stable task boundaries.
 Stage finish, replacement, reload, session replacement, or shutdown SHALL deactivate the tool and interrupt active operations while preserving a resumable durable run unless it completed or was explicitly discarded.
 The package SHALL expose no general Subagent command, public orchestration API, cross-extension service, external Agent override, or public raw run-store access.
@@ -58,6 +58,11 @@ The package SHALL expose no general Subagent command, public orchestration API, 
 
 - **WHEN** a Design or Implement caller attempts to supply a protocol version, graph hash, dynamic snapshot, launch identity, or stable task boundary
 - **THEN** the operation is rejected before run mutation because those facts belong to the control plane
+
+#### Scenario: Strict provider pads an Implement command
+
+- **WHEN** constrained sampling supplies every flat-schema property and represents fields absent from the selected Implement command with values or `null`
+- **THEN** the tool boundary projects only known non-selected-command fields, canonicalizes absent optional resume fields, preserves unknown or selected-command fields for exact validation, and dispatches no malformed command
 
 #### Scenario: Stage ends with paused work
 

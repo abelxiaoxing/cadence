@@ -74,6 +74,64 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+const CONTROL_TOOL_FIELDS = new Set([
+  "command",
+  "stage",
+  "change",
+  "operationId",
+  "deliveryRevision",
+  "receiptHash",
+  "routeId",
+]);
+
+const COMMAND_FIELDS: Readonly<
+  Record<ControlCommandName, ReadonlySet<string>>
+> = Object.freeze({
+  start: new Set(["command", "stage", "change", "operationId"]),
+  status: new Set(["command", "stage", "change"]),
+  resume: new Set([
+    "command",
+    "stage",
+    "change",
+    "operationId",
+    "deliveryRevision",
+    "receiptHash",
+  ]),
+  rebind: new Set(["command", "stage", "change", "operationId", "routeId"]),
+  cancel: new Set(["command", "stage", "change", "operationId"]),
+  discard: new Set(["command", "stage", "change", "operationId"]),
+});
+
+/**
+ * Adapts Pi/provider strict-schema padding to the closed command union.
+ * Known fields belonging to a different command are projected away, while
+ * unknown fields and fields owned by the selected command remain available to
+ * the strict validator and therefore cannot bypass its exact-key/type checks.
+ */
+export function canonicalizeControlCommandToolInput(value: unknown): unknown {
+  if (
+    !isRecord(value) ||
+    !(CONTROL_COMMANDS as readonly unknown[]).includes(value.command)
+  ) {
+    return value;
+  }
+  const command = value.command as ControlCommandName;
+  const allowed = COMMAND_FIELDS[command];
+  const canonical = Object.create(null) as Record<string, unknown>;
+  for (const [key, entry] of Object.entries(value)) {
+    if (CONTROL_TOOL_FIELDS.has(key) && !allowed.has(key)) continue;
+    if (
+      command === "resume" &&
+      (key === "deliveryRevision" || key === "receiptHash") &&
+      (entry === null || entry === undefined)
+    ) {
+      continue;
+    }
+    canonical[key] = entry;
+  }
+  return canonical;
+}
+
 function hasExactKeys(
   value: Record<string, unknown>,
   required: readonly string[],

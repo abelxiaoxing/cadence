@@ -285,9 +285,10 @@ describe("package Prompt provenance activates abel_dispatch", () => {
   it("publishes only the default command surface during Implement", () => {
     const tool = activePackageTool("abel-implement") as {
       parameters: Record<string, any>;
+      prepareArguments?: (args: unknown) => unknown;
     };
     expect(tool.parameters).toMatchObject({
-      required: ["command", "stage"],
+      required: ["command", "stage", "change"],
       additionalProperties: false,
       properties: {
         command: {
@@ -296,9 +297,35 @@ describe("package Prompt provenance activates abel_dispatch", () => {
         stage: { enum: ["abel-implement"] },
       },
     });
+    expect(Object.keys(tool.parameters.properties)).toEqual([
+      "command",
+      "stage",
+      "change",
+      "operationId",
+      "deliveryRevision",
+      "receiptHash",
+      "routeId",
+    ]);
     expect(tool.parameters.properties).not.toHaveProperty("version");
     expect(tool.parameters.properties).not.toHaveProperty("action");
     expect(tool.parameters).not.toHaveProperty("oneOf");
+    expect(tool.prepareArguments).toBeTypeOf("function");
+    expect(
+      tool.prepareArguments?.({
+        command: "start",
+        stage: "abel-implement",
+        change: "strict-provider-padding",
+        operationId: "strict-start",
+        deliveryRevision: 1,
+        receiptHash: "",
+        routeId: "",
+      }),
+    ).toEqual({
+      command: "start",
+      stage: "abel-implement",
+      change: "strict-provider-padding",
+      operationId: "strict-start",
+    });
   });
 
   for (const name of ["abel-design", "abel-implement", "abel-diagnose"]) {
