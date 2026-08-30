@@ -3821,7 +3821,11 @@ describe("durable verification lifecycle", () => {
     ok: true as const,
     exitCode: phase === "red" ? 1 : 0,
     classification:
-      phase === "red" ? ("expected-red" as const) : ("expected-green" as const),
+      phase === "red"
+        ? ("expected-red" as const)
+        : phase === "refactor"
+          ? ("expected-refactor" as const)
+          : ("expected-green" as const),
     diagnostic: {
       kind: "assertion" as const,
       id: `verification-lifecycle-${phase}`,
@@ -4708,6 +4712,478 @@ describe("durable verification lifecycle", () => {
     expect(
       readFileSync(path.join(fixture.consumerRoot, "value.txt"), "utf8"),
     ).toBe("fixed\n");
+    await engine.close();
+  });
+
+  it("corrects a Green constraint caused by its accepted Red artifact without Design", async () => {
+    const module = await import("../src/workflow-engine.ts");
+    const fixture = lifecycleFixture("red-artifact-context-correction");
+    const proposals: string[] = [];
+    const correctionEvidence: unknown[] = [];
+    const phaseVerifications: string[] = [];
+    const engine = module.openDurableWorkflowEngine({
+      consumerRoot: fixture.consumerRoot,
+      stateRoot: fixture.stateRoot,
+      deliverySource: {
+        load: async () => ({
+          version: 2 as const,
+          gate: "gate-b" as const,
+          revision: 1,
+          receiptHash: "8".repeat(64),
+          plan: fixture.plan,
+        }),
+      },
+      routePolicy: policy(),
+      proposeCandidate: async (input: Record<string, unknown>) => {
+        (input.onHeaders as () => void)();
+        (input.onProgress as () => void)();
+        const correction = input.artifactCorrection as
+          | { code: string }
+          | undefined;
+        proposals.push(
+          correction ? `correction:${correction.code}` : String(input.phase),
+        );
+        if (correction) correctionEvidence.push(structuredClone(correction));
+        if (input.phase === "red") {
+          return {
+            kind: "candidate" as const,
+            bytes: valuePatch("base", "red"),
+          };
+        }
+        if (correction) {
+          return {
+            kind: "candidate" as const,
+            bytes: valuePatch("red", "green"),
+          };
+        }
+        return {
+          kind: "retryable" as const,
+          code: "red-artifact-constraint",
+          contextRequest: {
+            code: "boundary-review-needed" as const,
+            refs: [
+              {
+                kind: "source-citation" as const,
+                path: "test/fixture.test.ts",
+                line: 209,
+              },
+              {
+                kind: "contract-diagnostic" as const,
+                ref: "phase-contract.writeSet",
+              },
+              {
+                kind: "requested-path" as const,
+                path: "scripts/AGENTS.md",
+                access: "read" as const,
+              },
+            ],
+          },
+        };
+      },
+      verifyPhase: async (input: Record<string, unknown>) => {
+        phaseVerifications.push(
+          `${String(input.phase)}:${String(
+            (input.verification as { id?: unknown }).id,
+          )}`,
+        );
+        return verifiedPhase(String(input.phase));
+      },
+      verifyChange: async () => ({
+        ok: true as const,
+        exitCode: 0 as const,
+        classification: "expected-green" as const,
+        failureIdentities: [],
+      }),
+    });
+
+    const completed = await engine.execute({
+      command: "start",
+      stage: "abel-implement",
+      change: fixture.change,
+      operationId: "red-artifact-context-start",
+    });
+    expect(completed).toMatchObject({ state: "completed", completed: true });
+    expect(JSON.stringify(completed)).not.toMatch(/designRequest/u);
+    expect(proposals).toEqual([
+      "red",
+      "green",
+      "correction:red-artifact-constraint",
+    ]);
+    expect(correctionEvidence).toEqual([
+      {
+        code: "red-artifact-constraint",
+        attempt: 2,
+        maxAttempts: 2,
+        contextRequest: {
+          code: "boundary-review-needed",
+          refs: [
+            {
+              kind: "source-citation",
+              path: "test/fixture.test.ts",
+              line: 209,
+            },
+            {
+              kind: "contract-diagnostic",
+              ref: "phase-contract.writeSet",
+            },
+            {
+              kind: "requested-path",
+              path: "scripts/AGENTS.md",
+              access: "read",
+            },
+          ],
+        },
+      },
+    ]);
+    expect(phaseVerifications).toEqual([
+      "red:package-loader-red",
+      "green:package-loader-repair",
+      "red:package-loader-red",
+      "green:package-loader-green",
+    ]);
+    expect(
+      readFileSync(path.join(fixture.consumerRoot, "value.txt"), "utf8"),
+    ).toBe("green\n");
+    await engine.close();
+  });
+
+  it("commits corrected Green evidence before continuing to Refactor", async () => {
+    const module = await import("../src/workflow-engine.ts");
+    const fixture = lifecycleFixture("red-artifact-refactor-correction");
+    const plan = structuredClone(fixture.plan) as ImplementPlan;
+    const planTask = plan.tasks[0];
+    if (!planTask) throw new Error("refactor fixture task missing");
+    planTask.phases.refactor = {
+      ...structuredClone(planTask.phases.green),
+      write: [...planTask.phases.green.write, "refactor-output.txt"],
+      verification: {
+        ...structuredClone(planTask.phases.green.verification),
+        id: "package-loader-refactor",
+        classification: "expected-refactor" as const,
+      },
+    };
+    plan.outputs.push({
+      id: "refactor-output",
+      path: "refactor-output.txt",
+      producer: { taskId: "package-loader-task", phase: "refactor" },
+      postcondition: "regular-file",
+    });
+    const proposals: string[] = [];
+    const engine = module.openDurableWorkflowEngine({
+      consumerRoot: fixture.consumerRoot,
+      stateRoot: fixture.stateRoot,
+      deliverySource: {
+        load: async () => ({
+          version: 2 as const,
+          gate: "gate-b" as const,
+          revision: 1,
+          receiptHash: "7".repeat(64),
+          plan,
+        }),
+      },
+      routePolicy: policy(),
+      proposeCandidate: async (input: Record<string, unknown>) => {
+        (input.onHeaders as () => void)();
+        (input.onProgress as () => void)();
+        const phase = String(input.phase);
+        if (phase === "red") {
+          proposals.push("red");
+          return {
+            kind: "candidate" as const,
+            bytes: valuePatch("base", "red"),
+          };
+        }
+        if (input.artifactCorrection) {
+          proposals.push("correction");
+          return {
+            kind: "candidate" as const,
+            bytes: valuePatch("red", "green"),
+          };
+        }
+        if (phase === "refactor") {
+          proposals.push("refactor");
+          return {
+            kind: "candidate" as const,
+            bytes: Buffer.from(
+              [
+                "diff --git a/value.txt b/value.txt",
+                "--- a/value.txt",
+                "+++ b/value.txt",
+                "@@ -1 +1 @@",
+                "-green",
+                "+refactored",
+                "diff --git a/refactor-output.txt b/refactor-output.txt",
+                "new file mode 100644",
+                "--- /dev/null",
+                "+++ b/refactor-output.txt",
+                "@@ -0,0 +1 @@",
+                "+refactor complete",
+                "",
+              ].join("\n"),
+            ),
+          };
+        }
+        proposals.push("green");
+        return {
+          kind: "retryable" as const,
+          code: "red-artifact-constraint",
+          contextRequest: {
+            code: "approved-context-needed" as const,
+            refs: [
+              {
+                kind: "source-citation" as const,
+                path: "test/fixture.test.ts",
+                line: 209,
+              },
+            ],
+          },
+        };
+      },
+      verifyPhase: async (input: Record<string, unknown>) =>
+        verifiedPhase(String(input.phase)),
+      verifyChange: async () => ({
+        ok: true as const,
+        exitCode: 0 as const,
+        classification: "expected-green" as const,
+        failureIdentities: [],
+      }),
+    });
+
+    const completed = await engine.execute({
+      command: "start",
+      stage: "abel-implement",
+      change: fixture.change,
+      operationId: "red-artifact-refactor-start",
+    });
+    expect(completed).toMatchObject({ state: "completed", completed: true });
+    expect(proposals).toEqual(["red", "green", "correction", "refactor"]);
+    expect(
+      readFileSync(path.join(fixture.consumerRoot, "value.txt"), "utf8"),
+    ).toBe("refactored\n");
+    expect(
+      readFileSync(
+        path.join(fixture.consumerRoot, "refactor-output.txt"),
+        "utf8",
+      ),
+    ).toBe("refactor complete\n");
+    await engine.close();
+  });
+
+  it.each([
+    ["red", "red-not-witnessed"],
+    ["green", "verification-rejected"],
+  ] as const)(
+    "rejects a correction when the corrected %s contract does not verify",
+    async (rejectedPhase, rejectionCode) => {
+      const module = await import("../src/workflow-engine.ts");
+      const fixture = lifecycleFixture(
+        `red-artifact-${rejectedPhase}-verification`,
+      );
+      let redCalls = 0;
+      const engine = module.openDurableWorkflowEngine({
+        consumerRoot: fixture.consumerRoot,
+        stateRoot: fixture.stateRoot,
+        deliverySource: {
+          load: async () => ({
+            version: 2 as const,
+            gate: "gate-b" as const,
+            revision: 1,
+            receiptHash: "6".repeat(64),
+            plan: fixture.plan,
+          }),
+        },
+        routePolicy: policy(),
+        proposeCandidate: async (input: Record<string, unknown>) => {
+          (input.onHeaders as () => void)();
+          (input.onProgress as () => void)();
+          if (input.phase === "red") {
+            return {
+              kind: "candidate" as const,
+              bytes: valuePatch("base", "red"),
+            };
+          }
+          if (input.artifactCorrection) {
+            return {
+              kind: "candidate" as const,
+              bytes: valuePatch("red", "green"),
+            };
+          }
+          return {
+            kind: "retryable" as const,
+            code: "red-artifact-constraint",
+            contextRequest: {
+              code: "approved-context-needed" as const,
+              refs: [
+                {
+                  kind: "source-citation" as const,
+                  path: "test/fixture.test.ts",
+                  line: 209,
+                },
+              ],
+            },
+          };
+        },
+        verifyPhase: async (input: Record<string, unknown>) => {
+          const phase = String(input.phase);
+          const verificationId = String(
+            (input.verification as { id?: unknown }).id,
+          );
+          if (phase === "red") {
+            redCalls += 1;
+            if (rejectedPhase === "red" && redCalls === 2) {
+              return {
+                ok: false as const,
+                kind: "retryable" as const,
+                code: rejectionCode,
+              };
+            }
+          }
+          if (
+            rejectedPhase === "green" &&
+            verificationId === "package-loader-green"
+          ) {
+            return {
+              ok: false as const,
+              kind: "retryable" as const,
+              code: rejectionCode,
+            };
+          }
+          return verifiedPhase(phase);
+        },
+        verifyChange: async () => ({
+          ok: true as const,
+          exitCode: 0 as const,
+          classification: "expected-green" as const,
+          failureIdentities: [],
+        }),
+      });
+
+      const paused = await engine.execute({
+        command: "start",
+        stage: "abel-implement",
+        change: fixture.change,
+        operationId: `red-artifact-${rejectedPhase}-verification-start`,
+      });
+      expect(paused).toMatchObject({
+        state: "paused",
+        pause: { code: rejectionCode },
+        tasks: [
+          {
+            taskId: "package-loader-task",
+            state: "retryable",
+            phase: "green",
+          },
+        ],
+      });
+      expect(
+        readFileSync(path.join(fixture.consumerRoot, "value.txt"), "utf8"),
+      ).toBe("base\n");
+      await engine.close();
+    },
+  );
+
+  it("rejects partial Red-artifact corrections and exhausts the sealed attempt budget", async () => {
+    const module = await import("../src/workflow-engine.ts");
+    const fixture = lifecycleFixture("red-artifact-partial-correction");
+    const plan = structuredClone(fixture.plan);
+    plan.verification.artifactCorrection.maxAttempts = 3;
+    plan.tasks[0]?.phases.green.write.push("extra.txt");
+    (
+      plan.outputs as Array<{
+        id: string;
+        path: string;
+        producer: { taskId: string; phase: "green" };
+        postcondition: "regular-file";
+      }>
+    ).push({
+      id: "partial-correction-output",
+      path: "extra.txt",
+      producer: { taskId: "package-loader-task", phase: "green" },
+      postcondition: "regular-file",
+    });
+    let correctionCalls = 0;
+    const engine = module.openDurableWorkflowEngine({
+      consumerRoot: fixture.consumerRoot,
+      stateRoot: fixture.stateRoot,
+      deliverySource: {
+        load: async () => ({
+          version: 2 as const,
+          gate: "gate-b" as const,
+          revision: 1,
+          receiptHash: "9".repeat(64),
+          plan,
+        }),
+      },
+      routePolicy: policy(),
+      proposeCandidate: async (input: Record<string, unknown>) => {
+        (input.onHeaders as () => void)();
+        (input.onProgress as () => void)();
+        if (input.phase === "red") {
+          return {
+            kind: "candidate" as const,
+            bytes: valuePatch("base", "red"),
+          };
+        }
+        if (input.artifactCorrection) {
+          correctionCalls += 1;
+          return {
+            kind: "candidate" as const,
+            bytes: valuePatch("red", `partial-${correctionCalls}`),
+          };
+        }
+        return {
+          kind: "retryable" as const,
+          code: "red-artifact-constraint",
+          contextRequest: {
+            code: "approved-context-needed" as const,
+            refs: [
+              {
+                kind: "source-citation" as const,
+                path: "test/fixture.test.ts",
+                line: 209,
+              },
+            ],
+          },
+        };
+      },
+      verifyPhase: async (input: Record<string, unknown>) =>
+        verifiedPhase(String(input.phase)),
+      verifyChange: async () => ({
+        ok: true as const,
+        exitCode: 0 as const,
+        classification: "expected-green" as const,
+        failureIdentities: [],
+      }),
+    });
+
+    const paused = await engine.execute({
+      command: "start",
+      stage: "abel-implement",
+      change: fixture.change,
+      operationId: "red-artifact-partial-start",
+    });
+    expect(paused).toMatchObject({
+      state: "paused",
+      pause: { code: "producer-output-unavailable" },
+      tasks: [
+        {
+          taskId: "package-loader-task",
+          state: "retryable",
+          phase: "green",
+        },
+      ],
+      privateData: { retained: true },
+    });
+    expect(JSON.stringify(paused)).not.toMatch(/designRequest/u);
+    expect(correctionCalls).toBe(
+      plan.verification.artifactCorrection.maxAttempts - 1,
+    );
+    expect(
+      readFileSync(path.join(fixture.consumerRoot, "value.txt"), "utf8"),
+    ).toBe("base\n");
+    expect(existsSync(path.join(fixture.consumerRoot, "extra.txt"))).toBe(
+      false,
+    );
     await engine.close();
   });
 

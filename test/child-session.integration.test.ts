@@ -335,7 +335,7 @@ describe("implementation candidate protocol", () => {
         {
           kind: "context-request",
           candidateId: "candidate-context",
-          code: "approved-context-needed",
+          code: "boundary-review-needed",
           refs: ["src/approved.ts"],
         },
         ["src"],
@@ -344,8 +344,38 @@ describe("implementation candidate protocol", () => {
       kind: "paused",
       code: "approved-context-needed",
       contextRequest: {
+        code: "boundary-review-needed",
+        refs: [
+          { kind: "requested-path", path: "src/approved.ts", access: "read" },
+        ],
+      },
+    });
+    expect(
+      classifyCandidateContextRequest(
+        {
+          kind: "context-request",
+          candidateId: "candidate-context",
+          code: "approved-context-needed",
+          refs: ["tests/file.test.mjs:209", "phase-contract.writeSet"],
+        },
+        ["tests/file.test.mjs"],
+      ),
+    ).toEqual({
+      kind: "paused",
+      code: "approved-context-needed",
+      contextRequest: {
         code: "approved-context-needed",
-        refs: ["src/approved.ts"],
+        refs: [
+          {
+            kind: "source-citation",
+            path: "tests/file.test.mjs",
+            line: 209,
+          },
+          {
+            kind: "contract-diagnostic",
+            ref: "phase-contract.writeSet",
+          },
+        ],
       },
     });
     expect(
@@ -363,8 +393,172 @@ describe("implementation candidate protocol", () => {
       code: "boundary-review-needed",
       contextRequest: {
         code: "task-split-needed",
-        refs: ["outside/authority.ts"],
+        refs: [
+          {
+            kind: "requested-path",
+            path: "outside/authority.ts",
+            access: "read",
+          },
+        ],
       },
+    });
+  });
+
+  it("routes a Green constraint from its accepted Red artifact to bounded correction", () => {
+    expect(
+      classifyCandidateContextRequest(
+        {
+          kind: "context-request",
+          candidateId: "candidate-red-constraint",
+          code: "boundary-review-needed",
+          refs: [
+            "tests/foundation.test.mjs:209",
+            "tests/foundation.test.mjs:237",
+            "phase-contract.writeSet",
+            "scripts/AGENTS.md",
+          ],
+        },
+        {
+          phase: "green",
+          readPaths: ["src/game.ts"],
+          writePaths: ["src/game.ts"],
+          taskPaths: ["tests/foundation.test.mjs", "src/game.ts"],
+          redWritePaths: ["tests/foundation.test.mjs"],
+          agents: { impact: "none" },
+        },
+      ),
+    ).toMatchObject({
+      kind: "retryable",
+      code: "red-artifact-constraint",
+      contextRequest: {
+        refs: [
+          {
+            kind: "source-citation",
+            path: "tests/foundation.test.mjs",
+            line: 209,
+          },
+          {
+            kind: "source-citation",
+            path: "tests/foundation.test.mjs",
+            line: 237,
+          },
+          {
+            kind: "contract-diagnostic",
+            ref: "phase-contract.writeSet",
+          },
+          {
+            kind: "requested-path",
+            path: "scripts/AGENTS.md",
+            access: "read",
+          },
+        ],
+      },
+    });
+  });
+
+  it("classifies requested write access against only writable boundaries", () => {
+    const boundary = {
+      phase: "green" as const,
+      readPaths: ["src/read-only.ts"],
+      writePaths: ["src/writable.ts"],
+      deletePaths: ["src/deletable.ts"],
+      taskPaths: ["src/read-only.ts", "src/writable.ts", "src/deletable.ts"],
+      redWritePaths: ["tests/red-only.test.ts"],
+      agents: { impact: "none" as const },
+    };
+    expect(
+      classifyCandidateContextRequest(
+        {
+          kind: "context-request",
+          candidateId: "candidate-read-context",
+          code: "approved-context-needed",
+          refs: [
+            {
+              kind: "requested-path",
+              path: "src/read-only.ts",
+              access: "read",
+            },
+          ],
+        },
+        boundary,
+      ),
+    ).toMatchObject({ kind: "paused", code: "approved-context-needed" });
+    expect(
+      classifyCandidateContextRequest(
+        {
+          kind: "context-request",
+          candidateId: "candidate-write-context",
+          code: "approved-context-needed",
+          refs: [
+            {
+              kind: "requested-path",
+              path: "src/read-only.ts",
+              access: "write",
+            },
+          ],
+        },
+        boundary,
+      ),
+    ).toMatchObject({
+      kind: "approval-needed",
+      code: "boundary-review-needed",
+    });
+  });
+
+  it("keeps AGENTS authority parent-owned and separately classified", () => {
+    expect(
+      classifyCandidateContextRequest(
+        {
+          kind: "context-request",
+          candidateId: "candidate-agents-unapproved",
+          code: "approved-context-needed",
+          refs: [
+            {
+              kind: "requested-path",
+              path: "scripts/AGENTS.md",
+              access: "write",
+            },
+          ],
+        },
+        {
+          phase: "green",
+          readPaths: ["src/game.ts"],
+          writePaths: ["src/game.ts"],
+          taskPaths: ["src/game.ts"],
+          redWritePaths: ["tests/foundation.test.mjs"],
+          agents: { impact: "none" },
+        },
+      ),
+    ).toMatchObject({
+      kind: "approval-needed",
+      code: "agents-contract-insufficient",
+    });
+    expect(
+      classifyCandidateContextRequest(
+        {
+          kind: "context-request",
+          candidateId: "candidate-agents-parent",
+          code: "boundary-review-needed",
+          refs: [
+            {
+              kind: "requested-path",
+              path: "AGENTS.md",
+              access: "write",
+            },
+          ],
+        },
+        {
+          phase: "green",
+          readPaths: ["src/game.ts"],
+          writePaths: ["src/game.ts"],
+          taskPaths: ["src/game.ts"],
+          redWritePaths: ["tests/foundation.test.mjs"],
+          agents: { impact: "update-existing", target: "AGENTS.md" },
+        },
+      ),
+    ).toMatchObject({
+      kind: "paused",
+      code: "agents-write-parent-owned",
     });
   });
 
@@ -548,7 +742,10 @@ describe("implementation candidate protocol", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.result).toEqual(firstRequest);
+    expect(result.result).toEqual({
+      ...firstRequest,
+      refs: [{ kind: "requested-path", path: "a.txt", access: "read" }],
+    });
     expect(result.submitCount).toBe(1);
     expect(faux.state.callCount).toBe(1);
   });

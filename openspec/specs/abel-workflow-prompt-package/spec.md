@@ -363,6 +363,16 @@ Implement SHALL NOT implicitly archive, commit, publish, release, or modify unre
 - **WHEN** the canonical plan's 2-3 total candidate-attempt bound for one task phase and operation is exhausted by typed artifact rejection
 - **THEN** the task pauses with the final safe artifact evidence and may resume under a replacement Worker without becoming a permanent blocker
 
+#### Scenario: Green reports a same-task Red constraint
+
+- **WHEN** Green reports citations to an accepted same-task Red test, a contract diagnostic, or an erroneous AGENTS assumption rather than a genuinely new product path
+- **THEN** Implement types those refs, preserves compatible Red evidence, reopens bounded artifact correction under the existing attempt limit, and does not emit approval-needed or a Design request
+
+#### Scenario: Persisted context approval is locally recoverable
+
+- **WHEN** status or resume encounters a legacy boundary-review-needed approval whose normalized requested paths prove no new authority
+- **THEN** Implement atomically reclassifies the same run and delivery to a recoverable artifact pause while genuine retained approvals still require a newer receipt
+
 #### Scenario: Repair budget is exhausted
 
 - **WHEN** bounded automatic in-boundary repair attempts are exhausted

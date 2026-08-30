@@ -917,7 +917,23 @@ export class RunStore {
     code?: string;
     lease?: OperationLease;
   }): RunProjection {
+    return this.transitionAtomically(input, () => {});
+  }
+
+  transitionAtomically(
+    input: {
+      runId: string;
+      to: RunState;
+      operationId: string;
+      code?: string;
+      lease?: OperationLease;
+    },
+    write: (database: DatabaseSync) => void,
+  ): RunProjection {
     requireIdentifier(input.operationId, "operation-id");
+    if (typeof write !== "function") {
+      throw new Error("state-transition-write-invalid");
+    }
     return this.#transaction(() => {
       if (input.lease) {
         if (input.lease.runId !== input.runId) throw new Error("lease-fenced");
@@ -935,6 +951,7 @@ export class RunStore {
         to: input.to,
         ...(input.code ? { code: input.code } : {}),
       });
+      write(this.#database);
       this.#recordOperation(
         input.runId,
         input.operationId,

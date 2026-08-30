@@ -1525,19 +1525,46 @@ export function openPackageWorkflowControlEngine(
       if (!phase) {
         return { kind: "paused", code: "task-phase-unavailable" };
       }
+      const taskPhases = Object.values(input.task.phases);
+      const executionBoundary = input.artifactCorrection
+        ? {
+            read: [
+              ...new Set(
+                taskPhases.flatMap((boundary) => [
+                  ...boundary.read,
+                  ...boundary.write,
+                  ...boundary.delete,
+                ]),
+              ),
+            ].sort(),
+            write: [
+              ...new Set(taskPhases.flatMap((boundary) => boundary.write)),
+            ].sort(),
+            delete: [
+              ...new Set(taskPhases.flatMap((boundary) => boundary.delete)),
+            ].sort(),
+          }
+        : {
+            read: [...phase.read],
+            write: [...phase.write],
+            delete: [...phase.delete],
+          };
       const phaseContract = {
         candidateId: input.candidateArtifact.identity.candidateId,
         taskId: input.taskId,
         phase: input.phase,
-        readSet: [...phase.read],
-        writeSet: [...phase.write],
-        deleteSet: [...phase.delete],
+        readSet: executionBoundary.read,
+        writeSet: executionBoundary.write,
+        deleteSet: executionBoundary.delete,
         verification: structuredClone(phase.verification),
         agentsImpact: input.task.agents.impact,
         agentsTarget: input.task.agents.target ?? null,
         agentsManagedOnly: true,
         agentsWriteAllowed: false,
         impactClosure: structuredClone(input.task.impactClosure),
+        ...(input.artifactCorrection
+          ? { artifactCorrection: structuredClone(input.artifactCorrection) }
+          : {}),
         ...(input.repair
           ? {
               repair: {
@@ -1570,7 +1597,11 @@ export function openPackageWorkflowControlEngine(
           path.resolve(input.workspaceRoot, root),
         ),
         allowedPaths: [
-          ...new Set([...phase.read, ...phase.write, ...phase.delete]),
+          ...new Set([
+            ...executionBoundary.read,
+            ...executionBoundary.write,
+            ...executionBoundary.delete,
+          ]),
         ],
         timeoutMs: LIMITS.phaseTimeoutMs,
         signal: input.signal,
@@ -1600,11 +1631,28 @@ export function openPackageWorkflowControlEngine(
       }
       const result = child.result;
       if (result.kind === "context-request") {
-        return classifyCandidateContextRequest(result, [
-          ...phase.read,
-          ...phase.write,
-          ...phase.delete,
-        ]);
+        return classifyCandidateContextRequest(result, {
+          phase: input.phase,
+          readPaths: phase.read,
+          writePaths: phase.write,
+          deletePaths: phase.delete,
+          taskPaths: [
+            ...new Set(
+              Object.values(input.task.phases).flatMap((boundary) => [
+                ...boundary.read,
+                ...boundary.write,
+                ...boundary.delete,
+              ]),
+            ),
+          ],
+          redWritePaths: input.task.phases.red.write,
+          agents: {
+            impact: input.task.agents.impact,
+            ...(input.task.agents.target
+              ? { target: input.task.agents.target }
+              : {}),
+          },
+        });
       }
       if (result.kind !== "sealed-candidate") {
         return { kind: "retryable", code: "candidate-diff-invalid" };

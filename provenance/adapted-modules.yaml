@@ -10,7 +10,7 @@ agents:
     sha256: fb7586a10b32038ad8d4c20853a03dfb9072a4c869777b715b1df1cb0e887f4a
   - path: agents/implementation-worker.md
     role: implementation-worker
-    sha256: d19d09d00ac390a48acf8fe5ce821f04e96e8ecf644ea36dd83533bb6bd08dd4
+    sha256: 19f94ac17b482fbd829a2c9ee4d7c2792c59dfd1cba3be9fca89a99365f4c518
 reference:
   attribution: THIRD_PARTY_NOTICES.md
   license: licenses/pi-subagents-MIT.txt

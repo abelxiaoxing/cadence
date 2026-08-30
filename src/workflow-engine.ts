@@ -45,7 +45,13 @@ import { type OperationLease, RunStore } from "./run-store.ts";
 import { observeSafePath } from "./safe-path.ts";
 import type { ResolvedStateRoot } from "./state-root.ts";
 import type { WorkflowActivityUpdate } from "./subagent-activity.ts";
-import type { CandidateArtifactSubmission } from "./submit-tool.ts";
+import {
+  type CandidateArtifactSubmission,
+  type CandidateContextBoundary,
+  type CandidateContextRef,
+  classifyCandidateContextRequest,
+  normalizeCandidateContextRefs,
+} from "./submit-tool.ts";
 import {
   type BeginCandidateInput,
   TASK_LEDGER_LIMITS,
@@ -171,7 +177,14 @@ interface WorkflowContextRequest {
     | "approved-context-needed"
     | "task-split-needed"
     | "boundary-review-needed";
-  refs: string[];
+  refs: CandidateContextRef[];
+}
+
+interface RedArtifactCorrection {
+  code: "red-artifact-constraint";
+  attempt: number;
+  maxAttempts: number;
+  contextRequest?: WorkflowContextRequest;
 }
 
 export const APPROVAL_AUTHORITY_CATEGORIES = [
@@ -296,6 +309,7 @@ export interface WorkflowWorker {
       attribution: "introduced";
       failureIdentities: string[];
     };
+    artifactCorrection?: RedArtifactCorrection;
     signal: AbortSignal;
     onActivity?: (
       event: Pick<
@@ -568,22 +582,70 @@ function normalizeWorkflowContextRequest(
       "approved-context-needed",
       "task-split-needed",
       "boundary-review-needed",
-    ].includes(String(value.code)) ||
-    !Array.isArray(value.refs) ||
-    value.refs.length === 0 ||
-    value.refs.length > 32 ||
-    value.refs.some(
-      (relative) =>
-        typeof relative !== "string" || !isValidRelativePath(relative),
-    ) ||
-    new Set(value.refs).size !== value.refs.length
+    ].includes(String(value.code))
   ) {
+    throw new Error("workflow-context-request-invalid");
+  }
+  let refs: CandidateContextRef[];
+  try {
+    refs = normalizeCandidateContextRefs(value.refs);
+  } catch {
     throw new Error("workflow-context-request-invalid");
   }
   return {
     code: value.code as WorkflowContextRequest["code"],
-    refs: [...(value.refs as string[])],
+    refs,
   };
+}
+
+function contextApprovalRefs(request: WorkflowContextRequest): string[] {
+  return request.refs.flatMap((ref) =>
+    ref.kind === "requested-path" ? [ref.path] : [],
+  );
+}
+
+function contextBoundaryForTask(
+  task: PlanTaskDraft,
+  phase: "red" | "green" | "refactor",
+): CandidateContextBoundary {
+  const boundary = task.phases[phase];
+  if (!boundary) throw new Error("workflow-task-phase-invalid");
+  return {
+    phase,
+    readPaths: boundary.read,
+    writePaths: boundary.write,
+    deletePaths: boundary.delete,
+    taskPaths: [
+      ...new Set(
+        Object.values(task.phases).flatMap((candidate) => [
+          ...candidate.read,
+          ...candidate.write,
+          ...candidate.delete,
+        ]),
+      ),
+    ],
+    redWritePaths: task.phases.red.write,
+    agents: {
+      impact: task.agents.impact,
+      ...(task.agents.target ? { target: task.agents.target } : {}),
+    },
+  };
+}
+
+function classifyPersistedContextRequest(
+  request: WorkflowContextRequest,
+  task: PlanTaskDraft,
+  phase: "red" | "green" | "refactor",
+) {
+  return classifyCandidateContextRequest(
+    {
+      kind: "context-request",
+      candidateId: "candidate-durable-reclassification",
+      code: request.code,
+      refs: request.refs,
+    },
+    contextBoundaryForTask(task, phase),
+  );
 }
 
 function approvalRequirement(
@@ -599,7 +661,7 @@ function approvalRequirement(
   return {
     category: requirement.category,
     requiredGates: [...requirement.requiredGates],
-    refs: contextRequest ? [...contextRequest.refs] : [],
+    refs: contextRequest ? contextApprovalRefs(contextRequest) : [],
   };
 }
 
@@ -1282,6 +1344,7 @@ export interface DurableWorkflowEngineOptions {
       attribution: "introduced";
       failureIdentities: string[];
     };
+    artifactCorrection?: RedArtifactCorrection;
     signal: AbortSignal;
     onHeaders(): void;
     onProgress(): void;
@@ -2319,6 +2382,9 @@ class DurableWorkflowComposition
     ledger: TaskLedger,
     input: Parameters<WorkflowWorker["runAttempt"]>[0],
   ): WorkflowAttemptOutcome | undefined {
+    if (input.artifactCorrection?.code === "red-artifact-constraint") {
+      return undefined;
+    }
     const projection = ledger.projection({
       runId: input.runId,
       taskId: input.taskId,
@@ -2925,6 +2991,9 @@ class DurableWorkflowComposition
             },
             route: attempt.route,
             repair,
+            ...(request.artifactCorrection
+              ? { artifactCorrection: request.artifactCorrection }
+              : {}),
             signal: attempt.signal,
             onHeaders: attempt.onHeaders,
             onProgress: attempt.onProgress,
@@ -2972,7 +3041,8 @@ class DurableWorkflowComposition
         proposal.kind !== "sealed-candidate"
       ) {
         return proposal.kind === "operation-cancelled" ||
-          proposal.kind === "paused"
+          proposal.kind === "paused" ||
+          proposal.kind === "approval-needed"
           ? withRoute(proposal)
           : reject(proposal, {
               category: "artifact",
@@ -3213,7 +3283,9 @@ class DurableWorkflowComposition
         changes: revisionChanges(proposalRoot, approvedPaths),
       });
       const requiredOutputs = request.plan.outputs.filter(
-        (output) => output.producer.taskId === request.taskId,
+        (output) =>
+          output.producer.taskId === request.taskId &&
+          (!request.artifactCorrection || output.producer.phase !== "refactor"),
       );
       if (
         requiredOutputs.some(
@@ -3352,7 +3424,7 @@ class DurableWorkflowComposition
   #verifiedPhaseReplay(
     ledger: TaskLedger,
     input: Parameters<WorkflowWorker["runAttempt"]>[0],
-  ): { artifactHash: string; exitCode: number } {
+  ): { artifactHash: string; exitCode: number; isolatedRevisionId: string } {
     const projection = ledger.projection({
       runId: input.runId,
       taskId: input.taskId,
@@ -3366,6 +3438,8 @@ class DurableWorkflowComposition
       !event ||
       typeof event.artifactHash !== "string" ||
       !SHA256.test(event.artifactHash) ||
+      typeof event.isolatedRevisionId !== "string" ||
+      !SHA256.test(event.isolatedRevisionId) ||
       typeof event.exitCode !== "number" ||
       event.actualClassification !== expectedClassification(input.phase)
     ) {
@@ -3374,6 +3448,285 @@ class DurableWorkflowComposition
     return {
       artifactHash: event.artifactHash,
       exitCode: event.exitCode,
+      isolatedRevisionId: event.isolatedRevisionId,
+    };
+  }
+
+  async #runRedArtifactCorrection(input: {
+    resources: DurableRunResources;
+    ledger: TaskLedger;
+    baseline?: DurableVerificationBaseline;
+    attempt: Parameters<WorkflowWorker["runAttempt"]>[0];
+  }): Promise<WorkflowAttemptOutcome> {
+    const { resources, ledger } = input;
+    const request = input.attempt;
+    if (
+      request.phase !== "green" ||
+      request.artifactCorrection?.code !== "red-artifact-constraint"
+    ) {
+      throw new Error("workflow-red-artifact-correction-invalid");
+    }
+    const priorRed = this.#verifiedPhaseReplay(ledger, {
+      ...request,
+      phase: "red",
+    });
+    if (!hasVerificationLifecycle(request.plan)) {
+      return { kind: "paused", code: "red-artifact-constraint" };
+    }
+    const stableRevisionId = resources.currentRevisionId;
+    const correctionPaths = [
+      ...new Set(
+        Object.values(request.task.phases).flatMap((phase) => [
+          ...phase.write,
+          ...phase.delete,
+        ]),
+      ),
+    ];
+    const rejectCorrection = async <T extends WorkflowAttemptOutcome>(
+      outcome: T,
+    ): Promise<T> => {
+      if (resources.currentRevisionId !== stableRevisionId) {
+        await this.#rollbackWorkspacePaths({
+          resources,
+          baseRevisionId: stableRevisionId,
+          rejectedRevisionId: resources.currentRevisionId,
+          paths: correctionPaths,
+        });
+      }
+      return outcome;
+    };
+    const failureIdentities = [
+      hash(
+        "red-artifact-constraint",
+        request.taskId,
+        request.task.phases.red.verification.id,
+      ),
+    ];
+    const correctionAttemptUsed = request.artifactCorrection.attempt;
+    if (
+      correctionAttemptUsed < 1 ||
+      correctionAttemptUsed > request.artifactCorrection.maxAttempts
+    ) {
+      throw new Error("workflow-red-artifact-correction-invalid");
+    }
+    const repaired = await this.#runRepairCandidate({
+      resources,
+      ledger,
+      attempt: request,
+      repairAttempt: correctionAttemptUsed,
+      failureIdentities,
+    });
+    if (repaired.kind !== "repair-committed") {
+      return rejectCorrection(repaired);
+    }
+
+    const correctedRevision = resources.workspaces.getRevision(
+      repaired.commit.isolatedRevisionId,
+    );
+    const acceptedRedRevision = resources.workspaces.getRevision(
+      priorRed.isolatedRevisionId,
+    );
+    if (!acceptedRedRevision.parentRevisionId) {
+      throw new Error("workflow-ledger-revision-base-invalid");
+    }
+    const correctedRedChanges: Record<
+      string,
+      { kind: "absent" } | { kind: "file"; bytes: Uint8Array; mode: number }
+    > = {};
+    for (const relative of [
+      ...new Set([
+        ...request.task.phases.red.write,
+        ...request.task.phases.red.delete,
+      ]),
+    ]) {
+      const entry = correctedRevision.entries[relative];
+      correctedRedChanges[relative] =
+        entry?.kind === "file"
+          ? {
+              kind: "file",
+              bytes: resources.artifacts.read(entry.hash),
+              mode: entry.mode,
+            }
+          : { kind: "absent" };
+    }
+    const correctedRedRevision = resources.workspaces.createRevision({
+      parentRevisionId: acceptedRedRevision.parentRevisionId,
+      changes: correctedRedChanges,
+    });
+    const verifyCorrectedContract = async (input: {
+      phase: "red" | "green";
+      revisionId: string;
+      verification: StructuredVerificationContract;
+    }): Promise<DurablePhaseVerificationResult> => {
+      const root = mkdtempSync(path.join(resources.root, "correction-check-"));
+      try {
+        resources.workspaces.materialize(input.revisionId, root);
+        return await this.#options.verifyPhase({
+          runId: request.runId,
+          deliveryRevision: request.deliveryRevision,
+          taskId: request.taskId,
+          phase: input.phase,
+          root,
+          verification: structuredClone(input.verification),
+          signal: request.signal,
+        });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    };
+    emitWorkflowActivity(request.onActivity, { state: "verifying" });
+    const redVerification = await verifyCorrectedContract({
+      phase: "red",
+      revisionId: correctedRedRevision.revisionId,
+      verification: request.task.phases.red.verification,
+    });
+    if (!redVerification.ok) {
+      return rejectCorrection({
+        ...redVerification,
+        ...(redVerification.kind === "retryable"
+          ? { retryPolicy: "verification" as const }
+          : {}),
+      });
+    }
+    if (
+      redVerification.classification !== "expected-red" ||
+      redVerification.exitCode === 0
+    ) {
+      return rejectCorrection({
+        kind: "retryable",
+        code: "verification-rejected",
+        retryPolicy: "verification",
+      });
+    }
+    const greenVerification = await verifyCorrectedContract({
+      phase: "green",
+      revisionId: repaired.commit.isolatedRevisionId,
+      verification: request.task.phases.green.verification,
+    });
+    if (!greenVerification.ok) {
+      return rejectCorrection({
+        ...greenVerification,
+        ...(greenVerification.kind === "retryable"
+          ? { retryPolicy: "verification" as const }
+          : {}),
+      });
+    }
+    if (
+      greenVerification.classification !== "expected-green" ||
+      greenVerification.exitCode !== 0
+    ) {
+      return rejectCorrection({
+        kind: "retryable",
+        code: "verification-rejected",
+        retryPolicy: "verification",
+      });
+    }
+
+    const repairEvent: VerifiedTaskEvent = {
+      runId: request.runId,
+      taskId: request.taskId,
+      eventId: `red-artifact-correction-${hash(
+        request.operationId,
+        request.taskId,
+        repaired.commit.artifactHash,
+      ).slice(0, 40)}`,
+      kind: "repair-verified",
+      phase: request.phase,
+      attempt: correctionAttemptUsed,
+      commandId: request.task.repairVerification.id,
+      exitCode: 0,
+      diagnostic: repaired.commit.diagnostic,
+      artifactHash: repaired.commit.artifactHash,
+      isolatedRevisionId: repaired.commit.isolatedRevisionId,
+      outputFacts: repaired.commit.outputFacts,
+      attribution: "introduced",
+      failureIdentities: [
+        hash(
+          "red-artifact-constraint",
+          request.taskId,
+          request.task.phases.red.verification.id,
+        ),
+      ],
+      routeId: repaired.commit.routeId,
+      routeFingerprint: repaired.commit.routeFingerprint,
+    };
+    const greenPaths = new Set([
+      ...request.task.phases.green.write,
+      ...request.task.phases.green.delete,
+    ]);
+    const greenEvent: VerifiedTaskEvent = {
+      runId: request.runId,
+      taskId: request.taskId,
+      eventId: `green-corrected-${hash(
+        request.operationId,
+        request.taskId,
+        repaired.commit.artifactHash,
+      ).slice(0, 40)}`,
+      kind: "phase-verified",
+      phase: "green",
+      commandId: request.task.phases.green.verification.id,
+      exitCode: greenVerification.exitCode,
+      expectedClassification: "expected-green",
+      actualClassification: greenVerification.classification,
+      diagnostic: greenVerification.diagnostic,
+      artifactHash: repaired.commit.artifactHash,
+      isolatedRevisionId: repaired.commit.isolatedRevisionId,
+      outputFacts: repaired.commit.outputFacts.filter((fact) =>
+        greenPaths.has(fact.path),
+      ),
+      routeId: repaired.commit.routeId,
+      routeFingerprint: repaired.commit.routeFingerprint,
+    };
+    const events: VerifiedTaskEvent[] = [repairEvent, greenEvent];
+    if (input.baseline) {
+      const affected = await this.#verifyTaskAffected({
+        resources,
+        baseline: input.baseline,
+        task: request.task,
+        revisionId: repaired.commit.isolatedRevisionId,
+        signal: request.signal,
+      });
+      if (affected.kind === "repairable") {
+        return rejectCorrection({
+          kind: "retryable",
+          code: "red-artifact-constraint",
+          retryPolicy: "artifact",
+        });
+      }
+      if (affected.kind !== "verified") return rejectCorrection(affected);
+    }
+    if (request.task.phases.refactor) {
+      ledger.commitVerifiedEvents(events);
+      return {
+        kind: "phase-committed",
+        artifactHash: repaired.commit.artifactHash,
+        isolatedRevisionId: repaired.commit.isolatedRevisionId,
+        exitCode: greenVerification.exitCode,
+        classification: greenVerification.classification,
+        routeId: repaired.commit.routeId,
+        routeFingerprint: repaired.commit.routeFingerprint,
+      };
+    }
+    const completedRevision = this.#completeTracking(resources, request.taskId);
+    ledger.commitTaskCompletion({
+      events,
+      factKey: `task-final-${hash(request.taskId).slice(0, 40)}`,
+      fact: {
+        taskId: request.taskId,
+        phase: request.phase,
+        isolatedRevisionId: completedRevision.revisionId,
+        attribution: "introduced",
+        repairAttempts: correctionAttemptUsed,
+      },
+    });
+    return {
+      kind: "phase-committed",
+      artifactHash: repaired.commit.artifactHash,
+      isolatedRevisionId: completedRevision.revisionId,
+      exitCode: greenVerification.exitCode,
+      classification: greenVerification.classification,
+      routeId: repaired.commit.routeId,
+      routeFingerprint: repaired.commit.routeFingerprint,
     };
   }
 
@@ -3598,6 +3951,16 @@ class DurableWorkflowComposition
       verificationBaseline = captured.baseline;
     }
     this.#openTask(resources, ledger, input);
+    if (input.artifactCorrection?.code === "red-artifact-constraint") {
+      return retained(
+        await this.#runRedArtifactCorrection({
+          resources,
+          ledger,
+          ...(verificationBaseline ? { baseline: verificationBaseline } : {}),
+          attempt: input,
+        }),
+      );
+    }
     if (input.repair) {
       if (!verificationBaseline) {
         throw new Error("workflow-verification-baseline-unavailable");
@@ -3747,7 +4110,8 @@ class DurableWorkflowComposition
         proposal.kind !== "sealed-candidate"
       ) {
         return proposal.kind === "operation-cancelled" ||
-          proposal.kind === "paused"
+          proposal.kind === "paused" ||
+          proposal.kind === "approval-needed"
           ? retained(proposal)
           : reject(proposal, {
               category: "artifact",
@@ -5080,8 +5444,18 @@ export class WorkflowEngine {
       this.#database
         .prepare(
           `UPDATE workflow_engine_tasks
-           SET state = 'paused', pause_code = 'operation-interrupted',
-               context_request_json = NULL, queue_position = NULL
+           SET state = 'paused',
+               pause_code = CASE
+                 WHEN pause_code = 'red-artifact-constraint'
+                   THEN pause_code
+                 ELSE 'operation-interrupted'
+               END,
+               context_request_json = CASE
+                 WHEN pause_code = 'red-artifact-constraint'
+                   THEN context_request_json
+                 ELSE NULL
+               END,
+               queue_position = NULL
            WHERE run_id = ? AND state IN ('phase-running', 'validating')`,
         )
         .run(row.run_id);
@@ -5745,6 +6119,23 @@ export class WorkflowEngine {
     const orderedPhases = phases(task);
     let phaseIndex = orderedPhases.indexOf(row.phase);
     let artifactAttempts = 0;
+    const persistedContextRequest = row.context_request_json
+      ? normalizeWorkflowContextRequest(
+          JSON.parse(row.context_request_json) as unknown,
+        )
+      : undefined;
+    const persistedRedArtifactCorrection =
+      row.phase === "green" &&
+      persistedContextRequest !== undefined &&
+      classifyPersistedContextRequest(persistedContextRequest, task, "green")
+        .code === "red-artifact-constraint";
+    let redArtifactCorrection =
+      row.phase === "green" &&
+      (row.pause_code === "red-artifact-constraint" ||
+        persistedRedArtifactCorrection);
+    let correctionContextRequest = redArtifactCorrection
+      ? persistedContextRequest
+      : undefined;
     if (phaseIndex < 0) throw new Error("workflow-task-phase-invalid");
     while (phaseIndex < orderedPhases.length) {
       const phase = orderedPhases[phaseIndex];
@@ -5771,6 +6162,7 @@ export class WorkflowEngine {
             JSON.parse(current.verification_json) as unknown,
           )
         : undefined;
+      const plan = this.#planForRevision(runId, row.delivery_revision);
       const repair =
         verificationStatus?.scope === "change-task-affected" &&
         verificationStatus.attribution === "introduced" &&
@@ -5782,19 +6174,31 @@ export class WorkflowEngine {
               failureIdentities: [...verificationStatus.failureIdentities],
             }
           : undefined;
+      const artifactCorrection =
+        redArtifactCorrection && phase === "green"
+          ? {
+              code: "red-artifact-constraint" as const,
+              attempt: artifactAttempts + 1,
+              maxAttempts: plan.verification.artifactCorrection.maxAttempts,
+              ...(correctionContextRequest
+                ? {
+                    contextRequest: structuredClone(correctionContextRequest),
+                  }
+                : {}),
+            }
+          : undefined;
       this.#setTask(
         runId,
         row.task_id,
         {
           state: "phase-running",
           phase,
-          pauseCode: null,
-          contextRequest: null,
+          pauseCode: artifactCorrection?.code ?? null,
+          contextRequest: correctionContextRequest ?? null,
           queuePosition: null,
         },
         lease,
       );
-      const plan = this.#planForRevision(runId, row.delivery_revision);
       let outcome: WorkflowAttemptOutcome;
       try {
         outcome = await this.#worker.runAttempt({
@@ -5825,6 +6229,7 @@ export class WorkflowEngine {
               }
             : {}),
           ...(repair ? { repair } : {}),
+          ...(artifactCorrection ? { artifactCorrection } : {}),
           signal,
           onActivity: (event) => {
             const projection = this.#runStore.status(runId);
@@ -5864,9 +6269,29 @@ export class WorkflowEngine {
         this.#setVerificationStatus(runId, outcome.verification, lease);
       }
       if (outcome.kind === "retryable" && outcome.retryPolicy === "artifact") {
+        if (outcome.code === "red-artifact-constraint") {
+          redArtifactCorrection = true;
+          correctionContextRequest = outcome.contextRequest
+            ? normalizeWorkflowContextRequest(outcome.contextRequest)
+            : correctionContextRequest;
+        }
         artifactAttempts += 1;
         const maxAttempts = plan.verification.artifactCorrection.maxAttempts;
         if (artifactAttempts < maxAttempts) {
+          this.#setTask(
+            runId,
+            row.task_id,
+            {
+              state: "retryable",
+              phase,
+              pauseCode: redArtifactCorrection
+                ? "red-artifact-constraint"
+                : outcome.code,
+              contextRequest: correctionContextRequest ?? null,
+              queuePosition: null,
+            },
+            lease,
+          );
           emitWorkflowActivity(onActivity, {
             state: "retrying",
             stage: this.#runStore.status(runId).stage,
@@ -5910,6 +6335,8 @@ export class WorkflowEngine {
           return;
         }
         artifactAttempts = 0;
+        redArtifactCorrection = false;
+        correctionContextRequest = undefined;
         phaseIndex += 1;
         if (phaseIndex >= orderedPhases.length) {
           this.#setTask(
@@ -5978,7 +6405,7 @@ export class WorkflowEngine {
             contextRequest:
               !approvalCodeInvalid && outcome.contextRequest
                 ? normalizeWorkflowContextRequest(outcome.contextRequest)
-                : null,
+                : (correctionContextRequest ?? null),
             queuePosition: null,
           },
           lease,
@@ -5990,9 +6417,117 @@ export class WorkflowEngine {
   }
 
   #firstPaused(rows: EngineTaskRow[]): EngineTaskRow | undefined {
-    return rows.find((row) =>
-      ["paused", "retryable", "approval-needed"].includes(row.state),
+    return (
+      rows.find((row) => row.state === "approval-needed") ??
+      rows.find((row) => ["paused", "retryable"].includes(row.state))
     );
+  }
+
+  #recoverLegacyContextApproval(runId: string): boolean {
+    const projection = this.#runStore.status(runId);
+    if (!["approval-needed", "paused"].includes(projection.state)) return false;
+    const rows = this.#tasks(runId);
+    const approvalRows = rows.filter((row) => row.state === "approval-needed");
+    if (approvalRows.length === 0) return false;
+    const reclassified = rows.flatMap((row) => {
+      if (
+        row.state !== "approval-needed" ||
+        row.pause_code !== "boundary-review-needed" ||
+        row.context_request_json === null
+      ) {
+        return [];
+      }
+      try {
+        const request = normalizeWorkflowContextRequest(
+          JSON.parse(row.context_request_json) as unknown,
+        );
+        const classified = classifyPersistedContextRequest(
+          request,
+          this.#taskPlan(row),
+          row.phase,
+        );
+        if (classified.kind === "approval-needed") return [];
+        return [
+          {
+            row,
+            state: classified.kind === "retryable" ? "retryable" : "paused",
+            code: classified.code,
+            contextRequest: JSON.stringify(
+              normalizeWorkflowContextRequest(classified.contextRequest),
+            ),
+          },
+        ];
+      } catch {
+        return [];
+      }
+    });
+    const reclassifiedTaskIds = new Set(
+      reclassified.map((entry) => entry.row.task_id),
+    );
+    const retainedApprovals = approvalRows.filter(
+      (row) => !reclassifiedTaskIds.has(row.task_id),
+    );
+    const updateTasks = (database: DatabaseSync) => {
+      for (const entry of reclassified) {
+        const updated = database
+          .prepare(
+            `UPDATE workflow_engine_tasks
+             SET state = ?, phase = ?, pause_code = ?, context_request_json = ?,
+                 queue_position = NULL
+             WHERE run_id = ? AND task_id = ?
+               AND state = 'approval-needed'
+               AND pause_code = 'boundary-review-needed'`,
+          )
+          .run(
+            entry.state,
+            entry.row.phase,
+            entry.code,
+            entry.contextRequest,
+            runId,
+            entry.row.task_id,
+          );
+        if (Number(updated.changes) !== 1) {
+          throw new Error("workflow-legacy-context-race");
+        }
+      }
+    };
+    const transitionWithUpdates = (
+      to: "paused" | "approval-needed",
+      code: string,
+    ) =>
+      this.#runStore.transitionAtomically(
+        {
+          runId,
+          to,
+          operationId: `legacy-context-${hash(
+            runId,
+            String(projection.sequence),
+            to,
+            code,
+            JSON.stringify(
+              reclassified.map((entry) => [entry.row.task_id, entry.code]),
+            ),
+          ).slice(0, 40)}`,
+          code,
+        },
+        updateTasks,
+      );
+    if (retainedApprovals.length > 0) {
+      if (projection.state === "approval-needed") {
+        if (reclassified.length === 0) return false;
+        this.#transaction(() => updateTasks(this.#database));
+      } else {
+        transitionWithUpdates(
+          "approval-needed",
+          retainedApprovals[0].pause_code ?? "approval-code-invalid",
+        );
+      }
+      return true;
+    }
+    const first = reclassified[0];
+    if (!first) return false;
+    transitionWithUpdates("paused", first.code);
+    return true;
   }
 
   async #finishChange(
@@ -6592,7 +7127,10 @@ export class WorkflowEngine {
         )
       : undefined;
     const pauseCode =
-      projection.pauseCode ?? firstPaused?.pause_code ?? "task-paused";
+      projection.state === "approval-needed" &&
+      firstPaused?.state === "approval-needed"
+        ? (firstPaused.pause_code ?? projection.pauseCode ?? "task-paused")
+        : (projection.pauseCode ?? firstPaused?.pause_code ?? "task-paused");
     const approval =
       projection.state === "approval-needed"
         ? approvalRequirement(pauseCode, contextRequest)
@@ -6941,6 +7479,7 @@ export class WorkflowEngine {
   ) {
     const runId = this.#lookupRun(command.stage, command.change);
     if (!runId) throw new Error("run-not-found");
+    this.#recoverLegacyContextApproval(runId);
     const replay = this.#beginOperation(
       runId,
       command.operationId,
@@ -7337,6 +7876,7 @@ export class WorkflowEngine {
       case "status": {
         const runId = this.#lookupRun(command.stage, command.change);
         if (!runId) throw new Error("run-not-found");
+        this.#recoverLegacyContextApproval(runId);
         return this.#withAvailableDelivery(this.#statusByRun(runId));
       }
       case "resume":

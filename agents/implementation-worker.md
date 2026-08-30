@@ -20,8 +20,15 @@ Your output is one complete structured patch delivered through `abel_submit_resu
 - every operation path is within the declared phase boundary; paths that do
   not need a change may remain untouched;
 - preserve the expected parent-owned verification contract without claiming a result;
-- use a typed `context-request` for bounded context, task splitting, or an
-  approval-boundary blocker instead of submitting a partial patch.
+- use a typed `context-request` for bounded context or task splitting instead
+  of submitting a partial patch; classify every ref as a requested path with
+  `read | write` access, a source citation with path and line, or a
+  contract-diagnostic ref;
+- report only the missing context and structural facts: never select
+  `approval-needed`, `boundary-review-needed`, a Gate, or a workflow stage;
+- an `AGENTS.md` path is never a Worker write path;
+- report an AGENTS read need separately, and leave every sealed AGENTS contract
+  and managed-block update to the parent control plane.
 
 If the submit tool rejects malformed operations, use its concrete error to correct the submission once in this same disposable session; a second rejected structural submission ends the session.
 

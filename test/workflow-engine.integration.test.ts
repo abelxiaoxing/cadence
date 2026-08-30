@@ -225,7 +225,23 @@ type AttemptOutcome =
       exitCode: number;
       classification: "expected-red" | "expected-green";
     }
-  | { kind: "paused"; code: string; untrustedCandidate?: Uint8Array }
+  | {
+      kind: "paused" | "retryable" | "approval-needed";
+      code: string;
+      untrustedCandidate?: Uint8Array;
+      contextRequest?: {
+        code:
+          | "approved-context-needed"
+          | "task-split-needed"
+          | "boundary-review-needed";
+        refs: Array<
+          | string
+          | { kind: "requested-path"; path: string; access: "read" | "write" }
+          | { kind: "source-citation"; path: string; line: number }
+          | { kind: "contract-diagnostic"; ref: string }
+        >;
+      };
+    }
   | { kind: "operation-cancelled"; code: "cancelled" };
 
 function committed(phase: string): AttemptOutcome {
@@ -241,6 +257,7 @@ function committed(phase: string): AttemptOutcome {
 class ScriptedWorker {
   readonly calls: string[] = [];
   readonly rebinds: string[] = [];
+  readonly artifactCorrections: unknown[] = [];
   readonly #script = new Map<string, AttemptOutcome[]>();
   unavailable = false;
   #waitingKey: string | undefined;
@@ -260,6 +277,9 @@ class ScriptedWorker {
 
   async runAttempt(input: Record<string, unknown>): Promise<AttemptOutcome> {
     if (this.unavailable) throw new Error("worker-must-not-run");
+    if (input.artifactCorrection) {
+      this.artifactCorrections.push(structuredClone(input.artifactCorrection));
+    }
     const key = `${String(input.taskId)}:${String(input.phase)}`;
     this.calls.push(
       `${key}:r${String(input.deliveryRevision)}:${String(input.routeId ?? "policy")}`,
@@ -1299,7 +1319,13 @@ describe("WorkflowEngine command authority", () => {
           code: "approved-context-needed",
           contextRequest: {
             code: "approved-context-needed",
-            refs: ["src/approved.ts"],
+            refs: [
+              {
+                kind: "requested-path",
+                path: "src/approved.ts",
+                access: "read",
+              },
+            ],
           },
         }),
         rebind: () => ({ ok: true as const, routeId: "fixture-route" }),
@@ -1317,11 +1343,331 @@ describe("WorkflowEngine command authority", () => {
           state: "paused",
           contextRequest: {
             code: "approved-context-needed",
-            refs: ["src/approved.ts"],
+            refs: [
+              {
+                kind: "requested-path",
+                path: "src/approved.ts",
+                access: "read",
+              },
+            ],
           },
         },
       ],
     });
+    await engine.close();
+  });
+
+  it("reclassifies a persisted legacy context approval on the same delivery and reopens Red correction", async () => {
+    const change = "engine-legacy-context-recovery";
+    const consumerRoot = makeConsumer("legacy-context-recovery");
+    const xdgStateHome = temporaryRoot("legacy-context-recovery-state");
+    const delivery = new DeliverySource();
+    const correctionTask = task("T1-legacy-context", {
+      write: "src/game.ts",
+    });
+    correctionTask.phases.red.write = ["tests/foundation.test.mjs"];
+    correctionTask.phases.green.read = [
+      "package.json",
+      "tests/foundation.test.mjs",
+      "src/game.ts",
+    ];
+    correctionTask.phases.green.write = ["src/game.ts"];
+    delivery.set(change, plan(change, [correctionTask]));
+    const contextRequest = {
+      code: "boundary-review-needed" as const,
+      refs: [
+        "tests/foundation.test.mjs:209",
+        "tests/foundation.test.mjs:237",
+        "phase-contract.writeSet",
+        "scripts/AGENTS.md",
+      ],
+    };
+    const firstWorker = new ScriptedWorker();
+    firstWorker.script("T1-legacy-context:green", [
+      {
+        kind: "approval-needed",
+        code: "boundary-review-needed",
+        contextRequest,
+      },
+    ]);
+    let engine = openEngine({
+      consumerRoot,
+      xdgStateHome,
+      delivery,
+      worker: firstWorker,
+    });
+    const legacyApproval = await engine.execute(
+      command("start", change, { operationId: "legacy-context-start" }),
+    );
+    expect(legacyApproval).toMatchObject({
+      state: "approval-needed",
+      deliveryRevision: 1,
+      approval: {
+        category: "path-boundary",
+        requiredGates: ["gate-b"],
+        designRequest: `/abel-design --change ${change}`,
+      },
+      tasks: [
+        {
+          taskId: "T1-legacy-context",
+          state: "approval-needed",
+          phase: "green",
+        },
+      ],
+    });
+    expect(
+      firstWorker.calls.map((call) => call.replace(/:r\d+:.*$/u, "")),
+    ).toEqual(["T1-legacy-context:red", "T1-legacy-context:green"]);
+    await engine.close();
+
+    const recoveryWorker = new ScriptedWorker();
+    recoveryWorker.script("T1-legacy-context:green", [
+      { kind: "paused", code: "red-artifact-constraint" },
+    ]);
+    engine = openEngine({
+      consumerRoot,
+      xdgStateHome,
+      delivery,
+      worker: recoveryWorker,
+    });
+    const recovered = await engine.execute(command("status", change));
+    expect(recovered).toMatchObject({
+      runId: legacyApproval.runId,
+      state: "paused",
+      deliveryRevision: 1,
+      pause: { code: "red-artifact-constraint" },
+      legalCommands: expect.arrayContaining(["resume"]),
+      tasks: [
+        {
+          taskId: "T1-legacy-context",
+          state: "retryable",
+          phase: "green",
+          contextRequest: {
+            refs: [
+              {
+                kind: "source-citation",
+                path: "tests/foundation.test.mjs",
+                line: 209,
+              },
+              {
+                kind: "source-citation",
+                path: "tests/foundation.test.mjs",
+                line: 237,
+              },
+              {
+                kind: "contract-diagnostic",
+                ref: "phase-contract.writeSet",
+              },
+              {
+                kind: "requested-path",
+                path: "scripts/AGENTS.md",
+                access: "read",
+              },
+            ],
+          },
+        },
+      ],
+    });
+    expect(JSON.stringify(recovered)).not.toMatch(/designRequest/u);
+
+    const resumed = await engine.execute(
+      command("resume", change, { operationId: "legacy-context-resume" }),
+    );
+    expect(resumed).toMatchObject({
+      runId: legacyApproval.runId,
+      state: "paused",
+      deliveryRevision: 1,
+      pause: { code: "red-artifact-constraint" },
+      tasks: [
+        {
+          taskId: "T1-legacy-context",
+          state: "paused",
+          phase: "green",
+        },
+      ],
+    });
+    expect(
+      recoveryWorker.calls.map((call) => call.replace(/:r\d+:.*$/u, "")),
+    ).toEqual(["T1-legacy-context:green"]);
+    expect(recoveryWorker.artifactCorrections).toEqual([
+      {
+        code: "red-artifact-constraint",
+        attempt: 1,
+        maxAttempts: 2,
+        contextRequest: {
+          code: "boundary-review-needed",
+          refs: [
+            {
+              kind: "source-citation",
+              path: "tests/foundation.test.mjs",
+              line: 209,
+            },
+            {
+              kind: "source-citation",
+              path: "tests/foundation.test.mjs",
+              line: 237,
+            },
+            {
+              kind: "contract-diagnostic",
+              ref: "phase-contract.writeSet",
+            },
+            {
+              kind: "requested-path",
+              path: "scripts/AGENTS.md",
+              access: "read",
+            },
+          ],
+        },
+      },
+    ]);
+    await engine.close();
+  });
+
+  it("reclassifies all recoverable legacy rows without bypassing a retained approval", async () => {
+    const change = "engine-legacy-mixed-approvals";
+    const consumerRoot = makeConsumer("legacy-mixed-approvals");
+    const xdgStateHome = temporaryRoot("legacy-mixed-approvals-state");
+    const correctionTask = task("T1-recoverable", {
+      write: "src/game.ts",
+    });
+    correctionTask.phases.red.write = ["tests/foundation.test.mjs"];
+    correctionTask.phases.green.read = [
+      "package.json",
+      "tests/foundation.test.mjs",
+      "src/game.ts",
+    ];
+    correctionTask.phases.green.write = ["src/game.ts"];
+    const authorityTask = task("T2-authority");
+    const delivery = new DeliverySource();
+    delivery.set(change, plan(change, [correctionTask, authorityTask]));
+    const worker = new ScriptedWorker();
+    worker.script("T1-recoverable:green", [
+      {
+        kind: "approval-needed",
+        code: "boundary-review-needed",
+        contextRequest: {
+          code: "boundary-review-needed",
+          refs: ["tests/foundation.test.mjs:209"],
+        },
+      },
+    ]);
+    worker.script("T2-authority:red", [
+      {
+        kind: "approval-needed",
+        code: "boundary-review-needed",
+        contextRequest: {
+          code: "boundary-review-needed",
+          refs: [
+            {
+              kind: "requested-path",
+              path: "new-product/path.ts",
+              access: "write",
+            },
+          ],
+        },
+      },
+    ]);
+    let engine = openEngine({
+      consumerRoot,
+      xdgStateHome,
+      delivery,
+      worker,
+    });
+    const approval = await engine.execute(
+      command("start", change, { operationId: "mixed-approvals-start" }),
+    );
+    expect(approval).toMatchObject({ state: "approval-needed" });
+    await engine.close();
+
+    const runStore = RunStore.open(
+      resolveStateRoot({
+        consumerRoot,
+        xdgStateHome,
+        homeDir: temporaryRoot("legacy-mixed-approvals-home"),
+      }),
+    );
+    runStore.transition({
+      runId: String(approval.runId),
+      to: "paused",
+      operationId: "simulate-legacy-approval-bypass",
+      code: "red-artifact-constraint",
+    });
+    runStore.close();
+    engine = openEngine({
+      consumerRoot,
+      xdgStateHome,
+      delivery,
+      worker,
+    });
+
+    const status = await engine.execute(command("status", change));
+    expect(status).toMatchObject({
+      state: "approval-needed",
+      legalCommands: ["status", "discard"],
+      pause: { code: "boundary-review-needed" },
+      approval: {
+        category: "path-boundary",
+        refs: ["new-product/path.ts"],
+      },
+      tasks: [
+        {
+          taskId: "T1-recoverable",
+          state: "retryable",
+          phase: "green",
+        },
+        {
+          taskId: "T2-authority",
+          state: "approval-needed",
+          phase: "red",
+        },
+      ],
+    });
+    await expect(
+      engine.execute(
+        command("resume", change, { operationId: "mixed-approvals-resume" }),
+      ),
+    ).rejects.toThrow(/approval-receipt-required/u);
+    await engine.close();
+  });
+
+  it("retains a genuine legacy context approval and requires a newer receipt", async () => {
+    const change = "engine-legacy-real-approval";
+    const consumerRoot = makeConsumer("legacy-real-approval");
+    const delivery = new DeliverySource();
+    delivery.set(change, plan(change, [task("T1-real-approval")]));
+    const worker = new ScriptedWorker();
+    worker.script("T1-real-approval:red", [
+      {
+        kind: "approval-needed",
+        code: "boundary-review-needed",
+        contextRequest: {
+          code: "boundary-review-needed",
+          refs: ["new-product/path.ts"],
+        },
+      },
+    ]);
+    const engine = openEngine({ consumerRoot, delivery, worker });
+    const approval = await engine.execute(
+      command("start", change, { operationId: "real-approval-start" }),
+    );
+    expect(approval).toMatchObject({
+      state: "approval-needed",
+      approval: {
+        category: "path-boundary",
+        requiredGates: ["gate-b"],
+      },
+    });
+    await expect(engine.execute(command("status", change))).resolves.toMatchObject(
+      {
+        state: "approval-needed",
+        approval: { category: "path-boundary" },
+      },
+    );
+    await expect(
+      engine.execute(
+        command("resume", change, { operationId: "real-approval-resume" }),
+      ),
+    ).rejects.toThrow(/approval-receipt-required/u);
     await engine.close();
   });
 

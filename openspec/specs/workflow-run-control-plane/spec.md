@@ -93,6 +93,21 @@ Only successful completion, explicit discard, or a deterministic contract or int
 - **WHEN** automatic artifact correction is exhausted while the approved task boundary remains valid
 - **THEN** the task pauses with bounded validation evidence and can resume with a replacement Worker while accepted sibling work remains available
 
+#### Scenario: Green is constrained by the same task Red artifact
+
+- **WHEN** Green reports an extra path because an accepted same-task Red test or assertion imposed the wrong constraint and the canonical plan does not authorize that extra output
+- **THEN** the control plane preserves the compatible Red revision, reopens bounded Red or artifact correction under the existing candidate-attempt limit, accepts no partial patch, and emits no approval-needed or Design request
+
+#### Scenario: Legacy context approval is reclassified
+
+- **WHEN** status or resume loads a persisted approval-needed boundary-review-needed task whose typed refs prove only a same-task Red constraint, citation, diagnostic, or allowed AGENTS read
+- **THEN** the control plane atomically converts it to a recoverable artifact pause on the same delivery revision, retains compatible private progress, and permits bare resume without discard
+
+#### Scenario: Genuine retained approval remains bound
+
+- **WHEN** a persisted context approval still proves a new dependency, product path, verification contract, or AGENTS contract boundary after reclassification
+- **THEN** it remains approval-needed and bare resume still requires a newer matching delivery receipt
+
 #### Scenario: Full verification introduces a failure
 
 - **WHEN** change-level verification finds a failure attributable to the isolated cumulative change

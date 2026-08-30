@@ -72,10 +72,12 @@ The package SHALL expose no general Subagent command, public orchestration API, 
 ### Requirement: Sealed structured artifact delivery
 
 Design and diagnosis Agents SHALL return structured evidence with originating identity, bounded scope, concise claims, exact citations, constraints, dependencies, risks, open questions, and implementation-boundary hints.
-Implementation Workers SHALL make one terminal submission containing either a complete ordered structured patch or a typed request for context, task reshaping, boundary approval, or capacity handling.
+Implementation Workers SHALL make one terminal submission containing either a complete ordered structured patch or a typed request for context, task reshaping, or capacity handling.
+Context refs SHALL distinguish requested paths with read or write access, source citations with path and line, and contract or diagnostic refs; only normalized requested paths SHALL participate in path-boundary computation.
 One structurally rejected submission MAY be corrected once inside the same disposable child session; a second rejection SHALL end that session, and only one accepted terminal result may survive.
 The trusted submit tool SHALL bind that submission to one originating run, task, phase, Worker attempt, approved path set, and isolated snapshot; validate exact replacements, rewrites, creates, and deletions against the isolated workspace and approved phase boundary; generate the unified diff; and own internal chunking, byte limits, hashing, and atomic sealing. The Worker SHALL NOT supply diff headers or hunks, sequence, byte-count, encoding, hash, or separate seal metadata.
-A Worker SHALL NOT select a workflow Gate result, approve authority, apply a candidate, or declare verification success.
+A Worker SHALL NOT select approval-needed, an approval code, a workflow Gate result, approve authority, apply a candidate, or declare verification success. Boundary-review-needed SHALL remain a trusted control-plane classification rather than a Worker-selectable string.
+AGENTS context SHALL be classified against the sealed AGENTS contract independently of ordinary path declarations, and no Worker context request or ordinary write set SHALL grant AGENTS write authority.
 Delivery MUST NOT expose hidden reasoning, a child transcript, tool-call history, credential, or unfiltered raw logs in public outcomes.
 Capacity exhaustion SHALL pause or request approved task reshaping and SHALL NOT yield a truncated candidate or terminally destroy the task.
 
@@ -97,7 +99,17 @@ Capacity exhaustion SHALL pause or request approved task reshaping and SHALL NOT
 #### Scenario: Worker needs more context
 
 - **WHEN** a Worker cannot safely produce an approved candidate from its supplied context
-- **THEN** it returns a typed bounded context request and the control plane either supplies already approved facts or pauses without inventing authority
+- **THEN** it returns typed requested-path, source-citation, and diagnostic facts and the control plane either supplies already approved facts or pauses without inventing authority or trusting a Worker-selected approval category
+
+#### Scenario: Context refs mix citations and diagnostics
+
+- **WHEN** a context request includes `tests/file.test.mjs:209`, `phase-contract.writeSet`, and one requested path
+- **THEN** the control plane treats the first as a source citation, the second as a contract diagnostic, and computes authority only from the normalized requested path
+
+#### Scenario: Worker requests an AGENTS write
+
+- **WHEN** a Worker reports that an AGENTS path needs mutation
+- **THEN** the control plane denies Worker write authority and either retains the parent-owned sealed AGENTS operation or requires an AGENTS-contract approval without adding that path to the ordinary Worker write set
 
 ### Requirement: Parent-owned change-workspace acceptance
 
