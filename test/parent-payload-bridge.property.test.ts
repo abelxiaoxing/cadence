@@ -403,8 +403,8 @@ describe("parent payload bridge properties", () => {
       baseCalls++;
       return terminalStream(requestModel, "done").stream;
     }) as Provider & { futureCapability: unknown };
-    const firstCapability = { version: 1 };
-    const currentCapability = { version: 2 };
+    const firstCapability = { name: "first" };
+    const currentCapability = { name: "current" };
     base.futureCapability = firstCapability;
 
     const packageBridge = new Bridge();

@@ -26,7 +26,7 @@ An explicit project or user file SHALL replace that default as a whole; an inval
 The policy SHALL define an ordered set of allowed routes for each closed package-owned role and MAY include inherited-parent identity as an explicit route.
 Each route SHALL declare enough non-secret capability metadata to determine supported dialect, context and output bounds, and eligibility for its role.
 Users SHALL be able to inspect the selected policy source, route names, route kinds, capabilities, health state, and ordering without exposing URL values, API keys, credentials, or raw environment values.
-The v2 policy format SHALL replace the v1 single-endpoint key contract without implicit migration or dual-stack resolution.
+The canonical policy format SHALL be the only accepted route configuration; obsolete single-endpoint keys SHALL NOT be translated or resolved in parallel.
 
 #### Scenario: Project policy exists
 
@@ -48,10 +48,10 @@ The v2 policy format SHALL replace the v1 single-endpoint key contract without i
 - **WHEN** local status presents endpoint routing
 - **THEN** it reports the policy source and non-secret route metadata without URL, key, credential, or environment values
 
-#### Scenario: V1 keys are present
+#### Scenario: Obsolete endpoint keys are present
 
-- **WHEN** only the obsolete v1 single-endpoint configuration is supplied
-- **THEN** v2 reports an unsupported configuration version and does not silently translate it
+- **WHEN** only obsolete single-endpoint configuration keys are supplied
+- **THEN** Cadence reports an invalid configuration and does not silently translate it
 
 ### Requirement: Capability and health aware route selection
 

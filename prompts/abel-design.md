@@ -196,8 +196,8 @@ Finalization revalidates both current private Gate proofs, the stored plan, stri
 It atomically installs canonical `gate-a.yaml`, writes `ready.yaml` last, rereads the installed delivery, removes `plan-draft.json`, marks the Design run completed, and returns `deliveryRevision` plus `receiptHash`.
 Any failure leaves Design nonterminal and installs no new `ready.yaml`.
 
-Receipt schema version 4 binds the Gate A and Gate B approval revisions, canonical contract hashes, and owner-private record hashes.
-`ready.yaml` references the plan path, schema version, raw-byte hash, canonical plan hash, executable verification closure, Gate A hash, artifact hashes, and traceability hash.
+The canonical receipts bind the Gate A and Gate B approval revisions, canonical contract hashes, and owner-private record hashes.
+`ready.yaml` references the plan path, raw-byte hash, canonical plan hash, executable verification closure, Gate A hash, artifact hashes, and traceability hash.
 It does not embed caller-owned runtime task state, completed/blocked arrays, snapshots, launch identities, or retry budgets.
 
 Only the sealed task checkboxes may be normalized from `[x]`/`[X]` to `[ ]` when validating the tracked `tasks.md` hash.

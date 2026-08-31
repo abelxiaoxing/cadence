@@ -21,10 +21,10 @@ Neither Gate grants tool permission, repository permission, identity, or authori
 Design and Implement may run in fresh contexts.
 Trusted delivery requires:
 
-- canonical receipt-schema-v4 Gate A and Gate B proofs for the same root/change/schema, each binding its approval revision, canonical contract hash, and owner-private journal record hash;
+- canonical Gate A and Gate B proofs for the same root/change/schema, each binding its approval revision, canonical contract hash, and owner-private journal record hash;
 - an owner-private finalization fact binding the exact delivery revision, ready-receipt raw hash, both Gate proofs, and canonical plan hash;
 - safe relative artifact paths and exact raw SHA-256 bindings;
-- a canonical `implement-plan.json` with schema version, raw hash, and canonical hash;
+- a canonical `implement-plan.json` with raw hash and canonical hash;
 - OpenSpec strict validity and planning completeness;
 - Requirement → Scenario → Verification → Task traceability exactly once;
 - executable verification closure and complete output/path/dependency/AGENTS contracts.

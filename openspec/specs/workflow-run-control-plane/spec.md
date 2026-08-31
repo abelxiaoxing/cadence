@@ -7,7 +7,7 @@ Provide a durable private control plane that makes Abel Design and Implement run
 
 The control plane SHALL assign every run one immutable identity that does not contain an approved delivery revision.
 For a named run, the stable lookup key SHALL be canonical project root, eligible Abel stage, and unique change name; a raw-requirement Design start SHALL receive a code-derived durable provisional identity and SHALL bind the Gate-A-approved change name to that same run rather than replacing it.
-Approved Gate A and Gate B delivery revisions SHALL be versioned bindings on the stable run, not run-identity components.
+Approved Gate A and Gate B delivery revisions SHALL be ordered bindings on the stable run, not run-identity components.
 Design callers SHALL use one private Design action family from `start` and `status` through change binding, decisions, Gates, artifact mutation, compilation, and finalization; a new start SHALL supply the transient requirement rather than a caller-computed provisional hash, and later operations SHALL use the returned run id.
 Implement callers SHALL operate through the separate `start`, `status`, `resume`, `rebind`, `cancel`, and `discard` command surface.
 Neither surface SHALL accept a caller-supplied protocol version, canonical graph, graph hash, task boundary, file snapshot, launch identity, or apply identity.
@@ -23,7 +23,7 @@ Every state-changing command SHALL be idempotent for the same operation identity
 #### Scenario: Start is repeated
 
 - **WHEN** an active Design start or any Implement start is repeated for the same stable root, stage, and change key, including after a newer delivery revision exists
-- **THEN** the control plane returns the same run status without admitting a duplicate graph, task, or operation, and accepts any newer revision only through validated versioned binding
+- **THEN** the control plane returns the same run status without admitting a duplicate graph, task, or operation, and accepts any newer revision only through a validated binding
 
 #### Scenario: Status is requested while every endpoint is unavailable
 
@@ -203,7 +203,7 @@ Only after final application, required postconditions, and post-apply verificati
 
 ### Requirement: Durable Design decisions and Gate proofs
 
-The private control plane SHALL record versioned behavior and technical decisions for one Design run and SHALL derive Gate currentness from their durable order. Gate A approval SHALL become stale after a later behavior decision; Gate B approval SHALL become stale after any later substantive decision, Gate A reapproval, or plan recompilation. The control plane SHALL normalize and hash transient decision and Gate-A contract text itself, persist only the resulting canonical hash, and bind Gate B only to a plan compiled after the current Gate A approval and latest substantive decisions without accepting a caller-supplied hash. Every Gate approval SHALL produce an owner-private record hash. Repeating one operation id SHALL replay its committed outcome.
+The private control plane SHALL record ordered behavior and technical decisions for one Design run and SHALL derive Gate currentness from their durable order. Gate A approval SHALL become stale after a later behavior decision; Gate B approval SHALL become stale after any later substantive decision, Gate A reapproval, or plan recompilation. The control plane SHALL normalize and hash transient decision and Gate-A contract text itself, persist only the resulting canonical hash, and bind Gate B only to a plan compiled after the current Gate A approval and latest substantive decisions without accepting a caller-supplied hash. Every Gate approval SHALL produce an owner-private record hash. Repeating one operation id SHALL replay its committed outcome.
 
 #### Scenario: Behavior changes after Gate A
 

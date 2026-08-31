@@ -56,7 +56,7 @@ function updateManifest(
 
 function recursiveDirectoryManifest(abs: string): string {
   const hash = createHash("sha256");
-  updateManifest(hash, "cadence-directory-manifest-v2");
+  updateManifest(hash, "cadence-directory-manifest");
   const visit = (directory: string, prefix: string): void => {
     const names = readdirSync(directory).sort();
     for (const name of names) {

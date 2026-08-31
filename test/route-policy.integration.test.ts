@@ -36,7 +36,6 @@ function completePolicy(): Record<string, unknown> {
     "diagnosis-worker",
   ];
   return {
-    version: 2,
     routes: {
       inherited: {
         kind: "inherited",

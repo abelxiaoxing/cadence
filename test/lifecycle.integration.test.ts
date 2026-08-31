@@ -38,7 +38,7 @@ function workflowPlanContracts(taskIds: string[]) {
         target: "task-red-contracts" as const,
         affected: "task-affected-contracts" as const,
         fullSuite: workflowExpectedGreen("lifecycle-baseline-full"),
-        failureIdentity: "normalized-v1" as const,
+        failureIdentity: "normalized" as const,
       },
       change: {
         affected: "task-affected-contracts" as const,
@@ -168,7 +168,6 @@ describe("durable WorkflowEngine scheduling", () => {
     });
     const change = "durable-independent-tasks";
     const plan = {
-      schemaVersion: 3 as const,
       changeId: change,
       tasks: [task("parallel-a"), task("parallel-b")],
       outputs: [],
@@ -200,7 +199,6 @@ describe("durable WorkflowEngine scheduling", () => {
       stateRoot,
       deliverySource: {
         load: vi.fn(async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "a".repeat(64),
@@ -278,7 +276,6 @@ describe("durable WorkflowEngine scheduling", () => {
       ],
     });
     const plan = {
-      schemaVersion: 3 as const,
       changeId: change,
       tasks: [
         {
@@ -309,7 +306,6 @@ describe("durable WorkflowEngine scheduling", () => {
     const services = {
       deliverySource: {
         load: vi.fn(async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "a".repeat(64),

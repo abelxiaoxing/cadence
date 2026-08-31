@@ -32,7 +32,6 @@ import type {
 
 const IDENTIFIER = /^[a-z0-9](?:[a-z0-9._:-]{0,126}[a-z0-9])?$/iu;
 const SHA256 = /^[a-f0-9]{64}$/u;
-const JOURNAL_VERSION = 2 as const;
 
 type TransactionState =
   | "prepared"
@@ -58,7 +57,6 @@ interface TransactionEvent {
 }
 
 interface TransactionJournal {
-  version: typeof JOURNAL_VERSION;
   transactionId: string;
   consumerRoot: string;
   baselineRevisionId: string;
@@ -208,7 +206,7 @@ function hashBytes(bytes: Uint8Array): string {
 
 function journalHash(journal: TransactionJournal): string {
   return createHash("sha256")
-    .update("cadence-apply-transaction-v2\0")
+    .update("cadence-apply-transaction\0")
     .update(JSON.stringify(journal))
     .digest("hex");
 }
@@ -449,7 +447,6 @@ function validateJournal(value: unknown): TransactionJournal {
   }
   const journal = value as TransactionJournal;
   if (
-    journal.version !== JOURNAL_VERSION ||
     !IDENTIFIER.test(journal.transactionId) ||
     !path.isAbsolute(journal.consumerRoot) ||
     !SHA256.test(journal.baselineRevisionId) ||
@@ -821,7 +818,6 @@ export class ApplyTransaction {
     ].sort();
     for (const hash of retainedHashes) this.#artifacts.retain(hash);
     const journal: TransactionJournal = {
-      version: JOURNAL_VERSION,
       transactionId: input.transactionId,
       consumerRoot,
       baselineRevisionId: baseline.revisionId,

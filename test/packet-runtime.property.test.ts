@@ -161,7 +161,6 @@ describe("PacketRuntime", () => {
       "diagnosis-worker",
     ];
     const parsed = parseRoutePolicy({
-      version: 2,
       routes: {
         inherited: {
           kind: "inherited",
@@ -296,7 +295,6 @@ describe("PacketRuntime", () => {
       writeFileSync(
         path.join(routeDirectory, "routes.json"),
         `${JSON.stringify({
-          version: 2,
           routes: {
             corrected: {
               kind: "custom",

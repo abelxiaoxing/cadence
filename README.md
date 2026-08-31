@@ -28,7 +28,7 @@ Design 激活期间，父模型只保留进入前已启用的 `read`、`grep`、
 Implementation Worker 不再手写 unified-diff header、hunk range、分段或哈希；它一次提交有序的 `replace`、`rewrite`、`create`、`delete` 操作。
 可信控制面在隔离 workspace 中校验精确文本、批准路径和 symlink 安全，生成并内部分块 sealed candidate；超限时保留可恢复状态而不接受截断 patch。
 OpenSpec change 制品只能通过私有 `write-artifact` / `delete-artifact` 原子操作变更；产品文件、AGENTS、`gate-a.yaml`、`ready.yaml` 和 `implement-plan.json` 对该通道不可达。
-Gate A/B 收据使用 schema v4，并在 Implement admission 时同时对照同一 root/change 的私有批准事实与 finalization revision/hash 事实验证。
+Gate A/B 收据只有一套 canonical 结构，并在 Implement admission 时同时对照同一 root/change 的私有批准事实与 finalization revision/hash 事实验证。
 
 只有继续工作确实需要新增行为、架构/策略、依赖、路径、资源、验证或 AGENTS 权限时才进入 `approval-needed`。
 结果保留原 Implement run，明确给出 authority category、所需 Gate、引用和 `/abel-design --change <change>` 用户指引；不会自动调用另一阶段。

@@ -899,7 +899,7 @@ export class DesignJournal {
   }): Record<string, unknown> {
     requireIdentifier(input.decisionId, "design-decision-id");
     const decisionContractHash = contractHash(
-      "abel-design-decision-v1",
+      "abel-design-decision",
       input.contract,
     );
     if (input.category !== "behavior" && input.category !== "technical") {
@@ -1024,7 +1024,7 @@ export class DesignJournal {
     }
     const gateAContractHash =
       input.gate === "gate-a"
-        ? contractHash("abel-design-gate-a-v1", input.contract)
+        ? contractHash("abel-design-gate-a", input.contract)
         : undefined;
     return this.#transaction(() => {
       this.#run(input.runId, true);

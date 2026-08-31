@@ -56,7 +56,6 @@ function policy(primaryModel = "primary-worker") {
     "diagnosis-worker",
   ];
   const parsed = parseRoutePolicy({
-    version: 2,
     routes: {
       primary: {
         kind: "custom",
@@ -125,7 +124,6 @@ function packagePlan(change: string) {
     verificationLock: "package-loader-verification",
   });
   return {
-    schemaVersion: 3 as const,
     changeId: change,
     tasks: [
       {
@@ -166,7 +164,7 @@ function packagePlan(change: string) {
         target: "task-red-contracts" as const,
         affected: "task-affected-contracts" as const,
         fullSuite: verification("package-full-baseline", "expected-green"),
-        failureIdentity: "normalized-v1" as const,
+        failureIdentity: "normalized" as const,
       },
       change: {
         affected: "task-affected-contracts" as const,
@@ -796,7 +794,7 @@ describe("durable WorkflowEngine service composition", () => {
     });
   });
 
-  it("loads only a fully covered canonical v2 delivery", async () => {
+  it("loads only a fully covered canonical delivery", async () => {
     const module = (await import("../src/index.ts")) as Record<string, unknown>;
     const packageDeliverySource = module.packageDeliverySource as
       | ((
@@ -840,7 +838,6 @@ describe("durable WorkflowEngine service composition", () => {
       verifyFinalizedDelivery: () => true,
     }).load({ stage: "abel-implement", change });
     expect(delivery).toMatchObject({
-      version: 2,
       gate: "gate-b",
       revision: 1,
       receiptHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
@@ -948,7 +945,7 @@ describe("durable WorkflowEngine service composition", () => {
     });
     await expect(
       source.load({ stage: "abel-implement", change }),
-    ).resolves.toMatchObject({ version: 2, revision: 1 });
+    ).resolves.toMatchObject({ revision: 1 });
 
     writeFileSync(
       tasksPath,
@@ -1055,7 +1052,6 @@ describe("durable WorkflowEngine service composition", () => {
     writeFileSync(
       path.join(routeDirectory, "routes.json"),
       `${JSON.stringify({
-        version: 2,
         routes: {
           inherited: {
             kind: "inherited",
@@ -1144,7 +1140,6 @@ describe("durable WorkflowEngine service composition", () => {
     writeFileSync(
       path.join(routeDirectory, "routes.json"),
       `${JSON.stringify({
-        version: 2,
         routes: {
           inherited: {
             kind: "inherited",
@@ -1265,7 +1260,7 @@ describe("durable WorkflowEngine service composition", () => {
     mkdirSync(routeDirectory, { recursive: true });
     writeFileSync(
       routePath,
-      `${JSON.stringify({ version: 1, routes: {}, roles: {} })}\n`,
+      `${JSON.stringify({ routes: {}, roles: { unexpected: [] } })}\n`,
     );
     const previousStateHome = process.env.XDG_STATE_HOME;
     process.env.XDG_STATE_HOME = stateBase;
@@ -1284,7 +1279,7 @@ describe("durable WorkflowEngine service composition", () => {
         routePolicy: {
           ok: false,
           source: { kind: "project" },
-          diagnostics: [{ code: "unsupported-policy-version" }],
+          diagnostics: [{ code: "role-invalid" }],
         },
       });
 
@@ -1296,7 +1291,6 @@ describe("durable WorkflowEngine service composition", () => {
       writeFileSync(
         routePath,
         `${JSON.stringify({
-          version: 2,
           routes: {
             inherited: {
               kind: "inherited",
@@ -1360,7 +1354,6 @@ describe("durable WorkflowEngine service composition", () => {
       stateRoot: fixture.stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2,
           gate: "gate-b",
           revision: 1,
           receiptHash: "e".repeat(64),
@@ -1432,7 +1425,6 @@ describe("durable WorkflowEngine service composition", () => {
       stateRoot: fixture.stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2,
           gate: "gate-b",
           revision: 1,
           receiptHash: "7".repeat(64),
@@ -1799,7 +1791,6 @@ describe("durable WorkflowEngine service composition", () => {
         };
       };
       const plan = {
-        schemaVersion: 3 as const,
         changeId: change,
         tasks: [
           task("T1-owner", fixture.owner),
@@ -1842,7 +1833,6 @@ describe("durable WorkflowEngine service composition", () => {
         stateRoot,
         deliverySource: {
           load: async () => ({
-            version: 2,
             gate: "gate-b",
             revision: 1,
             receiptHash: "c".repeat(64),
@@ -2013,7 +2003,6 @@ describe("durable WorkflowEngine service composition", () => {
         stateRoot,
         deliverySource: {
           load: async () => ({
-            version: 2,
             gate: "gate-b",
             revision: 1,
             receiptHash: "d".repeat(64),
@@ -2244,7 +2233,6 @@ describe("durable WorkflowEngine service composition", () => {
       verificationLock: "durable-fixture",
     });
     const plan = {
-      schemaVersion: 3 as const,
       changeId: change,
       tasks: [
         {
@@ -2278,7 +2266,6 @@ describe("durable WorkflowEngine service composition", () => {
       load: async (input: { deliveryRevision?: number }) => {
         const revision = input.deliveryRevision ?? 1;
         return {
-          version: 2 as const,
           gate: "gate-b" as const,
           revision,
           receiptHash: (revision === 1 ? "a" : "b").repeat(64),
@@ -2592,7 +2579,6 @@ describe("durable WorkflowEngine service composition", () => {
       load: async (input: { deliveryRevision?: number }) => {
         const revision = input.deliveryRevision ?? 1;
         return {
-          version: 2 as const,
           gate: "gate-b" as const,
           revision,
           receiptHash: (revision === 1 ? "c" : "d").repeat(64),
@@ -2790,7 +2776,6 @@ describe("durable WorkflowEngine service composition", () => {
       stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "e".repeat(64),
@@ -2974,7 +2959,6 @@ describe("durable WorkflowEngine service composition", () => {
       verificationLock: "durable-health",
     });
     const plan = {
-      schemaVersion: 3 as const,
       changeId: change,
       tasks: [
         {
@@ -3006,7 +2990,6 @@ describe("durable WorkflowEngine service composition", () => {
     };
     const deliverySource = {
       load: async () => ({
-        version: 2 as const,
         gate: "gate-b" as const,
         revision: 1,
         receiptHash: "b".repeat(64),
@@ -3114,7 +3097,6 @@ describe("durable WorkflowEngine service composition", () => {
     const services = {
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "a".repeat(64),
@@ -3204,7 +3186,6 @@ describe("durable WorkflowEngine service composition", () => {
     const services = {
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "b".repeat(64),
@@ -3311,7 +3292,6 @@ describe("durable WorkflowEngine service composition", () => {
       stateRoot: fixture.stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "c".repeat(64),
@@ -3445,7 +3425,6 @@ describe("durable WorkflowEngine service composition", () => {
       stateRoot: fixture.stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "4".repeat(64),
@@ -3502,7 +3481,6 @@ describe("durable WorkflowEngine service composition", () => {
       stateRoot: fixture.stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision,
           receiptHash: (revision === 1 ? "5" : "6").repeat(64),
@@ -3592,7 +3570,6 @@ describe("durable WorkflowEngine service composition", () => {
             ]);
           }
           return {
-            version: 2 as const,
             gate: "gate-b" as const,
             revision: 1,
             receiptHash: "f".repeat(64),
@@ -3856,7 +3833,6 @@ describe("durable verification lifecycle", () => {
     let revision = 1;
     const deliverySource = {
       load: async () => ({
-        version: 2 as const,
         gate: "gate-b" as const,
         revision,
         receiptHash: (revision === 1 ? "1" : "2").repeat(64),
@@ -3986,7 +3962,6 @@ describe("durable verification lifecycle", () => {
       stateRoot: fixture.stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "0".repeat(64),
@@ -4055,7 +4030,6 @@ describe("durable verification lifecycle", () => {
       stateRoot: fixture.stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "a".repeat(64),
@@ -4217,7 +4191,6 @@ describe("durable verification lifecycle", () => {
       stateRoot: fixture.stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "9".repeat(64),
@@ -4357,7 +4330,6 @@ describe("durable verification lifecycle", () => {
       stateRoot: fixture.stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "4".repeat(64),
@@ -4471,7 +4443,6 @@ describe("durable verification lifecycle", () => {
       stateRoot: fixture.stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "c".repeat(64),
@@ -4574,7 +4545,6 @@ describe("durable verification lifecycle", () => {
       stateRoot: fixture.stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "1".repeat(64),
@@ -4650,7 +4620,6 @@ describe("durable verification lifecycle", () => {
       stateRoot: fixture.stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "2".repeat(64),
@@ -4726,7 +4695,6 @@ describe("durable verification lifecycle", () => {
       stateRoot: fixture.stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "8".repeat(64),
@@ -4874,7 +4842,6 @@ describe("durable verification lifecycle", () => {
       stateRoot: fixture.stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "7".repeat(64),
@@ -4985,7 +4952,6 @@ describe("durable verification lifecycle", () => {
         stateRoot: fixture.stateRoot,
         deliverySource: {
           load: async () => ({
-            version: 2 as const,
             gate: "gate-b" as const,
             revision: 1,
             receiptHash: "6".repeat(64),
@@ -5107,7 +5073,6 @@ describe("durable verification lifecycle", () => {
       stateRoot: fixture.stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "9".repeat(64),
@@ -5206,7 +5171,6 @@ describe("durable verification lifecycle", () => {
       stateRoot: fixture.stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "4".repeat(64),
@@ -5295,7 +5259,6 @@ describe("durable verification lifecycle", () => {
       stateRoot: fixture.stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "6".repeat(64),
@@ -5400,7 +5363,6 @@ describe("durable verification lifecycle", () => {
       stateRoot: fixture.stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "8".repeat(64),
@@ -5513,7 +5475,6 @@ describe("durable verification lifecycle", () => {
       stateRoot: fixture.stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2 as const,
           gate: "gate-b" as const,
           revision: 1,
           receiptHash: "9".repeat(64),
@@ -5628,7 +5589,6 @@ describe("durable verification lifecycle", () => {
         load: async (input: { deliveryRevision?: number }) => {
           const revision = input.deliveryRevision ?? 1;
           return {
-            version: 2 as const,
             gate: "gate-b" as const,
             revision,
             receiptHash: (revision === 1 ? "a" : "b").repeat(64),

@@ -170,7 +170,6 @@ function declareInheritedRoute(cwd: string): void {
   writeFileSync(
     join(directory, "routes.json"),
     `${JSON.stringify({
-      version: 2,
       routes: {
         inherited: {
           kind: "inherited",

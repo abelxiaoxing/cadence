@@ -17,7 +17,21 @@ import {
   StateRootError,
 } from "./state-root.ts";
 
-export const RUN_STORE_SCHEMA_VERSION = 4 as const;
+export class RunStoreFormatError extends Error {
+  readonly code = "run-store-reset-required" as const;
+  readonly databasePath: string;
+  readonly recovery = Object.freeze({
+    action: "reset-private-run-store" as const,
+    requiresBackup: true as const,
+    retryCommand: "status-or-start" as const,
+  });
+
+  constructor(databasePath: string) {
+    super("run-store-reset-required");
+    this.name = "RunStoreFormatError";
+    this.databasePath = databasePath;
+  }
+}
 
 const CHANGE_NAME = /^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$/u;
 const IDENTIFIER = /^[a-z0-9](?:[a-z0-9._:-]{0,126}[a-z0-9])?$/iu;
@@ -84,10 +98,6 @@ export interface OperationLeaseStatus {
 }
 
 const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS schema_meta (
-    version INTEGER PRIMARY KEY CHECK (version = 4)
-  ) STRICT;
-
   CREATE TABLE IF NOT EXISTS runs (
     run_id TEXT PRIMARY KEY,
     root_hash TEXT NOT NULL,
@@ -191,6 +201,74 @@ function requireIdentifier(value: string, label: string): void {
   if (!IDENTIFIER.test(value)) throw new Error(`invalid-${label}`);
 }
 
+function configureDatabase(
+  database: DatabaseSync,
+  busyTimeoutMs: number | undefined,
+): void {
+  database.exec("PRAGMA foreign_keys = ON");
+  database.exec("PRAGMA journal_mode = WAL");
+  database.exec("PRAGMA synchronous = FULL");
+  database.exec(
+    `PRAGMA busy_timeout = ${Math.max(1, Math.min(30_000, busyTimeoutMs ?? 5_000))}`,
+  );
+}
+
+const REQUIRED_TABLES = [
+  "runs",
+  "delivery_bindings",
+  "events",
+  "tasks",
+  "operations",
+  "route_health",
+  "artifacts",
+  "workspace_revisions",
+  "apply_transactions",
+  "bootstrap_handoffs",
+] as const;
+
+const REQUIRED_DELIVERY_BINDING_COLUMNS = [
+  "run_id",
+  "gate",
+  "revision",
+  "receipt_hash",
+  "approval_revision",
+  "contract_hash",
+  "record_hash",
+  "operation_id",
+] as const;
+
+function applicationTables(database: DatabaseSync): string[] {
+  return (
+    database
+      .prepare(
+        `SELECT name FROM sqlite_master
+         WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+         ORDER BY name`,
+      )
+      .all() as unknown as Array<{ name: string }>
+  ).map(({ name }) => name);
+}
+
+function tableColumns(database: DatabaseSync, table: string): string[] {
+  return (
+    database.prepare(`PRAGMA table_info(${table})`).all() as unknown as Array<{
+      name: string;
+    }>
+  ).map(({ name }) => name);
+}
+
+function hasCurrentSchema(database: DatabaseSync): boolean {
+  const tables = applicationTables(database);
+  const deliveryBindingColumns = tableColumns(database, "delivery_bindings");
+  return (
+    !tables.includes("schema_meta") &&
+    REQUIRED_TABLES.every((table) => tables.includes(table)) &&
+    REQUIRED_DELIVERY_BINDING_COLUMNS.every((column) =>
+      deliveryBindingColumns.includes(column),
+    )
+  );
+}
+
 function parseProjection(value: string): RunProjection {
   const parsed = JSON.parse(value) as RunProjection;
   if (
@@ -262,25 +340,22 @@ export class RunStore {
     }
     chmodSync(stateRoot.databasePath, 0o600);
 
-    const database = new DatabaseSync(stateRoot.databasePath);
-    database.exec("PRAGMA foreign_keys = ON");
-    database.exec("PRAGMA journal_mode = WAL");
-    database.exec("PRAGMA synchronous = FULL");
-    database.exec(
-      `PRAGMA busy_timeout = ${Math.max(1, Math.min(30_000, options.busyTimeoutMs ?? 5_000))}`,
-    );
-    database.exec(SCHEMA);
-    const schemaRow = database
-      .prepare("SELECT version FROM schema_meta LIMIT 1")
-      .get() as { version: number } | undefined;
-    if (!schemaRow) {
-      database
-        .prepare("INSERT INTO schema_meta(version) VALUES (?)")
-        .run(RUN_STORE_SCHEMA_VERSION);
-    } else if (schemaRow.version !== RUN_STORE_SCHEMA_VERSION) {
-      database.close();
-      throw new Error("run-store-schema-version-rejected");
+    let database: DatabaseSync | undefined;
+    try {
+      database = new DatabaseSync(stateRoot.databasePath);
+      configureDatabase(database, options.busyTimeoutMs);
+      const tables = applicationTables(database);
+      if (tables.length === 0) {
+        database.exec(SCHEMA);
+      } else if (!hasCurrentSchema(database)) {
+        throw new RunStoreFormatError(stateRoot.databasePath);
+      }
+    } catch (error) {
+      database?.close();
+      if (error instanceof RunStoreFormatError) throw error;
+      throw new RunStoreFormatError(stateRoot.databasePath);
     }
+    if (!database) throw new RunStoreFormatError(stateRoot.databasePath);
     const store = new RunStore(stateRoot, database, options);
     store.#secureDatabaseFiles();
     store.recoverExpiredLeases();

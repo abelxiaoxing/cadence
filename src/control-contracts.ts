@@ -13,6 +13,68 @@ export const CONTROL_COMMANDS = [
 
 export const CONTROL_STAGES = ["abel-implement"] as const;
 
+const CONTROL_SCHEMA_PROPERTIES = {
+  command: {
+    type: "string",
+    enum: ["start", "status", "resume", "rebind", "cancel", "discard"],
+  },
+  stage: { type: "string", enum: ["abel-implement"] },
+  change: { type: "string" },
+  operationId: { type: "string" },
+  deliveryRevision: { type: "integer", minimum: 1 },
+  receiptHash: { type: "string" },
+  routeId: { type: "string" },
+} as const;
+
+type ControlSchemaField = Exclude<
+  keyof typeof CONTROL_SCHEMA_PROPERTIES,
+  "command"
+>;
+
+const commandSchema = (
+  command: ControlCommandName,
+  fields: readonly ControlSchemaField[],
+) => ({
+  type: "object" as const,
+  properties: {
+    command: { type: "string" as const, enum: [command] },
+    ...Object.fromEntries(
+      fields.map((field) => [field, CONTROL_SCHEMA_PROPERTIES[field]]),
+    ),
+  },
+  required: ["command", ...fields],
+  additionalProperties: false,
+});
+
+/**
+ * Provider-facing schema for the closed Implement command union.
+ *
+ * The anyOf branches express command-specific required fields, including the
+ * paired optional receipt arguments on resume. Exact keys and provider-added
+ * nullable padding remain enforced by the canonicalizer and validator below.
+ */
+export const CONTROL_COMMAND_PARAMETERS = {
+  type: "object",
+  properties: CONTROL_SCHEMA_PROPERTIES,
+  required: ["command", "stage", "change"],
+  anyOf: [
+    commandSchema("start", ["stage", "change", "operationId"]),
+    commandSchema("status", ["stage", "change"]),
+    commandSchema("resume", ["stage", "change", "operationId"]),
+    commandSchema("resume", [
+      "stage",
+      "change",
+      "operationId",
+      "deliveryRevision",
+      "receiptHash",
+    ]),
+    commandSchema("rebind", ["stage", "change", "operationId", "routeId"]),
+    commandSchema("cancel", ["stage", "change", "operationId"]),
+    commandSchema("discard", ["stage", "change", "operationId"]),
+  ],
+  additionalProperties: false,
+} as const;
+
 export type ControlCommandName = (typeof CONTROL_COMMANDS)[number];
 export type ControlStage = (typeof CONTROL_STAGES)[number];
 

@@ -230,7 +230,7 @@ function hashEvent(
   eventJson: string,
 ): string {
   return createHash("sha256")
-    .update("cadence-task-ledger-event-v2\0")
+    .update("cadence-task-ledger-event\0")
     .update(priorHash)
     .update("\0")
     .update(String(ordinal))
@@ -1354,7 +1354,6 @@ export class TaskLedger {
       return { ordinal: row.ordinal, ...fact };
     });
     const projection = {
-      version: 2,
       runId: input.runId,
       taskId: input.taskId,
       deliveryRevision: task.delivery_revision,

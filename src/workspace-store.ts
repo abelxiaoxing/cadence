@@ -20,7 +20,6 @@ import { isValidRelativePath } from "./contracts.ts";
 import { observeSafePath } from "./safe-path.ts";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
-const REVISION_VERSION = 2 as const;
 
 export interface WorkspaceFileEntry {
   kind: "file";
@@ -37,7 +36,6 @@ export type WorkspaceEntry = WorkspaceFileEntry | WorkspaceAbsentEntry;
 export type WorkspaceEntries = Record<string, WorkspaceEntry>;
 
 export interface WorkspaceRevision {
-  version: typeof REVISION_VERSION;
   revisionId: string;
   parentRevisionId: string | null;
   manifestHash: string;
@@ -89,17 +87,13 @@ function stableEntries(entries: WorkspaceEntries): WorkspaceEntries {
 
 function manifestHash(entries: WorkspaceEntries): string {
   return hash(
-    "cadence-workspace-manifest-v2",
+    "cadence-workspace-manifest",
     JSON.stringify(stableEntries(entries)),
   );
 }
 
 function revisionId(parentRevisionId: string | null, manifest: string): string {
-  return hash(
-    "cadence-workspace-revision-v2",
-    parentRevisionId ?? "",
-    manifest,
-  );
+  return hash("cadence-workspace-revision", parentRevisionId ?? "", manifest);
 }
 
 function ensureDirectory(directory: string): void {
@@ -219,7 +213,6 @@ function requireRevisionShape(value: unknown): WorkspaceRevision {
   }
   const candidate = value as Partial<WorkspaceRevision>;
   if (
-    candidate.version !== REVISION_VERSION ||
     typeof candidate.revisionId !== "string" ||
     !SHA256.test(candidate.revisionId) ||
     (candidate.parentRevisionId !== null &&
@@ -287,7 +280,6 @@ export class WorkspaceStore {
     const manifest = manifestHash(entries);
     const id = revisionId(parentRevisionId, manifest);
     const revision: WorkspaceRevision = {
-      version: REVISION_VERSION,
       revisionId: id,
       parentRevisionId,
       manifestHash: manifest,

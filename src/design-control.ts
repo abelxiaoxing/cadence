@@ -578,7 +578,7 @@ export class DesignController {
       ...(fromRequirement
         ? {
             provisionalKey: transientHash(
-              "abel-design-requirement-v1",
+              "abel-design-requirement",
               request.requirement,
             ),
           }

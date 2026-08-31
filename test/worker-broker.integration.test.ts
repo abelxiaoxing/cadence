@@ -61,7 +61,6 @@ function policy(
     "diagnosis-worker",
   ];
   return {
-    version: 2,
     routes: {
       "custom-primary": {
         kind: "custom",
@@ -136,7 +135,6 @@ describe("whole-file route policy", () => {
     const home = temporaryRoot("valid-user");
     writePolicy(home, policy(), true);
     writePolicy(cwd, {
-      version: 2,
       routes: { partial: { kind: "custom", model: "missing-url" } },
       roles: policy().roles,
     });

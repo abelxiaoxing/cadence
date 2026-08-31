@@ -115,7 +115,6 @@ describe("child session creation cancellation", () => {
       roots: [process.cwd()],
       timeoutMs: 5_000,
       ledgerProjection: {
-        version: 2,
         runId: "replacement-run",
         taskId: "replacement-task",
         currentPhase: "green",

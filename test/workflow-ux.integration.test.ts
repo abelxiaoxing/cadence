@@ -1,7 +1,10 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
 import { DISPATCH_TOOL, registerWorkflowControl } from "../src/index.ts";
+import { RunStoreFormatError } from "../src/run-store.ts";
 import {
   ACTIVITY_DETAILS_KEY,
   ActivityInlineComponent,
@@ -119,7 +122,8 @@ describe("four-workflow user experience", () => {
     expect(harness.activeTools()).toEqual(["read", DISPATCH_TOOL]);
     expect(harness.tool()).toBeDefined();
 
-    const commandEnum = harness.tool().parameters.properties.command.enum;
+    const parameters = harness.tool().parameters;
+    const commandEnum = parameters.properties.command.enum;
     expect(commandEnum).toEqual([
       "start",
       "status",
@@ -128,12 +132,152 @@ describe("four-workflow user experience", () => {
       "cancel",
       "discard",
     ]);
+    expect(parameters.required).toEqual(["command", "stage", "change"]);
+    expect(parameters.anyOf).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            command: { type: "string", enum: ["status"] },
+          }),
+          required: ["command", "stage", "change"],
+        }),
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            command: { type: "string", enum: ["start"] },
+          }),
+          required: ["command", "stage", "change", "operationId"],
+        }),
+      ]),
+    );
+  });
+
+  it("returns structured local diagnostics when the run store cannot open", async () => {
+    const databaseRoot = mkdtempSync(
+      path.join(tmpdir(), "cadence-store-status-"),
+    );
+    const databasePath = path.join(databaseRoot, "control.sqlite3");
+    const database = new DatabaseSync(databasePath);
+    database.exec("CREATE TABLE old_state(value TEXT) STRICT;");
+    database.close();
+    try {
+      let tool: any;
+      let activeTools = ["read"];
+      const handlers = new Map<string, (...args: any[]) => any>();
+      const pi = {
+        registerTool(definition: unknown) {
+          tool = definition;
+        },
+        on(name: string, handler: (...args: any[]) => any) {
+          handlers.set(name, handler);
+        },
+        getCommands: () =>
+          ["abel-design", "abel-implement", "abel-diagnose"].map((name) => ({
+            name,
+            source: "prompt",
+            sourceInfo: {
+              origin: "package",
+              baseDir: packageRoot,
+              path: path.join(packageRoot, "prompts", `${name}.md`),
+            },
+          })),
+        getActiveTools: () => [...activeTools],
+        setActiveTools(next: string[]) {
+          activeTools = [...next];
+        },
+      };
+      registerWorkflowControl(pi as never, async () => {
+        throw new RunStoreFormatError(databasePath);
+      });
+      handlers.get("input")?.({ text: "/abel-implement schema-status" });
+      handlers.get("before_agent_start")?.(
+        {
+          prompt:
+            "<abel-request>schema-status</abel-request> <!-- ABEL:PROMPT:abel-implement -->",
+        },
+        { cwd: packageRoot },
+      );
+      const status = await tool.execute(
+        "schema-status-call",
+        {
+          command: "status",
+          stage: "abel-implement",
+          change: "schema-status",
+        },
+        undefined,
+        undefined,
+        { cwd: packageRoot, mode: "json" },
+      );
+      const start = await tool.execute(
+        "schema-start-call",
+        {
+          command: "start",
+          stage: "abel-implement",
+          change: "schema-status",
+          operationId: "schema-start",
+        },
+        undefined,
+        undefined,
+        { cwd: packageRoot, mode: "json" },
+      );
+      const expected = {
+        stage: "abel-implement",
+        change: "schema-status",
+        state: "paused",
+        durable: false,
+        completed: false,
+        pause: { code: "run-store-reset-required" },
+        legalCommands: ["status", "start"],
+        tasks: [],
+        queue: [],
+        controlStore: {
+          code: "run-store-reset-required",
+          databasePath,
+          recovery: {
+            action: "reset-private-run-store",
+            requiresBackup: true,
+            retryCommand: "status-or-start",
+          },
+        },
+      };
+      expect(status.details).toEqual(expected);
+      expect(start.details).toEqual(expected);
+
+      handlers.get("input")?.({ text: "/abel-design schema-status" });
+      handlers.get("before_agent_start")?.(
+        {
+          prompt:
+            "<abel-request>schema-status</abel-request> <!-- ABEL:PROMPT:abel-design -->",
+        },
+        { cwd: packageRoot },
+      );
+      let designError: unknown;
+      try {
+        await tool.execute(
+          "schema-design-call",
+          {
+            action: "design",
+            request: { operation: "status", runId: "run-schema-status" },
+          },
+          undefined,
+          undefined,
+          { cwd: packageRoot, mode: "json" },
+        );
+      } catch (error) {
+        designError = error;
+      }
+      expect(designError).toBeInstanceOf(Error);
+      expect((designError as Error).name).toBe("RunStoreResetError");
+      expect((designError as Error).message).toBe(
+        `run-store-reset-required: back up and remove the private run store at ${databasePath}, then retry the operation`,
+      );
+    } finally {
+      rmSync(databaseRoot, { recursive: true, force: true });
+    }
   });
 
   it("maps every semantic state truthfully and reserves success for completed", () => {
     for (const state of WORKFLOW_ACTIVITY_STATES) {
       const payload = {
-        version: 2,
         runId: "run-smooth-workflow",
         stage: "abel-implement",
         change: "smooth-workflow",
@@ -210,7 +354,6 @@ describe("four-workflow user experience", () => {
     const harness = workflowHarness(async (_command, onActivity) => {
       for (const update of semanticUpdates) onActivity?.(update);
       return {
-        version: 2,
         runId: "run-smooth-workflow",
         stage: "abel-implement",
         change: "smooth-workflow",

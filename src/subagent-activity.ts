@@ -87,7 +87,6 @@ export type ActivitySummary = EvidenceActivitySummary | DiffActivitySummary;
 export type ActivityTone = "accent" | "success" | "warning" | "muted" | "error";
 
 export interface ActivityDisplay {
-  version: 1;
   kind: "activityDisplay";
   requestId: string;
   role: string;
@@ -470,6 +469,7 @@ function workflowStateOf(
   }
   const state = result.state;
   switch (state) {
+    case "not-started":
     case "created":
     case "ready":
     case "queued":
@@ -659,7 +659,6 @@ export function projectWorkflowActivity(
       ? "completion-state-inconsistent"
       : workflowCode(payload);
   return {
-    version: 1,
     kind: "activityDisplay",
     requestId: sanitizeDisplayText(
       runId ?? taskId ?? change ?? command.operationId ?? "pending",
@@ -792,7 +791,6 @@ function displayFromEvent(
 ): ActivityDisplay {
   const reason = event.failureReason;
   return {
-    version: 1,
     kind: "activityDisplay",
     requestId: entry.requestId,
     role: entry.role,
@@ -989,7 +987,6 @@ export class ActivityController {
     const entry = this.entries.get(toolCallId);
     if (!entry) return;
     const display: ActivityDisplay = {
-      version: 1,
       kind: "activityDisplay",
       requestId: entry.requestId,
       role: entry.role,
@@ -1230,7 +1227,6 @@ export function renderActivityResult(
   if (failedRun) {
     const snapshot = identityFromDispatchArgs(asRecord(context?.args)?.request);
     const display: ActivityDisplay = {
-      version: 1,
       kind: "activityDisplay",
       requestId: isActivityDisplay(activity)
         ? activity.requestId
@@ -1275,7 +1271,6 @@ function isActivityDisplay(value: unknown): value is ActivityDisplay {
   const record = asRecord(value);
   return (
     record?.kind === "activityDisplay" &&
-    record.version === 1 &&
     typeof record.requestId === "string" &&
     typeof record.role === "string" &&
     typeof record.phase === "string" &&

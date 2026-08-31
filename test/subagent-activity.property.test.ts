@@ -208,7 +208,6 @@ describe("Subagent activity presentation", () => {
   it("[SLICE-5:pi-tool-error] omits next-step metadata from diff summaries", () => {
     const component = new ActivityInlineComponent(
       {
-        version: 1,
         kind: "activityDisplay",
         requestId: "request-1",
         role: "implementation-worker",

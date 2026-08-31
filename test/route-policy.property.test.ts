@@ -5,7 +5,6 @@ const ROLES = ["design-explorer", "implementation-worker", "diagnosis-worker"];
 
 function validPolicy(): Record<string, unknown> {
   return {
-    version: 2,
     routes: {
       parent: {
         kind: "inherited",
@@ -23,7 +22,7 @@ function validPolicy(): Record<string, unknown> {
 
 describe("closed route policy properties", () => {
   it("rejects every missing required top-level or route field", () => {
-    for (const key of ["version", "routes", "roles"]) {
+    for (const key of ["routes", "roles"]) {
       const candidate = validPolicy();
       delete candidate[key];
       expect(parseRoutePolicy(candidate).ok, `missing ${key}`).toBe(false);

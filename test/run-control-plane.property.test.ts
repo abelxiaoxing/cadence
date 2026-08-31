@@ -1,6 +1,7 @@
 import { lstatSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 const RED_IDENTITY = "[CADENCE-V2:T1-control-store-delivery]";
@@ -107,7 +108,6 @@ function planDraft(reverseSets = false): Record<string, unknown> {
     resources.reverse();
   }
   return {
-    schemaVersion: 3,
     changeId: "durable-control-plane",
     tasks: [
       {
@@ -193,7 +193,7 @@ function planDraft(reverseSets = false): Record<string, unknown> {
         target: "task-red-contracts",
         affected: "task-affected-contracts",
         fullSuite: verification("package-baseline", "expected-green"),
-        failureIdentity: "normalized-v1",
+        failureIdentity: "normalized",
       },
       change: {
         affected: "task-affected-contracts",
@@ -350,6 +350,33 @@ describe("change-oriented control contract", () => {
       controlContracts,
       "CONTROL_COMMANDS",
     ).CONTROL_COMMANDS;
+    const schema = requiredModule(
+      controlContracts,
+      "CONTROL_COMMAND_PARAMETERS",
+    ).CONTROL_COMMAND_PARAMETERS as any;
+    expect(schema.required).toEqual(["command", "stage", "change"]);
+    expect(schema.anyOf).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            command: { type: "string", enum: ["status"] },
+          }),
+          required: ["command", "stage", "change"],
+        }),
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            command: { type: "string", enum: ["start"] },
+          }),
+          required: ["command", "stage", "change", "operationId"],
+        }),
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            command: { type: "string", enum: ["rebind"] },
+          }),
+          required: ["command", "stage", "change", "operationId", "routeId"],
+        }),
+      ]),
+    );
     expect(commands).toEqual([
       "start",
       "status",
@@ -435,7 +462,6 @@ describe("canonical delivery compilation", () => {
       receipt: {
         plan: {
           path: "implement-plan.json",
-          schemaVersion: 3,
           rawSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
           canonicalHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
         },
@@ -480,17 +506,17 @@ describe("canonical delivery compilation", () => {
     });
   });
 
-  it("rejects prior plan and receipt schema versions without an adapter", () => {
+  it("rejects noncanonical plan and receipt fields", () => {
     const compilePlan = requiredFunction<
       (
         draft: Record<string, unknown>,
         options: { consumerRoot: string },
       ) => Record<string, unknown>
     >(deliveryCompiler, "compileImplementPlan");
-    const legacyPlan = planDraft() as any;
-    legacyPlan.schemaVersion = 2;
+    const invalidPlan = planDraft() as any;
+    invalidPlan.unknownField = true;
     expect(() =>
-      compilePlan(legacyPlan, {
+      compilePlan(invalidPlan, {
         consumerRoot: path.resolve(import.meta.dirname, ".."),
       }),
     ).toThrow(/delivery-plan-invalid/u);
@@ -511,13 +537,10 @@ describe("canonical delivery compilation", () => {
       },
       artifacts: [{ path: "proposal.md", rawSha256: "a".repeat(64) }],
     });
-    expect(gate.receipt.receiptVersion).toBe(4);
-    const legacyReceipt = Buffer.from(
-      Buffer.from(gate.bytes)
-        .toString("utf8")
-        .replace('"receiptVersion":4', '"receiptVersion":3'),
-    );
-    expect(() => parseGateA(legacyReceipt)).toThrow(/gate-a-receipt-invalid/u);
+    const invalid = JSON.parse(Buffer.from(gate.bytes).toString("utf8"));
+    invalid.unknownField = true;
+    const invalidReceipt = Buffer.from(`${JSON.stringify(invalid)}\n`);
+    expect(() => parseGateA(invalidReceipt)).toThrow(/gate-a-receipt-invalid/u);
   });
 
   it.each([
@@ -763,6 +786,80 @@ describe("repository-external private state", () => {
 });
 
 describe("durable run journal", () => {
+  it("requires an explicit reset for a noncanonical private store", () => {
+    const resolve = requiredFunction<
+      (options: Record<string, unknown>) => Record<string, unknown>
+    >(stateRootModule, "resolveStateRoot");
+    const prepare = requiredFunction<
+      (resolved: Record<string, unknown>) => Record<string, unknown>
+    >(stateRootModule, "prepareStateRoot");
+    const storeClass = requiredModule(runStoreModule, "RunStore").RunStore as {
+      open(resolved: Record<string, unknown>): unknown;
+    };
+    const errorClass = requiredModule(runStoreModule, "RunStoreFormatError")
+      .RunStoreFormatError as new (
+      ...args: any[]
+    ) => Error;
+    const resolved = resolve({
+      consumerRoot: temporaryRoot("noncanonical-store-consumer"),
+      xdgStateHome: temporaryRoot("noncanonical-store-xdg"),
+      homeDir: temporaryRoot("noncanonical-store-home"),
+    });
+    prepare(resolved);
+    const database = new DatabaseSync(String(resolved.databasePath));
+    database.exec(`
+      CREATE TABLE old_state(value TEXT) STRICT;
+      INSERT INTO old_state(value) VALUES ('preserved');
+    `);
+    database.close();
+
+    let rejected: any;
+    try {
+      storeClass.open(resolved);
+    } catch (error) {
+      rejected = error;
+    }
+    expect(rejected).toBeInstanceOf(errorClass);
+    expect(rejected).toMatchObject({
+      code: "run-store-reset-required",
+      databasePath: resolved.databasePath,
+      recovery: {
+        action: "reset-private-run-store",
+        requiresBackup: true,
+        retryCommand: "status-or-start",
+      },
+    });
+    const preserved = new DatabaseSync(String(resolved.databasePath));
+    expect(preserved.prepare("SELECT value FROM old_state").get()).toEqual({
+      value: "preserved",
+    });
+    preserved.close();
+  });
+
+  it("does not initialize a foreign schema-less database as a current run store", () => {
+    const resolve = requiredFunction<
+      (options: Record<string, unknown>) => Record<string, unknown>
+    >(stateRootModule, "resolveStateRoot");
+    const prepare = requiredFunction<
+      (resolved: Record<string, unknown>) => Record<string, unknown>
+    >(stateRootModule, "prepareStateRoot");
+    const storeClass = requiredModule(runStoreModule, "RunStore").RunStore as {
+      open(resolved: Record<string, unknown>): unknown;
+    };
+    const resolved = resolve({
+      consumerRoot: temporaryRoot("foreign-schema-consumer"),
+      xdgStateHome: temporaryRoot("foreign-schema-xdg"),
+      homeDir: temporaryRoot("foreign-schema-home"),
+    });
+    prepare(resolved);
+    const database = new DatabaseSync(String(resolved.databasePath));
+    database.exec("CREATE TABLE foreign_state(value TEXT) STRICT;");
+    database.close();
+    expect(() => storeClass.open(resolved)).toThrow(
+      /run-store-reset-required/u,
+    );
+  });
+
   it("rolls back a public delivery binding when its atomic admission write fails", () => {
     const resolve = requiredFunction<
       (options: Record<string, unknown>) => Record<string, unknown>

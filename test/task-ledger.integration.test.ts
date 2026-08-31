@@ -342,18 +342,15 @@ describe("restart-safe task evidence", () => {
       initialPhase: "red",
     });
     value.ledger.putDurableFact("verification-baseline", {
-      version: 1,
       revisionId: "2".repeat(64),
       failures: ["3".repeat(64)],
     });
     expect(value.ledger.durableFact("verification-baseline")).toEqual({
-      version: 1,
       revisionId: "2".repeat(64),
       failures: ["3".repeat(64)],
     });
     expect(() =>
       value.ledger.putDurableFact("verification-baseline", {
-        version: 1,
         revisionId: "4".repeat(64),
         failures: [],
       }),

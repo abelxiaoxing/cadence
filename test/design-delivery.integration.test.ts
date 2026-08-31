@@ -13,7 +13,6 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  DELIVERY_RECEIPT_VERSION,
   parseGateAReceipt,
   parseReadyReceipt,
 } from "../src/delivery-compiler.ts";
@@ -34,7 +33,7 @@ const roots: string[] = [];
 const BEHAVIOR_DECISION = "Closed delivery observable behavior";
 const BEHAVIOR_APPROVAL = "Approved closed delivery WHAT contract";
 const BEHAVIOR_HASH = createHash("sha256")
-  .update("abel-design-gate-a-v1\0")
+  .update("abel-design-gate-a\0")
   .update(BEHAVIOR_APPROVAL)
   .digest("hex");
 
@@ -72,7 +71,6 @@ function planDraft(change: string) {
     verificationInputs: [{ kind: "workspace" as const, path: "verify.mjs" }],
   });
   return {
-    schemaVersion: 3 as const,
     changeId: change,
     tasks: [
       {
@@ -107,7 +105,7 @@ function planDraft(change: string) {
         target: "task-red-contracts" as const,
         affected: "task-affected-contracts" as const,
         fullSuite: verification("delivery-baseline", "expected-green"),
-        failureIdentity: "normalized-v1" as const,
+        failureIdentity: "normalized" as const,
       },
       change: {
         affected: "task-affected-contracts" as const,
@@ -561,7 +559,7 @@ describe("safe private Design artifact mutation", () => {
         "specs/new-capability/nested-contract/spec.md",
         "## ADDED Requirements\n",
       ],
-      ["plan-draft.json", '{"schemaVersion":3}\n'],
+      ["plan-draft.json", '{"changeId":"artifact-write"}\n'],
     ]);
 
     let operation = 0;
@@ -941,7 +939,6 @@ describe("code-owned Design delivery compilation", () => {
     const ready = parseReadyReceipt(
       readFileSync(path.join(item.changeRoot, "ready.yaml")),
     );
-    expect(DELIVERY_RECEIPT_VERSION).toBe(4);
     expect(gateA.approval).toMatchObject({
       revision: 1,
       contractHash: BEHAVIOR_HASH,
@@ -1114,6 +1111,89 @@ describe("code-owned Design delivery compilation", () => {
 });
 
 describe("private Gate proofs bind Implement admission", () => {
+  it("rejects a noncanonical receipt before starting a Worker", async () => {
+    const item = fixture("noncanonical-receipt");
+    await approveAndCompile(item);
+    await item.controller.execute({
+      operation: "finalize-delivery",
+      runId: item.runId,
+      operationId: "finalize-v1",
+    });
+
+    for (const name of ["gate-a.yaml", "ready.yaml"]) {
+      const target = path.join(item.changeRoot, name);
+      const receipt = JSON.parse(readFileSync(target, "utf8"));
+      receipt.unknownField = true;
+      writeFileSync(target, `${canonicalJson(receipt)}\n`);
+    }
+
+    const journal = DesignJournal.open(item.stateRoot);
+    const source = packageDeliverySource(item.consumerRoot, {
+      inspectOpenSpec: item.inspectOpenSpec,
+      verifyGateProof: (input) => journal.verifyGateProof(input),
+      verifyFinalizedDelivery: (input) =>
+        journal.verifyFinalizedDelivery(input),
+    });
+    let workerCalls = 0;
+    const engine = WorkflowEngine.open({
+      consumerRoot: item.consumerRoot,
+      stateRoot: item.stateRoot,
+      deliverySource: source,
+      worker: {
+        runAttempt: async () => {
+          workerCalls += 1;
+          return { kind: "paused" as const, code: "worker-must-not-run" };
+        },
+        rebind: () => ({ ok: true as const, routeId: "fixture" }),
+      },
+      changeVerifier: {
+        verify: async () => ({
+          kind: "paused" as const,
+          code: "verification-must-not-run",
+        }),
+      },
+    });
+    const expectedDiagnostics = [
+      "delivery-receipt-invalid",
+      "delivery-recompile-required",
+    ];
+    await expect(
+      engine.execute({
+        command: "start",
+        stage: "abel-implement",
+        change: item.change,
+        operationId: "noncanonical-start",
+      }),
+    ).resolves.toMatchObject({
+      state: "paused",
+      completed: false,
+      pause: { code: "delivery-invalid" },
+      delivery: {
+        code: "delivery-invalid",
+        diagnostics: expectedDiagnostics,
+      },
+      tasks: [],
+    });
+    await expect(
+      engine.execute({
+        command: "status",
+        stage: "abel-implement",
+        change: item.change,
+      }),
+    ).resolves.toMatchObject({
+      state: "paused",
+      delivery: {
+        code: "delivery-invalid",
+        diagnostics: expectedDiagnostics,
+      },
+      legalCommands: ["status", "resume", "discard"],
+    });
+    expect(workerCalls).toBe(0);
+    await engine.close();
+    journal.close();
+    item.controller.close();
+  });
+
   it("discovers a proof-bound receipt locally without treating it as full admission", async () => {
     const item = fixture("delivery-discovery");
     await approveAndCompile(item);
@@ -1178,7 +1258,6 @@ describe("private Gate proofs bind Implement admission", () => {
     await expect(
       source.load({ stage: "abel-implement", change: item.change }),
     ).resolves.toMatchObject({
-      version: 2,
       revision: 1,
       approvalProofs: {
         gateA: { recordHash: expect.stringMatching(/^[a-f0-9]{64}$/u) },

@@ -38,6 +38,7 @@ import {
   verificationSteps,
 } from "./contracts.ts";
 import {
+  CONTROL_COMMAND_PARAMETERS,
   canonicalizeControlCommandToolInput,
   validateControlCommand,
 } from "./control-contracts.ts";
@@ -46,7 +47,6 @@ import {
   compileImplementPlan,
   DeliveryValidationError,
   type GateApprovalProof,
-  IMPLEMENT_PLAN_SCHEMA_VERSION,
   parseGateAReceipt,
   parseImplementPlan,
   parseReadyReceipt,
@@ -67,6 +67,7 @@ import {
   unavailableRoutePolicy,
   type WorkerRoutePolicy,
 } from "./route-policy.ts";
+import { RunStoreFormatError } from "./run-store.ts";
 import { observeSafePath } from "./safe-path.ts";
 import { resolveStateRoot } from "./state-root.ts";
 import {
@@ -733,7 +734,10 @@ export function packageDeliverySource(
       try {
         receipt = parseReadyReceipt(receiptBytes);
       } catch {
-        throw new DeliveryValidationError(["delivery-receipt-invalid"]);
+        throw new DeliveryValidationError([
+          "delivery-receipt-invalid",
+          "delivery-recompile-required",
+        ]);
       }
       const diagnostics = new Set<string>();
       if (receipt.change !== input.change) {
@@ -899,7 +903,6 @@ export function packageDeliverySource(
         }
         if (
           receipt.plan.path !== "implement-plan.json" ||
-          receipt.plan.schemaVersion !== IMPLEMENT_PLAN_SCHEMA_VERSION ||
           receipt.plan.rawSha256 !== sha256(planBytes) ||
           receipt.plan.canonicalHash !== hashCanonicalValue(plan)
         ) {
@@ -982,7 +985,6 @@ export function packageDeliverySource(
         throw new DeliveryValidationError([...diagnostics]);
       }
       return {
-        version: 2,
         gate: "gate-b",
         revision: receipt.deliveryRevision,
         receiptHash,
@@ -1251,7 +1253,7 @@ function normalizedFailureIdentities(input: {
   if (vitestFailures.length > 0) {
     return [...new Set(vitestFailures)]
       .sort()
-      .map((failure) => sha256(`vitest-failure-v1\0${failure}`));
+      .map((failure) => sha256(`vitest-failure\0${failure}`));
   }
   const normalizedOutput = input.output
     .replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "gu"), "")
@@ -1261,7 +1263,6 @@ function normalizedFailureIdentities(input: {
   return [
     sha256(
       canonicalJson({
-        version: 1,
         verificationId: input.step.id,
         exitCode: input.exitCode,
         output: normalizedOutput,
@@ -1764,6 +1765,39 @@ export function openPackageWorkflowControlEngine(
   };
 }
 
+function runStoreUnavailableStatus(
+  error: RunStoreFormatError,
+  command: {
+    stage: "abel-implement";
+    change: string;
+  },
+): Record<string, unknown> {
+  return {
+    stage: command.stage,
+    change: command.change,
+    state: "paused",
+    durable: false,
+    completed: false,
+    pause: { code: error.code },
+    legalCommands: ["status", "start"],
+    tasks: [],
+    queue: [],
+    controlStore: {
+      code: error.code,
+      databasePath: error.databasePath,
+      recovery: structuredClone(error.recovery),
+    },
+  };
+}
+
+function runStoreResetError(error: RunStoreFormatError): Error {
+  const reset = new Error(
+    `${error.code}: back up and remove the private run store at ${error.databasePath}, then retry the operation`,
+  );
+  reset.name = "RunStoreResetError";
+  return reset;
+}
+
 function visibleRoutePolicyStatus(
   resolution: RoutePolicyResolution,
   brokerStatus: Record<string, unknown> | undefined,
@@ -1875,26 +1909,6 @@ export function registerWorkflowControl(
 
   // Pi validates tool arguments before execute(), so expose only the schema
   // legal for the active stage instead of one ambiguous command/packet union.
-  const CONTROL_COMMAND_PARAMETERS = {
-    type: "object",
-    properties: {
-      command: {
-        type: "string",
-        enum: ["start", "status", "resume", "rebind", "cancel", "discard"],
-      },
-      stage: {
-        type: "string",
-        enum: ["abel-implement"],
-      },
-      change: { type: "string" },
-      operationId: { type: "string" },
-      deliveryRevision: { type: "integer", minimum: 1 },
-      receiptHash: { type: "string" },
-      routeId: { type: "string" },
-    },
-    required: ["command", "stage", "change"],
-    additionalProperties: false,
-  } as const;
   const PACKET_PARAMETERS = {
     type: "object",
     properties: {
@@ -1962,7 +1976,14 @@ export function registerWorkflowControl(
             }
             const designRequest = validateDesignControlRequest(record.request);
             if (!designRequest.ok) throw new Error(designRequest.code);
-            const engine = await engineFor(ctx);
+            let engine: WorkflowControlEngine;
+            try {
+              engine = await engineFor(ctx);
+            } catch (error) {
+              if (error instanceof RunStoreFormatError)
+                throw runStoreResetError(error);
+              throw error;
+            }
             if (!engine.executeDesign)
               throw new Error("design-control-unavailable");
             const payload = await engine.executeDesign(designRequest.value);
@@ -1988,7 +2009,13 @@ export function registerWorkflowControl(
               );
             }
             if (packet.value.stage === "abel-design") {
-              designEngine = await engineFor(ctx);
+              try {
+                designEngine = await engineFor(ctx);
+              } catch (error) {
+                if (error instanceof RunStoreFormatError)
+                  throw runStoreResetError(error);
+                throw error;
+              }
               if (!designEngine.assertDesignRun || !packet.value.runId) {
                 throw new Error("design-control-unavailable");
               }
@@ -2076,7 +2103,17 @@ export function registerWorkflowControl(
         ) {
           throw new Error("stage-control-mismatch");
         }
-        const engine = await engineFor(ctx);
+        let engine: WorkflowControlEngine;
+        try {
+          engine = await engineFor(ctx);
+        } catch (error) {
+          if (!(error instanceof RunStoreFormatError)) throw error;
+          const payload = runStoreUnavailableStatus(error, validation.value);
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+            details: payload,
+          };
+        }
         const tuiControl = ctx.mode === "tui";
         if (tuiControl) {
           try {

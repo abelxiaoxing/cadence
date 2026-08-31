@@ -30,7 +30,6 @@ import {
 import type { GateApprovalProof } from "./delivery-compiler.ts";
 import {
   DeliveryValidationError,
-  IMPLEMENT_PLAN_SCHEMA_VERSION,
   type ImplementPlan,
   type PlanTaskDraft,
 } from "./delivery-compiler.ts";
@@ -354,7 +353,6 @@ export interface WorkflowWorker {
 }
 
 export interface WorkflowDelivery {
-  version: 2;
   gate: "gate-a" | "gate-b";
   revision: number;
   receiptHash: string;
@@ -970,7 +968,6 @@ function parsePlan(value: string): ImplementPlan {
 function assertPlan(value: unknown): asserts value is ImplementPlan {
   if (
     !isRecord(value) ||
-    value.schemaVersion !== IMPLEMENT_PLAN_SCHEMA_VERSION ||
     typeof value.changeId !== "string" ||
     !Array.isArray(value.tasks) ||
     !Array.isArray(value.outputs) ||
@@ -1016,7 +1013,6 @@ function assertDelivery(
 ): asserts value is WorkflowDelivery {
   if (
     !isRecord(value) ||
-    value.version !== 2 ||
     (value.gate !== "gate-a" && value.gate !== "gate-b") ||
     !Number.isSafeInteger(value.revision) ||
     (value.revision as number) < 1 ||
@@ -1286,7 +1282,6 @@ interface DurableVerificationObservation {
 }
 
 interface DurableVerificationBaseline {
-  version: 1;
   revisionId: string;
   targetContracts: Array<{
     taskId: string;
@@ -1634,7 +1629,7 @@ function verificationIdentities(
     return [...new Set(supplied)].sort();
   }
   if (result.ok) return [];
-  return [hash("verification-failure-v1", scope, verification.id, result.code)];
+  return [hash("verification-failure", scope, verification.id, result.code)];
 }
 
 function parseVerificationBaseline(
@@ -1642,7 +1637,6 @@ function parseVerificationBaseline(
 ): DurableVerificationBaseline {
   if (
     !isRecord(value) ||
-    value.version !== 1 ||
     typeof value.revisionId !== "string" ||
     !SHA256.test(value.revisionId) ||
     !Array.isArray(value.targetContracts) ||
@@ -2101,7 +2095,6 @@ class DurableWorkflowComposition
     });
     if (!fullSuite.ok) return fullSuite;
     const baseline: DurableVerificationBaseline = {
-      version: 1,
       revisionId: input.resources.baselineRevisionId,
       targetContracts: plan.tasks.map((task) => ({
         taskId: task.taskId,
@@ -7137,7 +7130,6 @@ export class WorkflowEngine {
         : undefined;
     const currentRevision = projection.deliveryRevision ?? 0;
     return {
-      version: 2,
       runId: projection.runId,
       stage: projection.stage,
       ...(projection.change ? { change: projection.change } : {}),
@@ -7875,7 +7867,18 @@ export class WorkflowEngine {
         );
       case "status": {
         const runId = this.#lookupRun(command.stage, command.change);
-        if (!runId) throw new Error("run-not-found");
+        if (!runId) {
+          return {
+            stage: command.stage,
+            change: command.change,
+            state: "not-started",
+            durable: true,
+            completed: false,
+            legalCommands: ["start"],
+            tasks: [],
+            queue: [],
+          };
+        }
         this.#recoverLegacyContextApproval(runId);
         return this.#withAvailableDelivery(this.#statusByRun(runId));
       }
@@ -7941,7 +7944,7 @@ export class WorkflowEngine {
         outcome.handoffId === existing.handoff_id &&
         outcome.runId === existing.owner_run_id &&
         outcome.receiptHash === existing.receipt_hash &&
-        outcome.selectorBeforeCutover === "v1-bootstrap" &&
+        outcome.selectorBeforeCutover === "bootstrap" &&
         existing.state === "prepared" &&
         outcome.state === "prepared" &&
         outcome.selectorCasPending === true;
@@ -7962,7 +7965,7 @@ export class WorkflowEngine {
       if (
         existing.state !== "prepared" ||
         outcome.state !== "prepared" ||
-        outcome.selectorBeforeCutover !== "v1-bootstrap" ||
+        outcome.selectorBeforeCutover !== "bootstrap" ||
         outcome.selectorCasPending !== true ||
         acceptanceFacts === undefined ||
         workspaceManifestHash === undefined
@@ -8019,7 +8022,7 @@ export class WorkflowEngine {
       acceptanceHash: input.acceptanceHash,
       ...(acceptanceFacts ? { acceptanceFacts } : {}),
       ...(workspaceManifestHash ? { workspaceManifestHash } : {}),
-      selectorBeforeCutover: "v1-bootstrap",
+      selectorBeforeCutover: "bootstrap",
       selectorCasPending: true,
     };
     const preparedRows = this.#database

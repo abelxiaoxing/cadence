@@ -177,7 +177,7 @@ Design SHALL submit only unresolved behavior decisions to Gate A and unresolved 
 Reversible mechanical decisions uniquely determined by repository facts or an approved contract SHALL be recorded without interrupting the user, and related decisions owned by one Gate SHALL be presented together.
 After Gate A it SHALL write only inside the resolved OpenSpec change root according to the artifact graph and approved behavior contract.
 
-Design SHALL produce one versioned, machine-readable implementation plan containing every task, explicit dependency, phase scope, verification-input binding, output provenance and postcondition, approved dependency, impact closure, scheduling declaration, and AGENTS-impact contract.
+Design SHALL produce one canonical machine-readable implementation plan containing every task, explicit dependency, phase scope, verification-input binding, output provenance and postcondition, approved dependency, impact closure, scheduling declaration, and AGENTS-impact contract.
 A code-owned delivery compiler SHALL validate and canonicalize that plan, calculate its identity and verification closure, and generate the receipt bindings; the parent model SHALL NOT hand-assemble a Runtime graph admission, graph hash, dynamic file snapshot, or operation identity.
 Before Gate B and again before final readiness, Design SHALL require strict OpenSpec validation, a complete trace from Requirement to Scenario to Verification to Task, and an executable static verification closure with no diagnostics.
 The ready receipt SHALL bind the exact compiled plan artifact and its canonical identity by safe relative path and hash rather than embedding an alternate caller-supplied graph copy.

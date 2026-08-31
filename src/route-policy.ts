@@ -4,7 +4,6 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { ROLES } from "./contracts.ts";
 
-export const ROUTE_POLICY_VERSION = 2 as const;
 export const ROUTE_DIALECTS = [
   "openai-completions",
   "openai-responses",
@@ -48,7 +47,6 @@ export interface CustomRoutePolicy extends RouteBase {
 export type WorkerRoutePolicy = InheritedRoutePolicy | CustomRoutePolicy;
 
 export interface RoutePolicy {
-  version: typeof ROUTE_POLICY_VERSION;
   routes: Readonly<Record<string, WorkerRoutePolicy>>;
   roles: Readonly<Record<WorkerRole, readonly string[]>>;
 }
@@ -64,8 +62,7 @@ export type RoutePolicyDiagnosticCode =
   | "route-invalid"
   | "route-duplicate"
   | "role-invalid"
-  | "route-reference-invalid"
-  | "unsupported-policy-version";
+  | "route-reference-invalid";
 
 export interface RoutePolicyDiagnostic {
   code: RoutePolicyDiagnosticCode;
@@ -102,7 +99,6 @@ export type RoutePolicyResolution =
  */
 export function unavailableRoutePolicy(): RoutePolicy {
   return {
-    version: ROUTE_POLICY_VERSION,
     routes: Object.freeze({}),
     roles: Object.freeze(
       Object.fromEntries(
@@ -273,17 +269,8 @@ function parseRoute(
 }
 
 export function parseRoutePolicy(value: unknown): ParsedRoutePolicy {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, ["version", "routes", "roles"])
-  ) {
+  if (!isRecord(value) || !hasExactKeys(value, ["routes", "roles"])) {
     return { ok: false, diagnostics: [{ code: "policy-invalid" }] };
-  }
-  if (value.version !== ROUTE_POLICY_VERSION) {
-    return {
-      ok: false,
-      diagnostics: [{ code: "unsupported-policy-version", field: "version" }],
-    };
   }
   if (!isRecord(value.routes) || !isRecord(value.roles)) {
     return { ok: false, diagnostics: [{ code: "policy-invalid" }] };
@@ -341,7 +328,6 @@ export function parseRoutePolicy(value: unknown): ParsedRoutePolicy {
   return {
     ok: true,
     policy: {
-      version: ROUTE_POLICY_VERSION,
       routes: Object.freeze(structuredClone(routes)),
       roles: Object.freeze(
         Object.fromEntries(
@@ -366,7 +352,6 @@ export function parentRoutePolicy(
     ? Math.min(parentModel.maxTokens, contextWindow)
     : 1;
   const parsed = parseRoutePolicy({
-    version: ROUTE_POLICY_VERSION,
     routes: {
       parent: {
         kind: "inherited",

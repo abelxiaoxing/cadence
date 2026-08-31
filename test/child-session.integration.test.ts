@@ -189,7 +189,6 @@ describe("real isolated child session", () => {
       roots: [cwd],
       timeoutMs: 5_000,
       ledgerProjection: {
-        version: 2,
         runId: "run-child-projection",
         taskId: "task-child-projection",
         currentPhase: "red",

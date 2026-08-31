@@ -151,7 +151,6 @@ function task(
 
 function plan(change: string, tasks: ReturnType<typeof task>[]) {
   return {
-    schemaVersion: 3,
     changeId: change,
     tasks,
     outputs: [],
@@ -208,7 +207,6 @@ class DeliverySource {
       input.receiptHash ?? (revision === 1 ? HASH_A : HASH_B),
     );
     return {
-      version: 2,
       gate: "gate-b",
       revision,
       receiptHash,
@@ -386,6 +384,30 @@ function openEngine(input: {
 }
 
 describe("WorkflowEngine command authority", () => {
+  it("serves local not-started status without loading delivery or contacting a Worker", async () => {
+    const change = "engine-not-started-status";
+    const consumerRoot = makeConsumer("not-started-status");
+    const delivery = new DeliverySource();
+    delivery.unavailable = true;
+    const worker = new ScriptedWorker();
+    worker.unavailable = true;
+    const engine = openEngine({ consumerRoot, delivery, worker });
+
+    await expect(engine.execute(command("status", change))).resolves.toEqual({
+      stage: "abel-implement",
+      change,
+      state: "not-started",
+      durable: true,
+      completed: false,
+      legalCommands: ["start"],
+      tasks: [],
+      queue: [],
+    });
+    expect(delivery.calls).toBe(0);
+    expect(worker.calls).toEqual([]);
+    await engine.close();
+  });
+
   it("discards while delivery validation is still pending", async () => {
     const change = "engine-discard-validating-delivery";
     const consumerRoot = makeConsumer("discard-validating-delivery");
@@ -409,7 +431,6 @@ describe("WorkflowEngine command authority", () => {
           announceDelivery();
           await deliveryHeld;
           return {
-            version: 2,
             gate: "gate-b",
             revision: 1,
             receiptHash: HASH_A,
@@ -470,7 +491,6 @@ describe("WorkflowEngine command authority", () => {
       command("start", change, { operationId: "start-stable-001" }),
     );
     expect(created).toMatchObject({
-      version: 2,
       stage: "abel-implement",
       change,
       state: "paused",
@@ -628,7 +648,6 @@ describe("WorkflowEngine command authority", () => {
         load: async (input: Record<string, unknown>) => {
           const revision = Number(input.deliveryRevision ?? 1);
           return {
-            version: 2,
             gate: "gate-b",
             revision,
             receiptHash: revision === 1 ? HASH_A : HASH_B,
@@ -728,7 +747,6 @@ describe("WorkflowEngine command authority", () => {
         const revision = Number(input.deliveryRevision ?? 1);
         loads.push(revision);
         return {
-          version: 2,
           gate: "gate-b",
           revision,
           receiptHash: revision === 1 ? HASH_A : HASH_B,
@@ -812,7 +830,6 @@ describe("WorkflowEngine command authority", () => {
       stateRoot,
       deliverySource: {
         load: async () => ({
-          version: 2,
           gate: "gate-b",
           revision: 1,
           receiptHash: HASH_A,
@@ -1758,7 +1775,7 @@ describe("WorkflowEngine command authority", () => {
       state: "prepared",
       runId: run.runId,
       receiptHash: HASH_C,
-      selectorBeforeCutover: "v1-bootstrap",
+      selectorBeforeCutover: "bootstrap",
       selectorCasPending: true,
     });
     expect(engine.prepareBootstrapHandoff(binding)).toEqual(prepared);

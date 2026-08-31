@@ -19,9 +19,7 @@ import {
 } from "./implement-graph.ts";
 import { validateVerificationAdapterCapability } from "./verification-capability.ts";
 
-export const IMPLEMENT_PLAN_SCHEMA_VERSION = 3 as const;
 export const IMPLEMENT_PLAN_PATH = "implement-plan.json" as const;
-export const DELIVERY_RECEIPT_VERSION = 4 as const;
 export const GATE_A_RECEIPT_PATH = "gate-a.yaml" as const;
 export const READY_RECEIPT_PATH = "ready.yaml" as const;
 
@@ -42,7 +40,6 @@ export interface GateApprovalProof {
 }
 
 export interface GateAReceipt {
-  receiptVersion: typeof DELIVERY_RECEIPT_VERSION;
   change: string;
   schema: string;
   approval: GateApprovalProof;
@@ -58,7 +55,6 @@ export interface DeliveryTraceability {
 }
 
 export interface ReadyReceipt {
-  receiptVersion: typeof DELIVERY_RECEIPT_VERSION;
   change: string;
   schema: string;
   deliveryRevision: number;
@@ -197,7 +193,7 @@ export interface PlanVerification {
     target: "task-red-contracts";
     affected: "task-affected-contracts";
     fullSuite: StructuredVerificationContract;
-    failureIdentity: "normalized-v1";
+    failureIdentity: "normalized";
   };
   change: {
     affected: "task-affected-contracts";
@@ -235,7 +231,6 @@ export interface PlanTracking {
 }
 
 export interface PlanDraft {
-  schemaVersion: typeof IMPLEMENT_PLAN_SCHEMA_VERSION;
   changeId: string;
   tasks: PlanTaskDraft[];
   outputs: ImplementGraphOutput[];
@@ -243,9 +238,7 @@ export interface PlanDraft {
   tracking: PlanTracking;
 }
 
-export interface ImplementPlan extends PlanDraft {
-  schemaVersion: typeof IMPLEMENT_PLAN_SCHEMA_VERSION;
-}
+export type ImplementPlan = PlanDraft;
 
 export interface CompiledDelivery {
   plan: ImplementPlan;
@@ -256,7 +249,6 @@ export interface CompiledDelivery {
   receipt: {
     plan: {
       path: typeof IMPLEMENT_PLAN_PATH;
-      schemaVersion: typeof IMPLEMENT_PLAN_SCHEMA_VERSION;
       rawSha256: string;
       canonicalHash: string;
     };
@@ -360,7 +352,6 @@ export function compileGateAReceipt(input: {
 }): { receipt: GateAReceipt; bytes: Uint8Array; rawSha256: string } {
   requireReceiptIdentity(input.change, input.schema);
   const receipt: GateAReceipt = {
-    receiptVersion: DELIVERY_RECEIPT_VERSION,
     change: input.change,
     schema: input.schema,
     approval: normalizeGateProof(input.approval),
@@ -381,14 +372,7 @@ export function parseGateAReceipt(bytes: Uint8Array): GateAReceipt {
   );
   if (
     !isRecord(receipt) ||
-    !exactKeys(receipt, [
-      "receiptVersion",
-      "change",
-      "schema",
-      "approval",
-      "artifacts",
-    ]) ||
-    receipt.receiptVersion !== DELIVERY_RECEIPT_VERSION ||
+    !exactKeys(receipt, ["change", "schema", "approval", "artifacts"]) ||
     !isRecord(receipt.approval) ||
     !exactKeys(receipt.approval, ["revision", "contractHash", "recordHash"])
   ) {
@@ -454,7 +438,6 @@ export function compileReadyReceipt(input: {
     throw new Error("delivery-receipt-invalid");
   }
   const receipt: ReadyReceipt = {
-    receiptVersion: DELIVERY_RECEIPT_VERSION,
     change: input.change,
     schema: input.schema,
     deliveryRevision: input.deliveryRevision,
@@ -489,7 +472,6 @@ export function parseReadyReceipt(bytes: Uint8Array): ReadyReceipt {
   if (
     !isRecord(receipt) ||
     !exactKeys(receipt, [
-      "receiptVersion",
       "change",
       "schema",
       "deliveryRevision",
@@ -500,7 +482,6 @@ export function parseReadyReceipt(bytes: Uint8Array): ReadyReceipt {
       "traceability",
       "openspec",
     ]) ||
-    receipt.receiptVersion !== DELIVERY_RECEIPT_VERSION ||
     !Number.isSafeInteger(receipt.deliveryRevision) ||
     receipt.deliveryRevision < 1 ||
     !isRecord(receipt.approvals) ||
@@ -516,14 +497,8 @@ export function parseReadyReceipt(bytes: Uint8Array): ReadyReceipt {
       "recordHash",
     ]) ||
     !isRecord(receipt.plan) ||
-    !exactKeys(receipt.plan, [
-      "path",
-      "schemaVersion",
-      "rawSha256",
-      "canonicalHash",
-    ]) ||
+    !exactKeys(receipt.plan, ["path", "rawSha256", "canonicalHash"]) ||
     receipt.plan.path !== IMPLEMENT_PLAN_PATH ||
-    receipt.plan.schemaVersion !== IMPLEMENT_PLAN_SCHEMA_VERSION ||
     !SHA256.test(receipt.plan.rawSha256) ||
     !SHA256.test(receipt.plan.canonicalHash) ||
     !isRecord(receipt.verificationClosure) ||
@@ -870,7 +845,7 @@ function normalizeVerificationPlan(value: unknown): PlanVerification {
     ]) ||
     value.baseline.target !== "task-red-contracts" ||
     value.baseline.affected !== "task-affected-contracts" ||
-    value.baseline.failureIdentity !== "normalized-v1" ||
+    value.baseline.failureIdentity !== "normalized" ||
     !isRecord(value.change) ||
     !exactKeys(value.change, ["affected", "fullSuite", "postApply"]) ||
     value.change.affected !== "task-affected-contracts" ||
@@ -919,7 +894,7 @@ function normalizeVerificationPlan(value: unknown): PlanVerification {
       target: "task-red-contracts",
       affected: "task-affected-contracts",
       fullSuite: normalizeExpectedGreenVerification(value.baseline.fullSuite),
-      failureIdentity: "normalized-v1",
+      failureIdentity: "normalized",
     },
     change: {
       affected: "task-affected-contracts",
@@ -974,14 +949,12 @@ function normalizeDraft(value: unknown): ImplementPlan {
   if (
     !isRecord(value) ||
     !exactKeys(value, [
-      "schemaVersion",
       "changeId",
       "tasks",
       "outputs",
       "verification",
       "tracking",
     ]) ||
-    value.schemaVersion !== IMPLEMENT_PLAN_SCHEMA_VERSION ||
     typeof value.changeId !== "string" ||
     !CHANGE_NAME.test(value.changeId) ||
     !Array.isArray(value.tasks) ||
@@ -990,7 +963,6 @@ function normalizeDraft(value: unknown): ImplementPlan {
     throw new Error("delivery-plan-invalid");
   }
   const plan: ImplementPlan = {
-    schemaVersion: IMPLEMENT_PLAN_SCHEMA_VERSION,
     changeId: value.changeId,
     tasks: value.tasks
       .map(normalizeTask)
@@ -1092,7 +1064,6 @@ export function compileImplementPlan(
     receipt: {
       plan: {
         path: IMPLEMENT_PLAN_PATH,
-        schemaVersion: IMPLEMENT_PLAN_SCHEMA_VERSION,
         rawSha256,
         canonicalHash: planHash,
       },
