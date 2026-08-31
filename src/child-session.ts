@@ -26,6 +26,7 @@ import {
   type CandidateArtifactSubmission,
   type CandidateArtifactSubmissionResult,
   createCandidateArtifactTool,
+  createStructuredPatchTool,
   createSubmitTool,
   type FinalCategory,
   type SubmitClassification,
@@ -200,10 +201,6 @@ function structuralSubmitCount(message: AssistantMessage | undefined) {
   ).length;
 }
 
-function hasOneStructuralSubmit(message: AssistantMessage | undefined) {
-  return message?.role === "assistant" && structuralSubmitCount(message) === 1;
-}
-
 function safeChildError(failure: ChildFailure): string {
   switch (failure.kind) {
     case "environment":
@@ -308,19 +305,34 @@ export async function runChildSession(input: {
   ledgerProjection?: unknown;
   captureObservations?: boolean;
   candidateArtifact?: CandidateArtifactSubmission;
+  structuredPatch?: {
+    workspaceRoot: string;
+    writePaths: string[];
+    deletePaths: string[];
+  };
   onStreamStart?: () => void;
   onStreamProgress?: () => void;
 }): Promise<ChildSessionResult> {
   const candidateProtocol = input.candidateArtifact !== undefined;
   const submit = input.candidateArtifact
     ? createCandidateArtifactTool(input.candidateArtifact)
-    : createSubmitTool({
-        requestId: input.requestId,
-        taskId: input.taskId,
-        role: input.role,
-        phase: input.phase ?? "red",
-        output: input.output,
-      });
+    : input.structuredPatch
+      ? createStructuredPatchTool({
+          requestId: input.requestId,
+          taskId: input.taskId,
+          role: input.role,
+          phase: input.phase ?? "red",
+          workspaceRoot: input.structuredPatch.workspaceRoot,
+          writePaths: input.structuredPatch.writePaths,
+          deletePaths: input.structuredPatch.deletePaths,
+        })
+      : createSubmitTool({
+          requestId: input.requestId,
+          taskId: input.taskId,
+          role: input.role,
+          phase: input.phase ?? "red",
+          output: input.output,
+        });
   const observationCollector = input.captureObservations
     ? new ScopedObservationCollector()
     : undefined;
@@ -396,19 +408,16 @@ export async function runChildSession(input: {
     const assistants =
       session?.messages.filter((m) => m.role === "assistant") ?? [];
     const last = assistants.at(-1);
-    const lastSubmit = assistants.findLast((message) =>
-      hasStructuralSubmit(message),
-    );
     const structuralAttempts = assistants.reduce(
       (count, message) => count + structuralSubmitCount(message),
       0,
     );
     let finalCategory: FinalCategory;
-    if (!last) {
-      finalCategory = "no-final-assistant";
-    } else if (hasOneStructuralSubmit(lastSubmit)) {
+    if (submit.getResult() !== undefined) {
       finalCategory =
         structuralAttempts > 1 ? "multiple-submit" : "single-submit-only";
+    } else if (!last) {
+      finalCategory = "no-final-assistant";
     } else {
       const content = finalDeliveryContent(last);
       finalCategory =
@@ -481,7 +490,7 @@ export async function runChildSession(input: {
       cwd: input.cwd,
       modelRuntime: input.modelRuntime,
       model: input.model,
-      thinkingLevel: "off",
+      thinkingLevel: "low",
       tools: toolNames,
       customTools,
       resourceLoader: new EmptyResourceLoader(effectivePrompt),
@@ -563,13 +572,18 @@ export async function runChildSession(input: {
     const result = submit.getResult();
     const attempts = submit.getAttempts();
     const classification = classifySession();
+    const terminalSubmitFailure = submit.getFailure();
     const candidateComplete =
       candidateProtocol &&
       result !== undefined &&
       (result.kind === "sealed-candidate" || result.kind === "context-request");
-    if (!result || (candidateProtocol && !candidateComplete)) {
+    if (
+      !result ||
+      terminalSubmitFailure !== undefined ||
+      (candidateProtocol && !candidateComplete)
+    ) {
       const failure = withSubmitDetails(
-        submit.getFailure() ??
+        terminalSubmitFailure ??
           input.failureOverride?.() ??
           transportFailure() ??
           noStructuralSubmit(),
@@ -589,32 +603,9 @@ export async function runChildSession(input: {
         ...observationMetadata(),
       };
     }
-    const assistants = session.messages.filter((m) => m.role === "assistant");
-    const final = assistants.at(-1);
-    if (
-      !(candidateProtocol
-        ? candidateComplete && structuralSubmitCount(final) === 1
-        : hasOneStructuralSubmit(final))
-    ) {
-      const failure = {
-        kind: "artifact",
-        code: "invalid-structural-result",
-        stage: "child-finalization",
-        details: submitDetails(classification),
-      } as const;
-      disposeOnce();
-      return {
-        ok: false,
-        error: safeChildError(failure),
-        failure,
-        failureKind: "failed",
-        transportFailure: false,
-        disposeCount,
-        usage: usage.total(),
-        classification,
-        ...observationMetadata(),
-      };
-    }
+    // The trusted submit tool already validates and seals the one accepted
+    // result. Harmless text or read-only calls do not alter that admission;
+    // another terminal submission does.
     disposeOnce();
     return {
       ok: true,

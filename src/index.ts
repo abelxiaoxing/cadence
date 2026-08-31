@@ -46,6 +46,7 @@ import {
   assessDeliveryTraceability,
   compileImplementPlan,
   DeliveryValidationError,
+  DesignPlanValidationError,
   type GateApprovalProof,
   parseGateAReceipt,
   parseImplementPlan,
@@ -53,6 +54,7 @@ import {
 } from "./delivery-compiler.ts";
 import {
   DesignController,
+  DesignFinalizationError,
   validateDesignControlRequest,
 } from "./design-control.ts";
 import { canonicalJson, hashCanonicalValue } from "./implement-graph.ts";
@@ -230,15 +232,15 @@ const DESIGN_CONTROL_REQUEST_SCHEMA = {
       required: ["operation", "operationId", field],
       additionalProperties: false,
     })),
-    {
-      type: "object",
+    ...(["status", "validate-plan-draft"] as const).map((operation) => ({
+      type: "object" as const,
       properties: {
-        operation: { type: "string", enum: ["status"] },
-        runId: { type: "string" },
+        operation: { type: "string" as const, enum: [operation] },
+        runId: { type: "string" as const },
       },
       required: ["operation", "runId"],
       additionalProperties: false,
-    },
+    })),
     {
       type: "object",
       properties: {
@@ -420,6 +422,89 @@ function splitUsage(result: unknown): { payload: unknown; usage?: unknown } {
   }
   const { usage, ...payload } = result as Record<string, unknown>;
   return { payload, usage };
+}
+
+const SAFE_DESIGN_ERROR_CODE = /^[a-z0-9](?:[a-z0-9._:-]{0,126}[a-z0-9])?$/iu;
+const MAX_DESIGN_ERROR_DIAGNOSTICS = 64;
+
+type SafeDesignFailure = {
+  kind: "design-control-failure";
+  operation: string;
+  code: string;
+  diagnostics: ReadonlyArray<Record<string, string>>;
+};
+
+function safeDesignFailure(
+  error: unknown,
+  operation: string,
+): SafeDesignFailure {
+  const message = error instanceof Error ? error.message : "";
+  const code =
+    error instanceof DesignPlanValidationError
+      ? "design-plan-validation-invalid"
+      : SAFE_DESIGN_ERROR_CODE.test(message)
+        ? message
+        : "design-control-failed";
+  const rawDiagnostics: readonly unknown[] =
+    error instanceof DesignFinalizationError ||
+    error instanceof DesignPlanValidationError ||
+    error instanceof DeliveryValidationError
+      ? error.diagnostics
+      : [];
+  const diagnostics = rawDiagnostics
+    .flatMap((candidate) => {
+      if (typeof candidate === "string") {
+        const diagnosticCode = candidate.split(":", 1)[0] ?? "";
+        return SAFE_DESIGN_ERROR_CODE.test(diagnosticCode)
+          ? [{ code: diagnosticCode }]
+          : [];
+      }
+      if (
+        candidate === null ||
+        typeof candidate !== "object" ||
+        Array.isArray(candidate)
+      ) {
+        return [];
+      }
+      const admitted = Object.fromEntries(
+        Object.entries(candidate as Record<string, unknown>)
+          .filter(
+            (entry): entry is [string, string] =>
+              [
+                "code",
+                "taskId",
+                "phase",
+                "field",
+                "category",
+                "owner",
+                "verificationId",
+                "outputId",
+                "dependencyTaskId",
+                "producerTaskId",
+                "producerPhase",
+              ].includes(entry[0]) &&
+              typeof entry[1] === "string" &&
+              SAFE_DESIGN_ERROR_CODE.test(entry[1]),
+          )
+          .sort(([left], [right]) => left.localeCompare(right)),
+      );
+      return typeof admitted.code === "string" ? [admitted] : [];
+    })
+    .sort((left, right) =>
+      canonicalJson(left).localeCompare(canonicalJson(right)),
+    )
+    .filter(
+      (candidate, index, values) =>
+        index === 0 ||
+        canonicalJson(candidate) !== canonicalJson(values[index - 1]),
+    )
+    .slice(0, MAX_DESIGN_ERROR_DIAGNOSTICS);
+  return {
+    kind: "design-control-failure",
+    operation: SAFE_DESIGN_ERROR_CODE.test(operation) ? operation : "unknown",
+    code,
+    diagnostics,
+  };
 }
 
 export interface WorkflowControlEngine {
@@ -1515,6 +1600,8 @@ export function openPackageWorkflowControlEngine(
         context,
         parentPayloadBridge,
         input.signal,
+        process.env,
+        { onResponse: input.onHeaders },
       );
       if (!phaseRuntime.ok) {
         if (phaseRuntime.failure.kind === "cancelled") {
@@ -1566,6 +1653,9 @@ export function openPackageWorkflowControlEngine(
         ...(input.artifactCorrection
           ? { artifactCorrection: structuredClone(input.artifactCorrection) }
           : {}),
+        ...(input.contextRequest
+          ? { requestedContext: structuredClone(input.contextRequest) }
+          : {}),
         ...(input.repair
           ? {
               repair: {
@@ -1609,7 +1699,6 @@ export function openPackageWorkflowControlEngine(
         failureOverride: phaseRuntime.failureOverride,
         ledgerProjection: input.ledgerProjection,
         candidateArtifact: input.candidateArtifact,
-        onStreamStart: input.onHeaders,
         onStreamProgress: input.onProgress,
       });
       if (!child.ok) {
@@ -1625,10 +1714,18 @@ export function openPackageWorkflowControlEngine(
         if (child.failure.kind === "result-limit") {
           return { kind: "paused", code: "needs-task-split" };
         }
+        const attemptDiagnostic = {
+          finalCategory: child.classification.finalCategory,
+          submitAttempts: child.classification.attempts,
+          schema: child.classification.schema,
+          identityMismatch: Object.entries(child.classification.identity)
+            .filter(([, matches]) => !matches)
+            .map(([dimension]) => dimension),
+        };
         return child.failure.kind === "environment" ||
           child.failure.kind === "verification-adapter"
-          ? { kind: "paused", code: child.failure.code }
-          : { kind: "retryable", code: child.failure.code };
+          ? { kind: "paused", code: child.failure.code, attemptDiagnostic }
+          : { kind: "retryable", code: child.failure.code, attemptDiagnostic };
       }
       const result = child.result;
       if (result.kind === "context-request") {
@@ -1817,6 +1914,7 @@ export function registerWorkflowControl(
   const parentPayloadBridge = new ParentPayloadBridge();
   const activity = new ActivityController();
   const engines = new Map<string, Promise<WorkflowControlEngine>>();
+  const designFailures = new Map<string, SafeDesignFailure>();
   let pendingPrompt: EligiblePrompt | undefined;
   let activePrompt: EligiblePrompt | undefined;
   let designToolSnapshot: string[] | undefined;
@@ -1912,7 +2010,12 @@ export function registerWorkflowControl(
   const PACKET_PARAMETERS = {
     type: "object",
     properties: {
-      action: { type: "string", enum: [...PACKET_ACTIONS, "design"] },
+      action: {
+        type: "string",
+        enum: [...PACKET_ACTIONS, "design"],
+        description:
+          "Top-level dispatch action. design and run require request; finish is explicit stage exit and MUST omit request.",
+      },
       request: {
         anyOf: [
           DESIGN_REQUEST_SCHEMA,
@@ -1964,6 +2067,9 @@ export function registerWorkflowControl(
           ) {
             throw new Error("control-envelope-ambiguous");
           }
+          if (record.action === "finish" && Object.hasOwn(record, "request")) {
+            throw new Error("control-envelope-ambiguous");
+          }
           if (
             activePrompt !== "abel-design" &&
             activePrompt !== "abel-diagnose"
@@ -1986,19 +2092,30 @@ export function registerWorkflowControl(
             }
             if (!engine.executeDesign)
               throw new Error("design-control-unavailable");
-            const payload = await engine.executeDesign(designRequest.value);
-            if (
-              designRequest.value.operation === "finalize-delivery" &&
-              payload.state === "completed"
-            ) {
-              await deactivateStage();
+            try {
+              const payload = await engine.executeDesign(designRequest.value);
+              if (
+                designRequest.value.operation === "finalize-delivery" &&
+                payload.state === "completed"
+              ) {
+                await deactivateStage();
+              }
+              return {
+                content: [
+                  { type: "text" as const, text: JSON.stringify(payload) },
+                ],
+                details: payload,
+              };
+            } catch (error) {
+              const failure = safeDesignFailure(
+                error,
+                designRequest.value.operation,
+              );
+              designFailures.set(toolCallId, failure);
+              const sanitized = new Error(failure.code);
+              sanitized.name = "DesignControlError";
+              throw sanitized;
             }
-            return {
-              content: [
-                { type: "text" as const, text: JSON.stringify(payload) },
-              ],
-              details: payload,
-            };
           }
           let designEngine: WorkflowControlEngine | undefined;
           if (record.action === "run") {
@@ -2198,6 +2315,39 @@ export function registerWorkflowControl(
   };
   registerDispatchTool("packet");
 
+  pi.on("tool_result", (event) => {
+    if (
+      event.toolName !== DISPATCH_TOOL ||
+      !event.isError ||
+      event.input.action !== "design"
+    ) {
+      return;
+    }
+    const errorText = event.content
+      .flatMap((item) =>
+        item.type === "text" && typeof item.text === "string"
+          ? [item.text]
+          : [],
+      )
+      .join("\n");
+    const failure = safeDesignFailure(
+      new Error(errorText.trim()),
+      typeof (event.input.request as Record<string, unknown> | undefined)
+        ?.operation === "string"
+        ? String((event.input.request as Record<string, unknown>).operation)
+        : "unknown",
+    );
+    const details =
+      event.details && typeof event.details === "object"
+        ? (event.details as Record<string, unknown>)
+        : {};
+    const visible = designFailures.get(event.toolCallId) ?? failure;
+    designFailures.delete(event.toolCallId);
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(visible) }],
+      details: { ...details, designFailure: visible },
+    };
+  });
   pi.on("input", (event) => {
     pendingPrompt = invokedPrompt(event.text);
     return { action: "continue" };
@@ -2251,6 +2401,7 @@ export function registerWorkflowControl(
   pi.on("session_start", async (_event, ctx) => {
     pendingPrompt = undefined;
     activePrompt = undefined;
+    designFailures.clear();
     activity.detach();
     await packetRuntime.drain();
     await closeEngines();
@@ -2266,6 +2417,7 @@ export function registerWorkflowControl(
   });
   pi.on("session_shutdown", async () => {
     activePrompt = undefined;
+    designFailures.clear();
     activity.detach();
     await packetRuntime.drain();
     await closeEngines();

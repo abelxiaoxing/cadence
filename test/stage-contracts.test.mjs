@@ -58,6 +58,8 @@ describe("Design stage contract", () => {
 
   it("compiles one executable delivery before reporting readiness", () => {
     expect(design).toMatch(/ImplementPlan/);
+    expect(design).toMatch(/"operation":"validate-plan-draft"/);
+    expect(design).toMatch(/structured diagnostics/i);
     expect(design).toMatch(/"operation":"compile-plan"/);
     expect(design).toMatch(/"operation":"finalize-delivery"/);
     expect(design).toMatch(/implement-plan\.json/);
@@ -66,6 +68,8 @@ describe("Design stage contract", () => {
     expect(design).toMatch(/regular-file outputs/i);
     expect(design).toMatch(/AGENTS operation/i);
     expect(design).toMatch(/READY_TO_IMPLEMENT/);
+    expect(design).toMatch(/Never send `operation: "finish"`/i);
+    expect(design).toMatch(/\{"action":"finish"\}/);
   });
 
   it("does not reopen approvals for mechanical delivery repair", () => {

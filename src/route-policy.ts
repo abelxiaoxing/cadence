@@ -59,6 +59,7 @@ export type RoutePolicyDiagnosticCode =
   | "policy-unreadable"
   | "policy-invalid-json"
   | "policy-invalid"
+  | "policy-version-unsupported"
   | "route-invalid"
   | "route-duplicate"
   | "role-invalid"
@@ -269,7 +270,19 @@ function parseRoute(
 }
 
 export function parseRoutePolicy(value: unknown): ParsedRoutePolicy {
-  if (!isRecord(value) || !hasExactKeys(value, ["routes", "roles"])) {
+  if (!isRecord(value)) {
+    return { ok: false, diagnostics: [{ code: "policy-invalid" }] };
+  }
+  const legacyVersion = Object.hasOwn(value, "version")
+    ? value.version
+    : undefined;
+  if (legacyVersion !== undefined && legacyVersion !== 2) {
+    return {
+      ok: false,
+      diagnostics: [{ code: "policy-version-unsupported", field: "version" }],
+    };
+  }
+  if (!hasExactKeys(value, ["routes", "roles"], ["version"])) {
     return { ok: false, diagnostics: [{ code: "policy-invalid" }] };
   }
   if (!isRecord(value.routes) || !isRecord(value.roles)) {
@@ -338,6 +351,48 @@ export function parseRoutePolicy(value: unknown): ParsedRoutePolicy {
         ),
       ) as unknown as RoutePolicy["roles"],
     },
+  };
+}
+
+function constrainInheritedRoutes(
+  policy: RoutePolicy,
+  parentModel?: ParentModelCapabilities,
+): RoutePolicy {
+  if (!parentModel) return policy;
+  const routes = Object.fromEntries(
+    Object.entries(policy.routes).map(([routeId, route]) => {
+      if (route.kind !== "inherited") return [routeId, structuredClone(route)];
+      const capabilities = {
+        ...structuredClone(route.capabilities),
+        contextWindow: Math.min(
+          route.capabilities.contextWindow,
+          parentModel.contextWindow,
+        ),
+        maxTokens: Math.min(
+          route.capabilities.maxTokens,
+          parentModel.maxTokens,
+          route.capabilities.contextWindow,
+          parentModel.contextWindow,
+        ),
+      };
+      const raw = { kind: "inherited" as const, capabilities };
+      return [
+        routeId,
+        {
+          id: route.id,
+          ...raw,
+          fingerprint: routeFingerprint(raw),
+        },
+      ];
+    }),
+  );
+  return {
+    routes: Object.freeze(routes),
+    roles: Object.freeze(
+      Object.fromEntries(
+        ROLES.map((role) => [role, Object.freeze([...policy.roles[role]])]),
+      ),
+    ) as unknown as RoutePolicy["roles"],
   };
 }
 
@@ -436,7 +491,11 @@ export function loadRoutePolicy(
   }
   const parsed = parseRoutePolicy(value);
   return parsed.ok
-    ? { ok: true, source, policy: parsed.policy }
+    ? {
+        ok: true,
+        source,
+        policy: constrainInheritedRoutes(parsed.policy, options.parentModel),
+      }
     : { ok: false, source, diagnostics: parsed.diagnostics };
 }
 

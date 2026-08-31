@@ -14,6 +14,7 @@ import { LIMITS } from "../src/contracts";
 import {
   classifyCandidateContextRequest,
   createCandidateArtifactTool,
+  createStructuredPatchTool,
 } from "../src/submit-tool";
 import { TaskLedger } from "../src/task-ledger";
 
@@ -360,7 +361,7 @@ describe("implementation candidate protocol", () => {
         ["tests/file.test.mjs"],
       ),
     ).toEqual({
-      kind: "paused",
+      kind: "retryable",
       code: "approved-context-needed",
       contextRequest: {
         code: "approved-context-needed",
@@ -400,6 +401,113 @@ describe("implementation candidate protocol", () => {
           },
         ],
       },
+    });
+  });
+
+  it("keeps the first accepted structured patch and rejects a later overwrite", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "abel-structured-one-result-"));
+    roots.push(cwd);
+    writeFileSync(join(cwd, "a.txt"), "old\n");
+    const submission = createStructuredPatchTool({
+      requestId: "diagnosis-one-result",
+      taskId: "diagnosis-one-result",
+      role: "diagnosis-worker",
+      phase: "red",
+      workspaceRoot: cwd,
+      writePaths: ["a.txt"],
+      deletePaths: [],
+    });
+    const execute = submission.tool.execute as (
+      id: string,
+      params: Record<string, unknown>,
+    ) => Promise<unknown>;
+    const patch = (newText: string) => ({
+      kind: "candidate-patch",
+      candidateId: "diagnosis-one-result",
+      operations: [
+        {
+          kind: "replace",
+          path: "a.txt",
+          oldText: "old",
+          newText,
+        },
+      ],
+    });
+
+    await execute("first-accepted", patch("first"));
+    const first = submission.getResult();
+    await expect(execute("second-rejected", patch("second"))).rejects.toThrow(
+      /terminal|duplicate/u,
+    );
+
+    expect(submission.getResult()).toEqual(first);
+    expect(first).toMatchObject({ kind: "diff" });
+    expect(first && "diff" in first ? first.diff : "").toContain("+first");
+    expect(submission.getFailure()).toEqual({
+      kind: "artifact",
+      code: "invalid-structural-result",
+      stage: "structural-submit",
+    });
+  });
+
+  it("records a terminal failure for a duplicate accepted candidate result", async () => {
+    const candidateId = "candidate-one-result";
+    const submission = createCandidateArtifactTool({
+      ledger: {
+        beginCandidate: () => ({ ok: true as const }),
+        appendCandidateSegment: () => ({ ok: true as const }),
+        sealCandidate: () => ({
+          ok: true as const,
+          artifactHash: "a".repeat(64),
+          bytes: 1,
+          paths: ["src/value.ts"],
+        }),
+      } as never,
+      identity: {
+        candidateId,
+        runId: "run-candidate-one-result",
+        deliveryRevision: 1,
+        taskId: "task-candidate-one-result",
+        phase: "green",
+        attemptId: "attempt-candidate-one-result",
+        approvedPaths: ["src/value.ts"],
+        isolatedRevisionId: "b".repeat(64),
+        verificationId: "candidate-one-result-green",
+        routeId: "implementation-primary",
+        routeFingerprint: "c".repeat(64),
+      },
+      workspaceRoot: process.cwd(),
+      writePaths: ["src/value.ts"],
+      deletePaths: [],
+    });
+    const execute = submission.tool.execute as (
+      id: string,
+      params: Record<string, unknown>,
+    ) => Promise<unknown>;
+    const first = {
+      kind: "context-request",
+      candidateId,
+      code: "approved-context-needed",
+      refs: ["src/value.ts"],
+    };
+
+    await execute("first-candidate-result", first);
+    await expect(
+      execute("duplicate-candidate-result", {
+        ...first,
+        code: "task-split-needed",
+      }),
+    ).rejects.toThrow(/terminal/u);
+
+    expect(submission.getResult()).toMatchObject({
+      kind: "context-request",
+      candidateId,
+      code: "approved-context-needed",
+    });
+    expect(submission.getFailure()).toEqual({
+      kind: "artifact",
+      code: "invalid-structural-result",
+      stage: "structural-submit",
     });
   });
 
@@ -481,7 +589,7 @@ describe("implementation candidate protocol", () => {
         },
         boundary,
       ),
-    ).toMatchObject({ kind: "paused", code: "approved-context-needed" });
+    ).toMatchObject({ kind: "retryable", code: "approved-context-needed" });
     expect(
       classifyCandidateContextRequest(
         {
@@ -655,6 +763,160 @@ describe("implementation candidate protocol", () => {
     expect(result.submitCount).toBe(2);
     expect(result.classification.finalCategory).toBe("multiple-submit");
     expect(faux.state.callCount).toBe(2);
+  });
+
+  it("lets a diagnosis Worker submit structured operations and receives a trusted diff", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const cwd = mkdtempSync(join(tmpdir(), "abel-child-diagnosis-patch-"));
+    roots.push(cwd);
+    writeFileSync(join(cwd, "a.txt"), "old\n");
+    const faux = fauxProvider({
+      provider: "abel-faux-diagnosis-patch",
+      api: "faux",
+    });
+    faux.setResponses([
+      fauxAssistantMessage(
+        fauxToolCall("abel_submit_result", {
+          kind: "candidate-patch",
+          candidateId: "diagnosis-patch",
+          operations: [
+            {
+              kind: "replace",
+              path: "a.txt",
+              oldText: "old",
+              newText: "new",
+            },
+          ],
+        }),
+        { stopReason: "toolUse" },
+      ),
+    ]);
+    const modelRuntime = await parentProvider.runtimeForProvider(faux.provider);
+    const result = await child.runChildSession({
+      cwd,
+      modelRuntime,
+      model: faux.getModel(),
+      systemPrompt: "Submit one diagnosis patch.",
+      requestId: "diagnosis-patch",
+      taskId: "diagnosis-patch",
+      role: "diagnosis-worker",
+      phase: "red",
+      output: "diff",
+      roots: [cwd],
+      timeoutMs: 5_000,
+      structuredPatch: {
+        workspaceRoot: cwd,
+        writePaths: ["a.txt"],
+        deletePaths: [],
+      },
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      result: {
+        kind: "diff",
+        id: "diagnosis-patch",
+        role: "diagnosis-worker",
+        taskId: "diagnosis-patch",
+        phase: "red",
+      },
+    });
+    if (result.ok && result.result.kind === "diff") {
+      expect(result.result.diff).toContain("--- a/a.txt");
+      expect(result.result.diff).toContain("+++ b/a.txt");
+    }
+  });
+
+  it("accepts a diagnosis context request through the same small protocol", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const cwd = mkdtempSync(join(tmpdir(), "abel-child-diagnosis-context-"));
+    roots.push(cwd);
+    const faux = fauxProvider({
+      provider: "abel-faux-diagnosis-context",
+      api: "faux",
+    });
+    faux.setResponses([
+      fauxAssistantMessage(
+        fauxToolCall("abel_submit_result", {
+          kind: "context-request",
+          candidateId: "diagnosis-context",
+          code: "approved-context-needed",
+          refs: ["missing.txt"],
+        }),
+        { stopReason: "toolUse" },
+      ),
+    ]);
+    const modelRuntime = await parentProvider.runtimeForProvider(faux.provider);
+    await expect(
+      child.runChildSession({
+        cwd,
+        modelRuntime,
+        model: faux.getModel(),
+        systemPrompt: "Request missing diagnosis context.",
+        requestId: "diagnosis-context",
+        taskId: "diagnosis-context",
+        role: "diagnosis-worker",
+        phase: "red",
+        output: "diff",
+        roots: [cwd],
+        timeoutMs: 5_000,
+        structuredPatch: {
+          workspaceRoot: cwd,
+          writePaths: [],
+          deletePaths: [],
+        },
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      result: {
+        kind: "context-request",
+        candidateId: "diagnosis-context",
+        code: "approved-context-needed",
+      },
+    });
+  });
+
+  it("accepts a diagnosis delete operation within the declared write set", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const cwd = mkdtempSync(join(tmpdir(), "abel-child-diagnosis-delete-"));
+    roots.push(cwd);
+    writeFileSync(join(cwd, "obsolete.txt"), "obsolete\n");
+    const faux = fauxProvider({
+      provider: "abel-faux-diagnosis-delete",
+      api: "faux",
+    });
+    faux.setResponses([
+      fauxAssistantMessage(
+        fauxToolCall("abel_submit_result", {
+          kind: "candidate-patch",
+          candidateId: "diagnosis-delete",
+          operations: [{ kind: "delete", path: "obsolete.txt" }],
+        }),
+        { stopReason: "toolUse" },
+      ),
+    ]);
+    const modelRuntime = await parentProvider.runtimeForProvider(faux.provider);
+    const result = await child.runChildSession({
+      cwd,
+      modelRuntime,
+      model: faux.getModel(),
+      systemPrompt: "Delete the obsolete diagnosis fixture.",
+      requestId: "diagnosis-delete",
+      taskId: "diagnosis-delete",
+      role: "diagnosis-worker",
+      phase: "red",
+      output: "diff",
+      roots: [cwd],
+      timeoutMs: 5_000,
+      structuredPatch: {
+        workspaceRoot: cwd,
+        writePaths: ["obsolete.txt"],
+        deletePaths: ["obsolete.txt"],
+      },
+    });
+    expect(result).toMatchObject({ ok: true, result: { kind: "diff" } });
+    if (result.ok && result.result.kind === "diff") {
+      expect(result.result.diff).toContain("deleted file mode");
+    }
   });
 
   it("keeps the first terminal candidate result when its tool batch also reads", async () => {
@@ -897,6 +1159,43 @@ describe("structural submission classification", () => {
 
     expect(result.ok).toBe(true);
     expect(result.submitCount).toBe(2);
+  });
+
+  it("rejects two valid submissions from one assistant tool batch", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const result = await runChildSessionFixture(
+      child,
+      parentProvider,
+      "two-valid-submits",
+      fauxAssistantMessage(
+        [
+          fauxToolCall("abel_submit_result", validDiffSubmit, {
+            id: "first-valid-submit",
+          }),
+          fauxToolCall(
+            "abel_submit_result",
+            {
+              ...validDiffSubmit,
+              summary: "attempt to overwrite the accepted result",
+            },
+            { id: "second-valid-submit" },
+          ),
+        ],
+        { stopReason: "toolUse" },
+      ),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.failure).toMatchObject({
+      kind: "artifact",
+      code: "invalid-structural-result",
+      stage: "structural-submit",
+    });
+    expect(result.classification).toMatchObject({
+      finalCategory: "multiple-submit",
+      attempts: 2,
+      schema: "invalid",
+    });
   });
 
   it("stops after the one in-session structural correction is also rejected", async () => {
@@ -1180,7 +1479,7 @@ describe("structural submission classification", () => {
       code: "invalid-diff",
       stage: "candidate-diff",
       details: {
-        finalCategory: "single-submit-only",
+        finalCategory: "mixed",
         submitAttempts: 1,
         schema: "invalid",
       },

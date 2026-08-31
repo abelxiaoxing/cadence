@@ -97,6 +97,16 @@ export type PacketChildRunner = (input: {
   signal: AbortSignal;
 }) => Promise<ChildSessionResult>;
 
+type PacketRouteResult =
+  | {
+      kind: "phase-failure";
+      phase: Extract<
+        Awaited<ReturnType<typeof runtimeForWorkerRoute>>,
+        { ok: false }
+      >;
+    }
+  | { kind: "child"; child: ChildSessionResult };
+
 interface WaitingPacket {
   controller: AbortController;
   resolve(acquired: boolean): void;
@@ -251,7 +261,7 @@ export class PacketRuntime {
         this.#notify(packet, observer, sequence, "running");
       }
       const usage = new UsageAggregator();
-      const child = await this.#dispatchChild(
+      let child = await this.#dispatchChild(
         packet,
         context,
         controller.signal,
@@ -259,6 +269,28 @@ export class PacketRuntime {
           this.#notifyBrokerActivity(packet, observer, sequence, activity),
       );
       usage.add("launch:0", child.usage);
+      if (
+        this.#childRunner &&
+        !child.ok &&
+        child.failure.kind === "artifact" &&
+        !controller.signal.aborted
+      ) {
+        this.#notifyBrokerActivity(packet, observer, sequence, {
+          state: "retrying",
+          attempt: 1,
+          maxAttempts: 2,
+          code: child.failure.code,
+          wait: "bounded-policy",
+        });
+        child = await this.#dispatchChild(
+          packet,
+          context,
+          controller.signal,
+          (activity) =>
+            this.#notifyBrokerActivity(packet, observer, sequence, activity),
+        );
+        usage.add("launch:1", child.usage);
+      }
       if (!child.ok) {
         const state = failureState(child.failureKind);
         this.#notify(packet, observer, sequence, state);
@@ -319,12 +351,26 @@ export class PacketRuntime {
       throw new Error("packet agent definition is unavailable");
     }
     const broker = this.#brokerFor(context);
-    const routed = await broker.run({
+    const brokerUsage = new UsageAggregator();
+    let childAttempt = 0;
+    const withBrokerUsage = (
+      child: ChildSessionResult,
+    ): ChildSessionResult => ({
+      ...child,
+      usage: brokerUsage.total(),
+    });
+    const routed = await broker.run<PacketRouteResult>({
       runId: `${packet.stage}:${packet.id}`,
       operationId: packet.id,
       role: packet.role as WorkerRole,
       signal,
       ...(onActivity ? { onActivity } : {}),
+      classifyResult: (value) =>
+        value.kind === "child" &&
+        !value.child.ok &&
+        value.child.failure.kind === "artifact"
+          ? value.child.failure.code
+          : undefined,
       execute: async (attempt) => {
         const phase = await runtimeForWorkerRoute(
           attempt.route,
@@ -332,6 +378,7 @@ export class PacketRuntime {
           this.#parentPayloadBridge,
           attempt.signal,
           this.#environment,
+          { onResponse: attempt.onHeaders },
         );
         if (!phase.ok) {
           if (phase.failure.kind === "cancelled") {
@@ -360,6 +407,15 @@ export class PacketRuntime {
           role: packet.role,
           phase: packet.phase,
           output: packet.output as "evidence" | "diff",
+          ...(packet.role === "diagnosis-worker" && packet.output === "diff"
+            ? {
+                structuredPatch: {
+                  workspaceRoot: context.cwd,
+                  writePaths: packet.declared.write,
+                  deletePaths: packet.declared.write,
+                },
+              }
+            : {}),
           roots: packet.roots.map((root) => path.resolve(context.cwd, root)),
           allowedPaths: [
             ...new Set([...packet.declared.read, ...packet.declared.write]),
@@ -367,9 +423,9 @@ export class PacketRuntime {
           timeoutMs: LIMITS.phaseTimeoutMs,
           signal: attempt.signal,
           failureOverride: phase.failureOverride,
-          onStreamStart: attempt.onHeaders,
           onStreamProgress: attempt.onProgress,
         });
+        brokerUsage.add(`attempt:${childAttempt++}`, child.usage);
         if (!child.ok && child.failure.kind === "transport") {
           throw new Error(child.failure.code);
         }
@@ -379,29 +435,31 @@ export class PacketRuntime {
     if (!routed.ok) {
       const cancelled = routed.state === "cancelled" || signal.aborted;
       const timedOut = !cancelled && routed.code === "phase-timeout";
-      return syntheticChildFailure(
-        cancelled ? "packet cancelled" : routed.code,
-        cancelled
-          ? { kind: "cancelled", code: "cancelled" }
-          : timedOut
-            ? {
-                kind: "transport",
-                code: "timeout",
-                stage: "child-timeout",
-              }
-            : {
-                kind: "transport",
-                code: "transport-failure",
-                stage: "child-provider-stream",
-              },
-        cancelled ? "cancelled" : timedOut ? "timed-out" : "failed",
+      return withBrokerUsage(
+        syntheticChildFailure(
+          cancelled ? "packet cancelled" : routed.code,
+          cancelled
+            ? { kind: "cancelled", code: "cancelled" }
+            : timedOut
+              ? {
+                  kind: "transport",
+                  code: "timeout",
+                  stage: "child-timeout",
+                }
+              : {
+                  kind: "transport",
+                  code: "transport-failure",
+                  stage: "child-provider-stream",
+                },
+          cancelled ? "cancelled" : timedOut ? "timed-out" : "failed",
+        ),
       );
     }
     if (routed.value.kind === "phase-failure") {
       const phase = routed.value.phase;
-      return syntheticChildFailure(phase.error, phase.failure);
+      return withBrokerUsage(syntheticChildFailure(phase.error, phase.failure));
     }
-    return routed.value.child;
+    return withBrokerUsage(routed.value.child);
   }
 
   #brokerFor(context: PacketContext): RunWorkerBroker {

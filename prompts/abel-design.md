@@ -152,13 +152,22 @@ The plan admits only shell-free `vitest`, `package-script`, `static-check`, or o
 Pin local runners, package scripts, arguments, `minTests`, classifications, and `noInstall` behavior.
 Reject shell operators, implicit downloads, absolute/escaping paths, missing local capability, and unsupported verification shapes during Design readiness.
 
-After current Gate A approval, send the complete draft through `write-artifact` only to the relative path `plan-draft.json`, then invoke code-owned compilation:
+After current Gate A approval, send the complete draft through `write-artifact` only to the relative path `plan-draft.json`.
+Before mutation-owning compilation, use the read-only typed preflight; it validates the same fixed draft and returns task/output counts plus hashes without installing canonical files or journaling a plan revision:
+
+```json
+{"action":"design","request":{"operation":"validate-plan-draft","runId":"<run-id>"}}
+```
+
+If preflight fails, use its safe structured diagnostics (`code`, and when applicable `taskId`, `phase`, `field`, `category`, `owner`, `verificationId`, or `outputId`) to repair the exact boundary.
+Do not bisect the draft blindly or repeat an unchanged validation/finalization request.
+After preflight succeeds, invoke code-owned compilation:
 
 ```json
 {"action":"design","request":{"operation":"compile-plan","runId":"<run-id>","operationId":"<unique-operation>"}}
 ```
 
-The compiler reads only that fixed safe path, validates capability and graph closure, atomically installs canonical `implement-plan.json`, and returns its raw and canonical hashes.
+The compiler reads only that fixed safe path, validates capability and graph closure again, atomically installs canonical `implement-plan.json`, and returns its raw and canonical hashes.
 Do not hand-assemble canonical plan bytes, hashes, generated task Markdown, or receipts.
 The canonical `ImplementPlan` contains:
 
@@ -219,6 +228,8 @@ Report `READY_TO_IMPLEMENT` only when strict validation passes, both Gates have 
 Successful finalization deactivates private dispatch before an unrelated later request.
 Gate waits remain active for direct follow-up; if the user explicitly ends an unfinished Design interaction, send `{"action":"finish"}`.
 Otherwise report the current Design state, retained evidence, and the one unresolved decision or artifact that prevents readiness.
+Design `status` exposes only Design `legalOperations`; explicit stage exit is separately exposed as top-level `packetActions: ["finish"]`.
+Never send `operation: "finish"`; exit only with `{"action":"finish"}`.
 
 Do not implement product code and do not archive, publish, release, stage, or commit implicitly.
 

@@ -54,7 +54,7 @@ Cross-stage calls fail closed.
 
 ## Durable Design control
 
-Design uses one closed private `action: "design"` family from its first operation onward: `start`, `status`, `bind-change`, `record-decision`, `approve-gate`, `write-artifact`, `delete-artifact`, `compile-plan`, and `finalize-delivery`.
+Design uses one closed private `action: "design"` family from its first operation onward: `start`, `status`, `bind-change`, `record-decision`, `approve-gate`, `write-artifact`, `delete-artifact`, `validate-plan-draft`, `compile-plan`, and `finalize-delivery`.
 `start` accepts either the complete transient requirement or an existing change name; `status` uses the returned run id; `bind-change` names a provisional run only after current Gate A approval.
 The control plane normalizes and hashes transient requirement, decision-contract, and Gate-A contract text itself, and Gate B binds a plan compiled after the current Gate A approval and latest substantive decisions without a caller-supplied hash.
 The owner-private SQLite journal retains only normalized evidence identities/hashes, versioned decision hashes and refs, Gate proof facts, canonical compiled-plan identity/bytes, finalization identity, and idempotent operation outcomes.
@@ -73,6 +73,7 @@ Code-owned `gate-a.yaml` and `ready.yaml` receipts remain forbidden; `implement-
 All filesystem-mutating Design operations serialize against the durable expiring finalization lease.
 A competing or stale owner cannot inspect, replace, remove, or commit another operation's receipt bytes, and cleanup is fenced by the current operation's raw receipt hash.
 After current Gate A, the parent sends the fixed `plan-draft.json` input only through `write-artifact`.
+Read-only `validate-plan-draft` runs the same compiler checks without installing files or recording a plan revision and returns bounded task/phase/field diagnostics; unchanged invalid requests are not retried blindly.
 `compile-plan` owns canonical plan construction and installation.
 Gate B binds that exact stored canonical plan hash.
 `finalize-delivery` validates current proofs, OpenSpec, artifacts, traceability, and executable closure, writes Gate A and ready receipts atomically with `ready.yaml` last, rereads them, removes the draft, and completes Design.
@@ -199,5 +200,6 @@ Its absence pauses that verification only and does not block unrelated tasks or 
 Tool settlement is not completion.
 Only durable `completed` after cumulative apply and postconditions receives success.
 Successful Design finalization, terminal Implement settlement, Diagnose `finish`, explicit stage finish, and session shutdown deactivate only `abel_dispatch`, drain packets, clear the parent bridge, and clear active stage identity.
+Design status separates `legalOperations` from top-level `packetActions`; `finish` is never a Design operation and is sent only as `{"action":"finish"}`.
 Gate waits and resumable pauses remain active for direct follow-up.
 Never archive, publish, release, stage, or commit implicitly.

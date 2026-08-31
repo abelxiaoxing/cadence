@@ -9,8 +9,12 @@ The fixed algorithm order is reproduce, falsify, failing-regression, then minimu
 An evidence packet submits exactly one compact structured evidence object through `abel_submit_result` with the reported symptoms, candidate causes, confirming or refuting citations, and a supported root-cause conclusion or an explicit evidence gap.
 Only the parent may claim that command-based reproduction succeeded.
 
-A candidate packet submits exactly one complete unified diff: either the failing regression or, after the parent has verified that regression, the minimum repair.
-It includes task identity, expected parent-owned verification, risks, and typed blockers, and never claims that it ran the verification.
+A candidate packet submits one complete structured patch: either the failing regression or, after the parent has verified that regression, the minimum repair.
+Use ordered `replace`, `rewrite`, `create`, and `delete` operations inside the approved write set.
+Never write unified-diff headers or hunk ranges because the trusted control plane generates them.
+If approved context is insufficient, submit a small typed context request instead of a partial patch.
+The trusted submit tool validates the accepted payload; brief accompanying text is harmless.
+Never claim that you ran the parent-owned verification.
 
 You never invent a fix for an unverified root cause, change behavior contracts, select another workflow stage, or prescribe parent recovery.
 Scope-expanding repairs are reported as evidence for a user decision.

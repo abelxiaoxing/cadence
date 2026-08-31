@@ -75,10 +75,71 @@ const LOCKFILES = new Set([
   "pnpm-lock.yaml",
   "yarn.lock",
 ]);
-const IMPLEMENTATION_ROUTE_REQUIREMENTS = Object.freeze({
-  minContextWindow: 128_000,
-  minOutputTokens: 64_000,
+const IMPLEMENTATION_ROUTE_LIMITS = Object.freeze({
+  preferredContextWindow: 128_000,
+  preferredOutputTokens: 64_000,
+  minimumContextWindow: 16_000,
+  minimumOutputTokens: 8_000,
 });
+
+function implementationRouteRequirements(
+  input: {
+    task?: PlanTaskDraft;
+    artifactCorrection?: RedArtifactCorrection;
+    repair?: { failureIdentities: string[] };
+  } = {},
+) {
+  if (!input.task) {
+    return {
+      minContextWindow: IMPLEMENTATION_ROUTE_LIMITS.minimumContextWindow,
+      minOutputTokens: IMPLEMENTATION_ROUTE_LIMITS.minimumOutputTokens,
+    };
+  }
+  const serializedBytes = Buffer.byteLength(canonicalJson(input.task), "utf8");
+  const pathCount = Object.values(input.task.phases).reduce(
+    (total, phase) =>
+      total + phase.read.length + phase.write.length + phase.delete.length,
+    0,
+  );
+  const complexity =
+    serializedBytes +
+    pathCount * 512 +
+    (input.artifactCorrection ? 16_384 : 0) +
+    (input.repair ? input.repair.failureIdentities.length * 256 + 16_384 : 0);
+  return {
+    minContextWindow: Math.min(
+      IMPLEMENTATION_ROUTE_LIMITS.preferredContextWindow,
+      Math.max(
+        IMPLEMENTATION_ROUTE_LIMITS.minimumContextWindow,
+        16_384 + complexity * 2,
+      ),
+    ),
+    minOutputTokens: Math.min(
+      IMPLEMENTATION_ROUTE_LIMITS.preferredOutputTokens,
+      Math.max(
+        IMPLEMENTATION_ROUTE_LIMITS.minimumOutputTokens,
+        8_192 + Math.ceil(complexity / 2),
+      ),
+    ),
+  };
+}
+
+const SEMANTIC_ROUTE_FAILURE_CODES = new Set([
+  "child-no-structural-submit",
+  "invalid-structural-result",
+  "structural-identity-mismatch",
+  "invalid-diff",
+  "candidate-diff-invalid",
+]);
+
+function semanticRouteFailure(
+  value: DurableCandidateProposal,
+): string | undefined {
+  return (value.kind === "retryable" || value.kind === "paused") &&
+    SEMANTIC_ROUTE_FAILURE_CODES.has(value.code)
+    ? value.code
+    : undefined;
+}
 
 function isCancellationException(error: unknown, signal: AbortSignal): boolean {
   if (!signal.aborted) return false;
@@ -136,6 +197,7 @@ const ENGINE_SCHEMA = `
     phase TEXT NOT NULL,
     pause_code TEXT,
     context_request_json TEXT,
+    attempt_diagnostic_json TEXT,
     route_id TEXT,
     route_fingerprint TEXT,
     queue_position INTEGER,
@@ -289,7 +351,9 @@ export type WorkflowAttemptOutcome = (
   | { kind: "operation-cancelled"; code: "cancelled" }
 ) &
   WorkflowWorkspaceFacts &
-  WorkflowRouteFacts;
+  WorkflowRouteFacts & {
+    attemptDiagnostic?: SafeAttemptDiagnostic;
+  };
 
 export interface WorkflowWorker {
   runAttempt(input: {
@@ -309,6 +373,7 @@ export interface WorkflowWorker {
       failureIdentities: string[];
     };
     artifactCorrection?: RedArtifactCorrection;
+    contextRequest?: WorkflowContextRequest;
     signal: AbortSignal;
     onActivity?: (
       event: Pick<
@@ -320,6 +385,7 @@ export interface WorkflowWorker {
   rebind(input: {
     runId: string;
     taskId: string;
+    task: PlanTaskDraft;
     role: "implementation-worker";
     routeId: string;
   }):
@@ -492,9 +558,20 @@ interface EngineTaskRow {
   phase: "red" | "green" | "refactor";
   pause_code: string | null;
   context_request_json: string | null;
+  attempt_diagnostic_json: string | null;
   route_id: string | null;
   route_fingerprint: string | null;
   queue_position: number | null;
+}
+
+interface SafeAttemptDiagnostic {
+  fingerprint?: string;
+  finalCategory?: string;
+  submitAttempts?: number;
+  schema?: string;
+  identityMismatch?: string[];
+  sameFailureCount?: number;
+  action?: "rebind-or-revise-delivery";
 }
 
 interface EngineOperationRow {
@@ -1213,6 +1290,7 @@ function ensureEngineColumns(database: DatabaseSync): void {
   ensure("workflow_engine_tasks", [
     ["route_fingerprint", "TEXT"],
     ["context_request_json", "TEXT"],
+    ["attempt_diagnostic_json", "TEXT"],
   ]);
 }
 
@@ -1229,6 +1307,7 @@ export type DurableCandidateProposal =
       kind: "paused" | "retryable" | "approval-needed";
       code: string;
       contextRequest?: WorkflowContextRequest;
+      attemptDiagnostic?: SafeAttemptDiagnostic;
     }
   | { kind: "operation-cancelled"; code: "cancelled" };
 
@@ -1340,6 +1419,7 @@ export interface DurableWorkflowEngineOptions {
       failureIdentities: string[];
     };
     artifactCorrection?: RedArtifactCorrection;
+    contextRequest?: WorkflowContextRequest;
     signal: AbortSignal;
     onHeaders(): void;
     onProgress(): void;
@@ -2925,7 +3005,13 @@ class DurableWorkflowComposition
           ...(request.routeFingerprint
             ? { expectedFingerprint: request.routeFingerprint }
             : {}),
-          requirements: IMPLEMENTATION_ROUTE_REQUIREMENTS,
+          requirements: implementationRouteRequirements({
+            task: request.task,
+            ...(request.artifactCorrection
+              ? { artifactCorrection: request.artifactCorrection }
+              : {}),
+            repair: { failureIdentities: input.failureIdentities },
+          }),
         });
         if (!rebound.ok) return { kind: "paused", code: rebound.code };
       }
@@ -2944,9 +3030,16 @@ class DurableWorkflowComposition
         runId: request.runId,
         operationId: `${request.operationId}:${request.taskId}:repair:${input.repairAttempt}`,
         role: "implementation-worker",
-        requirements: IMPLEMENTATION_ROUTE_REQUIREMENTS,
+        requirements: implementationRouteRequirements({
+          task: request.task,
+          ...(request.artifactCorrection
+            ? { artifactCorrection: request.artifactCorrection }
+            : {}),
+          repair: { failureIdentities: input.failureIdentities },
+        }),
         signal: request.signal,
         ...(request.onActivity ? { onActivity: request.onActivity } : {}),
+        classifyResult: semanticRouteFailure,
         execute: (attempt) => {
           identity = {
             candidateId: `candidate-${randomUUID()}`,
@@ -2986,6 +3079,9 @@ class DurableWorkflowComposition
             repair,
             ...(request.artifactCorrection
               ? { artifactCorrection: request.artifactCorrection }
+              : {}),
+            ...(request.contextRequest
+              ? { contextRequest: request.contextRequest }
               : {}),
             signal: attempt.signal,
             onHeaders: attempt.onHeaders,
@@ -4000,7 +4096,13 @@ class DurableWorkflowComposition
           ...(input.routeFingerprint
             ? { expectedFingerprint: input.routeFingerprint }
             : {}),
-          requirements: IMPLEMENTATION_ROUTE_REQUIREMENTS,
+          requirements: implementationRouteRequirements({
+            task: input.task,
+            ...(input.artifactCorrection
+              ? { artifactCorrection: input.artifactCorrection }
+              : {}),
+            ...(input.repair ? { repair: input.repair } : {}),
+          }),
         });
         if (!rebound.ok) {
           return retained({ kind: "paused", code: rebound.code });
@@ -4016,9 +4118,16 @@ class DurableWorkflowComposition
         runId: input.runId,
         operationId: `${input.operationId}:${input.taskId}:${input.phase}`,
         role: "implementation-worker",
-        requirements: IMPLEMENTATION_ROUTE_REQUIREMENTS,
+        requirements: implementationRouteRequirements({
+          task: input.task,
+          ...(input.artifactCorrection
+            ? { artifactCorrection: input.artifactCorrection }
+            : {}),
+          ...(input.repair ? { repair: input.repair } : {}),
+        }),
         signal: input.signal,
         ...(input.onActivity ? { onActivity: input.onActivity } : {}),
+        classifyResult: semanticRouteFailure,
         execute: (attempt) => {
           identity = {
             candidateId: `candidate-${randomUUID()}`,
@@ -4055,6 +4164,9 @@ class DurableWorkflowComposition
               deletePaths: phase.delete,
             },
             route: attempt.route,
+            ...(input.contextRequest
+              ? { contextRequest: input.contextRequest }
+              : {}),
             signal: attempt.signal,
             onHeaders: attempt.onHeaders,
             onProgress: attempt.onProgress,
@@ -4634,7 +4746,7 @@ class DurableWorkflowComposition
       runId: input.runId,
       role: input.role,
       routeId: input.routeId,
-      requirements: IMPLEMENTATION_ROUTE_REQUIREMENTS,
+      requirements: implementationRouteRequirements({ task: input.task }),
     });
     return rebound.ok
       ? {
@@ -5521,8 +5633,8 @@ export class WorkflowEngine {
     return this.#database
       .prepare(
         `SELECT task_id, task_order, delivery_revision, plan_json, state,
-                phase, pause_code, context_request_json, route_id,
-                route_fingerprint, queue_position
+                phase, pause_code, context_request_json, attempt_diagnostic_json,
+                route_id, route_fingerprint, queue_position
          FROM workflow_engine_tasks WHERE run_id = ? ORDER BY task_order`,
       )
       .all(runId) as unknown as EngineTaskRow[];
@@ -5819,7 +5931,8 @@ export class WorkflowEngine {
             `UPDATE workflow_engine_tasks
              SET task_order = ?, delivery_revision = ?, plan_json = ?,
                  state = 'pending', phase = 'red', pause_code = NULL,
-                 context_request_json = NULL, queue_position = NULL
+                 context_request_json = NULL, attempt_diagnostic_json = NULL,
+                 queue_position = NULL
              WHERE run_id = ? AND task_id = ?`,
           )
           .run(taskOrder, delivery.revision, taskJson, runId, task.taskId);
@@ -5876,6 +5989,7 @@ export class WorkflowEngine {
       phase?: "red" | "green" | "refactor";
       pauseCode?: string | null;
       contextRequest?: WorkflowContextRequest | null;
+      attemptDiagnostic?: SafeAttemptDiagnostic | null;
       routeId?: string | null;
       routeFingerprint?: string | null;
       queuePosition?: number | null;
@@ -5904,6 +6018,14 @@ export class WorkflowEngine {
           : JSON.stringify(
               normalizeWorkflowContextRequest(values.contextRequest),
             ),
+      );
+    }
+    if (values.attemptDiagnostic !== undefined) {
+      assignments.push("attempt_diagnostic_json = ?");
+      parameters.push(
+        values.attemptDiagnostic === null
+          ? null
+          : JSON.stringify(values.attemptDiagnostic),
       );
     }
     if (values.routeId !== undefined) {
@@ -6126,6 +6248,7 @@ export class WorkflowEngine {
       row.phase === "green" &&
       (row.pause_code === "red-artifact-constraint" ||
         persistedRedArtifactCorrection);
+    let requestedContext = persistedContextRequest;
     let correctionContextRequest = redArtifactCorrection
       ? persistedContextRequest
       : undefined;
@@ -6187,7 +6310,8 @@ export class WorkflowEngine {
           state: "phase-running",
           phase,
           pauseCode: artifactCorrection?.code ?? null,
-          contextRequest: correctionContextRequest ?? null,
+          contextRequest: requestedContext ?? null,
+          attemptDiagnostic: null,
           queuePosition: null,
         },
         lease,
@@ -6223,6 +6347,7 @@ export class WorkflowEngine {
             : {}),
           ...(repair ? { repair } : {}),
           ...(artifactCorrection ? { artifactCorrection } : {}),
+          ...(requestedContext ? { contextRequest: requestedContext } : {}),
           signal,
           onActivity: (event) => {
             const projection = this.#runStore.status(runId);
@@ -6261,12 +6386,51 @@ export class WorkflowEngine {
       ) {
         this.#setVerificationStatus(runId, outcome.verification, lease);
       }
+      if (
+        outcome.kind !== "phase-committed" &&
+        outcome.kind !== "operation-cancelled" &&
+        outcome.contextRequest
+      ) {
+        requestedContext = normalizeWorkflowContextRequest(
+          outcome.contextRequest,
+        );
+      }
+      if (
+        outcome.kind !== "phase-committed" &&
+        outcome.kind !== "operation-cancelled" &&
+        outcome.attemptDiagnostic
+      ) {
+        const previous = row.attempt_diagnostic_json
+          ? (JSON.parse(row.attempt_diagnostic_json) as SafeAttemptDiagnostic)
+          : undefined;
+        const fingerprint = hash(
+          outcome.code,
+          outcome.attemptDiagnostic.finalCategory ?? "unknown",
+          outcome.attemptDiagnostic.schema ?? "unknown",
+          JSON.stringify(outcome.attemptDiagnostic.identityMismatch ?? []),
+        ).slice(0, 16);
+        const sameFailure = previous?.fingerprint === fingerprint;
+        const sameFailureCount = sameFailure
+          ? (previous?.sameFailureCount ?? 1) + 1
+          : 1;
+        const attemptDiagnostic = {
+          ...outcome.attemptDiagnostic,
+          fingerprint,
+          sameFailureCount,
+          ...(sameFailureCount > 1
+            ? { action: "rebind-or-revise-delivery" as const }
+            : {}),
+        };
+        this.#setTask(runId, row.task_id, { attemptDiagnostic }, lease);
+        row.attempt_diagnostic_json = JSON.stringify(attemptDiagnostic);
+      }
       if (outcome.kind === "retryable" && outcome.retryPolicy === "artifact") {
         if (outcome.code === "red-artifact-constraint") {
           redArtifactCorrection = true;
           correctionContextRequest = outcome.contextRequest
             ? normalizeWorkflowContextRequest(outcome.contextRequest)
             : correctionContextRequest;
+          requestedContext = correctionContextRequest ?? requestedContext;
         }
         artifactAttempts += 1;
         const maxAttempts = plan.verification.artifactCorrection.maxAttempts;
@@ -6280,7 +6444,7 @@ export class WorkflowEngine {
               pauseCode: redArtifactCorrection
                 ? "red-artifact-constraint"
                 : outcome.code,
-              contextRequest: correctionContextRequest ?? null,
+              contextRequest: requestedContext ?? null,
               queuePosition: null,
             },
             lease,
@@ -6321,6 +6485,7 @@ export class WorkflowEngine {
               phase,
               pauseCode: null,
               contextRequest: null,
+              attemptDiagnostic: null,
               queuePosition: null,
             },
             lease,
@@ -6329,6 +6494,7 @@ export class WorkflowEngine {
         }
         artifactAttempts = 0;
         redArtifactCorrection = false;
+        requestedContext = undefined;
         correctionContextRequest = undefined;
         phaseIndex += 1;
         if (phaseIndex >= orderedPhases.length) {
@@ -6340,6 +6506,7 @@ export class WorkflowEngine {
               phase,
               pauseCode: null,
               contextRequest: null,
+              attemptDiagnostic: null,
               queuePosition: null,
             },
             lease,
@@ -6354,6 +6521,7 @@ export class WorkflowEngine {
             phase: orderedPhases[phaseIndex],
             pauseCode: null,
             contextRequest: null,
+            attemptDiagnostic: null,
             queuePosition: null,
           },
           lease,
@@ -6395,10 +6563,9 @@ export class WorkflowEngine {
             pauseCode: approvalCodeInvalid
               ? "approval-code-invalid"
               : outcome.code,
-            contextRequest:
-              !approvalCodeInvalid && outcome.contextRequest
-                ? normalizeWorkflowContextRequest(outcome.contextRequest)
-                : (correctionContextRequest ?? null),
+            contextRequest: approvalCodeInvalid
+              ? null
+              : (requestedContext ?? null),
             queuePosition: null,
           },
           lease,
@@ -7096,6 +7263,21 @@ export class WorkflowEngine {
     return this.#statusByRun(runId);
   }
 
+  #safeAttemptDiagnostic(
+    _runId: string,
+    row: EngineTaskRow | undefined,
+  ): SafeAttemptDiagnostic | undefined {
+    if (!row) return undefined;
+    if (row.attempt_diagnostic_json) {
+      try {
+        return JSON.parse(row.attempt_diagnostic_json) as SafeAttemptDiagnostic;
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
+  }
+
   #statusByRun(runId: string): Record<string, unknown> {
     const projection = this.#runStore.status(runId);
     const rows = this.#tasks(runId);
@@ -7128,6 +7310,7 @@ export class WorkflowEngine {
       projection.state === "approval-needed"
         ? approvalRequirement(pauseCode, contextRequest)
         : undefined;
+    const attemptDiagnostic = this.#safeAttemptDiagnostic(runId, firstPaused);
     const currentRevision = projection.deliveryRevision ?? 0;
     return {
       runId: projection.runId,
@@ -7146,6 +7329,7 @@ export class WorkflowEngine {
         ? {
             pause: {
               code: pauseCode,
+              ...(attemptDiagnostic ? { diagnostic: attemptDiagnostic } : {}),
             },
           }
         : {}),
@@ -7629,6 +7813,7 @@ export class WorkflowEngine {
     const rebound = this.#worker.rebind({
       runId,
       taskId: task.task_id,
+      task: structuredClone(this.#taskPlan(task)),
       role: "implementation-worker",
       routeId: command.routeId,
     });

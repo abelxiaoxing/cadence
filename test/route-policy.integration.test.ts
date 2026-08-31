@@ -129,6 +129,42 @@ describe("route policy loading", () => {
     expect(launches).toBe(0);
   });
 
+  it("accepts the legacy version-2 wrapper and rejects unknown versions", () => {
+    const legacy = { version: 2, ...completePolicy() };
+    expect(parseRoutePolicy(legacy)).toMatchObject({ ok: true });
+    expect(parseRoutePolicy({ ...legacy, version: 3 })).toMatchObject({
+      ok: false,
+      diagnostics: [{ code: "policy-version-unsupported", field: "version" }],
+    });
+  });
+
+  it("constrains explicit inherited capabilities to the active parent model", () => {
+    const cwd = root("explicit-parent-bounds-cwd");
+    const home = root("explicit-parent-bounds-home");
+    const directory = path.join(home, ".pi", "agent", "cadence");
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(
+      path.join(directory, "routes.json"),
+      JSON.stringify({ version: 2, ...completePolicy() }),
+    );
+    expect(
+      loadRoutePolicy({
+        cwd,
+        home,
+        parentModel: { contextWindow: 32_768, maxTokens: 8_192 },
+      }),
+    ).toMatchObject({
+      ok: true,
+      policy: {
+        routes: {
+          inherited: {
+            capabilities: { contextWindow: 32_768, maxTokens: 8_192 },
+          },
+        },
+      },
+    });
+  });
+
   it("uses a user policy only when no project policy exists", () => {
     const cwd = root("cwd");
     const home = root("home");

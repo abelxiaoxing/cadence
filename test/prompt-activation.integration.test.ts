@@ -268,6 +268,7 @@ describe("package Prompt provenance activates abel_dispatch", () => {
         "approve-gate",
         "write-artifact",
         "delete-artifact",
+        "validate-plan-draft",
         "compile-plan",
         "finalize-delivery",
       ]),

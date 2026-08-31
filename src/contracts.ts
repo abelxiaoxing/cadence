@@ -1102,8 +1102,258 @@ function validateTaskBoundary(
 }
 
 export type ImplementGraphContractDiagnostic =
-  | { code: "invalid-implement-graph" }
-  | { code: "invalid-output-path"; outputId?: string };
+  | {
+      code: "invalid-implement-graph";
+      taskId?: string;
+      phase?: ImplementationPhase;
+      field?: string;
+      category?: string;
+      outputId?: string;
+    }
+  | {
+      code: "invalid-output-path";
+      outputId?: string;
+      field: "outputs.path";
+      category: "path";
+    };
+
+function phaseBoundaryContractDiagnostic(
+  value: unknown,
+  phase: ImplementationPhase,
+): Omit<
+  Extract<
+    ImplementGraphContractDiagnostic,
+    { code: "invalid-implement-graph" }
+  >,
+  "code"
+> | null {
+  const prefix = `phases.${phase}`;
+  if (
+    !hasExactKeys(
+      value,
+      ["read", "write", "delete", "verification", "verificationInputs"],
+      ["verificationLock"],
+    )
+  ) {
+    return { phase, field: prefix, category: "shape" };
+  }
+  if (!validatePathSet(value.read)) {
+    return { phase, field: `${prefix}.read`, category: "path-set" };
+  }
+  if (!validatePathSet(value.write) || value.write.some(isAgentsPath)) {
+    return { phase, field: `${prefix}.write`, category: "path-set" };
+  }
+  if (!validatePathSet(value.delete) || value.delete.some(isAgentsPath)) {
+    return { phase, field: `${prefix}.delete`, category: "path-set" };
+  }
+  const deletions = value.delete as string[];
+  if (value.write.some((candidate) => deletions.includes(candidate))) {
+    return { phase, field: prefix, category: "write-delete-overlap" };
+  }
+  if (!validateVerificationInputBindings(value.verificationInputs)) {
+    return {
+      phase,
+      field: `${prefix}.verificationInputs`,
+      category: "verification-input-binding",
+    };
+  }
+  if (
+    value.verificationLock !== undefined &&
+    !isValidRelativePath(value.verificationLock)
+  ) {
+    return {
+      phase,
+      field: `${prefix}.verificationLock`,
+      category: "path",
+    };
+  }
+  const verification = validateVerificationContract(value.verification);
+  if (!verification.ok) {
+    return {
+      phase,
+      field: `${prefix}.verification`,
+      category: "verification-contract",
+    };
+  }
+  const classification = {
+    red: "expected-red",
+    green: "expected-green",
+    refactor: "expected-refactor",
+  } as const;
+  if (verification.value.classification !== classification[phase]) {
+    return {
+      phase,
+      field: `${prefix}.verification.classification`,
+      category: "verification-classification",
+    };
+  }
+  return null;
+}
+
+function impactClosureCategory(reason: string): string {
+  const categories: Record<string, string> = {
+    "invalid impact closure": "shape",
+    "invalid impact closure related test": "related-test",
+    "current-task related test is outside the write set":
+      "current-task-outside-write-set",
+    "regression task identity is required": "regression-task-identity",
+    "unexpected regression task identity": "regression-task-identity",
+    "public impact closure is incomplete": "public-impact-incomplete",
+    "affected suite contains no existing test evidence":
+      "existing-test-evidence",
+  };
+  return categories[reason] ?? "contract";
+}
+
+function taskBoundaryContractDiagnostic(
+  value: Record<string, unknown>,
+  snapshot: unknown,
+): Omit<
+  Extract<
+    ImplementGraphContractDiagnostic,
+    { code: "invalid-implement-graph" }
+  >,
+  "code"
+> | null {
+  const taskId = validIdentifier(value.taskId) ? value.taskId : undefined;
+  const diagnostic = (
+    field: string,
+    category: string,
+    phase?: ImplementationPhase,
+  ) => ({
+    ...(taskId ? { taskId } : {}),
+    ...(phase ? { phase } : {}),
+    field,
+    category,
+  });
+  if (
+    !hasExactKeys(value, [
+      "changeId",
+      "taskId",
+      "dependsOn",
+      "objective",
+      "context",
+      "roots",
+      "phases",
+      "scheduling",
+      "agents",
+      "approvedDependencies",
+      "impactClosure",
+    ])
+  ) {
+    return diagnostic("task", "shape");
+  }
+  if (!validIdentifier(value.changeId)) {
+    return diagnostic("changeId", "identifier");
+  }
+  if (!validIdentifier(value.taskId)) {
+    return diagnostic("taskId", "identifier");
+  }
+  if (!validateIdentifierSet(value.dependsOn)) {
+    return diagnostic("dependsOn", "identifier-set");
+  }
+  if (
+    typeof value.objective !== "string" ||
+    value.objective.length === 0 ||
+    value.objective.length > 4096
+  ) {
+    return diagnostic("objective", "text-boundary");
+  }
+  if (
+    !hasExactKeys(value.context, ["agents", "contract"]) ||
+    typeof value.context.agents !== "string" ||
+    typeof value.context.contract !== "string"
+  ) {
+    return diagnostic("context", "shape");
+  }
+  if (!validateRoots(value.roots)) {
+    return diagnostic("roots", "path-set");
+  }
+  if (!hasExactKeys(value.phases, ["red", "green"], ["refactor"])) {
+    return diagnostic("phases", "shape");
+  }
+  for (const phase of IMPLEMENTATION_PHASES) {
+    const boundary = value.phases[phase];
+    if (phase === "refactor" && boundary === undefined) continue;
+    const phaseDiagnostic = phaseBoundaryContractDiagnostic(boundary, phase);
+    if (phaseDiagnostic)
+      return { ...diagnostic("phases", "contract"), ...phaseDiagnostic };
+  }
+  if (
+    !hasExactKeys(value.scheduling, ["conflicts", "resources"]) ||
+    !validatePathSet(value.scheduling.conflicts) ||
+    !validatePathSet(value.scheduling.resources)
+  ) {
+    return diagnostic("scheduling", "path-set");
+  }
+  if (
+    !hasExactKeys(value.agents, ["impact", "managedOnly"], ["target"]) ||
+    !(AGENTS_IMPACTS as readonly unknown[]).includes(value.agents.impact) ||
+    value.agents.managedOnly !== true ||
+    (value.agents.impact === "none"
+      ? value.agents.target !== undefined
+      : !isAgentsPath(value.agents.target))
+  ) {
+    return diagnostic("agents", "contract");
+  }
+  if (validateApprovedDependencies(value.approvedDependencies) !== null) {
+    return diagnostic("approvedDependencies", "dependency-set");
+  }
+  const roots = value.roots as string[];
+  for (const phase of IMPLEMENTATION_PHASES) {
+    const boundary = value.phases[phase] as PhaseBoundary | undefined;
+    if (!boundary) continue;
+    for (const [field, candidates] of [
+      ["read", boundary.read],
+      ["write", boundary.write],
+      ["delete", boundary.delete],
+      ["verification", verificationInputPaths(boundary.verification)],
+    ] as const) {
+      if (candidates.some((candidate) => !isWithinRoots(candidate, roots))) {
+        return diagnostic(`phases.${phase}.${field}`, "outside-roots", phase);
+      }
+    }
+    if (boundary.verification.kind !== undefined) {
+      const declared = new Set([...boundary.read, ...boundary.write]);
+      if (
+        verificationInputPaths(boundary.verification).some(
+          (input) => !declared.has(input),
+        )
+      ) {
+        return diagnostic(
+          `phases.${phase}.verification`,
+          "verification-input-not-declared",
+          phase,
+        );
+      }
+    }
+  }
+  const taskPhases = value.phases as Record<
+    ImplementationPhase,
+    PhaseBoundary | undefined
+  >;
+  const phases = IMPLEMENTATION_PHASES.flatMap((phase) => {
+    const boundary = taskPhases[phase];
+    return boundary ? [boundary] : [];
+  });
+  const declared = {
+    read: [...new Set(phases.flatMap((entry) => entry.read))],
+    write: [
+      ...new Set(phases.flatMap((entry) => [...entry.write, ...entry.delete])),
+    ],
+  };
+  const impactReason = validateImpactClosure(
+    value.impactClosure,
+    declared,
+    snapshot,
+  );
+  if (impactReason !== null) {
+    return diagnostic("impactClosure", impactClosureCategory(impactReason));
+  }
+  return validateTaskBoundary(value, snapshot)
+    ? null
+    : diagnostic("task", "contract");
+}
 
 export function validateImplementGraphBoundary(value: unknown):
   | { ok: true; value: ImplementGraphBoundary }
@@ -1137,36 +1387,29 @@ export function validateImplementGraphBoundary(value: unknown):
       return {
         ok: false,
         reason: "invalid Implement task boundary",
-        diagnostic: { code: "invalid-implement-graph" },
+        diagnostic: {
+          code: "invalid-implement-graph",
+          field: "tasks",
+          category: "shape",
+        },
       };
     }
     const task = candidate as Record<string, unknown>;
-    const phases = task.phases as Record<string, unknown> | undefined;
-    if (
-      Object.hasOwn(task, "changeId") ||
-      !Object.hasOwn(task, "dependsOn") ||
-      !validateIdentifierSet(task.dependsOn) ||
-      !phases ||
-      !["red", "green"].every((phase) => {
-        const boundary = phases[phase];
-        return (
-          boundary !== null &&
-          typeof boundary === "object" &&
-          !Array.isArray(boundary) &&
-          Object.hasOwn(boundary, "verificationInputs")
+    const diagnostic = Object.hasOwn(task, "changeId")
+      ? {
+          ...(validIdentifier(task.taskId) ? { taskId: task.taskId } : {}),
+          field: "changeId",
+          category: "unexpected-field",
+        }
+      : taskBoundaryContractDiagnostic(
+          { changeId: value.changeId, ...task },
+          undefined,
         );
-      }) ||
-      (phases.refactor !== undefined &&
-        (!phases.refactor ||
-          typeof phases.refactor !== "object" ||
-          Array.isArray(phases.refactor) ||
-          !Object.hasOwn(phases.refactor, "verificationInputs"))) ||
-      !validateTaskBoundary({ changeId: value.changeId, ...task }, undefined)
-    ) {
+    if (diagnostic) {
       return {
         ok: false,
         reason: "invalid Implement task boundary",
-        diagnostic: { code: "invalid-implement-graph" },
+        diagnostic: { code: "invalid-implement-graph", ...diagnostic },
       };
     }
   }
@@ -1191,6 +1434,8 @@ export function validateImplementGraphBoundary(value: unknown):
         diagnostic: {
           code: "invalid-output-path",
           ...(validIdentifier(output.id) ? { outputId: output.id } : {}),
+          field: "outputs.path",
+          category: "path",
         },
       };
     }
@@ -1207,7 +1452,12 @@ export function validateImplementGraphBoundary(value: unknown):
       return {
         ok: false,
         reason: "invalid Implement graph output",
-        diagnostic: { code: "invalid-implement-graph" },
+        diagnostic: {
+          code: "invalid-implement-graph",
+          ...(validIdentifier(output.id) ? { outputId: output.id } : {}),
+          field: "outputs",
+          category: "shape",
+        },
       };
     }
   }
@@ -1271,11 +1521,7 @@ export function validatePacketEnvelope(
   ) {
     return { ok: false, reason: "invalid Design run identity" };
   }
-  if (
-    typeof packet.id !== "string" ||
-    packet.id.length === 0 ||
-    packet.id.length > 128
-  ) {
+  if (!validIdentifier(packet.id)) {
     return { ok: false, reason: "invalid request id" };
   }
   if (
@@ -1729,7 +1975,7 @@ function validateDesignEvidenceResult(r: Record<string, unknown>): {
   if (
     !validIdentifier(r.id) ||
     r.packet_id !== r.id ||
-    !validIdentifier(r.module_name)
+    !isValidRelativePath(r.module_name)
   ) {
     return { ok: false, reason: "invalid Design evidence identity" };
   }

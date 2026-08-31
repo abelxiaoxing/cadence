@@ -227,6 +227,13 @@ type AttemptOutcome =
       kind: "paused" | "retryable" | "approval-needed";
       code: string;
       untrustedCandidate?: Uint8Array;
+      retryPolicy?: "artifact" | "stale" | "verification" | "checkpoint";
+      attemptDiagnostic?: {
+        finalCategory?: string;
+        submitAttempts?: number;
+        schema?: string;
+        identityMismatch?: string[];
+      };
       contextRequest?: {
         code:
           | "approved-context-needed"
@@ -256,6 +263,7 @@ class ScriptedWorker {
   readonly calls: string[] = [];
   readonly rebinds: string[] = [];
   readonly artifactCorrections: unknown[] = [];
+  readonly contextRequests: Array<unknown | undefined> = [];
   readonly #script = new Map<string, AttemptOutcome[]>();
   unavailable = false;
   #waitingKey: string | undefined;
@@ -275,6 +283,11 @@ class ScriptedWorker {
 
   async runAttempt(input: Record<string, unknown>): Promise<AttemptOutcome> {
     if (this.unavailable) throw new Error("worker-must-not-run");
+    this.contextRequests.push(
+      input.contextRequest === undefined
+        ? undefined
+        : structuredClone(input.contextRequest),
+    );
     if (input.artifactCorrection) {
       this.artifactCorrections.push(structuredClone(input.artifactCorrection));
     }
@@ -405,6 +418,145 @@ describe("WorkflowEngine command authority", () => {
     });
     expect(delivery.calls).toBe(0);
     expect(worker.calls).toEqual([]);
+    await engine.close();
+  });
+
+  it("retains two parallel connect-timeout tasks and resumes their original workspace facts without artifact correction", async () => {
+    const change = "parallel-inherited-connect-timeout";
+    const consumerRoot = makeConsumer("parallel-connect-timeout");
+    const xdgStateHome = temporaryRoot("parallel-connect-timeout-state");
+    const stateRoot = resolveStateRoot({
+      consumerRoot,
+      xdgStateHome,
+      homeDir: temporaryRoot("parallel-connect-timeout-home"),
+    });
+    const delivery = new DeliverySource();
+    delivery.set(
+      change,
+      plan(change, [
+        task("T1", { verificationLock: "parallel-connect-t1" }),
+        task("T7", { verificationLock: "parallel-connect-t7" }),
+        task("T2", {
+          dependsOn: ["T1", "T7"],
+          verificationLock: "parallel-connect-dependent",
+        }),
+      ]),
+    );
+    const retainedRevision = "e".repeat(64);
+    const firstInputs: Record<string, unknown>[] = [];
+    let engine = requiredEngine().open({
+      consumerRoot,
+      stateRoot,
+      deliverySource: delivery,
+      worker: {
+        runAttempt: async (input: Record<string, unknown>) => {
+          firstInputs.push({
+            taskId: input.taskId,
+            phase: input.phase,
+            artifactCorrection: input.artifactCorrection,
+          });
+          return {
+            kind: "paused" as const,
+            code: "connect-timeout",
+            baselineRevisionId: retainedRevision,
+            currentWorkspaceRevisionId: retainedRevision,
+          };
+        },
+        rebind: () => ({ ok: true as const, routeId: "parent" }),
+      },
+      changeVerifier: new PausingVerifier(),
+      leaseTtlMs: 10_000,
+    });
+
+    const paused = await engine.execute(
+      command("start", change, {
+        operationId: "parallel-connect-timeout-start",
+      }),
+    );
+    expect(paused).toMatchObject({
+      state: "paused",
+      pause: { code: "connect-timeout" },
+      privateData: {
+        retained: true,
+        baselineRevisionId: retainedRevision,
+        currentRevisionId: retainedRevision,
+      },
+      tasks: expect.arrayContaining([
+        { taskId: "T1", state: "paused", phase: "red" },
+        { taskId: "T7", state: "paused", phase: "red" },
+        { taskId: "T2", state: "pending", phase: "red" },
+      ]),
+      queue: [],
+    });
+    expect(firstInputs.map((input) => input.taskId).sort()).toEqual([
+      "T1",
+      "T7",
+    ]);
+    expect(firstInputs.every((input) => input.artifactCorrection === undefined))
+      .toBe(true);
+    expect(readFileSync(path.join(consumerRoot, "sentinel.txt"), "utf8")).toBe(
+      "main-workspace\n",
+    );
+    await engine.close();
+
+    const resumedInputs: Record<string, unknown>[] = [];
+    engine = requiredEngine().open({
+      consumerRoot,
+      stateRoot,
+      deliverySource: delivery,
+      worker: {
+        runAttempt: async (input: Record<string, unknown>) => {
+          resumedInputs.push({
+            taskId: input.taskId,
+            phase: input.phase,
+            artifactCorrection: input.artifactCorrection,
+            baselineRevisionId: input.baselineRevisionId,
+            currentWorkspaceRevisionId: input.currentWorkspaceRevisionId,
+          });
+          if (input.phase === "red") {
+            return {
+              kind: "phase-committed" as const,
+              artifactHash: HASH_A,
+              isolatedRevisionId:
+                input.taskId === "T1" ? "1".repeat(64) : "7".repeat(64),
+              exitCode: 1,
+              classification: "expected-red" as const,
+            };
+          }
+          return { kind: "paused" as const, code: "post-recovery-hold" };
+        },
+        rebind: () => ({ ok: true as const, routeId: "parent" }),
+      },
+      changeVerifier: new PausingVerifier(),
+      leaseTtlMs: 10_000,
+    });
+    const resumed = await engine.execute(
+      command("resume", change, {
+        operationId: "parallel-connect-timeout-resume",
+      }),
+    );
+
+    expect(resumed).toMatchObject({
+      runId: paused.runId,
+      state: "paused",
+      pause: { code: "post-recovery-hold" },
+      queue: [],
+    });
+    const resumedRed = resumedInputs.filter((input) => input.phase === "red");
+    expect(resumedRed).toHaveLength(2);
+    expect(
+      resumedRed.every(
+        (input) =>
+          input.baselineRevisionId === retainedRevision &&
+          input.currentWorkspaceRevisionId === retainedRevision,
+      ),
+    ).toBe(true);
+    expect(
+      resumedInputs.every((input) => input.artifactCorrection === undefined),
+    ).toBe(true);
+    expect(readFileSync(path.join(consumerRoot, "sentinel.txt"), "utf8")).toBe(
+      "main-workspace\n",
+    );
     await engine.close();
   });
 
@@ -1371,6 +1523,130 @@ describe("WorkflowEngine command authority", () => {
         },
       ],
     });
+    await engine.close();
+  });
+
+  it("forwards a persisted in-boundary context request on same-run resume", async () => {
+    const change = "engine-context-request-resume";
+    const consumerRoot = makeConsumer("context-request-resume");
+    const xdgStateHome = temporaryRoot("context-request-resume-state");
+    const delivery = new DeliverySource();
+    delivery.set(change, plan(change, [task("T1-context-resume")]));
+    const contextRequest = {
+      code: "approved-context-needed" as const,
+      refs: [
+        {
+          kind: "source-citation" as const,
+          path: "test/fixture.test.ts",
+          line: 1,
+        },
+        { kind: "contract-diagnostic" as const, ref: "phase-contract.readSet" },
+      ],
+    };
+    const firstWorker = new ScriptedWorker();
+    firstWorker.script("T1-context-resume:red", [
+      {
+        kind: "retryable",
+        code: "approved-context-needed",
+        retryPolicy: "artifact",
+        contextRequest,
+      },
+      {
+        kind: "retryable",
+        code: "approved-context-needed",
+        retryPolicy: "artifact",
+        contextRequest,
+      },
+    ]);
+    let engine = openEngine({
+      consumerRoot,
+      xdgStateHome,
+      delivery,
+      worker: firstWorker,
+    });
+    const paused = await engine.execute(
+      command("start", change, { operationId: "context-request-start" }),
+    );
+    expect(paused).toMatchObject({
+      state: "paused",
+      tasks: [
+        {
+          taskId: "T1-context-resume",
+          state: "retryable",
+          contextRequest,
+        },
+      ],
+    });
+    await engine.close();
+
+    const recoveryWorker = new ScriptedWorker();
+    recoveryWorker.script("T1-context-resume:red", [
+      { kind: "paused", code: "context-request-replayed" },
+    ]);
+    engine = openEngine({
+      consumerRoot,
+      xdgStateHome,
+      delivery,
+      worker: recoveryWorker,
+    });
+    const resumed = await engine.execute(
+      command("resume", change, { operationId: "context-request-resume" }),
+    );
+
+    expect(resumed).toMatchObject({
+      runId: paused.runId,
+      state: "paused",
+      pause: { code: "context-request-replayed" },
+    });
+    expect(recoveryWorker.contextRequests).toEqual([contextRequest]);
+    expect(recoveryWorker.artifactCorrections).toEqual([]);
+    await engine.close();
+  });
+
+  it("does not classify a different failure code as a repeated attempt", async () => {
+    const change = "engine-attempt-diagnostic-code";
+    const consumerRoot = makeConsumer("attempt-diagnostic-code");
+    const delivery = new DeliverySource();
+    delivery.set(change, plan(change, [task("T1-diagnostic-code")]));
+    const worker = new ScriptedWorker();
+    const diagnostic = {
+      finalCategory: "mixed",
+      submitAttempts: 1,
+      schema: "invalid",
+      identityMismatch: ["task"],
+    };
+    worker.script("T1-diagnostic-code:red", [
+      {
+        kind: "paused",
+        code: "invalid-structural-result",
+        attemptDiagnostic: diagnostic,
+      },
+      {
+        kind: "paused",
+        code: "structural-identity-mismatch",
+        attemptDiagnostic: diagnostic,
+      },
+    ]);
+    const engine = openEngine({ consumerRoot, delivery, worker });
+    await engine.execute(
+      command("start", change, { operationId: "diagnostic-code-start" }),
+    );
+    const resumed = await engine.execute(
+      command("resume", change, { operationId: "diagnostic-code-resume" }),
+    );
+
+    expect(resumed).toMatchObject({
+      pause: {
+        code: "structural-identity-mismatch",
+        diagnostic: {
+          sameFailureCount: 1,
+          fingerprint: expect.stringMatching(/^[a-f0-9]{16}$/u),
+        },
+      },
+    });
+    expect(
+      (resumed.pause as { diagnostic: Record<string, unknown> }).diagnostic,
+    ).not.toHaveProperty("action");
     await engine.close();
   });
 

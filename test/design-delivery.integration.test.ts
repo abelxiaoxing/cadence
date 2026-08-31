@@ -13,6 +13,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  DesignPlanValidationError,
   parseGateAReceipt,
   parseReadyReceipt,
 } from "../src/delivery-compiler.ts";
@@ -455,7 +456,8 @@ describe("safe private Design artifact mutation", () => {
         completed: false,
         pause: { code: "design-awaiting-gate-a" },
         runId: expect.any(String),
-        legalActions: ["status", "record-decision", "approve-gate", "finish"],
+        legalOperations: ["status", "record-decision", "approve-gate"],
+        packetActions: ["finish"],
       });
       const runId = String(started.runId);
 
@@ -491,14 +493,15 @@ describe("safe private Design artifact mutation", () => {
         runId,
         change: "friendly-design-control",
         state: "paused",
-        legalActions: [
+        legalOperations: [
           "status",
           "record-decision",
           "write-artifact",
           "delete-artifact",
+          "validate-plan-draft",
           "compile-plan",
-          "finish",
         ],
+        packetActions: ["finish"],
       });
       expect(
         await controller.execute({
@@ -701,6 +704,67 @@ describe("safe private Design artifact mutation", () => {
       }),
     ).rejects.toThrow(/design-artifact-path-unsafe/u);
     expect(existsSync(path.join(outside, "spec.md"))).toBe(false);
+    item.controller.close();
+  });
+
+  it("preflights a valid PlanDraft without installing or journaling a canonical plan", async () => {
+    const item = fixture("plan-preflight");
+    await approveGateAOnly(item);
+
+    const validated = await item.controller.execute({
+      operation: "validate-plan-draft",
+      runId: item.runId,
+    });
+
+    expect(validated).toMatchObject({
+      operation: "validate-plan-draft",
+      runId: item.runId,
+      valid: true,
+      plan: {
+        taskCount: 1,
+        outputCount: 0,
+        rawSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        canonicalHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      },
+    });
+    expect(existsSync(path.join(item.changeRoot, "implement-plan.json"))).toBe(
+      false,
+    );
+    expect(item.controller.status(item.runId).plan).toBeNull();
+    item.controller.close();
+  });
+
+  it("reports the exact task, phase, field, and category for an invalid draft", async () => {
+    const item = fixture("plan-preflight-diagnostic");
+    await approveGateAOnly(item);
+    const invalid = planDraft(item.change);
+    (invalid.tasks[0]!.phases.green.verification.args as string[]) = [
+      "--unsafe&&operator",
+    ];
+    writeFileSync(
+      path.join(item.changeRoot, "plan-draft.json"),
+      `${JSON.stringify(invalid, null, 2)}\n`,
+    );
+
+    try {
+      await item.controller.execute({
+        operation: "validate-plan-draft",
+        runId: item.runId,
+      });
+      throw new Error("expected PlanDraft validation failure");
+    } catch (error) {
+      expect(error).toBeInstanceOf(DesignPlanValidationError);
+      expect((error as DesignPlanValidationError).diagnostics).toContainEqual({
+        code: "invalid-implement-graph",
+        taskId: "delivery-task",
+        phase: "green",
+        field: "phases.green.verification",
+        category: "verification-contract",
+      });
+    }
+    expect(existsSync(path.join(item.changeRoot, "implement-plan.json"))).toBe(
+      false,
+    );
     item.controller.close();
   });
 

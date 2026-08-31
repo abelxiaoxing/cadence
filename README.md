@@ -20,6 +20,8 @@ Implement 只暴露 `start`、`status`、`resume`、`rebind`、`cancel` 和 `dis
 `status` 完全本地可用；相同 operation id 幂等重放，进程、会话或 Worker 更换后仍从 durable checkpoint 继续。
 Design 从第一步起统一使用 `action: "design"`：新需求通过 `start(requirement)` 进入，已有 change 通过 `start(change)` 进入，后续只携带返回的 `runId`。
 需求、决策合同与 Gate A 合同由控制面规范化并计算哈希，调用方无需 SHA-256 工具；Gate B 自动绑定当前已编译 canonical plan，原始瞬时文本不会写入 durable journal。
+`validate-plan-draft` 可在 `compile-plan` 前只读运行同一套编译检查，并以结构化 `taskId` / phase / field / verification 诊断定位问题；Design finalization 的安全诊断码也会进入错误详情与可展开 TUI，而不再只显示统一失败标题。
+Design status 将可调用的 `legalOperations` 与顶层 `packetActions` 分开；显式退出只能发送 `{"action":"finish"}`，不能伪装成 `operation: "finish"`。
 
 普通 artifact、错误 Red、transport、environment、stale、conflict、baseline 与验证失败都留在同一 Implement run 中恢复。
 累计验证发现 introduced failure 时会自动重开责任任务做有界修复；自动预算耗尽后 `resume` 复用已有 baseline 和 phase facts。
@@ -75,6 +77,10 @@ npm install -g @abelxiaoxing/cadence
 只有需要自定义模型、显式顺序或 failover 时，才复制 [`config/routes.example.json`](config/routes.example.json) 到项目级 `.pi/cadence/routes.json` 或用户级 `~/.pi/agent/cadence/routes.json`。
 项目文件按整文件优先；route 必须显式列入对应角色，custom route 只引用 `apiKeyEnv` 的变量名，不能把凭据值写进 JSON。
 一旦显式文件存在，它就是完整策略；损坏、缺字段或角色引用不一致会 fail closed，不会悄悄退回默认父模型。
+旧配置的顶层数字标记 `2` 会被安全迁移为当前 canonical 结构；其他编号会以专用诊断码明确拒绝。
+inherited route 声明的能力会与当前父模型真实能力取交集，不能通过夸大的配置绕过 admission。
+transport 与 malformed structural result 都只在声明的 route 顺序内做有界 failover；只有一个 route 时会原地重试一次，多个 route 时按顺序切换。
+相同 pause 的安全指纹与重复计数通过 `status` 暴露，凭据、URL 和原始输出仍保持私有。
 `rebind` 只能选择已获 policy 授权且能力匹配的 route，不会扩大任务边界。
 
 ## 跨项目验证合同（Cross-project verification）

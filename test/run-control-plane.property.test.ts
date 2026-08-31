@@ -473,6 +473,23 @@ describe("canonical delivery compilation", () => {
     expect(String(left.tasksMarkdown)).toContain("T1-control-store-delivery");
   });
 
+  it("rejects a phase with no writable or deletable boundary", () => {
+    const compile = requiredFunction<
+      (
+        draft: Record<string, unknown>,
+        options: { consumerRoot: string },
+      ) => Record<string, unknown>
+    >(deliveryCompiler, "compileImplementPlan");
+    const draft = planDraft() as any;
+    draft.tasks[0].phases.green.write = [];
+    draft.tasks[0].phases.green.delete = [];
+    expect(() =>
+      compile(draft, {
+        consumerRoot: path.resolve(import.meta.dirname, ".."),
+      }),
+    ).toThrow(/delivery-plan-empty-phase-boundary/u);
+  });
+
   it("requires an explicit bounded artifact-correction policy", () => {
     const compile = requiredFunction<
       (

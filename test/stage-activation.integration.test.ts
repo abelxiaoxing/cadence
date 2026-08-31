@@ -1,5 +1,6 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { DesignFinalizationError } from "../src/design-control.ts";
 import {
   DISPATCH_TOOL,
   registerWorkflowControl,
@@ -76,6 +77,67 @@ function baseEngine(
 }
 
 describe("semantic stage activation teardown", () => {
+  it("publishes safe structured finalization diagnostics while preserving tool failure", async () => {
+    const engine: WorkflowControlEngine = {
+      ...baseEngine(),
+      executeDesign: vi.fn(async () => {
+        throw new DesignFinalizationError([
+          "traceability-task-unmapped",
+          "design-openspec-incomplete",
+        ]);
+      }),
+    };
+    const item = harness("abel-design", engine);
+    const input = {
+      action: "design",
+      request: {
+        operation: "finalize-delivery",
+        runId: "design-run-1",
+        operationId: "finalize-v1",
+      },
+    };
+    await expect(
+      item.tool.execute(
+        "finalize-error-call",
+        input,
+        undefined,
+        undefined,
+        item.context,
+      ),
+    ).rejects.toThrow(/design-finalization-invalid/u);
+
+    const patch = await item.handlers.get("tool_result")?.({
+      type: "tool_result",
+      toolName: DISPATCH_TOOL,
+      toolCallId: "finalize-error-call",
+      input,
+      content: [{ type: "text", text: "design-finalization-invalid" }],
+      details: undefined,
+      isError: true,
+    });
+    expect(patch).toMatchObject({
+      content: [
+        {
+          type: "text",
+          text: expect.stringContaining('"code":"design-finalization-invalid"'),
+        },
+      ],
+      details: {
+        designFailure: {
+          kind: "design-control-failure",
+          operation: "finalize-delivery",
+          code: "design-finalization-invalid",
+          diagnostics: [
+            { code: "design-openspec-incomplete" },
+            { code: "traceability-task-unmapped" },
+          ],
+        },
+      },
+    });
+    expect(patch).not.toHaveProperty("isError");
+    expect(item.active()).toContain(DISPATCH_TOOL);
+  });
+
   it("deactivates after successful Design finalization but not at a Gate wait", async () => {
     const engine: WorkflowControlEngine = {
       ...baseEngine(),
@@ -280,6 +342,29 @@ describe("semantic stage activation teardown", () => {
     const item = harness("abel-diagnose", baseEngine());
     await item.tool.execute(
       "finish-call",
+      { action: "finish" },
+      undefined,
+      undefined,
+      item.context,
+    );
+    expect(item.active()).toEqual(["read", "bash"]);
+  });
+
+  it("deactivates Design only through top-level finish and rejects a request body", async () => {
+    const item = harness("abel-design", baseEngine());
+    await expect(
+      item.tool.execute(
+        "ambiguous-finish-call",
+        { action: "finish", request: { operation: "finish" } },
+        undefined,
+        undefined,
+        item.context,
+      ),
+    ).rejects.toThrow(/control-envelope-ambiguous/u);
+    expect(item.active()).toContain(DISPATCH_TOOL);
+
+    await item.tool.execute(
+      "design-finish-call",
       { action: "finish" },
       undefined,
       undefined,

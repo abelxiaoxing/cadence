@@ -29,6 +29,10 @@ import {
 
 const SUBAGENT_PROVIDER_ID = "abel-subagent";
 
+export interface PhaseTransportObserver {
+  onResponse?(): void;
+}
+
 function customStreamOptions<T extends StreamOptions>(
   model: Model<string>,
   options?: T,
@@ -49,32 +53,55 @@ function customStreamOptions<T extends StreamOptions>(
   } as T;
 }
 
+function observedStreamOptions<T extends StreamOptions>(
+  options?: T,
+  observer?: PhaseTransportObserver,
+): T | undefined {
+  if (!observer?.onResponse) return options;
+  const childOnResponse = options?.onResponse;
+  return {
+    ...options,
+    onResponse: async (response, requestModel) => {
+      observer.onResponse?.();
+      await childOnResponse?.(response, requestModel);
+    },
+  } as T;
+}
+
 // The compat dispatchers resolve the concrete API implementation from
 // model.api at call time, so one pair serves all supported dialects.
-const SUBAGENT_STREAMS = {
-  stream(
-    model: Parameters<typeof subagentStream>[0],
-    context: Parameters<typeof subagentStream>[1],
-    options?: Parameters<typeof subagentStream>[2],
-  ) {
-    return subagentStream(
-      model,
-      context,
-      customStreamOptions(model as Model<string>, options),
-    );
-  },
-  streamSimple(
-    model: Parameters<typeof subagentStreamSimple>[0],
-    context: Parameters<typeof subagentStreamSimple>[1],
-    options?: Parameters<typeof subagentStreamSimple>[2],
-  ) {
-    return subagentStreamSimple(
-      model,
-      context,
-      customStreamOptions(model as Model<string>, options),
-    );
-  },
-};
+function subagentStreams(observer?: PhaseTransportObserver) {
+  return {
+    stream(
+      model: Parameters<typeof subagentStream>[0],
+      context: Parameters<typeof subagentStream>[1],
+      options?: Parameters<typeof subagentStream>[2],
+    ) {
+      return subagentStream(
+        model,
+        context,
+        observedStreamOptions(
+          customStreamOptions(model as Model<string>, options),
+          observer,
+        ),
+      );
+    },
+    streamSimple(
+      model: Parameters<typeof subagentStreamSimple>[0],
+      context: Parameters<typeof subagentStreamSimple>[1],
+      options?: Parameters<typeof subagentStreamSimple>[2],
+    ) {
+      return subagentStreamSimple(
+        model,
+        context,
+        observedStreamOptions(
+          customStreamOptions(model as Model<string>, options),
+          observer,
+        ),
+      );
+    },
+  };
+}
 
 function customSubagentModel(endpoint: ResolvedCustomRoute): Model<string> {
   return {
@@ -97,6 +124,7 @@ function customSubagentModel(endpoint: ResolvedCustomRoute): Model<string> {
 function customSubagentProvider(
   endpoint: ResolvedCustomRoute,
   model: Model<string>,
+  observer?: PhaseTransportObserver,
 ): Provider {
   return createProvider({
     id: SUBAGENT_PROVIDER_ID,
@@ -118,7 +146,7 @@ function customSubagentProvider(
       },
     },
     models: [model],
-    api: SUBAGENT_STREAMS,
+    api: subagentStreams(observer),
   }) as Provider;
 }
 
@@ -126,11 +154,12 @@ export async function customPhaseRuntime(
   route: CustomRoutePolicy,
   signal?: AbortSignal,
   environment: Readonly<Record<string, string | undefined>> = process.env,
+  observer?: PhaseTransportObserver,
 ): Promise<PhaseRuntimeResult> {
   if (signal?.aborted) return cancelledPhaseRuntime();
   const endpoint = resolveCustomRoute(route, environment);
   const model = customSubagentModel(endpoint);
-  const provider = customSubagentProvider(endpoint, model);
+  const provider = customSubagentProvider(endpoint, model, observer);
   let modelRuntime: ModelRuntime;
   try {
     modelRuntime = await runtimeForProvider(provider, signal);
@@ -236,6 +265,7 @@ export function phaseProvider(
   },
   payloadBridge: PhasePayloadBridge,
   diagnostic?: { failure?: PhaseRuntimeFailure },
+  observer?: PhaseTransportObserver,
 ): Provider {
   return {
     ...parent,
@@ -262,7 +292,7 @@ export function phaseProvider(
         diagnostic,
       );
       return parent.stream(model, context, {
-        ...options,
+        ...observedStreamOptions(options, observer),
         apiKey: auth.apiKey,
         headers: { ...options?.headers, ...auth.headers },
         env: { ...options?.env, ...auth.env },
@@ -278,7 +308,7 @@ export function phaseProvider(
         diagnostic,
       );
       return parent.streamSimple(model, context, {
-        ...options,
+        ...observedStreamOptions(options, observer),
         apiKey: auth.apiKey,
         headers: { ...options?.headers, ...auth.headers },
         env: { ...options?.env, ...auth.env },
@@ -314,6 +344,7 @@ export async function runtimeFromContext(
   ctx: Pick<ExtensionContext, "model" | "modelRegistry">,
   payloadBridge: ParentPayloadBridge,
   signal?: AbortSignal,
+  observer?: PhaseTransportObserver,
 ): Promise<PhaseRuntimeResult> {
   if (signal?.aborted) return cancelledPhaseRuntime();
   if (!ctx.model) {
@@ -398,6 +429,7 @@ export async function runtimeFromContext(
       capture,
     },
     diagnostic,
+    observer,
   );
   let modelRuntime: ModelRuntime;
   try {
@@ -432,10 +464,11 @@ export async function runtimeForWorkerRoute(
   payloadBridge: ParentPayloadBridge,
   signal?: AbortSignal,
   environment: Readonly<Record<string, string | undefined>> = process.env,
+  observer?: PhaseTransportObserver,
 ): Promise<PhaseRuntimeResult> {
   return route.kind === "custom"
-    ? customPhaseRuntime(route, signal, environment)
-    : runtimeFromContext(ctx, payloadBridge, signal);
+    ? customPhaseRuntime(route, signal, environment, observer)
+    : runtimeFromContext(ctx, payloadBridge, signal, observer);
 }
 
 function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {

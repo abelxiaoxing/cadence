@@ -7,7 +7,7 @@ agents:
     sha256: aa4bdaed14b75be0a803b0067b252c43f5dbdb0c1084db896d767ebc8a0ed611
   - path: agents/diagnosis-worker.md
     role: diagnosis-worker
-    sha256: fb7586a10b32038ad8d4c20853a03dfb9072a4c869777b715b1df1cb0e887f4a
+    sha256: f20a752040227ef5e09a9bf69901cdc9246743970339106f6487bbfec4f28564
   - path: agents/implementation-worker.md
     role: implementation-worker
     sha256: 19f94ac17b482fbd829a2c9ee4d7c2792c59dfd1cba3be9fca89a99365f4c518

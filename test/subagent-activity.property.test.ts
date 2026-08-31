@@ -9,6 +9,7 @@ import {
   ActivityInlineComponent,
   ActivityWidget,
   createActivityDisplay,
+  renderActivityResult,
   renderActivityWidgetLines,
   sanitizeDisplayText,
   sanitizeFailureReason,
@@ -203,6 +204,80 @@ describe("Subagent activity presentation", () => {
         /anthropic|claude|openai|gpt|deepseek|\/Users|private\.ts/i,
       );
     }
+  });
+
+  it("renders a compact safe Design code and expandable structured diagnostics", () => {
+    const result = {
+      details: {
+        designFailure: {
+          kind: "design-control-failure",
+          operation: "compile-plan",
+          code: "delivery-plan-invalid:invalid-task-boundary",
+          diagnostics: [
+            {
+              code: "invalid-implement-graph",
+              taskId: "T2",
+              phase: "green",
+              field: "phases.green.verification",
+              category: "verification-input-not-declared",
+            },
+          ],
+        },
+      },
+    };
+    const context = {
+      isError: true,
+      args: { action: "design", request: { operation: "compile-plan" } },
+    };
+    const compact = renderActivityResult(
+      result,
+      { expanded: false, isPartial: false },
+      undefined,
+      context,
+    )
+      .render(200)
+      .join("\n");
+    expect(compact).toContain(
+      "Abel Dispatch design compile-plan failed: delivery-plan-invalid:invalid-task-boundary",
+    );
+    expect(compact).toContain("1 diagnostic");
+    expect(compact).not.toContain("T2");
+
+    const expanded = renderActivityResult(
+      result,
+      { expanded: true, isPartial: false },
+      undefined,
+      context,
+    )
+      .render(200)
+      .join("\n");
+    expect(expanded).toContain("invalid-implement-graph");
+    expect(expanded).toContain("taskId=T2");
+    expect(expanded).toContain("phase=green");
+    expect(expanded).toContain("field=phases.green.verification");
+  });
+
+  it("rejects unsafe Design failure details before rendering", () => {
+    const rendered = renderActivityResult(
+      {
+        details: {
+          designFailure: {
+            kind: "design-control-failure",
+            operation: "compile-plan",
+            code: "/home/user/private.txt",
+            diagnostics: [{ code: "model=gpt-secret" }],
+          },
+        },
+      },
+      { expanded: true, isPartial: false },
+      undefined,
+      { isError: true, args: { action: "design" } },
+    )
+      .render(160)
+      .join("\n");
+    expect(rendered.trimEnd()).toBe("Abel Dispatch design failed");
+    expect(rendered).not.toContain("private.txt");
+    expect(rendered).not.toContain("gpt-secret");
   });
 
   it("[SLICE-5:pi-tool-error] omits next-step metadata from diff summaries", () => {

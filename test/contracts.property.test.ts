@@ -127,6 +127,15 @@ describe("strict packet envelope contracts", () => {
     );
   });
 
+  it("rejects packet IDs that cannot be echoed by the result contract", () => {
+    if (!contracts) return notReady("contracts");
+    for (const id of ["auth/evidence#1", "packet with spaces", ".hidden"]) {
+      expect(contracts.validatePacketEnvelope(validEnvelope({ id })).ok).toBe(
+        false,
+      );
+    }
+  });
+
   it("rejects path bounds that escape or are absolute", () => {
     if (!contracts) return notReady("contracts");
     for (const root of ["/etc", "..", "../src", "src/../../etc"]) {
@@ -280,6 +289,16 @@ describe("strict evidence result schema", () => {
     expect(contracts.validateEvidenceResult(validDesignPacketResult()).ok).toBe(
       true,
     );
+  });
+
+  it("allows canonical relative module paths", () => {
+    if (!contracts) return notReady("contracts");
+    expect(
+      contracts.validateEvidenceResult({
+        ...validDesignPacketResult(),
+        module_name: "src/workflow-engine.ts",
+      }).ok,
+    ).toBe(true);
   });
 
   it.each([

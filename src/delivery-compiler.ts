@@ -94,6 +94,79 @@ export class DeliveryValidationError extends Error {
   }
 }
 
+export interface DesignPlanDiagnostic {
+  code: string;
+  taskId?: string;
+  phase?: string;
+  field?: string;
+  category?: string;
+  owner?: string;
+  verificationId?: string;
+  outputId?: string;
+  dependencyTaskId?: string;
+  producerTaskId?: string;
+  producerPhase?: string;
+}
+
+export class DesignPlanValidationError extends Error {
+  readonly diagnostics: readonly DesignPlanDiagnostic[];
+
+  constructor(message: string, diagnostics: readonly DesignPlanDiagnostic[]) {
+    const normalized = [
+      ...new Map(
+        diagnostics
+          .map((diagnostic) => structuredClone(diagnostic))
+          .sort((left, right) =>
+            canonicalJson(left).localeCompare(canonicalJson(right)),
+          )
+          .map((diagnostic) => [canonicalJson(diagnostic), diagnostic]),
+      ).values(),
+    ];
+    super(message);
+    this.name = "DesignPlanValidationError";
+    this.diagnostics = Object.freeze(normalized);
+  }
+}
+
+const SAFE_PLAN_ERROR_CODE = /^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$/u;
+
+function planErrorCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  return SAFE_PLAN_ERROR_CODE.test(message) ? message : "delivery-plan-invalid";
+}
+
+function planDiagnosticField(code: string): string | undefined {
+  const fields: Record<string, string> = {
+    "delivery-plan-invalid-task": "task",
+    "delivery-plan-invalid-task-phases": "phases",
+    "delivery-plan-invalid-phase": "phases",
+    "delivery-plan-empty-phase-boundary": "phases",
+    "delivery-plan-write-delete-overlap": "phases",
+    "delivery-verification-invalid": "verification",
+    "delivery-task-verification-invalid": "affectedVerification",
+    "delivery-agents-checkpoint-mismatch": "verification.agentsCheckpoint",
+  };
+  return fields[code];
+}
+
+function asPlanValidationError(
+  error: unknown,
+  context: Omit<DesignPlanDiagnostic, "code"> = {},
+): DesignPlanValidationError {
+  if (error instanceof DesignPlanValidationError) {
+    const diagnostics = error.diagnostics.map((diagnostic) => ({
+      ...context,
+      ...diagnostic,
+    }));
+    return new DesignPlanValidationError(error.message, diagnostics);
+  }
+  const code = planErrorCode(error);
+  const field = planDiagnosticField(code);
+  return new DesignPlanValidationError(code, [
+    { code, ...context, ...(field ? { field } : {}) },
+  ]);
+}
+
 export function assessDeliveryTraceability(input: {
   tasksMarkdown: string;
   specs: readonly { path: string; text: string }[];
@@ -578,6 +651,9 @@ function normalizePhase(value: unknown): PlanPhaseDraft {
   }
   const write = sortStrings(value.write as string[]);
   const deletions = sortStrings(value.delete as string[]);
+  if (write.length + deletions.length === 0) {
+    throw new Error("delivery-plan-empty-phase-boundary");
+  }
   if (write.some((candidate) => deletions.includes(candidate))) {
     throw new Error("delivery-plan-write-delete-overlap");
   }
@@ -600,60 +676,97 @@ function normalizePhase(value: unknown): PlanPhaseDraft {
 }
 
 function normalizeTask(value: unknown): PlanTaskDraft {
-  if (
-    !isRecord(value) ||
-    !isRecord(value.phases) ||
-    !isRecord(value.affectedVerification) ||
-    !isRecord(value.repairVerification)
-  ) {
-    throw new Error("delivery-plan-invalid-task");
+  const taskId =
+    isRecord(value) && typeof value.taskId === "string"
+      ? value.taskId
+      : undefined;
+  const context = taskId ? { taskId } : {};
+  try {
+    if (
+      !isRecord(value) ||
+      !isRecord(value.phases) ||
+      !isRecord(value.affectedVerification) ||
+      !isRecord(value.repairVerification)
+    ) {
+      throw new Error("delivery-plan-invalid-task");
+    }
+    const phases = value.phases;
+    if (!Object.hasOwn(phases, "red") || !Object.hasOwn(phases, "green")) {
+      throw new Error("delivery-plan-invalid-task-phases");
+    }
+    const cloned = structuredClone(value) as unknown as PlanTaskDraft;
+    let affectedVerification: StructuredVerificationContract;
+    try {
+      affectedVerification = normalizeVerification(value.affectedVerification);
+    } catch (error) {
+      throw asPlanValidationError(error, {
+        ...context,
+        field: "affectedVerification",
+      });
+    }
+    let repairVerification: StructuredVerificationContract;
+    try {
+      repairVerification = normalizeVerification(value.repairVerification);
+    } catch (error) {
+      throw asPlanValidationError(error, {
+        ...context,
+        field: "repairVerification",
+      });
+    }
+    if (
+      affectedVerification.classification !== "expected-green" ||
+      repairVerification.classification !== "expected-green"
+    ) {
+      throw new Error("delivery-task-verification-invalid");
+    }
+    const normalizeTaskPhase = (
+      phase: "red" | "green" | "refactor",
+      candidate: unknown,
+    ) => {
+      try {
+        return normalizePhase(candidate);
+      } catch (error) {
+        throw asPlanValidationError(error, {
+          ...context,
+          phase,
+          field: `phases.${phase}`,
+        });
+      }
+    };
+    return {
+      ...cloned,
+      dependsOn: sortStrings(cloned.dependsOn),
+      roots: sortStrings(cloned.roots),
+      phases: {
+        red: normalizeTaskPhase("red", phases.red),
+        green: normalizeTaskPhase("green", phases.green),
+        ...(phases.refactor !== undefined
+          ? { refactor: normalizeTaskPhase("refactor", phases.refactor) }
+          : {}),
+      },
+      scheduling: {
+        conflicts: sortStrings(cloned.scheduling.conflicts),
+        resources: sortStrings(cloned.scheduling.resources),
+      },
+      approvedDependencies: sortStrings(cloned.approvedDependencies),
+      affectedVerification,
+      repairVerification,
+      impactClosure: {
+        changedSurfaces: sortStrings(
+          cloned.impactClosure.changedSurfaces,
+        ) as PlanTaskDraft["impactClosure"]["changedSurfaces"],
+        searchEvidence: sortStrings(cloned.impactClosure.searchEvidence),
+        relatedTests: [...cloned.impactClosure.relatedTests].sort(
+          (left, right) =>
+            left.path.localeCompare(right.path) ||
+            left.disposition.localeCompare(right.disposition),
+        ),
+        affectedSuite: sortStrings(cloned.impactClosure.affectedSuite),
+      },
+    };
+  } catch (error) {
+    throw asPlanValidationError(error, context);
   }
-  const phases = value.phases;
-  if (!Object.hasOwn(phases, "red") || !Object.hasOwn(phases, "green")) {
-    throw new Error("delivery-plan-invalid-task-phases");
-  }
-  const cloned = structuredClone(value) as unknown as PlanTaskDraft;
-  const affectedVerification = normalizeVerification(
-    value.affectedVerification,
-  );
-  const repairVerification = normalizeVerification(value.repairVerification);
-  if (
-    affectedVerification.classification !== "expected-green" ||
-    repairVerification.classification !== "expected-green"
-  ) {
-    throw new Error("delivery-task-verification-invalid");
-  }
-  return {
-    ...cloned,
-    dependsOn: sortStrings(cloned.dependsOn),
-    roots: sortStrings(cloned.roots),
-    phases: {
-      red: normalizePhase(phases.red),
-      green: normalizePhase(phases.green),
-      ...(phases.refactor !== undefined
-        ? { refactor: normalizePhase(phases.refactor) }
-        : {}),
-    },
-    scheduling: {
-      conflicts: sortStrings(cloned.scheduling.conflicts),
-      resources: sortStrings(cloned.scheduling.resources),
-    },
-    approvedDependencies: sortStrings(cloned.approvedDependencies),
-    affectedVerification,
-    repairVerification,
-    impactClosure: {
-      changedSurfaces: sortStrings(
-        cloned.impactClosure.changedSurfaces,
-      ) as PlanTaskDraft["impactClosure"]["changedSurfaces"],
-      searchEvidence: sortStrings(cloned.impactClosure.searchEvidence),
-      relatedTests: [...cloned.impactClosure.relatedTests].sort(
-        (left, right) =>
-          left.path.localeCompare(right.path) ||
-          left.disposition.localeCompare(right.disposition),
-      ),
-      affectedSuite: sortStrings(cloned.impactClosure.affectedSuite),
-    },
-  };
 }
 
 function graphFromPlan(plan: ImplementPlan): ImplementGraphBoundary {
@@ -962,6 +1075,25 @@ function normalizeDraft(value: unknown): ImplementPlan {
   ) {
     throw new Error("delivery-plan-invalid");
   }
+  const draftGraph = validateImplementGraphBoundary({
+    changeId: value.changeId,
+    tasks: value.tasks.map((candidate) => {
+      if (!isRecord(candidate)) return candidate;
+      const {
+        affectedVerification: _affectedVerification,
+        repairVerification: _repairVerification,
+        ...boundary
+      } = candidate;
+      return boundary;
+    }),
+    outputs: value.outputs,
+  });
+  if (!draftGraph.ok) {
+    throw new DesignPlanValidationError(
+      `delivery-plan-invalid:${draftGraph.reason}`,
+      [draftGraph.diagnostic],
+    );
+  }
   const plan: ImplementPlan = {
     changeId: value.changeId,
     tasks: value.tasks
@@ -1011,7 +1143,10 @@ function normalizeDraft(value: unknown): ImplementPlan {
   }
   const graphValidation = validateImplementGraphBoundary(graphFromPlan(plan));
   if (!graphValidation.ok) {
-    throw new Error(`delivery-plan-invalid:${graphValidation.reason}`);
+    throw new DesignPlanValidationError(
+      `delivery-plan-invalid:${graphValidation.reason}`,
+      [graphValidation.diagnostic],
+    );
   }
   return plan;
 }
@@ -1034,43 +1169,52 @@ export function compileImplementPlan(
   draft: unknown,
   options: { consumerRoot: string },
 ): CompiledDelivery {
-  const plan = normalizeDraft(draft);
-  const graph = graphFromPlan(plan);
-  const readiness = assessImplementGraphReadiness(options.consumerRoot, graph, {
-    completedTasks: [],
-    blockedTasks: [],
-    appliedPhases: [],
-  });
-  const diagnostics = [
-    ...readiness.closure.diagnostics,
-    ...deliveryVerificationDiagnostics(plan, options.consumerRoot),
-  ];
-  if (diagnostics.length > 0) {
-    throw new Error(
-      `delivery-plan-not-executable:${canonicalJson(diagnostics)}`,
-    );
-  }
-  const canonical = canonicalJson(plan);
-  const bytes = new TextEncoder().encode(`${canonical}\n`);
-  const rawSha256 = createHash("sha256").update(bytes).digest("hex");
-  const planHash = hashCanonicalValue(plan);
-  const closure = structuredClone(readiness.closure);
-  return {
-    plan,
-    bytes,
-    rawSha256,
-    planHash,
-    closure,
-    receipt: {
-      plan: {
-        path: IMPLEMENT_PLAN_PATH,
-        rawSha256,
-        canonicalHash: planHash,
+  try {
+    const plan = normalizeDraft(draft);
+    const graph = graphFromPlan(plan);
+    const readiness = assessImplementGraphReadiness(
+      options.consumerRoot,
+      graph,
+      {
+        completedTasks: [],
+        blockedTasks: [],
+        appliedPhases: [],
       },
-      verificationClosure: structuredClone(closure),
-    },
-    tasksMarkdown: renderTasks(plan),
-  };
+    );
+    const diagnostics = [
+      ...readiness.closure.diagnostics,
+      ...deliveryVerificationDiagnostics(plan, options.consumerRoot),
+    ] as DesignPlanDiagnostic[];
+    if (diagnostics.length > 0) {
+      throw new DesignPlanValidationError(
+        `delivery-plan-not-executable:${canonicalJson(diagnostics)}`,
+        diagnostics,
+      );
+    }
+    const canonical = canonicalJson(plan);
+    const bytes = new TextEncoder().encode(`${canonical}\n`);
+    const rawSha256 = createHash("sha256").update(bytes).digest("hex");
+    const planHash = hashCanonicalValue(plan);
+    const closure = structuredClone(readiness.closure);
+    return {
+      plan,
+      bytes,
+      rawSha256,
+      planHash,
+      closure,
+      receipt: {
+        plan: {
+          path: IMPLEMENT_PLAN_PATH,
+          rawSha256,
+          canonicalHash: planHash,
+        },
+        verificationClosure: structuredClone(closure),
+      },
+      tasksMarkdown: renderTasks(plan),
+    };
+  } catch (error) {
+    throw asPlanValidationError(error);
+  }
 }
 
 export function parseImplementPlan(bytes: Uint8Array): ImplementPlan {

@@ -1,6 +1,12 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import {
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+} from "@earendil-works/pi-ai/providers/faux";
+import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import { Activation } from "../src/activation.ts";
 import type { ChildSessionResult } from "../src/child-session.ts";
@@ -12,7 +18,9 @@ import {
   PacketRuntime,
 } from "../src/packet-runtime.ts";
 import { ParentPayloadBridge } from "../src/parent-payload-bridge.ts";
-import { parseRoutePolicy } from "../src/route-policy.ts";
+import { runtimeForProvider } from "../src/parent-provider.ts";
+import { parentRoutePolicy, parseRoutePolicy } from "../src/route-policy.ts";
+import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
 
 const ZERO_USAGE = {
   input: 0,
@@ -479,7 +487,7 @@ describe("PacketRuntime", () => {
     });
   });
 
-  it("does not restart a malformed Design or Diagnose packet", async () => {
+  it("restarts a malformed Design or Diagnose packet exactly once", async () => {
     let designCalls = 0;
     const design = activeRuntime(async () => {
       designCalls += 1;
@@ -492,7 +500,7 @@ describe("PacketRuntime", () => {
     await expect(
       design.execute("run", { request: packet("design") }, context),
     ).resolves.toMatchObject({ ok: false, failure: { kind: "artifact" } });
-    expect(designCalls).toBe(1);
+    expect(designCalls).toBe(2);
 
     let diagnoseCalls = 0;
     const diagnose = activeRuntime(async () => {
@@ -510,7 +518,99 @@ describe("PacketRuntime", () => {
         context,
       ),
     ).resolves.toMatchObject({ ok: false, failure: { kind: "artifact" } });
-    expect(diagnoseCalls).toBe(1);
+    expect(diagnoseCalls).toBe(2);
+  });
+
+  it("preserves usage from a broker-retried malformed child", async () => {
+    const requestId = "packet-broker-usage";
+    const validEvidence = {
+      id: requestId,
+      role: "design-explorer",
+      kind: "evidence",
+      packet_id: requestId,
+      module_name: "packet-runtime",
+      scope: ["src/packet-runtime.ts"],
+      files_read: ["src/packet-runtime.ts"],
+      evidence: [
+        {
+          claim: "packet runtime owns broker usage aggregation",
+          path: "src/packet-runtime.ts",
+          line_start: 1,
+          line_end: 1,
+        },
+      ],
+      existing_structures: ["PacketRuntime"],
+      existing_conventions: [],
+      constraints_discovered: [],
+      open_questions: [],
+      dependencies: [],
+      write_set_hints: [],
+      validation_hints: ["compare aggregate usage"],
+      agents_impact_hints: ["none"],
+      risks: [],
+      success_criteria_hints: ["all broker attempts are counted"],
+    };
+    const response = (value: Record<string, unknown>, id: string) =>
+      fauxAssistantMessage(fauxToolCall("abel_submit_result", value, { id }), {
+        stopReason: "toolUse",
+      });
+    const run = async (
+      providerName: string,
+      responses: ReturnType<typeof fauxAssistantMessage>[],
+    ) => {
+      const faux = fauxProvider({ provider: providerName, api: "faux" });
+      faux.setResponses(responses);
+      const modelRuntime = await runtimeForProvider(faux.provider);
+      const activation = new Activation();
+      activation.request();
+      activation.activate();
+      const runtime = new PacketRuntime({
+        activation,
+        parentPayloadBridge: new PassthroughParentPayloadBridge(),
+        routePolicy: parentRoutePolicy({
+          contextWindow: faux.getModel().contextWindow,
+          maxTokens: faux.getModel().maxTokens,
+        }),
+      });
+      try {
+        const result = await runtime.execute(
+          "run",
+          { request: packet(requestId) },
+          {
+            cwd: process.cwd(),
+            model: faux.getModel(),
+            modelRegistry: new ModelRegistry(modelRuntime),
+          },
+        );
+        return { result, calls: faux.state.callCount };
+      } finally {
+        await runtime.drain();
+      }
+    };
+
+    const retried = await run("packet-broker-usage-retry", [
+      response(
+        { ...validEvidence, id: "wrong-first", packet_id: "wrong-first" },
+        "wrong-first",
+      ),
+      response(
+        { ...validEvidence, id: "wrong-second", packet_id: "wrong-second" },
+        "wrong-second",
+      ),
+      response(validEvidence, "accepted-after-retry"),
+    ]);
+    const baseline = await run("packet-broker-usage-baseline", [
+      response(validEvidence, "accepted-without-retry"),
+    ]);
+
+    expect(retried.result).toMatchObject({ ok: true });
+    expect(baseline.result).toMatchObject({ ok: true });
+    expect(retried.calls).toBe(3);
+    expect(baseline.calls).toBe(1);
+    const retriedTokens = retried.result.usage?.totalTokens ?? 0;
+    const baselineTokens = baseline.result.usage?.totalTokens ?? 0;
+    expect(baselineTokens).toBeGreaterThan(0);
+    expect(retriedTokens).toBeGreaterThan(baselineTokens);
   });
 
   it("drains activation and parent payload state on finish", async () => {

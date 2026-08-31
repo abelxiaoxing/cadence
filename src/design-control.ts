@@ -15,6 +15,7 @@ import {
   compileImplementPlan,
   compileReadyReceipt,
   type DeliveryArtifactBinding,
+  DesignPlanValidationError,
   type GateApprovalProof,
   parseGateAReceipt,
   parseImplementPlan,
@@ -87,6 +88,10 @@ export type DesignControlRequest =
       runId: string;
       operationId: string;
       gate: "gate-b";
+    }
+  | {
+      operation: "validate-plan-draft";
+      runId: string;
     }
   | {
       operation: "compile-plan";
@@ -198,7 +203,10 @@ export function validateDesignControlRequest(
       ? { ok: true, value: structuredClone(value) as DesignControlRequest }
       : { ok: false, code: "invalid-design-control-request" };
   }
-  if (value.operation === "status") {
+  if (
+    value.operation === "status" ||
+    value.operation === "validate-plan-draft"
+  ) {
     return exactKeys(value, ["operation", "runId"]) &&
       typeof value.runId === "string" &&
       IDENTIFIER.test(value.runId)
@@ -508,6 +516,8 @@ export class DesignController {
         return this.#journal.recordDecision(request);
       case "approve-gate":
         return this.#journal.approveGate(request);
+      case "validate-plan-draft":
+        return this.#validatePlanDraft(request);
       case "compile-plan":
         return this.#compilePlan(request);
       case "finalize-delivery":
@@ -539,7 +549,7 @@ export class DesignController {
     const canApproveGate =
       !design.gates.gateA.current ||
       (planReadyForGateB && !design.gates.gateB.current);
-    const legalActions = terminal
+    const legalOperations = terminal
       ? ["status"]
       : [
           "status",
@@ -549,7 +559,12 @@ export class DesignController {
             ? ["bind-change"]
             : []),
           ...(design.gates.gateA.current && design.change
-            ? ["write-artifact", "delete-artifact", "compile-plan"]
+            ? [
+                "write-artifact",
+                "delete-artifact",
+                "validate-plan-draft",
+                "compile-plan",
+              ]
             : []),
           ...(design.change &&
           design.plan &&
@@ -557,7 +572,6 @@ export class DesignController {
           design.gates.gateB.current
             ? ["finalize-delivery"]
             : []),
-          "finish",
         ];
     return {
       runId: run.runId,
@@ -566,7 +580,8 @@ export class DesignController {
       state: run.state,
       completed: run.state === "completed",
       ...(run.pauseCode ? { pause: { code: run.pauseCode } } : {}),
-      legalActions,
+      legalOperations,
+      packetActions: terminal ? [] : ["finish"],
       design,
     };
   }
@@ -772,6 +787,51 @@ export class DesignController {
     }
   }
 
+  #readCompiledDraft(runId: string) {
+    const status = this.#journal.status(runId);
+    if (!status.change) throw new Error("design-change-required");
+    if (!status.gates.gateA.current) throw new Error("design-gate-a-required");
+    const draftPath = safeRelative(status.change, "plan-draft.json");
+    const draftBytes = readSafeFile(this.consumerRoot, draftPath);
+    let draft: unknown;
+    try {
+      draft = JSON.parse(draftBytes.toString("utf8"));
+    } catch {
+      throw new DesignPlanValidationError("design-plan-draft-invalid", [
+        { code: "design-plan-draft-invalid", field: "plan-draft.json" },
+      ]);
+    }
+    const compiled = compileImplementPlan(draft, {
+      consumerRoot: this.consumerRoot,
+    });
+    if (compiled.plan.changeId !== status.change) {
+      throw new DesignPlanValidationError("design-plan-change-mismatch", [
+        { code: "design-plan-change-mismatch", field: "changeId" },
+      ]);
+    }
+    return { status, compiled };
+  }
+
+  #validatePlanDraft(
+    request: Extract<
+      DesignControlRequest,
+      { operation: "validate-plan-draft" }
+    >,
+  ) {
+    const { compiled } = this.#readCompiledDraft(request.runId);
+    return {
+      operation: request.operation,
+      runId: request.runId,
+      valid: true,
+      plan: {
+        taskCount: compiled.plan.tasks.length,
+        outputCount: compiled.plan.outputs.length,
+        rawSha256: compiled.rawSha256,
+        canonicalHash: compiled.planHash,
+      },
+    };
+  }
+
   #compilePlan(
     request: Extract<DesignControlRequest, { operation: "compile-plan" }>,
   ) {
@@ -787,32 +847,17 @@ export class DesignController {
     });
     try {
       this.#journal.assertNoPendingArtifactOperations(request.runId);
-      const status = this.#journal.status(request.runId);
-      if (!status.change) throw new Error("design-change-required");
-      if (!status.gates.gateA.current)
-        throw new Error("design-gate-a-required");
-      const readyPath = safeRelative(status.change, "ready.yaml");
-      const gateAPath = safeRelative(status.change, "gate-a.yaml");
+      const { status, compiled } = this.#readCompiledDraft(request.runId);
+      const change = status.change;
+      if (!change) throw new Error("design-change-required");
+      const readyPath = safeRelative(change, "ready.yaml");
+      const gateAPath = safeRelative(change, "gate-a.yaml");
       removeSafeFile(this.consumerRoot, readyPath);
       removeSafeFile(this.consumerRoot, gateAPath);
-      const draftPath = safeRelative(status.change, "plan-draft.json");
-      const draftBytes = readSafeFile(this.consumerRoot, draftPath);
-      let draft: unknown;
-      try {
-        draft = JSON.parse(draftBytes.toString("utf8"));
-      } catch {
-        throw new Error("design-plan-draft-invalid");
-      }
-      const compiled = compileImplementPlan(draft as never, {
-        consumerRoot: this.consumerRoot,
-      });
-      if (compiled.plan.changeId !== status.change) {
-        throw new Error("design-plan-change-mismatch");
-      }
       this.#journal.assertFinalizationLease(lease);
       atomicWrite(
         this.consumerRoot,
-        safeRelative(status.change, "implement-plan.json"),
+        safeRelative(change, "implement-plan.json"),
         compiled.bytes,
       );
       return this.#journal.recordCompiledPlan({

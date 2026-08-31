@@ -187,6 +187,7 @@ export function sanitizeDisplayText(value: unknown, maxLength = 240): string {
 }
 
 const SAFE_WORKFLOW_CODE = /^[a-z0-9](?:[a-z0-9._:-]{0,126}[a-z0-9])?$/iu;
+const SAFE_DESIGN_DETAIL_VALUE = /^[a-z0-9](?:[a-z0-9._:-]{0,126}[a-z0-9])?$/iu;
 const SAFE_CONTROL_ACTIONS = new Set([
   "start",
   "status",
@@ -218,6 +219,82 @@ export function sanitizeFailureReason(value: unknown, maxLength = 240): string {
     ? normalized
     : "subagent failed";
   return safe.slice(0, Math.max(0, maxLength));
+}
+
+function safeDesignFailure(value: unknown): {
+  operation: string;
+  code: string;
+  diagnostics: Array<Record<string, string>>;
+} | null {
+  const failure = asRecord(value);
+  if (
+    failure?.kind !== "design-control-failure" ||
+    typeof failure.operation !== "string" ||
+    !SAFE_DESIGN_DETAIL_VALUE.test(failure.operation) ||
+    typeof failure.code !== "string" ||
+    !SAFE_DESIGN_DETAIL_VALUE.test(failure.code) ||
+    !Array.isArray(failure.diagnostics)
+  ) {
+    return null;
+  }
+  const diagnostics = failure.diagnostics.flatMap((candidate) => {
+    const record = asRecord(candidate);
+    if (
+      !record ||
+      typeof record.code !== "string" ||
+      !SAFE_DESIGN_DETAIL_VALUE.test(record.code)
+    ) {
+      return [];
+    }
+    return [
+      Object.fromEntries(
+        Object.entries(record).filter(
+          ([, entry]) =>
+            typeof entry === "string" && SAFE_DESIGN_DETAIL_VALUE.test(entry),
+        ),
+      ) as Record<string, string>,
+    ];
+  });
+  return {
+    operation: failure.operation,
+    code: failure.code,
+    diagnostics,
+  };
+}
+
+function renderDesignFailure(
+  failure: ReturnType<typeof safeDesignFailure> & object,
+  expanded: boolean,
+  theme?: ActivityTheme,
+): Component {
+  const title = styled(
+    theme,
+    "error",
+    `${dispatchLabel("design")} ${failure.operation} failed: ${failure.code}`,
+  );
+  if (!expanded || failure.diagnostics.length === 0) {
+    const suffix =
+      failure.diagnostics.length > 0
+        ? styled(
+            theme,
+            "muted",
+            ` (${failure.diagnostics.length} diagnostic${failure.diagnostics.length === 1 ? "" : "s"})`,
+          )
+        : "";
+    return new Text(`${title}${suffix}`, 0, 0);
+  }
+  const lines = failure.diagnostics.map((diagnostic) => {
+    const details = Object.entries(diagnostic)
+      .filter(([key]) => key !== "code")
+      .map(([key, value]) => `${key}=${value}`)
+      .join(" · ");
+    return `  - ${diagnostic.code}${details ? ` · ${details}` : ""}`;
+  });
+  return new Text(
+    [title, ...lines.map((entry) => styled(theme, "muted", entry))].join("\n"),
+    0,
+    0,
+  );
 }
 
 export function formatElapsed(milliseconds: number): string {
@@ -1246,6 +1323,10 @@ export function renderActivityResult(
     return new ActivityInlineComponent(display, theme);
   }
   if (failed) {
+    const designFailure = safeDesignFailure(details?.designFailure);
+    if (args?.action === "design" && designFailure) {
+      return renderDesignFailure(designFailure, options.expanded, theme);
+    }
     return new Text(
       `${dispatchLabel(args?.action ?? args?.command)} failed`,
       0,

@@ -1446,7 +1446,7 @@ describe("durable WorkflowEngine service composition", () => {
       proposeCandidate: async (input: Record<string, unknown>) => {
         (input.onHeaders as () => void)();
         (input.onProgress as () => void)();
-        return { kind: "retryable" as const, code: "candidate-diff-invalid" };
+        return { kind: "retryable" as const, code: "candidate-patch-invalid" };
       },
     });
     const started = await engine.execute({
@@ -1457,7 +1457,7 @@ describe("durable WorkflowEngine service composition", () => {
     });
     expect(started).toMatchObject({
       state: "paused",
-      pause: { code: "candidate-diff-invalid" },
+      pause: { code: "candidate-patch-invalid" },
       routeBinding: {
         routeId: "primary",
         routeFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
@@ -1528,6 +1528,122 @@ describe("durable WorkflowEngine service composition", () => {
     });
     expect(replacementCalls).toBe(1);
     await engine.close();
+  });
+
+  it("rejects a rebind whose route meets only the generic minima but not the paused task", async () => {
+    const module = (await import("../src/workflow-engine.ts")) as Record<
+      string,
+      unknown
+    >;
+    const openDurableWorkflowEngine = module.openDurableWorkflowEngine as (
+      options: Record<string, unknown>,
+    ) => {
+      execute(command: unknown): Promise<Record<string, unknown>>;
+      close(): Promise<void> | void;
+    };
+    const fixture = directEngineFixture("task-capability-rebind");
+    const change = "task-capability-rebind";
+    const roles = [
+      "design-explorer",
+      "implementation-worker",
+      "diagnosis-worker",
+    ];
+    const parsed = parseRoutePolicy({
+      routes: {
+        capable: {
+          kind: "custom",
+          url: "https://capable.worker.invalid/v1",
+          model: "capable-worker",
+          dialect: "openai-responses",
+          apiKeyEnv: "CAPABLE_WORKER_KEY",
+          capabilities: {
+            roles,
+            dialects: ["openai-responses"],
+            contextWindow: 256_000,
+            maxTokens: 128_000,
+          },
+        },
+        "generic-minimum": {
+          kind: "custom",
+          url: "https://minimum.worker.invalid/v1",
+          model: "minimum-worker",
+          dialect: "openai-responses",
+          apiKeyEnv: "MINIMUM_WORKER_KEY",
+          capabilities: {
+            roles,
+            dialects: ["openai-responses"],
+            contextWindow: 16_000,
+            maxTokens: 8_000,
+          },
+        },
+      },
+      roles: Object.fromEntries(
+        roles.map((role) => [role, ["capable", "generic-minimum"]]),
+      ),
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const plan = packagePlan(change);
+    const engine = openDurableWorkflowEngine({
+      consumerRoot: fixture.consumerRoot,
+      stateRoot: fixture.stateRoot,
+      deliverySource: {
+        load: async () => ({
+          gate: "gate-b" as const,
+          revision: 1,
+          receiptHash: "6".repeat(64),
+          plan,
+        }),
+      },
+      routePolicy: parsed.policy,
+      proposeCandidate: async (input: Record<string, unknown>) => {
+        (input.onHeaders as () => void)();
+        (input.onProgress as () => void)();
+        return { kind: "paused" as const, code: "task-capability-hold" };
+      },
+      verifyPhase: async () => {
+        throw new Error("a paused proposal must not reach verification");
+      },
+      verifyChange: async () => ({
+        ok: true as const,
+        exitCode: 0 as const,
+        classification: "expected-green",
+      }),
+    });
+    try {
+      const paused = await engine.execute({
+        command: "start",
+        stage: "abel-implement",
+        change,
+        operationId: "task-capability-start",
+      });
+      expect(paused).toMatchObject({
+        state: "paused",
+        routeBinding: { routeId: "capable" },
+      });
+
+      await expect(
+        engine.execute({
+          command: "rebind",
+          stage: "abel-implement",
+          change,
+          operationId: "task-capability-rebind",
+          routeId: "generic-minimum",
+        }),
+      ).rejects.toThrow(/route-capability-insufficient/u);
+      await expect(
+        engine.execute({
+          command: "status",
+          stage: "abel-implement",
+          change,
+        }),
+      ).resolves.toMatchObject({
+        runId: paused.runId,
+        routeBinding: { routeId: "capable" },
+      });
+    } finally {
+      await engine.close();
+    }
   });
 
   it("mounts a safe non-system verification runner into the sandbox", async () => {
@@ -2706,6 +2822,75 @@ describe("durable WorkflowEngine service composition", () => {
       tasks: [{ taskId: "retained-task", state: "paused", phase: "green" }],
     });
     expect(resumedPhases).toEqual(["retained-task:green"]);
+    await engine.close();
+  });
+
+  it("clears stale attempt diagnostics when a revised delivery resets a task", async () => {
+    const module = await import("../src/workflow-engine.ts");
+    const fixture = directEngineFixture("diagnostic-delivery-reset");
+    const change = "diagnostic-delivery-reset";
+    const firstPlan = packagePlan(change);
+    const revisedPlan = structuredClone(firstPlan);
+    const revisedTask = revisedPlan.tasks[0];
+    if (!revisedTask) throw new Error("revised task missing");
+    revisedTask.context.contract = "revised approved package loader";
+    let revision = 1;
+    const engine = module.WorkflowEngine.open({
+      consumerRoot: fixture.consumerRoot,
+      stateRoot: fixture.stateRoot,
+      deliverySource: {
+        load: async () => ({
+          gate: "gate-b" as const,
+          revision,
+          receiptHash: (revision === 1 ? "a" : "b").repeat(64),
+          plan: revision === 1 ? firstPlan : revisedPlan,
+        }),
+      },
+      worker: {
+        runAttempt: async () =>
+          revision === 1
+            ? {
+                kind: "retryable" as const,
+                code: "invalid-structural-result",
+                attemptDiagnostic: {
+                  finalCategory: "mixed",
+                  submitAttempts: 1,
+                  schema: "invalid",
+                },
+              }
+            : { kind: "paused" as const, code: "new-delivery-pause" },
+        rebind: () => ({ ok: true as const, routeId: "inherited" }),
+      },
+      changeVerifier: {
+        verify: async () => ({ kind: "paused" as const, code: "unused" }),
+      },
+    });
+    const first = await engine.execute({
+      command: "start",
+      stage: "abel-implement",
+      change,
+      operationId: "diagnostic-revision-one",
+    });
+    expect(first).toMatchObject({
+      pause: {
+        code: "invalid-structural-result",
+        diagnostic: { schema: "invalid" },
+      },
+    });
+
+    revision = 2;
+    const resumed = await engine.execute({
+      command: "resume",
+      stage: "abel-implement",
+      change,
+      operationId: "diagnostic-revision-two",
+      deliveryRevision: 2,
+      receiptHash: "b".repeat(64),
+    });
+    expect(resumed).toMatchObject({ pause: { code: "new-delivery-pause" } });
+    expect(
+      (resumed.pause as Record<string, unknown>).diagnostic,
+    ).toBeUndefined();
     await engine.close();
   });
 

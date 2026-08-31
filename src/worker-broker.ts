@@ -7,12 +7,12 @@ import {
 } from "./route-policy.ts";
 
 export const ROUTE_ATTEMPT_BOUNDS = Object.freeze({
-  connectMs: 5_000,
-  firstResponseMs: 30_000,
-  idleMs: 60_000,
-  totalMs: 10 * 60_000,
+  connectMs: 10_000,
+  firstResponseMs: 90_000,
+  idleMs: 3 * 60_000,
+  totalMs: 20 * 60_000,
   cooldownMs: 30_000,
-  attemptsPerRoute: 1,
+  attemptsPerRoute: 2,
 });
 
 export type RouteHealthState = "healthy" | "open" | "half-open";
@@ -61,6 +61,7 @@ export interface RunWorkerAttemptInput<T> {
   requirements?: RouteRequirements;
   signal?: AbortSignal;
   onActivity?: (event: BrokerActivityUpdate) => void;
+  classifyResult?: (value: T) => string | undefined;
   execute(context: RouteAttemptContext): Promise<T>;
 }
 
@@ -218,6 +219,16 @@ export class WorkerBroker {
     this.#setRouteHealth(routeId, { state: "healthy" });
   }
 
+  #releaseHalfOpenProbeForRetry(routeId: string, code: string): void {
+    const health = this.#routeHealth(routeId);
+    if (health.state !== "half-open" || !health.probeInFlight) return;
+    this.#setRouteHealth(routeId, {
+      state: "open",
+      retryAt: this.#now(),
+      lastCode: code,
+    });
+  }
+
   select(input: {
     role: WorkerRole;
     dialects?: RouteDialect[];
@@ -372,6 +383,7 @@ export class WorkerBroker {
     requirements?: RouteRequirements;
     signal?: AbortSignal;
     onActivity?: (event: BrokerActivityUpdate) => void;
+    classifyResult?: (value: T) => string | undefined;
     execute: (context: RouteAttemptContext) => Promise<T>;
   }): Promise<
     | { ok: true; routeId: string; value: T; attempts: BrokerAttemptEvidence[] }
@@ -397,12 +409,20 @@ export class WorkerBroker {
     }
     const attempted = new Set<string>();
     const evidence: BrokerAttemptEvidence[] = [];
-    const maxAttempts = this.#policy.roles[input.role].filter((routeId) => {
-      const route = this.#policy.routes[routeId];
-      return route
-        ? capable(route, input.role, input.requirements ?? {})
-        : false;
-    }).length;
+    const capableRouteCount = this.#policy.roles[input.role].filter(
+      (routeId) => {
+        const route = this.#policy.routes[routeId];
+        return route
+          ? capable(route, input.role, input.requirements ?? {})
+          : false;
+      },
+    ).length;
+    const maxAttempts = Math.max(
+      1,
+      capableRouteCount > 1
+        ? capableRouteCount
+        : ROUTE_ATTEMPT_BOUNDS.attemptsPerRoute,
+    );
     for (;;) {
       const selection = this.select({
         role: input.role,
@@ -427,6 +447,9 @@ export class WorkerBroker {
           probeExpiresAt: this.#now() + ROUTE_ATTEMPT_BOUNDS.totalMs,
         });
       }
+      const routeAttempt = evidence.filter(
+        (item) => item.routeId === routeId,
+      ).length;
       const attempt = evidence.length + 1;
       emitBrokerActivity(input.onActivity, {
         state: "connecting",
@@ -450,6 +473,31 @@ export class WorkerBroker {
                   : "worker-progress",
             }),
         );
+        const semanticCode = input.classifyResult?.(value);
+        if (semanticCode) {
+          evidence.push({ routeId, code: semanticCode });
+          const routeHasRetry =
+            capableRouteCount === 1 &&
+            routeAttempt + 1 < ROUTE_ATTEMPT_BOUNDS.attemptsPerRoute;
+          if (routeHasRetry) {
+            this.#releaseHalfOpenProbeForRetry(routeId, semanticCode);
+            attempted.delete(routeId);
+          } else {
+            this.markFailure(routeId, semanticCode);
+          }
+          if (attempt < maxAttempts) {
+            emitBrokerActivity(input.onActivity, {
+              state: "retrying",
+              attempt,
+              maxAttempts,
+              code: semanticCode,
+              wait: "bounded-policy",
+            });
+            continue;
+          }
+          if (routeHasRetry) this.markFailure(routeId, semanticCode);
+          return { ok: true, routeId, value, attempts: evidence };
+        }
         this.markSuccess(routeId);
         return { ok: true, routeId, value, attempts: evidence };
       } catch (error) {
@@ -466,8 +514,16 @@ export class WorkerBroker {
           }
           return { ok: false, state: "cancelled", code, attempts: evidence };
         }
-        this.markFailure(routeId, code);
-        if (attempted.size < maxAttempts) {
+        const routeHasRetry =
+          capableRouteCount === 1 &&
+          routeAttempt + 1 < ROUTE_ATTEMPT_BOUNDS.attemptsPerRoute;
+        if (routeHasRetry) {
+          this.#releaseHalfOpenProbeForRetry(routeId, code);
+          attempted.delete(routeId);
+        } else {
+          this.markFailure(routeId, code);
+        }
+        if (attempt < maxAttempts) {
           emitBrokerActivity(input.onActivity, {
             state: "retrying",
             attempt,
@@ -475,6 +531,8 @@ export class WorkerBroker {
             code,
             wait: "bounded-policy",
           });
+        } else if (routeHasRetry) {
+          this.markFailure(routeId, code);
         }
       }
     }
@@ -615,6 +673,7 @@ export class RunWorkerBroker {
       ...(input.requirements ? { requirements: input.requirements } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
       ...(input.onActivity ? { onActivity: input.onActivity } : {}),
+      ...(input.classifyResult ? { classifyResult: input.classifyResult } : {}),
       execute: input.execute,
     });
     if (result.ok) {

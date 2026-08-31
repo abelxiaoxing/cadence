@@ -195,7 +195,7 @@ describe("capability and health aware Worker broker", () => {
     });
   });
 
-  it("enforces independent first-response timeout without hidden retry", async () => {
+  it("retries one route once after an independent first-response timeout", async () => {
     vi.useFakeTimers();
     const parse = requiredFunction<(value: unknown) => Record<string, unknown>>(
       policyModule,
@@ -231,14 +231,21 @@ describe("capability and health aware Worker broker", () => {
         });
       },
     });
-    await vi.advanceTimersByTimeAsync(30_001);
+    const bounds = brokerModule?.ROUTE_ATTEMPT_BOUNDS as {
+      firstResponseMs: number;
+    };
+    await vi.advanceTimersByTimeAsync(bounds.firstResponseMs + 1);
+    await vi.advanceTimersByTimeAsync(bounds.firstResponseMs + 1);
     await expect(pending).resolves.toMatchObject({
       ok: false,
       state: "paused",
       code: "first-response-timeout",
-      attempts: [{ routeId: "custom-primary", code: "first-response-timeout" }],
+      attempts: [
+        { routeId: "custom-primary", code: "first-response-timeout" },
+        { routeId: "custom-primary", code: "first-response-timeout" },
+      ],
     });
-    expect(attempts).toBe(1);
+    expect(attempts).toBe(2);
   });
 
   it("settles a timeout even when the executor ignores cancellation", async () => {
@@ -263,11 +270,18 @@ describe("capability and health aware Worker broker", () => {
       },
     });
 
-    await vi.advanceTimersByTimeAsync(30_001);
+    const bounds = brokerModule?.ROUTE_ATTEMPT_BOUNDS as {
+      firstResponseMs: number;
+    };
+    await vi.advanceTimersByTimeAsync(bounds.firstResponseMs + 1);
+    await vi.advanceTimersByTimeAsync(bounds.firstResponseMs + 1);
     await expect(pending).resolves.toMatchObject({
       ok: false,
       code: "first-response-timeout",
-      attempts: [{ routeId: "custom-primary", code: "first-response-timeout" }],
+      attempts: [
+        { routeId: "custom-primary", code: "first-response-timeout" },
+        { routeId: "custom-primary", code: "first-response-timeout" },
+      ],
     });
   });
 
@@ -326,6 +340,142 @@ describe("capability and health aware Worker broker", () => {
       /custom-primary|parent-fallback|primary\.invalid|private transport detail/i,
     );
   });
+
+  it("fails over a typed semantic result without widening its declared routes", async () => {
+    const parse = requiredFunction<(value: unknown) => Record<string, unknown>>(
+      policyModule,
+      "parseRoutePolicy",
+    );
+    const brokerClass = brokerModule?.WorkerBroker as new (
+      policy: Record<string, unknown>,
+    ) => {
+      run(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+    };
+    const parsed = parse(policy());
+    const broker = new brokerClass(parsed.policy as Record<string, unknown>);
+    let attempts = 0;
+    const result = await broker.run({
+      operationId: "semantic-failover-operation",
+      role: "implementation-worker",
+      classifyResult(value: { code?: string }) {
+        return value.code === "invalid-structural-result"
+          ? value.code
+          : undefined;
+      },
+      execute: async (attempt: { onHeaders(): void; onProgress(): void }) => {
+        attempts += 1;
+        attempt.onHeaders();
+        attempt.onProgress();
+        return attempts === 1
+          ? { kind: "retryable", code: "invalid-structural-result" }
+          : { kind: "candidate" };
+      },
+    });
+    expect(result).toMatchObject({ ok: true, value: { kind: "candidate" } });
+    expect(attempts).toBe(2);
+  });
+
+  it("retries one route once for a malformed structural result", async () => {
+    const parse = requiredFunction<(value: unknown) => Record<string, unknown>>(
+      policyModule,
+      "parseRoutePolicy",
+    );
+    const brokerClass = brokerModule?.WorkerBroker as new (
+      policy: Record<string, unknown>,
+    ) => {
+      run(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+      status(): Record<string, unknown>;
+    };
+    const parsed = parse(policy(["custom-primary"]));
+    const broker = new brokerClass(parsed.policy as Record<string, unknown>);
+    let attempts = 0;
+    const result = await broker.run({
+      operationId: "single-route-semantic-retry",
+      role: "implementation-worker",
+      classifyResult(value: { code?: string }) {
+        return value.code;
+      },
+      execute: async (attempt: { onHeaders(): void; onProgress(): void }) => {
+        attempts += 1;
+        attempt.onHeaders();
+        attempt.onProgress();
+        return { kind: "retryable", code: "invalid-structural-result" };
+      },
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      attempts: [
+        { routeId: "custom-primary", code: "invalid-structural-result" },
+        { routeId: "custom-primary", code: "invalid-structural-result" },
+      ],
+    });
+    expect(attempts).toBe(2);
+    expect(JSON.stringify(broker.status())).toContain('"health":"open"');
+  });
+
+  it.each(["transport", "semantic"] as const)(
+    "releases a failed half-open %s probe before its bounded same-route retry",
+    async (failureMode) => {
+      const parse = requiredFunction<
+        (value: unknown) => Record<string, unknown>
+      >(policyModule, "parseRoutePolicy");
+      const brokerClass = brokerModule?.WorkerBroker as new (
+        policy: Record<string, unknown>,
+        options: Record<string, unknown>,
+      ) => {
+        markFailure(routeId: string, code: string): void;
+        run(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+        status(): Record<string, unknown>;
+      };
+      const bounds = brokerModule?.ROUTE_ATTEMPT_BOUNDS as {
+        cooldownMs: number;
+      };
+      const parsed = parse(policy(["custom-primary"]));
+      let now = 1_000;
+      const broker = new brokerClass(parsed.policy as Record<string, unknown>, {
+        now: () => now,
+      });
+      broker.markFailure("custom-primary", "transport-failure");
+      now += bounds.cooldownMs + 1;
+
+      let attempts = 0;
+      const result = await broker.run({
+        operationId: `half-open-${failureMode}-retry`,
+        role: "implementation-worker",
+        classifyResult(value: { code?: string }) {
+          return value.code;
+        },
+        execute: async (attempt: { onHeaders(): void; onProgress(): void }) => {
+          attempts += 1;
+          attempt.onHeaders();
+          attempt.onProgress();
+          if (attempts === 1) {
+            if (failureMode === "transport") {
+              throw new Error("private half-open transport failure");
+            }
+            return {
+              kind: "retryable",
+              code: "invalid-structural-result",
+            };
+          }
+          return { kind: "candidate" };
+        },
+      });
+
+      expect(result).toMatchObject({
+        ok: true,
+        routeId: "custom-primary",
+        value: { kind: "candidate" },
+      });
+      expect(attempts).toBe(2);
+      expect((broker.status() as { routes: unknown[] }).routes).toContainEqual(
+        expect.objectContaining({
+          id: "custom-primary",
+          health: "healthy",
+        }),
+      );
+    },
+  );
 
   it("allows typed compatible rebind but rejects route and authority widening", () => {
     const parse = requiredFunction<(value: unknown) => Record<string, unknown>>(
