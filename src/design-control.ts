@@ -456,12 +456,21 @@ export class DesignController {
   private constructor(options: DesignControllerOptions) {
     this.consumerRoot = path.resolve(options.consumerRoot);
     this.#runs = RunStore.open(options.stateRoot);
-    this.#journal = DesignJournal.open(options.stateRoot, {
-      ...(options.now ? { now: options.now } : {}),
-      ...(options.finalizationLeaseMs !== undefined
-        ? { finalizationLeaseMs: options.finalizationLeaseMs }
-        : {}),
-    });
+    try {
+      this.#journal = DesignJournal.open(options.stateRoot, {
+        ...(options.now ? { now: options.now } : {}),
+        ...(options.finalizationLeaseMs !== undefined
+          ? { finalizationLeaseMs: options.finalizationLeaseMs }
+          : {}),
+      });
+    } catch (error) {
+      try {
+        this.#runs.close();
+      } catch {
+        // The Design journal initialization failure remains authoritative.
+      }
+      throw error;
+    }
     this.#inspectOpenSpec = options.inspectOpenSpec;
   }
 
@@ -588,18 +597,32 @@ export class DesignController {
 
   #start(request: Extract<DesignControlRequest, { operation: "start" }>) {
     const fromRequirement = "requirement" in request;
-    const run = this.#runs.startRun({
-      stage: "abel-design",
-      ...(fromRequirement
-        ? {
-            provisionalKey: transientHash(
-              "abel-design-requirement",
-              request.requirement,
-            ),
-          }
-        : { change: request.change }),
-      operationId: request.operationId,
-    });
+    let run: ReturnType<RunStore["startRun"]>;
+    try {
+      run = this.#runs.startRun({
+        stage: "abel-design",
+        ...(fromRequirement
+          ? {
+              provisionalKey: transientHash(
+                "abel-design-requirement",
+                request.requirement,
+              ),
+              provisionalAliases: [
+                transientHash(
+                  "abel-design-requirement-v1",
+                  request.requirement,
+                ),
+              ],
+            }
+          : { change: request.change }),
+        operationId: request.operationId,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "operation-id-conflict") {
+        throw new Error("design-operation-conflict", { cause: error });
+      }
+      throw error;
+    }
     if (run.state === "created") {
       this.#runs.transition({
         runId: run.runId,

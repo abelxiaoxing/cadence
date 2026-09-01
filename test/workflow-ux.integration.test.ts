@@ -250,14 +250,20 @@ describe("four-workflow user experience", () => {
         },
         { cwd: packageRoot },
       );
+      const privateRequirement = "private requirement must not be reflected";
+      const designInput = {
+        action: "design",
+        request: {
+          operation: "start",
+          operationId: "schema-design-start",
+          requirement: privateRequirement,
+        },
+      };
       let designError: unknown;
       try {
         await tool.execute(
           "schema-design-call",
-          {
-            action: "design",
-            request: { operation: "status", runId: "run-schema-status" },
-          },
+          designInput,
           undefined,
           undefined,
           { cwd: packageRoot, mode: "json" },
@@ -266,10 +272,36 @@ describe("four-workflow user experience", () => {
         designError = error;
       }
       expect(designError).toBeInstanceOf(Error);
-      expect((designError as Error).name).toBe("RunStoreResetError");
+      expect((designError as Error).name).toBe("DesignControlError");
       expect((designError as Error).message).toBe(
-        `run-store-reset-required: back up and remove the private run store at ${databasePath}, then retry the operation`,
+        "design-store-migration-failed",
       );
+      const designFailure = await handlers.get("tool_result")?.({
+        type: "tool_result",
+        toolName: DISPATCH_TOOL,
+        toolCallId: "schema-design-call",
+        input: designInput,
+        content: [{ type: "text", text: "design-store-migration-failed" }],
+        details: undefined,
+        isError: true,
+      });
+      expect(designFailure).toMatchObject({
+        details: {
+          designFailure: {
+            code: "design-store-migration-failed",
+            diagnostics: [
+              {
+                code: "design-store-migration-failed",
+                category: "storage",
+                field: "schemaVersion",
+                retryable: false,
+              },
+            ],
+          },
+        },
+      });
+      expect(JSON.stringify(designFailure)).not.toContain(databasePath);
+      expect(JSON.stringify(designFailure)).not.toContain(privateRequirement);
     } finally {
       rmSync(databaseRoot, { recursive: true, force: true });
     }

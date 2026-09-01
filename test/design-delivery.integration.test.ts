@@ -460,6 +460,26 @@ describe("safe private Design artifact mutation", () => {
         packetActions: ["finish"],
       });
       const runId = String(started.runId);
+      expect(
+        await controller.execute({
+          operation: "status",
+          runId,
+        }),
+      ).toEqual(started);
+      expect(
+        await controller.execute({
+          operation: "start",
+          operationId: "start-from-requirement",
+          requirement: `  ${requirement}\r\n`,
+        }),
+      ).toEqual(started);
+      await expect(
+        controller.execute({
+          operation: "start",
+          operationId: "start-from-requirement",
+          requirement: "A conflicting normalized requirement",
+        }),
+      ).rejects.toThrow(/design-operation-conflict/u);
 
       const decision = await controller.execute({
         operation: "record-decision",
@@ -525,6 +545,7 @@ describe("safe private Design artifact mutation", () => {
       });
       const durable =
         JSON.stringify(database.prepare("SELECT * FROM runs").all()) +
+        JSON.stringify(database.prepare("SELECT * FROM events").all()) +
         JSON.stringify(database.prepare("SELECT * FROM design_facts").all()) +
         JSON.stringify(
           database.prepare("SELECT * FROM design_operations").all(),
@@ -536,6 +557,184 @@ describe("safe private Design artifact mutation", () => {
       expect(durable).not.toContain(
         "The workflow remains recoverable and non-blocking.",
       );
+    } finally {
+      controller.close();
+    }
+  });
+
+  it.each([
+    ["minimal", "x", false],
+    ["English", "Design a durable run without changing the repository.", false],
+    ["Chinese", "设计修复文档批次的 UNSUPPORTED_DOCUMENT_TYPE 误报。", true],
+  ])(
+    "starts, replays, and restores a %s requirement",
+    async (_label, requirement, legacyV4) => {
+      const consumerRoot = mkdtempSync(
+        path.join(tmpdir(), "abel-design-start-input-consumer-"),
+      );
+      const stateHome = mkdtempSync(
+        path.join(tmpdir(), "abel-design-start-input-state-"),
+      );
+      roots.push(consumerRoot, stateHome);
+      const stateRoot = resolveStateRoot({
+        consumerRoot,
+        xdgStateHome: stateHome,
+      });
+      if (legacyV4) {
+        RunStore.open(stateRoot).close();
+        const legacy = new DatabaseSync(stateRoot.databasePath);
+        legacy.exec(`
+          CREATE TABLE schema_meta (
+            version INTEGER PRIMARY KEY CHECK (version = 4)
+          ) STRICT;
+          INSERT INTO schema_meta(version) VALUES (4);
+        `);
+        legacy.close();
+      }
+      const controller = DesignController.open({
+        consumerRoot,
+        stateRoot,
+        inspectOpenSpec: async () => {
+          throw new Error("unexpected-openspec-inspection");
+        },
+      });
+      try {
+        const request = {
+          operation: "start" as const,
+          operationId: "input-start",
+          requirement,
+        };
+        const started = await controller.execute(request);
+        expect(started).toMatchObject({
+          runId: expect.any(String),
+          stage: "abel-design",
+          state: "paused",
+        });
+        expect(await controller.execute(request)).toEqual(started);
+        expect(
+          await controller.execute({
+            operation: "status",
+            runId: String(started.runId),
+          }),
+        ).toEqual(started);
+        expect(existsSync(path.join(consumerRoot, "openspec/changes"))).toBe(
+          false,
+        );
+
+        const database = new DatabaseSync(stateRoot.databasePath, {
+          readOnly: true,
+        });
+        const durable = JSON.stringify(
+          database
+            .prepare(
+              `SELECT lookup_key, provisional_key, projection_json
+             FROM runs`,
+            )
+            .all(),
+        );
+        if (legacyV4) {
+          expect(
+            database
+              .prepare(
+                "SELECT name FROM sqlite_master WHERE name = 'schema_meta'",
+              )
+              .get(),
+          ).toBeUndefined();
+        }
+        database.close();
+        expect(durable).not.toContain(requirement);
+        expect(durable).toMatch(/[a-f0-9]{64}/u);
+      } finally {
+        controller.close();
+      }
+    },
+  );
+
+  it("replays the released v1.2.2 provisional hash without replacing its run or receipt", async () => {
+    const consumerRoot = mkdtempSync(
+      path.join(tmpdir(), "abel-design-v122-consumer-"),
+    );
+    const stateHome = mkdtempSync(
+      path.join(tmpdir(), "abel-design-v122-state-"),
+    );
+    roots.push(consumerRoot, stateHome);
+    const stateRoot = resolveStateRoot({
+      consumerRoot,
+      xdgStateHome: stateHome,
+    });
+    const requirement = "Preserve a released durable Design operation receipt";
+    const operationId = "released-v122-start";
+    const legacyHash = createHash("sha256")
+      .update("abel-design-requirement-v1")
+      .update("\0")
+      .update(requirement)
+      .digest("hex");
+    const legacyStore = RunStore.open(stateRoot);
+    const legacyRun = legacyStore.startRun({
+      stage: "abel-design",
+      provisionalKey: legacyHash,
+      operationId,
+    });
+    legacyStore.transition({
+      runId: legacyRun.runId,
+      to: "paused",
+      operationId: `design-await-gate-a-${createHash("sha256")
+        .update(legacyRun.runId)
+        .digest("hex")
+        .slice(0, 32)}`,
+      code: "design-awaiting-gate-a",
+    });
+    legacyStore.close();
+    const legacyDatabase = new DatabaseSync(stateRoot.databasePath);
+    legacyDatabase.exec(`
+      CREATE TABLE schema_meta (
+        version INTEGER PRIMARY KEY CHECK (version = 4)
+      ) STRICT;
+      INSERT INTO schema_meta(version) VALUES (4);
+    `);
+    legacyDatabase.close();
+
+    const controller = DesignController.open({
+      consumerRoot,
+      stateRoot,
+      inspectOpenSpec: async () => {
+        throw new Error("unexpected-openspec-inspection");
+      },
+    });
+    try {
+      const replay = await controller.execute({
+        operation: "start",
+        operationId,
+        requirement,
+      });
+      expect(replay).toMatchObject({
+        runId: legacyRun.runId,
+        state: "paused",
+      });
+      const database = new DatabaseSync(stateRoot.databasePath, {
+        readOnly: true,
+      });
+      expect(
+        Number(
+          (database.prepare("SELECT COUNT(*) AS count FROM runs").get() as any)
+            .count,
+        ),
+      ).toBe(1);
+      expect(
+        Number(
+          (
+            database
+              .prepare("SELECT COUNT(*) AS count FROM operations")
+              .get() as any
+          ).count,
+        ),
+      ).toBe(2);
+      expect(
+        database
+          .prepare("SELECT name FROM sqlite_master WHERE name = 'schema_meta'")
+          .get(),
+      ).toBeUndefined();
+      database.close();
     } finally {
       controller.close();
     }

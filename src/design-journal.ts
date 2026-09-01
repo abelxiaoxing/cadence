@@ -317,12 +317,21 @@ export class DesignJournal {
     }
     const stateRoot = prepareStateRoot(unresolved);
     const database = new DatabaseSync(stateRoot.databasePath);
-    database.exec("PRAGMA foreign_keys = ON");
-    database.exec("PRAGMA journal_mode = WAL");
-    database.exec("PRAGMA synchronous = FULL");
-    database.exec("PRAGMA busy_timeout = 5000");
-    database.exec(SCHEMA);
-    return new DesignJournal(stateRoot, database, options);
+    try {
+      database.exec("PRAGMA foreign_keys = ON");
+      database.exec("PRAGMA journal_mode = WAL");
+      database.exec("PRAGMA synchronous = FULL");
+      database.exec("PRAGMA busy_timeout = 5000");
+      database.exec(SCHEMA);
+      return new DesignJournal(stateRoot, database, options);
+    } catch (error) {
+      try {
+        database.close();
+      } catch {
+        // The Design journal initialization failure remains authoritative.
+      }
+      throw error;
+    }
   }
 
   #assertOpen(): void {
@@ -337,7 +346,11 @@ export class DesignJournal {
       this.#database.exec("COMMIT");
       return result;
     } catch (error) {
-      this.#database.exec("ROLLBACK");
+      try {
+        this.#database.exec("ROLLBACK");
+      } catch {
+        // The original operation or commit failure remains authoritative.
+      }
       throw error;
     }
   }

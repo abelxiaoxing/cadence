@@ -2,6 +2,7 @@ import { lstatSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { Worker } from "node:worker_threads";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 const RED_IDENTITY = "[CADENCE-V2:T1-control-store-delivery]";
@@ -72,6 +73,41 @@ function requiredFunction<T extends (...args: never[]) => unknown>(
     `${RED_IDENTITY}: ${exportName} must be exported`,
   ).toBeTypeOf("function");
   return loaded[exportName] as T;
+}
+
+type TestStateRoot = Record<string, unknown> & { databasePath: string };
+type TestRunStore = {
+  startRun(input: Record<string, unknown>): Record<string, unknown>;
+  status(runId: string): Record<string, unknown>;
+  close(): void;
+};
+
+function testStateRoot(label: string): TestStateRoot {
+  const resolve = requiredFunction<
+    (options: Record<string, unknown>) => TestStateRoot
+  >(stateRootModule, "resolveStateRoot");
+  return resolve({
+    consumerRoot: temporaryRoot(`${label}-consumer`),
+    xdgStateHome: temporaryRoot(`${label}-xdg`),
+    homeDir: temporaryRoot(`${label}-home`),
+  });
+}
+
+function openTestRunStore(stateRoot: TestStateRoot): TestRunStore {
+  const storeClass = requiredModule(runStoreModule, "RunStore").RunStore as {
+    open(resolved: Record<string, unknown>): TestRunStore;
+  };
+  return storeClass.open(stateRoot);
+}
+
+function rowCount(database: DatabaseSync, from: string): number {
+  return Number(
+    (
+      database.prepare(`SELECT COUNT(*) AS count FROM ${from}`).get() as {
+        count: number;
+      }
+    ).count,
+  );
 }
 
 function verification(
@@ -800,9 +836,280 @@ describe("repository-external private state", () => {
       path.join(String(prepared.rootDir), "control.sqlite3"),
     );
   });
+
+  it.skipIf(process.platform !== "win32")(
+    "initializes private state through native drive-letter and backslash paths",
+    () => {
+      const resolve = requiredFunction<
+        (options: Record<string, unknown>) => TestStateRoot
+      >(stateRootModule, "resolveStateRoot");
+      const consumerRoot = temporaryRoot("windows-consumer");
+      const userRoot = temporaryRoot("windows-user");
+      const resolved = resolve({
+        consumerRoot,
+        xdgStateHome: path.join(userRoot, "AppData", "Local"),
+        homeDir: userRoot,
+      });
+      expect(path.win32.isAbsolute(String(resolved.databasePath))).toBe(true);
+      expect(String(resolved.databasePath)).toMatch(/^[a-z]:\\/iu);
+      expect(String(resolved.databasePath)).toContain("\\");
+      const store = openTestRunStore(resolved);
+      expect(
+        store.startRun({
+          stage: "abel-design",
+          provisionalKey: "c".repeat(64),
+          operationId: "windows-native-start",
+        }),
+      ).toMatchObject({ runId: expect.any(String) });
+      store.close();
+    },
+  );
 });
 
 describe("durable run journal", () => {
+  it("migrates the supported schema_meta v4 store without losing runs or operation receipts", () => {
+    const resolved = testStateRoot("legacy-v4");
+    let store = openTestRunStore(resolved);
+    const created = store.startRun({
+      stage: "abel-design",
+      provisionalKey: "a".repeat(64),
+      operationId: "legacy-v4-start",
+    });
+    store.close();
+
+    const legacy = new DatabaseSync(String(resolved.databasePath));
+    legacy.exec(`
+      CREATE TABLE schema_meta (
+        version INTEGER PRIMARY KEY CHECK (version = 4)
+      ) STRICT;
+      INSERT INTO schema_meta(version) VALUES (4);
+    `);
+    const before = {
+      runs: rowCount(legacy, "runs"),
+      operations: rowCount(legacy, "operations"),
+    };
+    legacy.close();
+
+    store = openTestRunStore(resolved);
+    expect(store.status(String(created.runId))).toEqual(created);
+    expect(
+      store.startRun({
+        stage: "abel-design",
+        provisionalKey: "a".repeat(64),
+        operationId: "legacy-v4-start",
+      }),
+    ).toEqual(created);
+    store.close();
+
+    const migrated = new DatabaseSync(String(resolved.databasePath), {
+      readOnly: true,
+    });
+    expect(
+      migrated
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_meta'",
+        )
+        .get(),
+    ).toBeUndefined();
+    expect(rowCount(migrated, "runs")).toBe(before.runs);
+    expect(rowCount(migrated, "operations")).toBe(before.operations);
+    migrated.close();
+  });
+
+  it("rolls back a failed supported migration and preserves the legacy store", () => {
+    const migrationErrorClass = requiredModule(
+      runStoreModule,
+      "RunStoreMigrationError",
+    ).RunStoreMigrationError as new (
+      ...args: any[]
+    ) => Error;
+    const resolved = testStateRoot("legacy-migration-failure");
+    openTestRunStore(resolved).close();
+    const legacy = new DatabaseSync(String(resolved.databasePath));
+    legacy.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE schema_meta (
+        version INTEGER PRIMARY KEY CHECK (version = 4)
+      ) STRICT;
+      INSERT INTO schema_meta(version) VALUES (4);
+      CREATE TABLE migration_blocker (
+        version INTEGER NOT NULL REFERENCES schema_meta(version)
+      ) STRICT;
+      INSERT INTO migration_blocker(version) VALUES (4);
+    `);
+    legacy.close();
+
+    expect(() => openTestRunStore(resolved)).toThrow(migrationErrorClass);
+    const preserved = new DatabaseSync(String(resolved.databasePath), {
+      readOnly: true,
+    });
+    expect(preserved.prepare("SELECT version FROM schema_meta").get()).toEqual({
+      version: 4,
+    });
+    expect(
+      preserved.prepare("SELECT version FROM migration_blocker").get(),
+    ).toEqual({ version: 4 });
+    preserved.close();
+  });
+
+  it("fences a reused Design start operation id across different inputs", () => {
+    const resolved = testStateRoot("design-start-conflict");
+    const store = openTestRunStore(resolved);
+    store.startRun({
+      stage: "abel-design",
+      provisionalKey: "a".repeat(64),
+      operationId: "same-design-start",
+    });
+    expect(() =>
+      store.startRun({
+        stage: "abel-design",
+        provisionalKey: "b".repeat(64),
+        operationId: "same-design-start",
+      }),
+    ).toThrow(/operation-id-conflict/u);
+    store.close();
+
+    const database = new DatabaseSync(String(resolved.databasePath), {
+      readOnly: true,
+    });
+    expect(rowCount(database, "runs")).toBe(1);
+    expect(rowCount(database, "operations")).toBe(1);
+    database.close();
+  });
+
+  it("serializes concurrent Design starts without losing a run or receipt", async () => {
+    const resolved = testStateRoot("concurrent-design-start");
+    openTestRunStore(resolved).close();
+    const workerUrl = new URL(
+      "./fixtures/run-store-start-worker.mjs",
+      import.meta.url,
+    );
+    const workers = [
+      new Worker(workerUrl, {
+        execArgv: ["--experimental-strip-types"],
+        workerData: {
+          stateRoot: resolved,
+          provisionalKey: "d".repeat(64),
+          operationId: "concurrent-design-start-one",
+        },
+      }),
+      new Worker(workerUrl, {
+        execArgv: ["--experimental-strip-types"],
+        workerData: {
+          stateRoot: resolved,
+          provisionalKey: "e".repeat(64),
+          operationId: "concurrent-design-start-two",
+        },
+      }),
+    ];
+    const nextMessage = (worker: Worker) =>
+      new Promise<any>((resolveMessage, reject) => {
+        worker.once("message", resolveMessage);
+        worker.once("error", reject);
+      });
+    try {
+      expect(await Promise.all(workers.map(nextMessage))).toEqual([
+        "ready",
+        "ready",
+      ]);
+      for (const worker of workers) worker.postMessage("start");
+      const outcomes = await Promise.all(workers.map(nextMessage));
+      expect(outcomes).toEqual([
+        expect.objectContaining({ ok: true, runId: expect.any(String) }),
+        expect.objectContaining({ ok: true, runId: expect.any(String) }),
+      ]);
+      expect(outcomes[0].runId).not.toBe(outcomes[1].runId);
+    } finally {
+      await Promise.all(workers.map((worker) => worker.terminate()));
+    }
+
+    const database = new DatabaseSync(String(resolved.databasePath), {
+      readOnly: true,
+    });
+    expect(rowCount(database, "runs")).toBe(2);
+    expect(rowCount(database, "operations WHERE kind = 'start'")).toBe(2);
+    database.close();
+  });
+
+  it.each([
+    [
+      "before the run insert",
+      `CREATE TRIGGER fail_start_before_run
+       BEFORE INSERT ON runs
+       BEGIN SELECT RAISE(ABORT, 'forced-before-run'); END`,
+      "fail_start_before_run",
+    ],
+    [
+      "after the run insert and before the receipt",
+      `CREATE TRIGGER fail_start_before_receipt
+       BEFORE INSERT ON operations WHEN NEW.kind = 'start'
+       BEGIN SELECT RAISE(ABORT, 'forced-before-receipt'); END`,
+      "fail_start_before_receipt",
+    ],
+  ])(
+    "rolls back a Design start failure %s",
+    (_label, triggerSql, triggerName) => {
+      const resolved = testStateRoot(`atomic-start-${triggerName}`);
+      openTestRunStore(resolved).close();
+      const setup = new DatabaseSync(String(resolved.databasePath));
+      setup.exec(triggerSql);
+      setup.close();
+      const store = openTestRunStore(resolved);
+      const request = {
+        stage: "abel-design",
+        provisionalKey: "f".repeat(64),
+        operationId: "atomic-design-start",
+      };
+      expect(() => store.startRun(request)).toThrow(/forced-/u);
+      const failed = new DatabaseSync(String(resolved.databasePath));
+      expect(rowCount(failed, "runs")).toBe(0);
+      expect(rowCount(failed, "operations")).toBe(0);
+      failed.exec(`DROP TRIGGER ${triggerName}`);
+      failed.close();
+      expect(store.startRun(request)).toMatchObject({
+        runId: expect.any(String),
+      });
+      store.close();
+    },
+  );
+
+  it("rolls back a Design start when transaction commit fails", () => {
+    const resolved = testStateRoot("atomic-commit");
+    openTestRunStore(resolved).close();
+    const setup = new DatabaseSync(String(resolved.databasePath));
+    setup.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE deferred_parent (id TEXT PRIMARY KEY) STRICT;
+      CREATE TABLE deferred_commit_failure (
+        id TEXT NOT NULL REFERENCES deferred_parent(id)
+          DEFERRABLE INITIALLY DEFERRED
+      ) STRICT;
+      CREATE TRIGGER fail_start_commit
+      AFTER INSERT ON operations WHEN NEW.kind = 'start'
+      BEGIN
+        INSERT INTO deferred_commit_failure(id) VALUES ('missing');
+      END;
+    `);
+    setup.close();
+    const store = openTestRunStore(resolved);
+    const request = {
+      stage: "abel-design",
+      provisionalKey: "1".repeat(64),
+      operationId: "commit-failure-start",
+    };
+    expect(() => store.startRun(request)).toThrow(/constraint failed/u);
+    const failed = new DatabaseSync(String(resolved.databasePath));
+    expect(rowCount(failed, "runs")).toBe(0);
+    expect(rowCount(failed, "operations")).toBe(0);
+    expect(rowCount(failed, "deferred_commit_failure")).toBe(0);
+    failed.exec("DROP TRIGGER fail_start_commit");
+    failed.close();
+    expect(store.startRun(request)).toMatchObject({
+      runId: expect.any(String),
+    });
+    store.close();
+  });
+
   it("requires an explicit reset for a noncanonical private store", () => {
     const resolve = requiredFunction<
       (options: Record<string, unknown>) => Record<string, unknown>

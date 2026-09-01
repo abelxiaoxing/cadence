@@ -11,7 +11,9 @@ const packageDir = path.resolve(import.meta.dirname, "..");
 
 function harness(
   prompt: "abel-design" | "abel-implement" | "abel-diagnose",
-  engine: WorkflowControlEngine,
+  engine:
+    | WorkflowControlEngine
+    | (() => WorkflowControlEngine | Promise<WorkflowControlEngine>),
   initialActive: string[] = ["read", "bash"],
 ) {
   let tool: any;
@@ -41,7 +43,9 @@ function harness(
       active = [...next];
     },
   };
-  registerWorkflowControl(pi as never, async () => engine);
+  registerWorkflowControl(pi as never, async () =>
+    typeof engine === "function" ? engine() : engine,
+  );
   const invoke = (name: typeof prompt) => {
     handlers.get("input")?.({ text: `/${name} verified` });
     handlers.get("before_agent_start")?.(
@@ -76,7 +80,123 @@ function baseEngine(
   return { execute, async close() {} };
 }
 
+async function capturedDesignFailure(
+  item: ReturnType<typeof harness>,
+  toolCallId: string,
+  input: Record<string, unknown>,
+  code: string,
+) {
+  await expect(
+    item.tool.execute(toolCallId, input, undefined, undefined, item.context),
+  ).rejects.toMatchObject({ name: "DesignControlError", message: code });
+  return item.handlers.get("tool_result")?.({
+    type: "tool_result",
+    toolName: DISPATCH_TOOL,
+    toolCallId,
+    input,
+    content: [{ type: "text", text: code }],
+    details: undefined,
+    isError: true,
+  });
+}
+
 describe("semantic stage activation teardown", () => {
+  it("reports a result serialization failure and keeps Design tools restricted", async () => {
+    let attempts = 0;
+    const engine: WorkflowControlEngine = {
+      ...baseEngine(),
+      executeDesign: vi.fn(async () => {
+        attempts += 1;
+        return attempts === 1
+          ? ({ runId: "durable-run", state: "paused", invalid: 1n } as any)
+          : { runId: "durable-run", state: "paused" };
+      }),
+    };
+    const item = harness("abel-design", engine);
+    const input = {
+      action: "design",
+      request: {
+        operation: "start",
+        operationId: "serialization-start",
+        requirement: "safe requirement",
+      },
+    };
+    const patch = await capturedDesignFailure(
+      item,
+      "serialization-call",
+      input,
+      "design-receipt-serialization-failed",
+    );
+    expect(patch).toMatchObject({
+      details: {
+        designFailure: {
+          code: "design-receipt-serialization-failed",
+          diagnostics: [
+            {
+              code: "design-receipt-serialization-failed",
+              category: "control",
+              retryable: false,
+            },
+          ],
+        },
+      },
+    });
+    await expect(
+      item.tool.execute(
+        "serialization-retry",
+        input,
+        undefined,
+        undefined,
+        item.context,
+      ),
+    ).resolves.toMatchObject({ details: { runId: "durable-run" } });
+    expect(item.active()).toEqual(["read", DISPATCH_TOOL]);
+  });
+
+  it("classifies SQLite contention as a retryable Design store lock", async () => {
+    const locked = Object.assign(new Error("database is locked"), {
+      code: "ERR_SQLITE_ERROR",
+      errcode: 5,
+      errstr: "database is locked",
+    });
+    const engine: WorkflowControlEngine = {
+      ...baseEngine(),
+      executeDesign: vi.fn(async () => {
+        throw locked;
+      }),
+    };
+    const item = harness("abel-design", engine);
+    const input = {
+      action: "design",
+      request: {
+        operation: "start",
+        operationId: "locked-start",
+        requirement: "safe requirement",
+      },
+    };
+    const patch = await capturedDesignFailure(
+      item,
+      "locked-call",
+      input,
+      "design-store-locked",
+    );
+    expect(patch).toMatchObject({
+      details: {
+        designFailure: {
+          code: "design-store-locked",
+          diagnostics: [
+            {
+              code: "design-store-locked",
+              category: "storage",
+              retryable: true,
+            },
+          ],
+        },
+      },
+    });
+    expect(item.active()).toEqual(["read", DISPATCH_TOOL]);
+  });
+
   it("publishes safe structured finalization diagnostics while preserving tool failure", async () => {
     const engine: WorkflowControlEngine = {
       ...baseEngine(),

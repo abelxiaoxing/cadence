@@ -33,6 +33,17 @@ export class RunStoreFormatError extends Error {
   }
 }
 
+export class RunStoreMigrationError extends Error {
+  readonly code = "run-store-migration-failed" as const;
+  readonly schemaVersion: number;
+
+  constructor(schemaVersion: number, cause: unknown) {
+    super("run-store-migration-failed", { cause });
+    this.name = "RunStoreMigrationError";
+    this.schemaVersion = schemaVersion;
+  }
+}
+
 const CHANGE_NAME = /^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$/u;
 const IDENTIFIER = /^[a-z0-9](?:[a-z0-9._:-]{0,126}[a-z0-9])?$/iu;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -67,6 +78,7 @@ export interface StartRunInput {
   stage: RunStage;
   change?: string;
   provisionalKey?: string;
+  provisionalAliases?: readonly string[];
   operationId: string;
 }
 
@@ -236,6 +248,7 @@ const REQUIRED_DELIVERY_BINDING_COLUMNS = [
   "record_hash",
   "operation_id",
 ] as const;
+const LEGACY_SCHEMA_VERSION = 4;
 
 function applicationTables(database: DatabaseSync): string[] {
   return (
@@ -257,16 +270,121 @@ function tableColumns(database: DatabaseSync, table: string): string[] {
   ).map(({ name }) => name);
 }
 
-function hasCurrentSchema(database: DatabaseSync): boolean {
-  const tables = applicationTables(database);
+function hasRequiredCoreSchema(
+  database: DatabaseSync,
+  tables: readonly string[],
+): boolean {
   const deliveryBindingColumns = tableColumns(database, "delivery_bindings");
   return (
-    !tables.includes("schema_meta") &&
     REQUIRED_TABLES.every((table) => tables.includes(table)) &&
     REQUIRED_DELIVERY_BINDING_COLUMNS.every((column) =>
       deliveryBindingColumns.includes(column),
     )
   );
+}
+
+function hasCurrentSchema(
+  database: DatabaseSync,
+  tables: readonly string[],
+): boolean {
+  return (
+    !tables.includes("schema_meta") && hasRequiredCoreSchema(database, tables)
+  );
+}
+
+function isSupportedLegacySchema(
+  database: DatabaseSync,
+  tables: readonly string[],
+): boolean {
+  if (
+    !tables.includes("schema_meta") ||
+    !hasRequiredCoreSchema(database, tables) ||
+    tableColumns(database, "schema_meta").join("\0") !== "version"
+  ) {
+    return false;
+  }
+  const rows = database
+    .prepare("SELECT version FROM schema_meta")
+    .all() as unknown as Array<{
+    version: number;
+  }>;
+  return (
+    rows.length === 1 && Number(rows[0]?.version) === LEGACY_SCHEMA_VERSION
+  );
+}
+
+function isSqliteLocked(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "errcode" in error &&
+    ((error as { errcode?: unknown }).errcode === 5 ||
+      (error as { errcode?: unknown }).errcode === 6)
+  );
+}
+
+function isStoreUnavailable(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const errcode = (error as { errcode?: unknown }).errcode;
+  if ([8, 10, 13, 14, 23, 24].includes(Number(errcode))) return true;
+  const code = (error as { code?: unknown }).code;
+  return (
+    typeof code === "string" &&
+    [
+      "EACCES",
+      "EBUSY",
+      "EMFILE",
+      "ENFILE",
+      "ENOSPC",
+      "EPERM",
+      "EROFS",
+    ].includes(code)
+  );
+}
+
+function ensureCurrentSchema(
+  database: DatabaseSync,
+  databasePath: string,
+): void {
+  const initialTables = applicationTables(database);
+  if (hasCurrentSchema(database, initialTables)) return;
+  let transactionStarted = false;
+  let migrating = false;
+  try {
+    database.exec("BEGIN IMMEDIATE");
+    transactionStarted = true;
+    const tables = applicationTables(database);
+    if (tables.length === 0) {
+      database.exec(SCHEMA);
+    } else if (hasCurrentSchema(database, tables)) {
+      // Another opener may already have completed the same migration.
+    } else if (isSupportedLegacySchema(database, tables)) {
+      migrating = true;
+      database.exec("DROP TABLE schema_meta");
+    } else {
+      throw new RunStoreFormatError(databasePath);
+    }
+    database.exec("COMMIT");
+  } catch (error) {
+    if (transactionStarted) {
+      try {
+        database.exec("ROLLBACK");
+      } catch {
+        // The original schema or commit failure remains authoritative.
+      }
+    }
+    if (
+      error instanceof RunStoreFormatError ||
+      error instanceof RunStoreMigrationError ||
+      isSqliteLocked(error)
+    ) {
+      throw error;
+    }
+    if (migrating) {
+      throw new RunStoreMigrationError(LEGACY_SCHEMA_VERSION, error);
+    }
+    throw error;
+  }
 }
 
 function parseProjection(value: string): RunProjection {
@@ -281,22 +399,35 @@ function parseProjection(value: string): RunProjection {
   return parsed;
 }
 
-function lookupKey(input: StartRunInput): string {
+function lookupKeys(input: StartRunInput): string[] {
   const hasChange = typeof input.change === "string";
   const hasProvisional = typeof input.provisionalKey === "string";
   if (hasChange === hasProvisional) throw new Error("invalid-run-lookup-key");
   if (hasChange) {
+    if (input.provisionalAliases !== undefined) {
+      throw new Error("invalid-run-lookup-key");
+    }
     if (!CHANGE_NAME.test(input.change as string))
       throw new Error("invalid-change");
-    return `change:${input.change}`;
+    return [`change:${input.change}`];
   }
   if (!SHA256.test(input.provisionalKey as string)) {
+    throw new Error("invalid-provisional-key");
+  }
+  if (
+    input.provisionalAliases !== undefined &&
+    (!Array.isArray(input.provisionalAliases) ||
+      input.provisionalAliases.length > 4 ||
+      input.provisionalAliases.some((alias) => !SHA256.test(alias)))
+  ) {
     throw new Error("invalid-provisional-key");
   }
   if (input.stage !== "abel-design") {
     throw new Error("provisional-run-requires-design");
   }
-  return `provisional:${input.provisionalKey}`;
+  return [
+    ...new Set([input.provisionalKey, ...(input.provisionalAliases ?? [])]),
+  ].map((hash) => `provisional:${hash}`);
 }
 
 export class RunStore {
@@ -344,22 +475,37 @@ export class RunStore {
     try {
       database = new DatabaseSync(stateRoot.databasePath);
       configureDatabase(database, options.busyTimeoutMs);
-      const tables = applicationTables(database);
-      if (tables.length === 0) {
-        database.exec(SCHEMA);
-      } else if (!hasCurrentSchema(database)) {
-        throw new RunStoreFormatError(stateRoot.databasePath);
-      }
+      ensureCurrentSchema(database, stateRoot.databasePath);
     } catch (error) {
-      database?.close();
-      if (error instanceof RunStoreFormatError) throw error;
+      try {
+        database?.close();
+      } catch {
+        // The run-store initialization failure remains authoritative.
+      }
+      if (
+        error instanceof RunStoreFormatError ||
+        error instanceof RunStoreMigrationError ||
+        isSqliteLocked(error) ||
+        isStoreUnavailable(error)
+      ) {
+        throw error;
+      }
       throw new RunStoreFormatError(stateRoot.databasePath);
     }
     if (!database) throw new RunStoreFormatError(stateRoot.databasePath);
     const store = new RunStore(stateRoot, database, options);
-    store.#secureDatabaseFiles();
-    store.recoverExpiredLeases();
-    return store;
+    try {
+      store.#secureDatabaseFiles();
+      store.recoverExpiredLeases();
+      return store;
+    } catch (error) {
+      try {
+        database.close();
+      } catch {
+        // The permission or lease-recovery failure remains authoritative.
+      }
+      throw error;
+    }
   }
 
   #assertOpen(): void {
@@ -374,7 +520,11 @@ export class RunStore {
       value = work();
       this.#database.exec("COMMIT");
     } catch (error) {
-      this.#database.exec("ROLLBACK");
+      try {
+        this.#database.exec("ROLLBACK");
+      } catch {
+        // The original operation or commit failure remains authoritative.
+      }
       throw error;
     }
     this.#secureDatabaseFiles();
@@ -517,16 +667,62 @@ export class RunStore {
     if (input.stage !== "abel-design" && input.stage !== "abel-implement") {
       throw new Error("invalid-run-stage");
     }
-    const key = lookupKey(input);
+    const keys = lookupKeys(input);
+    const key = keys[0];
+    if (!key) throw new Error("invalid-run-lookup-key");
     return this.#transaction(() => {
-      let existing = this.#database
+      const operationRows = this.#database
         .prepare(
-          `SELECT run_id, projection_json FROM runs
-           WHERE root_hash = ? AND stage = ? AND lookup_key = ?`,
+          `SELECT operations.run_id, operations.kind, operations.state,
+                  operations.outcome_json, runs.lookup_key
+           FROM operations
+           JOIN runs ON runs.run_id = operations.run_id
+           WHERE runs.root_hash = ? AND runs.stage = ?
+             AND operations.operation_id = ?`,
         )
-        .get(this.stateRoot.consumerRootHash, input.stage, key) as
-        | RunRow
-        | undefined;
+        .all(
+          this.stateRoot.consumerRootHash,
+          input.stage,
+          input.operationId,
+        ) as unknown as Array<{
+        run_id: string;
+        kind: string;
+        state: string;
+        outcome_json: string | null;
+        lookup_key: string;
+      }>;
+      if (operationRows.length > 0) {
+        const replay = operationRows.find(
+          (row) =>
+            row.kind === "start" &&
+            row.state === "committed" &&
+            row.outcome_json !== null &&
+            keys.includes(row.lookup_key),
+        );
+        if (operationRows.length !== 1 || !replay) {
+          throw new Error("operation-id-conflict");
+        }
+        const outcome = parseProjection(replay.outcome_json as string);
+        if (outcome.runId !== replay.run_id) {
+          throw new Error("operation-outcome-invalid");
+        }
+        return outcome;
+      }
+      let existing: RunRow | undefined;
+      for (const compatibleKey of keys) {
+        const candidate = this.#database
+          .prepare(
+            `SELECT run_id, projection_json FROM runs
+             WHERE root_hash = ? AND stage = ? AND lookup_key = ?`,
+          )
+          .get(this.stateRoot.consumerRootHash, input.stage, compatibleKey) as
+          | RunRow
+          | undefined;
+        if (candidate && existing && candidate.run_id !== existing.run_id) {
+          throw new Error("run-lookup-conflict");
+        }
+        existing ??= candidate;
+      }
       if (existing) {
         const projection = parseProjection(existing.projection_json);
         if (

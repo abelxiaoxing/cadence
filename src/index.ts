@@ -69,9 +69,9 @@ import {
   unavailableRoutePolicy,
   type WorkerRoutePolicy,
 } from "./route-policy.ts";
-import { RunStoreFormatError } from "./run-store.ts";
+import { RunStoreFormatError, RunStoreMigrationError } from "./run-store.ts";
 import { observeSafePath } from "./safe-path.ts";
-import { resolveStateRoot } from "./state-root.ts";
+import { resolveStateRoot, StateRootError } from "./state-root.ts";
 import {
   ACTIVITY_DETAILS_KEY,
   ActivityController,
@@ -431,20 +431,160 @@ type SafeDesignFailure = {
   kind: "design-control-failure";
   operation: string;
   code: string;
-  diagnostics: ReadonlyArray<Record<string, string>>;
+  diagnostics: ReadonlyArray<Record<string, string | boolean>>;
 };
+
+type DesignFailureBoundary =
+  | "dispatch"
+  | "initialization"
+  | "execution"
+  | "serialization";
+
+function sqliteLocked(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "errcode" in error &&
+    ((error as { errcode?: unknown }).errcode === 5 ||
+      (error as { errcode?: unknown }).errcode === 6)
+  );
+}
+
+function sqliteUnavailable(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const errcode = Number((error as { errcode?: unknown }).errcode);
+  const code = (error as { code?: unknown }).code;
+  return (
+    [8, 10, 13, 14, 23, 24].includes(errcode) ||
+    (typeof code === "string" &&
+      [
+        "EACCES",
+        "EBUSY",
+        "EMFILE",
+        "ENFILE",
+        "ENOSPC",
+        "EPERM",
+        "EROFS",
+      ].includes(code))
+  );
+}
+
+function classifyDesignFailure(
+  error: unknown,
+  operation: string,
+  boundary: DesignFailureBoundary,
+): {
+  code: string;
+  category: string;
+  retryable: boolean;
+  field?: string;
+} {
+  const message = error instanceof Error ? error.message : "";
+  if (error instanceof DesignPlanValidationError) {
+    return {
+      code: "design-plan-validation-invalid",
+      category: "validation",
+      retryable: false,
+    };
+  }
+  if (
+    error instanceof RunStoreMigrationError ||
+    error instanceof RunStoreFormatError
+  ) {
+    return {
+      code: "design-store-migration-failed",
+      category: "storage",
+      retryable: false,
+      field: "schemaVersion",
+    };
+  }
+  if (sqliteLocked(error)) {
+    return {
+      code: "design-store-locked",
+      category: "storage",
+      retryable: true,
+    };
+  }
+  if (sqliteUnavailable(error)) {
+    return {
+      code: "design-store-unavailable",
+      category: "storage",
+      retryable: false,
+    };
+  }
+  if (error instanceof StateRootError) {
+    return {
+      code: "design-store-unavailable",
+      category: "storage",
+      retryable: false,
+    };
+  }
+  if (
+    message === "design-operation-conflict" ||
+    message === "operation-id-conflict"
+  ) {
+    return {
+      code: "design-operation-conflict",
+      category: "control",
+      retryable: false,
+      field: "operationId",
+    };
+  }
+  if (message === "stage-control-mismatch") {
+    return {
+      code: "design-stage-inactive",
+      category: "stage",
+      retryable: false,
+    };
+  }
+  if (message === "invalid-design-control-request") {
+    return {
+      code: "invalid-design-control-request",
+      category: "validation",
+      retryable: false,
+    };
+  }
+  if (boundary === "serialization") {
+    return {
+      code: "design-receipt-serialization-failed",
+      category: "control",
+      retryable: false,
+    };
+  }
+  if (boundary === "initialization") {
+    return {
+      code: "design-store-unavailable",
+      category: "storage",
+      retryable: false,
+    };
+  }
+  if (
+    error instanceof DesignFinalizationError ||
+    error instanceof DeliveryValidationError ||
+    (message.startsWith("design-") && SAFE_DESIGN_ERROR_CODE.test(message))
+  ) {
+    return { code: message, category: "control", retryable: false };
+  }
+  if (operation === "start") {
+    return {
+      code: "design-run-create-failed",
+      category: "storage",
+      retryable: false,
+    };
+  }
+  return {
+    code: "design-control-internal",
+    category: "control",
+    retryable: false,
+  };
+}
 
 function safeDesignFailure(
   error: unknown,
   operation: string,
+  boundary: DesignFailureBoundary = "dispatch",
 ): SafeDesignFailure {
-  const message = error instanceof Error ? error.message : "";
-  const code =
-    error instanceof DesignPlanValidationError
-      ? "design-plan-validation-invalid"
-      : SAFE_DESIGN_ERROR_CODE.test(message)
-        ? message
-        : "design-control-failed";
+  const classified = classifyDesignFailure(error, operation, boundary);
   const rawDiagnostics: readonly unknown[] =
     error instanceof DesignFinalizationError ||
     error instanceof DesignPlanValidationError ||
@@ -468,8 +608,11 @@ function safeDesignFailure(
       }
       const admitted = Object.fromEntries(
         Object.entries(candidate as Record<string, unknown>)
-          .filter(
-            (entry): entry is [string, string] =>
+          .filter((entry): entry is [string, string | boolean] => {
+            if (entry[0] === "retryable") {
+              return typeof entry[1] === "boolean";
+            }
+            return (
               [
                 "code",
                 "taskId",
@@ -484,8 +627,9 @@ function safeDesignFailure(
                 "producerPhase",
               ].includes(entry[0]) &&
               typeof entry[1] === "string" &&
-              SAFE_DESIGN_ERROR_CODE.test(entry[1]),
-          )
+              SAFE_DESIGN_ERROR_CODE.test(entry[1])
+            );
+          })
           .sort(([left], [right]) => left.localeCompare(right)),
       );
       return typeof admitted.code === "string" ? [admitted] : [];
@@ -499,10 +643,18 @@ function safeDesignFailure(
         canonicalJson(candidate) !== canonicalJson(values[index - 1]),
     )
     .slice(0, MAX_DESIGN_ERROR_DIAGNOSTICS);
+  if (diagnostics.length === 0) {
+    diagnostics.push({
+      code: classified.code,
+      category: classified.category,
+      retryable: classified.retryable,
+      ...(classified.field ? { field: classified.field } : {}),
+    });
+  }
   return {
     kind: "design-control-failure",
     operation: SAFE_DESIGN_ERROR_CODE.test(operation) ? operation : "unknown",
-    code,
+    code: classified.code,
     diagnostics,
   };
 }
@@ -2082,18 +2234,19 @@ export function registerWorkflowControl(
             }
             const designRequest = validateDesignControlRequest(record.request);
             if (!designRequest.ok) throw new Error(designRequest.code);
-            let engine: WorkflowControlEngine;
+            let boundary: DesignFailureBoundary = "initialization";
             try {
-              engine = await engineFor(ctx);
-            } catch (error) {
-              if (error instanceof RunStoreFormatError)
-                throw runStoreResetError(error);
-              throw error;
-            }
-            if (!engine.executeDesign)
-              throw new Error("design-control-unavailable");
-            try {
+              const engine = await engineFor(ctx);
+              if (!engine.executeDesign)
+                throw new Error("design-control-unavailable");
+              boundary = "execution";
               const payload = await engine.executeDesign(designRequest.value);
+              boundary = "serialization";
+              const serialized = JSON.stringify(payload);
+              if (serialized === undefined) {
+                throw new Error("design-receipt-serialization-failed");
+              }
+              boundary = "execution";
               if (
                 designRequest.value.operation === "finalize-delivery" &&
                 payload.state === "completed"
@@ -2101,15 +2254,14 @@ export function registerWorkflowControl(
                 await deactivateStage();
               }
               return {
-                content: [
-                  { type: "text" as const, text: JSON.stringify(payload) },
-                ],
+                content: [{ type: "text" as const, text: serialized }],
                 details: payload,
               };
             } catch (error) {
               const failure = safeDesignFailure(
                 error,
                 designRequest.value.operation,
+                boundary,
               );
               designFailures.set(toolCallId, failure);
               const sanitized = new Error(failure.code);
