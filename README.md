@@ -71,6 +71,46 @@ npm install -g @abelxiaoxing/cadence
 
 本包要求 Node.js `>=22.13.0`，以使用稳定可用的内置 `node:sqlite`；不从参考仓库源安装，也不维护 Pi 主机版本兼容矩阵。
 
+## OpenSpec 启动与平台范围
+
+Design finalization 和 Implement delivery 加载共用无 shell 的 OpenSpec 适配层：读取已安装 `@fission-ai/openspec` 的 `package.json` 中 `bin` 声明，再以 Node 执行 JS 入口；不直接执行 Windows npm 的 `.cmd`，也不调用 `npx`、自动下载或切换 CLI 版本。
+
+默认按宿主 `PATH` 定位 OpenSpec，支持 npm 全局默认/自定义 prefix，以及 Unix npm/Bun 的入口符号链接。
+不搜索当前目录，不自动信任 consumer repository 内的 CLI；第一个已发现安装损坏时明确失败，不偷偷选用后续版本。
+版本管理器的任意包装脚本、原生 exe 和 PowerShell 脚本不作为可执行回退。
+
+特殊安装可在**启动宿主之前**配置以下环境变量（不属于 Worker 请求参数）：
+
+| 变量                         | 含义                                                                                                                        |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `ABEL_OPENSPEC_PACKAGE_ROOT` | 已安装 `@fission-ai/openspec` 的绝对包目录，包含 `package.json`；不是 `.cmd` 或 JS 文件路径。显式配置代表操作者信任该安装。 |
+| `ABEL_OPENSPEC_NODE`         | Node 原生可执行文件的绝对路径，例如 `C:\Program Files\nodejs\node.exe`；默认复用 Node 宿主。非 Node 宿主必须显式配置。      |
+
+配置无效不会退回 PATH。
+Windows 环境变量名按不区分大小写读取。
+更换全局安装或 PATH 后应重启宿主，确保它继承新环境。
+
+两个 CLI 子进程各有 30 秒超时、每个输出流 4 MiB 上限，关闭 stdin、禁用 OpenSpec telemetry，并在返回检查结果前等待两者结束。
+校验报告的 exit 1 与 `valid: false` 被识别为 strict-invalid；无法启动、协议异常、超时、取消、输出超限分别给出安全诊断。
+诊断只暴露 command、phase、reason、允许列表中的 systemCode 和 exitCode，不返回原始 stderr、绝对路径或环境变量。
+inspection 不可用时不再级联误报 traceability 输入缺失，且绝不生成成功的 ready 收据。
+
+平台契约 CI 使用 Linux、Windows、macOS × Node 22.13.0/24.13.0，显式安装 OpenSpec 1.5.0，验证真实 npm 全局入口、严格校验、Design finalization、失败重试和 proof-bound delivery 加载。
+状态协议要求布尔字段 `isComplete`，用于判断 1.5.0 的规划产物是否齐全；若另有 `isPlanningComplete`，该字段也必须为布尔值，且两者均为 `true` 才视为规划完成。
+CLI 的其他版本必须满足相同 JSON 协议；新增支持版本应加入契约测试。
+
+**此矩阵不代表原生 Implement 隔离已全平台可用。**
+当前隔离后端仍为 Linux Bubblewrap；Windows/macOS 的原生隔离、ACL 与完整文件应用语义需要单独实现和验收，缺少隔离能力时保持暂停，不降级为主工作区直接执行。
+
+本地可用 `CADENCE_REAL_OPENSPEC=1` 启用真实 CLI 测试（Windows 可用 PowerShell 设置 `$env:CADENCE_REAL_OPENSPEC = "1"`），然后运行：
+
+```sh
+bun run test:target test/openspec-cli.test.ts test/design-delivery.integration.test.ts
+```
+
+未启用时，真实 CLI 用例明确跳过，其他适配层回归测试照常执行。
+`bun run check` 的 JS 语法扫描使用 Node 遍历，不依赖 Unix `find`/`xargs`。
+
 ## Worker 路由（Worker routes）
 
 路由配置是可选的：没有项目级或用户级文件时，三个包内 Agent 默认继承当前父模型，因此首次 Design、Implement 或 Diagnose 不需要预先配置 endpoint。

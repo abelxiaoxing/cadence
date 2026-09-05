@@ -1187,20 +1187,29 @@ describe("durable WorkflowEngine service composition", () => {
       ),
     };
     const validation = { items: [{ id: change, valid: true }] };
-    const openspec = path.join(commandRoot, "openspec");
-    writeFileSync(
-      openspec,
-      [
-        "#!/bin/sh",
-        'if [ "$1" = "status" ]; then',
-        `  printf '%s\\n' '${JSON.stringify(status)}'`,
-        "else",
-        `  printf '%s\\n' '${JSON.stringify(validation)}'`,
-        "fi",
-        "",
-      ].join("\n"),
+    const openspecRoot = path.join(
+      commandRoot,
+      "node_modules/@fission-ai/openspec",
     );
-    chmodSync(openspec, 0o755);
+    mkdirSync(openspecRoot, { recursive: true });
+    writeFileSync(
+      path.join(openspecRoot, "package.json"),
+      JSON.stringify({
+        name: "@fission-ai/openspec",
+        bin: { openspec: "entry.cjs" },
+      }),
+    );
+    writeFileSync(
+      path.join(openspecRoot, "entry.cjs"),
+      `console.log(JSON.stringify(process.argv[2] === "status" ? ${JSON.stringify(status)} : ${JSON.stringify(validation)}));\n`,
+    );
+    writeFileSync(
+      path.join(
+        commandRoot,
+        process.platform === "win32" ? "openspec.cmd" : "openspec",
+      ),
+      "unused npm shim\n",
+    );
 
     const previousStateHome = process.env.XDG_STATE_HOME;
     const previousPath = process.env.PATH;

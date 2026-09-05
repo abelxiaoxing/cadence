@@ -1,0 +1,55 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.13.0'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - run: bun install --frozen-lockfile
+      - run: bun run verify
+      - run: bun run check:agents
+      - run: bun run traceability:check
+
+  openspec-platform-contract:
+    name: OpenSpec / ${{ matrix.os }} / Node ${{ matrix.node }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ['22.13.0', '24.13.0']
+    runs-on: ${{ matrix.os }}
+    env:
+      # Exercise npm global custom-prefix shims and shell-sensitive paths.
+      npm_config_prefix: '${{ runner.temp }}/Cadence CLI 中文 & %PATH% ! (npm)'
+      CADENCE_REAL_OPENSPEC: '1'
+      OPENSPEC_TELEMETRY: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - run: bun install --frozen-lockfile
+      # Installation is explicit CI setup, never a runtime fallback/download.
+      - run: npm install --global @fission-ai/openspec@1.5.0
+      - name: Add actual npm global command directory to PATH
+        run: node scripts/ci-openspec-path.mjs
+      - run: bun run check
+      # Explicit Node invocation prevents Bun from masking Node spawn behavior.
+      # These cover Design receipt/retry/admission, not native Implement isolation.
+      - run: node node_modules/vitest/vitest.mjs run test/openspec-cli.test.ts test/design-delivery.integration.test.ts test/stage-activation.integration.test.ts test/subagent-activity.property.test.ts

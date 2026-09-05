@@ -57,6 +57,7 @@ const expectedMembers = [
   "package/src/index.ts",
   "package/src/implement-graph.ts",
   "package/src/isolation-backend.ts",
+  "package/src/openspec-cli.ts",
   "package/src/packet-runtime.ts",
   "package/src/parent-provider.ts",
   "package/src/route-policy.ts",

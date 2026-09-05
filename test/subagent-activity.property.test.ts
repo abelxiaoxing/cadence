@@ -257,6 +257,40 @@ describe("Subagent activity presentation", () => {
     expect(expanded).toContain("field=phases.green.verification");
   });
 
+  it("renders OpenSpec launch details in expanded Design failures", () => {
+    const rendered = renderActivityResult(
+      {
+        details: {
+          designFailure: {
+            kind: "design-control-failure",
+            operation: "finalize-delivery",
+            code: "design-finalization-invalid",
+            diagnostics: [
+              {
+                code: "design-openspec-unavailable",
+                command: "status",
+                phase: "spawn",
+                reason: "launch-failed",
+                systemCode: "ENOENT",
+              },
+            ],
+          },
+        },
+      },
+      { expanded: true, isPartial: false },
+      undefined,
+      {
+        isError: true,
+        args: { action: "design", request: { operation: "finalize-delivery" } },
+      },
+    )
+      .render(240)
+      .join("\n");
+    expect(rendered).toContain("command=status");
+    expect(rendered).toContain("phase=spawn");
+    expect(rendered).toContain("systemCode=ENOENT");
+  });
+
   it("rejects unsafe Design failure details before rendering", () => {
     const rendered = renderActivityResult(
       {

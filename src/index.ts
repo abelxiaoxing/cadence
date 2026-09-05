@@ -4,7 +4,6 @@
 // workflow routing (abel-design/implement/diagnose provenance) in the prompts
 // integration; abel-init and ordinary prompts never activate dispatch.
 import { AsyncLocalStorage } from "node:async_hooks";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   lstatSync,
@@ -17,7 +16,6 @@ import {
 import { homedir } from "node:os";
 import path, { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import type {
   AgentToolResult,
   AgentToolUpdateCallback,
@@ -59,6 +57,10 @@ import {
 } from "./design-control.ts";
 import { canonicalJson, hashCanonicalValue } from "./implement-graph.ts";
 import { BubblewrapIsolationBackend } from "./isolation-backend.ts";
+import {
+  inspectOpenSpecDelivery,
+  type OpenSpecDeliveryInspection,
+} from "./openspec-cli.ts";
 import { PACKET_ACTIONS, PacketRuntime } from "./packet-runtime.ts";
 import { ParentPayloadBridge } from "./parent-payload-bridge.ts";
 import { runtimeForWorkerRoute } from "./parent-provider.ts";
@@ -90,6 +92,11 @@ import {
   type WorkflowAvailableDelivery,
   type WorkflowDeliverySource,
 } from "./workflow-engine.ts";
+
+export {
+  inspectOpenSpecDelivery,
+  type OpenSpecDeliveryInspection,
+} from "./openspec-cli.ts";
 
 export const DISPATCH_TOOL = "abel_dispatch";
 const DESIGN_PARENT_READ_TOOLS = new Set(["read", "grep", "find", "ls"]);
@@ -589,7 +596,16 @@ function safeDesignFailure(
     error instanceof DesignFinalizationError ||
     error instanceof DesignPlanValidationError ||
     error instanceof DeliveryValidationError
-      ? error.diagnostics
+      ? error instanceof DesignFinalizationError
+        ? [
+            ...error.diagnostics.filter(
+              (code) =>
+                !error.openSpecDiagnostic ||
+                code !== "design-openspec-unavailable",
+            ),
+            ...(error.openSpecDiagnostic ? [error.openSpecDiagnostic] : []),
+          ]
+        : error.diagnostics
       : [];
   const diagnostics = rawDiagnostics
     .flatMap((candidate) => {
@@ -625,6 +641,10 @@ function safeDesignFailure(
                 "dependencyTaskId",
                 "producerTaskId",
                 "producerPhase",
+                "command",
+                "reason",
+                "systemCode",
+                "exitCode",
               ].includes(entry[0]) &&
               typeof entry[1] === "string" &&
               SAFE_DESIGN_ERROR_CODE.test(entry[1])
@@ -681,15 +701,6 @@ export type WorkflowControlEngineFactory = (
 ) => WorkflowControlEngine | Promise<WorkflowControlEngine>;
 
 const PACKAGE_DELIVERY_MAX_BYTES = 16 * 1024 * 1024;
-const execFileAsync = promisify(execFile);
-
-export interface OpenSpecDeliveryInspection {
-  change: string;
-  schema: string;
-  planningComplete: boolean;
-  strictValid: boolean;
-  artifactPaths: string[];
-}
 
 export interface PackageDeliverySourceOptions {
   inspectOpenSpec?: (
@@ -781,96 +792,6 @@ function readPackageDeliveryFile(
     throw new Error("delivery-file-size-invalid");
   }
   return readFileSync(target);
-}
-
-function deliveryRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function parseCommandJson(
-  value: string,
-  code: string,
-): Record<string, unknown> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new Error(code);
-  }
-  const record = deliveryRecord(parsed);
-  if (!record) throw new Error(code);
-  return record;
-}
-
-export async function inspectOpenSpecDelivery(
-  consumerRoot: string,
-  change: string,
-): Promise<OpenSpecDeliveryInspection> {
-  const [statusExecution, validationExecution] = await Promise.all([
-    execFileAsync("openspec", ["status", "--change", change, "--json"], {
-      cwd: consumerRoot,
-      encoding: "utf8",
-      maxBuffer: 4 * 1024 * 1024,
-    }),
-    execFileAsync(
-      "openspec",
-      ["validate", change, "--strict", "--json", "--no-interactive"],
-      {
-        cwd: consumerRoot,
-        encoding: "utf8",
-        maxBuffer: 4 * 1024 * 1024,
-      },
-    ),
-  ]);
-  const status = parseCommandJson(
-    statusExecution.stdout,
-    "delivery-openspec-status-invalid",
-  );
-  const validation = parseCommandJson(
-    validationExecution.stdout,
-    "delivery-openspec-validation-invalid",
-  );
-  const changeRoot = path.resolve(consumerRoot, "openspec", "changes", change);
-  const artifactPathsRecord = deliveryRecord(status.artifactPaths);
-  const artifactPaths = artifactPathsRecord
-    ? Object.values(artifactPathsRecord).flatMap((entry) => {
-        const record = deliveryRecord(entry);
-        if (!record || !Array.isArray(record.existingOutputPaths)) return [];
-        return record.existingOutputPaths.flatMap((candidate) => {
-          if (typeof candidate !== "string") return [];
-          const resolved = path.resolve(candidate);
-          const relative = path.relative(changeRoot, resolved);
-          return relative &&
-            !relative.startsWith(`..${path.sep}`) &&
-            relative !== ".." &&
-            !path.isAbsolute(relative)
-            ? [relative.split(path.sep).join("/")]
-            : [];
-        });
-      })
-    : [];
-  const items = Array.isArray(validation.items) ? validation.items : [];
-  const strictValid =
-    items.length === 1 &&
-    deliveryRecord(items[0])?.id === change &&
-    deliveryRecord(items[0])?.valid === true;
-  if (
-    status.changeName !== change ||
-    typeof status.schemaName !== "string" ||
-    artifactPaths.length === 0
-  ) {
-    throw new Error("delivery-openspec-status-invalid");
-  }
-  return {
-    change,
-    schema: status.schemaName,
-    planningComplete:
-      status.isPlanningComplete === true && status.isComplete === true,
-    strictValid,
-    artifactPaths: [...new Set(artifactPaths)].sort(),
-  };
 }
 
 export function packageDeliverySource(

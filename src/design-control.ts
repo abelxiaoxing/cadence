@@ -27,6 +27,7 @@ import {
   DesignJournal,
   type DesignStatusProjection,
 } from "./design-journal.ts";
+import { OpenSpecCliError, type OpenSpecDiagnostic } from "./openspec-cli.ts";
 import { RunStore } from "./run-store.ts";
 import { observeSafePath } from "./safe-path.ts";
 import type { ResolvedStateRoot } from "./state-root.ts";
@@ -131,11 +132,17 @@ export interface DesignControllerOptions {
 export class DesignFinalizationError extends Error {
   readonly diagnostics: readonly string[];
 
-  constructor(diagnostics: readonly string[]) {
+  readonly openSpecDiagnostic?: Readonly<OpenSpecDiagnostic>;
+
+  constructor(
+    diagnostics: readonly string[],
+    openSpecDiagnostic?: Readonly<OpenSpecDiagnostic>,
+  ) {
     const normalized = [...new Set(diagnostics)].sort();
     super("design-finalization-invalid");
     this.name = "DesignFinalizationError";
     this.diagnostics = Object.freeze(normalized);
+    this.openSpecDiagnostic = openSpecDiagnostic;
   }
 }
 
@@ -934,9 +941,12 @@ export class DesignController {
       removeSafeFile(this.consumerRoot, readyPath);
       const diagnostics = new Set<string>();
       let inspection: DesignOpenSpecInspection | undefined;
+      let openSpecDiagnostic: Readonly<OpenSpecDiagnostic> | undefined;
       try {
         inspection = await this.#inspectOpenSpec(this.consumerRoot, change);
-      } catch {
+      } catch (error) {
+        if (error instanceof OpenSpecCliError)
+          openSpecDiagnostic = error.diagnostic;
         diagnostics.add("design-openspec-unavailable");
       }
       if (inspection) {
@@ -1004,7 +1014,7 @@ export class DesignController {
       let traceability:
         | ReturnType<typeof assessDeliveryTraceability>
         | undefined;
-      if (compiled) {
+      if (compiled && inspection) {
         const tasks = artifactBytes.get("tasks.md");
         const specs = [...artifactBytes]
           .filter(
@@ -1035,7 +1045,7 @@ export class DesignController {
         !traceability?.ok ||
         diagnostics.size > 0
       ) {
-        throw new DesignFinalizationError([...diagnostics]);
+        throw new DesignFinalizationError([...diagnostics], openSpecDiagnostic);
       }
       const gateAReceipt = compileGateAReceipt({
         change,

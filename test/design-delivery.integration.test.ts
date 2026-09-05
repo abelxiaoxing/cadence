@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -25,6 +26,10 @@ import {
   registerWorkflowControl,
   type WorkflowControlEngine,
 } from "../src/index.ts";
+import {
+  inspectOpenSpecDelivery,
+  OpenSpecCliError,
+} from "../src/openspec-cli.ts";
 import { canonicalJson } from "../src/run-state.ts";
 import { RunStore } from "../src/run-store.ts";
 import { resolveStateRoot } from "../src/state-root.ts";
@@ -142,10 +147,13 @@ function planDraft(change: string) {
 
 function fixture(label: string) {
   const consumerRoot = mkdtempSync(
-    path.join(tmpdir(), `abel-design-delivery-consumer-${label}-`),
+    path.join(
+      realpathSync(tmpdir()),
+      `abel-design-delivery-consumer-${label}-`,
+    ),
   );
   const stateHome = mkdtempSync(
-    path.join(tmpdir(), `abel-design-delivery-state-${label}-`),
+    path.join(realpathSync(tmpdir()), `abel-design-delivery-state-${label}-`),
   );
   roots.push(consumerRoot, stateHome);
   const change = "close-design-delivery";
@@ -422,10 +430,10 @@ function extensionJourneyHarness(
 describe("safe private Design artifact mutation", () => {
   it("owns provisional identity, change binding, and approval hashes in code", async () => {
     const consumerRoot = mkdtempSync(
-      path.join(tmpdir(), "abel-design-lifecycle-consumer-"),
+      path.join(realpathSync(tmpdir()), "abel-design-lifecycle-consumer-"),
     );
     const stateHome = mkdtempSync(
-      path.join(tmpdir(), "abel-design-lifecycle-state-"),
+      path.join(realpathSync(tmpdir()), "abel-design-lifecycle-state-"),
     );
     roots.push(consumerRoot, stateHome);
     mkdirSync(path.join(consumerRoot, "openspec/changes"), { recursive: true });
@@ -570,10 +578,10 @@ describe("safe private Design artifact mutation", () => {
     "starts, replays, and restores a %s requirement",
     async (_label, requirement, legacyV4) => {
       const consumerRoot = mkdtempSync(
-        path.join(tmpdir(), "abel-design-start-input-consumer-"),
+        path.join(realpathSync(tmpdir()), "abel-design-start-input-consumer-"),
       );
       const stateHome = mkdtempSync(
-        path.join(tmpdir(), "abel-design-start-input-state-"),
+        path.join(realpathSync(tmpdir()), "abel-design-start-input-state-"),
       );
       roots.push(consumerRoot, stateHome);
       const stateRoot = resolveStateRoot({
@@ -652,10 +660,10 @@ describe("safe private Design artifact mutation", () => {
 
   it("replays the released v1.2.2 provisional hash without replacing its run or receipt", async () => {
     const consumerRoot = mkdtempSync(
-      path.join(tmpdir(), "abel-design-v122-consumer-"),
+      path.join(realpathSync(tmpdir()), "abel-design-v122-consumer-"),
     );
     const stateHome = mkdtempSync(
-      path.join(tmpdir(), "abel-design-v122-state-"),
+      path.join(realpathSync(tmpdir()), "abel-design-v122-state-"),
     );
     roots.push(consumerRoot, stateHome);
     const stateRoot = resolveStateRoot({
@@ -888,10 +896,14 @@ describe("safe private Design artifact mutation", () => {
     const item = fixture("artifact-symlink");
     await approveGateAOnly(item);
     const outside = mkdtempSync(
-      path.join(tmpdir(), "abel-design-artifact-outside-"),
+      path.join(realpathSync(tmpdir()), "abel-design-artifact-outside-"),
     );
     roots.push(outside);
-    symlinkSync(outside, path.join(item.changeRoot, "specs/symlinked"));
+    symlinkSync(
+      outside,
+      path.join(item.changeRoot, "specs/symlinked"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
 
     await expect(
       item.controller.execute({
@@ -1266,6 +1278,119 @@ describe("code-owned Design delivery compilation", () => {
     ).toThrow();
     failing.close();
   });
+
+  it("preserves OpenSpec launch diagnostics, suppresses dependent errors, and retries the same operation", async () => {
+    const item = fixture("openspec-retry");
+    await approveAndCompile(item);
+    item.controller.close();
+    let broken = true;
+    const controller = DesignController.open({
+      consumerRoot: item.consumerRoot,
+      stateRoot: item.stateRoot,
+      inspectOpenSpec: async () => {
+        if (broken)
+          throw new OpenSpecCliError("status", "spawn", "launch-failed", {
+            systemCode: "ENOENT",
+          });
+        return item.inspectOpenSpec();
+      },
+    });
+    const request = {
+      operation: "finalize-delivery" as const,
+      runId: item.runId,
+      operationId: "retry-openspec",
+    };
+    try {
+      await expect(controller.execute(request)).rejects.toMatchObject({
+        diagnostics: ["design-openspec-unavailable"],
+        openSpecDiagnostic: {
+          command: "status",
+          phase: "spawn",
+          reason: "launch-failed",
+          systemCode: "ENOENT",
+        },
+      });
+      expect(existsSync(path.join(item.changeRoot, "ready.yaml"))).toBe(false);
+      broken = false;
+      await expect(controller.execute(request)).resolves.toMatchObject({
+        state: "completed",
+        deliveryRevision: 1,
+      });
+      const source = packageDeliverySource(item.consumerRoot, {
+        inspectOpenSpec: item.inspectOpenSpec,
+        verifyGateProof: (input) => controller.verifyGateProof(input),
+        verifyFinalizedDelivery: (input) =>
+          controller.verifyFinalizedDelivery(input),
+      });
+      await expect(
+        source.discoverLatest({ stage: "abel-implement", change: item.change }),
+      ).resolves.toMatchObject({ deliveryRevision: 1 });
+      await expect(
+        source.load({ stage: "abel-implement", change: item.change }),
+      ).resolves.toMatchObject({ revision: 1, gate: "gate-b" });
+    } finally {
+      controller.close();
+    }
+  });
+
+  it.skipIf(process.env.CADENCE_REAL_OPENSPEC !== "1")(
+    "finalizes and admits a delivery through the real global CLI",
+    async () => {
+      const item = fixture("real-openspec");
+      writeFileSync(
+        path.join(item.consumerRoot, "openspec/config.yaml"),
+        "schema: spec-driven\n",
+      );
+      writeFileSync(
+        path.join(item.changeRoot, "proposal.md"),
+        "## Why\n\nClose delivery.\n\n## What Changes\n\n- Add closed delivery.\n\n## Capabilities\n\n### New Capabilities\n- `example`: closed delivery.\n\n## Impact\n\nCLI only.\n",
+      );
+      const spec = path.join(item.changeRoot, "specs/example/spec.md");
+      writeFileSync(
+        spec,
+        readFileSync(spec, "utf8").replace(
+          "The delivery is closed.",
+          "The delivery SHALL be closed.",
+        ),
+      );
+      await approveAndCompile(item);
+      item.controller.close();
+      const controller = DesignController.open({
+        consumerRoot: item.consumerRoot,
+        stateRoot: item.stateRoot,
+        inspectOpenSpec: inspectOpenSpecDelivery,
+      });
+      try {
+        await expect(
+          controller.execute({
+            operation: "finalize-delivery",
+            runId: item.runId,
+            operationId: "real-finalize",
+          }),
+        ).resolves.toMatchObject({ state: "completed", deliveryRevision: 1 });
+        const source = packageDeliverySource(item.consumerRoot, {
+          verifyGateProof: (input) => controller.verifyGateProof(input),
+          verifyFinalizedDelivery: (input) =>
+            controller.verifyFinalizedDelivery(input),
+        });
+        const delivery = await source.discoverLatest({
+          stage: "abel-implement",
+          change: item.change,
+        });
+        expect(delivery).toMatchObject({ deliveryRevision: 1 });
+        await expect(
+          source.load({
+            stage: "abel-implement",
+            change: item.change,
+            ...delivery,
+          }),
+        ).resolves.toMatchObject({ revision: 1, gate: "gate-b" });
+      } finally {
+        controller.close();
+      }
+    },
+    60_000,
+  );
 
   it("serializes competing finalization operations before receipt mutation", async () => {
     const item = fixture("finalization-overlap");

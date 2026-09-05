@@ -6,6 +6,7 @@ import {
   registerWorkflowControl,
   type WorkflowControlEngine,
 } from "../src/index.ts";
+import { OpenSpecCliError } from "../src/openspec-cli.ts";
 
 const packageDir = path.resolve(import.meta.dirname, "..");
 
@@ -256,6 +257,41 @@ describe("semantic stage activation teardown", () => {
     });
     expect(patch).not.toHaveProperty("isError");
     expect(item.active()).toContain(DISPATCH_TOOL);
+  });
+
+  it("publishes allowlisted OpenSpec launch detail without a duplicate root diagnostic", async () => {
+    const diagnostic = new OpenSpecCliError(
+      "status",
+      "spawn",
+      "launch-failed",
+      { systemCode: "EINVAL" },
+    ).diagnostic;
+    const engine: WorkflowControlEngine = {
+      ...baseEngine(),
+      executeDesign: vi.fn(async () => {
+        throw new DesignFinalizationError(
+          ["design-openspec-unavailable"],
+          diagnostic,
+        );
+      }),
+    };
+    const item = harness("abel-design", engine);
+    const failure = await capturedDesignFailure(
+      item,
+      "launch-call",
+      {
+        action: "design",
+        request: {
+          operation: "finalize-delivery",
+          runId: "design-run-1",
+          operationId: "launch-failure",
+        },
+      },
+      "design-finalization-invalid",
+    );
+    expect(failure).toMatchObject({
+      details: { designFailure: { diagnostics: [diagnostic] } },
+    });
   });
 
   it("deactivates after successful Design finalization but not at a Gate wait", async () => {

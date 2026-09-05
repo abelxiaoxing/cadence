@@ -40,7 +40,7 @@
     "pack:check": "node scripts/pack-check.mjs",
     "traceability:check": "node scripts/traceability-check.mjs",
     "verify": "bun run check && bun run lint && bun run test && bun run pack:check",
-    "check": "find skills test scripts -name '*.mjs' -type f -print0 | xargs -0 -r -n1 node --check && tsc --noEmit",
+    "check": "node scripts/check-syntax.mjs && tsc --noEmit",
     "lint": "biome check . && rumdl check .",
     "test": "vitest run",
     "test:target": "vitest run",
