@@ -13,8 +13,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { normalizeChangeContract } from "../src/change-contract.ts";
 import {
   DesignPlanValidationError,
+  type PlanDraft,
   parseGateAReceipt,
   parseReadyReceipt,
 } from "../src/delivery-compiler.ts";
@@ -284,6 +286,247 @@ function deferred() {
   });
   return { promise, resolve };
 }
+
+it("compiles only the structured authority approved at Gate A", async () => {
+  const item = fixture("structured-authority");
+  const draft = planDraft(item.change);
+  const contract = {
+    goal: "Close the accepted delivery",
+    acceptance: [
+      {
+        id: "A1",
+        statement: "Verify the delivered contract",
+        verification: draft.verification.change.fullSuite,
+      },
+    ],
+    constraints: [{ id: "C1", statement: "Keep the existing public export" }],
+    policy: {
+      writeRoots: ["src"],
+      dependencies: [],
+      verificationModes: ["behavior" as const],
+    },
+  };
+  try {
+    await item.controller.execute({
+      operation: "approve-gate",
+      runId: item.runId,
+      operationId: "structured-a",
+      gate: "gate-a",
+      contract,
+    });
+    await item.controller.execute({
+      operation: "compile-plan",
+      runId: item.runId,
+      operationId: "structured-plan",
+    });
+    const compiled = JSON.parse(
+      readFileSync(path.join(item.changeRoot, "implement-plan.json"), "utf8"),
+    );
+    expect(compiled.changeContract.goal).toBe(contract.goal);
+    writeFileSync(
+      path.join(item.changeRoot, "plan-draft.json"),
+      JSON.stringify({
+        ...draft,
+        changeContract: { ...contract, constraints: [] },
+      }),
+    );
+    await expect(
+      item.controller.execute({
+        operation: "validate-plan-draft",
+        runId: item.runId,
+      }),
+    ).rejects.toThrow("change-contract-mismatch");
+  } finally {
+    item.controller.close();
+  }
+});
+
+it.each([
+  { mode: "behavior", adapter: "vitest", explicit: true },
+  { mode: "behavior", adapter: "package-script", explicit: true },
+  { mode: "mechanical", adapter: "static-check", explicit: false },
+  { mode: "refactor", adapter: "static-check", explicit: false },
+] as const)(
+  "preserves $adapter Gate A authority in $mode amendments (explicit: $explicit)",
+  async ({ mode, adapter, explicit }) => {
+    const item = fixture(`authority-amendment-${mode}-${adapter}`);
+    const draft: PlanDraft = planDraft(item.change);
+    draft.tasks[0]!.verificationMode = mode;
+    if (mode === "mechanical") {
+      writeFileSync(path.join(item.consumerRoot, "src/value.txt"), "value\n");
+      for (const phase of Object.values(draft.tasks[0]!.phases))
+        phase.write = ["src/value.txt"];
+    }
+    if (adapter !== "static-check") {
+      mkdirSync(path.join(item.consumerRoot, "node_modules/.bin"), {
+        recursive: true,
+      });
+      writeFileSync(
+        path.join(item.consumerRoot, "node_modules/.bin/vitest"),
+        "#!/usr/bin/env node\n",
+        { mode: 0o755 },
+      );
+      writeFileSync(
+        path.join(item.consumerRoot, "package.json"),
+        JSON.stringify({ scripts: { test: "vitest run" } }),
+      );
+      draft.verification.change.fullSuite =
+        adapter === "package-script"
+          ? {
+              kind: "package-script",
+              id: "delivery-full",
+              packageManager: "npm",
+              script: "test",
+              command: "vitest run",
+              args: [],
+              classification: "expected-green",
+            }
+          : {
+              kind: "vitest",
+              id: "delivery-full",
+              runner: { kind: "local-binary", executable: "vitest" },
+              testFiles: ["verify.mjs"],
+              args: [],
+              classification: "expected-green",
+              minTests: 1,
+            };
+    }
+    const contract = normalizeChangeContract({
+      goal: "Preserve approved delivery",
+      acceptance: [
+        {
+          id: "A1",
+          statement: "Verify accepted behavior",
+          verification: draft.verification.change.fullSuite,
+        },
+      ],
+      constraints: [{ id: "C1", statement: "Preserve public behavior" }],
+      policy: {
+        writeRoots: ["src"],
+        dependencies: [],
+        verificationModes: [mode],
+      },
+    });
+    if (explicit) draft.changeContract = structuredClone(contract);
+    writeFileSync(
+      path.join(item.changeRoot, "plan-draft.json"),
+      JSON.stringify(draft),
+    );
+    let workflow: WorkflowEngine | undefined;
+    try {
+      await item.controller.execute({
+        operation: "approve-gate",
+        runId: item.runId,
+        operationId: "approve",
+        gate: "gate-a",
+        contract,
+      });
+      await item.controller.execute({
+        operation: "compile-plan",
+        runId: item.runId,
+        operationId: "compile",
+      });
+      const compiled = JSON.parse(
+        readFileSync(path.join(item.changeRoot, "implement-plan.json"), "utf8"),
+      );
+      expect(compiled.changeContract).toEqual(contract);
+      if (adapter !== "static-check")
+        expect(
+          compiled.verification.change.fullSuite.executionBindings,
+        ).toBeDefined();
+      await item.controller.execute({
+        operation: "finalize-delivery",
+        runId: item.runId,
+        operationId: "finalize",
+      });
+      workflow = WorkflowEngine.open({
+        consumerRoot: item.consumerRoot,
+        stateRoot: item.stateRoot,
+        deliverySource: packageDeliverySource(item.consumerRoot, {
+          inspectOpenSpec: item.inspectOpenSpec,
+          verifyGateProof: (input) => item.controller.verifyGateProof(input),
+          verifyFinalizedDelivery: (input) =>
+            item.controller.verifyFinalizedDelivery(input),
+        }),
+        worker: {
+          runAttempt: async () => ({
+            kind: "paused",
+            code: "needs-task-split",
+          }),
+          rebind: () => ({ ok: true, routeId: "fixture" }),
+        },
+        changeVerifier: {
+          verify: async () => ({
+            kind: "paused",
+            code: "verification-not-reached",
+          }),
+        },
+      });
+      const paused = await workflow.execute({
+        command: "start",
+        stage: "abel-implement",
+        change: item.change,
+        operationId: "start",
+      });
+      expect(paused).toMatchObject({
+        state: "paused",
+        decisionBatch: { id: expect.any(String) },
+      });
+      const batchId = String((paused.decisionBatch as { id: string }).id);
+      const amend = (request: Record<string, unknown>) =>
+        workflow!.amend(item.change, batchId, request, (assertAuthority) =>
+          item.controller.executeWithAuthority(request, assertAuthority),
+        );
+      const started = await amend({
+        operation: "start",
+        change: item.change,
+        operationId: "amend-start",
+      });
+      const runId = String(started.runId);
+      await amend({
+        operation: "write-artifact",
+        runId,
+        operationId: "write-unchanged-draft",
+        path: "plan-draft.json",
+        content: JSON.stringify(draft),
+      });
+      await expect(
+        amend({ operation: "validate-plan-draft", runId }),
+      ).resolves.toMatchObject({ valid: true });
+      await expect(
+        amend({
+          operation: "compile-plan",
+          runId,
+          operationId: "amend-compile",
+        }),
+      ).resolves.toMatchObject({ gates: { gateB: { current: true } } });
+      await expect(
+        amend({
+          operation: "finalize-delivery",
+          runId,
+          operationId: "amend-finalize",
+        }),
+      ).resolves.toMatchObject({ deliveryRevision: expect.any(Number) });
+      writeFileSync(
+        path.join(item.changeRoot, "plan-draft.json"),
+        JSON.stringify({
+          ...draft,
+          changeContract: { ...contract, constraints: [] },
+        }),
+      );
+      await expect(
+        amend({
+          operation: "validate-plan-draft",
+          runId,
+          operationId: "mismatch",
+        }),
+      ).rejects.toThrow("change-contract-mismatch");
+    } finally {
+      await workflow?.close();
+      item.controller.close();
+    }
+  },
+);
 
 function journeyControlEngine(
   item: ReturnType<typeof fixture>,

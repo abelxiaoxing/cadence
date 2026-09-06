@@ -6,7 +6,7 @@ import {
   type ApprovalBoundaryCode,
   isValidRelativePath,
   type StructuredVerificationContract,
-  verificationInputPaths,
+  verificationBoundInputPaths,
 } from "./contracts.ts";
 import type { ControlStage } from "./control-contracts.ts";
 import type {
@@ -71,14 +71,16 @@ export function implementationRouteRequirements(
     (input.artifactCorrection ? 16_384 : 0) +
     (input.repair ? input.repair.failureIdentities.length * 256 + 16_384 : 0);
   return {
-    minContextWindow: Math.min(
+    minContextWindow: IMPLEMENTATION_ROUTE_LIMITS.minimumContextWindow,
+    minOutputTokens: IMPLEMENTATION_ROUTE_LIMITS.minimumOutputTokens,
+    preferredContextWindow: Math.min(
       IMPLEMENTATION_ROUTE_LIMITS.preferredContextWindow,
       Math.max(
         IMPLEMENTATION_ROUTE_LIMITS.minimumContextWindow,
         16_384 + complexity * 2,
       ),
     ),
-    minOutputTokens: Math.min(
+    preferredOutputTokens: Math.min(
       IMPLEMENTATION_ROUTE_LIMITS.preferredOutputTokens,
       Math.max(
         IMPLEMENTATION_ROUTE_LIMITS.minimumOutputTokens,
@@ -181,6 +183,42 @@ export interface RedArtifactCorrection {
   attempt: number;
   maxAttempts: number;
   contextRequest?: WorkflowContextRequest;
+}
+
+export type RecoveryActionRequest = {
+  kind: "affected-repair" | "cumulative-repair" | "red-correction";
+  attempt: number;
+};
+export type RecoveryActionDecision =
+  | { allowed: true }
+  | {
+      allowed: false;
+      code: "repair-attempts-exhausted" | "artifact-attempts-exhausted";
+    };
+
+/** One policy for every nested recovery action; execution services supply facts only. */
+export function decideRecoveryAction(
+  plan: ImplementPlan,
+  request: RecoveryActionRequest,
+  authority: { additionalAttempt?: boolean; verificationOnly?: boolean } = {},
+): RecoveryActionDecision {
+  const correction = request.kind === "red-correction";
+  const limit =
+    authority.additionalAttempt || authority.verificationOnly
+      ? 1
+      : correction
+        ? plan.verification.artifactCorrection.maxAttempts
+        : plan.verification.repair.maxAttempts;
+  return Number.isSafeInteger(request.attempt) &&
+    request.attempt > 0 &&
+    request.attempt <= limit
+    ? { allowed: true }
+    : {
+        allowed: false,
+        code: correction
+          ? "artifact-attempts-exhausted"
+          : "repair-attempts-exhausted",
+      };
 }
 
 export interface WorkflowRecoveryFeedback {
@@ -321,6 +359,9 @@ export type WorkflowAttemptOutcome = (
   };
 
 export interface WorkflowWorker {
+  hasPendingVerification?(
+    input: Parameters<WorkflowWorker["runAttempt"]>[0],
+  ): Promise<boolean>;
   isContextReadAvailable?(input: {
     runId: string;
     deliveryRevision: number;
@@ -349,7 +390,12 @@ export interface WorkflowWorker {
     contextRequest?: WorkflowContextRequest;
     contextReadPaths?: string[];
     recoveryFeedback?: WorkflowRecoveryFeedback;
+    additionalAttempt?: boolean;
+    verificationOnly?: boolean;
     reserveCandidate?: () => boolean;
+    recoveryDecision?: (
+      request: RecoveryActionRequest,
+    ) => RecoveryActionDecision;
     signal: AbortSignal;
     onActivity?: (
       event: Pick<
@@ -428,6 +474,7 @@ export interface WorkflowDeliverySource {
 
 export interface WorkflowChangeVerifier {
   verify(input: {
+    taskEvidence?: Array<{ taskId: string; deliveryRevision: number }>;
     runId: string;
     deliveryRevision: number;
     plan: ImplementPlan;
@@ -517,6 +564,7 @@ export interface WorkflowEngineOptions {
   lifecycle?: WorkflowRunLifecycle;
   now?: () => number;
   leaseTtlMs?: number;
+  workHardLimit?: number;
 }
 
 export interface EngineRunRow {
@@ -1157,7 +1205,9 @@ export function phases(
   task: PlanTaskDraft,
 ): Array<"red" | "green" | "refactor"> {
   return [
-    "red",
+    ...(!task.verificationMode || task.verificationMode === "behavior"
+      ? ["red" as const]
+      : []),
     "green",
     ...(task.phases.refactor ? (["refactor"] as const) : []),
   ];
@@ -1324,7 +1374,7 @@ export function deliveryTrackingPath(plan: ImplementPlan): string | undefined {
 export function deliveryBoundPaths(plan: ImplementPlan): string[] {
   const paths = new Set<string>();
   const bindVerification = (verification: StructuredVerificationContract) => {
-    for (const relative of verificationInputPaths(verification)) {
+    for (const relative of verificationBoundInputPaths(verification)) {
       if (relative !== ".") paths.add(relative);
     }
   };

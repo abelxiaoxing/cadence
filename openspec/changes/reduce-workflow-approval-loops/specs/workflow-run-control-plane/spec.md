@@ -21,7 +21,7 @@ Implement SHALL expose every known task or change authority gap in one stable de
 
 ### Requirement: Persistent recovery reservations
 
-Recovery incidents SHALL be stored separately from display diagnostics and indexed by verification obligation and phase rather than route, task naming, or workspace revision lineage. Before execution the control plane SHALL reserve a finite run-wide work unit; nested candidate proposals SHALL reserve additional units through the same authority. Reopen and post-launch cancellation SHALL NOT refund consumed work. A changed repair limit SHALL NOT invalidate unchanged task evidence or implicitly replenish an exhausted incident.
+Recovery incidents SHALL be stored separately from display diagnostics and indexed by verification obligation and phase rather than route, task naming, or workspace revision lineage. Before execution the control plane SHALL reserve a finite run-wide work unit; nested candidate proposals SHALL reserve additional units through the same authority. Reopen and post-launch cancellation SHALL NOT refund consumed work. A changed repair limit SHALL NOT invalidate unchanged task evidence or implicitly replenish an exhausted incident. Explicit parent recovery may grant one additional launch without resetting counters; capacity may grow by admitted phase high-water within the fixed run limit.
 
 #### Scenario: Internal rollback repeats the same failure
 
@@ -60,7 +60,7 @@ The control plane SHALL preserve unchanged authorization across identical plan c
 
 ### Requirement: Durable autonomous recovery
 
-Implement SHALL automatically correct retryable artifacts, stale candidates, and verification failures within bounded task authority and pass structured recovery feedback to the next Worker. Exhaustion SHALL survive resume, restart, rollback, route replacement, task renaming, and contract rewording for the same verification obligation. Dedicated checked storage SHALL retain recovery facts independently of display diagnostics, and a pre-reserved run-wide work budget SHALL bound all launches, including nested repair.
+Implement SHALL automatically correct retryable artifacts, stale candidates, and verification failures within bounded task authority and pass structured recovery feedback to the next Worker. Automatic exhaustion SHALL survive ordinary resume, restart, rollback, route replacement, task renaming, and contract rewording for the same verification obligation. Dedicated checked storage SHALL retain recovery facts independently of display diagnostics, and a pre-reserved run-wide work budget SHALL bound all launches, including nested repair.
 
 #### Scenario: Stale candidate is refreshed automatically
 
@@ -126,3 +126,23 @@ The private control plane SHALL record ordered behavior and technical decisions 
 
 - **WHEN** the same approval operation id is repeated
 - **THEN** the control plane returns the original record rather than creating another approval revision
+
+
+### Requirement: Explicit bounded recovery continuation
+
+Exhausted automatic correction SHALL remain exhausted across ordinary resume, restart and rebind. The parent MAY explicitly authorize one additional attempt against the current incident and failure sequence without resetting consumption. Authorizations and launches SHALL be durable, idempotent and lease-bound. Successful delivery admission MAY grow work capacity by the largest admitted phase count, within a fixed run hard limit; renaming, replay and shrinking then regrowing SHALL NOT repeatedly replenish capacity. The cumulative work budget SHALL replace the independent run-wide failure-count stop.
+
+#### Scenario: The parent retries an exhausted incident
+
+- **WHEN** the parent explicitly resumes the current exhausted incident with remaining work capacity
+- **THEN** exactly one additional attempt is permitted, stale or replayed grants do not duplicate work, and another failure pauses without resetting history
+
+#### Scenario: An admitted plan splits a task
+
+- **WHEN** a revised admitted delivery increases the phase count
+- **THEN** the retained work budget grows to the admitted high-water allowance without refunding consumed work or exceeding the run hard limit
+
+#### Scenario: An additional attempt retains a candidate during an environment failure
+
+- **WHEN** an explicitly granted attempt seals a candidate but verification becomes unavailable and the run is later resumed or reopened
+- **THEN** ordinary resume may reverify the current retained candidate despite exhausted generation attempts, cannot launch a new candidate, preserves unavailable diagnostics, and counts a subsequent product rejection without resetting history

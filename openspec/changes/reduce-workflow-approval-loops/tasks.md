@@ -67,3 +67,25 @@
   - `specs/workflow-run-control-plane/spec.md#Parent-owned implementation continuation/Automatic amendment keeps failing`
   - `specs/workflow-run-control-plane/spec.md#Parent-owned implementation continuation/Explicit cancellation interrupts continuation`
   - `specs/workflow-run-control-plane/spec.md#Parent-owned implementation continuation/Parent recovery is presented to the user`
+
+
+## 8. Verification runtime and explicit recovery
+
+- [x] 8.1 Implement and verify isolated execution, report classification, script compatibility and bounded parent recovery.
+  - `specs/private-agent-orchestration/spec.md#Isolated verification runtime/A normal package manager project runs tests`
+  - `specs/private-agent-orchestration/spec.md#Isolated verification runtime/Logs and reports exceed the old output threshold`
+  - `specs/private-agent-orchestration/spec.md#Isolated verification runtime/Verification cannot produce valid evidence`
+  - `specs/private-agent-orchestration/spec.md#Isolated verification runtime/Approved scripts contain shell composition`
+  - `specs/workflow-run-control-plane/spec.md#Explicit bounded recovery continuation/The parent retries an exhausted incident`
+  - `specs/workflow-run-control-plane/spec.md#Explicit bounded recovery continuation/An admitted plan splits a task`
+
+- [x] 8.2 Correct authorized configuration mutation, streaming Red evidence and exhausted-candidate reverification.
+  - `specs/private-agent-orchestration/spec.md#Isolated verification runtime/A candidate changes an authorized configuration file`
+  - `specs/private-agent-orchestration/spec.md#Isolated verification runtime/Configuration contains harmless documentation`
+  - `specs/private-agent-orchestration/spec.md#Isolated verification runtime/A Red witness falls outside retained diagnostic logs`
+  - `specs/workflow-run-control-plane/spec.md#Explicit bounded recovery continuation/An additional attempt retains a candidate during an environment failure`
+
+- [x] 8.3 Correct complete-set attribution, stable execution identities and advisory route estimates.
+  - `specs/private-agent-orchestration/spec.md#Recoverable attempts and Worker replacement/Estimated capacity exceeds an available route`
+  - `specs/private-agent-orchestration/spec.md#Isolated verification runtime/Failure sets exceed presentation limits`
+  - `specs/private-agent-orchestration/spec.md#Isolated verification runtime/Equivalent verification contracts have different display identities`

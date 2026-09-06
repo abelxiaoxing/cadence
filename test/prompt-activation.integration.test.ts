@@ -407,6 +407,7 @@ describe("package Prompt provenance activates abel_dispatch", () => {
       "deliveryRevision",
       "receiptHash",
       "routeId",
+      "recovery",
       "action",
       "batchId",
       "request",

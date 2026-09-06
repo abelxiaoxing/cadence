@@ -1,7 +1,7 @@
 import { Worker } from "node:worker_threads";
 
 export interface WorkspaceIoMetrics {
-  operation: "captureBaseline" | "materialize";
+  operation: "captureBaseline" | "materialize" | "verificationIdentity";
   elapsedMs: number;
   files: number;
   bytes: number;

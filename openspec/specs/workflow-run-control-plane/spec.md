@@ -74,7 +74,7 @@ The public run lifecycle SHALL distinguish at least ready, queued, connecting, r
 Transport, endpoint, environment, capacity, generated-artifact, stale-snapshot, resource-conflict, verification, and repairable compatibility failures SHALL NOT by themselves create an unrecoverable task terminal.
 Resource conflicts SHALL remain queued until their declared conflict clears.
 Retryable failures SHALL preserve separate policy counters and final typed evidence for transport, artifact correction, stale refresh, verification repair, and parent checkpoint work.
-Artifact correction SHALL use the canonical plan's 2-3 total candidate-attempt bound independently for each task phase and operation, SHALL count the initial candidate launch, and SHALL reset only after phase commitment or a later explicit operation.
+Artifact correction SHALL use the canonical plan's 2-3 automatic candidate-attempt bound per verification obligation and phase, including the initial launch. Ordinary operations SHALL NOT reset exhaustion; explicit parent recovery MAY authorize one additional launch against the current incident and failure sequence within the retained cumulative budget.
 Exhausting an automatic policy SHALL pause the run for explicit resume, Worker rebinding, task reshaping, approval revision, or discard; it SHALL NOT erase already committed independent work.
 Only successful completion, explicit discard, or a deterministic contract or integrity rejection with no legal revision path SHALL terminate a run.
 
@@ -91,7 +91,7 @@ Only successful completion, explicit discard, or a deterministic contract or int
 #### Scenario: Generated candidate remains invalid
 
 - **WHEN** automatic artifact correction is exhausted while the approved task boundary remains valid
-- **THEN** the task pauses with bounded validation evidence and can resume with a replacement Worker while accepted sibling work remains available
+- **THEN** the task pauses with bounded validation evidence and can receive an explicit additional attempt under the retained budget while accepted sibling work remains available
 
 #### Scenario: Green is constrained by the same task Red artifact
 
@@ -117,7 +117,7 @@ Only successful completion, explicit discard, or a deterministic contract or int
 
 Every run SHALL bind the exact approved Gate A and Gate B delivery revision it executes.
 A discovered requirement, behavior, policy, dependency, architecture, path, conflict, resource, verification, or AGENTS boundary gap SHALL pause the run as approval-needed with structured safe evidence. The parent SHALL choose its recommended implementation solution within the accepted Design constraints and compile revised authority automatically; Workers SHALL NOT expand their own authority.
-A behavior-affecting revision SHALL require renewed Gate A authorization and a freshly compiled Gate B proof; a purely technical revision SHALL retain Gate A and receive a new compiler-owned Gate B proof after the parent records its recommended implementation choice under the accepted Design.
+A behavior-affecting revision SHALL require renewed Gate A authorization outside automatic Implement amendment and a freshly compiled Gate B proof; a purely technical revision SHALL retain Gate A and receive a new compiler-owned Gate B proof after the parent records its recommended implementation choice under the accepted Design.
 After a newly approved delivery revision is supplied, the control plane SHALL attach it as a new binding to the existing stable run, compare its behavior, task, path, verification, output, and dependency contracts with retained work, invalidate only facts no longer justified, revalidate the private change workspace, and continue when the revised contract permits it.
 Gate approval SHALL remain a product or implementation-contract approval and SHALL NOT become tool permission.
 
@@ -173,7 +173,7 @@ Runtime state MUST NOT be written into AGENTS indexes, tracked OpenSpec artifact
 
 ### Requirement: Transactional change completion
 
-Implement SHALL perform Red, Green, Refactor, declared output checks, affected verification, full-suite comparison, and approved AGENTS checkpoint work against a private cumulative change workspace before final delivery to the main workspace.
+Implement SHALL perform the approved evidence mode (Red/Green for behavior; baseline/Green for authorized mechanical/refactor tasks), optional Refactor, declared output checks, affected verification, full-suite comparison, and approved AGENTS checkpoint work against a private cumulative change workspace before final delivery to the main workspace.
 The main workspace SHALL remain unchanged by Implement candidates until the complete change is verified and ready to apply.
 Before final application, the control plane SHALL compare every bound main-workspace input and target with the baseline on which the verified cumulative change depends.
 A stale main workspace SHALL pause for rebase and revalidation without overwriting user changes.
@@ -355,7 +355,7 @@ Implement SHALL expose every known task or change authority gap in one stable de
 
 ### Requirement: Persistent recovery reservations
 
-Recovery incidents SHALL be stored separately from display diagnostics and indexed by verification obligation and phase rather than route, task naming, or workspace revision lineage. Before execution the control plane SHALL reserve a finite run-wide work unit; nested candidate proposals SHALL reserve additional units through the same authority. Reopen and post-launch cancellation SHALL NOT refund consumed work. A changed repair limit SHALL NOT invalidate unchanged task evidence or implicitly replenish an exhausted incident.
+Recovery incidents SHALL be stored separately from display diagnostics and indexed by verification obligation and phase rather than route, task naming, or workspace revision lineage. Before execution the control plane SHALL reserve a finite run-wide work unit; nested candidate proposals SHALL reserve additional units through the same authority. Reopen and post-launch cancellation SHALL NOT refund consumed work. A changed repair limit SHALL NOT invalidate unchanged task evidence or implicitly replenish an exhausted incident. Explicit parent recovery may grant one additional launch without resetting counters; capacity may grow by admitted phase high-water within the fixed run limit.
 
 #### Scenario: Internal rollback repeats the same failure
 
@@ -400,3 +400,45 @@ Invoking Implement SHALL delegate remaining implementation choices to the parent
 
 - **WHEN** a nonterminal result supplies an automatic parent continuation
 - **THEN** activity remains recovering rather than completed or waiting for a user decision, and no manual resume hint is displayed
+
+### Requirement: Explicit bounded recovery continuation
+
+Exhausted automatic correction SHALL remain exhausted across ordinary resume, restart and rebind. The parent MAY explicitly authorize one additional attempt against the current incident and failure sequence without resetting consumption. Authorizations and launches SHALL be durable, idempotent and lease-bound. Successful delivery admission MAY grow work capacity by the largest admitted phase count, within a fixed run hard limit; renaming, replay and shrinking then regrowing SHALL NOT repeatedly replenish capacity. The cumulative work budget SHALL replace the independent run-wide failure-count stop.
+
+#### Scenario: The parent retries an exhausted incident
+
+- **WHEN** the parent explicitly resumes the current exhausted incident with remaining work capacity
+- **THEN** exactly one additional attempt is permitted, stale or replayed grants do not duplicate work, and another failure pauses without resetting history
+
+#### Scenario: An admitted plan splits a task
+
+- **WHEN** a revised admitted delivery increases the phase count
+- **THEN** the retained work budget grows to the admitted high-water allowance without refunding consumed work or exceeding the run hard limit
+
+#### Scenario: An additional attempt retains a candidate during an environment failure
+
+- **WHEN** an explicitly granted attempt seals a candidate but verification becomes unavailable and the run is later resumed or reopened
+- **THEN** ordinary resume may reverify the current retained candidate despite exhausted generation attempts, cannot launch a new candidate, preserves unavailable diagnostics, and counts a subsequent product rejection without resetting history
+
+### Requirement: Structured change authority
+
+Gate A MAY accept a structured ChangeContract with stable acceptance IDs, verification obligations, explicit constraints and write/dependency/verification-mode policy. New Design work SHALL use this form. The controller SHALL normalize, persist and inherit that authority. Compilation SHALL inject the approved contract and reject substitution, omitted required verification or policy expansion. Automatic Implement amendments SHALL NOT renew Gate A, record replacement behavior decisions, or rewrite accepted proposal/spec artifacts. Prose-only historical approvals SHALL remain readable without granting new implicit scope.
+
+#### Scenario: A technical label attempts to weaken acceptance
+
+- **WHEN** an automatic revision removes accepted verification, expands its policy or replaces behavior authority
+- **THEN** the controller rejects it before publishing the revised executable authority
+
+#### Scenario: A structured contract is reopened
+
+- **WHEN** the Design journal reopens or inherits finalized Gate A authority
+- **THEN** the same normalized goal, acceptance, constraints and policy remain available and bound to compilation
+
+### Requirement: Parent-owned nested recovery decisions
+
+Every nested affected repair, cumulative repair and Red correction SHALL ask the parent recovery policy whether its next action is allowed. The parent SHALL check its lease, apply the shared automatic or explicit one-attempt policy, and retain the existing durable work reservation authority. The executor SHALL sequence effects without independently choosing retry limits.
+
+#### Scenario: A nested repair reaches its bound
+
+- **WHEN** a repair requests work beyond its automatic limit or single additional grant
+- **THEN** the parent refuses the action without launching another candidate or refunding previous work

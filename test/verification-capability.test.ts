@@ -3,6 +3,7 @@ import {
   cpSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -10,15 +11,23 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as verificationCapability from "../src/verification-capability.ts";
 import {
   bindCurrentVerificationCapability,
+  bindDraftVerificationInputs,
   commonDirectory,
   isVerificationCapabilityCurrent,
   resolveVerificationRunner,
   validateVerificationAdapterCapability,
   validateVerificationCapability,
+  verificationRunnerFiles,
 } from "../src/verification-capability.ts";
+import {
+  captureVerificationEnvironmentIdentity,
+  prepareVerificationEnvironment,
+} from "../src/verification-environment.ts";
+import { verificationEnvironmentDigest } from "../src/verification-identity.ts";
 
 const fixtures = fileURLToPath(
   new URL("./fixtures/verification-consumers", import.meta.url),
@@ -26,6 +35,7 @@ const fixtures = fileURLToPath(
 const roots: string[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
@@ -89,6 +99,107 @@ const npmVitest = {
 } as const;
 
 describe("cross-project verification capability", () => {
+  it("hashes transitive installed bytes outside the parent thread and excludes disposable Vite caches", async () => {
+    const root = consumer("npm");
+    const capture = () => captureVerificationEnvironmentIdentity(root, []);
+    const before = await capture();
+    mkdirSync(path.join(root, "node_modules/.vite"));
+    writeFileSync(path.join(root, "node_modules/.vite/cache"), "temporary");
+    expect(await capture()).toBe(before);
+    writeFileSync(path.join(root, "node_modules/transitive.js"), "changed");
+    expect(await capture()).not.toBe(before);
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled"));
+    await expect(
+      captureVerificationEnvironmentIdentity(root, [], controller.signal),
+    ).rejects.toThrow("cancelled");
+  });
+  it.each([
+    ["launcher", "bin/npm-cli.js"],
+    ["launcher", "lib/cli.js"],
+    ["launcher", "node_modules/helper/index.js"],
+    ["fixed-arg", "bin/npm-cli.js"],
+    ["fixed-arg", "lib/cli.js"],
+    ["fixed-arg", "node_modules/helper/index.js"],
+  ])(
+    "invalidates retained identity for a system %s when %s changes",
+    async (bindingKind, changedFile) => {
+      const root = consumer("npm");
+      const system = path.join(root, "system");
+      const installed = path.join(system, "lib/node_modules/npm");
+      mkdirSync(path.join(system, "bin"), { recursive: true });
+      for (const file of [
+        "bin/npm-cli.js",
+        "lib/cli.js",
+        "node_modules/helper/index.js",
+      ]) {
+        mkdirSync(path.dirname(path.join(installed, file)), {
+          recursive: true,
+        });
+        writeFileSync(path.join(installed, file), "original installed bytes\n");
+      }
+      writeFileSync(
+        path.join(installed, "package.json"),
+        JSON.stringify({ name: "npm", bin: { npm: "bin/npm-cli.js" } }),
+      );
+      const launcher = path.join(system, "bin/npm");
+      symlinkSync("../lib/node_modules/npm/bin/npm-cli.js", launcher);
+      const binding =
+        bindingKind === "launcher"
+          ? { command: "npm", executablePath: launcher }
+          : {
+              command: "npm",
+              executablePath: process.execPath,
+              fixedArgs: [launcher],
+            };
+      // System runners have no private mount source to cover their package bytes.
+      vi.spyOn(
+        verificationCapability,
+        "validateVerificationAdapterCapability",
+      ).mockReturnValue({
+        ok: true,
+        verificationId: npmVitest.id,
+        runnerBindings: [binding],
+      });
+      const verification = {
+        ...npmVitest,
+        testFiles: [...npmVitest.testFiles],
+        args: [],
+      };
+      const paths = verificationRunnerFiles(root, verification, [binding]);
+      const bound = verificationEnvironmentDigest(paths);
+      const before = await captureVerificationEnvironmentIdentity(root, [
+        verification,
+      ]);
+      writeFileSync(
+        path.join(installed, changedFile),
+        "upgraded installed bytes\n",
+      );
+      expect(verificationEnvironmentDigest(paths)).not.toBe(bound);
+      expect(
+        await captureVerificationEnvironmentIdentity(root, [verification]),
+      ).not.toBe(before);
+    },
+  );
+
+  it("invalidates a bound capability when an installed local runner changes", () => {
+    const root = consumer("npm");
+    const bound = bindCurrentVerificationCapability(root, {
+      kind: "static-check",
+      id: "local-check",
+      runner: { kind: "local-binary", executable: "tsc" },
+      args: [],
+      classification: "expected-green",
+    });
+    expect(bound.ok).toBe(true);
+    if (!bound.ok) throw new Error("capability unavailable");
+    expect(isVerificationCapabilityCurrent(root, bound.value)).toBe(true);
+    writeFileSync(
+      path.join(root, "node_modules/tsc.js"),
+      "#!/usr/bin/env node\nprocess.exit(1);\n",
+    );
+    expect(isVerificationCapabilityCurrent(root, bound.value)).toBe(false);
+  });
   it("resolves Windows PATH runners case-insensitively without POSIX execute bits", () => {
     const root = consumer("npm");
     const fixture = windowsRunnerFixture(root);
@@ -254,7 +365,63 @@ describe("cross-project verification capability", () => {
     });
   });
 
-  it("keeps unsafe and networking package scripts rejected on Windows", () => {
+  it.each(["bun test", "node before.mjs && bun test", "npm run nested"])(
+    "retains private runtime mounts and PATH for approved script %s",
+    (command) => {
+      const root = consumer("npm");
+      const runtime = path.join(root, "private-home/.bun/bin");
+      mkdirSync(runtime, { recursive: true });
+      writeFileSync(path.join(runtime, "bun"), "#!/bin/sh\nexit 0\n", {
+        mode: 0o755,
+      });
+      writeFileSync(
+        path.join(root, "package.json"),
+        JSON.stringify({ scripts: { test: command, nested: "bun test" } }),
+      );
+      const capability = validateVerificationAdapterCapability(
+        root,
+        {
+          kind: "package-script",
+          id: "bun-script",
+          packageManager: "npm",
+          script: "test",
+          command,
+          args: [],
+          classification: "expected-green",
+        },
+        {
+          runnerEnvironment: {
+            path: `${runtime}${path.delimiter}${process.env.PATH ?? ""}`,
+          },
+        },
+      );
+      expect(capability.ok).toBe(true);
+      if (!capability.ok) throw new Error("capability unavailable");
+      expect(capability.runnerBindings).toContainEqual({
+        command: "bun",
+        executablePath: path.join(runtime, "bun"),
+        mountSource: runtime,
+      });
+      const environment = prepareVerificationEnvironment(
+        root,
+        root,
+        capability.runnerBindings,
+      );
+      try {
+        const mount = environment.mounts.find(
+          (entry) => entry.source === runtime,
+        );
+        expect(mount).toBeDefined();
+        expect(environment.environment.PATH.split(":")).toContain(
+          mount!.target,
+        );
+      } finally {
+        environment.cleanup();
+      }
+    },
+  );
+
+  it("accepts an approved opaque package script on Windows", () => {
     const root = consumer("npm");
     const fixture = windowsRunnerFixture(root);
     writeFileSync(
@@ -277,8 +444,7 @@ describe("cross-project verification capability", () => {
         { runnerEnvironment: fixture.environment },
       ),
     ).toMatchObject({
-      ok: false,
-      diagnostic: { code: "script-unsafe" },
+      ok: true,
     });
   });
 
@@ -326,6 +492,110 @@ describe("cross-project verification capability", () => {
       });
     }
   });
+
+  it("binds compound package scripts, hooks, lockfiles and optional configuration", () => {
+    const root = consumer("npm");
+    const command = "node before.mjs && npm run test:run -- --run";
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({
+        scripts: {
+          verify: command,
+          "test:run": "vitest run",
+          preverify: "node setup.mjs",
+        },
+      }),
+    );
+    const contract = {
+      kind: "package-script",
+      id: "compound",
+      packageManager: "npm",
+      script: "verify",
+      command,
+      args: [],
+      classification: "expected-green",
+    };
+    const draft = { ...contract, command: undefined };
+    const compiled = bindDraftVerificationInputs(root, draft);
+    expect(draft.command).toBeUndefined();
+    expect(compiled).toMatchObject({
+      command,
+      executionBindings: {
+        "package.json": expect.stringMatching(/^[a-f0-9]{64}$/u),
+        ".npmrc": null,
+      },
+    });
+    const bound = bindCurrentVerificationCapability(root, compiled);
+    expect(bound).toMatchObject({ ok: true });
+    if (!bound.ok) return;
+    writeFileSync(path.join(root, ".npmrc"), "fund=false\n");
+    expect(isVerificationCapabilityCurrent(root, bound.value)).toBe(false);
+    expect(validateVerificationCapability(root, compiled)).toMatchObject({
+      ok: false,
+      diagnostic: { code: "verification-config-mismatch" },
+    });
+  });
+
+  it("allows only parent-authorized execution input changes and still binds the actual invocation", () => {
+    const root = consumer("npm");
+    const compiled = bindDraftVerificationInputs(root, npmVitest);
+    const manifest = JSON.parse(
+      readFileSync(path.join(root, "package.json"), "utf8"),
+    );
+    manifest.description = "approved metadata change";
+    writeFileSync(path.join(root, "package.json"), JSON.stringify(manifest));
+    expect(validateVerificationCapability(root, compiled)).toMatchObject({
+      ok: false,
+      diagnostic: { code: "verification-config-mismatch" },
+    });
+    const bound = bindCurrentVerificationCapability(root, compiled, {
+      executionWritePaths: ["package.json"],
+    });
+    expect(bound).toMatchObject({ ok: true });
+    if (!bound.ok) return;
+    manifest.scripts["test:run"] = "vitest --version";
+    writeFileSync(path.join(root, "package.json"), JSON.stringify(manifest));
+    expect(isVerificationCapabilityCurrent(root, bound.value)).toBe(false);
+    expect(
+      validateVerificationCapability(root, compiled, {
+        executionWritePaths: ["package.json"],
+      }),
+    ).toMatchObject({
+      ok: false,
+      diagnostic: { code: "script-command-mismatch" },
+    });
+  });
+
+  it.each([
+    ".npmrc",
+    ".yarnrc",
+    ".yarnrc.yml",
+    "bunfig.toml",
+    "pnpm-workspace.yaml",
+  ])(
+    "ignores comments and harmless values in %s while rejecting effective host configuration",
+    (file) => {
+      const root = consumer("npm");
+      const separator = [".yarnrc.yml", "pnpm-workspace.yaml"].includes(file)
+        ? ": "
+        : "=";
+      writeFileSync(
+        path.join(root, file),
+        `# token password plugins script-shell are documentation\ncache${separator}"./token-cache" # ordinary comment\n`,
+      );
+      expect(validateVerificationCapability(root, npmVitest)).toMatchObject({
+        ok: true,
+      });
+      writeFileSync(
+        path.join(root, file),
+        `"script-shell"${separator}"/host/shell"\n`,
+      );
+      expect(validateVerificationCapability(root, npmVitest)).toMatchObject({
+        ok: false,
+        diagnostic: { code: "verification-config-unsafe" },
+      });
+    },
+  );
 
   it("rejects a missing package script", () => {
     const root = consumer("npm");
@@ -390,41 +660,6 @@ describe("cross-project verification capability", () => {
       diagnostic: {
         kind: "design-readiness",
         code: "verification-contract-unsupported",
-      },
-    });
-  });
-
-  it.each([
-    "bun x prisma validate",
-    "bun --bun x prisma validate",
-    "bunx prisma validate",
-    "npm exec prisma validate",
-    "npm --yes exec prisma validate",
-    "pnpm dlx prisma validate",
-    "pnpx prisma validate",
-    "yarn dlx prisma validate",
-  ])("rejects implicit-download package script alias %s", (command) => {
-    const root = consumer("bun");
-    writeFileSync(
-      path.join(root, "package.json"),
-      JSON.stringify({ scripts: { schema: command } }),
-    );
-
-    expect(
-      validateVerificationCapability(root, {
-        kind: "package-script",
-        id: "download-alias",
-        packageManager: "bun",
-        script: "schema",
-        command,
-        args: [],
-        classification: "expected-green",
-      }),
-    ).toMatchObject({
-      ok: false,
-      diagnostic: {
-        kind: "verification-adapter",
-        code: "script-unsafe",
       },
     });
   });

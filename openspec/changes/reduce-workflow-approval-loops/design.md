@@ -16,7 +16,7 @@ A separately checked amendment namespace retains a maximum of 64 mutating contro
 
 Recovery facts live in a separate checked SQLite namespace, not attempt diagnostic JSON. The incident key binds the Red verification obligation with its non-semantic verification id removed, plus the current phase. Route, operation, task name, context prose and private workspace lineage are not recovery identities. A successful verified phase resolves its active episode; the append-only run history retains consumption. Cumulative repair cycle counts also survive restart.
 
-There is a fixed limit of 24 recovery events and a work budget initialized to 24 plus three units per initially planned phase. The control plane reserves a unit before each execution and grants nested candidate proposals additional units from the same ledger. Reservations commit before side effects. Queuing and pre-launch cancellation spend no work; post-launch cancellation does not mark a product failure or refund consumed work. Changes to plans, routes and task identities do not enlarge this budget. Unchanged resume after exhaustion performs no new work.
+Work remains reserved before execution and nested candidates use the same authority. The independent 24-failure stop is removed. Capacity is 24 plus three units per largest admitted phase count, capped by the host limit captured at run start (default 512); used work is never refunded. Ordinary resume/rebind does not replenish automatic correction. A parent may explicitly grant one launch against the current incident/failure sequence, with atomic reservation and durable replay fencing. Details and migration rationale are maintained in `docs/design/verification-runtime-and-recovery.md`.
 
 The existing durable executor retains its bounded local repair mechanics, while their launches now share the parent reservation authority. Automatic correction still receives safe structured feedback. The parent can now submit a revised task decomposition through the existing compiler; an executor-owned dynamic DAG synthesis algorithm and general environment installation remain separate capabilities; output compaction is not described as task splitting, and missing external capabilities are reported truthfully.
 
@@ -31,3 +31,9 @@ Changes to recovery limits retain compatible task evidence. Future attempts use 
 Permanent regression coverage exercises the actual rejected-correction/rollback/resume composition for Red and Green, route replacement, retained budgets, nested reservations, combined authority gaps, same-stage amendment followed by fresh-session receipt-less resume, compiler-generated proof, preserved sibling evidence and discovered-read currentness. Existing isolation, lifecycle cancellation, Red-Green-Refactor, delivery forgery, apply recovery and package verification remain required.
 
 Validation: `bun run verify` passed with 667 tests passed and 7 opt-in/platform skips; the real tarball contains the expected 67 members. Explicit real Bubblewrap validation passed all 3 isolation tests. Fresh-process seed acceptance passed 141 tests and type/syntax checks. Strict OpenSpec validation, all 42 active scenario traceability references, AGENTS checks, and whitespace checks passed.
+
+## 完整归因与路由偏好
+
+失败身份集合不再受模型摘要上限约束：完整基线封存到现有私有 ArtifactStore，ledger 保存 revision 和内容哈希引用，旧内联基线仍可读取。归因比较完成后，Worker、修复事件和公共状态最多保留 256 条相关失败。非 Vitest 失败身份绑定执行义务与证据，排除合同显示 ID；运行时策略升级为 `report-file-v3` 以触发旧证据重验。
+
+Implement 路由保留 16,000 context / 8,000 output 硬下限，复杂度估算只决定自动选择的优先级。各优先级内保持配置顺序；满足硬下限的健康路由仍可 fallback 或显式 rebind。

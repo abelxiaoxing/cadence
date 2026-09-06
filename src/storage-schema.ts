@@ -212,7 +212,10 @@ export const RECOVERY_SCHEMA = `
   CREATE TABLE IF NOT EXISTS workflow_work_budget (
     run_id TEXT PRIMARY KEY REFERENCES runs(run_id) ON DELETE CASCADE,
     used INTEGER NOT NULL CHECK (used >= 0),
-    max_work INTEGER NOT NULL CHECK (max_work > 0 AND used <= max_work)
+    max_work INTEGER NOT NULL CHECK (max_work > 0 AND used <= max_work),
+    phase_high_water INTEGER NOT NULL DEFAULT 0,
+    hard_limit INTEGER NOT NULL DEFAULT 512,
+    recovery_policy INTEGER NOT NULL DEFAULT 0
   ) STRICT;
 
   CREATE TABLE IF NOT EXISTS workflow_recovery_incidents (
@@ -221,6 +224,7 @@ export const RECOVERY_SCHEMA = `
     failures INTEGER NOT NULL CHECK (failures >= 0),
     max_attempts INTEGER NOT NULL CHECK (max_attempts > 0),
     feedback_json TEXT NOT NULL,
+    conditions_json TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (run_id, incident_key)
   ) STRICT;
 
@@ -322,3 +326,27 @@ export const ENGINE_ADDITIONS = {
     attempt_diagnostic_json: "TEXT",
   },
 };
+
+export const RECOVERY_ADDITIONS = {
+  workflow_work_budget: {
+    phase_high_water: "INTEGER NOT NULL DEFAULT 0",
+    hard_limit: "INTEGER NOT NULL DEFAULT 512",
+    recovery_policy: "INTEGER NOT NULL DEFAULT 0",
+  },
+  workflow_recovery_incidents: {
+    conditions_json: "TEXT NOT NULL DEFAULT '{}'",
+  },
+};
+
+export const RECOVERY_GRANT_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS workflow_recovery_grants (
+    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+    operation_id TEXT NOT NULL,
+    incident_key TEXT NOT NULL,
+    failure_sequence INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    consumed INTEGER NOT NULL DEFAULT 0 CHECK (consumed IN (0, 1)),
+    PRIMARY KEY (run_id, operation_id),
+    UNIQUE (run_id, incident_key, failure_sequence)
+  ) STRICT;
+`;

@@ -360,8 +360,8 @@ Implement SHALL NOT implicitly archive, commit, publish, release, or modify unre
 
 #### Scenario: Artifact correction budget is exhausted
 
-- **WHEN** the canonical plan's 2-3 total candidate-attempt bound for one task phase and operation is exhausted by typed artifact rejection
-- **THEN** the task pauses with the final safe artifact evidence and may resume under a replacement Worker without becoming a permanent blocker
+- **WHEN** the canonical plan's 2-3 automatic candidate-attempt bound for one verification obligation and phase is exhausted by typed artifact rejection
+- **THEN** the task pauses with the final safe artifact evidence and may receive one explicit parent-authorized attempt within the retained cumulative budget without resetting automatic exhaustion
 
 #### Scenario: Green reports a same-task Red constraint
 
@@ -722,3 +722,26 @@ Design SHALL investigate repository-resolvable unknowns before asking about impl
 
 - **WHEN** a valid draft realizes current accepted choices
 - **THEN** compilation supplies the private Gate B proof and finalization proceeds without a second decision round
+
+### Requirement: Change-specific verification evidence
+
+Behavior tasks SHALL retain Red/Green verification. Explicitly authorized mechanical and behavior-preserving refactor tasks MAY use baseline and postcondition evidence without a Red candidate. Compilation SHALL reject these modes without structured authority, reject declared public behavior impact, restrict mechanical write types and protect accepted refactor verifier inputs. All modes SHALL retain affected, cumulative and post-apply verification and transactional completion.
+
+#### Scenario: A nonbehavioral task executes
+
+- **WHEN** an approved mechanical or refactor task satisfies its compiler checks
+- **THEN** execution starts at Green after baseline capture and produces no fabricated Red candidate or failure fact
+
+### Requirement: Live workflow evaluation
+
+Development evaluation SHALL distinguish deterministic regression, package activation preflight and live-model consumer execution. Live measurements SHALL include completion, interventions, repeated amendments, elapsed time and reported usage/cost, without retaining raw conversations. Independent final oracles SHALL check successful consumer behavior. Provider failure, cancellation and Design-only completion SHALL not count as successful implementation.
+
+#### Scenario: A live model cannot execute
+
+- **WHEN** the host reports a provider error before useful execution
+- **THEN** evaluation records model unavailability separately from user intervention and never reports a successful workflow
+
+#### Scenario: The host is replaced between stages
+
+- **WHEN** the restart evaluation replaces its host after finalized Design
+- **THEN** Implement must discover the retained delivery in the new context and pass the final consumer oracle

@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import { compareCanonicalStrings } from "./canonical.ts";
 import {
+  assertPlanWithinChangeContract,
+  type ChangeContract,
+  normalizeChangeContract,
+} from "./change-contract.ts";
+import {
   type AgentsImpact,
   type ImplementGraphBoundary,
   type ImplementGraphOutput,
@@ -18,7 +23,10 @@ import {
   hashCanonicalValue,
   type ImplementGraphReadiness,
 } from "./implement-graph.ts";
-import { validateVerificationAdapterCapability } from "./verification-capability.ts";
+import {
+  bindDraftVerificationInputs,
+  validateVerificationAdapterCapability,
+} from "./verification-capability.ts";
 
 export const IMPLEMENT_PLAN_PATH = "implement-plan.json" as const;
 export const GATE_A_RECEIPT_PATH = "gate-a.yaml" as const;
@@ -219,7 +227,9 @@ export function assessDeliveryTraceability(input: {
   }
   const verificationIds = input.plan.tasks
     .flatMap((task) => [
-      task.phases.red.verification.id,
+      ...(task.verificationMode && task.verificationMode !== "behavior"
+        ? []
+        : [task.phases.red.verification.id]),
       task.phases.green.verification.id,
       ...(task.phases.refactor ? [task.phases.refactor.verification.id] : []),
     ])
@@ -305,6 +315,7 @@ export interface PlanTracking {
 }
 
 export interface PlanDraft {
+  changeContract?: ChangeContract;
   changeId: string;
   tasks: PlanTaskDraft[];
   outputs: ImplementGraphOutput[];
@@ -679,7 +690,7 @@ function normalizeVerification(
   return cloned;
 }
 
-function normalizePhase(value: unknown): PlanPhaseDraft {
+function normalizePhase(value: unknown, readOnly = false): PlanPhaseDraft {
   if (
     !isRecord(value) ||
     !exactKeys(value, [
@@ -702,7 +713,7 @@ function normalizePhase(value: unknown): PlanPhaseDraft {
   }
   const write = sortStrings(value.write as string[]);
   const deletions = sortStrings(value.delete as string[]);
-  if (write.length + deletions.length === 0) {
+  if (!readOnly && write.length + deletions.length === 0) {
     throw new Error("delivery-plan-empty-phase-boundary");
   }
   if (write.some((candidate) => deletions.includes(candidate))) {
@@ -775,7 +786,12 @@ function normalizeTask(value: unknown): PlanTaskDraft {
       candidate: unknown,
     ) => {
       try {
-        return normalizePhase(candidate);
+        return normalizePhase(
+          candidate,
+          phase === "red" &&
+            value.verificationMode !== undefined &&
+            value.verificationMode !== "behavior",
+        );
       } catch (error) {
         throw asPlanValidationError(error, {
           ...context,
@@ -1110,6 +1126,7 @@ function normalizeTracking(value: unknown): PlanTracking {
 }
 
 function normalizeDraft(value: unknown): ImplementPlan {
+  value = structuredClone(value);
   if (
     !isRecord(value) ||
     !exactKeys(value, [
@@ -1118,6 +1135,7 @@ function normalizeDraft(value: unknown): ImplementPlan {
       "outputs",
       "verification",
       "tracking",
+      ...(value.changeContract === undefined ? [] : ["changeContract"]),
     ]) ||
     typeof value.changeId !== "string" ||
     !CHANGE_NAME.test(value.changeId) ||
@@ -1126,9 +1144,26 @@ function normalizeDraft(value: unknown): ImplementPlan {
   ) {
     throw new Error("delivery-plan-invalid");
   }
+  const source = value;
+  const taskDrafts = value.tasks.map((task: unknown) => {
+    if (
+      !isRecord(task) ||
+      !["mechanical", "refactor"].includes(String(task.verificationMode))
+    )
+      return task;
+    if (!isRecord(task.phases) || !isRecord(task.phases.green))
+      throw new Error("delivery-plan-invalid-task-phases");
+    if (!source.changeContract)
+      throw new Error("change-contract-verification-mode-required");
+    const green = task.phases.green;
+    return {
+      ...task,
+      phases: { ...task.phases, red: { ...green, write: [], delete: [] } },
+    };
+  });
   const draftGraph = validateImplementGraphBoundary({
     changeId: value.changeId,
-    tasks: value.tasks.map((candidate) => {
+    tasks: taskDrafts.map((candidate) => {
       if (!isRecord(candidate)) return candidate;
       const {
         affectedVerification: _affectedVerification,
@@ -1146,8 +1181,11 @@ function normalizeDraft(value: unknown): ImplementPlan {
     );
   }
   const plan: ImplementPlan = {
+    ...(value.changeContract === undefined
+      ? {}
+      : { changeContract: normalizeChangeContract(value.changeContract) }),
     changeId: value.changeId,
-    tasks: value.tasks
+    tasks: taskDrafts
       .map(normalizeTask)
       .sort((left, right) =>
         compareCanonicalStrings(left.taskId, right.taskId),
@@ -1194,6 +1232,11 @@ function normalizeDraft(value: unknown): ImplementPlan {
   ) {
     throw new Error("delivery-agents-checkpoint-mismatch");
   }
+  if (plan.changeContract)
+    assertPlanWithinChangeContract(plan.changeContract, plan.tasks, [
+      plan.verification.change.fullSuite,
+      plan.verification.change.postApply,
+    ]);
   const graphValidation = validateImplementGraphBoundary(graphFromPlan(plan));
   if (!graphValidation.ok) {
     throw new DesignPlanValidationError(
@@ -1211,7 +1254,12 @@ function renderTasks(plan: ImplementPlan): string {
     lines.push(
       `  - Depends on: ${task.dependsOn.length > 0 ? task.dependsOn.join(", ") : "[]"}`,
     );
-    lines.push(`  - Red verification: ${task.phases.red.verification.id}`);
+    if (!task.verificationMode || task.verificationMode === "behavior")
+      lines.push(`  - Red verification: ${task.phases.red.verification.id}`);
+    else
+      lines.push(
+        `  - Evidence mode: ${task.verificationMode}; baseline and postconditions required`,
+      );
     lines.push(`  - Green verification: ${task.phases.green.verification.id}`);
   }
   lines.push("");
@@ -1220,9 +1268,11 @@ function renderTasks(plan: ImplementPlan): string {
 
 export function compileImplementPlan(
   draft: unknown,
-  options: { consumerRoot: string },
+  options: { consumerRoot: string; bindExecutionInputs?: boolean },
 ): CompiledDelivery {
   try {
+    if (options.bindExecutionInputs)
+      draft = bindDraftVerificationInputs(options.consumerRoot, draft);
     const normalized = normalizeDraft(draft);
     const plan =
       isRecord(draft) && legacyPlans.get(draft) === JSON.stringify(draft)

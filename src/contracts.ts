@@ -150,6 +150,9 @@ export const VERIFICATION_ADAPTER_CODES = [
   "script-command-mismatch",
   "script-missing",
   "script-unsafe",
+  "report-arguments-conflict",
+  "verification-config-mismatch",
+  "verification-config-unsafe",
 ] as const;
 export const CHILD_TRANSPORT_CODES = [
   "child-no-final-assistant",
@@ -249,10 +252,35 @@ export type VerificationClassification =
   | "expected-green"
   | "expected-refactor";
 
+/** Runtime-owned evidence; unavailable checks never become product baselines. */
+export interface VerificationEvidence {
+  id: string;
+  exitCode: number;
+  classification: VerificationClassification;
+  tests?: number;
+  failureIdentities: string[];
+  policy: "report-file-v3";
+}
+export type VerificationObservation =
+  | { kind: "accepted"; evidence: VerificationEvidence }
+  | {
+      kind: "rejected";
+      code: "red-not-witnessed" | "verification-rejected";
+      evidence: VerificationEvidence;
+    }
+  | {
+      kind: "unavailable";
+      category: "environment" | "adapter" | "resource";
+      code: string;
+      verificationId: string;
+    }
+  | { kind: "cancelled" };
+
 interface VerificationBase {
   id: string;
   classification: VerificationClassification;
   expectedFailure?: string;
+  executionBindings?: Record<string, string | null>;
 }
 
 export type PackageManager = "bun" | "npm" | "pnpm" | "yarn";
@@ -338,6 +366,7 @@ export interface PhaseBoundary {
 }
 
 export interface TaskBoundary {
+  verificationMode?: "behavior" | "mechanical" | "refactor";
   changeId: string;
   taskId: string;
   dependsOn: string[];
@@ -512,7 +541,7 @@ function validScriptCommand(value: unknown): value is string {
     value.length > 0 &&
     value.length <= 1024 &&
     value.trim() === value &&
-    !UNSAFE_VERIFICATION_TOKEN.test(value)
+    !value.includes("\0")
   );
 }
 
@@ -575,6 +604,7 @@ function validateExecutableRunner(value: unknown): value is ExecutableRunner {
 
 function validateVitestRunner(value: ExecutableRunner): boolean {
   if (value.kind === "package-script") {
+    if (UNSAFE_VERIFICATION_TOKEN.test(value.command)) return false;
     const tokens = value.command.split(/\s+/u);
     return (
       tokens[0] === "vitest" ||
@@ -591,8 +621,23 @@ function validateAtomicVerification(
 ): value is AtomicVerificationContract {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const contract = value as Record<string, unknown>;
-  const expectedFailure =
-    contract.classification === "expected-red" ? ["expectedFailure"] : [];
+  if (
+    contract.executionBindings !== undefined &&
+    (!contract.executionBindings ||
+      typeof contract.executionBindings !== "object" ||
+      Array.isArray(contract.executionBindings) ||
+      Object.entries(contract.executionBindings).some(
+        ([key, hash]) =>
+          !VERIFICATION_CONFIGURATION_PATHS.includes(key) ||
+          (hash !== null &&
+            (typeof hash !== "string" || !/^[a-f0-9]{64}$/u.test(hash))),
+      ))
+  )
+    return false;
+  const expectedFailure = [
+    ...(contract.classification === "expected-red" ? ["expectedFailure"] : []),
+    ...(contract.executionBindings === undefined ? [] : ["executionBindings"]),
+  ];
   if (contract.kind === "vitest") {
     const executableRunner = contract.runner as ExecutableRunner;
     return (
@@ -717,6 +762,38 @@ export function verificationSteps(
   return normalized.value.kind === "steps"
     ? structuredClone(normalized.value.steps)
     : [structuredClone(normalized.value)];
+}
+
+export const VERIFICATION_CONFIGURATION_PATHS: readonly string[] = [
+  "package.json",
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "bun.lock",
+  "bun.lockb",
+  "pnpm-lock.yaml",
+  "yarn.lock",
+  ".npmrc",
+  ".yarnrc",
+  ".yarnrc.yml",
+  "bunfig.toml",
+  "pnpm-workspace.yaml",
+];
+
+export function verificationBoundInputPaths(
+  verification: VerificationContract,
+): string[] {
+  return [
+    ...new Set([
+      ...verificationInputPaths(verification),
+      ...verificationSteps(verification).flatMap((step) =>
+        step.kind === "vitest" ||
+        step.kind === "package-script" ||
+        ("runner" in step && step.runner.kind === "package-script")
+          ? VERIFICATION_CONFIGURATION_PATHS
+          : [],
+      ),
+    ]),
+  ];
 }
 
 export function verificationInputPaths(
@@ -976,6 +1053,7 @@ function isWithinRoots(path: string, roots: string[]): boolean {
 function validatePhaseBoundary(
   value: unknown,
   phase: ImplementationPhase,
+  mode: unknown = "behavior",
 ): value is PhaseBoundary {
   if (
     !hasExactKeys(
@@ -1002,7 +1080,10 @@ function validatePhaseBoundary(
   const verification = validateVerificationContract(value.verification);
   if (!verification.ok) return false;
   const classification = {
-    red: "expected-red",
+    red:
+      mode !== undefined && mode !== "behavior"
+        ? "expected-green"
+        : "expected-red",
     green: "expected-green",
     refactor: "expected-refactor",
   } as const;
@@ -1014,19 +1095,27 @@ function validateTaskBoundary(
   snapshot: unknown,
 ): value is TaskBoundary {
   if (
-    !hasExactKeys(value, [
-      "changeId",
-      "taskId",
-      "dependsOn",
-      "objective",
-      "context",
-      "roots",
-      "phases",
-      "scheduling",
-      "agents",
-      "approvedDependencies",
-      "impactClosure",
-    ]) ||
+    !hasExactKeys(
+      value,
+      [
+        "changeId",
+        "taskId",
+        "dependsOn",
+        "objective",
+        "context",
+        "roots",
+        "phases",
+        "scheduling",
+        "agents",
+        "approvedDependencies",
+        "impactClosure",
+      ],
+      ["verificationMode"],
+    ) ||
+    (value.verificationMode !== undefined &&
+      !["behavior", "mechanical", "refactor"].includes(
+        String(value.verificationMode),
+      )) ||
     !validIdentifier(value.changeId) ||
     !validIdentifier(value.taskId) ||
     !validateIdentifierSet(value.dependsOn) ||
@@ -1038,7 +1127,7 @@ function validateTaskBoundary(
     typeof value.context.contract !== "string" ||
     !validateRoots(value.roots) ||
     !hasExactKeys(value.phases, ["red", "green"], ["refactor"]) ||
-    !validatePhaseBoundary(value.phases.red, "red") ||
+    !validatePhaseBoundary(value.phases.red, "red", value.verificationMode) ||
     !validatePhaseBoundary(value.phases.green, "green") ||
     (value.phases.refactor !== undefined &&
       !validatePhaseBoundary(value.phases.refactor, "refactor")) ||
@@ -1120,6 +1209,7 @@ export type ImplementGraphContractDiagnostic =
 function phaseBoundaryContractDiagnostic(
   value: unknown,
   phase: ImplementationPhase,
+  mode: unknown = "behavior",
 ): Omit<
   Extract<
     ImplementGraphContractDiagnostic,
@@ -1176,7 +1266,10 @@ function phaseBoundaryContractDiagnostic(
     };
   }
   const classification = {
-    red: "expected-red",
+    red:
+      mode !== undefined && mode !== "behavior"
+        ? "expected-green"
+        : "expected-red",
     green: "expected-green",
     refactor: "expected-refactor",
   } as const;
@@ -1227,22 +1320,33 @@ function taskBoundaryContractDiagnostic(
     category,
   });
   if (
-    !hasExactKeys(value, [
-      "changeId",
-      "taskId",
-      "dependsOn",
-      "objective",
-      "context",
-      "roots",
-      "phases",
-      "scheduling",
-      "agents",
-      "approvedDependencies",
-      "impactClosure",
-    ])
+    !hasExactKeys(
+      value,
+      [
+        "changeId",
+        "taskId",
+        "dependsOn",
+        "objective",
+        "context",
+        "roots",
+        "phases",
+        "scheduling",
+        "agents",
+        "approvedDependencies",
+        "impactClosure",
+      ],
+      ["verificationMode"],
+    )
   ) {
     return diagnostic("task", "shape");
   }
+  if (
+    value.verificationMode !== undefined &&
+    !["behavior", "mechanical", "refactor"].includes(
+      String(value.verificationMode),
+    )
+  )
+    return diagnostic("verificationMode", "shape");
   if (!validIdentifier(value.changeId)) {
     return diagnostic("changeId", "identifier");
   }
@@ -1275,7 +1379,11 @@ function taskBoundaryContractDiagnostic(
   for (const phase of IMPLEMENTATION_PHASES) {
     const boundary = value.phases[phase];
     if (phase === "refactor" && boundary === undefined) continue;
-    const phaseDiagnostic = phaseBoundaryContractDiagnostic(boundary, phase);
+    const phaseDiagnostic = phaseBoundaryContractDiagnostic(
+      boundary,
+      phase,
+      value.verificationMode,
+    );
     if (phaseDiagnostic)
       return { ...diagnostic("phases", "contract"), ...phaseDiagnostic };
   }

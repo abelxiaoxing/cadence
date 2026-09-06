@@ -1,5 +1,11 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import {
+  assertPlanWithinChangeContract,
+  normalizeChangeContract,
+  retainedChangeContract,
+} from "./change-contract.ts";
 import { LIMITS } from "./contracts.ts";
 import {
   assertControlCommand,
@@ -7,10 +13,12 @@ import {
   type ControlStage,
 } from "./control-contracts.ts";
 import {
+  compileImplementPlan,
   DeliveryValidationError,
   type ImplementPlan,
   type PlanTaskDraft,
 } from "./delivery-compiler.ts";
+import { snapshotFiles } from "./file-snapshot.ts";
 import type { RoutePolicy } from "./route-policy.ts";
 import {
   canonicalJson,
@@ -26,6 +34,8 @@ import {
   AMENDMENT_SCHEMA,
   ENGINE_ADDITIONS,
   ENGINE_SCHEMA,
+  RECOVERY_ADDITIONS,
+  RECOVERY_GRANT_SCHEMA,
   RECOVERY_SCHEMA,
   REJECTED_DELIVERY_SCHEMA,
 } from "./storage-schema.ts";
@@ -40,6 +50,7 @@ import {
   CHANGE_NAME,
   cancellableRead,
   classifyPersistedContextRequest,
+  decideRecoveryAction,
   deliveryBoundPaths,
   type EngineOperationRow,
   type EngineRunRow,
@@ -91,6 +102,7 @@ export class WorkflowEngine {
   readonly #lifecycle?: WorkflowRunLifecycle;
   readonly #now: () => number;
   readonly #leaseTtlMs: number;
+  readonly #workHardLimit: number;
   #activeTasks = 0;
   readonly #capacityWaiters = new Set<() => void>();
   readonly #active = new Map<string, ActiveOperation>();
@@ -114,12 +126,16 @@ export class WorkflowEngine {
     this.#lifecycle = options.lifecycle;
     this.#now = options.now ?? Date.now;
     this.#leaseTtlMs = options.leaseTtlMs ?? 60_000;
+    this.#workHardLimit = options.workHardLimit ?? 512;
+    if (!Number.isSafeInteger(this.#workHardLimit) || this.#workHardLimit < 1)
+      throw new Error("workflow-work-limit-invalid");
     this.#runStore = RunStore.open(options.stateRoot, { now: this.#now });
     this.#database = new DatabaseSync(options.stateRoot.databasePath);
     try {
       configureSqlite(this.#database);
       ensureSqliteSchema(this.#database, ENGINE_SCHEMA, ENGINE_ADDITIONS);
-      ensureSqliteSchema(this.#database, RECOVERY_SCHEMA);
+      ensureSqliteSchema(this.#database, RECOVERY_SCHEMA, RECOVERY_ADDITIONS);
+      ensureSqliteSchema(this.#database, RECOVERY_GRANT_SCHEMA);
       ensureSqliteSchema(this.#database, AMENDMENT_SCHEMA);
       ensureSqliteSchema(this.#database, REJECTED_DELIVERY_SCHEMA);
     } catch (error) {
@@ -127,6 +143,29 @@ export class WorkflowEngine {
       this.#runStore.close();
       throw error;
     }
+    this.#transaction(() => {
+      const budgets = this.#database
+        .prepare(
+          "SELECT run_id FROM workflow_work_budget WHERE recovery_policy = 0",
+        )
+        .all() as { run_id: string }[];
+      for (const { run_id } of budgets) {
+        const plans = this.#database
+          .prepare(
+            "SELECT plan_json FROM workflow_engine_deliveries WHERE run_id = ?",
+          )
+          .all(run_id) as { plan_json: string }[];
+        const high = Math.max(
+          0,
+          ...plans.map((row) => this.#phaseCount(JSON.parse(row.plan_json))),
+        );
+        this.#database
+          .prepare(
+            "UPDATE workflow_work_budget SET phase_high_water = ?, hard_limit = MAX(hard_limit, max_work, used), recovery_policy = 1 WHERE run_id = ?",
+          )
+          .run(high, run_id);
+      }
+    });
     this.#recoverInterruptedOperations();
     this.#recoverTerminalCleanup();
   }
@@ -335,6 +374,7 @@ export class WorkflowEngine {
                 throw new Error("amendment-budget-exhausted");
             });
           }
+          this.#assertAmendmentContract(runId, change, request);
           const outcome = await execute(assertAuthority);
           assertAuthority();
           return this.#commitOperation(runId, operationId, outcome);
@@ -349,6 +389,73 @@ export class WorkflowEngine {
       });
     this.#amendments.set(runId, pending);
     return pending;
+  }
+
+  #assertAmendmentContract(
+    runId: string,
+    change: string,
+    request: unknown,
+  ): void {
+    if (!isRecord(request)) throw new Error("amendment-contract-invalid");
+    if (
+      (request.operation === "approve-gate" && request.gate === "gate-a") ||
+      (request.operation === "record-decision" &&
+        request.category === "behavior")
+    )
+      throw new Error("amendment-changes-accepted-behavior");
+    if (
+      ![
+        "write-artifact",
+        "delete-artifact",
+        "compile-plan",
+        "validate-plan-draft",
+        "finalize-delivery",
+      ].includes(String(request.operation))
+    )
+      return;
+    const relative = String(request.path);
+    if (relative === "proposal.md" || relative.startsWith("specs/")) {
+      const file = `openspec/changes/${change}/${relative}`;
+      if (
+        request.operation !== "write-artifact" ||
+        !isSafeRegularFile(this.#consumerRoot, file) ||
+        readFileSync(path.join(this.#consumerRoot, file), "utf8") !==
+          request.content
+      )
+        throw new Error("amendment-changes-accepted-behavior");
+    }
+    const compile = [
+      "compile-plan",
+      "validate-plan-draft",
+      "finalize-delivery",
+    ].includes(String(request.operation));
+    if (!compile) return;
+    const draftPath = `openspec/changes/${change}/plan-draft.json`;
+    if (!isSafeRegularFile(this.#consumerRoot, draftPath)) return;
+    const run = this.#engineRun(runId);
+    if (run.current_revision === null) return;
+    const prior = this.#planForRevision(runId, run.current_revision);
+    const contract = retainedChangeContract(prior);
+    const draft = JSON.parse(
+      readFileSync(path.join(this.#consumerRoot, draftPath), "utf8"),
+    );
+    if (
+      draft.changeContract !== undefined &&
+      canonicalJson(normalizeChangeContract(draft.changeContract)) !==
+        canonicalJson(contract)
+    )
+      throw new Error("change-contract-mismatch");
+    // Match DesignController's inheritance before validating authorized modes.
+    if (draft.changeContract === undefined && prior.changeContract)
+      draft.changeContract = contract;
+    const next = compileImplementPlan(draft, {
+      consumerRoot: this.#consumerRoot,
+      bindExecutionInputs: true,
+    }).plan;
+    assertPlanWithinChangeContract(contract, next.tasks, [
+      next.verification.change.fullSuite,
+      next.verification.change.postApply,
+    ]);
   }
 
   #lookupRun(stage: ControlStage, change: string): string | undefined {
@@ -809,6 +916,17 @@ export class WorkflowEngine {
       .get(runId, delivery.revision) as
       | { receipt_hash: string; plan_json: string }
       | undefined;
+    const capturedBudget = this.#database
+      .prepare("SELECT hard_limit FROM workflow_work_budget WHERE run_id = ?")
+      .get(runId) as { hard_limit: number } | undefined;
+    if (
+      this.#phaseCount(delivery.plan) >
+        (capturedBudget?.hard_limit ?? this.#workHardLimit) &&
+      !existing
+    )
+      throw new DeliveryValidationError([
+        "verification-work-budget-insufficient",
+      ]);
     const serializedPlan = JSON.stringify(delivery.plan);
     if (
       existing &&
@@ -1019,6 +1137,12 @@ export class WorkflowEngine {
           serializedPlan,
         );
 
+      if (
+        database
+          .prepare("SELECT 1 FROM workflow_work_budget WHERE run_id = ?")
+          .get(runId)
+      )
+        this.#growWorkBudget(database, runId, delivery.plan);
       const admitted = new Set<string>();
       delivery.plan.tasks.forEach((task, taskOrder) => {
         admitted.add(task.taskId);
@@ -1030,9 +1154,16 @@ export class WorkflowEngine {
               `INSERT INTO workflow_engine_tasks(
                  run_id, task_id, task_order, delivery_revision, plan_json,
                  state, phase
-               ) VALUES (?, ?, ?, ?, ?, 'pending', 'red')`,
+               ) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
             )
-            .run(runId, task.taskId, taskOrder, delivery.revision, taskJson);
+            .run(
+              runId,
+              task.taskId,
+              taskOrder,
+              delivery.revision,
+              taskJson,
+              phases(task)[0],
+            );
           return;
         }
         if (compatible.has(task.taskId) && !invalidated.has(task.taskId)) {
@@ -1054,12 +1185,19 @@ export class WorkflowEngine {
           .prepare(
             `UPDATE workflow_engine_tasks
              SET task_order = ?, delivery_revision = ?, plan_json = ?,
-                 state = 'pending', phase = 'red', pause_code = NULL,
+                 state = 'pending', phase = ?, pause_code = NULL,
                  context_request_json = NULL, attempt_diagnostic_json = NULL,
                  queue_position = NULL
              WHERE run_id = ? AND task_id = ?`,
           )
-          .run(taskOrder, delivery.revision, taskJson, runId, task.taskId);
+          .run(
+            taskOrder,
+            delivery.revision,
+            taskJson,
+            phases(task)[0],
+            runId,
+            task.taskId,
+          );
       });
       for (const row of priorRows) {
         if (!admitted.has(row.task_id)) {
@@ -1518,28 +1656,37 @@ export class WorkflowEngine {
         });
         activeRecovery.feedback.maxAttempts = maxRecoveryAttempts;
       }
-      const totalFailures = (
-        this.#database
-          .prepare(
-            "SELECT COUNT(*) AS count FROM workflow_recovery_events WHERE run_id = ? AND kind IN ('failure', 'repair')",
-          )
-          .get(runId) as { count: number }
-      ).count;
-      if (totalFailures >= 24) {
-        this.#setTask(
+      const granted = this.#hasRecoveryGrant(
+        runId,
+        operationId,
+        recoveryKey(task, phase, row, current),
+      );
+      const verificationOnly =
+        !granted &&
+        activeRecovery &&
+        activeRecovery.failures >= maxRecoveryAttempts &&
+        (await this.#worker.hasPendingVerification?.({
           runId,
-          row.task_id,
-          {
-            state: "paused",
-            phase,
-            pauseCode: "change-recovery-budget-exhausted",
-            queuePosition: null,
-          },
-          lease,
-        );
-        return;
-      }
-      if (activeRecovery && activeRecovery.failures >= maxRecoveryAttempts) {
+          operationId,
+          deliveryRevision: row.delivery_revision,
+          taskId: row.task_id,
+          phase,
+          task,
+          plan,
+          signal,
+          ...(current.baseline_workspace_revision
+            ? { baselineRevisionId: current.baseline_workspace_revision }
+            : {}),
+          ...(current.current_workspace_revision
+            ? { currentWorkspaceRevisionId: current.current_workspace_revision }
+            : {}),
+        })) === true;
+      if (
+        !granted &&
+        !verificationOnly &&
+        activeRecovery &&
+        activeRecovery.failures >= maxRecoveryAttempts
+      ) {
         this.#setTask(
           runId,
           row.task_id,
@@ -1599,6 +1746,7 @@ export class WorkflowEngine {
           plan,
           recoveryKey(task, phase, row, current),
           lease,
+          granted ? operationId : undefined,
         )
       ) {
         this.#setTask(
@@ -1648,16 +1796,28 @@ export class WorkflowEngine {
           ...(repair ? { repair } : {}),
           ...(artifactCorrection ? { artifactCorrection } : {}),
           ...(requestedContext ? { contextRequest: requestedContext } : {}),
+          ...(granted ? { additionalAttempt: true } : {}),
+          ...(verificationOnly ? { verificationOnly: true } : {}),
           ...(activeRecovery
             ? { recoveryFeedback: activeRecovery.feedback }
             : {}),
           signal,
+          recoveryDecision: (request) => {
+            signal.throwIfAborted();
+            this.#runStore.assertLease(lease);
+            return decideRecoveryAction(plan, request, {
+              additionalAttempt: granted,
+              verificationOnly,
+            });
+          },
           reserveCandidate: () => {
             signal.throwIfAborted();
+            if (verificationOnly) return false;
             if (initialReservation) {
               initialReservation = false;
               return true;
             }
+            if (granted) return false;
             return this.#reserveWork(
               runId,
               plan,
@@ -1748,13 +1908,18 @@ export class WorkflowEngine {
         outcome.code === "repair-attempts-exhausted"
       ) {
         const maxAttempts = plan.verification.repair.maxAttempts;
+        const failures = Math.max(
+          maxAttempts,
+          (activeRecovery?.failures ?? 0) +
+            (granted || verificationOnly ? 1 : 0),
+        );
         const diagnostic: SafeAttemptDiagnostic = {
           recovery: {
             key: recoveryKey(task, phase, row, this.#engineRun(runId)),
-            failures: maxAttempts,
+            failures,
             feedback: {
               code: outcome.code,
-              attempt: maxAttempts + 1,
+              attempt: failures + 1,
               maxAttempts,
               strategy: "repair-verification",
             },
@@ -2120,6 +2285,10 @@ export class WorkflowEngine {
       legalCommands: ["status", "cancel", "discard"],
     });
     const verification = await this.#changeVerifier.verify({
+      taskEvidence: this.#tasks(runId).map((row) => ({
+        taskId: row.task_id,
+        deliveryRevision: row.delivery_revision,
+      })),
       runId,
       deliveryRevision,
       plan: structuredClone(plan),
@@ -2344,7 +2513,20 @@ export class WorkflowEngine {
       });
       const active = this.#active.get(runId);
       if (active) active.kind = "applying";
-      application = await this.#application.applyPrepared(applicationInput);
+      try {
+        application = await this.#application.applyPrepared(applicationInput);
+      } catch (error) {
+        this.#runStore.assertLease(lease);
+        if (this.#runStore.status(runId).state === "applying")
+          this.#transition(
+            runId,
+            "recovering",
+            `${operationId}:application-interrupted`,
+            "operation-interrupted",
+            lease,
+          );
+        throw error;
+      }
     } else {
       this.#transition(
         runId,
@@ -2739,26 +2921,154 @@ export class WorkflowEngine {
     return rows.map((row) => String(row.path));
   }
 
+  #phaseCount(plan: ImplementPlan): number {
+    return plan.tasks.reduce((sum, task) => sum + phases(task).length, 0);
+  }
+
+  #growWorkBudget(
+    database: DatabaseSync,
+    runId: string,
+    plan: ImplementPlan,
+  ): void {
+    const count = this.#phaseCount(plan);
+    database
+      .prepare(`INSERT INTO workflow_work_budget(run_id, used, max_work, phase_high_water, hard_limit, recovery_policy)
+      VALUES (?, 0, ?, ?, ?, 1) ON CONFLICT(run_id) DO UPDATE SET
+      phase_high_water = MAX(phase_high_water, excluded.phase_high_water),
+      max_work = MIN(hard_limit, MAX(max_work, 24 + 3 * MAX(phase_high_water, excluded.phase_high_water)))`)
+      .run(
+        runId,
+        Math.min(this.#workHardLimit, 24 + 3 * count),
+        count,
+        this.#workHardLimit,
+      );
+  }
+
+  #hasRecoveryGrant(runId: string, operationId: string, key: string): boolean {
+    return Boolean(
+      this.#database
+        .prepare(
+          "SELECT 1 FROM workflow_recovery_grants WHERE run_id = ? AND operation_id = ? AND incident_key = ? AND consumed = 0",
+        )
+        .get(runId, operationId, key),
+    );
+  }
+
+  #recoveryConditions(runId: string, key: string) {
+    const run = this.#engineRun(runId);
+    const task = this.#tasks(runId).find(
+      (row) => recoveryKey(this.#taskPlan(row), row.phase, row, run) === key,
+    );
+    return {
+      route: task?.route_fingerprint ?? run.route_fingerprint,
+      context: task
+        ? hash(
+            canonicalJson(
+              snapshotFiles(
+                this.#consumerRoot,
+                this.#contextReads(runId, task.task_id),
+              ),
+            ),
+          )
+        : null,
+    };
+  }
+
+  #failureSequence(runId: string, key: string): number {
+    return (
+      this.#database
+        .prepare(
+          "SELECT COALESCE(MAX(sequence), 0) AS sequence FROM workflow_recovery_events WHERE run_id = ? AND incident_key = ?",
+        )
+        .get(runId, key) as { sequence: number }
+    ).sequence;
+  }
+
+  #grantRecovery(
+    runId: string,
+    operationId: string,
+    request: NonNullable<
+      Extract<ControlCommand, { command: "resume" }>["recovery"]
+    >,
+    lease: OperationLease,
+  ): void {
+    this.#leasedTransaction(lease, () => {
+      const incident = this.#recovery(runId, request.incidentKey);
+      const current = this.#tasks(runId).some(
+        (row) =>
+          ["paused", "retryable"].includes(row.state) &&
+          recoveryKey(
+            this.#taskPlan(row),
+            row.phase,
+            row,
+            this.#engineRun(runId),
+          ) === request.incidentKey,
+      );
+      if (
+        !current ||
+        !incident ||
+        incident.failures < incident.feedback.maxAttempts ||
+        this.#failureSequence(runId, request.incidentKey) !==
+          request.failureSequence
+      )
+        throw new Error("recovery-request-stale");
+      const conditions = this.#database
+        .prepare(
+          "SELECT conditions_json FROM workflow_recovery_incidents WHERE run_id = ? AND incident_key = ?",
+        )
+        .get(runId, request.incidentKey) as { conditions_json: string };
+      const previous = JSON.parse(conditions.conditions_json);
+      const observed = this.#recoveryConditions(runId, request.incidentKey);
+      if (
+        (request.reason === "route-changed" &&
+          (!previous.route || previous.route === observed.route)) ||
+        (request.reason === "context-extended" &&
+          (!previous.context || previous.context === observed.context))
+      )
+        throw new Error("recovery-evidence-unavailable");
+      const budget = this.#database
+        .prepare(
+          "SELECT used, max_work FROM workflow_work_budget WHERE run_id = ?",
+        )
+        .get(runId) as { used: number; max_work: number };
+      if (!budget || budget.used >= budget.max_work)
+        throw new Error("change-work-budget-exhausted");
+      this.#database
+        .prepare(
+          "INSERT INTO workflow_recovery_grants(run_id, operation_id, incident_key, failure_sequence, reason) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(
+          runId,
+          operationId,
+          request.incidentKey,
+          request.failureSequence,
+          request.reason,
+        );
+    });
+  }
+
   #reserveWork(
     runId: string,
     plan: ImplementPlan,
     key: string,
     lease: OperationLease,
+    grantOperationId?: string,
   ): boolean {
     return this.#leasedTransaction(lease, () => {
-      this.#database
-        .prepare(`INSERT INTO workflow_work_budget(run_id, used, max_work) VALUES (?, 0, ?)
-        ON CONFLICT(run_id) DO NOTHING`)
-        .run(
-          runId,
-          24 +
-            plan.tasks.reduce((sum, task) => sum + phases(task).length * 3, 0),
-        );
+      this.#growWorkBudget(this.#database, runId, plan);
       const reserved = this.#database
         .prepare(`UPDATE workflow_work_budget SET used = used + 1
         WHERE run_id = ? AND used < max_work`)
         .run(runId);
       if (reserved.changes !== 1) return false;
+      if (grantOperationId) {
+        const consumed = this.#database
+          .prepare(
+            "UPDATE workflow_recovery_grants SET consumed = 1 WHERE run_id = ? AND operation_id = ? AND incident_key = ? AND consumed = 0",
+          )
+          .run(runId, grantOperationId, key);
+        if (consumed.changes !== 1) throw new Error("recovery-request-stale");
+      }
       this.#database
         .prepare(`INSERT INTO workflow_recovery_events(run_id, sequence, incident_key, kind)
         SELECT ?, COALESCE(MAX(sequence), 0) + 1, ?, 'launch' FROM workflow_recovery_events WHERE run_id = ?`)
@@ -2796,9 +3106,9 @@ export class WorkflowEngine {
     this.#leasedTransaction(lease, () => {
       this.#database
         .prepare(
-          `INSERT INTO workflow_recovery_incidents(run_id, incident_key, failures, max_attempts, feedback_json)
-         VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id, incident_key) DO UPDATE SET
-         failures = MAX(failures, excluded.failures), max_attempts = MIN(max_attempts, excluded.max_attempts), feedback_json = excluded.feedback_json`,
+          `INSERT INTO workflow_recovery_incidents(run_id, incident_key, failures, max_attempts, feedback_json, conditions_json)
+         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(run_id, incident_key) DO UPDATE SET
+         failures = MAX(failures, excluded.failures), max_attempts = MIN(max_attempts, excluded.max_attempts), feedback_json = excluded.feedback_json, conditions_json = excluded.conditions_json`,
         )
         .run(
           runId,
@@ -2806,6 +3116,7 @@ export class WorkflowEngine {
           fact.failures,
           fact.feedback.maxAttempts,
           JSON.stringify(fact.feedback),
+          JSON.stringify(this.#recoveryConditions(runId, fact.key)),
         );
       this.#database
         .prepare(
@@ -2979,7 +3290,7 @@ export class WorkflowEngine {
         : undefined;
     const resourceBudget = this.#database
       .prepare(
-        "SELECT used, max_work AS maximum FROM workflow_work_budget WHERE run_id = ?",
+        "SELECT used, max_work AS maximum, phase_high_water AS phaseHighWater, hard_limit AS hardLimit FROM workflow_work_budget WHERE run_id = ?",
       )
       .get(runId) as { used: number; maximum: number } | undefined;
     const budgetCode = rows.find(
@@ -3044,6 +3355,21 @@ export class WorkflowEngine {
               code: recovery.feedback.code,
               attempts: recovery.failures,
               maxAttempts: recovery.feedback.maxAttempts,
+              automaticRetryExhausted: true,
+              ...(!budgetExhausted &&
+              resourceBudget &&
+              resourceBudget.used < resourceBudget.maximum
+                ? {
+                    additionalAttempt: {
+                      incidentKey: recovery.key,
+                      failureSequence: this.#failureSequence(
+                        runId,
+                        recovery.key,
+                      ),
+                      reason: "parent-directed-retry",
+                    },
+                  }
+                : {}),
             },
           }
         : {}),
@@ -3586,6 +3912,13 @@ export class WorkflowEngine {
           lease,
         );
       }
+      if (command.recovery)
+        this.#grantRecovery(
+          runId,
+          command.operationId,
+          command.recovery,
+          lease,
+        );
       return this.#launchAdvance(
         runId,
         command.operationId,

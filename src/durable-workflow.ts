@@ -48,6 +48,7 @@ import {
   DependencyManifestError,
   type DurableCandidateProposal,
   type DurableVerificationScope,
+  decideRecoveryAction,
   deliveryBoundPaths,
   deliveryTrackingPath,
   dependencyContract,
@@ -183,6 +184,7 @@ export interface DurableWorkflowEngineOptions {
     onProgress(): void;
   }): Promise<DurableCandidateProposal>;
   verifyPhase(input: {
+    executionWritePaths?: readonly string[];
     runId: string;
     deliveryRevision: number;
     taskId: string;
@@ -203,6 +205,12 @@ export interface DurableWorkflowEngineOptions {
   }): Promise<DurableChangeVerificationResult>;
   now?: () => number;
   leaseTtlMs?: number;
+  workHardLimit?: number;
+  verificationPolicy?: string;
+  verificationEnvironment?(
+    plan: ImplementPlan,
+    signal: AbortSignal,
+  ): Promise<string>;
 }
 
 interface DurableRunResources {
@@ -219,6 +227,7 @@ interface DurableRunResources {
   mergeTail: Promise<void>;
   verificationFact?: object;
   baselinePromises: Map<number, Promise<DurableBaselineResult>>;
+  environmentIdentity?: string;
   closed: boolean;
 }
 
@@ -390,10 +399,10 @@ function verificationIdentities(
   verification: StructuredVerificationContract,
   scope: DurableVerificationScope,
 ): string[] {
+  // Keep the complete comparison set; only Worker/status summaries are bounded.
   const supplied = result.failureIdentities;
   if (
     Array.isArray(supplied) &&
-    supplied.length <= 256 &&
     supplied.every(
       (identity) => typeof identity === "string" && SHA256.test(identity),
     )
@@ -404,9 +413,30 @@ function verificationIdentities(
   return [hash("verification-failure", scope, verification.id, result.code)];
 }
 
+function verificationBaselineFact(
+  baseline: DurableVerificationBaseline,
+  artifacts: ArtifactStore,
+) {
+  // Complete private evidence must not inherit the bounded model projection limits.
+  const artifact = artifacts.put(Buffer.from(JSON.stringify(baseline)));
+  return {
+    revisionId: baseline.revisionId,
+    baselineArtifactHash: artifact.hash,
+  };
+}
+
 function parseVerificationBaseline(
   value: unknown,
+  artifacts: ArtifactStore,
 ): DurableVerificationBaseline {
+  if (isRecord(value) && typeof value.baselineArtifactHash === "string") {
+    const revisionId = value.revisionId;
+    value = JSON.parse(
+      Buffer.from(artifacts.read(value.baselineArtifactHash)).toString("utf8"),
+    );
+    if (!isRecord(value) || value.revisionId !== revisionId)
+      throw new Error("workflow-verification-baseline-conflict");
+  }
   if (
     !isRecord(value) ||
     typeof value.revisionId !== "string" ||
@@ -547,6 +577,75 @@ class DurableWorkflowComposition
     this.#broker.updatePolicy(policy);
   }
 
+  async #refreshEnvironment(
+    resources: DurableRunResources,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (!this.#options.verificationEnvironment) return;
+    const identity = await this.#options.verificationEnvironment(
+      resources.plan,
+      signal,
+    );
+    if (identity !== resources.environmentIdentity) {
+      resources.environmentIdentity = identity;
+      resources.baselinePromises.clear();
+      resources.verificationFact = undefined;
+    }
+  }
+
+  async #environmentCurrent(
+    runId: string,
+    signal: AbortSignal,
+    expected?: string,
+  ): Promise<boolean> {
+    if (!this.#options.verificationEnvironment) return true;
+    const resources = this.#runs.get(runId);
+    if (!resources) return false;
+    try {
+      const identity = await this.#options.verificationEnvironment(
+        resources.plan,
+        signal,
+      );
+      resources.environmentIdentity ??= identity;
+      return identity === (expected ?? resources.environmentIdentity);
+    } catch {
+      signal.throwIfAborted();
+      return false;
+    }
+  }
+
+  async #verifyPhase(
+    input: Parameters<DurableWorkflowEngineOptions["verifyPhase"]>[0],
+  ): Promise<DurablePhaseVerificationResult> {
+    if (await this.#environmentCurrent(input.runId, input.signal)) {
+      const identity = this.#runs.get(input.runId)?.environmentIdentity;
+      const result = await this.#options.verifyPhase(input);
+      if (await this.#environmentCurrent(input.runId, input.signal, identity))
+        return result;
+    }
+    return {
+      ok: false,
+      kind: "paused",
+      code: "verification-environment-changed",
+    };
+  }
+
+  async #verifyChange(
+    input: Parameters<DurableWorkflowEngineOptions["verifyChange"]>[0],
+  ): Promise<DurableChangeVerificationResult> {
+    if (await this.#environmentCurrent(input.runId, input.signal)) {
+      const identity = this.#runs.get(input.runId)?.environmentIdentity;
+      const result = await this.#options.verifyChange(input);
+      if (await this.#environmentCurrent(input.runId, input.signal, identity))
+        return result;
+    }
+    return {
+      ok: false,
+      kind: "environment",
+      code: "verification-environment-changed",
+    };
+  }
+
   routePolicyStatus(): Record<string, unknown> {
     return this.#broker.status();
   }
@@ -625,7 +724,25 @@ class DurableWorkflowComposition
     resources: DurableRunResources,
     root: string,
     signal: AbortSignal,
+    transactionId: string,
   ): Promise<{ ok: true } | { ok: false; code: string }> {
+    if (this.#options.verificationEnvironment) {
+      const fact = this.#ledger(
+        resources,
+        resources.deliveryRevision,
+      ).durableFact(`apply-environment-${hash(transactionId).slice(0, 40)}`);
+      if (!isRecord(fact) || typeof fact.identity !== "string")
+        return { ok: false, code: "verification-environment-changed" };
+      resources.environmentIdentity = fact.identity;
+      if (
+        !(await this.#environmentCurrent(
+          resources.runId,
+          signal,
+          fact.identity,
+        ))
+      )
+        return { ok: false, code: "verification-environment-changed" };
+    }
     if (
       resources.plan.outputs.some(
         (output) => observeSafePath(root, output.path).kind !== "file",
@@ -634,7 +751,7 @@ class DurableWorkflowComposition
       return { ok: false, code: "producer-output-unavailable" };
     }
     const lifecycle = hasVerificationLifecycle(resources.plan);
-    const result = await this.#options.verifyChange({
+    const result = await this.#verifyChange({
       runId: resources.runId,
       deliveryRevision: resources.deliveryRevision,
       root,
@@ -751,8 +868,13 @@ class DurableWorkflowComposition
       artifacts,
       workspaces,
       hooks: {
-        postApply: ({ root: verificationRoot, signal }) =>
-          this.#verifyPostApply(resources, verificationRoot, signal),
+        postApply: ({ transactionId, root: verificationRoot, signal }) =>
+          this.#verifyPostApply(
+            resources,
+            verificationRoot,
+            signal,
+            transactionId,
+          ),
       },
     });
     resources = {
@@ -821,7 +943,7 @@ class DurableWorkflowComposition
         root,
         input.signal,
       );
-      const result = await this.#options.verifyChange({
+      const result = await this.#verifyChange({
         runId: input.resources.runId,
         deliveryRevision: input.resources.deliveryRevision,
         root,
@@ -886,9 +1008,15 @@ class DurableWorkflowComposition
     ledger: TaskLedger;
     signal: AbortSignal;
   }): Promise<DurableBaselineResult> {
-    const stored = input.ledger.durableFact("verification-baseline");
+    const environmentIdentity = input.resources.environmentIdentity;
+    const stored = input.ledger.durableFact(
+      this.#baselineFactKey(input.resources),
+    );
     if (stored !== undefined) {
-      const baseline = parseVerificationBaseline(stored);
+      const baseline = parseVerificationBaseline(
+        stored,
+        input.resources.artifacts,
+      );
       if (baseline.revisionId !== input.resources.baselineRevisionId) {
         throw new Error("workflow-verification-baseline-conflict");
       }
@@ -921,27 +1049,51 @@ class DurableWorkflowComposition
     if (!fullSuite.ok) return fullSuite;
     const baseline: DurableVerificationBaseline = {
       revisionId: input.resources.baselineRevisionId,
-      targetContracts: plan.tasks.map((task) => ({
-        taskId: task.taskId,
-        verificationId: task.phases.red.verification.id,
-        expectedFailure:
-          "expectedFailure" in task.phases.red.verification
-            ? (task.phases.red.verification.expectedFailure ??
-              task.phases.red.verification.id)
-            : task.phases.red.verification.id,
-      })),
+      targetContracts: plan.tasks
+        .filter(
+          (task) =>
+            !task.verificationMode || task.verificationMode === "behavior",
+        )
+        .map((task) => ({
+          taskId: task.taskId,
+          verificationId: task.phases.red.verification.id,
+          expectedFailure:
+            "expectedFailure" in task.phases.red.verification
+              ? (task.phases.red.verification.expectedFailure ??
+                task.phases.red.verification.id)
+              : task.phases.red.verification.id,
+        })),
       affected,
       fullSuite: fullSuite.observation,
     };
-    input.ledger.putDurableFact("verification-baseline", baseline);
+    if (environmentIdentity !== input.resources.environmentIdentity)
+      return {
+        ok: false,
+        outcome: { kind: "paused", code: "verification-environment-changed" },
+      };
+    input.ledger.putDurableFact(
+      this.#baselineFactKey(input.resources),
+      verificationBaselineFact(baseline, input.resources.artifacts),
+    );
     return { ok: true, baseline };
   }
 
-  #ensureVerificationBaseline(input: {
+  async #ensureVerificationBaseline(input: {
     resources: DurableRunResources;
     ledger: TaskLedger;
     signal: AbortSignal;
   }): Promise<DurableBaselineResult> {
+    try {
+      await this.#refreshEnvironment(input.resources, input.signal);
+    } catch {
+      return {
+        ok: false,
+        outcome: {
+          kind: "paused",
+          code: "verification-environment-unavailable",
+        },
+      };
+    }
     const existing = input.resources.baselinePromises.get(
       input.resources.deliveryRevision,
     );
@@ -994,7 +1146,7 @@ class DurableWorkflowComposition
     return {
       kind: "repairable",
       attribution: "introduced",
-      failureIdentities: introduced,
+      failureIdentities: introduced.slice(0, 256),
     };
   }
 
@@ -1191,8 +1343,152 @@ class DurableWorkflowComposition
       boundaryHash: hash("durable-task-boundary", JSON.stringify(input.task)),
       objective: input.task.objective,
       contextRefs,
-      initialPhase: "red",
+      initialPhase:
+        input.task.verificationMode &&
+        input.task.verificationMode !== "behavior"
+          ? "green"
+          : "red",
     });
+  }
+
+  #executionWritePaths(resources: DurableRunResources): string[] {
+    return [
+      ...new Set(
+        resources.plan.tasks.flatMap((task) =>
+          Object.values(task.phases).flatMap((phase) => [
+            ...phase.write,
+            ...phase.delete,
+          ]),
+        ),
+      ),
+    ];
+  }
+
+  #baselineFactKey(resources: DurableRunResources): string {
+    return this.#options.verificationPolicy || resources.environmentIdentity
+      ? `verification-baseline-${hash(this.#options.verificationPolicy ?? "legacy", resources.environmentIdentity ?? "legacy").slice(0, 24)}`
+      : "verification-baseline";
+  }
+
+  #policyFactKey(
+    resources: DurableRunResources,
+    event: Record<string, unknown>,
+  ): string {
+    return `verified-policy-${hash(this.#options.verificationPolicy ?? "legacy", resources.environmentIdentity ?? "legacy", JSON.stringify({ kind: event.kind, phase: event.phase, commandId: event.commandId, artifactHash: event.artifactHash, isolatedRevisionId: event.isolatedRevisionId, exitCode: event.exitCode, actualClassification: event.actualClassification })).slice(0, 40)}`;
+  }
+
+  async #revalidatePhasePolicy(
+    resources: DurableRunResources,
+    ledger: TaskLedger,
+    task: PlanTaskDraft,
+    signal: AbortSignal,
+  ): Promise<WorkflowAttemptOutcome | undefined> {
+    if (
+      !this.#options.verificationPolicy &&
+      !this.#options.verificationEnvironment
+    )
+      return undefined;
+    const projection = ledger.projection({
+      runId: resources.runId,
+      taskId: task.taskId,
+      nextPhase: "green",
+    }) as { history: Array<Record<string, unknown>> };
+    for (const event of projection.history.filter(
+      (event) =>
+        event.kind === "phase-verified" || event.kind === "repair-verified",
+    )) {
+      const key = this.#policyFactKey(resources, event);
+      if (ledger.durableFact(key) !== undefined) continue;
+      const phase = event.phase as "red" | "green" | "refactor";
+      const boundary = task.phases[phase];
+      const repair = event.kind === "repair-verified";
+      const verification = repair
+        ? task.repairVerification
+        : boundary?.verification;
+      const expected = repair
+        ? "expected-green"
+        : expectedClassification(phase);
+      if (
+        !boundary ||
+        !verification ||
+        typeof event.isolatedRevisionId !== "string"
+      )
+        throw new Error("workflow-ledger-phase-invalid");
+      const root = mkdtempSync(
+        path.join(resources.root, "policy-verification-"),
+      );
+      try {
+        await resources.workspaces.materializeAsync(
+          event.isolatedRevisionId,
+          root,
+          signal,
+        );
+        const result = await this.#verifyPhase({
+          executionWritePaths: this.#executionWritePaths(resources),
+          runId: resources.runId,
+          deliveryRevision: resources.deliveryRevision,
+          taskId: task.taskId,
+          phase,
+          root,
+          verification,
+          signal,
+        });
+        if (!result.ok)
+          return {
+            kind: "paused",
+            code:
+              result.kind === "paused"
+                ? result.code
+                : "verification-policy-rejected",
+          };
+        if (
+          result.classification !== expected ||
+          (expected === "expected-red"
+            ? result.exitCode === 0
+            : result.exitCode !== 0)
+        )
+          return { kind: "paused", code: "verification-policy-rejected" };
+        ledger.putDurableFact(key, {
+          policy: this.#options.verificationPolicy ?? "legacy",
+        });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+    return undefined;
+  }
+
+  #pendingCandidate(
+    ledger: TaskLedger,
+    key: string,
+    baseRevisionId: string,
+  ):
+    | {
+        identity: BeginCandidateInput;
+        proposal: Extract<
+          DurableCandidateProposal,
+          { kind: "sealed-candidate" }
+        >;
+      }
+    | undefined {
+    const value = ledger.durableFact(key);
+    if (
+      !isRecord(value) ||
+      !isRecord(value.identity) ||
+      !isRecord(value.proposal) ||
+      value.identity.isolatedRevisionId !== baseRevisionId
+    )
+      return undefined;
+    return value as unknown as {
+      identity: BeginCandidateInput;
+      proposal: Extract<DurableCandidateProposal, { kind: "sealed-candidate" }>;
+    };
+  }
+
+  #savePendingCandidate(ledger: TaskLedger, key: string, value: unknown): void {
+    const previous = ledger.durableFact(key);
+    if (previous === undefined) ledger.putDurableFact(key, value);
+    else ledger.replaceDurableFact(key, previous, value);
   }
 
   #replayedPhase(
@@ -1588,18 +1884,25 @@ class DurableWorkflowComposition
       );
       for (const deliveryRevision of retainedRevisions) {
         const ledger = this.#ledger(resources, deliveryRevision);
-        const stored = ledger.durableFact("verification-baseline");
+        const stored = ledger.durableFact(this.#baselineFactKey(resources));
         resources.baselinePromises.delete(deliveryRevision);
         if (stored === undefined) continue;
-        const baseline = parseVerificationBaseline(stored);
+        const baseline = parseVerificationBaseline(stored, resources.artifacts);
         if (baseline.revisionId === expandedBaseline.revisionId) continue;
         if (baseline.revisionId !== input.baselineRevisionId) {
           throw new Error("workflow-verification-baseline-conflict");
         }
-        ledger.replaceDurableFact("verification-baseline", stored, {
-          ...baseline,
-          revisionId: expandedBaseline.revisionId,
-        });
+        ledger.replaceDurableFact(
+          this.#baselineFactKey(resources),
+          stored,
+          verificationBaselineFact(
+            {
+              ...baseline,
+              revisionId: expandedBaseline.revisionId,
+            },
+            resources.artifacts,
+          ),
+        );
       }
     }
     resources.baselineRevisionId = expandedBaseline.revisionId;
@@ -1743,6 +2046,8 @@ class DurableWorkflowComposition
       return { kind: "approval-needed", code: "task-write-set-empty" };
     }
     const baseRevisionId = resources.currentRevisionId;
+    const pendingKey = `pending-${hash(request.taskId, request.phase, request.task.repairVerification.id).slice(0, 40)}`;
+    const pending = this.#pendingCandidate(ledger, pendingKey, baseRevisionId);
     const proposalRoot = mkdtempSync(path.join(resources.root, "repair-"));
     try {
       await resources.workspaces.materializeAsync(
@@ -1750,7 +2055,7 @@ class DurableWorkflowComposition
         proposalRoot,
         request.signal,
       );
-      if (request.routeId) {
+      if (request.routeId && !pending) {
         const rebound = this.#broker.resumeBinding({
           runId: request.runId,
           taskId: request.taskId,
@@ -1779,80 +2084,90 @@ class DurableWorkflowComposition
         attribution: "introduced" as const,
         failureIdentities: [...input.failureIdentities],
       };
-      let identity: BeginCandidateInput | undefined;
-      const routed = await this.#broker.run({
-        runId: request.runId,
-        taskId: request.taskId,
-        operationId: `${request.operationId}:${request.taskId}:repair:${input.repairAttempt}`,
-        role: "implementation-worker",
-        requirements: implementationRouteRequirements({
-          task: request.task,
-          ...(request.artifactCorrection
-            ? { artifactCorrection: request.artifactCorrection }
-            : {}),
-          repair: { failureIdentities: input.failureIdentities },
-        }),
-        signal: request.signal,
-        ...(request.onActivity ? { onActivity: request.onActivity } : {}),
-        classifyResult: semanticRouteFailure,
-        execute: async (attempt) => {
-          identity = {
-            candidateId: `candidate-${randomUUID()}`,
+      let identity: BeginCandidateInput | undefined = pending?.identity;
+      const routed = pending
+        ? {
+            ok: true as const,
+            value: pending.proposal,
+            routeId: pending.identity.routeId,
+            routeFingerprint: pending.identity.routeFingerprint,
+          }
+        : await this.#broker.run({
             runId: request.runId,
-            deliveryRevision: request.deliveryRevision,
             taskId: request.taskId,
-            phase: request.phase,
-            attemptId: `repair-${hash(
-              request.operationId,
-              request.taskId,
-              String(input.repairAttempt),
-              attempt.route.fingerprint,
-            ).slice(0, 40)}`,
-            approvedPaths,
-            isolatedRevisionId: baseRevisionId,
-            verificationId: request.task.repairVerification.id,
-            routeId: attempt.route.id,
-            routeFingerprint: attempt.route.fingerprint,
-          };
-          if (request.reserveCandidate && !request.reserveCandidate())
-            return {
-              kind: "paused" as const,
-              code: "change-work-budget-exhausted",
-            };
-          return this.#options.proposeCandidate({
-            runId: request.runId,
-            operationId: request.operationId,
-            deliveryRevision: request.deliveryRevision,
-            taskId: request.taskId,
-            phase: request.phase,
-            task: structuredClone(request.task),
-            contextReadPaths: request.contextReadPaths,
-            workspaceRoot: proposalRoot,
-            ledgerProjection,
-            candidateArtifact: {
-              ledger,
-              identity,
-              workspaceRoot: proposalRoot,
-              writePaths: approvedWritePaths,
-              deletePaths: approvedDeletePaths,
+            operationId: `${request.operationId}:${request.taskId}:repair:${input.repairAttempt}`,
+            role: "implementation-worker",
+            requirements: implementationRouteRequirements({
+              task: request.task,
+              ...(request.artifactCorrection
+                ? { artifactCorrection: request.artifactCorrection }
+                : {}),
+              repair: { failureIdentities: input.failureIdentities },
+            }),
+            signal: request.signal,
+            ...(request.onActivity ? { onActivity: request.onActivity } : {}),
+            classifyResult: semanticRouteFailure,
+            execute: async (attempt) => {
+              identity = {
+                candidateId: `candidate-${randomUUID()}`,
+                runId: request.runId,
+                deliveryRevision: request.deliveryRevision,
+                taskId: request.taskId,
+                phase: request.phase,
+                attemptId: `repair-${hash(
+                  request.operationId,
+                  request.taskId,
+                  String(input.repairAttempt),
+                  attempt.route.fingerprint,
+                ).slice(0, 40)}`,
+                approvedPaths,
+                isolatedRevisionId: baseRevisionId,
+                verificationId: request.task.repairVerification.id,
+                routeId: attempt.route.id,
+                routeFingerprint: attempt.route.fingerprint,
+              };
+              if (request.reserveCandidate && !request.reserveCandidate())
+                return {
+                  kind: "paused" as const,
+                  code:
+                    request.additionalAttempt || request.verificationOnly
+                      ? "repair-attempts-exhausted"
+                      : "change-work-budget-exhausted",
+                };
+              return this.#options.proposeCandidate({
+                runId: request.runId,
+                operationId: request.operationId,
+                deliveryRevision: request.deliveryRevision,
+                taskId: request.taskId,
+                phase: request.phase,
+                task: structuredClone(request.task),
+                contextReadPaths: request.contextReadPaths,
+                workspaceRoot: proposalRoot,
+                ledgerProjection,
+                candidateArtifact: {
+                  ledger,
+                  identity,
+                  workspaceRoot: proposalRoot,
+                  writePaths: approvedWritePaths,
+                  deletePaths: approvedDeletePaths,
+                },
+                route: attempt.route,
+                repair,
+                ...(request.artifactCorrection
+                  ? { artifactCorrection: request.artifactCorrection }
+                  : {}),
+                ...(request.contextRequest
+                  ? { contextRequest: request.contextRequest }
+                  : {}),
+                ...(request.recoveryFeedback
+                  ? { recoveryFeedback: request.recoveryFeedback }
+                  : {}),
+                signal: attempt.signal,
+                onHeaders: attempt.onHeaders,
+                onProgress: attempt.onProgress,
+              });
             },
-            route: attempt.route,
-            repair,
-            ...(request.artifactCorrection
-              ? { artifactCorrection: request.artifactCorrection }
-              : {}),
-            ...(request.contextRequest
-              ? { contextRequest: request.contextRequest }
-              : {}),
-            ...(request.recoveryFeedback
-              ? { recoveryFeedback: request.recoveryFeedback }
-              : {}),
-            signal: attempt.signal,
-            onHeaders: attempt.onHeaders,
-            onProgress: attempt.onProgress,
           });
-        },
-      });
       if (!routed.ok) {
         return routed.state === "cancelled" || request.signal.aborted
           ? { kind: "operation-cancelled", code: "cancelled" }
@@ -2155,7 +2470,18 @@ class DurableWorkflowComposition
         );
       }
       emitWorkflowActivity(request.onActivity, { state: "verifying" });
-      const verified = await this.#options.verifyPhase({
+      this.#savePendingCandidate(ledger, pendingKey, {
+        identity,
+        proposal: {
+          kind: "sealed-candidate",
+          candidateId: identity.candidateId,
+          artifactHash,
+          bytes: bytes.length,
+          paths: candidatePaths,
+        },
+      });
+      const verified = await this.#verifyPhase({
+        executionWritePaths: this.#executionWritePaths(resources),
         runId: request.runId,
         deliveryRevision: request.deliveryRevision,
         taskId: request.taskId,
@@ -2165,6 +2491,8 @@ class DurableWorkflowComposition
         signal: request.signal,
       });
       if (!verified.ok) {
+        if (verified.kind === "paused") return verified;
+        this.#savePendingCandidate(ledger, pendingKey, null);
         return reject(verified, {
           category: "verification",
           code: verified.code,
@@ -2356,12 +2684,18 @@ class DurableWorkflowComposition
       ),
     ];
     const correctionAttemptUsed = request.artifactCorrection.attempt;
-    if (
-      correctionAttemptUsed < 1 ||
-      correctionAttemptUsed > request.artifactCorrection.maxAttempts
-    ) {
-      throw new Error("workflow-red-artifact-correction-invalid");
-    }
+    const correctionAction = {
+      kind: "red-correction" as const,
+      attempt:
+        request.additionalAttempt || request.verificationOnly
+          ? 1
+          : correctionAttemptUsed,
+    };
+    const correctionDecision =
+      request.recoveryDecision?.(correctionAction) ??
+      decideRecoveryAction(request.plan, correctionAction, request);
+    if (!correctionDecision.allowed)
+      return { kind: "paused", code: correctionDecision.code };
     const repaired = await this.#runRepairCandidate({
       resources,
       ledger,
@@ -2418,7 +2752,8 @@ class DurableWorkflowComposition
           root,
           request.signal,
         );
-        return await this.#options.verifyPhase({
+        return await this.#verifyPhase({
+          executionWritePaths: this.#executionWritePaths(resources),
           runId: request.runId,
           deliveryRevision: request.deliveryRevision,
           taskId: request.taskId,
@@ -2691,7 +3026,19 @@ class DurableWorkflowComposition
       return outcome;
     };
     while (affected.kind === "repairable") {
-      if (repairAttempt >= request.plan.verification.repair.maxAttempts) {
+      if (
+        !(
+          request.recoveryDecision?.({
+            kind: "cumulative-repair",
+            attempt: repairAttempt + 1,
+          }) ??
+          decideRecoveryAction(
+            request.plan,
+            { kind: "cumulative-repair", attempt: repairAttempt + 1 },
+            request,
+          )
+        ).allowed
+      ) {
         return discardUncommitted({
           kind: "paused",
           code: "repair-attempts-exhausted",
@@ -2755,6 +3102,28 @@ class DurableWorkflowComposition
       routeId: lastCommit.routeId,
       routeFingerprint: lastCommit.routeFingerprint,
     };
+  }
+
+  async hasPendingVerification(
+    input: Parameters<WorkflowWorker["runAttempt"]>[0],
+  ): Promise<boolean> {
+    if (!input.baselineRevisionId || !input.currentWorkspaceRevisionId)
+      return false;
+    const resources = await this.#prepareResources(input, input.signal);
+    const ledger = this.#ledger(resources, input.deliveryRevision);
+    const verificationIds = [
+      input.task.phases[input.phase]?.verification.id,
+      input.task.repairVerification?.id,
+    ];
+    return verificationIds.some(
+      (id) =>
+        id &&
+        this.#pendingCandidate(
+          ledger,
+          `pending-${hash(input.taskId, input.phase, id).slice(0, 40)}`,
+          resources.currentRevisionId,
+        ) !== undefined,
+    );
   }
 
   isContextReadAvailable(
@@ -2844,6 +3213,13 @@ class DurableWorkflowComposition
         }),
       );
     }
+    const policyFailure = await this.#revalidatePhasePolicy(
+      resources,
+      ledger,
+      input.task,
+      input.signal,
+    );
+    if (policyFailure) return retained(policyFailure);
     const replay = this.#replayedPhase(resources, ledger, input);
     if (replay) return retained(replay);
     const phase = input.task.phases[input.phase];
@@ -2866,6 +3242,8 @@ class DurableWorkflowComposition
       });
     }
     const baseRevisionId = resources.currentRevisionId;
+    const pendingKey = `pending-${hash(input.taskId, input.phase, phase.verification.id).slice(0, 40)}`;
+    const pending = this.#pendingCandidate(ledger, pendingKey, baseRevisionId);
     const proposalRoot = mkdtempSync(path.join(resources.root, "attempt-"));
     try {
       await resources.workspaces.materializeAsync(
@@ -2873,7 +3251,7 @@ class DurableWorkflowComposition
         proposalRoot,
         input.signal,
       );
-      if (input.routeId) {
+      if (input.routeId && !pending) {
         const rebound = this.#broker.resumeBinding({
           runId: input.runId,
           taskId: input.taskId,
@@ -2899,76 +3277,86 @@ class DurableWorkflowComposition
         taskId: input.taskId,
         nextPhase: input.phase,
       });
-      let identity: BeginCandidateInput | undefined;
-      const routed = await this.#broker.run({
-        runId: input.runId,
-        taskId: input.taskId,
-        operationId: `${input.operationId}:${input.taskId}:${input.phase}`,
-        role: "implementation-worker",
-        requirements: implementationRouteRequirements({
-          task: input.task,
-          ...(input.artifactCorrection
-            ? { artifactCorrection: input.artifactCorrection }
-            : {}),
-          ...(input.repair ? { repair: input.repair } : {}),
-        }),
-        signal: input.signal,
-        ...(input.onActivity ? { onActivity: input.onActivity } : {}),
-        classifyResult: semanticRouteFailure,
-        execute: async (attempt) => {
-          identity = {
-            candidateId: `candidate-${randomUUID()}`,
+      let identity: BeginCandidateInput | undefined = pending?.identity;
+      const routed = pending
+        ? {
+            ok: true as const,
+            value: pending.proposal,
+            routeId: pending.identity.routeId,
+            routeFingerprint: pending.identity.routeFingerprint,
+          }
+        : await this.#broker.run({
             runId: input.runId,
-            deliveryRevision: input.deliveryRevision,
             taskId: input.taskId,
-            phase: input.phase,
-            attemptId: `attempt-${hash(
-              input.operationId,
-              input.taskId,
-              input.phase,
-              attempt.route.fingerprint,
-            ).slice(0, 40)}`,
-            approvedPaths,
-            isolatedRevisionId: baseRevisionId,
-            verificationId: phase.verification.id,
-            routeId: attempt.route.id,
-            routeFingerprint: attempt.route.fingerprint,
-          };
-          if (input.reserveCandidate && !input.reserveCandidate())
-            return {
-              kind: "paused" as const,
-              code: "change-work-budget-exhausted",
-            };
-          return this.#options.proposeCandidate({
-            runId: input.runId,
-            operationId: input.operationId,
-            deliveryRevision: input.deliveryRevision,
-            taskId: input.taskId,
-            phase: input.phase,
-            task: structuredClone(input.task),
-            contextReadPaths: input.contextReadPaths,
-            workspaceRoot: proposalRoot,
-            ledgerProjection,
-            candidateArtifact: {
-              ledger,
-              identity,
-              workspaceRoot: proposalRoot,
-              writePaths: phase.write,
-              deletePaths: phase.delete,
+            operationId: `${input.operationId}:${input.taskId}:${input.phase}`,
+            role: "implementation-worker",
+            requirements: implementationRouteRequirements({
+              task: input.task,
+              ...(input.artifactCorrection
+                ? { artifactCorrection: input.artifactCorrection }
+                : {}),
+              ...(input.repair ? { repair: input.repair } : {}),
+            }),
+            signal: input.signal,
+            ...(input.onActivity ? { onActivity: input.onActivity } : {}),
+            classifyResult: semanticRouteFailure,
+            execute: async (attempt) => {
+              identity = {
+                candidateId: `candidate-${randomUUID()}`,
+                runId: input.runId,
+                deliveryRevision: input.deliveryRevision,
+                taskId: input.taskId,
+                phase: input.phase,
+                attemptId: `attempt-${hash(
+                  input.operationId,
+                  input.taskId,
+                  input.phase,
+                  attempt.route.fingerprint,
+                ).slice(0, 40)}`,
+                approvedPaths,
+                isolatedRevisionId: baseRevisionId,
+                verificationId: phase.verification.id,
+                routeId: attempt.route.id,
+                routeFingerprint: attempt.route.fingerprint,
+              };
+              if (input.reserveCandidate && !input.reserveCandidate())
+                return {
+                  kind: "paused" as const,
+                  code:
+                    input.additionalAttempt || input.verificationOnly
+                      ? "repair-attempts-exhausted"
+                      : "change-work-budget-exhausted",
+                };
+              return this.#options.proposeCandidate({
+                runId: input.runId,
+                operationId: input.operationId,
+                deliveryRevision: input.deliveryRevision,
+                taskId: input.taskId,
+                phase: input.phase,
+                task: structuredClone(input.task),
+                contextReadPaths: input.contextReadPaths,
+                workspaceRoot: proposalRoot,
+                ledgerProjection,
+                candidateArtifact: {
+                  ledger,
+                  identity,
+                  workspaceRoot: proposalRoot,
+                  writePaths: phase.write,
+                  deletePaths: phase.delete,
+                },
+                route: attempt.route,
+                ...(input.contextRequest
+                  ? { contextRequest: input.contextRequest }
+                  : {}),
+                ...(input.recoveryFeedback
+                  ? { recoveryFeedback: input.recoveryFeedback }
+                  : {}),
+                signal: attempt.signal,
+                onHeaders: attempt.onHeaders,
+                onProgress: attempt.onProgress,
+              });
             },
-            route: attempt.route,
-            ...(input.contextRequest
-              ? { contextRequest: input.contextRequest }
-              : {}),
-            ...(input.recoveryFeedback
-              ? { recoveryFeedback: input.recoveryFeedback }
-              : {}),
-            signal: attempt.signal,
-            onHeaders: attempt.onHeaders,
-            onProgress: attempt.onProgress,
           });
-        },
-      });
       if (!routed.ok) {
         return retained(
           routed.state === "cancelled" || input.signal.aborted
@@ -3283,7 +3671,18 @@ class DurableWorkflowComposition
         );
       }
       emitWorkflowActivity(input.onActivity, { state: "verifying" });
-      const verified = await this.#options.verifyPhase({
+      this.#savePendingCandidate(ledger, pendingKey, {
+        identity,
+        proposal: {
+          kind: "sealed-candidate",
+          candidateId: identity.candidateId,
+          artifactHash,
+          bytes: bytes.length,
+          paths: candidatePaths,
+        },
+      });
+      const verified = await this.#verifyPhase({
+        executionWritePaths: this.#executionWritePaths(resources),
         runId: input.runId,
         deliveryRevision: input.deliveryRevision,
         taskId: input.taskId,
@@ -3293,6 +3692,8 @@ class DurableWorkflowComposition
         signal: input.signal,
       });
       if (!verified.ok) {
+        if (verified.kind === "paused") return retained(verified);
+        this.#savePendingCandidate(ledger, pendingKey, null);
         return reject(verified, {
           category: "verification",
           code: verified.code,
@@ -3383,6 +3784,14 @@ class DurableWorkflowComposition
         routeId: identity.routeId,
         routeFingerprint: identity.routeFingerprint,
       };
+      if (this.#options.verificationPolicy || resources.environmentIdentity)
+        ledger.putDurableFact(
+          this.#policyFactKey(
+            resources,
+            phaseEvent as unknown as Record<string, unknown>,
+          ),
+          { policy: this.#options.verificationPolicy ?? "legacy" },
+        );
       const finalPhase = input.task.phases.refactor ? "refactor" : "green";
       if (!verificationBaseline || input.phase !== finalPhase) {
         ledger.commitVerifiedEvent(phaseEvent);
@@ -3422,7 +3831,19 @@ class DurableWorkflowComposition
         "none";
       while (affected.kind === "repairable") {
         completionAttribution = "introduced";
-        if (repairAttempts >= input.plan.verification.repair.maxAttempts) {
+        if (
+          !(
+            input.recoveryDecision?.({
+              kind: "affected-repair",
+              attempt: repairAttempts + 1,
+            }) ??
+            decideRecoveryAction(
+              input.plan,
+              { kind: "affected-repair", attempt: repairAttempts + 1 },
+              input,
+            )
+          ).allowed
+        ) {
           return reject(
             { kind: "paused", code: "repair-attempts-exhausted" },
             {
@@ -3572,6 +3993,29 @@ class DurableWorkflowComposition
       },
       input.signal,
     );
+    try {
+      await this.#refreshEnvironment(resources, input.signal);
+    } catch {
+      return { kind: "paused", code: "verification-environment-unavailable" };
+    }
+    for (const reference of input.taskEvidence ?? []) {
+      const task = input.plan.tasks.find(
+        (task) => task.taskId === reference.taskId,
+      );
+      if (!task) throw new Error("workflow-ledger-task-invalid");
+      const failure = await this.#revalidatePhasePolicy(
+        resources,
+        this.#ledger(resources, reference.deliveryRevision),
+        task,
+        input.signal,
+      );
+      if (failure)
+        return {
+          kind: "paused",
+          code:
+            "code" in failure ? failure.code : "verification-policy-rejected",
+        };
+    }
     const cumulativeRevision = resources.workspaces.getRevision(
       resources.currentRevisionId,
     );
@@ -3642,7 +4086,7 @@ class DurableWorkflowComposition
                 scope: "change-task-affected",
                 attribution: "introduced",
                 taskId: task.taskId,
-                failureIdentities: introduced,
+                failureIdentities: introduced.slice(0, 256),
               },
             };
           }
@@ -3682,7 +4126,7 @@ class DurableWorkflowComposition
             verification: {
               scope: "change-full-suite",
               attribution: "unresolved",
-              failureIdentities: introduced,
+              failureIdentities: introduced.slice(0, 256),
             },
           };
         }
@@ -3720,7 +4164,10 @@ class DurableWorkflowComposition
             verification: {
               scope: "agents-checkpoint",
               attribution: "introduced",
-              failureIdentities: observed.observation.failureIdentities,
+              failureIdentities: observed.observation.failureIdentities.slice(
+                0,
+                256,
+              ),
             },
           };
         }
@@ -3730,6 +4177,9 @@ class DurableWorkflowComposition
         input.plan.changeId,
         String(input.deliveryRevision),
         resources.currentRevisionId,
+        ...(resources.environmentIdentity
+          ? [resources.environmentIdentity]
+          : []),
       ).slice(0, 40)}`;
       const sealed = await verifyCumulativeRevision({
         workspaceStore: resources.workspaces,
@@ -3753,6 +4203,7 @@ class DurableWorkflowComposition
     const verificationId = `change-${hash(
       input.plan.changeId,
       String(input.deliveryRevision),
+      ...(resources.environmentIdentity ? [resources.environmentIdentity] : []),
     ).slice(0, 40)}`;
     const result = await verifyCumulativeRevision({
       workspaceStore: resources.workspaces,
@@ -3760,7 +4211,7 @@ class DurableWorkflowComposition
       verificationId,
       signal: input.signal,
       execute: ({ root, signal }) =>
-        this.#options.verifyChange({
+        this.#verifyChange({
           runId: input.runId,
           deliveryRevision: input.deliveryRevision,
           root,
@@ -3801,6 +4252,17 @@ class DurableWorkflowComposition
     );
     if (!resources.verificationFact) {
       return { state: "paused", code: "verification-fact-unavailable" };
+    }
+    if (this.#options.verificationEnvironment) {
+      if (!resources.environmentIdentity)
+        return {
+          state: "paused",
+          code: "verification-environment-unavailable",
+        };
+      this.#ledger(resources, resources.deliveryRevision).putDurableFact(
+        `apply-environment-${hash(input.transactionId).slice(0, 40)}`,
+        { identity: resources.environmentIdentity },
+      );
     }
     const prepared = await resources.transactions.prepare({
       transactionId: input.transactionId,
@@ -3909,6 +4371,9 @@ export function openDurableWorkflowEngine(
     stateRoot: options.stateRoot,
     deliverySource: options.deliverySource,
     worker: composition,
+    ...(options.workHardLimit !== undefined
+      ? { workHardLimit: options.workHardLimit }
+      : {}),
     changeVerifier: composition,
     application: composition,
     lifecycle: composition,

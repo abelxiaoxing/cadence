@@ -9,6 +9,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import {
+  type ChangeContract,
+  normalizeChangeContract,
+} from "./change-contract.ts";
 import { isValidRelativePath } from "./contracts.ts";
 import {
   assessDeliveryTraceability,
@@ -29,6 +33,7 @@ import {
   type DesignStatusProjection,
 } from "./design-journal.ts";
 import { OpenSpecCliError, type OpenSpecDiagnostic } from "./openspec-cli.ts";
+import { canonicalJson } from "./run-state.ts";
 import { RunStore } from "./run-store.ts";
 import { observeSafePath } from "./safe-path.ts";
 import type { ResolvedStateRoot } from "./state-root.ts";
@@ -39,6 +44,20 @@ const ARTIFACT_SEGMENT = /^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$/iu;
 const MAX_DESIGN_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_DESIGN_REQUIREMENT_BYTES = 64 * 1024;
 const MAX_DESIGN_CONTRACT_BYTES = 256 * 1024;
+
+function validGateContract(value: unknown): boolean {
+  if (typeof value === "string")
+    return (
+      value.trim().length > 0 &&
+      Buffer.byteLength(value, "utf8") <= MAX_DESIGN_CONTRACT_BYTES
+    );
+  try {
+    normalizeChangeContract(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export interface DesignOpenSpecInspection {
   change: string;
@@ -83,7 +102,7 @@ export type DesignControlRequest =
       runId: string;
       operationId: string;
       gate: "gate-a";
-      contract: string;
+      contract: string | ChangeContract;
     }
   | {
       operation: "approve-gate";
@@ -276,9 +295,7 @@ export function validateDesignControlRequest(
         "gate",
         "contract",
       ]) &&
-      typeof value.contract === "string" &&
-      value.contract.trim().length > 0 &&
-      Buffer.byteLength(value.contract, "utf8") <= MAX_DESIGN_CONTRACT_BYTES
+      validGateContract(value.contract)
       ? { ok: true, value: structuredClone(value) as DesignControlRequest }
       : { ok: false, code: "invalid-design-control-request" };
   }
@@ -849,7 +866,21 @@ export class DesignController {
         { code: "design-plan-draft-invalid", field: "plan-draft.json" },
       ]);
     }
+    if (status.changeContract) {
+      if (!draft || typeof draft !== "object" || Array.isArray(draft))
+        throw new Error("change-contract-invalid");
+      const record = draft as Record<string, unknown>;
+      if (
+        record.changeContract !== undefined &&
+        canonicalJson(normalizeChangeContract(record.changeContract)) !==
+          canonicalJson(status.changeContract)
+      )
+        throw new Error("change-contract-mismatch");
+      record.changeContract = status.changeContract;
+    } else if (draft && typeof draft === "object" && "changeContract" in draft)
+      throw new Error("change-contract-gate-a-required");
     const compiled = compileImplementPlan(draft, {
+      bindExecutionInputs: true,
       consumerRoot: this.consumerRoot,
     });
     if (compiled.plan.changeId !== status.change) {

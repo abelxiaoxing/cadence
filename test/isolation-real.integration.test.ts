@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process";
 import {
+  cpSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -10,12 +12,22 @@ import {
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { compileCandidatePatch } from "../src/candidate-patch.ts";
+import type { StructuredVerificationContract } from "../src/contracts.ts";
 import { BubblewrapIsolationBackend } from "../src/isolation-backend.ts";
-import { executePackageVerification } from "../src/package-verification.ts";
+import {
+  changeVerificationResult,
+  executePackageVerification,
+  phaseVerificationResult,
+} from "../src/package-verification.ts";
 import { parseRoutePolicy } from "../src/route-policy.ts";
 import { resolveStateRoot } from "../src/state-root.ts";
+import {
+  bindDraftVerificationInputs,
+  resolveVerificationRunner,
+} from "../src/verification-capability.ts";
+import { captureVerificationEnvironmentIdentity } from "../src/verification-environment.ts";
 import { openDurableWorkflowEngine } from "../src/workflow-engine.ts";
 import { verificationFixturePlan } from "./helpers/verification-plan.ts";
 
@@ -202,6 +214,13 @@ describe.skipIf(!enabled)("real Linux isolation contract", () => {
         consumerRoot,
         stateRoot,
         routePolicy: routing.policy,
+        verificationPolicy: pauseGreen ? undefined : "report-file-v3",
+        verificationEnvironment: (current, signal) =>
+          captureVerificationEnvironmentIdentity(
+            consumerRoot,
+            [current.verification.change.fullSuite],
+            signal,
+          ),
         deliverySource: {
           load: async () => ({
             gate: "gate-b",
@@ -213,8 +232,6 @@ describe.skipIf(!enabled)("real Linux isolation contract", () => {
         proposeCandidate: async (input) => {
           input.onHeaders();
           input.onProgress();
-          if (input.phase === "green" && pauseGreen)
-            return { kind: "paused", code: "fixture-reopen" };
           phases.push(input.phase);
           const relative =
             input.phase === "red" ? "test/regression.mjs" : "value.txt";
@@ -236,12 +253,14 @@ describe.skipIf(!enabled)("real Linux isolation contract", () => {
           };
         },
         verifyPhase: async (input) => {
+          if (input.phase === "green" && pauseGreen)
+            return { ok: false, kind: "paused", code: "fixture-reopen" };
           const result = await executePackageVerification({
             ...input,
             dependencyOwner: consumerRoot,
           });
-          if (result.ok) observations.push(input.phase);
-          return result;
+          if (result.kind === "accepted") observations.push(input.phase);
+          return phaseVerificationResult(result);
         },
         verifyChange: async (input) => {
           const verification =
@@ -252,13 +271,8 @@ describe.skipIf(!enabled)("real Linux isolation contract", () => {
             verification,
             signal: input.signal,
           });
-          if (!result.ok)
-            return {
-              ok: false,
-              kind: "verification",
-              code: result.code,
-              failureIdentities: [result.code],
-            };
+          const observed = changeVerificationResult(result);
+          if (!observed.ok) return observed;
           observations.push(input.scope ?? "change");
           return { ok: true, exitCode: 0, classification: "expected-green" };
         },
@@ -280,6 +294,11 @@ describe.skipIf(!enabled)("real Linux isolation contract", () => {
       );
       await engine.close();
       pauseGreen = false;
+      mkdirSync(path.join(consumerRoot, "node_modules"), { recursive: true });
+      writeFileSync(
+        path.join(consumerRoot, "node_modules/environment-marker.mjs"),
+        "export const revision = 2;\n",
+      );
       engine = open();
       const finished = await engine.execute({
         command: "resume",
@@ -289,6 +308,7 @@ describe.skipIf(!enabled)("real Linux isolation contract", () => {
       });
       expect(finished).toMatchObject({ state: "completed", completed: true });
       expect(phases).toEqual(["red", "green"]);
+      expect(observations.filter((phase) => phase === "red")).toHaveLength(2);
       expect(observations).toEqual(
         expect.arrayContaining(["red", "green", "post-apply"]),
       );
@@ -300,4 +320,223 @@ describe.skipIf(!enabled)("real Linux isolation contract", () => {
       await engine.close();
     }
   }, 60_000);
+  it("preserves npm hooks, nested scripts and short circuiting while protecting host dependencies", async () => {
+    const root = temporary();
+    const dependencyOwner = temporary();
+    mkdirSync(path.join(dependencyOwner, "node_modules/protected"), {
+      recursive: true,
+    });
+    const sentinel = path.join(dependencyOwner, "node_modules/protected/value");
+    writeFileSync(sentinel, "immutable");
+    const scripts = {
+      preverify: "node audit.cjs pre",
+      verify: "node audit.cjs first && npm run nested && node audit.cjs last",
+      nested: "node audit.cjs nested",
+      postverify: "node audit.cjs post",
+      broken:
+        'node audit.cjs before && node -e "process.exit(1)" && node audit.cjs forbidden',
+    };
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts }));
+    writeFileSync(
+      path.join(root, "audit.cjs"),
+      String.raw`
+      const fs = require('node:fs');
+      const assert = require('node:assert/strict');
+      assert.equal(process.env.HOME, '/cadence/home');
+      assert.throws(() => fs.writeFileSync('node_modules/protected/value', 'changed'), {code: 'EROFS'});
+      fs.writeFileSync('node_modules/.vite/probe', 'private');
+      fs.writeFileSync('node_modules/.vite-temp/probe', 'private');
+      fs.appendFileSync('order.txt', process.argv[2] + '\n');
+    `,
+    );
+    const run = (script: "verify" | "broken") =>
+      executePackageVerification({
+        root,
+        dependencyOwner,
+        signal: new AbortController().signal,
+        verification: {
+          kind: "package-script",
+          id: script,
+          packageManager: "npm",
+          script,
+          command: scripts[script],
+          args: [],
+          classification: "expected-green",
+        },
+      });
+    expect(await run("verify")).toMatchObject({ kind: "accepted" });
+    expect(readFileSync(path.join(root, "order.txt"), "utf8")).toBe(
+      "pre\nfirst\nnested\nlast\npost\n",
+    );
+    expect(await run("broken")).toMatchObject({ kind: "rejected" });
+    expect(readFileSync(path.join(root, "order.txt"), "utf8")).toBe(
+      "pre\nfirst\nnested\nlast\npost\nbefore\n",
+    );
+    expect(readFileSync(sentinel, "utf8")).toBe("immutable");
+    expect(readdirSync(path.join(dependencyOwner, "node_modules"))).toEqual([
+      "protected",
+    ]);
+  }, 30_000);
+
+  it.each(["bun test", "node before.mjs && bun test", "npm run nested"])(
+    "executes approved npm script %s with a private Bun runtime",
+    async (command) => {
+      const root = temporary();
+      const runtime = path.join(temporary(), ".bun/bin");
+      mkdirSync(runtime, { recursive: true });
+      const bun = resolveVerificationRunner("bun");
+      if (!bun) throw new Error("Bun fixture unavailable");
+      cpSync(realpathSync(bun.executablePath), path.join(runtime, "bun"));
+      vi.stubEnv(
+        "PATH",
+        `${runtime}${path.delimiter}${process.env.PATH ?? ""}`,
+      );
+      try {
+        writeFileSync(
+          path.join(root, "package.json"),
+          JSON.stringify({ scripts: { test: command, nested: "bun test" } }),
+        );
+        writeFileSync(path.join(root, "before.mjs"), "export {};\n");
+        writeFileSync(
+          path.join(root, "sample.test.js"),
+          "import {test,expect} from 'bun:test'; test('runtime available',()=>expect(process.execPath.startsWith('/cadence-runners/')).toBe(true));\n",
+        );
+        const result = await executePackageVerification({
+          root,
+          dependencyOwner: root,
+          signal: new AbortController().signal,
+          verification: {
+            kind: "package-script",
+            id: "npm-bun-script",
+            packageManager: "npm",
+            script: "test",
+            command,
+            args: [],
+            classification: "expected-green",
+          },
+        });
+        expect(result, JSON.stringify(result)).toMatchObject({
+          kind: "accepted",
+          evidence: { exitCode: 0 },
+        });
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
+  it("executes an authorized manifest candidate while refusing unapproved drift", async () => {
+    const root = temporary();
+    const manifest = {
+      description: "before",
+      scripts: { check: "node check.mjs" },
+    };
+    writeFileSync(path.join(root, "package.json"), JSON.stringify(manifest));
+    writeFileSync(
+      path.join(root, "check.mjs"),
+      "import {readFileSync} from 'node:fs'; if(JSON.parse(readFileSync('package.json','utf8')).description !== 'after') process.exitCode=1;",
+    );
+    const verification = bindDraftVerificationInputs(root, {
+      kind: "package-script",
+      id: "manifest-check",
+      packageManager: "npm",
+      script: "check",
+      args: [],
+      classification: "expected-green",
+    }) as StructuredVerificationContract;
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({ ...manifest, description: "after" }),
+    );
+    const input = {
+      root,
+      dependencyOwner: root,
+      verification,
+      signal: new AbortController().signal,
+    };
+    expect(await executePackageVerification(input)).toMatchObject({
+      kind: "unavailable",
+      code: "verification-config-mismatch",
+    });
+    expect(
+      await executePackageVerification({
+        ...input,
+        executionWritePaths: ["package.json"],
+      }),
+    ).toMatchObject({ kind: "accepted" });
+  });
+
+  it("keeps a Red witness in large logs independent from displayed output", async () => {
+    const root = temporary();
+    writeFileSync(
+      path.join(root, "red.mjs"),
+      "process.stdout.write('x'.repeat(300000)+'REAL_RED_WITNESS'+'y'.repeat(300000)); process.exitCode=1;",
+    );
+    const verification = {
+      kind: "static-check" as const,
+      id: "large-red",
+      runner: { kind: "node" as const, script: "red.mjs" },
+      args: [],
+      classification: "expected-red" as const,
+      expectedFailure: "REAL_RED_WITNESS",
+    };
+    const run = () =>
+      executePackageVerification({
+        root,
+        dependencyOwner: root,
+        verification,
+        signal: new AbortController().signal,
+      });
+    expect(await run()).toMatchObject({ kind: "accepted" });
+    writeFileSync(
+      path.join(root, "red.mjs"),
+      "process.stdout.write('x'.repeat(600000)); process.exitCode=1;",
+    );
+    expect(await run()).toMatchObject({ kind: "rejected" });
+  });
+
+  it("runs real package managers and Vitest with private caches, config logs and large reports", async () => {
+    const root = temporary();
+    const dependencyOwner = path.resolve(import.meta.dirname, "..");
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({ type: "module", scripts: { test: "vitest run" } }),
+    );
+    writeFileSync(
+      path.join(root, "vitest.config.ts"),
+      "console.log('config loaded'); export default {};\n",
+    );
+    writeFileSync(
+      path.join(root, "sample.test.js"),
+      "import {it,expect} from 'vitest'; for(let i=0;i<8000;i++)it('ordinary passing regression test '+i,()=>expect(1).toBe(1));\n",
+    );
+    for (const packageManager of process.env.CADENCE_ALL_PACKAGE_MANAGERS ===
+    "1"
+      ? (["npm", "bun", "pnpm", "yarn"] as const)
+      : (["npm", "bun"] as const)) {
+      const result = await executePackageVerification({
+        root,
+        dependencyOwner,
+        verification: {
+          kind: "vitest",
+          id: "real-report",
+          runner: {
+            kind: "package-script",
+            packageManager,
+            script: "test",
+            command: "vitest run",
+          },
+          testFiles: ["sample.test.js"],
+          args: [],
+          minTests: 8000,
+          classification: "expected-green",
+        },
+        signal: new AbortController().signal,
+      });
+      expect(result, JSON.stringify(result)).toMatchObject({
+        kind: "accepted",
+        evidence: { exitCode: 0, tests: 8000 },
+      });
+    }
+  }, 30_000);
 });

@@ -196,23 +196,96 @@ class ArtifactStore {
   }
 }
 
-// src/workspace-store.ts
-import { execFile, execFileSync } from "node:child_process";
-import { createHash as createHash2, randomUUID as randomUUID2 } from "node:crypto";
+// src/verification-identity.ts
+import { createHash as createHash2 } from "node:crypto";
 import {
-  chmodSync as chmodSync2,
   closeSync as closeSync2,
   constants as constants2,
-  fsyncSync as fsyncSync2,
-  lstatSync as lstatSync3,
-  mkdirSync as mkdirSync2,
+  fstatSync,
+  lstatSync as lstatSync2,
   openSync as openSync2,
+  readdirSync,
+  readlinkSync,
+  readSync
+} from "node:fs";
+import path2 from "node:path";
+function verificationEnvironmentDigest(roots, checkCancelled = () => {}) {
+  const digest2 = createHash2("sha256");
+  let entries = 0;
+  let bytes = 0;
+  const started = Date.now();
+  const buffer = Buffer.alloc(256 * 1024);
+  const visit = (file, relative, dependencyRoot) => {
+    checkCancelled();
+    if (++entries > 500000 || Date.now() - started > 60000)
+      throw new Error("verification-environment-limit");
+    const stat = lstatSync2(file, { throwIfNoEntry: false });
+    digest2.update(JSON.stringify([relative, stat ? stat.mode & 511 : null]));
+    if (!stat) {
+      digest2.update("absent");
+      return;
+    }
+    if (stat.isSymbolicLink()) {
+      digest2.update(JSON.stringify(["link", readlinkSync(file)]));
+      return;
+    }
+    if (stat.isDirectory()) {
+      digest2.update("directory");
+      for (const name of readdirSync(file).sort()) {
+        if (dependencyRoot && [".vite", ".vite-temp"].includes(name))
+          continue;
+        visit(path2.join(file, name), `${relative}/${name}`, false);
+      }
+      return;
+    }
+    if (!stat.isFile())
+      throw new Error("verification-environment-unsafe");
+    const fd = openSync2(file, constants2.O_RDONLY | constants2.O_NOFOLLOW);
+    try {
+      const before = fstatSync(fd);
+      if (before.ino !== stat.ino || before.dev !== stat.dev)
+        throw new Error("verification-environment-changed");
+      const content = createHash2("sha256");
+      for (;; ) {
+        const count = readSync(fd, buffer, 0, buffer.length, null);
+        if (count === 0)
+          break;
+        checkCancelled();
+        bytes += count;
+        if (bytes > 16 * 1024 ** 3 || Date.now() - started > 60000)
+          throw new Error("verification-environment-limit");
+        content.update(buffer.subarray(0, count));
+      }
+      const after = fstatSync(fd);
+      if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs)
+        throw new Error("verification-environment-changed");
+      digest2.update(JSON.stringify(["file", content.digest("hex")]));
+    } finally {
+      closeSync2(fd);
+    }
+  };
+  for (const root of [...new Set(roots)].sort())
+    visit(root, root, path2.basename(root) === "node_modules");
+  return digest2.digest("hex");
+}
+
+// src/workspace-store.ts
+import { execFile, execFileSync } from "node:child_process";
+import { createHash as createHash3, randomUUID as randomUUID2 } from "node:crypto";
+import {
+  chmodSync as chmodSync2,
+  closeSync as closeSync3,
+  constants as constants3,
+  fsyncSync as fsyncSync2,
+  lstatSync as lstatSync4,
+  mkdirSync as mkdirSync2,
+  openSync as openSync3,
   readFileSync as readFileSync2,
   renameSync as renameSync2,
   unlinkSync as unlinkSync2,
   writeFileSync as writeFileSync2
 } from "node:fs";
-import path3 from "node:path";
+import path4 from "node:path";
 import { promisify } from "node:util";
 
 // src/canonical.ts
@@ -231,7 +304,20 @@ var CONTROL_SCHEMA_PROPERTIES = {
   operationId: { type: "string" },
   deliveryRevision: { type: "integer", minimum: 1 },
   receiptHash: { type: "string" },
-  routeId: { type: "string" }
+  routeId: { type: "string" },
+  recovery: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      incidentKey: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      failureSequence: { type: "integer", minimum: 1 },
+      reason: {
+        type: "string",
+        enum: ["parent-directed-retry", "route-changed", "context-extended"]
+      }
+    },
+    required: ["incidentKey", "failureSequence", "reason"]
+  }
 };
 var commandSchema = (command, fields) => ({
   type: "object",
@@ -250,6 +336,15 @@ var CONTROL_COMMAND_PARAMETERS = {
     commandSchema("start", ["stage", "change", "operationId"]),
     commandSchema("status", ["stage", "change"]),
     commandSchema("resume", ["stage", "change", "operationId"]),
+    commandSchema("resume", ["stage", "change", "operationId", "recovery"]),
+    commandSchema("resume", [
+      "stage",
+      "change",
+      "operationId",
+      "deliveryRevision",
+      "receiptHash",
+      "recovery"
+    ]),
     commandSchema("resume", [
       "stage",
       "change",
@@ -270,7 +365,8 @@ var CONTROL_TOOL_FIELDS = new Set([
   "operationId",
   "deliveryRevision",
   "receiptHash",
-  "routeId"
+  "routeId",
+  "recovery"
 ]);
 var COMMAND_FIELDS = Object.freeze({
   start: new Set(["command", "stage", "change", "operationId"]),
@@ -281,7 +377,8 @@ var COMMAND_FIELDS = Object.freeze({
     "change",
     "operationId",
     "deliveryRevision",
-    "receiptHash"
+    "receiptHash",
+    "recovery"
   ]),
   rebind: new Set(["command", "stage", "change", "operationId", "routeId"]),
   cancel: new Set(["command", "stage", "change", "operationId"]),
@@ -300,15 +397,15 @@ function isValidRelativePath(p) {
 }
 
 // src/safe-path.ts
-import { lstatSync as lstatSync2 } from "node:fs";
-import path2 from "node:path";
+import { lstatSync as lstatSync3 } from "node:fs";
+import path3 from "node:path";
 function observeSafePath(root, relative) {
   if (!isValidRelativePath(relative)) {
     return { kind: "unsafe", reason: "invalid-path" };
   }
   try {
-    const resolvedRoot = path2.resolve(root);
-    const rootStat = lstatSync2(resolvedRoot, { throwIfNoEntry: false });
+    const resolvedRoot = path3.resolve(root);
+    const rootStat = lstatSync3(resolvedRoot, { throwIfNoEntry: false });
     if (!rootStat?.isDirectory() || rootStat.isSymbolicLink()) {
       return { kind: "unsafe", reason: "root-unavailable" };
     }
@@ -317,11 +414,11 @@ function observeSafePath(root, relative) {
     let current = resolvedRoot;
     const parts = relative.split("/");
     for (const [index, part] of parts.entries()) {
-      current = path2.join(current, part);
-      if (!current.startsWith(`${resolvedRoot}${path2.sep}`)) {
+      current = path3.join(current, part);
+      if (!current.startsWith(`${resolvedRoot}${path3.sep}`)) {
         return { kind: "unsafe", reason: "invalid-path" };
       }
-      const stat = lstatSync2(current, { throwIfNoEntry: false });
+      const stat = lstatSync3(current, { throwIfNoEntry: false });
       if (!stat)
         return { kind: "absent" };
       if (stat.isSymbolicLink()) {
@@ -406,7 +503,7 @@ async function runWorkspaceIo(input) {
 // src/workspace-store.ts
 var SHA2562 = /^[a-f0-9]{64}$/u;
 function hash(...values) {
-  const digest2 = createHash2("sha256");
+  const digest2 = createHash3("sha256");
   for (const value of values) {
     const bytes = typeof value === "string" ? Buffer.from(value) : value;
     digest2.update(`${bytes.byteLength}:`);
@@ -424,7 +521,7 @@ function revisionId(parentRevisionId, manifest) {
   return hash("cadence-workspace-revision", parentRevisionId ?? "", manifest);
 }
 function ensureDirectory2(directory) {
-  const stat = lstatSync3(directory, { throwIfNoEntry: false });
+  const stat = lstatSync4(directory, { throwIfNoEntry: false });
   if (stat) {
     if (stat.isSymbolicLink() || !stat.isDirectory()) {
       throw new Error("unsafe-workspace-path");
@@ -432,42 +529,42 @@ function ensureDirectory2(directory) {
     chmodSync2(directory, 448);
     return;
   }
-  let cursor = path3.dirname(directory);
-  while (cursor !== path3.dirname(cursor)) {
-    const ancestor = lstatSync3(cursor, { throwIfNoEntry: false });
+  let cursor = path4.dirname(directory);
+  while (cursor !== path4.dirname(cursor)) {
+    const ancestor = lstatSync4(cursor, { throwIfNoEntry: false });
     if (ancestor) {
       if (ancestor.isSymbolicLink() || !ancestor.isDirectory()) {
         throw new Error("unsafe-workspace-path");
       }
       break;
     }
-    cursor = path3.dirname(cursor);
+    cursor = path4.dirname(cursor);
   }
   mkdirSync2(directory, { recursive: true, mode: 448 });
-  const created = lstatSync3(directory);
+  const created = lstatSync4(directory);
   if (created.isSymbolicLink() || !created.isDirectory()) {
     throw new Error("unsafe-workspace-path");
   }
   chmodSync2(directory, 448);
 }
 function syncDirectory2(directory) {
-  const descriptor = openSync2(directory, constants2.O_RDONLY);
+  const descriptor = openSync3(directory, constants3.O_RDONLY);
   try {
     fsyncSync2(descriptor);
   } finally {
-    closeSync2(descriptor);
+    closeSync3(descriptor);
   }
 }
 function writeAtomic2(target, bytes) {
-  const directory = path3.dirname(target);
+  const directory = path4.dirname(target);
   ensureDirectory2(directory);
-  const temporary = path3.join(directory, `.${path3.basename(target)}.${process.pid}.${randomUUID2()}.tmp`);
-  const descriptor = openSync2(temporary, constants2.O_CREAT | constants2.O_EXCL | constants2.O_WRONLY, 384);
+  const temporary = path4.join(directory, `.${path4.basename(target)}.${process.pid}.${randomUUID2()}.tmp`);
+  const descriptor = openSync3(temporary, constants3.O_CREAT | constants3.O_EXCL | constants3.O_WRONLY, 384);
   try {
     writeFileSync2(descriptor, bytes);
     fsyncSync2(descriptor);
   } finally {
-    closeSync2(descriptor);
+    closeSync3(descriptor);
   }
   try {
     renameSync2(temporary, target);
@@ -545,10 +642,10 @@ class WorkspaceStore {
   constructor(root, artifacts, options = {}) {
     this.#checkCancelled = options.checkCancelled ?? (() => {});
     this.#onMetrics = options.onMetrics;
-    if (!path3.isAbsolute(root))
+    if (!path4.isAbsolute(root))
       throw new Error("workspace-store-root-invalid");
-    this.root = path3.resolve(root);
-    this.#revisions = path3.join(this.root, "revisions");
+    this.root = path4.resolve(root);
+    this.#revisions = path4.join(this.root, "revisions");
     this.#artifacts = artifacts;
     ensureDirectory2(this.root);
     ensureDirectory2(this.#revisions);
@@ -556,7 +653,7 @@ class WorkspaceStore {
   #revisionPath(id) {
     if (!SHA2562.test(id))
       throw new Error("workspace-revision-id-invalid");
-    return path3.join(this.#revisions, id.slice(0, 2), `${id}.json`);
+    return path4.join(this.#revisions, id.slice(0, 2), `${id}.json`);
   }
   #storeRevision(parentRevisionId, rawEntries) {
     const entries = stableEntries(rawEntries);
@@ -569,7 +666,7 @@ class WorkspaceStore {
       entries
     };
     const target = this.#revisionPath(id);
-    const existing = lstatSync3(target, { throwIfNoEntry: false });
+    const existing = lstatSync4(target, { throwIfNoEntry: false });
     if (existing) {
       const stored = this.getRevision(id);
       if (JSON.stringify(stored) !== JSON.stringify(revision)) {
@@ -601,8 +698,8 @@ class WorkspaceStore {
     return false;
   }
   captureBaseline(input) {
-    const consumerRoot = path3.resolve(input.consumerRoot);
-    const rootStat = lstatSync3(consumerRoot, { throwIfNoEntry: false });
+    const consumerRoot = path4.resolve(input.consumerRoot);
+    const rootStat = lstatSync4(consumerRoot, { throwIfNoEntry: false });
     if (!rootStat?.isDirectory() || rootStat.isSymbolicLink()) {
       throw new Error("unsafe-workspace-path");
     }
@@ -615,7 +712,7 @@ class WorkspaceStore {
     const timeout = input.gitTimeoutMs ?? 30000;
     if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 30000)
       throw new Error("workspace-git-timeout-invalid");
-    const consumerRoot = path3.resolve(input.consumerRoot);
+    const consumerRoot = path4.resolve(input.consumerRoot);
     let tracked;
     try {
       tracked = parseNullSeparated(execFileSync("git", ["ls-files", "-z", "--cached"], {
@@ -649,10 +746,10 @@ class WorkspaceStore {
       }
       if (observation.kind !== "file")
         throw new Error("unsafe-workspace-path");
-      const absolute = path3.join(consumerRoot, ...relative.split("/"));
+      const absolute = path4.join(consumerRoot, ...relative.split("/"));
       const bytes = readFileSync2(absolute);
       const artifact = this.#artifacts.put(bytes);
-      const stat = lstatSync3(absolute);
+      const stat = lstatSync4(absolute);
       entries[relative] = {
         kind: "file",
         hash: artifact.hash,
@@ -673,7 +770,7 @@ class WorkspaceStore {
   }
   getRevision(id) {
     const target = this.#revisionPath(id);
-    const stat = lstatSync3(target, { throwIfNoEntry: false });
+    const stat = lstatSync4(target, { throwIfNoEntry: false });
     if (!stat?.isFile() || stat.isSymbolicLink()) {
       throw new Error("workspace-revision-unavailable");
     }
@@ -752,7 +849,7 @@ class WorkspaceStore {
   }
   materialize(revisionIdValue, destination) {
     const revision = this.getRevision(revisionIdValue);
-    const root = path3.resolve(destination);
+    const root = path4.resolve(destination);
     ensureDirectory2(root);
     for (const [relative, entry] of Object.entries(revision.entries)) {
       this.#checkCancelled();
@@ -771,10 +868,10 @@ class WorkspaceStore {
       const segments = relative.split("/");
       let parent = root;
       for (const segment of segments.slice(0, -1)) {
-        parent = path3.join(parent, segment);
+        parent = path4.join(parent, segment);
         ensureDirectory2(parent);
       }
-      const target = path3.join(root, ...segments);
+      const target = path4.join(root, ...segments);
       if (observation.kind !== "absent") {
         throw new Error("workspace-materialize-conflict");
       }
@@ -786,8 +883,8 @@ class WorkspaceStore {
   }
   async captureBaselineWithGit(input, signal) {
     signal?.throwIfAborted();
-    const consumerRoot = path3.resolve(input.consumerRoot);
-    const stat = lstatSync3(consumerRoot, { throwIfNoEntry: false });
+    const consumerRoot = path4.resolve(input.consumerRoot);
+    const stat = lstatSync4(consumerRoot, { throwIfNoEntry: false });
     if (!stat?.isDirectory() || stat.isSymbolicLink())
       throw new Error("unsafe-workspace-path");
     const excluded = [".git", "node_modules", ...input.excludedPaths ?? []];
@@ -847,29 +944,34 @@ var checkCancelled = () => {
     throw new Error("cancelled");
 };
 try {
-  const artifacts = new ArtifactStore(workerData.artifactRoot);
-  const store = new WorkspaceStore(workerData.root, artifacts, {
-    checkCancelled
-  });
-  let result;
-  let revision;
-  checkCancelled();
-  if (workerData.operation === "captureBaseline") {
-    revision = await store.captureBaselineWithGit(workerData.args[0], controller.signal);
-    result = revision;
-  } else if (workerData.operation === "materialize") {
-    revision = store.getRevision(workerData.args[0]);
-    store.materialize(workerData.args[0], workerData.args[1]);
+  if (workerData.operation === "verificationIdentity") {
+    const result = verificationEnvironmentDigest(workerData.args[0], checkCancelled);
+    parentPort.postMessage({ ok: true, result, files: 0, bytes: 0 });
   } else {
-    throw new Error("workspace-io-operation-invalid");
+    const artifacts = new ArtifactStore(workerData.artifactRoot);
+    const store = new WorkspaceStore(workerData.root, artifacts, {
+      checkCancelled
+    });
+    let result;
+    let revision;
+    checkCancelled();
+    if (workerData.operation === "captureBaseline") {
+      revision = await store.captureBaselineWithGit(workerData.args[0], controller.signal);
+      result = revision;
+    } else if (workerData.operation === "materialize") {
+      revision = store.getRevision(workerData.args[0]);
+      store.materialize(workerData.args[0], workerData.args[1]);
+    } else {
+      throw new Error("workspace-io-operation-invalid");
+    }
+    const files = Object.values(revision.entries).filter((entry) => entry.kind === "file");
+    parentPort.postMessage({
+      ok: true,
+      result,
+      files: files.length,
+      bytes: files.reduce((sum, entry) => sum + entry.bytes, 0)
+    });
   }
-  const files = Object.values(revision.entries).filter((entry) => entry.kind === "file");
-  parentPort.postMessage({
-    ok: true,
-    result,
-    files: files.length,
-    bytes: files.reduce((sum, entry) => sum + entry.bytes, 0)
-  });
 } catch (error) {
   parentPort.postMessage({
     ok: false,

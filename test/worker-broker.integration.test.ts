@@ -3,6 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { parseRoutePolicy } from "../src/route-policy.ts";
+import { WorkerBroker } from "../src/worker-broker.ts";
+import { implementationRouteRequirements } from "../src/workflow-policy.ts";
+import { verificationFixturePlan } from "./helpers/verification-plan.ts";
+
 const RED_IDENTITY = "[CADENCE-V2:T2-route-policy-broker]";
 const roots: string[] = [];
 
@@ -708,4 +713,41 @@ describe("capability and health aware Worker broker", () => {
       }),
     ).toMatchObject({ ok: true });
   });
+});
+
+it("prefers estimated capacity but admits an 8K fallback and honors explicit hard minima and pins", async () => {
+  const parsed = parseRoutePolicy(policy());
+  if (!parsed.ok) throw new Error("invalid fixture policy");
+  parsed.policy.routes["custom-primary"].capabilities.maxTokens = 8192;
+  const broker = new WorkerBroker(parsed.policy);
+  const requirements = implementationRouteRequirements({
+    task: verificationFixturePlan("routing").plan.tasks[0],
+  });
+  const select = (extra = {}) =>
+    broker.select({ role: "implementation-worker", ...requirements, ...extra });
+  expect(select()).toMatchObject({
+    ok: true,
+    route: { id: "parent-fallback" },
+  });
+  expect(select({ routeId: "custom-primary" })).toMatchObject({
+    ok: true,
+    route: { id: "custom-primary" },
+  });
+  broker.markFailure("parent-fallback", "transport-failure");
+  expect(select()).toMatchObject({ ok: true, route: { id: "custom-primary" } });
+  expect(select({ minOutputTokens: 16000 })).toMatchObject({ ok: false });
+  const attempted: string[] = [];
+  const result = await broker.run({
+    operationId: "small-task",
+    role: "implementation-worker",
+    requirements,
+    execute: async (input) => {
+      input.onHeaders();
+      input.onProgress();
+      attempted.push(input.route.id);
+      return "done";
+    },
+  });
+  expect(result).toMatchObject({ ok: true });
+  expect(attempted).toEqual(["custom-primary"]);
 });

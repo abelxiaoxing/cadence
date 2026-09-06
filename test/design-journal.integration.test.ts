@@ -13,6 +13,60 @@ const roots: string[] = [];
 const HASH_B = "b".repeat(64);
 const HASH_C = "c".repeat(64);
 
+it("retains structured Gate A authority across reopen with canonical identities", () => {
+  const { stateRoot, runs, run } = fixture("structured-contract");
+  let journal = DesignJournal.open(stateRoot);
+  const contract = {
+    goal: "Preserve the accepted behavior",
+    acceptance: [
+      {
+        id: "A1",
+        statement: "Check passes",
+        verification: {
+          kind: "static-check" as const,
+          id: "check",
+          runner: { kind: "node" as const, script: "check.mjs" },
+          args: [],
+          classification: "expected-green" as const,
+        },
+      },
+    ],
+    constraints: [{ id: "C1", statement: "No additional dependencies" }],
+    policy: {
+      writeRoots: ["test", "src"],
+      dependencies: [],
+      verificationModes: ["behavior" as const],
+    },
+  };
+  const first = journal.approveGate({
+    runId: run.runId,
+    operationId: "contract-approve",
+    gate: "gate-a",
+    contract,
+  });
+  journal.close();
+  journal = DesignJournal.open(stateRoot);
+  try {
+    expect(journal.status(run.runId).changeContract).toMatchObject({
+      goal: contract.goal,
+      policy: { writeRoots: ["src", "test"] },
+    });
+    const second = journal.approveGate({
+      runId: run.runId,
+      operationId: "contract-reorder",
+      gate: "gate-a",
+      contract: {
+        ...contract,
+        policy: { ...contract.policy, writeRoots: ["src", "test"] },
+      },
+    });
+    expect(second.proof).toEqual(first.proof);
+  } finally {
+    journal.close();
+    runs.close();
+  }
+});
+
 afterEach(() => {
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });

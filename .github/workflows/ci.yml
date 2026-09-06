@@ -22,6 +22,7 @@ jobs:
       - run: bun run verify
       - run: bun run check:agents
       - run: bun run traceability:check
+      - run: bun run eval:workflow
 
   openspec-platform-contract:
     name: OpenSpec / ${{ matrix.os }} / Node ${{ matrix.node }}
@@ -63,6 +64,7 @@ jobs:
         node: ['22.13.0', '24.13.0']
     env:
       CADENCE_REAL_ISOLATION: '1'
+      CADENCE_ALL_PACKAGE_MANAGERS: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -74,5 +76,6 @@ jobs:
       - run: sudo apt-get update
       - run: sudo apt-get install --yes bubblewrap
       - run: bun install --frozen-lockfile
+      - run: npm install --global pnpm@10.12.1 yarn@1.22.22
       # Opt-in means unavailable isolation fails the job; it never silently skips.
       - run: node node_modules/vitest/vitest.mjs run test/isolation-real.integration.test.ts test/workspace-io.test.ts

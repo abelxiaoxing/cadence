@@ -78,7 +78,14 @@ function taskPhases(
   task: ImplementTaskBoundary,
 ): Array<[ImplementationPhase, ImplementTaskBoundary["phases"]["red"]]> {
   return [
-    ["red", task.phases.red],
+    ...(!task.verificationMode || task.verificationMode === "behavior"
+      ? [
+          ["red", task.phases.red] as [
+            ImplementationPhase,
+            ImplementTaskBoundary["phases"]["red"],
+          ],
+        ]
+      : []),
     ["green", task.phases.green],
     ...(task.phases.refactor
       ? ([["refactor", task.phases.refactor]] as Array<

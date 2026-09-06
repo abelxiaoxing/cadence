@@ -9,13 +9,21 @@ import path from "node:path";
 import {
   type AtomicVerificationContract,
   type StructuredVerificationContract,
+  VERIFICATION_CONFIGURATION_PATHS,
   type VerificationAdapterCode,
   validateVerificationContract,
+  verificationBoundInputPaths,
   verificationInputPaths,
   verificationSteps,
 } from "./contracts.ts";
-import { type Bound, isCurrent, snapshotFiles } from "./file-snapshot.ts";
+import {
+  type Bound,
+  isCurrent,
+  snapshotFile,
+  snapshotFiles,
+} from "./file-snapshot.ts";
 import { isSafeRegularFile, observeSafePath } from "./safe-path.ts";
+import { verificationEnvironmentDigest } from "./verification-identity.ts";
 
 export type VerificationCapabilityDiagnostic =
   | {
@@ -43,6 +51,7 @@ export interface CurrentVerificationCapability {
   verificationId: string;
   runnerBindings: VerificationRunnerBinding[];
   inputSnapshot: Bound;
+  runnerSnapshot: { paths: string[]; digest: string };
 }
 
 export type CurrentVerificationCapabilityResult =
@@ -64,14 +73,12 @@ export interface VerificationRunnerEnvironment {
 }
 
 export interface VerificationCapabilityOptions {
+  /** Trusted plan write/delete authority, supplied only for isolated execution. */
+  executionWritePaths?: readonly string[];
   dependencyOwner?: string;
   runnerEnvironment?: VerificationRunnerEnvironment;
 }
 
-const SHELL_OPERATOR = /[;&|`$<>\n\r\0]/u;
-const SIMPLE_TOKEN =
-  /^(?:[a-z0-9][a-z0-9._:@/=-]*|--?[a-z0-9][a-z0-9._:@/=-]*)$/iu;
-const NETWORKING_RUNNERS = new Set(["bunx", "pnpx"]);
 const WINDOWS_EXECUTABLE_EXTENSIONS = new Set([".exe", ".cmd"]);
 const DEFAULT_WINDOWS_PATH_EXT = ".COM;.EXE;.BAT;.CMD";
 const SYSTEM_MOUNT_ROOTS = ["/usr", "/bin", "/lib", "/lib64", "/etc"];
@@ -633,95 +640,13 @@ function packageManifest(root: string): Record<string, unknown> | null {
   }
 }
 
-function validateScriptCommand(
-  root: string,
-  verificationId: string,
-  command: string,
-  dependencyOwner: string,
-  runnerEnvironment: VerificationRunnerEnvironment,
-): VerificationCapabilityResult {
-  if (
-    command.length === 0 ||
-    command.trim() !== command ||
-    SHELL_OPERATOR.test(command)
-  ) {
-    return adapterFailure(
-      verificationId,
-      "script-unsafe",
-      "approved package script contains unsupported shell syntax",
-    );
-  }
-  const tokens = command.split(/\s+/u);
-  if (!SIMPLE_TOKEN.test(tokens[0] ?? "")) {
-    return adapterFailure(
-      verificationId,
-      "script-unsafe",
-      "approved package script cannot be represented as safe tokens",
-    );
-  }
-  const executable = tokens[0] ?? "";
-  const subcommands = new Set(tokens.slice(1));
-  if (
-    NETWORKING_RUNNERS.has(executable) ||
-    (executable === "bun" && subcommands.has("x")) ||
-    (executable === "npm" &&
-      (subcommands.has("exec") || subcommands.has("x"))) ||
-    (executable === "pnpm" && subcommands.has("dlx")) ||
-    (executable === "yarn" && subcommands.has("dlx"))
-  ) {
-    return adapterFailure(
-      verificationId,
-      "script-unsafe",
-      "package script uses a runner that can download implicitly",
-    );
-  }
-  if (executable === "npx") {
-    const local = tokens[1] === "--no-install" ? tokens[2] : undefined;
-    if (
-      !local ||
-      !localExecutable(root, local, dependencyOwner, runnerEnvironment)
-    ) {
-      return adapterFailure(
-        verificationId,
-        "local-executable-missing",
-        "npx requires --no-install and an installed local executable",
-      );
-    }
-    const runner = resolveVerificationRunner("npx", runnerEnvironment);
-    return runner
-      ? capabilitySuccess(verificationId, [runner])
-      : adapterFailure(
-          verificationId,
-          "runner-missing",
-          "npx is unavailable or cannot be mounted safely",
-        );
-  }
-  if (["node", "bun"].includes(executable)) {
-    const runner = resolveVerificationRunner(executable, runnerEnvironment);
-    return runner
-      ? capabilitySuccess(verificationId, [runner])
-      : adapterFailure(
-          verificationId,
-          "runner-missing",
-          `approved runner ${executable} is unavailable or cannot be mounted safely`,
-        );
-  }
-  return localExecutable(root, executable, dependencyOwner, runnerEnvironment)
-    ? capabilitySuccess(verificationId)
-    : adapterFailure(
-        verificationId,
-        "local-executable-missing",
-        `local executable ${executable} is unavailable`,
-      );
-}
-
 function validatePackageScript(
   root: string,
   verificationId: string,
   packageManager: string,
   script: string,
   approvedCommand: string,
-  dependencyOwner = root,
+  _dependencyOwner = root,
   runnerEnvironment: VerificationRunnerEnvironment = {},
 ): VerificationCapabilityResult {
   const packageRunner = resolveVerificationRunner(
@@ -755,19 +680,91 @@ function validatePackageScript(
       `package.json script ${script} differs from the Gate B contract`,
     );
   }
-  const scriptCapability = validateScriptCommand(
-    root,
-    verificationId,
-    actual,
-    dependencyOwner,
-    runnerEnvironment,
+  // Approved scripts are opaque shell programs and may invoke nested scripts
+  // or hooks. Supply the available supported runtimes without parsing shell
+  // syntax or rejecting composition; isolation still owns their execution.
+  const runtimes = ["node", "bun", "npm", "npx", "pnpm", "yarn"].flatMap(
+    (command) => {
+      const binding = resolveVerificationRunner(command, runnerEnvironment);
+      return binding ? [binding] : [];
+    },
   );
-  return scriptCapability.ok
-    ? capabilitySuccess(verificationId, [
-        packageRunner,
-        ...scriptCapability.runnerBindings,
-      ])
-    : scriptCapability;
+  return capabilitySuccess(verificationId, [packageRunner, ...runtimes]);
+}
+
+/** Inspect active directives, never comments or arbitrary words in values. */
+function unsupportedExecutionConfiguration(source: string): boolean {
+  const restricted = new Set([
+    "scriptshell",
+    "userconfig",
+    "globalconfig",
+    "yarnpath",
+    "plugins",
+    "auth",
+    "authtoken",
+    "password",
+    "token",
+    "npmauthtoken",
+    "npmauthident",
+  ]);
+  for (const line of source.split(/\r?\n/u)) {
+    let quote = "";
+    let escaped = false;
+    let active = "";
+    const parts: string[] = [];
+    let flowDepth = 0;
+    for (const character of line) {
+      if (escaped) {
+        active += character;
+        escaped = false;
+        continue;
+      }
+      if (character === "\\" && quote === '"') {
+        active += character;
+        escaped = true;
+        continue;
+      }
+      if (quote) {
+        active += character;
+        if (character === quote) quote = "";
+      } else if (character === '"' || character === "'") {
+        quote = character;
+        active += character;
+      } else if (
+        character === "#" ||
+        (character === ";" && active.trim() === "")
+      ) {
+        break;
+      } else if (
+        character === "{" ||
+        character === "}" ||
+        (character === "," && flowDepth > 0)
+      ) {
+        if (character === "{") flowDepth++;
+        if (character === "}") flowDepth = Math.max(0, flowDepth - 1);
+        parts.push(active);
+        active = "";
+      } else active += character;
+    }
+    parts.push(active);
+    for (const part of parts) {
+      if (part.includes("${")) return true;
+      const directive = part.match(
+        /^\s*(?:"((?:\\.|[^"\\])*)"|'([^']*)'|([^\s=]+))\s*(.*)$/u,
+      );
+      if (!directive) continue;
+      const rawKey = directive[1] ?? directive[2] ?? directive[3];
+      if (!rawKey.endsWith(":") && !directive[4]) continue;
+      const key = rawKey
+        .replace(/:$/u, "")
+        .split(":")
+        .at(-1)
+        ?.replace(/[-_]/gu, "")
+        .toLowerCase();
+      if (key && restricted.has(key)) return true;
+    }
+  }
+  return false;
 }
 
 function validateAtomicCapability(
@@ -775,7 +772,73 @@ function validateAtomicCapability(
   step: AtomicVerificationContract,
   dependencyOwner: string,
   runnerEnvironment: VerificationRunnerEnvironment,
+  executionWritePaths: readonly string[],
 ): VerificationCapabilityResult {
+  if (
+    step.kind === "vitest" &&
+    [
+      ...step.args,
+      ...(step.runner.kind === "package-script"
+        ? step.runner.command.split(/\s+/u)
+        : []),
+    ].some((arg) => /^--(?:reporters?|outputFile)(?:[.=]|$)/u.test(arg))
+  ) {
+    return adapterFailure(
+      step.id,
+      "report-arguments-conflict",
+      "Vitest report arguments are owned by the adapter",
+    );
+  }
+  if (step.executionBindings) {
+    for (const [relative, expected] of Object.entries(step.executionBindings)) {
+      if (executionWritePaths.includes(relative)) continue;
+      const observation = observeSafePath(root, relative);
+      if (
+        (expected === null && observation.kind !== "absent") ||
+        (expected !== null && snapshotFile(root, relative)?.sha256 !== expected)
+      ) {
+        return adapterFailure(
+          step.id,
+          "verification-config-mismatch",
+          "Bound execution inputs changed; recompile the verification contract",
+        );
+      }
+    }
+  }
+  for (const relative of verificationBoundInputPaths(step).filter((file) =>
+    VERIFICATION_CONFIGURATION_PATHS.includes(file),
+  )) {
+    const observation = observeSafePath(root, relative);
+    if (!["file", "absent"].includes(observation.kind))
+      return adapterFailure(
+        step.id,
+        "verification-config-unsafe",
+        "Execution configuration must be a regular file",
+      );
+    if (
+      observation.kind !== "file" ||
+      ![
+        ".npmrc",
+        ".yarnrc",
+        ".yarnrc.yml",
+        "bunfig.toml",
+        "pnpm-workspace.yaml",
+      ].includes(relative)
+    )
+      continue;
+    if (
+      lstatSync(path.join(root, relative)).size > 64 * 1024 ||
+      unsupportedExecutionConfiguration(
+        readFileSync(path.join(root, relative), "utf8"),
+      )
+    ) {
+      return adapterFailure(
+        step.id,
+        "verification-config-unsafe",
+        "Execution configuration requires unsupported credentials or host configuration",
+      );
+    }
+  }
   if (step.kind === "package-script") {
     return validatePackageScript(
       root,
@@ -862,6 +925,57 @@ function validateAtomicCapability(
   return capabilitySuccess(step.id);
 }
 
+/** Enrich only a new design draft, never rewrite proof-bound canonical delivery bytes. */
+export function bindDraftVerificationInputs(
+  root: string,
+  draft: unknown,
+): unknown {
+  const visit = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(visit);
+    if (!value || typeof value !== "object") return value;
+    const item = Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [
+        key,
+        // Gate A is immutable approval authority, not an execution contract.
+        key === "changeContract" ? structuredClone(child) : visit(child),
+      ]),
+    );
+    if (
+      item.kind === "package-script" &&
+      item.command === undefined &&
+      typeof item.script === "string"
+    ) {
+      const scripts = packageManifest(root)?.scripts as
+        | Record<string, unknown>
+        | undefined;
+      item.command = scripts?.[item.script];
+    }
+    if (
+      ["vitest", "package-script", "static-check"].includes(
+        String(item.kind),
+      ) &&
+      typeof item.id === "string"
+    ) {
+      const validation = validateVerificationContract(item);
+      if (
+        validation.ok &&
+        verificationBoundInputPaths(validation.value).some((file) =>
+          VERIFICATION_CONFIGURATION_PATHS.includes(file),
+        )
+      ) {
+        item.executionBindings = Object.fromEntries(
+          VERIFICATION_CONFIGURATION_PATHS.map((relative) => [
+            relative,
+            snapshotFile(root, relative)?.sha256 ?? null,
+          ]),
+        );
+      }
+    }
+    return item;
+  };
+  return visit(draft);
+}
+
 export function validateVerificationCapability(
   root: string,
   value: unknown,
@@ -882,6 +996,26 @@ export function bindCurrentVerificationCapability(
   if (!validation.ok) {
     throw new Error("verification-capability-invariant");
   }
+  let paths: string[];
+  let runnerDigest: string;
+  try {
+    paths = verificationRunnerFiles(
+      options.dependencyOwner ?? root,
+      validation.value,
+      capability.runnerBindings,
+    );
+    runnerDigest = verificationEnvironmentDigest(paths);
+  } catch {
+    return {
+      ok: false,
+      diagnostic: {
+        kind: "verification-adapter",
+        verificationId: capability.verificationId,
+        code: "runner-missing",
+        message: "Installed verification runner changed or is unavailable",
+      },
+    };
+  }
   return {
     ok: true,
     value: {
@@ -892,8 +1026,9 @@ export function bindCurrentVerificationCapability(
       })),
       inputSnapshot: snapshotFiles(
         root,
-        verificationInputPaths(validation.value),
+        verificationBoundInputPaths(validation.value),
       ),
+      runnerSnapshot: { paths, digest: runnerDigest },
     },
   };
 }
@@ -902,7 +1037,65 @@ export function isVerificationCapabilityCurrent(
   root: string,
   capability: CurrentVerificationCapability,
 ): boolean {
-  return isCurrent(root, capability.inputSnapshot);
+  try {
+    return (
+      isCurrent(root, capability.inputSnapshot) &&
+      verificationEnvironmentDigest(capability.runnerSnapshot.paths) ===
+        capability.runnerSnapshot.digest
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function verificationRunnerFiles(
+  dependencyOwner: string,
+  verification: StructuredVerificationContract,
+  bindings: readonly VerificationRunnerBinding[],
+): string[] {
+  const files = bindings.flatMap((binding) => [
+    binding.executablePath,
+    ...(binding.fixedArgs ?? []).filter((arg) => path.isAbsolute(arg)),
+  ]);
+  for (const file of [...new Set(files)]) {
+    // Keep the launcher identity and explicitly include its resolved bytes:
+    // the digest intentionally does not follow arbitrary dependency symlinks.
+    const resolved = realpathSync(file);
+    files.push(resolved);
+    // System runners have no mountSource. Bind their installed package too,
+    // including implementation modules and bundled dependencies beyond bin/.
+    for (
+      let directory = path.dirname(resolved);
+      directory !== path.dirname(directory);
+      directory = path.dirname(directory)
+    ) {
+      if (
+        lstatSync(path.join(directory, "package.json"), {
+          throwIfNoEntry: false,
+        })?.isFile()
+      ) {
+        files.push(directory);
+        break;
+      }
+    }
+  }
+  for (const step of verificationSteps(verification)) {
+    if (
+      !("runner" in step) ||
+      step.runner.kind === "node" ||
+      step.runner.kind === "package-script"
+    )
+      continue;
+    const executable =
+      step.kind === "vitest" ? "vitest" : step.runner.executable;
+    const file = path.join(dependencyOwner, "node_modules/.bin", executable);
+    try {
+      files.push(file, realpathSync(file));
+    } catch {
+      /* Admission owns missing runner diagnostics. */
+    }
+  }
+  return [...new Set(files)];
 }
 
 export function validateVerificationAdapterCapability(
@@ -945,6 +1138,7 @@ function validateCapability(
     dependencyOwner,
     options.runnerEnvironment ?? {},
     requireInputAvailability,
+    options.executionWritePaths ?? [],
   );
 }
 
@@ -954,6 +1148,7 @@ function validateAcceptedVerificationCapability(
   dependencyOwner: string,
   runnerEnvironment: VerificationRunnerEnvironment,
   requireInputAvailability: boolean,
+  executionWritePaths: readonly string[],
 ): VerificationCapabilityResult {
   if (requireInputAvailability) {
     for (const input of verificationInputPaths(verification)) {
@@ -973,6 +1168,7 @@ function validateAcceptedVerificationCapability(
       step,
       dependencyOwner,
       runnerEnvironment,
+      executionWritePaths,
     );
     if (!capability.ok) return capability;
     runnerBindings.push(...capability.runnerBindings);

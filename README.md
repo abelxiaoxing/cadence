@@ -31,7 +31,7 @@ Design status 将可调用的 `legalOperations` 与顶层 `packetActions` 分开
 普通 artifact、错误 Red、transport、environment、stale、conflict、baseline 与验证失败都留在同一 Implement run 中恢复。
 累计验证发现 introduced failure 时会自动重开责任任务做有界修复。
 artifact、stale candidate 与 verification 纠错会将具体失败码、修复策略和可用失败身份传给下一次 Worker。
-恢复预算以验证义务和阶段为依据，使用独立 SQLite 事实保存；`resume`、重启、回滚、换路由、任务重命名和合同改写都不能重置额度。
+自动恢复预算以验证义务和阶段为依据，使用独立 SQLite 事实保存；普通 `resume`、重启、回滚、换路由、任务重命名和合同改写都不能重置额度。
 执行前持久化预留工作额度；内部修复也计入同一 run 的有限资源预算。
 系统保留 baseline 和 phase facts，并明确区分缺少能力、缺少决定与恢复额度耗尽。
 Worker 可读取同一任务各阶段已批准路径的并集，并按需申请 sealed roots 内的普通文件读取；新增读取会绑定合并与最终应用的 currentness，写入和删除仍限于当前阶段；超大补丁先自动尝试紧凑的完整提交，不能完整提交时保留进度，绝不接受部分补丁。
@@ -167,9 +167,13 @@ bun run test:target test/openspec-cli.test.ts test/design-delivery.integration.t
 一旦显式文件存在，它就是完整策略；损坏、缺字段或角色引用不一致会 fail closed，不会悄悄退回默认父模型。
 旧配置的顶层数字标记 `2` 会被安全迁移为当前 canonical 结构；其他编号会以专用诊断码明确拒绝。
 inherited route 声明的能力会与当前父模型真实能力取交集，不能通过夸大的配置绕过 admission。
-transport 与 malformed structural result 都只在声明的 route 顺序内做有界 failover；只有一个 route 时会原地重试一次，多个 route 时按顺序切换。
+Implement 保留 16,000 context / 8,000 output 的最低容量要求；任务复杂度估算只影响自动选择的优先级，满足最低要求的 route 仍可作为 fallback 或显式 rebind。
+transport 与 malformed structural result 都只在声明的 route 集合内做有界 failover；优先选择达到容量估算的 route，同一优先级保持声明顺序，只有一个 route 时会原地重试一次。
 相同 pause 的安全指纹与重复计数通过 `status` 暴露，凭据、URL 和原始输出仍保持私有。
 `rebind` 只能选择已获 policy 授权且能力匹配的 route，不会扩大任务边界。
+
+验证归因使用完整失败集合；大基线以哈希校验的私有 artifact 持久化，Worker 和状态只接收最多 256 条失败摘要。
+非 Vitest 失败身份由执行入口、参数和失败证据决定，不受合同显示 ID 影响。
 
 ## 跨项目验证合同（Cross-project verification）
 
@@ -241,3 +245,56 @@ bun run traceability:check   # 162 条 active Requirement/Scenario 引用精确�
 ## 许可（License）
 
 MIT — 详见 [LICENSE](LICENSE) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+## 验证执行环境与明确恢复
+
+验证使用独立 HOME、Vite 缓存和报告目录；consumer 依赖保持只读。
+Vitest 的 JSON 报告与普通 stdout/stderr 分离，日志超过捕获预算只截取头尾，不终止正常测试。
+报告缺失、损坏或超限属于验证不可用，不作为产品失败基线或自动改代码的理由。
+已封存候选在环境故障后可重新验证，并在存储重开后复用；即使自动生成次数已耗尽，普通 resume 仍可只复验该候选，不启动新的补丁生成。
+非 Vitest 的 Red 证据通过有界流式匹配保留，不受日志头尾截取影响。
+完整的已批准 package-script 可包含组合命令、引号和嵌套脚本；包管理器在隔离环境中解释，manifest、lockfile 和项目配置绑定 currentness。
+配置注释和普通值不触发禁用词检查；有效的凭据或宿主执行配置仍被拒绝。
+计划已授权的 manifest/配置写入可在隔离候选中验证；未授权路径仍需匹配设计时哈希，实际入口脚本仍必须与批准命令相同，执行期间的输入漂移仍会使验证失效。
+专门的 Vitest 合同仍拥有 JSON reporter、测试数量及 Red 身份检查，复合脚本不会自动获得断言级语义。
+
+自动纠错耗尽后，普通 resume、rebind 和重启不充值。
+父代理可使用 status 返回的 `recovery.additionalAttempt`，作为 resume 的 `recovery` 字段明确追加一次尝试；失败后再次暂停，历史消耗保持。
+累计工作额度按成功接纳过的最大阶段数增长，任务重命名、重复编译及缩小后恢复原规模不增加额度。
+宿主可在启动前设置 `ABEL_WORK_MAX_UNITS`（默认 512）和 `ABEL_VERIFICATION_MAX_REPORT_BYTES`（默认 67108864）；Worker 不能调整这些资源设置。
+前者在 run 中固定，后者用于每次独立报告的有界读取。
+
+## 结构化授权与验证模式
+
+新 Design 的 Gate A 使用 `ChangeContract`：目标、稳定验收 ID 与验证义务、明确限制，以及允许的写入范围、依赖和验证模式。
+控制面保存规范化的非敏感权威值并注入计划；重排任务不能删除验收或扩大政策。
+自动 amendment 保留 Gate A，不能改写已接受的 proposal/spec 或行为决定。
+旧文本授权继续可读，其修订保留原有验证义务与保守范围。
+
+任务默认 `verificationMode: "behavior"`，继续执行 Red/Green。
+明确授权的 `mechanical` 和 `refactor` 模式采用基线与后置验证，从 Green 开始，不生成 Red 候选。
+机械修改限于文档、数据与配置文件；重构不能改写已接受的验证入口；声明公共行为变化时仍需 Red。
+全部模式保留累计验证与事务应用。
+
+验证证据现在绑定安装后的依赖内容、runner 和适配器政策。
+依赖身份采集在可取消 I/O 线程中执行；工具缓存不参与身份。
+环境漂移会暂停验证，恢复后重建基线并重验保留阶段。
+
+## 真实模型工作流评估
+
+开发仓库提供独立评估入口，消费项目和 Git 历史均在临时目录创建，结束后清理。
+默认只验证真实 Pi 的包来源与命令激活，不调用模型：
+
+```sh
+bun run eval:workflow
+bun run eval:workflow --live --scenario small-fix --output /tmp/cadence-evaluation.json
+bun run eval:workflow --live --scenario multiple-tasks
+bun run eval:workflow --live --scenario restart-recovery
+bun run eval:workflow --live --scenario missing-capability
+```
+
+`--live` 使用 Pi 当前配置的模型，也可传 `--model provider/model`；需要可用的 Provider、OpenSpec 和 Linux Bubblewrap。
+报告记录完成状态、用户介入、重复修订、耗时及宿主报告的 token/成本；最终行为另由隔离 oracle 检查。
+模型服务不可用、阶段停滞、取消与 Design 完成都不会被计为 Implement 成功。
+缺少能力的场景用于观察保留状态，不能把任意停滞当作正确恢复。
+无原始对话落盘。

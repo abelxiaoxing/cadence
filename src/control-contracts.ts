@@ -13,6 +13,12 @@ export const CONTROL_COMMANDS = [
 
 export const CONTROL_STAGES = ["abel-implement"] as const;
 
+export interface RecoveryRequest {
+  incidentKey: string;
+  failureSequence: number;
+  reason: "parent-directed-retry" | "route-changed" | "context-extended";
+}
+
 const CONTROL_SCHEMA_PROPERTIES = {
   command: {
     type: "string",
@@ -24,6 +30,19 @@ const CONTROL_SCHEMA_PROPERTIES = {
   deliveryRevision: { type: "integer", minimum: 1 },
   receiptHash: { type: "string" },
   routeId: { type: "string" },
+  recovery: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      incidentKey: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      failureSequence: { type: "integer", minimum: 1 },
+      reason: {
+        type: "string",
+        enum: ["parent-directed-retry", "route-changed", "context-extended"],
+      },
+    },
+    required: ["incidentKey", "failureSequence", "reason"],
+  },
 } as const;
 
 type ControlSchemaField = Exclude<
@@ -61,6 +80,15 @@ export const CONTROL_COMMAND_PARAMETERS = {
     commandSchema("start", ["stage", "change", "operationId"]),
     commandSchema("status", ["stage", "change"]),
     commandSchema("resume", ["stage", "change", "operationId"]),
+    commandSchema("resume", ["stage", "change", "operationId", "recovery"]),
+    commandSchema("resume", [
+      "stage",
+      "change",
+      "operationId",
+      "deliveryRevision",
+      "receiptHash",
+      "recovery",
+    ]),
     commandSchema("resume", [
       "stage",
       "change",
@@ -102,6 +130,7 @@ export interface ResumeControlCommand extends ControlBase {
   operationId: string;
   deliveryRevision?: number;
   receiptHash?: string;
+  recovery?: RecoveryRequest;
 }
 
 export interface RebindControlCommand extends ControlBase {
@@ -144,6 +173,7 @@ const CONTROL_TOOL_FIELDS = new Set([
   "deliveryRevision",
   "receiptHash",
   "routeId",
+  "recovery",
 ]);
 
 const COMMAND_FIELDS: Readonly<
@@ -158,6 +188,7 @@ const COMMAND_FIELDS: Readonly<
     "operationId",
     "deliveryRevision",
     "receiptHash",
+    "recovery",
   ]),
   rebind: new Set(["command", "stage", "change", "operationId", "routeId"]),
   cancel: new Set(["command", "stage", "change", "operationId"]),
@@ -282,13 +313,32 @@ export function validateControlCommand(
         !hasExactKeys(
           value,
           [...common, "operationId"],
-          ["deliveryRevision", "receiptHash"],
+          ["deliveryRevision", "receiptHash", "recovery"],
         ) ||
         !validChange(value.change) ||
         !validOperationId(value.operationId)
       ) {
         break;
       }
+      if (
+        value.recovery !== undefined &&
+        (!isRecord(value.recovery) ||
+          !hasExactKeys(value.recovery, [
+            "incidentKey",
+            "failureSequence",
+            "reason",
+          ]) ||
+          typeof value.recovery.incidentKey !== "string" ||
+          !SHA256.test(value.recovery.incidentKey) ||
+          !Number.isSafeInteger(value.recovery.failureSequence) ||
+          (value.recovery.failureSequence as number) < 1 ||
+          ![
+            "parent-directed-retry",
+            "route-changed",
+            "context-extended",
+          ].includes(String(value.recovery.reason)))
+      )
+        break;
       const hasRevision = value.deliveryRevision !== undefined;
       const hasReceipt = value.receiptHash !== undefined;
       if (hasRevision !== hasReceipt) break;

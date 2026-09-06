@@ -21,6 +21,8 @@ export interface RouteRequirements {
   dialects?: RouteDialect[];
   minContextWindow?: number;
   minOutputTokens?: number;
+  preferredContextWindow?: number;
+  preferredOutputTokens?: number;
 }
 
 interface RouteHealth {
@@ -127,7 +129,13 @@ function validRequirements(value: unknown): value is RouteRequirements {
   if (
     Object.keys(candidate).some(
       (key) =>
-        !["dialects", "minContextWindow", "minOutputTokens"].includes(key),
+        ![
+          "dialects",
+          "minContextWindow",
+          "minOutputTokens",
+          "preferredContextWindow",
+          "preferredOutputTokens",
+        ].includes(key),
     )
   ) {
     return false;
@@ -148,7 +156,12 @@ function validRequirements(value: unknown): value is RouteRequirements {
         (candidate.minContextWindow as number) > 0)) &&
     (candidate.minOutputTokens === undefined ||
       (Number.isSafeInteger(candidate.minOutputTokens) &&
-        (candidate.minOutputTokens as number) > 0))
+        (candidate.minOutputTokens as number) > 0)) &&
+    [candidate.preferredContextWindow, candidate.preferredOutputTokens].every(
+      (value) =>
+        value === undefined ||
+        (Number.isSafeInteger(value) && (value as number) > 0),
+    )
   );
 }
 
@@ -227,14 +240,13 @@ export class WorkerBroker {
     });
   }
 
-  select(input: {
-    role: WorkerRole;
-    dialects?: RouteDialect[];
-    minContextWindow?: number;
-    minOutputTokens?: number;
-    exclude?: readonly string[];
-    routeId?: string;
-  }):
+  select(
+    input: RouteRequirements & {
+      role: WorkerRole;
+      exclude?: readonly string[];
+      routeId?: string;
+    },
+  ):
     | { ok: true; route: WorkerRoutePolicy; health: RouteHealthState }
     | { ok: false; code: "endpoint-unavailable" | "route-not-declared" } {
     const requirements: RouteRequirements = {
@@ -245,6 +257,12 @@ export class WorkerBroker {
       ...(input.minOutputTokens === undefined
         ? {}
         : { minOutputTokens: input.minOutputTokens }),
+      ...(input.preferredContextWindow === undefined
+        ? {}
+        : { preferredContextWindow: input.preferredContextWindow }),
+      ...(input.preferredOutputTokens === undefined
+        ? {}
+        : { preferredOutputTokens: input.preferredOutputTokens }),
     };
     if (!isRole(input.role) || !validRequirements(requirements)) {
       return { ok: false, code: "endpoint-unavailable" };
@@ -259,7 +277,22 @@ export class WorkerBroker {
       return { ok: false, code: "route-not-declared" };
     }
     const excluded = new Set(input.exclude ?? []);
-    for (const routeId of candidates) {
+    // Stable preference tiers preserve declared order within each tier. Health,
+    // hard minima and explicit pins still determine eligibility.
+    const preferred = (routeId: string) => {
+      const route = this.#policy.routes[routeId];
+      return route &&
+        route.capabilities.contextWindow >=
+          (requirements.preferredContextWindow ?? 0) &&
+        route.capabilities.maxTokens >=
+          (requirements.preferredOutputTokens ?? 0)
+        ? 1
+        : 0;
+    };
+    const ordered = [...candidates].sort(
+      (left, right) => preferred(right) - preferred(left),
+    );
+    for (const routeId of ordered) {
       if (excluded.has(routeId)) continue;
       const route = this.#policy.routes[routeId];
       if (!route || !capable(route, input.role, requirements)) continue;

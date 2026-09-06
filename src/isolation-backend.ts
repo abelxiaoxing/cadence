@@ -15,6 +15,7 @@ export interface IsolationRunInput {
   mounts?: IsolationMount[];
   environment?: Record<string, string>;
   signal?: AbortSignal;
+  outputWitness?: string;
 }
 
 export type IsolationRunResult =
@@ -24,6 +25,11 @@ export type IsolationRunResult =
       exitCode: number;
       stdout: string;
       stderr: string;
+      outputWitnessMatched?: boolean;
+      logs: {
+        stdout: { bytes: number; truncated: boolean };
+        stderr: { bytes: number; truncated: boolean };
+      };
     }
   | {
       ok: false;
@@ -31,14 +37,13 @@ export type IsolationRunResult =
       code:
         | "isolation-backend-unavailable"
         | "isolation-backend-launch-failed"
-        | "isolation-execution-timeout"
-        | "isolation-output-limit-exceeded";
+        | "isolation-execution-timeout";
     }
   | { ok: false; state: "cancelled"; code: "cancelled" };
 
 export const ISOLATION_RUN_LIMITS = Object.freeze({
   timeoutMs: 10 * 60_000,
-  maxOutputBytes: 1024 * 1024,
+  maxOutputBytes: 256 * 1024,
   terminateGraceMs: 1_000,
 });
 
@@ -62,6 +67,59 @@ function defaultProbe(executable: string): boolean {
 
 function validEnvironmentName(name: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*$/u.test(name);
+}
+
+/** Retains independent head/tail copies; discarded chunks never stay referenced. */
+class BoundedLog {
+  bytes = 0;
+  #head = Buffer.alloc(0);
+  #tail = Buffer.alloc(0);
+  readonly limit: number;
+  readonly #witness?: Buffer;
+  #witnessTail = Buffer.alloc(0);
+  witnessMatched = false;
+  constructor(limit: number, witness?: string) {
+    this.limit = limit;
+    if (witness) this.#witness = Buffer.from(witness);
+  }
+  append(chunk: Buffer | string): void {
+    const input = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    this.bytes += input.byteLength;
+    if (this.#witness && !this.witnessMatched) {
+      const searchable = Buffer.concat([this.#witnessTail, input]);
+      this.witnessMatched = searchable.includes(this.#witness);
+      this.#witnessTail = this.witnessMatched
+        ? Buffer.alloc(0)
+        : Buffer.from(
+            searchable.subarray(
+              Math.max(0, searchable.length - this.#witness.length + 1),
+            ),
+          );
+    }
+    const headLimit = Math.ceil(this.limit / 2);
+    const take = Math.min(input.length, headLimit - this.#head.length);
+    if (take > 0)
+      this.#head = Buffer.concat([this.#head, input.subarray(0, take)]);
+    const rest = input.subarray(take);
+    const tailLimit = this.limit - headLimit;
+    if (rest.length && tailLimit) {
+      this.#tail =
+        rest.length >= tailLimit
+          ? Buffer.from(rest.subarray(-tailLimit))
+          : Buffer.concat([
+              this.#tail.subarray(
+                Math.max(0, this.#tail.length + rest.length - tailLimit),
+              ),
+              rest,
+            ]);
+    }
+  }
+  text(): string {
+    return Buffer.concat([this.#head, this.#tail]).toString("utf8");
+  }
+  metadata() {
+    return { bytes: this.bytes, truncated: this.bytes > this.limit };
+  }
 }
 
 /** Linux isolation capability. Lack of Bubblewrap is a pause, never a fallback. */
@@ -103,6 +161,13 @@ export class BubblewrapIsolationBackend {
   }
 
   async run(input: IsolationRunInput): Promise<IsolationRunResult> {
+    if (
+      input.outputWitness !== undefined &&
+      (typeof input.outputWitness !== "string" ||
+        input.outputWitness.length < 1 ||
+        input.outputWitness.length > 512)
+    )
+      throw new Error("isolation-output-witness-invalid");
     if (!(await this.available())) {
       return {
         ok: false,
@@ -165,9 +230,8 @@ export class BubblewrapIsolationBackend {
 
     return new Promise((resolve) => {
       let settled = false;
-      const stdout: Buffer[] = [];
-      const stderr: Buffer[] = [];
-      let capturedBytes = 0;
+      const stdout = new BoundedLog(this.#maxOutputBytes, input.outputWitness);
+      const stderr = new BoundedLog(this.#maxOutputBytes, input.outputWitness);
       let child: ReturnType<typeof spawn>;
       let executionTimer: ReturnType<typeof setTimeout> | undefined;
       let killTimer: ReturnType<typeof setTimeout> | undefined;
@@ -207,21 +271,11 @@ export class BubblewrapIsolationBackend {
         });
         return;
       }
-      const capture = (destination: Buffer[], chunk: Buffer | string): void => {
-        if (settled || terminationResult) return;
-        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        const remaining = this.#maxOutputBytes - capturedBytes;
-        if (remaining > 0) destination.push(bytes.subarray(0, remaining));
-        if (bytes.byteLength > remaining) {
-          capturedBytes = this.#maxOutputBytes;
-          terminate({
-            ok: false,
-            state: "paused",
-            code: "isolation-output-limit-exceeded",
-          });
-          return;
-        }
-        capturedBytes += bytes.byteLength;
+      const capture = (
+        destination: BoundedLog,
+        chunk: Buffer | string,
+      ): void => {
+        if (!settled && !terminationResult) destination.append(chunk);
       };
       child.stdout?.on("data", (chunk: Buffer | string) => {
         capture(stdout, chunk);
@@ -244,8 +298,15 @@ export class BubblewrapIsolationBackend {
             ok: true,
             state: "completed",
             exitCode: code ?? 1,
-            stdout: Buffer.concat(stdout).toString("utf8"),
-            stderr: Buffer.concat(stderr).toString("utf8"),
+            stdout: stdout.text(),
+            stderr: stderr.text(),
+            logs: { stdout: stdout.metadata(), stderr: stderr.metadata() },
+            ...(input.outputWitness
+              ? {
+                  outputWitnessMatched:
+                    stdout.witnessMatched || stderr.witnessMatched,
+                }
+              : {}),
           },
         );
       });

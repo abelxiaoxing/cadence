@@ -386,6 +386,7 @@ function openEngine(input: {
   verifier?: PausingVerifier | PassingVerifier;
   application?: RecoveringApplication;
   xdgStateHome?: string;
+  workHardLimit?: number;
 }): EngineApi {
   const xdgStateHome = input.xdgStateHome ?? temporaryRoot("state");
   return requiredEngine().open({
@@ -400,6 +401,7 @@ function openEngine(input: {
     changeVerifier: input.verifier ?? new PausingVerifier(),
     ...(input.application ? { application: input.application } : {}),
     leaseTtlMs: 10_000,
+    workHardLimit: input.workHardLimit,
   });
 }
 
@@ -484,6 +486,12 @@ describe("WorkflowEngine command authority", () => {
       let mutations = 0;
       const request = { operation: "compile-plan", operationId: "recommendation" };
       const revise = async (assertAuthority: () => void) => { assertAuthority(); mutations++; return { revised: true }; };
+      for (const forbidden of [
+        { operation: "approve-gate", gate: "gate-a", contract: "weaken acceptance" },
+        { operation: "record-decision", category: "behavior", contract: "change the goal" },
+        { operation: "write-artifact", path: "proposal.md", content: "replacement goal" },
+      ]) await expect(engine.amend(change, batch.id, forbidden, revise)).rejects.toThrow("amendment-changes-accepted-behavior");
+      expect(mutations).toBe(0);
       expect(await engine.amend(change, batch.id, request, revise)).toEqual({ revised: true });
       expect(await engine.amend(change, batch.id, request, revise)).toEqual({ revised: true });
       expect(mutations).toBe(1);
@@ -593,6 +601,87 @@ describe("WorkflowEngine command authority", () => {
       expect(resumed).toMatchObject({ recovery: { exhausted: true }, resourceBudget: { used: 30 } });
       expect(launches).toBe(30);
     } finally { await engine.close(); }
+  });
+
+  it("allows one explicit retry after exhaustion without resetting history or replaying a grant", async () => {
+    const change = "explicit-retry";
+    const consumerRoot = makeConsumer(change);
+    const xdgStateHome = temporaryRoot(change);
+    const delivery = new DeliverySource();
+    delivery.set(change, plan(change, [task("T1")]));
+    const worker = new ScriptedWorker();
+    worker.script("T1:red", Array.from({length: 4}, () => ({kind: "retryable" as const, code: "candidate-diff-invalid", retryPolicy: "artifact" as const})));
+    let engine = openEngine({consumerRoot, xdgStateHome, delivery, worker});
+    const paused = await engine.execute(command("start", change));
+    expect(worker.calls).toHaveLength(2);
+    const recovery = paused.recovery as { additionalAttempt: Record<string, unknown> };
+    expect(recovery.additionalAttempt).toMatchObject({reason: "parent-directed-retry"});
+    const retry = command("resume", change, {operationId: "explicit-once", recovery: recovery.additionalAttempt});
+    const next = await engine.execute(retry);
+    expect(next).toMatchObject({state: "paused", recovery: {exhausted: true, attempts: 3}, resourceBudget: {used: 3}});
+    expect(worker.calls).toHaveLength(3);
+    await engine.execute(retry);
+    expect(worker.calls).toHaveLength(3);
+    await engine.close();
+    engine = openEngine({consumerRoot, xdgStateHome, delivery, worker});
+    try {
+      await engine.execute(command("resume", change, {operationId: "ordinary-resume"}));
+      expect(worker.calls).toHaveLength(3);
+      await expect(engine.execute(command("resume", change, {operationId: "stale-grant", recovery: recovery.additionalAttempt}))).rejects.toThrow("recovery-request-stale");
+      expect(worker.calls).toHaveLength(3);
+    } finally {await engine.close();}
+  });
+
+  it.each([false, true])("preserves captured limits and exhausted history across reopen (legacy: %s)", async legacy => {
+    const change = `budget-migration-${legacy}`;
+    const consumerRoot = makeConsumer(change);
+    const xdgStateHome = temporaryRoot(change);
+    const delivery = new DeliverySource();
+    delivery.set(change, plan(change, [task("T1")]));
+    const worker = new ScriptedWorker();
+    worker.script("T1:red", Array.from({length: 2}, () => ({kind: "retryable" as const, code: "candidate-diff-invalid", retryPolicy: "artifact" as const})));
+    let engine = openEngine({consumerRoot, xdgStateHome, delivery, worker, workHardLimit: 12});
+    await engine.execute(command("start", change));
+    await engine.close();
+    if (legacy) {
+      const database = new DatabaseSync(resolveStateRoot({consumerRoot, xdgStateHome}).databasePath);
+      try {
+        database.exec("UPDATE workflow_work_budget SET max_work = 700");
+        for (const column of ["phase_high_water", "hard_limit", "recovery_policy"])
+          database.exec(`ALTER TABLE workflow_work_budget DROP COLUMN ${column}`);
+        database.exec("ALTER TABLE workflow_recovery_incidents DROP COLUMN conditions_json");
+        database.exec("DROP TABLE workflow_recovery_grants");
+      } finally { database.close(); }
+    }
+    engine = openEngine({consumerRoot, xdgStateHome, delivery, worker, workHardLimit: 4});
+    try {
+      const preserved = await engine.execute(command("resume", change, {operationId: "reopen"}));
+      expect(preserved).toMatchObject({resourceBudget: {used: 2, maximum: legacy ? 700 : 12, hardLimit: legacy ? 700 : 12, phaseHighWater: 2}, recovery: {attempts: 2, exhausted: true}});
+      expect(worker.calls).toHaveLength(2);
+      worker.runAttempt = async () => ({kind: "paused", code: "endpoint-unavailable"});
+      delivery.set(change, plan(change, Array.from({length: 4}, (_, i) => task(`T${i+1}`, {verificationLock: `lock-${i}`}))));
+      const expanded = await engine.execute(command("resume", change, {operationId: "expand", deliveryRevision: 2, receiptHash: HASH_B}));
+      expect(expanded).toMatchObject({deliveryRevision: 2, resourceBudget: {maximum: legacy ? 700 : 12, hardLimit: legacy ? 700 : 12, phaseHighWater: 8}});
+    } finally { await engine.close(); }
+  });
+
+  it("grows admitted phase capacity without refunding work or crediting repeated plans", async () => {
+    const change = "split-budget";
+    const consumerRoot = makeConsumer(change);
+    const delivery = new DeliverySource();
+    delivery.set(change, plan(change, [task("T1")]));
+    const worker = new ScriptedWorker();
+    worker.runAttempt = async () => ({kind: "paused", code: "endpoint-unavailable"});
+    const engine = openEngine({consumerRoot, delivery, worker});
+    try {
+      expect(await engine.execute(command("start", change))).toMatchObject({resourceBudget: {used: 1, maximum: 30}});
+      delivery.set(change, plan(change, Array.from({length: 16}, (_,i) => task(`T${i+1}`, {verificationLock: `lock-${i}`}))));
+      const expanded = await engine.execute(command("resume", change, {operationId: "split", deliveryRevision: 2, receiptHash: HASH_B}));
+      expect(expanded).toMatchObject({resourceBudget: {used: 17, maximum: 120, phaseHighWater: 32, hardLimit: 512}});
+      const repeated = await engine.execute(command("resume", change, {operationId: "repeat", deliveryRevision: 2, receiptHash: HASH_B}));
+      expect(repeated).toMatchObject({resourceBudget: {maximum: 120}});
+      expect((repeated.resourceBudget as {used: number}).used).toBeGreaterThanOrEqual(17);
+    } finally {await engine.close();}
   });
 
   it("retains verified sibling facts when only recovery policy changes", async () => {

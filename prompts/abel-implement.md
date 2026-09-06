@@ -82,7 +82,7 @@ Discovery never admits the delivery: `resume` still performs the full artifact, 
 Before any candidate, the engine records target-contract, task-affected, and full-suite baselines with normalized failure identities.
 A pre-existing failure remains separate and never satisfies Red or becomes evidence that this change caused it.
 
-For each ready task the engine runs:
+For each ready behavior task the engine runs:
 
 1. Red in a disposable child revision; the declared target must fail with the approved identity.
 2. Green with the minimum approved implementation; the declared target and task-affected contract must pass relative to baseline.
@@ -108,7 +108,8 @@ Ordinary failures stay inside this Implement run:
   Exhaustion survives process restart and `resume`.
   Operation ids, route binding, rollback revisions, task renaming, and contract rewording never clear it.
   Dedicated private incident records own the budget; displayed attempt diagnostics are not authority.
-  A run also has 24 recovery events and a work budget fixed at first execution: 24 plus three units per initially planned phase.
+  A run shares one cumulative work budget: 24 plus three units per largest admitted phase count, bounded by the host limit captured at run start (default 512).
+  Recompiling, renaming or returning to a previous plan size never adds credit; a genuinely larger admitted decomposition may increase capacity without refunding consumption.
   Execution reserves work durably before launch, including nested repair proposals; restart and post-launch cancellation do not refund consumed work.
 - `environment` or `verification-adapter`: the executor pauses without speculative edits.
   The parent inspects local diagnostics and restores available prerequisites using existing authorized capabilities, then resumes; baseline facts and completed phases are reused.
@@ -138,6 +139,12 @@ If status supplies a parent-owned amendment continuation, use it for a concrete 
 Rewriting prose or renaming tasks is not a correction and never replenishes execution budgets.
 A rebind may repair endpoint configuration but does not grant a new incident budget; do not repeatedly rebind and resume the same failure.
 If a revised delivery already exists, local status also discovers its exact revision/hash for an exhausted run; resume with `availableDelivery` without asking the user to copy receipt data.
+When `recovery.additionalAttempt` is present, the parent may make a concrete decision to retry once within remaining work capacity.
+Copy that object into an ordinary resume request's optional `recovery` field; do not invent incident keys or failure sequences.
+The default reason is `parent-directed-retry`; `route-changed` and `context-extended` additionally require control-plane evidence.
+This consumes one launch without resetting automatic correction history; another failure pauses again.
+Do not turn the availability of this option into an unconditional retry loop or another user approval round.
+Environment, resource and report protocol failures are unavailable verification, not product failures; restore prerequisites and reverify retained candidates.
 An unavailable endpoint, missing external credential, or irreducibly oversized task is not proof that product Design must restart.
 
 ## The only approval-needed boundary
@@ -174,7 +181,9 @@ For example, begin the revision with the returned change and batchId:
 Use the returned private revision runId on subsequent amendment requests.
 This channel does not activate Design, admit evidence packets, allow a different change, or grant product/AGENTS file writes.
 Keep the approved goal and explicit constraints stable.
-Reopen Gate A only for a changed behavior contract covered by the delegated implementation choice; technical-only amendments inherit it.
+Automatic amendments retain Gate A and the structured ChangeContract.
+They cannot renew Gate A, replace behavior decisions, or rewrite proposal/spec artifacts.
+Resolve implementation gaps within the accepted goal, constraints and policy; when no conforming solution exists, report that concrete contract blocker and preserve progress rather than repeatedly attempting an invalid amendment.
 Never weaken acceptance criteria just to obtain a passing result.
 The compiler supplies Gate B automatically.
 Finish all known items in the batch before finalizing, then issue ordinary resume.
@@ -213,3 +222,16 @@ Never hide an incomplete run behind a success checkmark.
 Do not archive, publish, release, stage, or commit implicitly.
 
 <!-- ABEL:END -->
+
+## Evidence modes and environment identity
+
+Follow the compiled task `verificationMode`.
+The default `behavior` mode retains Red/Green.
+Explicitly approved `mechanical` and `refactor` modes start execution at Green after baseline capture; do not invent a failing test or request a Red Worker.
+The compiler checks mode authority, path suitability and protected verifier inputs.
+All modes retain cumulative verification, output checks and transactional apply.
+
+`verification-environment-changed` is an unavailable environment, not a product regression.
+Installed dependency and runner content is bound to evidence; resume in a changed environment rebuilds baseline and revalidates retained phases.
+Reuse compatible sealed candidates.
+Do not edit product code to compensate for missing or drifting tools.

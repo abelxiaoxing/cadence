@@ -1128,7 +1128,7 @@ export class TaskLedger {
   commitVerifiedEvent(input: VerifiedTaskEvent) {
     this.#assertOpen();
     const normalized = normalizeVerifiedEvent(input);
-    this.#task(normalized.runId, normalized.taskId);
+    const task = this.#task(normalized.runId, normalized.taskId);
     const rows = this.#events(normalized.runId, normalized.taskId);
     const existing = rows.find((row) => row.event_id === normalized.eventId);
     const json = JSON.stringify(normalized);
@@ -1141,6 +1141,8 @@ export class TaskLedger {
       throw new Error("ledger-event-capacity-exceeded");
     }
     if (normalized.kind === "phase-verified") {
+      if (task.initial_phase === "green" && normalized.phase === "red")
+        throw new Error("ledger-phase-order-invalid");
       const completed = rows
         .map((row) => JSON.parse(row.event_json) as VerifiedTaskEvent)
         .filter(
@@ -1150,7 +1152,9 @@ export class TaskLedger {
         .map((event) => event.phase);
       const required =
         normalized.phase === "green"
-          ? "red"
+          ? task.initial_phase === "green"
+            ? undefined
+            : "red"
           : normalized.phase === "refactor"
             ? "green"
             : undefined;

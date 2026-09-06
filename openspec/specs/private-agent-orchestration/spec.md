@@ -172,9 +172,9 @@ A produced cross-task output SHALL publish only after its producer's required ph
 ### Requirement: Recoverable attempts and Worker replacement
 
 Provider-managed hidden retry SHALL remain disabled, while the control plane SHALL apply separately observable bounded policies for connection, first response, idle progress, total phase time, transport attempts, stale refresh, artifact correction, verification repair, and parent checkpoint correction.
-The canonical Implement plan SHALL seal `artifactCorrection.maxAttempts` as 2 or 3 recovery attempts per verification obligation and phase, including the initial attempt. Typed artifact, stale-candidate, and verification rejection SHALL consume this shared durable counter; another operation id SHALL NOT reset exhaustion. The next Worker SHALL receive structured recovery feedback. Operation ids, route replacement, rollback lineage, task renaming, and contract rewording SHALL NOT replenish an exhausted verification obligation. Dedicated private recovery facts and a run-wide pre-reserved work budget SHALL bound retries across process restart. Workers MAY read their task phase paths and request ordinary regular files inside sealed task roots; dynamically granted reads SHALL remain bound to merge, retained evidence, and final currentness. Phase write/delete authority remains unchanged.
+The canonical Implement plan SHALL seal `artifactCorrection.maxAttempts` as 2 or 3 automatic recovery attempts per verification obligation and phase, including the initial attempt. Typed artifact, stale-candidate, and verification rejection SHALL consume this shared durable counter; another operation id SHALL NOT reset exhaustion. The next Worker SHALL receive structured recovery feedback. Operation ids, route replacement, rollback lineage, task renaming, and contract rewording SHALL NOT replenish an exhausted verification obligation. Dedicated private recovery facts and a run-wide pre-reserved work budget SHALL bound retries across process restart. Workers MAY read their task phase paths and request ordinary regular files inside sealed task roots; dynamically granted reads SHALL remain bound to merge, retained evidence, and final currentness. Phase write/delete authority remains unchanged.
 Each failure SHALL retain its safe closed code, stage, policy class, attempt count, and legal continuation without exposing endpoint secrets, prompts, code excerpts, or raw model output in public outcomes.
-Automatic policy exhaustion SHALL pause the affected task rather than terminally block it.
+Automatic policy exhaustion SHALL pause the affected task rather than terminally block it. The parent MAY explicitly grant one additional attempt against a current incident and failure sequence while retaining all consumed work. Environment, report protocol and resource failures SHALL remain unavailable verification and SHALL NOT become product failure baselines.
 Cancellation SHALL interrupt the active operation without consuming an automatic retry or accepting partial output.
 An environment or endpoint failure SHALL permit resume after capability recovery.
 An approved route-policy change or explicit rebind SHALL permit a replacement Worker to continue from the structured task ledger without changing the approved task contract.
@@ -199,6 +199,12 @@ An approval-boundary gap SHALL become approval-needed and SHALL never authorize 
 
 - **WHEN** a complete candidate cannot fit one configured result envelope
 - **THEN** the trusted submit tool may internally chunk and seal one complete artifact or the task pauses for approved reshaping, and no truncated artifact is accepted
+
+#### Scenario: Estimated capacity exceeds an available route
+
+- **WHEN** an authorized healthy route meets the 16,000 context and 8,000 output hard minima but falls below the task's heuristic estimate
+- **THEN** it remains eligible as a fallback or explicit rebind; automatic selection prefers routes meeting the estimate, preserving declared order within each preference tier and all health and retry bounds
+
 
 ### Requirement: Task context ledger continuity
 
@@ -419,3 +425,71 @@ A Worker MAY request additional ordinary regular-file reads within sealed task r
 
 - **WHEN** the user changes a dynamically admitted supporting file before final application
 - **THEN** currentness validation pauses application and preserves the user's changes
+
+### Requirement: Isolated verification runtime
+
+The verifier SHALL provide private HOME and tool caches while protecting consumer dependencies. Vitest SHALL use a fresh bounded report file independently of bounded diagnostic logs. Environment, resource and report protocol failures SHALL NOT count as product failures. Approved package scripts SHALL execute intact through the package manager with their manifest, lockfile and configuration inputs bound to currentness.
+
+#### Scenario: A normal package manager project runs tests
+
+- **WHEN** an npm project uses a normal Vitest configuration and emits configuration logs
+- **THEN** verification runs with private HOME and writable Vite caches, validates its independent report, and leaves consumer dependencies unchanged
+
+#### Scenario: Logs and reports exceed the old output threshold
+
+- **WHEN** tests emit more than the log capture budget or a valid report larger than 1 MiB
+- **THEN** logs are truncated without stopping execution and the report is evaluated under its separate bounded limit
+
+#### Scenario: Verification cannot produce valid evidence
+
+- **WHEN** a report is missing, unsafe, malformed, contradictory or oversized
+- **THEN** verification pauses as unavailable without recording a product failure or launching speculative product repair
+
+#### Scenario: Approved scripts contain shell composition
+
+- **WHEN** a bound package script uses quotes, variables, hooks or chained commands
+- **THEN** the package manager executes the original script inside isolation and later input drift invalidates the capability
+
+#### Scenario: A candidate changes an authorized configuration file
+
+- **WHEN** a candidate changes a manifest or configuration path already writable by the admitted plan
+- **THEN** isolated verification permits that planned change while checking the exact approved entry command and currentness of the actual invocation; admission and undeclared paths retain their bound hashes
+
+#### Scenario: Configuration contains harmless documentation
+
+- **WHEN** a package manager configuration contains comments or ordinary values mentioning tokens or shell settings
+- **THEN** those words do not block verification; effective unsupported credential and host-execution directives remain rejected
+
+#### Scenario: A Red witness falls outside retained diagnostic logs
+
+- **WHEN** a non-Vitest verifier emits its expected Red witness between large log segments or across output chunks
+- **THEN** bounded stream matching preserves the witness independently of displayed logs without synthesizing a witness by concatenating the retained head and tail
+
+#### Scenario: Failure sets exceed presentation limits
+
+- **WHEN** baseline and current verification contain more than 256 failure identities, including enough to exceed ledger projection limits
+- **THEN** complete baseline evidence is retained as an integrity-checked private artifact across restart, attribution compares complete sets, and only introduced-failure feedback and public summaries are bounded to 256 identities
+
+#### Scenario: Equivalent verification contracts have different display identities
+
+- **WHEN** baseline and current non-Vitest contracts execute the same command and arguments under different display identifiers
+- **THEN** unchanged failure evidence has the same identity; distinct runners, commands or arguments remain distinct, and evidence under an older runtime policy is revalidated before reuse
+
+### Requirement: Verification environment identity
+
+Verification SHALL bind installed dependency bytes and runner identity in addition to repository inputs. Identity collection SHALL be bounded, cancellable and outside the parent event loop for dependency trees. A changed environment SHALL invalidate retained baseline and phase-policy evidence; unavailable or drifting environments SHALL not supply product failure evidence. Disposable tool caches SHALL not change identity.
+
+#### Scenario: Installed runner or dependency changes
+
+- **WHEN** installed executable or transitive dependency bytes change without changing the lockfile
+- **THEN** currentness fails and old verification evidence cannot be reused as current
+
+#### Scenario: A run resumes in a different environment
+
+- **WHEN** a retained run reopens with a changed installed environment
+- **THEN** it rebuilds the baseline and revalidates retained phases while reusing compatible sealed candidates
+
+#### Scenario: Final application resumes after environment drift
+
+- **WHEN** final apply is interrupted and its host reopens with a different verification environment
+- **THEN** the retained transaction rejects old evidence, safely rolls back and allows a later resume to revalidate before a new application

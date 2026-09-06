@@ -22,9 +22,6 @@ const expectedFiles = JSON.parse(
   ),
 );
 
-const obsoleteControlPattern =
-  /\b(?:RECOVERY_CODES|RecoveryCode|RecoveryNext|RecoveryRecord|RecoveryIdentity|recoveryFailure|normalizedArtifactRejection|WorkerContract|WorkerTaskContract|WorkerPhaseContract|LogicalWorker|WorkerState|contractOf|sameContract|samePhaseContract|branchBlocked|dependentsBlocked|partialResultUsable|independentResultsPreserved|nextStep|artifact-correction-pending|stale-redispatch-pending|artifact-correction-required|reasonCode|artifact-invalid|transport-failed|environment-unavailable|result-too-large|mechanical-redispatch-exhausted|implementation-artifact-delivery-blocked|environment-blocked|finish-unaffected|correct-artifact|repair-environment)\b|design-required|design-contract|return-to-design|candidate preflight rejected|split condition/i;
-
 const exec = (command, args, options = {}) => {
   const result = spawnSync(command, args, { encoding: "utf8", ...options });
   if (result.status !== 0) {
@@ -142,59 +139,6 @@ describe("real npm tarball", () => {
       .map((f) => f.replace(/\.md$/, ""))
       .sort();
     expect(shippedNames).toEqual([...shipped].sort());
-  });
-
-  it("[SLICE-5:pi-tool-error] ships no worker stage-routing channel and retains bounded Implement amendments", () => {
-    const resource = (relative) =>
-      readFileSync(path.join(packedPackageDir, relative), "utf8");
-    const implementResources = [
-      resource("prompts/abel-implement.md"),
-      resource("agents/implementation-worker.md"),
-    ].join("\n");
-    expect(implementResources).not.toMatch(
-      /design-required|design-contract|return-to-design|branchBlocked|dependentsBlocked|dependent successors?|recommended next (workflow )?step|nextStep|artifact-correction-required|reasonCode|artifact-invalid|transport-failed|environment-unavailable|result-too-large|split condition/i,
-    );
-    expect(implementResources).toMatch(/ordinary failures stay inside/i);
-    expect(implementResources).toMatch(/wrong-Red identity/i);
-    expect(implementResources).toMatch(/environment/i);
-    expect(implementResources).toMatch(/approval-needed` only/i);
-    expect(implementResources).toMatch(/"action":"amend"/);
-    expect(implementResources).toMatch(/does not activate Design/i);
-    expect(implementResources).toMatch(/result-limit/i);
-
-    const diagnosis = resource("agents/diagnosis-worker.md");
-    expect(diagnosis).toMatch(
-      /falsif[\s\S]{0,400}failing-regression[\s\S]{0,260}minimum-repair/i,
-    );
-    expect(diagnosis).not.toMatch(
-      /recommended next (workflow )?step|nextStep/i,
-    );
-  });
-
-  it("[SLICE-5:pi-tool-error] contains no obsolete control code in source or packed resources", () => {
-    const relativeFiles = expectedFiles.map((file) =>
-      file.replace(/^package\//, ""),
-    );
-    for (const [label, root] of [
-      ["working tree", packageDir],
-      ["packed tarball", packedPackageDir],
-    ]) {
-      for (const relative of relativeFiles) {
-        expect(
-          readFileSync(path.join(root, relative), "utf8"),
-          `${label}:${relative}`,
-        ).not.toMatch(obsoleteControlPattern);
-      }
-    }
-    for (const [label, root] of [
-      ["working tree", packageDir],
-      ["packed tarball", packedPackageDir],
-    ]) {
-      expect(
-        readFileSync(path.join(root, "src/index.ts"), "utf8"),
-        `${label}:src/index.ts`,
-      ).not.toMatch(/\bisError\s*:/);
-    }
   });
 });
 

@@ -2,6 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { compareCanonicalStrings } from "./canonical.ts";
 import {
+  type ChangeContract,
+  normalizeChangeContract,
+} from "./change-contract.ts";
+import {
   type DesignEvidenceResult,
   validateEvidenceResult,
 } from "./contracts.ts";
@@ -109,6 +113,7 @@ export interface DesignGateProjection {
 }
 
 export interface DesignStatusProjection {
+  changeContract?: ChangeContract;
   runId: string;
   change?: string;
   evidence: DesignEvidenceProjection[];
@@ -977,7 +982,7 @@ export class DesignJournal {
           runId: string;
           operationId: string;
           gate: "gate-a";
-          contract: string;
+          contract: string | ChangeContract;
         }
       | {
           runId: string;
@@ -993,9 +998,18 @@ export class DesignJournal {
     if (input.gate !== "gate-a" && input.gate !== "gate-b") {
       throw new Error("design-gate-invalid");
     }
+    const changeContract =
+      input.gate === "gate-a" && typeof input.contract !== "string"
+        ? normalizeChangeContract(input.contract)
+        : undefined;
     const gateAContractHash =
       input.gate === "gate-a"
-        ? contractHash("abel-design-gate-a", input.contract)
+        ? contractHash(
+            "abel-design-gate-a",
+            changeContract
+              ? canonicalJson(changeContract)
+              : (input.contract as string),
+          )
         : undefined;
     return this.#transaction(() => {
       this.#run(input.runId, true);
@@ -1051,6 +1065,7 @@ export class DesignJournal {
           gate: input.gate,
           revision,
           contractHash: approvedContractHash,
+          ...(changeContract ? { changeContract } : {}),
         };
         const fact = this.#appendFact(
           input.runId,
@@ -1673,6 +1688,9 @@ export class DesignJournal {
         gate: "gate-a",
         revision: gateA.revision,
         contractHash: gateA.contractHash,
+        ...(status.changeContract
+          ? { changeContract: status.changeContract }
+          : {}),
       });
       const projection = plan.projection;
       const fact = this.#appendFact(
@@ -1727,9 +1745,17 @@ export class DesignJournal {
       );
       latestDecisions.set(decision.decisionId, decision);
     }
+    const approved = facts
+      .filter((fact) => fact.kind === "approval")
+      .map((fact) => parseRecord(fact.payload_json, "design-approval-invalid"))
+      .filter((fact) => fact.gate === "gate-a")
+      .at(-1);
     return {
       runId,
       ...(run.change_name ? { change: run.change_name } : {}),
+      ...(approved?.changeContract
+        ? { changeContract: normalizeChangeContract(approved.changeContract) }
+        : {}),
       evidence,
       decisions: [...latestDecisions.values()].sort((left, right) =>
         compareCanonicalStrings(left.decisionId, right.decisionId),

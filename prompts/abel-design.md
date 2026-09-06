@@ -266,3 +266,25 @@ Never send `operation: "finish"`; exit only with `{"action":"finish"}`.
 Do not implement product code and do not archive, publish, release, stage, or commit implicitly.
 
 <!-- ABEL:END -->
+
+## Structured authority for new work
+
+Use a structured `ChangeContract` as the Gate A `contract` for new designs: `goal`, `acceptance` (stable `id`, accepted `statement`, complete structured `verification`), `constraints` (stable `id` and `statement`), and `policy` (`writeRoots`, allowed dependency names in `dependencies`, and `verificationModes`).
+Use `behavior` by default; explicitly permit `mechanical` or `refactor` only for suitable work.
+Present the accepted goal, constraints and scope together with the recommended choices.
+Do not include secrets or raw conversation in the contract.
+
+Code normalizes and hashes the object.
+The journal retains the normalized authority and injects it into compiled plans; callers do not compute hashes.
+Keep acceptance IDs and statements stable when reshaping a plan.
+Compilation rejects missing acceptance verification, outside-policy writes/dependencies, or substituted authority.
+Historical prose approvals remain readable; their existence does not authorize new scope.
+
+Mechanical tasks may write document/data/config files (`.md`, `.txt`, `.json`, `.yaml`, `.yml`, `.toml`, `.lock`).
+Refactor tasks preserve accepted verifier inputs.
+Both must declare no public behavior change and require an explicitly allowed mode in Gate A. Specify task `verificationMode` and Green (plus optional Refactor); omit Red in the draft.
+The compiler handles its internal compatibility representation.
+Runtime captures baseline and executes Green with affected, cumulative and post-apply verification, without generating a Red candidate.
+Behavior tasks continue to require Red/Green.
+
+An AGENTS checkpoint additionally requires its exact target path in `policy.writeRoots`; a broad source root does not grant AGENTS authority.

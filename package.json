@@ -45,7 +45,8 @@
     "test": "vitest run",
     "test:target": "vitest run",
     "check:agents": "node scripts/check-agents.mjs",
-    "build:workspace-io": "bun scripts/build-workspace-io.mjs"
+    "build:workspace-io": "bun scripts/build-workspace-io.mjs",
+    "eval:workflow": "node --experimental-strip-types scripts/evaluate-workflow.mjs"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

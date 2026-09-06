@@ -1,6 +1,11 @@
 import { compareCanonicalStrings } from "./canonical.ts";
 import { packageDeliverySource } from "./package-delivery.ts";
-import { executePackageVerification } from "./package-verification.ts";
+import {
+  changeVerificationResult,
+  executePackageVerification,
+  phaseVerificationResult,
+} from "./package-verification.ts";
+import { captureVerificationEnvironmentIdentity } from "./verification-environment.ts";
 
 export {
   type PackageDeliverySourceOptions,
@@ -277,9 +282,9 @@ const DESIGN_CONTROL_REQUEST_SCHEMA = {
         operationId: { type: "string" },
         gate: { type: "string", enum: ["gate-a"] },
         contract: {
-          type: "string",
+          anyOf: [{ type: "string" }, { type: "object" }],
           description:
-            "Complete approved WHAT contract; code hashes it and never persists the text.",
+            "Structured ChangeContract with goal, acceptance, constraints and policy. Legacy prose remains readable; code hashes authority.",
         },
       },
       required: ["operation", "runId", "operationId", "gate", "contract"],
@@ -755,7 +760,39 @@ export function openPackageWorkflowControlEngine(
   if (!implementationAgent) {
     throw new Error("implementation-worker-agent-unavailable");
   }
+  const hostLimit = (name: string, fallback: number): number => {
+    const value =
+      process.env[name] === undefined ? fallback : Number(process.env[name]);
+    if (!Number.isSafeInteger(value) || value < 1)
+      throw new Error("verification-host-limit-invalid");
+    return value;
+  };
+  const maxReportBytes = hostLimit(
+    "ABEL_VERIFICATION_MAX_REPORT_BYTES",
+    64 * 1024 * 1024,
+  );
+  const workHardLimit = hostLimit("ABEL_WORK_MAX_UNITS", 512);
   const engine = openDurableWorkflowEngine({
+    workHardLimit,
+    verificationPolicy: "report-file-v4",
+    verificationEnvironment: (plan, signal) =>
+      captureVerificationEnvironmentIdentity(
+        consumerRoot,
+        [
+          ...plan.tasks.flatMap((task) => [
+            ...Object.values(task.phases).map((phase) => phase.verification),
+            task.affectedVerification,
+            task.repairVerification,
+          ]),
+          plan.verification.baseline.fullSuite,
+          plan.verification.change.fullSuite,
+          plan.verification.change.postApply,
+          ...(plan.verification.agentsCheckpoint.verification
+            ? [plan.verification.agentsCheckpoint.verification]
+            : []),
+        ],
+        signal,
+      ),
     consumerRoot,
     stateRoot,
     deliverySource: packageDeliverySource(consumerRoot, {
@@ -961,44 +998,37 @@ export function openPackageWorkflowControlEngine(
         paths: [...result.paths],
       };
     },
-    verifyPhase: (input) =>
-      executePackageVerification({
-        root: input.root,
-        dependencyOwner: consumerRoot,
-        verification: input.verification,
-        signal: input.signal,
-      }),
+    verifyPhase: async (input) =>
+      phaseVerificationResult(
+        await executePackageVerification({
+          maxReportBytes,
+          executionWritePaths: input.executionWritePaths,
+          root: input.root,
+          dependencyOwner: consumerRoot,
+          verification: input.verification,
+          signal: input.signal,
+        }),
+      ),
     verifyChange: async (input) => {
       const verifications = input.verification
         ? [input.verification]
         : input.plan.tasks.map((task) => affectedVerification(task));
       for (const verification of verifications) {
         const result = await executePackageVerification({
+          maxReportBytes,
+          executionWritePaths: input.plan.tasks.flatMap((task) =>
+            Object.values(task.phases).flatMap((phase) => [
+              ...phase.write,
+              ...phase.delete,
+            ]),
+          ),
           root: input.root,
           dependencyOwner: consumerRoot,
           verification,
           signal: input.signal,
         });
-        if (!result.ok) {
-          const adapter = new Set([
-            "runner-missing",
-            "script-missing",
-            "script-command-mismatch",
-            "local-executable-missing",
-          ]).has(result.code);
-          return {
-            ok: false,
-            kind: adapter
-              ? ("verification-adapter" as const)
-              : result.kind === "paused"
-                ? ("environment" as const)
-                : ("verification" as const),
-            code: result.code,
-            ...(result.failureIdentities
-              ? { failureIdentities: result.failureIdentities }
-              : {}),
-          };
-        }
+        const observed = changeVerificationResult(result);
+        if (!observed.ok) return observed;
       }
       return {
         ok: true,
