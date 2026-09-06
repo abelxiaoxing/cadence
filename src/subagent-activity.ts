@@ -532,6 +532,17 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function hasAutomaticContinuation(result: Record<string, unknown>): boolean {
+  const continuation = asRecord(result.continuation);
+  return (
+    ["paused", "approval-needed"].includes(String(result.state)) &&
+    asRecord(result.pause)?.code !== "operation-cancelled" &&
+    continuation?.owner === "parent" &&
+    continuation.automatic === true &&
+    (continuation.action === "amend" || continuation.command === "resume")
+  );
+}
+
 function workflowStateOf(
   result: Record<string, unknown>,
 ): WorkflowActivityState {
@@ -544,6 +555,7 @@ function workflowStateOf(
   ) {
     return "operation-cancelled";
   }
+  if (hasAutomaticContinuation(result)) return "recovering";
   const state = result.state;
   switch (state) {
     case "not-started":
@@ -755,7 +767,8 @@ export function projectWorkflowActivity(
     ...(workflowWait(state, payload)
       ? { wait: workflowWait(state, payload) }
       : {}),
-    ...(nextWorkflowAction(state, legalCommands)
+    ...(!hasAutomaticContinuation(payload) &&
+    nextWorkflowAction(state, legalCommands)
       ? { nextAction: nextWorkflowAction(state, legalCommands) }
       : {}),
   };

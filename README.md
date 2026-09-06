@@ -6,7 +6,7 @@
 **Cadence** 是一个面向 Pi 的规范驱动四阶段工作流扩展包，内置可恢复的私有代理编排：
 
 - `/abel-init [project-path]` — 本地、固定顺序且幂等地初始化或安全修复 OpenSpec 与 AGENTS 托管索引，不派发子代理。
-- `/abel-design <requirement> | --change <change_name>` — 使用有界只读证据包解决行为与技术决策，生成经 Gate A（WHAT）和 Gate B（HOW）批准的 canonical delivery；不启动实现 Worker，不运行产品测试，也不修改产品代码。
+- `/abel-design <requirement> | --change <change_name>` — 使用有界只读证据包解决行为与技术决策，生成绑定 Gate A 用户授权与 Gate B 系统计划证明的 canonical delivery；不启动实现 Worker，不运行产品测试，也不修改产品代码。
 - `/abel-implement <change_name>` — 在私有不可变 revision 中执行已批准的 Red-Green-Refactor DAG，累计验证全部任务后才通过一次可恢复事务写入主工作区。
 - `/abel-diagnose <problem-description>` — 独立执行“复现 → 证伪 → 失败回归 → 最小修复”，不充当 Implement 的失败路由。
 
@@ -29,7 +29,15 @@ Design 从第一步起统一使用 `action: "design"`：新需求通过 `start(r
 Design status 将可调用的 `legalOperations` 与顶层 `packetActions` 分开；显式退出只能发送 `{"action":"finish"}`，不能伪装成 `operation: "finish"`。
 
 普通 artifact、错误 Red、transport、environment、stale、conflict、baseline 与验证失败都留在同一 Implement run 中恢复。
-累计验证发现 introduced failure 时会自动重开责任任务做有界修复；自动预算耗尽后 `resume` 复用已有 baseline 和 phase facts。
+累计验证发现 introduced failure 时会自动重开责任任务做有界修复。
+artifact、stale candidate 与 verification 纠错会将具体失败码、修复策略和可用失败身份传给下一次 Worker。
+恢复预算以验证义务和阶段为依据，使用独立 SQLite 事实保存；`resume`、重启、回滚、换路由、任务重命名和合同改写都不能重置额度。
+执行前持久化预留工作额度；内部修复也计入同一 run 的有限资源预算。
+系统保留 baseline 和 phase facts，并明确区分缺少能力、缺少决定与恢复额度耗尽。
+Worker 可读取同一任务各阶段已批准路径的并集，并按需申请 sealed roots 内的普通文件读取；新增读取会绑定合并与最终应用的 currentness，写入和删除仍限于当前阶段；超大补丁先自动尝试紧凑的完整提交，不能完整提交时保留进度，绝不接受部分补丁。
+Design 对明确需求尽量只进行一轮集中决策：先调查仓库约定，再一起呈现目标、关键技术取舍、推荐默认值及编译授权；编译器在记录有效计划时原子生成 Gate B 证明，无需第二次用户确认。
+相同计划重编译和仅修改决策引用不会重开 Gate。
+已完成 change 的新修订从同一 root/change 的最新私有 finalized delivery 继承未变化的决策与授权；仅技术变化保留 Gate A，行为契约变化仍重新生成相应证明。
 Design 证据包必须绑定 durable `runId`；接受后的有界证据、决策版本、Gate 证明与 canonical plan 身份写入 owner-private journal。
 Design 激活期间，父模型只保留进入前已启用的 `read`、`grep`、`find`、`ls` 与 `abel_dispatch`；原工具集合会在 finalize、finish、切换阶段或 session 结束时精确恢复。
 Implementation Worker 不再手写 unified-diff header、hunk range、分段或哈希；它一次提交有序的 `replace`、`rewrite`、`create`、`delete` 操作。
@@ -38,11 +46,16 @@ OpenSpec change 制品只能通过私有 `write-artifact` / `delete-artifact` �
 Gate A/B 收据只有一套 canonical 结构，并在 Implement admission 时同时对照同一 root/change 的私有批准事实与 finalization revision/hash 事实验证。
 
 只有继续工作确实需要新增行为、架构/策略、依赖、路径、资源、验证或 AGENTS 权限时才进入 `approval-needed`。
-结果保留原 Implement run，明确给出 authority category、所需 Gate、引用和 `/abel-design --change <change>` 用户指引；不会自动调用另一阶段。
-`resume` 只作为带有更高 `deliveryRevision` 与匹配 `receiptHash` 的条件命令出现。
-用户显式完成 Design 后，新的 Implement 上下文会通过本地 `status` 自动发现 proof-bound 的精确 revision/hash，再对同一 run 做完整 admission 与 resume；不依赖复制上一次会话内容。
+Design 完成主要决策后，Implement 中的新实施选择默认由父模型采用推荐方案，记录后继续执行；不再默认向用户追问。
+状态一次返回完整 `blockers`、稳定的 `decisionBatch`，并明确由父模型负责执行自动 `continuation`。
+父模型通过当前 Implement 内的 `action: "amend"` 修订同一 change、自动生成计划证明，再由普通 resume 发现并验证新交付；无需切换命令、重新确认或手动传递收据。
+交付校验失败和任务过大也能进入该修订通道，不必伪装成用户决策。
+修订有独立的持久化预算：每个 run 最多 64 次变更尝试，失败也计数，成功操作重放和只读检查不计数。
+自动修订保留 Design 目标、明确限制与验收标准；Worker 仍必须等待新计划通过完整校验才能使用新权限。
+新证明尚未就绪时，`resume` 只列为条件命令；证明就绪后可直接恢复，由控制层读取版本和哈希。
+增量修订或用户主动选择的 Design 完成后，新的 Implement 上下文都能本地发现并校验交付，继续同一 run。
 
-交互式 TUI、print、JSON 和 RPC 都以 durable semantic state 为准。
+交互式 TUI、print、JSON 和 RPC 都保留 durable semantic state；父模型有自动继续动作时，TUI 显示 recovering，不把内部待编译状态显示成用户待确认，也不提示用户手动 resume。
 queued、connecting、waiting-first-response、running、validating、retrying、verifying、paused、approval-needed、applying 和 recovering 都不是完成；operation-cancelled 表示本次操作取消但 run 仍可恢复，discarded 与 rejected 是非成功终态。
 只有最终 apply 与 post-apply verification 提交后的 `completed` 才显示成功。
 Design finalization、Implement 终态、Diagnose/显式 `finish` 或 session shutdown 会清除 active stage 与 parent bridge；Design 还会恢复进入前的精确父工具集合，其他阶段只撤下 `abel_dispatch`。

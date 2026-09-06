@@ -91,6 +91,140 @@ function designPacket(runId?: string) {
 }
 
 describe("run-bound durable Design evidence", () => {
+  it("preserves Gate B for an identical plan compiled under a new operation", () => {
+    const { stateRoot, runs, run } = fixture("identical-plan");
+    const journal = DesignJournal.open(stateRoot);
+    try {
+      journal.approveGate({
+        runId: run.runId,
+        operationId: "approve-a",
+        gate: "gate-a",
+        contract: "Approved behavior",
+      });
+      const bytes = Buffer.from('{"plan":"same"}\n');
+      const input = {
+        runId: run.runId,
+        bytes,
+        rawSha256: createHash("sha256").update(bytes).digest("hex"),
+        canonicalHash: HASH_B,
+      };
+      const first = journal.recordCompiledPlan({
+        ...input,
+        operationId: "compile-one",
+      });
+      journal.approveGate({
+        runId: run.runId,
+        operationId: "approve-b",
+        gate: "gate-b",
+      });
+      const gates = journal.status(run.runId).gates;
+      const second = journal.recordCompiledPlan({
+        ...input,
+        operationId: "compile-two",
+      });
+      expect(second.plan).toEqual(first.plan);
+      expect(journal.status(run.runId).gates).toEqual(gates);
+      journal.recordDecision({
+        runId: run.runId,
+        operationId: "new-technical-choice",
+        decisionId: "storage",
+        category: "technical",
+        contract: "New storage policy",
+        refs: ["design.md#Storage"],
+      });
+      const afterDecision = journal.recordCompiledPlan({
+        ...input,
+        operationId: "compile-three",
+      });
+      expect(afterDecision.plan).not.toEqual(first.plan);
+      expect(journal.status(run.runId).gates.gateB.current).toBe(false);
+    } finally {
+      journal.close();
+      runs.close();
+    }
+  });
+
+  it("repairs decision references without reopening unchanged authority", () => {
+    const { stateRoot, runs, run } = fixture("decision-refs");
+    const journal = DesignJournal.open(stateRoot);
+    try {
+      const decision = {
+        runId: run.runId,
+        decisionId: "behavior",
+        category: "behavior" as const,
+        contract: "Same behavior",
+        refs: ["specs/example/spec.md#Old"],
+      };
+      journal.recordDecision({ ...decision, operationId: "decision" });
+      journal.approveGate({
+        runId: run.runId,
+        operationId: "gate-a",
+        gate: "gate-a",
+        contract: "Same behavior",
+      });
+      const bytes = Buffer.from('{"plan":"same"}\n');
+      const plan = {
+        runId: run.runId,
+        bytes,
+        rawSha256: createHash("sha256").update(bytes).digest("hex"),
+        canonicalHash: HASH_B,
+      };
+      journal.recordCompiledPlan({ ...plan, operationId: "compile" });
+      journal.approveGate({
+        runId: run.runId,
+        operationId: "gate-b",
+        gate: "gate-b",
+      });
+      const before = journal.status(run.runId);
+      journal.recordDecision({
+        ...decision,
+        operationId: "repair-refs",
+        refs: ["specs/example/spec.md#Correct"],
+      });
+      journal.recordCompiledPlan({ ...plan, operationId: "recompile" });
+      const after = journal.status(run.runId);
+      expect(after.decisions[0].refs).toEqual([
+        "specs/example/spec.md#Correct",
+      ]);
+      expect(after.gates).toEqual(before.gates);
+      expect(after.plan).toEqual(before.plan);
+    } finally {
+      journal.close();
+      runs.close();
+    }
+  });
+
+  it("does not inherit unfinalized or discarded approval facts", () => {
+    const { stateRoot, runs, run } = fixture("unfinalized-inheritance");
+    const journal = DesignJournal.open(stateRoot);
+    try {
+      journal.approveGate({
+        runId: run.runId,
+        operationId: "gate-a",
+        gate: "gate-a",
+        contract: "Abandoned behavior",
+      });
+      runs.transition({
+        runId: run.runId,
+        to: "discarded",
+        operationId: "discard",
+      });
+      const next = runs.startRun({
+        stage: "abel-design",
+        change: "close-design-loop",
+        operationId: "new-design",
+      });
+      journal.inheritFinalizedAuthority(next.runId);
+      expect(journal.status(next.runId).gates).toEqual({
+        gateA: { current: false },
+        gateB: { current: false },
+      });
+    } finally {
+      journal.close();
+      runs.close();
+    }
+  });
+
   it("requires a Design run identity while Diagnose packets remain independent", () => {
     expect(validatePacketEnvelope(designPacket()).ok).toBe(false);
     expect(validatePacketEnvelope(designPacket("run-123")).ok).toBe(true);

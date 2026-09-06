@@ -315,6 +315,32 @@ describe("four-workflow user experience", () => {
     }
   });
 
+  it.each(["paused", "approval-needed"])(
+    "shows parent-owned %s continuation as recovery without asking the user to resume",
+    (state) => {
+      const display = projectWorkflowActivity(
+        {},
+        {
+          stage: "abel-implement",
+          state,
+          completed: false,
+          continuation: {
+            owner: "parent",
+            automatic: true,
+            action: "amend",
+            change: "fixture",
+            batchId: "batch",
+          },
+          legalCommands: ["status", "resume", "discard"],
+        },
+        0,
+      );
+      expect(display.state).toBe("recovering");
+      expect(display.tone).not.toBe("success");
+      expect(display.nextAction).toBeUndefined();
+    },
+  );
+
   it("maps every semantic state truthfully and reserves success for completed", () => {
     for (const state of WORKFLOW_ACTIVITY_STATES) {
       const payload = {
@@ -519,8 +545,8 @@ describe("four-workflow user experience", () => {
     expect(implement).toMatch(
       /Ordinary failures stay inside this Implement run/i,
     );
-    expect(implement).toMatch(/\/abel-design --change <change>/i);
-    expect(implement).toMatch(/never invoke Design automatically/i);
+    expect(implement).toMatch(/"action":"amend"/);
+    expect(implement).toMatch(/does not activate Design/i);
     expect(implement).not.toMatch(/return-to-design|nextStep/i);
   });
 });

@@ -252,12 +252,7 @@ async function approveAndCompile(
     runId: item.runId,
     operationId: "compile-v1",
   });
-  await item.controller.execute({
-    operation: "approve-gate",
-    runId: item.runId,
-    operationId: "approve-b-v1",
-    gate: "gate-b",
-  });
+  expect(compiled).toMatchObject({ gates: { gateB: { current: true } } });
   return compiled;
 }
 
@@ -293,6 +288,7 @@ function deferred() {
 function journeyControlEngine(
   item: ReturnType<typeof fixture>,
   phases: string[],
+  blocker: "authority" | "plan" = "authority",
 ): { control: WorkflowControlEngine; designCalls: () => number } {
   const design = DesignController.open({
     consumerRoot: item.consumerRoot,
@@ -320,6 +316,8 @@ function journeyControlEngine(
           };
         }
         if (phases.length === 2) {
+          if (blocker === "plan")
+            return { kind: "paused" as const, code: "needs-task-split" };
           return {
             kind: "approval-needed" as const,
             code: "unapproved-dependency-change",
@@ -345,6 +343,11 @@ function journeyControlEngine(
       executeDesign(request) {
         designCalls += 1;
         return design.execute(request);
+      },
+      executeAmendment(change, batchId, request) {
+        return workflow.amend(change, batchId, request, (assertAuthority) =>
+          design.executeWithAuthority(request, assertAuthority),
+        );
       },
       assertDesignRun: (runId) => design.assertDesignRun(runId),
       recordDesignEvidence: (input) => design.recordEvidence(input),
@@ -1014,177 +1017,346 @@ describe("safe private Design artifact mutation", () => {
 });
 
 describe("explicit four-entrypoint approval round trip", () => {
-  it("switches Implement to explicit Design and resumes the same run from a fresh extension context", async () => {
-    const item = fixture("extension-approval-round-trip");
-    await approveAndCompile(item);
-    await item.controller.execute({
-      operation: "finalize-delivery",
-      runId: item.runId,
-      operationId: "finalize-v1",
-    });
-    item.controller.close();
-
-    const phases: string[] = [];
-    const firstEngine = journeyControlEngine(item, phases);
-    let opens = 0;
-    const first = extensionJourneyHarness(
-      item.consumerRoot,
-      () =>
-        opens++ === 0
-          ? firstEngine.control
-          : journeyControlEngine(item, phases).control,
-      "abel-implement",
-    );
-    const approval = await first.execute("implement-v1", {
-      command: "start",
-      stage: "abel-implement",
-      change: item.change,
-      operationId: "implement-v1",
-    });
-    expect(approval).toMatchObject({
-      state: "approval-needed",
-      deliveryRevision: 1,
-      approval: {
-        category: "dependency",
-        requiredGates: ["gate-b"],
-        designRequest: `/abel-design --change ${item.change}`,
-      },
-    });
-    expect(firstEngine.designCalls()).toBe(0);
-    expect(first.active()).toEqual(["read", "bash", "edit", DISPATCH_TOOL]);
-
-    await first.invoke("abel-design");
-    expect(first.active()).toEqual(["read", DISPATCH_TOOL]);
-    const designStart = await first.execute("design-v2", {
-      action: "design",
-      request: {
-        operation: "start",
-        change: item.change,
-        operationId: "design-v2",
-      },
-    });
-    const designRunId = String(designStart.runId);
-    await first.execute("behavior-v2", {
-      action: "design",
-      request: {
-        operation: "record-decision",
-        runId: designRunId,
-        operationId: "behavior-v2",
-        decisionId: "observable-contract",
-        category: "behavior",
-        contract: BEHAVIOR_DECISION,
-        refs: ["specs/example/spec.md#Closed delivery"],
-      },
-    });
-    await first.execute("dependency-v2", {
-      action: "design",
-      request: {
-        operation: "record-decision",
-        runId: designRunId,
-        operationId: "dependency-v2",
-        decisionId: "dependency-authority",
-        category: "technical",
-        contract: "Approved dependency authority",
-        refs: ["design.md#Decisions"],
-      },
-    });
-    await first.execute("approve-a-v2", {
-      action: "design",
-      request: {
-        operation: "approve-gate",
-        runId: designRunId,
-        operationId: "approve-a-v2",
-        gate: "gate-a",
-        contract: BEHAVIOR_APPROVAL,
-      },
-    });
-    await first.execute("write-plan-v2", {
-      action: "design",
-      request: {
-        operation: "write-artifact",
-        runId: designRunId,
-        operationId: "write-plan-v2",
-        path: "plan-draft.json",
-        content: `${JSON.stringify(planDraft(item.change), null, 2)}\n`,
-      },
-    });
-    const compiled = await first.execute("compile-v2", {
-      action: "design",
-      request: {
-        operation: "compile-plan",
-        runId: designRunId,
-        operationId: "compile-v2",
-      },
-    });
-    const planHash = (compiled.plan as { canonicalHash: string } | undefined)
-      ?.canonicalHash;
-    expect(planHash).toMatch(/^[a-f0-9]{64}$/u);
-    await first.execute("approve-b-v2", {
-      action: "design",
-      request: {
-        operation: "approve-gate",
-        runId: designRunId,
-        operationId: "approve-b-v2",
-        gate: "gate-b",
-      },
-    });
-    const revised = await first.execute("finalize-v2", {
-      action: "design",
-      request: {
+  it.each(["authority", "plan"] as const)(
+    "uses a parent recommendation to amend %s inside Implement and discovers continuation after a fresh extension context",
+    async (blocker) => {
+      const item = fixture("extension-approval-round-trip");
+      await approveAndCompile(item);
+      await item.controller.execute({
         operation: "finalize-delivery",
-        runId: designRunId,
-        operationId: "finalize-v2",
-      },
-    });
-    expect(revised).toMatchObject({
-      state: "completed",
-      deliveryRevision: 2,
-      receiptHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
-    });
-    expect(first.active()).toEqual(["read", "bash", "edit"]);
-    await first.handlers.get("session_shutdown")?.();
+        runId: item.runId,
+        operationId: "finalize-v1",
+      });
+      item.controller.close();
 
-    const freshEngine = journeyControlEngine(item, phases);
-    const fresh = extensionJourneyHarness(
-      item.consumerRoot,
-      freshEngine.control,
-      "abel-implement",
-    );
-    const status = await fresh.execute("fresh-status", {
-      command: "status",
-      stage: "abel-implement",
-      change: item.change,
-    });
-    expect(status).toMatchObject({
-      runId: approval.runId,
-      state: "approval-needed",
-      legalCommands: ["status", "resume", "discard"],
-      availableDelivery: {
+      const phases: string[] = [];
+      const firstEngine = journeyControlEngine(item, phases, blocker);
+      let opens = 0;
+      const first = extensionJourneyHarness(
+        item.consumerRoot,
+        () =>
+          opens++ === 0
+            ? firstEngine.control
+            : journeyControlEngine(item, phases).control,
+        "abel-implement",
+      );
+      const approval = await first.execute("implement-v1", {
+        command: "start",
+        stage: "abel-implement",
+        change: item.change,
+        operationId: "implement-v1",
+        batchId: null,
+        request: null,
+      });
+      expect(approval).toMatchObject({
+        state: blocker === "authority" ? "approval-needed" : "paused",
+        deliveryRevision: 1,
+        continuation: { owner: "parent", automatic: true, action: "amend" },
+        decisionBatch: {
+          resolution: {
+            owner: "parent",
+            strategy: "recommended",
+            requiresUserInput: false,
+          },
+          requiredGates: ["gate-b"],
+          continuation: {
+            action: "amend",
+            change: item.change,
+            batchId: expect.any(String),
+          },
+        },
+      });
+      expect(firstEngine.designCalls()).toBe(0);
+      expect(first.active()).toEqual(["read", "bash", "edit", DISPATCH_TOOL]);
+
+      const batchId = String((approval.decisionBatch as { id: string }).id);
+      await expect(
+        first.execute("stale-amendment", {
+          action: "amend",
+          change: item.change,
+          batchId: "stale",
+          request: {
+            operation: "start",
+            change: item.change,
+            operationId: "stale-amendment",
+          },
+        }),
+      ).rejects.toThrow(/amendment-batch-stale/u);
+      await expect(
+        first.execute("unrelated-amendment", {
+          action: "amend",
+          change: item.change,
+          batchId,
+          request: {
+            operation: "start",
+            change: "unrelated-change",
+            operationId: "unrelated-amendment",
+          },
+        }),
+      ).rejects.toThrow(/amendment-change-mismatch/u);
+      const designStart = await first.execute("design-v2", {
+        action: "amend",
+        change: item.change,
+        batchId,
+        request: {
+          operation: "start",
+          change: item.change,
+          operationId: "design-v2",
+        },
+      });
+      const designRunId = String(designStart.runId);
+      await first.execute("dependency-v2", {
+        action: "amend",
+        change: item.change,
+        batchId,
+        request: {
+          operation: "record-decision",
+          runId: designRunId,
+          operationId: "dependency-v2",
+          decisionId: "dependency-authority",
+          category: "technical",
+          contract:
+            "Parent recommends the smallest implementation revision consistent with the accepted Design",
+          refs: ["design.md#Decisions"],
+        },
+      });
+      await first.execute("invalid-amendment-draft", {
+        action: "amend",
+        change: item.change,
+        batchId,
+        request: {
+          operation: "write-artifact",
+          runId: designRunId,
+          operationId: "invalid-draft",
+          path: "plan-draft.json",
+          content: "{}\n",
+        },
+      });
+      await expect(
+        first.execute("invalid-amendment-compile", {
+          action: "amend",
+          change: item.change,
+          batchId,
+          request: {
+            operation: "compile-plan",
+            runId: designRunId,
+            operationId: "invalid-compile",
+          },
+        }),
+      ).rejects.toThrow(/design-plan-validation-invalid/u);
+      const diagnostic = first.handlers.get("tool_result")?.({
+        toolName: DISPATCH_TOOL,
+        toolCallId: "invalid-amendment-compile",
+        isError: true,
+        input: { action: "amend", request: { operation: "compile-plan" } },
+        content: [{ type: "text", text: "design-plan-validation-invalid" }],
+      });
+      expect(diagnostic).toMatchObject({
+        details: {
+          designFailure: {
+            code: "design-plan-validation-invalid",
+            diagnostics: expect.any(Array),
+          },
+        },
+      });
+      await first.execute("write-plan-v2", {
+        action: "amend",
+        change: item.change,
+        batchId,
+        request: {
+          operation: "write-artifact",
+          runId: designRunId,
+          operationId: "write-plan-v2",
+          path: "plan-draft.json",
+          content: `${JSON.stringify(planDraft(item.change), null, 2)}\n`,
+        },
+      });
+      const compiled = await first.execute("compile-v2", {
+        action: "amend",
+        change: item.change,
+        batchId,
+        request: {
+          operation: "compile-plan",
+          runId: designRunId,
+          operationId: "compile-v2",
+        },
+      });
+      const planHash = (compiled.plan as { canonicalHash: string } | undefined)
+        ?.canonicalHash;
+      expect(planHash).toMatch(/^[a-f0-9]{64}$/u);
+      const revised = await first.execute("finalize-v2", {
+        action: "amend",
+        change: item.change,
+        batchId,
+        request: {
+          operation: "finalize-delivery",
+          runId: designRunId,
+          operationId: "finalize-v2",
+        },
+      });
+      expect(revised).toMatchObject({
+        state: "ready",
+        completed: false,
+        scope: "amendment",
         deliveryRevision: 2,
-        receiptHash: revised.receiptHash,
-      },
-    });
+        receiptHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      });
+      expect(first.active()).toEqual(["read", "bash", "edit", DISPATCH_TOOL]);
+      await first.handlers.get("session_shutdown")?.();
 
-    const resumed = await fresh.execute("implement-v2", {
-      command: "resume",
-      stage: "abel-implement",
-      change: item.change,
-      operationId: "implement-v2",
-      deliveryRevision: 2,
-      receiptHash: revised.receiptHash,
-    });
-    expect(resumed).toMatchObject({
-      runId: approval.runId,
-      deliveryRevision: 2,
-      state: "paused",
-      pause: { code: "endpoint-unavailable" },
-    });
-    expect(phases).toEqual(["red", "green", "green"]);
-    await fresh.handlers.get("session_shutdown")?.();
-  });
+      const freshEngine = journeyControlEngine(item, phases);
+      const fresh = extensionJourneyHarness(
+        item.consumerRoot,
+        freshEngine.control,
+        "abel-implement",
+      );
+      const status = await fresh.execute("fresh-status", {
+        command: "status",
+        stage: "abel-implement",
+        change: item.change,
+      });
+      expect(status).toMatchObject({
+        runId: approval.runId,
+        state: blocker === "authority" ? "approval-needed" : "paused",
+        continuation: { owner: "parent", automatic: true, command: "resume" },
+        availableDelivery: {
+          deliveryRevision: 2,
+          receiptHash: revised.receiptHash,
+        },
+      });
+
+      const resumed = await fresh.execute("implement-v2", {
+        command: "resume",
+        stage: "abel-implement",
+        change: item.change,
+        operationId: "implement-v2",
+      });
+      expect(resumed).toMatchObject({
+        runId: approval.runId,
+        deliveryRevision: 2,
+        state: "paused",
+        pause: { code: "endpoint-unavailable" },
+      });
+      expect(phases).toEqual(["red", "green", "green"]);
+      await fresh.handlers.get("session_shutdown")?.();
+    },
+  );
 });
 
 describe("code-owned Design delivery compilation", () => {
+  it("inherits finalized decisions and Gates for a technical-only revision", async () => {
+    const item = fixture("inherit-approval");
+    await approveAndCompile(item);
+    const previous = item.controller.status(item.runId);
+    await item.controller.execute({
+      operation: "finalize-delivery",
+      runId: item.runId,
+      operationId: "finalize-original",
+    });
+    const next = await item.controller.execute({
+      operation: "start",
+      change: item.change,
+      operationId: "revise-technical",
+    });
+    const runId = String(next.runId);
+    expect(runId).not.toBe(item.runId);
+    const inherited = item.controller.status(runId);
+    expect(inherited.gates).toMatchObject({
+      gateA: { current: true },
+      gateB: { current: true },
+    });
+    const receiptBytes = readFileSync(path.join(item.changeRoot, "ready.yaml"));
+    const gateBytes = readFileSync(path.join(item.changeRoot, "gate-a.yaml"));
+    await item.controller.execute({
+      operation: "write-artifact",
+      runId,
+      operationId: "unchanged-draft",
+      path: "plan-draft.json",
+      content: JSON.stringify(planDraft(item.change)),
+    });
+    await item.controller.execute({
+      operation: "compile-plan",
+      runId,
+      operationId: "unchanged-compilation",
+    });
+    expect(item.controller.status(runId).gates).toEqual(inherited.gates);
+    expect(readFileSync(path.join(item.changeRoot, "ready.yaml"))).toEqual(
+      receiptBytes,
+    );
+    expect(readFileSync(path.join(item.changeRoot, "gate-a.yaml"))).toEqual(
+      gateBytes,
+    );
+    expect(inherited.gates.gateA.proof?.contractHash).toBe(
+      previous.gates.gateA.proof?.contractHash,
+    );
+    expect(
+      inherited.decisions.map(({ decisionId, contractHash }) => ({
+        decisionId,
+        contractHash,
+      })),
+    ).toEqual(
+      previous.decisions.map(({ decisionId, contractHash }) => ({
+        decisionId,
+        contractHash,
+      })),
+    );
+    await item.controller.execute({
+      operation: "record-decision",
+      runId,
+      operationId: "technical-only",
+      decisionId: "storage-change",
+      category: "technical",
+      contract: "Revised technical authority",
+      refs: ["design.md#Decisions"],
+    });
+    expect(item.controller.status(runId).gates).toMatchObject({
+      gateA: { current: true },
+      gateB: { current: false, staleReason: "technical-decision-changed" },
+    });
+    expect(item.controller.status(item.runId).gates).toEqual(previous.gates);
+    await expect(
+      item.controller.execute({
+        operation: "start",
+        change: item.change,
+        operationId: "resume-revision",
+      }),
+    ).resolves.toMatchObject({ runId });
+    expect(item.controller.status(runId).gates.gateB.current).toBe(false);
+    await item.controller.execute({
+      operation: "write-artifact",
+      runId,
+      operationId: "revised-draft",
+      path: "plan-draft.json",
+      content: JSON.stringify(planDraft(item.change)),
+    });
+    await item.controller.execute({
+      operation: "compile-plan",
+      runId,
+      operationId: "compile-revision",
+    });
+    await item.controller.execute({
+      operation: "approve-gate",
+      runId,
+      operationId: "approve-technical-revision",
+      gate: "gate-b",
+    });
+    await expect(
+      item.controller.execute({
+        operation: "finalize-delivery",
+        runId,
+        operationId: "finalize-revision",
+      }),
+    ).resolves.toMatchObject({ state: "completed", deliveryRevision: 2 });
+    expect(
+      item.controller.verifyGateProof({
+        change: item.change,
+        gate: "gate-a",
+        proof: previous.gates.gateA.proof!,
+      }),
+    ).toBe(true);
+    item.controller.close();
+  });
+
   it("compiles the fixed draft, binds Gate B, and finalizes ready last", async () => {
     const item = fixture("success");
     const compiled = await approveAndCompile(item);
@@ -1957,7 +2129,11 @@ describe("private Gate proofs bind Implement admission", () => {
       approval: {
         category: "dependency",
         requiredGates: ["gate-b"],
-        designRequest: `/abel-design --change ${item.change}`,
+        continuation: {
+          action: "amend",
+          change: item.change,
+          batchId: expect.any(String),
+        },
       },
     });
 
@@ -2105,7 +2281,11 @@ describe("private Gate proofs bind Implement admission", () => {
       approval: {
         category: "observable-behavior",
         requiredGates: ["gate-a", "gate-b"],
-        designRequest: `/abel-design --change ${item.change}`,
+        continuation: {
+          action: "amend",
+          change: item.change,
+          batchId: expect.any(String),
+        },
       },
     });
     await engine.close();

@@ -144,7 +144,7 @@ describe("real npm tarball", () => {
     expect(shippedNames).toEqual([...shipped].sort());
   });
 
-  it("[SLICE-5:pi-tool-error] ships no worker or Implement recovery channel", () => {
+  it("[SLICE-5:pi-tool-error] ships no worker stage-routing channel and retains bounded Implement amendments", () => {
     const resource = (relative) =>
       readFileSync(path.join(packedPackageDir, relative), "utf8");
     const implementResources = [
@@ -158,10 +158,8 @@ describe("real npm tarball", () => {
     expect(implementResources).toMatch(/wrong-Red identity/i);
     expect(implementResources).toMatch(/environment/i);
     expect(implementResources).toMatch(/approval-needed` only/i);
-    expect(implementResources).toMatch(/\/abel-design --change <change>/i);
-    expect(implementResources).toMatch(
-      /never invoke[s]? Design automatically/i,
-    );
+    expect(implementResources).toMatch(/"action":"amend"/);
+    expect(implementResources).toMatch(/does not activate Design/i);
     expect(implementResources).toMatch(/result-limit/i);
 
     const diagnosis = resource("agents/diagnosis-worker.md");

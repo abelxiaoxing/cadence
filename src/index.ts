@@ -62,6 +62,7 @@ import {
   type WorkerRoutePolicy,
 } from "./route-policy.ts";
 import { RunStoreFormatError, RunStoreMigrationError } from "./run-store.ts";
+import { isSafeRegularFile } from "./safe-path.ts";
 import { resolveStateRoot, StateRootError } from "./state-root.ts";
 import {
   ACTIVITY_DETAILS_KEY,
@@ -70,7 +71,10 @@ import {
   renderActivityResult,
   type WorkflowActivityUpdate,
 } from "./subagent-activity.ts";
-import { classifyCandidateContextRequest } from "./submit-tool.ts";
+import {
+  classifyCandidateContextRequest,
+  permitsContextRead,
+} from "./submit-tool.ts";
 import { openDurableWorkflowEngine } from "./workflow-engine.ts";
 
 export {
@@ -669,6 +673,11 @@ export interface WorkflowControlEngine {
     onActivity?: (event: WorkflowActivityUpdate) => void,
   ): Promise<Record<string, unknown>>;
   executeDesign?(request: unknown): Promise<Record<string, unknown>>;
+  executeAmendment?(
+    change: string,
+    batchId: string,
+    request: unknown,
+  ): Promise<Record<string, unknown>>;
   assertDesignRun?(runId: string): void;
   recordDesignEvidence?(input: {
     runId: string;
@@ -799,10 +808,28 @@ export function openPackageWorkflowControlEngine(
             ].sort(),
           }
         : {
-            read: [...phase.read],
+            read: [
+              ...new Set(
+                taskPhases.flatMap((boundary) => [
+                  ...boundary.read,
+                  ...boundary.write,
+                  ...boundary.delete,
+                ]),
+              ),
+            ].sort(),
             write: [...phase.write],
             delete: [...phase.delete],
           };
+      executionBoundary.read = [
+        ...new Set([
+          ...executionBoundary.read,
+          ...(input.contextReadPaths ?? []).filter(
+            (relative) =>
+              permitsContextRead(relative, input.task.roots) &&
+              isSafeRegularFile(input.workspaceRoot, relative),
+          ),
+        ]),
+      ].sort();
       const phaseContract = {
         candidateId: input.candidateArtifact.identity.candidateId,
         taskId: input.taskId,
@@ -821,6 +848,9 @@ export function openPackageWorkflowControlEngine(
           : {}),
         ...(input.contextRequest
           ? { requestedContext: structuredClone(input.contextRequest) }
+          : {}),
+        ...(input.recoveryFeedback
+          ? { recoveryFeedback: structuredClone(input.recoveryFeedback) }
           : {}),
         ...(input.repair
           ? {
@@ -843,6 +873,7 @@ export function openPackageWorkflowControlEngine(
           input.task.objective,
           input.task.context.agents,
           input.task.context.contract,
+          "Use recoveryFeedback to change the failing approach. For compact-patch, prefer exact replace operations and omit unchanged bodies; submit one complete atomic patch. Never repeat an unchanged failing submission or weaken verification to obtain a pass.",
           `<phase-contract>${JSON.stringify(phaseContract)}</phase-contract>`,
         ].join("\n\n"),
         requestId: childRequestId(input.operationId, input.taskId, input.phase),
@@ -878,7 +909,7 @@ export function openPackageWorkflowControlEngine(
           return { kind: "approval-needed", code: child.failure.code };
         }
         if (child.failure.kind === "result-limit") {
-          return { kind: "paused", code: "needs-task-split" };
+          return { kind: "retryable", code: "needs-task-split" };
         }
         const attemptDiagnostic = {
           finalCategory: child.classification.finalCategory,
@@ -897,6 +928,7 @@ export function openPackageWorkflowControlEngine(
       if (result.kind === "context-request") {
         return classifyCandidateContextRequest(result, {
           phase: input.phase,
+          contextReadRoots: input.task.roots,
           readPaths: phase.read,
           writePaths: phase.write,
           deletePaths: phase.delete,
@@ -1013,6 +1045,11 @@ export function openPackageWorkflowControlEngine(
     },
     executeDesign(request: unknown) {
       return design.execute(request);
+    },
+    executeAmendment(change: string, batchId: string, request: unknown) {
+      return engine.amend(change, batchId, request, (assertAuthority) =>
+        design.executeWithAuthority(request, assertAuthority),
+      );
     },
     assertDesignRun(runId: string) {
       design.assertDesignRun(runId);
@@ -1219,20 +1256,42 @@ export function registerWorkflowControl(
     required: ["action"],
     additionalProperties: false,
   } as const;
+  const AMEND_PARAMETERS = {
+    type: "object",
+    properties: {
+      action: { type: "string", enum: ["amend"] },
+      change: { type: "string" },
+      batchId: { type: "string" },
+      request: DESIGN_CONTROL_REQUEST_SCHEMA,
+    },
+    required: ["action", "change", "batchId", "request"],
+    additionalProperties: false,
+  } as const;
   const IMPLEMENT_PARAMETERS = {
     ...CONTROL_COMMAND_PARAMETERS,
     properties: {
       ...CONTROL_COMMAND_PARAMETERS.properties,
-      ...FINISH_PARAMETERS.properties,
+      ...AMEND_PARAMETERS.properties,
+      action: { type: "string", enum: ["finish", "amend"] },
     },
     required: [],
-    anyOf: [...CONTROL_COMMAND_PARAMETERS.anyOf, FINISH_PARAMETERS],
+    anyOf: [
+      ...CONTROL_COMMAND_PARAMETERS.anyOf,
+      FINISH_PARAMETERS,
+      AMEND_PARAMETERS,
+    ],
   } as const;
   const prepareImplementArguments = (args: unknown): unknown => {
     if (!args || typeof args !== "object" || Array.isArray(args)) return args;
     const record = { ...(args as Record<string, unknown>) };
     // Strict providers can pad fields belonging to the other union branch.
-    if (record.action === "finish") {
+    if (record.action !== "amend") {
+      for (const key of ["batchId", "request"]) {
+        if (record[key] === null || record[key] === undefined)
+          delete record[key];
+      }
+    }
+    if (record.action === "finish" || record.action === "amend") {
       for (const key of Object.keys(CONTROL_COMMAND_PARAMETERS.properties)) {
         if (record[key] === null || record[key] === undefined)
           delete record[key];
@@ -1252,7 +1311,7 @@ export function registerWorkflowControl(
       label: "Abel Control",
       description:
         kind === "command"
-          ? 'Private stage-bound Abel workflow control. Accepts durable Implement change commands or {"action":"finish"} to leave the workflow and preserve resumable work.'
+          ? 'Private stage-bound Abel workflow control. Accepts durable Implement commands, batch-bound {"action":"amend"} artifact revisions, or {"action":"finish"} to leave and preserve resumable work.'
           : "Private stage-bound Abel packet control. Accepts bounded Design and Diagnose packet operations.",
       executionMode: "parallel",
       ...(kind === "command"
@@ -1281,6 +1340,108 @@ export function registerWorkflowControl(
           params && typeof params === "object" && !Array.isArray(params)
             ? (params as Record<string, unknown>)
             : undefined;
+        if (record?.action === "amend") {
+          if (
+            activePrompt !== "abel-implement" ||
+            Object.keys(record).some(
+              (key) =>
+                !["action", "change", "batchId", "request"].includes(key),
+            ) ||
+            typeof record.change !== "string" ||
+            typeof record.batchId !== "string"
+          ) {
+            throw new Error("stage-control-mismatch");
+          }
+          const parsed = validateDesignControlRequest(record.request);
+          if (!parsed.ok) throw new Error(parsed.code);
+          const request = parsed.value;
+          if (
+            request.operation === "bind-change" ||
+            (request.operation === "start" &&
+              (!("change" in request) || request.change !== record.change))
+          ) {
+            throw new Error("amendment-change-mismatch");
+          }
+          let settle!: () => void;
+          const pending = new Promise<void>((resolve) => {
+            settle = resolve;
+          });
+          designOperations.add(pending);
+          try {
+            const engine = await engineFor(ctx);
+            if (exitingStage || !activation.isActive() || !engine.executeDesign)
+              throw new Error("stage-control-mismatch");
+            const status = await engine.execute(
+              {
+                command: "status",
+                stage: "abel-implement",
+                change: record.change,
+              },
+              ctx,
+              signal,
+            );
+            const batch = status.decisionBatch as { id?: string } | undefined;
+            if (
+              !["approval-needed", "paused"].includes(String(status.state)) ||
+              batch?.id !== record.batchId
+            )
+              throw new Error("amendment-batch-stale");
+            if (request.operation !== "start") {
+              const designStatus = await engine.executeDesign({
+                operation: "status",
+                runId: request.runId,
+              });
+              if (designStatus.change !== record.change)
+                throw new Error("amendment-change-mismatch");
+            }
+            if (!engine.executeAmendment)
+              throw new Error("amendment-control-unavailable");
+            const revision = await engine.executeAmendment(
+              record.change,
+              record.batchId,
+              request,
+            );
+            const payload =
+              request.operation === "finalize-delivery" &&
+              revision.state === "completed"
+                ? {
+                    ...revision,
+                    scope: "amendment",
+                    state: "ready",
+                    completed: false,
+                    runId: status.runId,
+                    amendmentRunId: revision.runId,
+                    stage: "abel-implement",
+                  }
+                : { ...revision, scope: "amendment" };
+            // A compiled amendment stays in Implement; its private Design
+            // records do not activate the Design stage or broaden parent tools.
+            return {
+              content: [
+                { type: "text" as const, text: JSON.stringify(payload) },
+              ],
+              details: payload,
+            };
+          } catch (error) {
+            if (
+              error instanceof DesignPlanValidationError ||
+              error instanceof DesignFinalizationError ||
+              error instanceof DeliveryValidationError
+            ) {
+              const failure = safeDesignFailure(
+                error,
+                request.operation,
+                "execution",
+              );
+              designFailures.set(toolCallId, failure);
+              throw new Error(failure.code);
+            }
+            throw error;
+          } finally {
+            settle();
+            designOperations.delete(pending);
+          }
+        }
         if (record && typeof record.action === "string") {
           if (
             Object.keys(record).some(
@@ -1567,7 +1728,10 @@ export function registerWorkflowControl(
     if (
       event.toolName !== DISPATCH_TOOL ||
       !event.isError ||
-      event.input.action !== "design"
+      (event.input.action !== "design" &&
+        !(
+          event.input.action === "amend" && designFailures.has(event.toolCallId)
+        ))
     ) {
       return;
     }

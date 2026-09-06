@@ -341,7 +341,7 @@ describe("implementation candidate protocol", () => {
         ["src"],
       ),
     ).toEqual({
-      kind: "paused",
+      kind: "retryable",
       code: "approved-context-needed",
       contextRequest: {
         code: "boundary-review-needed",
@@ -508,6 +508,66 @@ describe("implementation candidate protocol", () => {
       kind: "artifact",
       code: "invalid-structural-result",
       stage: "structural-submit",
+    });
+  });
+
+  it("reads approved task context across phases without expanding write authority", () => {
+    const boundary = {
+      phase: "green" as const,
+      readPaths: ["src/main.ts"],
+      writePaths: ["src/main.ts"],
+      taskPaths: ["src/main.ts", "src/helper.ts"],
+      redWritePaths: [],
+      agents: { impact: "none" as const },
+    };
+    const request = (access: "read" | "write", path = "src/helper.ts") => ({
+      kind: "context-request" as const,
+      candidateId: "candidate-task-context",
+      code: "approved-context-needed" as const,
+      refs: [{ kind: "requested-path" as const, path, access }],
+    });
+    expect(
+      classifyCandidateContextRequest(request("read"), boundary),
+    ).toMatchObject({ kind: "retryable", code: "approved-context-needed" });
+    expect(
+      classifyCandidateContextRequest(request("write"), boundary),
+    ).toMatchObject({ kind: "approval-needed" });
+    expect(
+      classifyCandidateContextRequest(
+        request("read", "outside/private.ts"),
+        boundary,
+      ),
+    ).toMatchObject({ kind: "approval-needed" });
+  });
+
+  it("discovers ordinary context within sealed roots without granting writes or secret reads", () => {
+    const boundary = {
+      phase: "green" as const,
+      readPaths: ["src/main.ts"],
+      writePaths: ["src/main.ts"],
+      taskPaths: ["src/main.ts"],
+      contextReadRoots: ["src"],
+      redWritePaths: [],
+      agents: { impact: "none" as const },
+    };
+    const classify = (path: string, access: "read" | "write" = "read") =>
+      classifyCandidateContextRequest(
+        {
+          kind: "context-request",
+          candidateId: "context-discovery",
+          code: "approved-context-needed",
+          refs: [{ kind: "requested-path", path, access }],
+        },
+        boundary,
+      );
+    expect(classify("src/helper.ts")).toMatchObject({
+      kind: "retryable",
+      code: "approved-context-needed",
+    });
+    for (const path of ["src/.env", "src/private.key", "outside/helper.ts"])
+      expect(classify(path)).toMatchObject({ kind: "approval-needed" });
+    expect(classify("src/helper.ts", "write")).toMatchObject({
+      kind: "approval-needed",
     });
   });
 

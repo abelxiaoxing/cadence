@@ -201,6 +201,55 @@ export const ENGINE_SCHEMA = `
   ) STRICT;
 `;
 
+export const RECOVERY_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS workflow_context_reads (
+    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL,
+    path TEXT NOT NULL,
+    PRIMARY KEY (run_id, task_id, path)
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS workflow_work_budget (
+    run_id TEXT PRIMARY KEY REFERENCES runs(run_id) ON DELETE CASCADE,
+    used INTEGER NOT NULL CHECK (used >= 0),
+    max_work INTEGER NOT NULL CHECK (max_work > 0 AND used <= max_work)
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS workflow_recovery_incidents (
+    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+    incident_key TEXT NOT NULL,
+    failures INTEGER NOT NULL CHECK (failures >= 0),
+    max_attempts INTEGER NOT NULL CHECK (max_attempts > 0),
+    feedback_json TEXT NOT NULL,
+    PRIMARY KEY (run_id, incident_key)
+  ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS workflow_recovery_events (
+    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+    sequence INTEGER NOT NULL CHECK (sequence > 0),
+    incident_key TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('failure', 'resolved', 'repair', 'launch')),
+    PRIMARY KEY (run_id, sequence)
+  ) STRICT;
+`;
+
+// Independent namespace so existing recovery stores remain atomically additive.
+export const AMENDMENT_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS workflow_amendment_budget (
+    run_id TEXT PRIMARY KEY REFERENCES runs(run_id) ON DELETE CASCADE,
+    used INTEGER NOT NULL CHECK (used >= 0 AND used <= 64)
+  ) STRICT;
+`;
+
+export const REJECTED_DELIVERY_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS workflow_rejected_deliveries (
+    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+    delivery_revision INTEGER NOT NULL CHECK (delivery_revision > 0),
+    receipt_hash TEXT NOT NULL,
+    PRIMARY KEY (run_id, delivery_revision, receipt_hash)
+  ) STRICT;
+`;
+
 export const TASK_SCHEMA = `
       CREATE TABLE IF NOT EXISTS candidates (
         candidate_id TEXT PRIMARY KEY,

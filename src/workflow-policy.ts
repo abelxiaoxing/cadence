@@ -183,6 +183,24 @@ export interface RedArtifactCorrection {
   contextRequest?: WorkflowContextRequest;
 }
 
+export interface WorkflowRecoveryFeedback {
+  code: string;
+  attempt: number;
+  maxAttempts: number;
+  strategy:
+    | "revise-candidate"
+    | "refresh-candidate"
+    | "repair-verification"
+    | "compact-patch";
+  failureIdentities?: string[];
+}
+
+export interface WorkflowRecoveryFact {
+  key: string;
+  failures: number;
+  feedback: WorkflowRecoveryFeedback;
+}
+
 export const APPROVAL_AUTHORITY_CATEGORIES = [
   "observable-behavior",
   "architecture-policy",
@@ -211,6 +229,14 @@ export const INTERNAL_APPROVAL_CODES = [
 
 export type InternalApprovalCode = (typeof INTERNAL_APPROVAL_CODES)[number];
 export type WorkflowApprovalCode = ApprovalBoundaryCode | InternalApprovalCode;
+
+// These pauses need a new executable plan, not a new user decision. Environment,
+// integrity and cancellation codes deliberately do not grant this continuation.
+export function permitsPlanAmendment(code: string): boolean {
+  return ["delivery-invalid", "needs-task-split", "task-split-needed"].includes(
+    code,
+  );
+}
 
 export const APPROVAL_REQUIREMENT_BY_CODE = {
   "agents-contract-insufficient": {
@@ -295,6 +321,14 @@ export type WorkflowAttemptOutcome = (
   };
 
 export interface WorkflowWorker {
+  isContextReadAvailable?(input: {
+    runId: string;
+    deliveryRevision: number;
+    plan: ImplementPlan;
+    baselineRevisionId: string;
+    currentWorkspaceRevisionId: string;
+    path: string;
+  }): boolean;
   runAttempt(input: {
     runId: string;
     operationId: string;
@@ -313,6 +347,9 @@ export interface WorkflowWorker {
     };
     artifactCorrection?: RedArtifactCorrection;
     contextRequest?: WorkflowContextRequest;
+    contextReadPaths?: string[];
+    recoveryFeedback?: WorkflowRecoveryFeedback;
+    reserveCandidate?: () => boolean;
     signal: AbortSignal;
     onActivity?: (
       event: Pick<
@@ -344,6 +381,7 @@ export interface WorkflowWorker {
       deliveryRevision: number;
       state: string;
       phase: "red" | "green" | "refactor";
+      contextReadPaths?: string[];
     }>;
     invalidatedTaskIds: string[];
     baselineRevisionId: string;
@@ -417,6 +455,7 @@ export interface WorkflowApplication {
     consumerRoot: string;
     deliveryRevision: number;
     plan: ImplementPlan;
+    contextReadPaths?: string[];
     baselineRevisionId?: string;
     currentWorkspaceRevisionId?: string;
     signal: AbortSignal;
@@ -427,6 +466,7 @@ export interface WorkflowApplication {
     consumerRoot: string;
     deliveryRevision: number;
     plan: ImplementPlan;
+    contextReadPaths?: string[];
     baselineRevisionId?: string;
     currentWorkspaceRevisionId?: string;
     signal: AbortSignal;
@@ -437,6 +477,7 @@ export interface WorkflowApplication {
     consumerRoot: string;
     deliveryRevision: number;
     plan: ImplementPlan;
+    contextReadPaths?: string[];
     baselineRevisionId?: string;
     currentWorkspaceRevisionId?: string;
     signal: AbortSignal;
@@ -456,6 +497,7 @@ export interface WorkflowApplicationContext {
   runId: string;
   deliveryRevision: number;
   plan: ImplementPlan;
+  contextReadPaths?: string[];
   baselineRevisionId?: string;
   currentWorkspaceRevisionId?: string;
 }
@@ -513,6 +555,38 @@ export interface SafeAttemptDiagnostic {
   identityMismatch?: string[];
   sameFailureCount?: number;
   action?: "rebind-or-revise-delivery";
+  recovery?: WorkflowRecoveryFact;
+}
+
+export function recoveryKey(
+  task: PlanTaskDraft,
+  phase: string,
+  _row: EngineTaskRow,
+  _run: EngineRunRow,
+): string {
+  // Keep the Red witness and the active phase's obligation across replanning.
+  // Execution identities, verifier names, and wording are not progress.
+  const obligation = (boundary: PlanTaskDraft["phases"]["red"]) => {
+    const verification = structuredClone(
+      boundary.verification,
+    ) as unknown as Record<string, unknown>;
+    delete verification.id;
+    return {
+      verification,
+      verificationInputs: boundary.verificationInputs
+        .map((binding) => canonicalJson(binding))
+        .sort(compareCanonicalStrings),
+    };
+  };
+  const boundary = task.phases[phase as keyof PlanTaskDraft["phases"]];
+  if (!boundary) throw new Error("workflow-task-phase-invalid");
+  return hash(
+    canonicalJson({
+      red: obligation(task.phases.red),
+      phase: obligation(boundary),
+    }),
+    phase,
+  );
 }
 
 export interface EngineOperationRow {
@@ -628,6 +702,7 @@ export function contextBoundaryForTask(
   if (!boundary) throw new Error("workflow-task-phase-invalid");
   return {
     phase,
+    contextReadRoots: task.roots,
     readPaths: boundary.read,
     writePaths: boundary.write,
     deletePaths: boundary.delete,
@@ -1171,6 +1246,12 @@ export function taskApprovalBoundary(
   delete planBoundary.outputs;
   if (isRecord(planBoundary.tracking)) {
     delete planBoundary.tracking.taskIds;
+  }
+  // Retry limits and presentation do not invalidate verified product facts.
+  if (isRecord(planBoundary.verification)) {
+    delete planBoundary.verification.artifactCorrection;
+    if (isRecord(planBoundary.verification.repair))
+      delete planBoundary.verification.repair.maxAttempts;
   }
   return canonicalJson({
     plan: planBoundary,

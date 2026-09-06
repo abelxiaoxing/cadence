@@ -225,6 +225,7 @@ export interface CandidateContextBoundary {
   writePaths: readonly string[];
   deletePaths?: readonly string[];
   taskPaths: readonly string[];
+  contextReadRoots?: readonly string[];
   redWritePaths: readonly string[];
   agents: {
     impact: "none" | "update-existing" | "create-index" | "remove-index";
@@ -354,6 +355,19 @@ function pathWithinAny(relative: string, approved: readonly string[]): boolean {
   return approved.some((path) => contextRefWithinBoundary(relative, path));
 }
 
+export function permitsContextRead(
+  relative: string,
+  roots: readonly string[],
+): boolean {
+  // Dynamic discovery never grants hidden credentials or a directory tree.
+  return (
+    isValidRelativePath(relative) &&
+    relative.split("/").every((part) => !part.startsWith(".")) &&
+    !/\.(?:pem|key|p12|pfx)$/iu.test(relative) &&
+    pathWithinAny(relative, roots)
+  );
+}
+
 export function classifyCandidateContextRequest(
   request: {
     kind: "context-request";
@@ -377,11 +391,15 @@ export function classifyCandidateContextRequest(
   const ordinaryRequested = requested.filter((ref) => !isAgentsPath(ref.path));
   const outsideOrdinary = ordinaryRequested.filter(
     (ref) =>
+      !(
+        ref.access === "read" &&
+        permitsContextRead(ref.path, boundary.contextReadRoots ?? [])
+      ) &&
       !pathWithinAny(
         ref.path,
         ref.access === "write"
           ? [...boundary.writePaths, ...(boundary.deletePaths ?? [])]
-          : phasePaths,
+          : [...phasePaths, ...boundary.taskPaths],
       ),
   );
   const agentsRequested = requested.filter((ref) => isAgentsPath(ref.path));
@@ -428,7 +446,7 @@ export function classifyCandidateContextRequest(
     classification = { kind: "paused", code: "agents-context-needed" };
   } else {
     classification = {
-      kind: request.code === "approved-context-needed" ? "retryable" : "paused",
+      kind: "retryable",
       code:
         request.code === "task-split-needed"
           ? "task-split-needed"

@@ -28,7 +28,8 @@ Never start another stage automatically.
 Design resolves product and technical decisions, collects cited evidence, and compiles one trusted delivery.
 It never launches an implementation Worker, creates a product-code candidate, applies a product diff, runs Red/Green/Refactor, or mutates the main workspace.
 
-If the requirement/change is missing, absent, ambiguous, or not unique, stop before exploration and ask one focused question.
+If no requirement can be identified or several changes cannot be distinguished, ask one focused question about the target.
+Otherwise investigate first: resolve discoverable unknowns from repository evidence and choose reversible defaults within existing authority; only unresolved substantive choices require a user decision.
 An explicit `--change <name>` resumes only that existing change; never reinterpret a misspelling as a new requirement.
 
 ## Write boundary
@@ -120,6 +121,18 @@ Do not put prompts, transcripts, hidden reasoning, credentials, environment valu
 Ask the user only for substantive choices: observable behavior, scope/non-goals, data/security/privacy/compatibility/migration policy, new dependencies, architecture/policy, irreversible changes, and technical choices with real trade-offs.
 Resolve reversible details mechanically from one established repository convention and do not ask them repeatedly.
 
+Aim for one consolidated user decision round for a clear requirement.
+Investigate repository evidence before asking about implementation details.
+Present the observable contract, any substantive technical trade-offs, and your recommended defaults together; include authorization to mechanically compile and seal the plan within those choices.
+An explicit acceptance of that complete proposal covers both its behavior and the presented technical choices.
+Do not ask a second time merely because the compiler has now produced the exact task DAG or receipt.
+Ask a further focused question only when new evidence changes a substantive choice that was not covered by the accepted proposal.
+Explain that difference, retain all other decisions, and group related unresolved choices into the same question.
+Existing instructions and accepted same-task decisions are authorization evidence; do not require the user to restate them.
+Design settles the goal, main decisions, explicit constraints, and non-goals.
+Make the implementation delegation clear in the accepted proposal: the parent will choose its recommended solution for later implementation choices within those constraints, record material decisions, and continue to verified results without another selection or confirmation round.
+Do not ask the user to approve this delegation separately or attempt to enumerate every future implementation detail.
+
 Gate A approves the complete WHAT: goal, observable scenarios, failures, scope/non-goals, compatibility/migration/security policy, and success criteria.
 Before approval, present the unresolved behavior decisions together.
 After explicit approval:
@@ -137,7 +150,8 @@ The control plane generates the canonical behavior-contract hash; the returned p
 `gate-a.yaml` is installed later by code-owned finalization, not hand-authored here.
 
 Gate A is not tool permission and carries no session/model/timestamp identity.
-A later behavior decision invalidates both Gates; a later technical decision or plan compilation invalidates Gate B only.
+A later behavior decision invalidates both Gates; a later technical decision or changed plan compilation invalidates Gate B only.
+Compiling identical canonical bytes after unchanged decisions preserves the existing plan revision and both Gates, even with a new operation id.
 
 ## Technical contract and ImplementPlan
 
@@ -153,6 +167,11 @@ Each task must seal:
 - conflicts, resources, verification locks, dependency changes, impact closure, and existing-test evidence;
 - AGENTS impact/target and managed-only ownership;
 - precise context sufficient for a fresh Worker without a conversation transcript.
+
+Seal the supporting repository files needed by the whole task, including callers, types, fixtures, and conventions; Workers may read the union of that task's approved phase paths.
+Writes and deletes remain phase-local.
+This task-wide read authority is part of the proposal, not an ad hoc escalation during Implement.
+Keep tasks small enough for one complete patch using compact exact replacements, and separate independent outputs during planning.
 
 Impact closure must name affected existing tests and fixtures; a suite made only from newly added tests is insufficient.
 For public UI or API work, seal the relevant route authorization, page state, API response and contract, public HTML/template/theme behavior, and an approved browser E2E check when those surfaces are affected.
@@ -184,7 +203,7 @@ The canonical `ImplementPlan` contains:
 - tasks and regular-file outputs;
 - target/affected/full-suite baselines and normalized failure identity policy;
 - change-level affected, full-suite, and post-apply verification;
-- an explicit `artifactCorrection.maxAttempts` of 2-3 total candidate launches per task phase and operation, including the initial launch;
+- an explicit `artifactCorrection.maxAttempts` of 2-3 attempts for a verification obligation and phase, including the initial attempt; operation ids, rollback lineage, route changes, task renaming, and rewording do not replenish it;
 - bounded in-boundary repair policy and attribution classes `pre-existing | introduced | unresolved | environment`;
 - parent-owned `tasks.md` tracking;
 - when required, one sealed managed-block AGENTS operation per approved target, including impact, owning task ids, complete marker-bounded content, and verification.
@@ -195,18 +214,14 @@ Every absent future input must be a unique declared output from a transitive dep
 
 ## Gate B and trusted delivery
 
-Gate B grants no tool permission or authority beyond its recorded scope.
-Gate B approves the complete HOW: substantive technical choices, task DAG, exact boundaries, verification/repair contracts, output postconditions, dependency changes, scheduling declarations, tracking, and AGENTS operations.
-Do not request approval while any capability, closure, traceability, or blocking decision is unresolved.
+Gate B is a code-owned plan certificate, not a second user decision round.
+The accepted proposal covers behavior, substantive technical choices, and authority to compile their realization.
+Ask about any newly discovered substantive choice before recording that changed decision; preserve all existing decisions by id instead of restating their contract text.
+`compile-plan` atomically records the validated plan and its Gate B proof after the current Gate A and substantive decisions.
+Do not request a separate Gate B confirmation or an extra approve-gate call after successful compilation.
+Finalization still validates strict OpenSpec artifacts, traceability, graph closure, and the current private proofs.
 
-After explicit approval, materialize any remaining schema artifacts through `write-artifact` one at a time and complete the code-owned sequence below.
-First approve Gate B; the control plane accepts only a plan compiled after the current Gate A approval and latest substantive decisions, then binds that stored canonical hash so the caller never copies or recomputes it:
-
-```json
-{"action":"design","request":{"operation":"approve-gate","runId":"<run-id>","operationId":"<unique-operation>","gate":"gate-b"}}
-```
-
-Then request finalization:
+Request finalization:
 
 ```json
 {"action":"design","request":{"operation":"finalize-delivery","runId":"<run-id>","operationId":"<unique-operation>"}}
@@ -229,15 +244,19 @@ Every other byte remains bound.
 
 On resume, validate current artifacts and receipts first.
 Use Design `status` to recover bounded accepted-evidence identities/hashes, latest decision revisions, Gate currentness, and compiled-plan identity without relying on a prior child session.
+A new revision of a completed change inherits decisions, Gate authority, and the canonical plan from the latest completed owner-private finalization for that same root and change.
+Evidence packets are not inherited as current observations: recheck affected repository facts.
+Technical-only changes keep Gate A; changed behavior invalidates both Gates.
 Preserve decisions whose bound content did not change.
-A mechanical hash, formatting, checkbox, stale path, or traceability repair regenerates only invalidated artifacts and does not reopen a Gate.
-Reopen Gate A only for changed behavior authority; reopen Gate B only for changed technical authority.
+A mechanical hash, formatting, checkbox, stale path, or traceability repair regenerates only invalidated artifacts and does not reopen a user decision.
+Reopen Gate A only for changed behavior authority; ask about changed substantive technical authority only when it is not already accepted.
+The compiler regenerates Gate B as needed without a separate confirmation.
 Report the exact invalidated decision/artifact instead of restarting the whole Design process.
 
 Endpoint/transport failure in an evidence packet pauses that packet and retains other evidence.
 Missing package scripts/runners or a non-executable verification contract must be corrected before Gate B; they must not be deferred as an Implement surprise.
 
-Report `READY_TO_IMPLEMENT` only when strict validation passes, both Gates have zero unresolved decisions, all artifacts/hashes/traceability resolve, and the canonical plan is executable.
+Report `READY_TO_IMPLEMENT` only when strict validation passes, user decisions are resolved and both private proofs are current, all artifacts/hashes/traceability resolve, and the canonical plan is executable.
 Successful finalization deactivates private dispatch before an unrelated later request.
 Gate waits remain active for direct follow-up; if the user explicitly ends an unfinished Design interaction, send `{"action":"finish"}`.
 Otherwise report the current Design state, retained evidence, and the one unresolved decision or artifact that prevents readiness.

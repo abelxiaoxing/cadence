@@ -911,6 +911,7 @@ export class DesignJournal {
           revision,
           contractHash: decisionContractHash,
           refs,
+          authorityChanged: prior?.contractHash !== decisionContractHash,
         };
         const fact = this.#appendFact(
           input.runId,
@@ -1019,9 +1020,9 @@ export class DesignJournal {
         if (!current.gateA.current) throw new Error("design-gate-a-required");
         const plan = this.#currentPlanProjection(input.runId);
         if (!plan) throw new Error("design-plan-required");
-        const latestDecisionSequence = this.#facts(input.runId)
-          .filter((fact) => fact.kind === "decision")
-          .at(-1)?.sequence;
+        const latestDecisionSequence = this.#latestSubstantiveDecisionSequence(
+          input.runId,
+        );
         if (
           plan.sequence <= (current.gateA.approvedSequence ?? 0) ||
           (latestDecisionSequence !== undefined &&
@@ -1105,6 +1106,20 @@ export class DesignJournal {
     return undefined;
   }
 
+  #certifyPlan(runId: string, planHash: string): void {
+    const gates = this.#gateStatus(runId);
+    if (gates.gateB.current && gates.gateB.proof?.contractHash === planHash)
+      return;
+    const previous = this.#latestApproval(runId, "gate-b");
+    const revision = (previous?.proof.revision ?? 0) + 1;
+    this.#appendFact(runId, "approval", `gate-b:${revision}`, {
+      gate: "gate-b",
+      revision,
+      contractHash: planHash,
+      authority: "compiler",
+    });
+  }
+
   recordCompiledPlan(input: {
     runId: string;
     operationId: string;
@@ -1112,6 +1127,7 @@ export class DesignJournal {
     rawSha256: string;
     canonicalHash: string;
     lease?: DesignFinalizationLease;
+    certify?: boolean;
   }): Record<string, unknown> {
     requireHash(input.rawSha256, "design-plan-raw-hash");
     requireHash(input.canonicalHash, "design-plan-canonical-hash");
@@ -1150,6 +1166,32 @@ export class DesignJournal {
         throw new Error("design-gate-a-required");
       }
       const prior = this.#currentPlanProjection(input.runId);
+      const status = this.status(input.runId);
+      const latestDecision =
+        this.#latestSubstantiveDecisionSequence(input.runId) ?? 0;
+      if (
+        prior &&
+        prior.rawSha256 === input.rawSha256 &&
+        prior.canonicalHash === input.canonicalHash &&
+        prior.sequence > latestDecision &&
+        prior.sequence > (status.gates.gateA.approvedSequence ?? 0)
+      ) {
+        if (input.certify) this.#certifyPlan(input.runId, input.canonicalHash);
+        const outcome = {
+          operation: "compile-plan",
+          runId: input.runId,
+          plan: prior,
+          gates: this.#gateStatus(input.runId),
+        };
+        this.#recordOperation(
+          input.runId,
+          input.operationId,
+          "compile-plan",
+          request,
+          outcome,
+        );
+        return structuredClone(outcome);
+      }
       const revision = (prior?.revision ?? 0) + 1;
       const payload = {
         revision,
@@ -1184,6 +1226,7 @@ export class DesignJournal {
         recordHash: fact.record_hash,
         sequence: fact.sequence,
       };
+      if (input.certify) this.#certifyPlan(input.runId, input.canonicalHash);
       const outcome = {
         operation: "compile-plan",
         runId: input.runId,
@@ -1468,26 +1511,34 @@ export class DesignJournal {
     });
   }
 
+  #latestSubstantiveDecisionSequence(
+    runId: string,
+    category?: DecisionCategory,
+  ): number | undefined {
+    return this.#facts(runId)
+      .filter((fact) => {
+        if (fact.kind !== "decision") return false;
+        const decision = parseRecord(
+          fact.payload_json,
+          "design-decision-record-invalid",
+        );
+        return (
+          decision.authorityChanged !== false &&
+          (category === undefined || decision.category === category)
+        );
+      })
+      .at(-1)?.sequence;
+  }
+
   #gateStatus(runId: string): DesignStatusProjection["gates"] {
-    const facts = this.#facts(runId);
-    const latestBehavior = facts
-      .filter((fact) => {
-        if (fact.kind !== "decision") return false;
-        return (
-          parseRecord(fact.payload_json, "design-decision-record-invalid")
-            .category === "behavior"
-        );
-      })
-      .at(-1)?.sequence;
-    const latestTechnical = facts
-      .filter((fact) => {
-        if (fact.kind !== "decision") return false;
-        return (
-          parseRecord(fact.payload_json, "design-decision-record-invalid")
-            .category === "technical"
-        );
-      })
-      .at(-1)?.sequence;
+    const latestBehavior = this.#latestSubstantiveDecisionSequence(
+      runId,
+      "behavior",
+    );
+    const latestTechnical = this.#latestSubstantiveDecisionSequence(
+      runId,
+      "technical",
+    );
     const plan = this.#currentPlanProjection(runId);
     const gateAApproval = this.#latestApproval(runId, "gate-a");
     const gateBApproval = this.#latestApproval(runId, "gate-b");
@@ -1542,6 +1593,116 @@ export class DesignJournal {
         }
       : { current: false };
     return { gateA, gateB };
+  }
+
+  /** Seed a new revision only from a completed, privately finalized delivery. */
+  inheritFinalizedAuthority(runId: string): void {
+    this.#transaction(() => {
+      const run = this.#run(runId, true);
+      if (!run.change_name || this.#facts(runId).length > 0) return;
+      const candidates = this.#database
+        .prepare(`
+        SELECT facts.run_id, facts.payload_json FROM design_facts AS facts
+        JOIN runs ON runs.run_id = facts.run_id
+        WHERE runs.root_hash = ? AND runs.stage = 'abel-design'
+          AND runs.change_name = ? AND runs.state = 'completed'
+          AND facts.kind = 'finalization' AND runs.run_id <> ?
+      `)
+        .all(run.root_hash, run.change_name, runId) as unknown as Array<{
+        run_id: string;
+        payload_json: string;
+      }>;
+      const source = candidates
+        .map((row) => ({
+          runId: row.run_id,
+          fact: parseRecord(
+            row.payload_json,
+            "design-finalization-record-invalid",
+          ),
+        }))
+        .sort(
+          (left, right) =>
+            Number(right.fact.deliveryRevision) -
+            Number(left.fact.deliveryRevision),
+        )[0];
+      if (!source) return;
+      const status = this.status(source.runId);
+      const plan = this.currentCompiledPlan(source.runId);
+      const gateA = status.gates.gateA.proof;
+      const gateB = status.gates.gateB.proof;
+      if (
+        !plan ||
+        !gateA ||
+        !gateB ||
+        !status.gates.gateA.current ||
+        !status.gates.gateB.current ||
+        sha256(plan.bytes) !== plan.projection.rawSha256 ||
+        !this.verifyFinalizedDelivery({
+          change: run.change_name,
+          deliveryRevision: Number(source.fact.deliveryRevision),
+          receiptHash: String(source.fact.receiptHash),
+          gateA,
+          gateB,
+          planCanonicalHash: plan.projection.canonicalHash,
+        })
+      ) {
+        throw new Error("design-inherited-authority-invalid");
+      }
+      this.#appendFact(runId, "inheritance", "finalized-authority", {
+        sourceRunId: source.runId,
+        deliveryRevision: source.fact.deliveryRevision,
+        receiptHash: source.fact.receiptHash,
+        gateA,
+        gateB,
+      });
+      for (const decision of status.decisions) {
+        this.#appendFact(
+          runId,
+          "decision",
+          `${decision.decisionId}:${decision.revision}`,
+          {
+            decisionId: decision.decisionId,
+            category: decision.category,
+            revision: decision.revision,
+            contractHash: decision.contractHash,
+            refs: decision.refs,
+          },
+        );
+      }
+      this.#appendFact(runId, "approval", `gate-a:${gateA.revision}`, {
+        gate: "gate-a",
+        revision: gateA.revision,
+        contractHash: gateA.contractHash,
+      });
+      const projection = plan.projection;
+      const fact = this.#appendFact(
+        runId,
+        "plan",
+        String(projection.revision),
+        {
+          revision: projection.revision,
+          rawSha256: projection.rawSha256,
+          canonicalHash: projection.canonicalHash,
+        },
+      );
+      this.#database
+        .prepare(`INSERT INTO design_compiled_plans(
+        run_id, revision, fact_sequence, raw_sha256, canonical_hash, plan_bytes
+      ) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(
+          runId,
+          projection.revision,
+          fact.sequence,
+          projection.rawSha256,
+          projection.canonicalHash,
+          Buffer.from(plan.bytes),
+        );
+      this.#appendFact(runId, "approval", `gate-b:${gateB.revision}`, {
+        gate: "gate-b",
+        revision: gateB.revision,
+        contractHash: gateB.contractHash,
+      });
+    });
   }
 
   status(runId: string): DesignStatusProjection {

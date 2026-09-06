@@ -104,6 +104,14 @@ describe("Abel prompt templates", () => {
   it("requires unique input for design, implement, and diagnose", () => {
     for (const name of ["abel-design", "abel-implement", "abel-diagnose"]) {
       const file = readFileSync(path.join(promptsDir, `${name}.md`), "utf8");
+      if (name === "abel-design") {
+        expect(file).toMatch(/no requirement can be identified/i);
+        expect(file).toMatch(/investigate first/i);
+        expect(file).toMatch(
+          /only unresolved substantive choices require a user decision/i,
+        );
+        continue;
+      }
       expect(file).toMatch(/missing|absent/i);
       expect(file).toMatch(/ambiguous|unique/i);
       expect(file).toMatch(/stop/i);

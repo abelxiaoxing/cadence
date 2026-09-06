@@ -408,11 +408,13 @@ describe("package Prompt provenance activates abel_dispatch", () => {
       "receiptHash",
       "routeId",
       "action",
+      "batchId",
+      "request",
     ]);
     expect(tool.parameters.properties).not.toHaveProperty("version");
     expect(tool.parameters.properties.action).toEqual({
       type: "string",
-      enum: ["finish"],
+      enum: ["finish", "amend"],
     });
     expect(tool.parameters).not.toHaveProperty("oneOf");
     expect(tool.prepareArguments).toBeTypeOf("function");
@@ -431,6 +433,8 @@ describe("package Prompt provenance activates abel_dispatch", () => {
         stage: "abel-implement",
         change: "retained",
         action: null,
+        batchId: null,
+        request: null,
       }),
     ).toEqual({
       command: "status",

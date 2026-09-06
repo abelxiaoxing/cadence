@@ -1520,7 +1520,8 @@ describe("durable WorkflowEngine service composition", () => {
     ).resolves.toMatchObject({
       runId: started.runId,
       state: "paused",
-      pause: { code: "route-rebind-required" },
+      pause: { code: "candidate-patch-invalid" },
+      recovery: { exhausted: true },
     });
     expect(replacementCalls).toBe(0);
 
@@ -1558,9 +1559,10 @@ describe("durable WorkflowEngine service composition", () => {
       }),
     ).resolves.toMatchObject({
       state: "paused",
-      pause: { code: "replacement-reached" },
+      pause: { code: "candidate-patch-invalid" },
+      recovery: { exhausted: true },
     });
-    expect(replacementCalls).toBe(1);
+    expect(replacementCalls).toBe(0);
     await engine.close();
   });
 
@@ -2162,7 +2164,14 @@ describe("durable WorkflowEngine service composition", () => {
         routePolicy: policy(),
         proposeCandidate: async (input: Record<string, unknown>) => {
           proposalCalls += 1;
-          if (proposalCalls === 2) retryProjection = input.ledgerProjection;
+          if (proposalCalls === 2) {
+            retryProjection = input.ledgerProjection;
+            expect(input.recoveryFeedback).toMatchObject({
+              code: fixture.expectedCode,
+              attempt: 2,
+              strategy: "revise-candidate",
+            });
+          }
           (input.onHeaders as () => void)();
           (input.onProgress as () => void)();
           return input.phase === "red"
@@ -2230,7 +2239,11 @@ describe("durable WorkflowEngine service composition", () => {
             category: "dependency",
             requiredGates: ["gate-b"],
             refs: [],
-            designRequest: `/abel-design --change ${change}`,
+            continuation: {
+              action: "amend",
+              change: change,
+              batchId: expect.any(String),
+            },
             retainedRun: {
               runId: expect.any(String),
               deliveryRevision: 1,
@@ -2300,7 +2313,7 @@ describe("durable WorkflowEngine service composition", () => {
         pause: { code: fixture.expectedCode },
       });
       expect(proposalCalls).toBe(
-        plan.verification.artifactCorrection.maxAttempts * 2,
+        plan.verification.artifactCorrection.maxAttempts,
       );
       await engine.close();
     },
@@ -4906,6 +4919,68 @@ describe("durable verification lifecycle", () => {
     await engine.close();
   });
 
+  it("recovers an oversized candidate with compact guidance and completes the same run", async () => {
+    const module = await import("../src/workflow-engine.ts");
+    const fixture = lifecycleFixture("compact-candidate-recovery");
+    const attempts: string[] = [];
+    const engine = module.openDurableWorkflowEngine({
+      consumerRoot: fixture.consumerRoot,
+      stateRoot: fixture.stateRoot,
+      deliverySource: {
+        load: async () => ({
+          gate: "gate-b" as const,
+          revision: 1,
+          receiptHash: "8".repeat(64),
+          plan: fixture.plan,
+        }),
+      },
+      routePolicy: policy(),
+      proposeCandidate: async (input) => {
+        input.onHeaders();
+        input.onProgress();
+        attempts.push(input.phase);
+        if (attempts.length === 1)
+          return { kind: "retryable", code: "needs-task-split" };
+        if (attempts.length === 2)
+          expect(input.recoveryFeedback).toMatchObject({
+            strategy: "compact-patch",
+            code: "needs-task-split",
+            attempt: 2,
+          });
+        return {
+          kind: "candidate",
+          bytes:
+            input.phase === "red"
+              ? valuePatch("base", "red")
+              : valuePatch("red", "green"),
+        };
+      },
+      verifyPhase: async (input) => verifiedPhase(input.phase),
+      verifyChange: async () => ({
+        ok: true,
+        exitCode: 0,
+        classification: "expected-green",
+        failureIdentities: [],
+      }),
+    });
+    try {
+      await expect(
+        engine.execute({
+          command: "start",
+          stage: "abel-implement",
+          change: fixture.change,
+          operationId: "compact-start",
+        }),
+      ).resolves.toMatchObject({ state: "completed", completed: true });
+      expect(attempts).toEqual(["red", "red", "green"]);
+      expect(
+        readFileSync(path.join(fixture.consumerRoot, "value.txt"), "utf8"),
+      ).toBe("green\n");
+    } finally {
+      await engine.close();
+    }
+  });
+
   it("corrects a Green constraint caused by its accepted Red artifact without Design", async () => {
     const module = await import("../src/workflow-engine.ts");
     const fixture = lifecycleFixture("red-artifact-context-correction");
@@ -5168,7 +5243,9 @@ describe("durable verification lifecycle", () => {
       const fixture = lifecycleFixture(
         `red-artifact-${rejectedPhase}-verification`,
       );
+      fixture.plan.tasks[0]!.phases.red.write.push("test/fixture.test.ts");
       let redCalls = 0;
+      let proposalCalls = 0;
       const engine = module.openDurableWorkflowEngine({
         consumerRoot: fixture.consumerRoot,
         stateRoot: fixture.stateRoot,
@@ -5182,6 +5259,7 @@ describe("durable verification lifecycle", () => {
         },
         routePolicy: policy(),
         proposeCandidate: async (input: Record<string, unknown>) => {
+          proposalCalls += 1;
           (input.onHeaders as () => void)();
           (input.onProgress as () => void)();
           if (input.phase === "red") {
@@ -5218,7 +5296,7 @@ describe("durable verification lifecycle", () => {
           );
           if (phase === "red") {
             redCalls += 1;
-            if (rejectedPhase === "red" && redCalls === 2) {
+            if (rejectedPhase === "red" && redCalls >= 2) {
               return {
                 ok: false as const,
                 kind: "retryable" as const,
@@ -5266,9 +5344,214 @@ describe("durable verification lifecycle", () => {
       expect(
         readFileSync(path.join(fixture.consumerRoot, "value.txt"), "utf8"),
       ).toBe("base\n");
+      const callsBeforeResume = proposalCalls;
+      for (let index = 0; index < 3; index += 1) {
+        const resumed = await engine.execute({
+          command: "resume",
+          stage: "abel-implement",
+          change: fixture.change,
+          operationId: `rollback-resume-${index}`,
+        });
+        expect(resumed).toMatchObject({ recovery: { exhausted: true } });
+        expect(proposalCalls).toBe(callsBeforeResume);
+      }
       await engine.close();
     },
   );
+
+  it("discovers a supporting read created by a dependency in the private workspace", async () => {
+    const module = await import("../src/workflow-engine.ts");
+    const fixture = lifecycleFixture("dependency-context");
+    const plan = fixture.plan as unknown as ImplementPlan;
+    const producer = plan.tasks[0];
+    const consumer = structuredClone(producer);
+    consumer.taskId = "consumer-task";
+    consumer.dependsOn = [producer.taskId];
+    producer.phases.green.write.push("helper.ts");
+    plan.outputs.push({
+      id: "helper-output",
+      path: "helper.ts",
+      producer: { taskId: producer.taskId, phase: "green" },
+      postcondition: "regular-file",
+    });
+    plan.tasks.push(consumer);
+    plan.tracking.taskIds.push(consumer.taskId);
+    writeFileSync(
+      fixture.tasksPath,
+      "# Tasks\n\n- [ ] package-loader-task — producer\n- [ ] consumer-task — consumer\n",
+    );
+    let consumerCalls = 0;
+    let discovered: string[] | undefined;
+    const engine = module.openDurableWorkflowEngine({
+      consumerRoot: fixture.consumerRoot,
+      stateRoot: fixture.stateRoot,
+      deliverySource: {
+        load: async () => ({
+          gate: "gate-b" as const,
+          revision: 1,
+          receiptHash: "6".repeat(64),
+          plan,
+        }),
+      },
+      routePolicy: policy(),
+      proposeCandidate: async (input) => {
+        input.onHeaders();
+        input.onProgress();
+        if (input.taskId === producer.taskId)
+          return {
+            kind: "candidate" as const,
+            bytes:
+              input.phase === "red"
+                ? valuePatch("base", "red")
+                : Buffer.concat([
+                    valuePatch("red", "green"),
+                    Buffer.from(
+                      "diff --git a/helper.ts b/helper.ts\nnew file mode 100644\n--- /dev/null\n+++ b/helper.ts\n@@ -0,0 +1 @@\n+private helper\n",
+                    ),
+                  ]),
+          };
+        if (consumerCalls++ === 0) {
+          writeFileSync(
+            path.join(fixture.consumerRoot, "host-only.ts"),
+            "not captured\n",
+          );
+          return {
+            kind: "retryable" as const,
+            code: "approved-context-needed",
+            contextRequest: {
+              code: "approved-context-needed" as const,
+              refs: [
+                {
+                  kind: "requested-path" as const,
+                  path: "helper.ts",
+                  access: "read" as const,
+                },
+                {
+                  kind: "requested-path" as const,
+                  path: "host-only.ts",
+                  access: "read" as const,
+                },
+              ],
+            },
+          };
+        }
+        discovered = input.contextReadPaths;
+        expect(existsSync(path.join(fixture.consumerRoot, "helper.ts"))).toBe(
+          false,
+        );
+        expect(
+          readFileSync(path.join(input.workspaceRoot, "helper.ts"), "utf8"),
+        ).toBe("private helper\n");
+        expect(input.candidateArtifact.writePaths).not.toContain("helper.ts");
+        return { kind: "paused" as const, code: "context-observed" };
+      },
+      verifyPhase: async (input) => verifiedPhase(input.phase),
+      verifyChange: async () => ({
+        ok: true as const,
+        exitCode: 0 as const,
+        classification: "expected-green" as const,
+        failureIdentities: [],
+      }),
+    });
+    try {
+      await engine.execute({
+        command: "start",
+        stage: "abel-implement",
+        change: fixture.change,
+        operationId: "discover-dependency-context",
+      });
+      expect(consumerCalls).toBe(2);
+      expect(discovered).toEqual(["helper.ts"]);
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it("binds discovered context to final currentness without expanding candidate writes", async () => {
+    const module = await import("../src/workflow-engine.ts");
+    const fixture = lifecycleFixture("discovered-context-currentness");
+    writeFileSync(
+      path.join(fixture.consumerRoot, "helper.ts"),
+      "old context\n",
+    );
+    execFileSync("git", ["add", "helper.ts"], { cwd: fixture.consumerRoot });
+    let greenCalls = 0;
+    const engine = module.openDurableWorkflowEngine({
+      consumerRoot: fixture.consumerRoot,
+      stateRoot: fixture.stateRoot,
+      deliverySource: {
+        load: async () => ({
+          gate: "gate-b" as const,
+          revision: 1,
+          receiptHash: "6".repeat(64),
+          plan: fixture.plan,
+        }),
+      },
+      routePolicy: policy(),
+      proposeCandidate: async (input) => {
+        input.onHeaders();
+        input.onProgress();
+        if (input.phase === "red")
+          return {
+            kind: "candidate" as const,
+            bytes: valuePatch("base", "red"),
+          };
+        if (greenCalls++ === 0)
+          return {
+            kind: "retryable" as const,
+            code: "approved-context-needed",
+            contextRequest: {
+              code: "approved-context-needed" as const,
+              refs: [
+                {
+                  kind: "requested-path" as const,
+                  path: "helper.ts",
+                  access: "read" as const,
+                },
+              ],
+            },
+          };
+        expect(input.contextReadPaths).toEqual(["helper.ts"]);
+        expect(input.candidateArtifact.writePaths).not.toContain("helper.ts");
+        expect(
+          readFileSync(path.join(input.workspaceRoot, "helper.ts"), "utf8"),
+        ).toBe("old context\n");
+        writeFileSync(
+          path.join(fixture.consumerRoot, "helper.ts"),
+          "user changed context\n",
+        );
+        return {
+          kind: "candidate" as const,
+          bytes: valuePatch("red", "green"),
+        };
+      },
+      verifyPhase: async (input) => verifiedPhase(input.phase),
+      verifyChange: async () => ({
+        ok: true as const,
+        exitCode: 0 as const,
+        classification: "expected-green" as const,
+        failureIdentities: [],
+      }),
+    });
+    try {
+      const outcome = await engine.execute({
+        command: "start",
+        stage: "abel-implement",
+        change: fixture.change,
+        operationId: "discover-context",
+      });
+      expect(outcome).toMatchObject({ state: "paused", completed: false });
+      expect(greenCalls).toBe(2);
+      expect(
+        readFileSync(path.join(fixture.consumerRoot, "value.txt"), "utf8"),
+      ).toBe("base\n");
+      expect(
+        readFileSync(path.join(fixture.consumerRoot, "helper.ts"), "utf8"),
+      ).toBe("user changed context\n");
+    } finally {
+      await engine.close();
+    }
+  });
 
   it("rejects partial Red-artifact corrections and exhausts the sealed attempt budget", async () => {
     const module = await import("../src/workflow-engine.ts");
@@ -5454,7 +5737,11 @@ describe("durable verification lifecycle", () => {
         category: "path-boundary",
         requiredGates: ["gate-b"],
         refs: [],
-        designRequest: `/abel-design --change ${fixture.change}`,
+        continuation: {
+          action: "amend",
+          change: fixture.change,
+          batchId: expect.any(String),
+        },
         receiptPrecondition: {
           deliveryRevision: { greaterThan: 1 },
           receiptHash: "matching-ready-receipt",
@@ -5471,7 +5758,7 @@ describe("durable verification lifecycle", () => {
     await engine.close();
   });
 
-  it("resumes after an exhausted repair budget from the last committed phase", async () => {
+  it("preserves exhausted repair and the main workspace after route replacement", async () => {
     const module = await import("../src/workflow-engine.ts");
     const fixture = lifecycleFixture("repair-resume");
     let repairCalls = 0;
@@ -5561,17 +5848,33 @@ describe("durable verification lifecycle", () => {
         change: fixture.change,
         operationId: "repair-resume-second-operation",
       }),
-    ).resolves.toMatchObject({ state: "completed", completed: true });
-    expect(proposals).toEqual([
-      "red",
-      "green",
-      "repair-1",
-      "green",
-      "repair-2",
-    ]);
+    ).resolves.toMatchObject({
+      state: "paused",
+      recovery: { exhausted: true },
+    });
+    expect(proposals).toEqual(["red", "green", "repair-1"]);
+    await engine.execute({
+      command: "rebind",
+      stage: "abel-implement",
+      change: fixture.change,
+      operationId: "repair-rebind",
+      routeId: "inherited",
+    });
+    await expect(
+      engine.execute({
+        command: "resume",
+        stage: "abel-implement",
+        change: fixture.change,
+        operationId: "repair-resume-changed-route",
+      }),
+    ).resolves.toMatchObject({
+      state: "paused",
+      recovery: { exhausted: true },
+    });
+    expect(proposals).toEqual(["red", "green", "repair-1"]);
     expect(
       readFileSync(path.join(fixture.consumerRoot, "value.txt"), "utf8"),
-    ).toBe("fixed\n");
+    ).toBe("base\n");
     await engine.close();
   });
 

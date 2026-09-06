@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import {
   lstatSync,
@@ -459,6 +460,7 @@ export class DesignController {
   readonly #runs: RunStore;
   readonly #inspectOpenSpec: DesignControllerOptions["inspectOpenSpec"];
   #closed = false;
+  readonly #authority = new AsyncLocalStorage<() => void>();
 
   private constructor(options: DesignControllerOptions) {
     this.consumerRoot = path.resolve(options.consumerRoot);
@@ -485,7 +487,22 @@ export class DesignController {
     return new DesignController(options);
   }
 
+  executeWithAuthority(
+    value: unknown,
+    assertAuthority: () => void,
+  ): Promise<Record<string, unknown>> {
+    return this.#authority.run(assertAuthority, () => this.execute(value));
+  }
+
+  #assertFinalizationLease(
+    lease: Parameters<DesignJournal["assertFinalizationLease"]>[0],
+  ): void {
+    this.#authority.getStore()?.();
+    this.#journal.assertFinalizationLease(lease);
+  }
+
   #assertOpen(): void {
+    this.#authority.getStore()?.();
     if (this.#closed) throw new Error("design-controller-closed");
   }
 
@@ -631,6 +648,7 @@ export class DesignController {
       throw error;
     }
     if (run.state === "created") {
+      this.#journal.inheritFinalizedAuthority(run.runId);
       this.#runs.transition({
         runId: run.runId,
         to: "paused",
@@ -882,9 +900,15 @@ export class DesignController {
       if (!change) throw new Error("design-change-required");
       const readyPath = safeRelative(change, "ready.yaml");
       const gateAPath = safeRelative(change, "gate-a.yaml");
-      removeSafeFile(this.consumerRoot, readyPath);
-      removeSafeFile(this.consumerRoot, gateAPath);
-      this.#journal.assertFinalizationLease(lease);
+      const unchanged =
+        status.gates.gateB.current &&
+        status.plan?.rawSha256 === compiled.rawSha256 &&
+        status.plan.canonicalHash === compiled.planHash;
+      if (!unchanged) {
+        removeSafeFile(this.consumerRoot, readyPath);
+        removeSafeFile(this.consumerRoot, gateAPath);
+      }
+      this.#assertFinalizationLease(lease);
       atomicWrite(
         this.consumerRoot,
         safeRelative(change, "implement-plan.json"),
@@ -897,6 +921,7 @@ export class DesignController {
         rawSha256: compiled.rawSha256,
         canonicalHash: compiled.planHash,
         lease,
+        certify: true,
       });
     } finally {
       this.#journal.releaseFinalizationLease(lease);
@@ -1069,7 +1094,7 @@ export class DesignController {
         traceability: traceability.value,
       });
       readyHash = readyReceipt.rawSha256;
-      this.#journal.assertFinalizationLease(lease);
+      this.#assertFinalizationLease(lease);
       atomicWrite(this.consumerRoot, gateAPath, gateAReceipt.bytes);
       atomicWrite(this.consumerRoot, readyPath, readyReceipt.bytes);
       readyInstalled = true;

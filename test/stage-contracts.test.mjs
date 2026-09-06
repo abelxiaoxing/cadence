@@ -74,11 +74,11 @@ describe("Design stage contract", () => {
   it("does not reopen approvals for mechanical delivery repair", () => {
     const recovery = section(design, "## Recovery without approval loops");
     expect(recovery).toMatch(/mechanical hash/i);
-    expect(recovery).toMatch(/does not reopen a Gate/i);
+    expect(recovery).toMatch(/does not reopen a user decision/i);
     expect(recovery).toMatch(
       /Reopen Gate A only for changed behavior authority/i,
     );
-    expect(recovery).toMatch(/Gate B only for changed technical authority/i);
+    expect(recovery).toMatch(/compiler regenerates Gate B/i);
   });
 
   it("seals compatibility and public-surface impact closure", () => {
@@ -166,15 +166,18 @@ describe("Implement stage contract", () => {
     );
     expect(approval).toMatch(/new observable behavior/i);
     expect(approval).toMatch(/new\/changed dependency/i);
-    expect(approval).toMatch(/undeclared write\/delete\/read target/i);
+    expect(approval).toMatch(
+      /undeclared write\/delete target or a read outside sealed discovery roots/i,
+    );
     expect(approval).toMatch(/changed verification contract/i);
     expect(approval).toMatch(/AGENTS target\/impact\/managed block change/i);
     expect(approval).toMatch(/never `approval-needed`/i);
     expect(approval).toMatch(/endpoint outage/i);
     expect(approval).toMatch(/introduced in-boundary repair/i);
-    expect(approval).toMatch(/\/abel-design --change <change>/i);
-    expect(approval).toMatch(/never invoke Design automatically/i);
-    expect(approval).toMatch(/`conditionalCommands`/i);
+    expect(approval).toMatch(/`decisionBatch.items`/);
+    expect(approval).toMatch(/"action":"amend"/);
+    expect(approval).toMatch(/does not activate Design/i);
+    expect(approval).toMatch(/stale batch ids/i);
     expect(approval).not.toMatch(/return-to-design|nextStep/i);
     for (const pattern of forbiddenStageRouting)
       expect(approval).not.toMatch(pattern);

@@ -172,7 +172,7 @@ A produced cross-task output SHALL publish only after its producer's required ph
 ### Requirement: Recoverable attempts and Worker replacement
 
 Provider-managed hidden retry SHALL remain disabled, while the control plane SHALL apply separately observable bounded policies for connection, first response, idle progress, total phase time, transport attempts, stale refresh, artifact correction, verification repair, and parent checkpoint correction.
-The canonical Implement plan SHALL seal `artifactCorrection.maxAttempts` as 2 or 3 total candidate launches per task phase and operation, including the initial launch; only typed artifact rejection SHALL consume that counter, and a later explicit operation SHALL start a fresh counter from the retained ledger.
+The canonical Implement plan SHALL seal `artifactCorrection.maxAttempts` as 2 or 3 recovery attempts per verification obligation and phase, including the initial attempt. Typed artifact, stale-candidate, and verification rejection SHALL consume this shared durable counter; another operation id SHALL NOT reset exhaustion. The next Worker SHALL receive structured recovery feedback. Operation ids, route replacement, rollback lineage, task renaming, and contract rewording SHALL NOT replenish an exhausted verification obligation. Dedicated private recovery facts and a run-wide pre-reserved work budget SHALL bound retries across process restart. Workers MAY read their task phase paths and request ordinary regular files inside sealed task roots; dynamically granted reads SHALL remain bound to merge, retained evidence, and final currentness. Phase write/delete authority remains unchanged.
 Each failure SHALL retain its safe closed code, stage, policy class, attempt count, and legal continuation without exposing endpoint secrets, prompts, code excerpts, or raw model output in public outcomes.
 Automatic policy exhaustion SHALL pause the affected task rather than terminally block it.
 Cancellation SHALL interrupt the active operation without consuming an automatic retry or accepting partial output.
@@ -188,7 +188,7 @@ An approval-boundary gap SHALL become approval-needed and SHALL never authorize 
 #### Scenario: Automatic attempts are exhausted
 
 - **WHEN** one policy class reaches its automatic attempt bound
-- **THEN** the task pauses with that class's final evidence while counters for unrelated artifact, verification, stale, and checkpoint work remain unchanged
+- **THEN** the task pauses with final evidence; shared artifact/stale/verification exhaustion survives restart and unchanged resume, while transport and parent-checkpoint policies remain separate
 
 #### Scenario: Replacement Worker resumes
 
@@ -305,7 +305,7 @@ Presentation failure SHALL NOT alter scheduling, cancellation, recovery, verific
 #### Scenario: Task needs approval
 
 - **WHEN** a boundary gap pauses a task
-- **THEN** activity displays approval-needed with a safe boundary code and the Gate required to continue
+- **THEN** activity displays recovering when a parent-owned automatic continuation is available, retaining the safe boundary code and keeping the underlying Gate requirement inspectable
 
 #### Scenario: Tool call returns a paused outcome
 
@@ -405,3 +405,17 @@ The Design control surface SHALL provide code-owned write and delete operations 
 
 - **WHEN** the active Design run requests deletion of an allowed existing delta-spec file
 - **THEN** only that safe regular file is removed, operation replay is idempotent, and no parent directory or unrelated artifact is removed
+
+### Requirement: Bound context discovery
+
+A Worker MAY request additional ordinary regular-file reads within sealed task roots. The parent SHALL persist exact admitted paths, exclude hidden and private-key files from this automatic expansion, supply them to subsequent attempts, and bind them to candidate merge, retained evidence checks, and final application currentness. This permission SHALL NOT expand write or delete authority.
+
+#### Scenario: A supporting file was omitted from the task
+
+- **WHEN** a Worker requests an ordinary supporting read inside the sealed root
+- **THEN** the next attempt receives its exact read capability without a new user decision
+
+#### Scenario: Discovered context changes in the main workspace
+
+- **WHEN** the user changes a dynamically admitted supporting file before final application
+- **THEN** currentness validation pauses application and preserves the user's changes

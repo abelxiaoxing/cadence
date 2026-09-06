@@ -68,6 +68,7 @@ import {
   type WorkflowChangeVerifier,
   type WorkflowContextRequest,
   type WorkflowDeliverySource,
+  type WorkflowRecoveryFeedback,
   type WorkflowRouteFacts,
   type WorkflowRunLifecycle,
   type WorkflowWorker,
@@ -175,6 +176,8 @@ export interface DurableWorkflowEngineOptions {
     };
     artifactCorrection?: RedArtifactCorrection;
     contextRequest?: WorkflowContextRequest;
+    contextReadPaths?: string[];
+    recoveryFeedback?: WorkflowRecoveryFeedback;
     signal: AbortSignal;
     onHeaders(): void;
     onProgress(): void;
@@ -1507,6 +1510,7 @@ class DurableWorkflowComposition
           const boundPaths = [
             ...new Set(
               boundaries.flatMap((boundary) => [
+                ...(row.contextReadPaths ?? []),
                 ...boundary.read,
                 ...boundary.write,
                 ...boundary.delete,
@@ -1634,8 +1638,11 @@ class DurableWorkflowComposition
         baseRevisionId,
         currentRevisionId: resources.currentRevisionId,
         candidateRevisionId,
-        boundPaths: boundPaths ?? [
-          ...new Set([...phase.read, ...phase.write, ...phase.delete]),
+        boundPaths: [
+          ...new Set([
+            ...(boundPaths ?? [...phase.read, ...phase.write, ...phase.delete]),
+            ...(input.contextReadPaths ?? []),
+          ]),
         ],
       });
       resources.currentRevisionId = merged.revisionId;
@@ -1788,7 +1795,7 @@ class DurableWorkflowComposition
         signal: request.signal,
         ...(request.onActivity ? { onActivity: request.onActivity } : {}),
         classifyResult: semanticRouteFailure,
-        execute: (attempt) => {
+        execute: async (attempt) => {
           identity = {
             candidateId: `candidate-${randomUUID()}`,
             runId: request.runId,
@@ -1807,6 +1814,11 @@ class DurableWorkflowComposition
             routeId: attempt.route.id,
             routeFingerprint: attempt.route.fingerprint,
           };
+          if (request.reserveCandidate && !request.reserveCandidate())
+            return {
+              kind: "paused" as const,
+              code: "change-work-budget-exhausted",
+            };
           return this.#options.proposeCandidate({
             runId: request.runId,
             operationId: request.operationId,
@@ -1814,6 +1826,7 @@ class DurableWorkflowComposition
             taskId: request.taskId,
             phase: request.phase,
             task: structuredClone(request.task),
+            contextReadPaths: request.contextReadPaths,
             workspaceRoot: proposalRoot,
             ledgerProjection,
             candidateArtifact: {
@@ -1830,6 +1843,9 @@ class DurableWorkflowComposition
               : {}),
             ...(request.contextRequest
               ? { contextRequest: request.contextRequest }
+              : {}),
+            ...(request.recoveryFeedback
+              ? { recoveryFeedback: request.recoveryFeedback }
               : {}),
             signal: attempt.signal,
             onHeaders: attempt.onHeaders,
@@ -2741,6 +2757,16 @@ class DurableWorkflowComposition
     };
   }
 
+  isContextReadAvailable(
+    input: Parameters<NonNullable<WorkflowWorker["isContextReadAvailable"]>>[0],
+  ): boolean {
+    const resources = this.#resources(input);
+    const revision = resources.workspaces.getRevision(
+      input.currentWorkspaceRevisionId,
+    );
+    return revision.entries[input.path]?.kind === "file";
+  }
+
   async runAttempt(
     input: Parameters<WorkflowWorker["runAttempt"]>[0],
   ): Promise<WorkflowAttemptOutcome> {
@@ -2889,7 +2915,7 @@ class DurableWorkflowComposition
         signal: input.signal,
         ...(input.onActivity ? { onActivity: input.onActivity } : {}),
         classifyResult: semanticRouteFailure,
-        execute: (attempt) => {
+        execute: async (attempt) => {
           identity = {
             candidateId: `candidate-${randomUUID()}`,
             runId: input.runId,
@@ -2908,6 +2934,11 @@ class DurableWorkflowComposition
             routeId: attempt.route.id,
             routeFingerprint: attempt.route.fingerprint,
           };
+          if (input.reserveCandidate && !input.reserveCandidate())
+            return {
+              kind: "paused" as const,
+              code: "change-work-budget-exhausted",
+            };
           return this.#options.proposeCandidate({
             runId: input.runId,
             operationId: input.operationId,
@@ -2915,6 +2946,7 @@ class DurableWorkflowComposition
             taskId: input.taskId,
             phase: input.phase,
             task: structuredClone(input.task),
+            contextReadPaths: input.contextReadPaths,
             workspaceRoot: proposalRoot,
             ledgerProjection,
             candidateArtifact: {
@@ -2927,6 +2959,9 @@ class DurableWorkflowComposition
             route: attempt.route,
             ...(input.contextRequest
               ? { contextRequest: input.contextRequest }
+              : {}),
+            ...(input.recoveryFeedback
+              ? { recoveryFeedback: input.recoveryFeedback }
               : {}),
             signal: attempt.signal,
             onHeaders: attempt.onHeaders,
@@ -3772,7 +3807,12 @@ class DurableWorkflowComposition
       consumerRoot: input.consumerRoot,
       baselineRevisionId: resources.baselineRevisionId,
       finalRevisionId: resources.currentRevisionId,
-      boundPaths: deliveryBoundPaths(input.plan),
+      boundPaths: [
+        ...new Set([
+          ...deliveryBoundPaths(input.plan),
+          ...(input.contextReadPaths ?? []),
+        ]),
+      ].sort(),
       verificationFact: resources.verificationFact,
     });
     return prepared;
