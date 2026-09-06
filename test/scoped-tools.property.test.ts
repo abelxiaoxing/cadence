@@ -167,6 +167,87 @@ describe("scoped read-only tools", () => {
     ).toBe(true);
   });
 
+  it("bounds grep output and reports truncation", async () => {
+    if (!scopedTools) return notReady("scoped-tools");
+    const root = makeRoot();
+    writeFileSync(path.join(root, "matches.txt"), "needle\n".repeat(100000));
+    const grep = scopedTools
+      .createScopedTools({ roots: [root] })
+      .find((t) => t.name === "grep")!;
+    const result = await grep.execute({ pattern: "needle" });
+    expect(result).toMatchObject({ ok: true, truncated: true });
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
+      64 * 1024,
+    );
+  });
+
+  it("does not start a search after cancellation", async () => {
+    if (!scopedTools) return notReady("scoped-tools");
+    const root = makeRoot();
+    writeFileSync(path.join(root, "matches.txt"), "needle");
+    const controller = new AbortController();
+    controller.abort();
+    const grep = scopedTools
+      .createScopedTools({ roots: [root] })
+      .find((t) => t.name === "grep")!;
+    expect(
+      await grep.execute({ pattern: "needle" }, controller.signal),
+    ).toMatchObject({ ok: false, error: "search cancelled" });
+  });
+
+  it("cancels pathological matching while keeping the host responsive", async () => {
+    if (!scopedTools) return notReady("scoped-tools");
+    const root = makeRoot();
+    writeFileSync(path.join(root, "pathological.txt"), `${"a".repeat(32)}!`);
+    const controller = new AbortController();
+    let heartbeat = false;
+    const timer = setTimeout(() => {
+      heartbeat = true;
+      controller.abort();
+    }, 100);
+    const grep = scopedTools
+      .createScopedTools({ roots: [root] })
+      .find((t) => t.name === "grep")!;
+    try {
+      const result = await grep.execute(
+        { pattern: "^(a+)+$" },
+        controller.signal,
+      );
+      expect(heartbeat).toBe(true);
+      expect(result).toMatchObject({ ok: false, error: "search cancelled" });
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
+  it("terminates pathological matching at the search deadline", async () => {
+    if (!scopedTools) return notReady("scoped-tools");
+    const root = makeRoot();
+    writeFileSync(path.join(root, "pathological.txt"), `${"a".repeat(32)}!`);
+    const grep = scopedTools
+      .createScopedTools({ roots: [root] })
+      .find((t) => t.name === "grep")!;
+    const result = await grep.execute({ pattern: "^(a+)+$" });
+    expect(result).toMatchObject({ ok: false, error: "search timed out" });
+    // A timeout must not leave a thread or rejection that poisons the next search.
+    expect(await grep.execute({ pattern: "!" })).toMatchObject({ ok: true });
+  }, 10000);
+
+  it("skips oversized files explicitly and continues with admitted small files", async () => {
+    if (!scopedTools) return notReady("scoped-tools");
+    const root = makeRoot();
+    writeFileSync(path.join(root, "a-large.txt"), "x".repeat(2 * 1024 * 1024));
+    writeFileSync(path.join(root, "b-small.txt"), "needle");
+    const grep = scopedTools
+      .createScopedTools({ roots: [root] })
+      .find((t) => t.name === "grep")!;
+    expect(await grep.execute({ pattern: "needle" })).toMatchObject({
+      ok: true,
+      truncated: true,
+      matches: [{ path: "b-small.txt", line: 1, text: "needle" }],
+    });
+  });
+
   it("hides .git and node_modules unless explicitly in scope", async () => {
     if (!scopedTools) return notReady("scoped-tools");
     const root = makeRoot();
@@ -288,7 +369,7 @@ describe("scoped read-only tools", () => {
       pattern: "*.ts",
       limit: 1,
     });
-    expect(nested).toMatchObject({ ok: true, entries: ["index.ts"] });
+    expect(nested).toMatchObject({ ok: true, entries: ["src/index.ts"] });
     expect(await find.execute({ path: "src" })).toMatchObject({
       ok: false,
       error: expect.stringMatching(/pattern/i),
@@ -365,6 +446,61 @@ describe("scoped read-only tools", () => {
     ).not.toContain("outside.ts");
   });
 
+  it.each([false, true])(
+    "round-trips search paths and observations with nested roots (single=%s)",
+    async (single) => {
+      if (!scopedTools) return notReady("scoped-tools");
+      const workspace = makeRoot();
+      mkdirSync(path.join(workspace, "src"));
+      mkdirSync(path.join(workspace, "test"));
+      writeFileSync(path.join(workspace, "src", "same.ts"), "source needle");
+      writeFileSync(path.join(workspace, "test", "same.ts"), "test needle");
+      writeFileSync(path.join(workspace, "outside.ts"), "outside needle");
+      const collector = new scopedTools.ScopedObservationCollector();
+      const tools = scopedTools.createScopedTools({
+        cwd: workspace,
+        roots: (single ? ["src"] : ["src", "test"]).map((root) =>
+          path.join(workspace, root),
+        ),
+        allowedPaths: [
+          path.join(workspace, "src/same.ts"),
+          path.join(workspace, "test/same.ts"),
+        ],
+        observer: collector.observe,
+      });
+      const read = tools.find((t) => t.name === "read")!;
+      const find = tools.find((t) => t.name === "find")!;
+      const grep = tools.find((t) => t.name === "grep")!;
+      const found = await find.execute({ pattern: "*.ts" });
+      const expected = single
+        ? ["src/same.ts"]
+        : ["src/same.ts", "test/same.ts"];
+      expect(found.entries).toEqual(expected);
+      for (const file of found.entries as string[]) {
+        expect(await read.execute({ path: file })).toMatchObject({
+          ok: true,
+          content: file.startsWith("src") ? "source needle" : "test needle",
+        });
+      }
+      expect(
+        await find.execute({ path: "src", pattern: "*.ts" }),
+      ).toMatchObject({ entries: ["src/same.ts"] });
+      const grepped = await grep.execute({ path: ".", pattern: "needle" });
+      expect(
+        (grepped.matches as { path: string }[]).map((match) => match.path),
+      ).toEqual(expected);
+      expect(await read.execute({ path: "outside.ts" })).toMatchObject({
+        ok: false,
+      });
+      expect(
+        collector
+          .projection()
+          .observations.filter((o) => o.kind === "file")
+          .map((o) => o.path),
+      ).toEqual(expected);
+    },
+  );
+
   it("supports standard positive and negated glob character classes", async () => {
     if (!scopedTools) return notReady("scoped-tools");
     const root = makeRoot();
@@ -383,19 +519,19 @@ describe("scoped read-only tools", () => {
       await find.execute({ path: "src", pattern: "[ab].ts" }),
     ).toMatchObject({
       ok: true,
-      entries: ["a.ts", "b.ts"],
+      entries: ["src/a.ts", "src/b.ts"],
     });
     expect(
       await find.execute({ path: "src", pattern: "[!a].ts" }),
     ).toMatchObject({
       ok: true,
-      entries: ["b.ts", "c.ts"],
+      entries: ["src/b.ts", "src/c.ts"],
     });
     expect(
       await find.execute({ path: "src", pattern: "[^a].ts" }),
     ).toMatchObject({
       ok: true,
-      entries: ["b.ts", "c.ts"],
+      entries: ["src/b.ts", "src/c.ts"],
     });
   });
 });

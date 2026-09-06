@@ -8,7 +8,6 @@ const read = (relative) =>
 const design = read("prompts/abel-design.md");
 const implement = read("prompts/abel-implement.md");
 const diagnose = read("prompts/abel-diagnose.md");
-const shared = read("skills/abel-workflow/SKILL.md");
 
 function section(source, start, end) {
   const from = source.indexOf(start);
@@ -222,7 +221,7 @@ describe("Diagnose and browser-E2E contracts", () => {
   });
 
   it("pauses only an approved browser check when dev-browser is absent", () => {
-    const text = `${shared}\n${design}\n${implement}\n${diagnose}`;
+    const text = `${design}\n${implement}\n${diagnose}`;
     expect(text).toMatch(/dev-browser/);
     expect(text).toMatch(/approved browser E2E/i);
     expect(text).toMatch(/pause only that check/i);

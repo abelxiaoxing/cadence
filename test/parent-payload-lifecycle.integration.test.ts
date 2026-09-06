@@ -412,7 +412,7 @@ async function beforeAgent(harness: Harness): Promise<void> {
 async function activate(harness: Harness): Promise<void> {
   await harness.pi.emit(
     "input",
-    { type: "input", text: "/abel-design lifecycle" },
+    { type: "input", source: "interactive", text: "/abel-design lifecycle" },
     harness.context,
   );
   await beforeAgent(harness);

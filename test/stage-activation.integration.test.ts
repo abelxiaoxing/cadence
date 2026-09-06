@@ -48,13 +48,19 @@ function harness(
     typeof engine === "function" ? engine() : engine,
   );
   const invoke = (name: typeof prompt) => {
-    handlers.get("input")?.({ text: `/${name} verified` });
-    handlers.get("before_agent_start")?.(
-      {
-        prompt: `<abel-request>verified</abel-request> <!-- ABEL:PROMPT:${name} -->`,
-      },
-      { model: undefined, modelRegistry: {} },
-    );
+    const input = handlers.get("input")?.({
+      source: "interactive",
+      text: `/${name} verified`,
+    });
+    const before = () =>
+      handlers.get("before_agent_start")?.(
+        {
+          prompt: `<abel-request>verified</abel-request> <!-- ABEL:PROMPT:${name} -->`,
+        },
+        { model: undefined, modelRegistry: {} },
+      );
+    if (input instanceof Promise) return input.then(before);
+    return before();
   };
   invoke(prompt);
   const context = {
@@ -102,6 +108,154 @@ async function capturedDesignFailure(
 }
 
 describe("semantic stage activation teardown", () => {
+  it("waits for safe engine exit before restoring tools and rejects concurrent or stale dispatch", async () => {
+    let settle!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    const close = vi.fn(() => settled);
+    const executeDesign = vi.fn(async () => ({ state: "active" }));
+    const item = harness("abel-design", {
+      ...baseEngine(),
+      executeDesign,
+      close,
+    });
+    await item.tool.execute(
+      "open",
+      {
+        action: "design",
+        request: {
+          operation: "start",
+          requirement: "example",
+          operationId: "open",
+        },
+      },
+      undefined,
+      undefined,
+      item.context,
+    );
+    const finished = item.tool.execute(
+      "exit",
+      { action: "finish" },
+      undefined,
+      undefined,
+      item.context,
+    );
+    expect(item.active()).toEqual(["read", DISPATCH_TOOL]);
+    await expect(
+      item.tool.execute(
+        "during-exit",
+        {
+          action: "design",
+          request: {
+            operation: "start",
+            requirement: "example",
+            operationId: "other",
+          },
+        },
+        undefined,
+        undefined,
+        item.context,
+      ),
+    ).rejects.toThrow("stage-control-mismatch");
+    settle();
+    await finished;
+    expect(close).toHaveBeenCalledOnce();
+    expect(executeDesign).toHaveBeenCalledOnce();
+    expect(item.active()).toEqual(["read", "bash"]);
+    await expect(
+      item.tool.execute(
+        "stale",
+        { command: "status", stage: "abel-implement", change: "example" },
+        undefined,
+        undefined,
+        item.context,
+      ),
+    ).rejects.toThrow("stage-control-mismatch");
+  });
+
+  it("preserves a paused Implement run on exit without sending cancel or discard", async () => {
+    const execute = vi.fn(async () => ({ state: "paused", completed: false }));
+    const close = vi.fn(async () => {});
+    const item = harness("abel-implement", { execute, close });
+    await item.tool.execute(
+      "status",
+      { command: "status", stage: "abel-implement", change: "retained" },
+      undefined,
+      undefined,
+      item.context,
+    );
+    await expect(
+      item.tool.execute(
+        "bad-finish",
+        {
+          action: "finish",
+          command: "discard",
+          stage: "abel-implement",
+          change: "retained",
+        },
+        undefined,
+        undefined,
+        item.context,
+      ),
+    ).rejects.toThrow("control-envelope-ambiguous");
+    await item.tool.execute(
+      "finish",
+      { action: "finish" },
+      undefined,
+      undefined,
+      item.context,
+    );
+    expect(close).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledOnce();
+    expect(item.active()).toEqual(["read", "bash"]);
+  });
+
+  it("keeps Design restricted when engine settlement fails and allows exit retry", async () => {
+    const close = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("settlement-failed"))
+      .mockResolvedValueOnce(undefined);
+    const item = harness("abel-design", {
+      ...baseEngine(),
+      executeDesign: async () => ({ state: "active" }),
+      close,
+    });
+    await item.tool.execute(
+      "open",
+      {
+        action: "design",
+        request: {
+          operation: "start",
+          requirement: "example",
+          operationId: "open",
+        },
+      },
+      undefined,
+      undefined,
+      item.context,
+    );
+    await expect(
+      item.tool.execute(
+        "exit",
+        { action: "finish" },
+        undefined,
+        undefined,
+        item.context,
+      ),
+    ).rejects.toThrow("settlement-failed");
+    expect(item.active()).toEqual(["read", DISPATCH_TOOL]);
+    await item.tool.execute(
+      "retry-exit",
+      { action: "finish" },
+      undefined,
+      undefined,
+      item.context,
+    );
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(item.active()).toEqual(["read", "bash"]);
+  });
+
   it("reports a result serialization failure and keeps Design tools restricted", async () => {
     let attempts = 0;
     const engine: WorkflowControlEngine = {
@@ -343,7 +497,7 @@ describe("semantic stage activation teardown", () => {
 
   it.each(["abel-implement", "abel-diagnose"] as const)(
     "restores the exact pre-Design tools before switching to %s",
-    (destination) => {
+    async (destination) => {
       const original = [
         "write",
         "read",
@@ -363,7 +517,7 @@ describe("semantic stage activation teardown", () => {
         DISPATCH_TOOL,
       ]);
 
-      item.invoke(destination);
+      await item.invoke(destination);
 
       expect(item.active()).toEqual([...original, DISPATCH_TOOL]);
     },

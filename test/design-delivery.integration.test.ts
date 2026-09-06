@@ -358,7 +358,7 @@ function journeyControlEngine(
 
 function extensionJourneyHarness(
   consumerRoot: string,
-  control: WorkflowControlEngine,
+  control: WorkflowControlEngine | (() => WorkflowControlEngine),
   initialPrompt: "abel-design" | "abel-implement" | "abel-diagnose",
 ) {
   const packageRoot = path.resolve(import.meta.dirname, "..");
@@ -389,7 +389,9 @@ function extensionJourneyHarness(
       active = [...next];
     },
   };
-  registerWorkflowControl(pi as never, async () => control);
+  registerWorkflowControl(pi as never, async () =>
+    typeof control === "function" ? control() : control,
+  );
   const context = {
     cwd: consumerRoot,
     mode: "print",
@@ -399,13 +401,19 @@ function extensionJourneyHarness(
   const invoke = (
     prompt: "abel-design" | "abel-implement" | "abel-diagnose",
   ) => {
-    handlers.get("input")?.({ text: `/${prompt} ${itemChange}` });
-    handlers.get("before_agent_start")?.(
-      {
-        prompt: `<abel-request>${itemChange}</abel-request> <!-- ABEL:PROMPT:${prompt} -->`,
-      },
-      context,
-    );
+    const input = handlers.get("input")?.({
+      source: "interactive",
+      text: `/${prompt} ${itemChange}`,
+    });
+    const before = () =>
+      handlers.get("before_agent_start")?.(
+        {
+          prompt: `<abel-request>${itemChange}</abel-request> <!-- ABEL:PROMPT:${prompt} -->`,
+        },
+        context,
+      );
+    if (input instanceof Promise) return input.then(before);
+    return before();
   };
   const itemChange = "close-design-delivery";
   invoke(initialPrompt);
@@ -1018,9 +1026,13 @@ describe("explicit four-entrypoint approval round trip", () => {
 
     const phases: string[] = [];
     const firstEngine = journeyControlEngine(item, phases);
+    let opens = 0;
     const first = extensionJourneyHarness(
       item.consumerRoot,
-      firstEngine.control,
+      () =>
+        opens++ === 0
+          ? firstEngine.control
+          : journeyControlEngine(item, phases).control,
       "abel-implement",
     );
     const approval = await first.execute("implement-v1", {
@@ -1041,7 +1053,7 @@ describe("explicit four-entrypoint approval round trip", () => {
     expect(firstEngine.designCalls()).toBe(0);
     expect(first.active()).toEqual(["read", "bash", "edit", DISPATCH_TOOL]);
 
-    first.invoke("abel-design");
+    await first.invoke("abel-design");
     expect(first.active()).toEqual(["read", DISPATCH_TOOL]);
     const designStart = await first.execute("design-v2", {
       action: "design",
@@ -1391,6 +1403,155 @@ describe("code-owned Design delivery compilation", () => {
     },
     60_000,
   );
+
+  for (const boundary of [
+    "finish",
+    "switch",
+    "session_start",
+    "session_shutdown",
+  ] as const) {
+    for (const valid of [true, false]) {
+      it(`settles ${valid ? "successful" : "failed"} Design finalization before ${boundary} closes its journal`, async () => {
+        const item = fixture(`finalization-exit-${boundary}-${valid}`);
+        await approveAndCompile(item);
+        item.controller.close();
+        const inspectionEntered = deferred();
+        const releaseInspection = deferred();
+        const closeEntered = deferred();
+        const releaseClose = deferred();
+        let closeCalls = 0;
+        let exitSettled = false;
+        const controller = DesignController.open({
+          consumerRoot: item.consumerRoot,
+          stateRoot: item.stateRoot,
+          inspectOpenSpec: async () => {
+            inspectionEntered.resolve();
+            await releaseInspection.promise;
+            return { ...(await item.inspectOpenSpec()), strictValid: valid };
+          },
+        });
+        const session = extensionJourneyHarness(
+          item.consumerRoot,
+          {
+            execute: async () => ({ state: "paused" }),
+            executeDesign: (request) => controller.execute(request),
+            async close() {
+              closeCalls += 1;
+              closeEntered.resolve();
+              await releaseClose.promise;
+              controller.close();
+            },
+          },
+          "abel-design",
+        );
+        const finalization = session
+          .execute("finalize-exit", {
+            action: "design",
+            request: {
+              operation: "finalize-delivery",
+              runId: item.runId,
+              operationId: "finalize-exit",
+            },
+          })
+          .then(
+            (value) => ({ ok: true as const, value }),
+            (error) => ({ ok: false as const, error }),
+          );
+        await inspectionEntered.promise;
+        const exit = Promise.resolve(
+          boundary === "finish"
+            ? session.execute("exit", { action: "finish" })
+            : boundary === "switch"
+              ? session.invoke("abel-implement")
+              : session.handlers.get(boundary)?.(
+                  { type: boundary },
+                  session.context,
+                ),
+        ).then(() => {
+          exitSettled = true;
+        });
+        try {
+          // Yield a complete event-loop turn: the inspection is deliberately
+          // still pending, so neither close nor tool restoration is legal.
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          expect(closeCalls).toBe(0);
+          expect(exitSettled).toBe(false);
+          expect(session.active()).toEqual(["read", DISPATCH_TOOL]);
+          await expect(
+            session.execute("late-design", {
+              action: "design",
+              request: { operation: "status", runId: item.runId },
+            }),
+          ).rejects.toThrow("stage-control-mismatch");
+
+          releaseInspection.resolve();
+          const result = await finalization;
+          if (valid) {
+            expect(result).toMatchObject({
+              ok: true,
+              value: { state: "completed" },
+            });
+          } else {
+            expect(result).toMatchObject({
+              ok: false,
+              error: {
+                name: "DesignControlError",
+                message: "design-finalization-invalid",
+              },
+            });
+          }
+          await closeEntered.promise;
+          expect(exitSettled).toBe(false);
+          expect(session.active()).toEqual(["read", DISPATCH_TOOL]);
+          const database = new DatabaseSync(item.stateRoot.databasePath, {
+            readOnly: true,
+          });
+          try {
+            expect(
+              database
+                .prepare(
+                  "SELECT COUNT(*) AS count FROM design_finalization_leases WHERE run_id = ?",
+                )
+                .get(item.runId)?.count,
+            ).toBe(0);
+          } finally {
+            database.close();
+          }
+          releaseClose.resolve();
+          await exit;
+          expect(closeCalls).toBe(1);
+          expect(session.active()).toEqual(
+            boundary === "switch"
+              ? ["read", "bash", "edit", DISPATCH_TOOL]
+              : ["read", "bash", "edit"],
+          );
+          if (!valid) {
+            const retry = DesignController.open({
+              consumerRoot: item.consumerRoot,
+              stateRoot: item.stateRoot,
+              inspectOpenSpec: item.inspectOpenSpec,
+            });
+            try {
+              await expect(
+                retry.execute({
+                  operation: "finalize-delivery",
+                  runId: item.runId,
+                  operationId: "finalize-exit-retry",
+                }),
+              ).resolves.toMatchObject({ state: "completed" });
+            } finally {
+              retry.close();
+            }
+          }
+        } finally {
+          releaseInspection.resolve();
+          releaseClose.resolve();
+          await Promise.allSettled([finalization, exit]);
+          controller.close();
+        }
+      });
+    }
+  }
 
   it("serializes competing finalization operations before receipt mutation", async () => {
     const item = fixture("finalization-overlap");

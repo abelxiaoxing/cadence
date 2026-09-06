@@ -56,6 +56,7 @@ export interface WorkerBrokerOptions {
 
 export interface RunWorkerAttemptInput<T> {
   runId: string;
+  taskId?: string;
   operationId: string;
   role: WorkerRole;
   requirements?: RouteRequirements;
@@ -176,7 +177,6 @@ export class WorkerBroker {
   readonly #policy: RoutePolicy;
   readonly #now: () => number;
   readonly #healthStore: RouteHealthStore;
-  readonly #health = new Map<string, RouteHealth>();
 
   constructor(policy: RoutePolicy, options: WorkerBrokerOptions = {}) {
     this.#policy = structuredClone(policy);
@@ -187,7 +187,6 @@ export class WorkerBroker {
   #routeHealth(routeId: string): RouteHealth {
     const route = this.#policy.routes[routeId];
     return (
-      this.#health.get(routeId) ??
       (route ? this.#healthStore.get(route.fingerprint) : undefined) ?? {
         state: "healthy",
       }
@@ -197,7 +196,6 @@ export class WorkerBroker {
   #setRouteHealth(routeId: string, health: RouteHealth): void {
     const route = this.#policy.routes[routeId];
     if (!route) throw new Error("route-not-declared");
-    this.#health.set(routeId, structuredClone(health));
     this.#healthStore.set(route.fingerprint, health);
   }
 
@@ -606,7 +604,8 @@ export class WorkerBroker {
 }
 
 /**
- * Adds stable run/role route bindings to the stateless route-attempt broker.
+ * Adds run/role defaults and independent task bindings to route attempts.
+ * All bound brokers consult the same health store.
  * Attempt credentials and provider objects remain disposable and are never
  * retained by this facade.
  */
@@ -622,16 +621,21 @@ export class RunWorkerBroker {
 
   constructor(policy: RoutePolicy, options: WorkerBrokerOptions = {}) {
     this.#policy = structuredClone(policy);
-    this.#options = options;
-    this.#defaultBroker = new WorkerBroker(this.#policy, options);
+    this.#options = {
+      ...options,
+      healthStore: options.healthStore ?? new MemoryRouteHealthStore(),
+    };
+    this.#defaultBroker = new WorkerBroker(this.#policy, this.#options);
   }
 
-  #bindingKey(runId: string, role: WorkerRole): string {
-    return `${runId}\0${role}`;
+  #bindingKey(runId: string, role: WorkerRole, taskId?: string): string {
+    return JSON.stringify([runId, role, taskId ?? null]);
   }
 
-  #brokerFor(runId: string, role: WorkerRole): WorkerBroker {
-    const binding = this.#bindings.get(this.#bindingKey(runId, role));
+  #brokerFor(runId: string, role: WorkerRole, taskId?: string): WorkerBroker {
+    const binding =
+      this.#bindings.get(this.#bindingKey(runId, role, taskId)) ??
+      this.#bindings.get(this.#bindingKey(runId, role));
     if (!binding) return this.#defaultBroker;
     const routeId = binding.routeId;
     const key = `${role}\0${routeId}`;
@@ -657,6 +661,8 @@ export class RunWorkerBroker {
     if (
       typeof input.runId !== "string" ||
       input.runId.length === 0 ||
+      (input.taskId !== undefined &&
+        (typeof input.taskId !== "string" || input.taskId.length === 0)) ||
       typeof input.operationId !== "string" ||
       input.operationId.length === 0
     ) {
@@ -667,7 +673,11 @@ export class RunWorkerBroker {
         attempts: [],
       };
     }
-    const result = await this.#brokerFor(input.runId, input.role).run({
+    const result = await this.#brokerFor(
+      input.runId,
+      input.role,
+      input.taskId,
+    ).run({
       operationId: input.operationId,
       role: input.role,
       ...(input.requirements ? { requirements: input.requirements } : {}),
@@ -679,39 +689,54 @@ export class RunWorkerBroker {
     if (result.ok) {
       const route = this.#policy.routes[result.routeId];
       if (!route) throw new Error("broker-route-result-invalid");
-      this.#bindings.set(this.#bindingKey(input.runId, input.role), {
-        routeId: route.id,
-        fingerprint: route.fingerprint,
-      });
+      this.#bindings.set(
+        this.#bindingKey(input.runId, input.role, input.taskId),
+        {
+          routeId: route.id,
+          fingerprint: route.fingerprint,
+        },
+      );
     }
     return result;
   }
 
   rebind(input: {
     runId: string;
+    taskId?: string;
     role: WorkerRole;
     routeId: string;
     requirements?: RouteRequirements;
   }) {
-    const result = this.#defaultBroker.rebind(input);
+    const { taskId, ...routeInput } = input;
+    if (
+      taskId !== undefined &&
+      (typeof taskId !== "string" || taskId.length === 0)
+    ) {
+      return { ok: false as const, code: "approval-boundary" as const };
+    }
+    const result = this.#defaultBroker.rebind(routeInput);
     if (result.ok) {
-      this.#bindings.set(this.#bindingKey(input.runId, input.role), {
-        routeId: result.route.id,
-        fingerprint: result.route.fingerprint,
-      });
+      this.#bindings.set(
+        this.#bindingKey(input.runId, input.role, input.taskId),
+        {
+          routeId: result.route.id,
+          fingerprint: result.route.fingerprint,
+        },
+      );
     }
     return result;
   }
 
   resumeBinding(input: {
     runId: string;
+    taskId?: string;
     role: WorkerRole;
     routeId: string;
     expectedFingerprint?: string;
     requirements?: RouteRequirements;
   }) {
     const binding = this.#bindings.get(
-      this.#bindingKey(input.runId, input.role),
+      this.#bindingKey(input.runId, input.role, input.taskId),
     );
     const route = this.#policy.routes[input.routeId];
     if (!binding) {
@@ -724,6 +749,7 @@ export class RunWorkerBroker {
       }
       return this.rebind({
         runId: input.runId,
+        ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
         role: input.role,
         routeId: input.routeId,
         ...(input.requirements ? { requirements: input.requirements } : {}),
@@ -751,8 +777,12 @@ export class RunWorkerBroker {
     this.#boundBrokers.clear();
   }
 
-  binding(runId: string, role: WorkerRole): string | undefined {
-    return this.#bindings.get(this.#bindingKey(runId, role))?.routeId;
+  binding(
+    runId: string,
+    role: WorkerRole,
+    taskId?: string,
+  ): string | undefined {
+    return this.#bindings.get(this.#bindingKey(runId, role, taskId))?.routeId;
   }
 
   status(): Record<string, unknown> {

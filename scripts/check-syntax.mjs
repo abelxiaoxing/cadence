@@ -17,6 +17,6 @@ function check(directory) {
     }
   }
 }
-for (const directory of ["skills", "test", "scripts"]) {
+for (const directory of ["skills", "test", "scripts", "src"]) {
   check(path.join(root, directory));
 }

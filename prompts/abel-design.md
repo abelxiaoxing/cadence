@@ -6,13 +6,21 @@ tags: [abel, design, openspec, PBT, evidence]
 argument-hint: "<requirement> | --change <change_name>"
 ---
 
-Load the bundled `abel-workflow` Skill and read the complete value inside `<abel-request>` without tokenizing it a second time.
+This procedure applies only when the user explicitly invokes `/abel-design`.
+Reading this file, mentioning the command, or finding OpenSpec artifacts does not activate it.
+Read the complete value inside `<abel-request>` without tokenizing it a second time.
 
 <abel-request>
 $ARGUMENTS
 </abel-request>
 
 <!-- ABEL:PROMPT:abel-design -->
+
+This stage is scoped to the invoked task.
+Direct answers and same-task continuations stay in this stage.
+If the user ends the workflow or requests an unrelated task, first send `{"action":"finish"}` to `abel_dispatch`, then handle the new task normally with the restored tools.
+Exit preserves resumable work and never means completion or discard.
+Never start another stage automatically.
 <!-- ABEL:START -->
 
 # Design outcome
@@ -129,6 +137,7 @@ The control plane generates the canonical behavior-contract hash; the returned p
 `gate-a.yaml` is installed later by code-owned finalization, not hand-authored here.
 
 Gate A is not tool permission and carries no session/model/timestamp identity.
+A later behavior decision invalidates both Gates; a later technical decision or plan compilation invalidates Gate B only.
 
 ## Technical contract and ImplementPlan
 
@@ -149,6 +158,7 @@ Impact closure must name affected existing tests and fixtures; a suite made only
 For public UI or API work, seal the relevant route authorization, page state, API response and contract, public HTML/template/theme behavior, and an approved browser E2E check when those surfaces are affected.
 
 The plan admits only shell-free `vitest`, `package-script`, `static-check`, or ordered `steps` contracts.
+`dev-browser` is required only by an approved browser E2E contract; its absence does not block unrelated tasks or stages.
 Pin local runners, package scripts, arguments, `minTests`, classifications, and `noInstall` behavior.
 Reject shell operators, implicit downloads, absolute/escaping paths, missing local capability, and unsupported verification shapes during Design readiness.
 
@@ -179,12 +189,13 @@ The canonical `ImplementPlan` contains:
 - parent-owned `tasks.md` tracking;
 - when required, one sealed managed-block AGENTS operation per approved target, including impact, owning task ids, complete marker-bounded content, and verification.
 
-Use the shared readiness proof to require an executable static closure with no diagnostics.
+Use the code-owned readiness proof to require an executable static closure with no diagnostics.
 A write set grants authority but never proves that an output exists.
 Every absent future input must be a unique declared output from a transitive dependency.
 
 ## Gate B and trusted delivery
 
+Gate B grants no tool permission or authority beyond its recorded scope.
 Gate B approves the complete HOW: substantive technical choices, task DAG, exact boundaries, verification/repair contracts, output postconditions, dependency changes, scheduling declarations, tracking, and AGENTS operations.
 Do not request approval while any capability, closure, traceability, or blocking decision is unresolved.
 
@@ -204,6 +215,8 @@ Then request finalization:
 Finalization revalidates both current private Gate proofs, the stored plan, strict/planning-complete OpenSpec state, artifact coverage, exact traceability, and executable verification closure.
 It atomically installs canonical `gate-a.yaml`, writes `ready.yaml` last, rereads the installed delivery, removes `plan-draft.json`, marks the Design run completed, and returns `deliveryRevision` plus `receiptHash`.
 Any failure leaves Design nonterminal and installs no new `ready.yaml`.
+
+Finalization serializes artifact mutation through an expiring ownership lease; never bypass a lease conflict or manually repair code-owned receipt bytes.
 
 The canonical receipts bind the Gate A and Gate B approval revisions, canonical contract hashes, and owner-private record hashes.
 `ready.yaml` references the plan path, raw-byte hash, canonical plan hash, executable verification closure, Gate A hash, artifact hashes, and traceability hash.

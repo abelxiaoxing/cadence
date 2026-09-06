@@ -19,6 +19,7 @@ import {
   type ApprovalBoundaryCode,
   diffWritePaths,
   isValidRelativePath,
+  LIMITS,
   type StructuredVerificationContract,
   verificationInputPaths,
 } from "./contracts.ts";
@@ -150,6 +151,27 @@ function isCancellationException(error: unknown, signal: AbortSignal): boolean {
       error.message === "cancelled" ||
       error.message === "operation-cancelled")
   );
+}
+
+// These adapters are read-only. Cancellation fences their late settlement;
+// mutating operations must instead be awaited through their owned lifecycle.
+async function cancellableRead<T>(
+  read: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  signal?.throwIfAborted();
+  if (!signal) return read();
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    const reading = Promise.resolve().then(() => {
+      signal.throwIfAborted();
+      return read();
+    });
+    reading
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", onAbort));
+  });
 }
 
 function emitWorkflowActivity(
@@ -438,12 +460,14 @@ export interface WorkflowDeliverySource {
   load(input: {
     stage: ControlStage;
     change: string;
+    signal?: AbortSignal;
     deliveryRevision?: number;
     receiptHash?: string;
   }): Promise<WorkflowDelivery>;
   discoverLatest?(input: {
     stage: ControlStage;
     change: string;
+    signal?: AbortSignal;
   }): Promise<WorkflowAvailableDelivery | undefined>;
 }
 
@@ -3000,6 +3024,7 @@ class DurableWorkflowComposition
       if (request.routeId) {
         const rebound = this.#broker.resumeBinding({
           runId: request.runId,
+          taskId: request.taskId,
           role: "implementation-worker",
           routeId: request.routeId,
           ...(request.routeFingerprint
@@ -3028,6 +3053,7 @@ class DurableWorkflowComposition
       let identity: BeginCandidateInput | undefined;
       const routed = await this.#broker.run({
         runId: request.runId,
+        taskId: request.taskId,
         operationId: `${request.operationId}:${request.taskId}:repair:${input.repairAttempt}`,
         role: "implementation-worker",
         requirements: implementationRouteRequirements({
@@ -4091,6 +4117,7 @@ class DurableWorkflowComposition
       if (input.routeId) {
         const rebound = this.#broker.resumeBinding({
           runId: input.runId,
+          taskId: input.taskId,
           role: "implementation-worker",
           routeId: input.routeId,
           ...(input.routeFingerprint
@@ -4116,6 +4143,7 @@ class DurableWorkflowComposition
       let identity: BeginCandidateInput | undefined;
       const routed = await this.#broker.run({
         runId: input.runId,
+        taskId: input.taskId,
         operationId: `${input.operationId}:${input.taskId}:${input.phase}`,
         role: "implementation-worker",
         requirements: implementationRouteRequirements({
@@ -4744,6 +4772,7 @@ class DurableWorkflowComposition
   rebind(input: Parameters<WorkflowWorker["rebind"]>[0]) {
     const rebound = this.#broker.rebind({
       runId: input.runId,
+      taskId: input.taskId,
       role: input.role,
       routeId: input.routeId,
       requirements: implementationRouteRequirements({ task: input.task }),
@@ -5101,9 +5130,16 @@ export class WorkflowEngine {
   readonly #lifecycle?: WorkflowRunLifecycle;
   readonly #now: () => number;
   readonly #leaseTtlMs: number;
+  #activeTasks = 0;
+  readonly #capacityWaiters = new Set<() => void>();
   readonly #active = new Map<string, ActiveOperation>();
   readonly #operationLeases = new Map<string, HeldOperationLease>();
   #orphanRecoveryTimer?: ReturnType<typeof setTimeout>;
+  readonly #commands = new Map<
+    AbortController,
+    { command: ControlCommand; settled: Promise<Record<string, unknown>> }
+  >();
+  #closing?: Promise<void>;
   #closed = false;
 
   private constructor(options: WorkflowEngineOptions) {
@@ -5666,13 +5702,20 @@ export class WorkflowEngine {
     change: string,
     deliveryRevision?: number,
     receiptHash?: string,
+    signal?: AbortSignal,
   ): Promise<WorkflowDelivery> {
-    const delivery = await this.#deliverySource.load({
-      stage,
-      change,
-      ...(deliveryRevision === undefined ? {} : { deliveryRevision }),
-      ...(receiptHash === undefined ? {} : { receiptHash }),
-    });
+    const delivery = await cancellableRead(
+      () =>
+        this.#deliverySource.load({
+          stage,
+          change,
+          ...(deliveryRevision === undefined ? {} : { deliveryRevision }),
+          ...(receiptHash === undefined ? {} : { receiptHash }),
+          ...(signal ? { signal } : {}),
+        }),
+      signal,
+    );
+    signal?.throwIfAborted();
     assertDelivery(delivery, stage, change, deliveryRevision, receiptHash);
     return structuredClone(delivery);
   }
@@ -5950,6 +5993,38 @@ export class WorkflowEngine {
     });
   }
 
+  #cancelledDelivery(
+    runId: string,
+    operationId: string,
+    error: unknown,
+    signal: AbortSignal | undefined,
+    lease: OperationLease,
+  ): Record<string, unknown> | undefined {
+    if (!signal || !isCancellationException(error, signal)) return undefined;
+    try {
+      this.#runStore.assertLease(lease);
+      if (
+        ["validating-delivery", "ready"].includes(
+          this.#runStore.status(runId).state,
+        )
+      ) {
+        this.#transition(
+          runId,
+          "paused",
+          `${operationId}:delivery-cancelled`,
+          "operation-cancelled",
+          lease,
+        );
+      }
+    } catch (failure) {
+      if (!(failure instanceof Error) || failure.message !== "lease-fenced")
+        throw failure;
+    } finally {
+      this.#interruptOperation(runId, operationId);
+    }
+    return this.#statusByRun(runId);
+  }
+
   #deliveryFailure(
     runId: string,
     operationId: string,
@@ -6072,13 +6147,23 @@ export class WorkflowEngine {
     });
   }
 
-  #queueTask(runId: string, row: EngineTaskRow, lease: OperationLease): void {
-    if (row.state === "queued" && row.queue_position !== null) return;
+  #queueTask(
+    runId: string,
+    row: EngineTaskRow,
+    lease: OperationLease,
+    reason: "conflict" | "capacity" = "conflict",
+  ): void {
+    const pauseCode = reason === "capacity" ? "worker-capacity" : null;
+    if (row.state === "queued" && row.queue_position !== null) {
+      if (row.pause_code !== pauseCode)
+        this.#setTask(runId, row.task_id, { pauseCode }, lease);
+      return;
+    }
     const engineRun = this.#engineRun(runId);
     this.#leasedTransaction(lease, () => {
       this.#setTask(runId, row.task_id, {
         state: "queued",
-        pauseCode: null,
+        pauseCode,
         queuePosition: engineRun.next_queue_position,
       });
       this.#database
@@ -7121,6 +7206,20 @@ export class WorkflowEngine {
     else this.#transaction(cleanup);
   }
 
+  #waitForCapacity(signal: AbortSignal): Promise<void> {
+    if (signal.aborted || this.#activeTasks < LIMITS.maxActiveChildSessions)
+      return Promise.resolve();
+    return new Promise((resolve) => {
+      const wake = () => {
+        this.#capacityWaiters.delete(wake);
+        signal.removeEventListener("abort", wake);
+        resolve();
+      };
+      this.#capacityWaiters.add(wake);
+      signal.addEventListener("abort", wake, { once: true });
+    });
+  }
+
   async #advance(
     runId: string,
     operationId: string,
@@ -7172,6 +7271,7 @@ export class WorkflowEngine {
         before: string;
       }> = [];
       const selectedTaskIds = new Set<string>();
+      let capacityBlocked = false;
       for (const row of rows) {
         if (row.state === "verified" || attempted.has(row.task_id)) continue;
         if (!this.#dependenciesVerified(row, rows)) {
@@ -7193,14 +7293,38 @@ export class WorkflowEngine {
           this.#queueTask(runId, row, lease);
           continue;
         }
+        if (
+          this.#activeTasks + runnable.length >=
+          LIMITS.maxActiveChildSessions
+        ) {
+          this.#queueTask(runId, row, lease, "capacity");
+          capacityBlocked = true;
+          continue;
+        }
         const before = `${row.state}:${row.phase}`;
         attempted.add(row.task_id);
         selectedTaskIds.add(row.task_id);
         runnable.push({ row, before });
       }
+      if (runnable.length === 0 && capacityBlocked) {
+        await this.#waitForCapacity(signal);
+        madeProgress = true;
+        continue;
+      }
+      this.#activeTasks += runnable.length;
       const settled = await Promise.allSettled(
         runnable.map(({ row }) =>
-          this.#runTask(runId, row, operationId, signal, lease, onActivity),
+          this.#runTask(
+            runId,
+            row,
+            operationId,
+            signal,
+            lease,
+            onActivity,
+          ).finally(() => {
+            this.#activeTasks--;
+            for (const wake of this.#capacityWaiters) wake();
+          }),
         ),
       );
       const rejected = settled.find(
@@ -7383,7 +7507,7 @@ export class WorkflowEngine {
       queue: queued.map((row, index) => ({
         taskId: row.task_id,
         position: index + 1,
-        reason: "conflict",
+        reason: row.pause_code === "worker-capacity" ? "capacity" : "conflict",
       })),
       ...(engineRun?.verification_json
         ? {
@@ -7442,6 +7566,7 @@ export class WorkflowEngine {
 
   async #withAvailableDelivery(
     outcome: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<Record<string, unknown>> {
     if (
       outcome.stage !== "abel-implement" ||
@@ -7453,10 +7578,17 @@ export class WorkflowEngine {
     }
     let available: WorkflowAvailableDelivery | undefined;
     try {
-      available = await this.#deliverySource.discoverLatest({
-        stage: "abel-implement",
-        change: outcome.change,
-      });
+      const discover = this.#deliverySource.discoverLatest;
+      const change = outcome.change;
+      available = await cancellableRead(
+        () =>
+          discover.call(this.#deliverySource, {
+            stage: "abel-implement",
+            change,
+            ...(signal ? { signal } : {}),
+          }),
+        signal,
+      );
     } catch {
       return outcome;
     }
@@ -7618,7 +7750,13 @@ export class WorkflowEngine {
       legalCommands: ["status", "cancel", "discard"],
     });
     try {
-      const delivery = await this.#loadDelivery(command.stage, command.change);
+      const delivery = await this.#loadDelivery(
+        command.stage,
+        command.change,
+        undefined,
+        undefined,
+        signal,
+      );
       this.#admitDelivery(runId, delivery, lease);
       this.#transition(
         runId,
@@ -7634,6 +7772,14 @@ export class WorkflowEngine {
         onActivity,
       );
     } catch (error) {
+      const cancelled = this.#cancelledDelivery(
+        runId,
+        command.operationId,
+        error,
+        signal,
+        lease,
+      );
+      if (cancelled) return cancelled;
       const failure = this.#deliveryFailure(
         runId,
         command.operationId,
@@ -7749,6 +7895,7 @@ export class WorkflowEngine {
           command.change,
           requestedRevision,
           command.receiptHash ?? projectedBinding?.receiptHash,
+          signal,
         );
         this.#admitDelivery(runId, delivery, lease);
         this.#transition(
@@ -7774,6 +7921,14 @@ export class WorkflowEngine {
         onActivity,
       );
     } catch (error) {
+      const cancelled = this.#cancelledDelivery(
+        runId,
+        command.operationId,
+        error,
+        signal,
+        lease,
+      );
+      if (cancelled) return cancelled;
       const failure = this.#deliveryFailure(
         runId,
         command.operationId,
@@ -7917,21 +8072,33 @@ export class WorkflowEngine {
   }
 
   async #abortActiveOperation(runId: string, reason: Error): Promise<void> {
-    const active = this.#active.get(runId);
-    if (!active) return;
-    active.controller.abort(reason);
-    try {
-      await active.settled;
-    } catch (error) {
-      const fenced =
-        error instanceof Error &&
-        ["lease-fenced", "operation-journal-fenced"].includes(error.message);
+    const pending: Promise<unknown>[] = [];
+    for (const [controller, entry] of this.#commands) {
       if (
-        !fenced &&
-        !isCancellationException(error, active.controller.signal)
-      ) {
+        !["start", "resume"].includes(entry.command.command) ||
+        this.#lookupRun(entry.command.stage, entry.command.change) !== runId
+      )
+        continue;
+      controller.abort(reason);
+      pending.push(entry.settled);
+    }
+    const active = this.#active.get(runId);
+    if (active) {
+      active.controller.abort(reason);
+      pending.push(active.settled);
+    }
+    const results = await Promise.allSettled(pending);
+    for (const result of results) {
+      if (result.status !== "rejected") continue;
+      const error = result.reason;
+      if (
+        error !== reason &&
+        !(
+          error instanceof Error &&
+          ["lease-fenced", "operation-journal-fenced"].includes(error.message)
+        )
+      )
         throw error;
-      }
     }
   }
 
@@ -8038,17 +8205,44 @@ export class WorkflowEngine {
     return this.#commitOperation(runId, command.operationId, outcome);
   }
 
-  async execute(
+  execute(
     value: unknown,
     signal?: AbortSignal,
     onActivity?: (event: WorkflowActivityUpdate) => void,
   ): Promise<Record<string, unknown>> {
-    this.#assertOpen();
-    const command = assertControlCommand(value);
+    let command: ControlCommand;
+    try {
+      this.#assertOpen();
+      if (this.#closing) throw new Error("workflow-engine-closed");
+      command = assertControlCommand(value);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const controller = new AbortController();
+    const onAbort = () => controller.abort(signal?.reason);
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+    // Register before execution can yield or invoke external callbacks.
+    const settled = Promise.resolve()
+      .then(() => this.#executeCommand(command, controller.signal, onActivity))
+      .finally(() => {
+        signal?.removeEventListener("abort", onAbort);
+        this.#commands.delete(controller);
+      });
+    this.#commands.set(controller, { command, settled });
+    return settled;
+  }
+
+  async #executeCommand(
+    command: ControlCommand,
+    signal?: AbortSignal,
+    onActivity?: (event: WorkflowActivityUpdate) => void,
+  ): Promise<Record<string, unknown>> {
     switch (command.command) {
       case "start":
         return this.#withAvailableDelivery(
           await this.#start(command, signal, onActivity),
+          signal,
         );
       case "status": {
         const runId = this.#lookupRun(command.stage, command.change);
@@ -8065,11 +8259,12 @@ export class WorkflowEngine {
           };
         }
         this.#recoverLegacyContextApproval(runId);
-        return this.#withAvailableDelivery(this.#statusByRun(runId));
+        return this.#withAvailableDelivery(this.#statusByRun(runId), signal);
       }
       case "resume":
         return this.#withAvailableDelivery(
           await this.#resume(command, signal, onActivity),
+          signal,
         );
       case "rebind":
         return this.#rebind(command);
@@ -8247,21 +8442,30 @@ export class WorkflowEngine {
     return parseJsonRecord(row.facts_json);
   }
 
-  async close(): Promise<void> {
-    if (this.#closed) return;
-    if (this.#orphanRecoveryTimer) {
-      clearTimeout(this.#orphanRecoveryTimer);
-      this.#orphanRecoveryTimer = undefined;
-    }
-    const active = [...this.#active.values()];
-    for (const operation of active) {
-      operation.controller.abort(new Error("workflow-engine-closed"));
-    }
-    await Promise.allSettled(active.map((operation) => operation.settled));
-    this.#lifecycle?.close?.();
-    this.#database.close();
-    this.#runStore.close();
-    this.#closed = true;
+  close(): Promise<void> {
+    if (this.#closing) return this.#closing;
+    if (this.#closed) return Promise.resolve();
+    this.#closing = Promise.resolve().then(async () => {
+      if (this.#orphanRecoveryTimer) {
+        clearTimeout(this.#orphanRecoveryTimer);
+        this.#orphanRecoveryTimer = undefined;
+      }
+      const reason = new Error("workflow-engine-closed");
+      const commands = [...this.#commands];
+      for (const [controller] of commands) controller.abort(reason);
+      const active = [...this.#active.values()];
+      for (const operation of active) operation.controller.abort(reason);
+      await Promise.allSettled(commands.map(([, entry]) => entry.settled));
+      await Promise.allSettled(active.map((operation) => operation.settled));
+      for (const held of this.#operationLeases.values())
+        clearInterval(held.timer);
+      this.#operationLeases.clear();
+      this.#lifecycle?.close?.();
+      this.#database.close();
+      this.#runStore.close();
+      this.#closed = true;
+    });
+    return this.#closing;
   }
 }
 

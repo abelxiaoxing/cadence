@@ -1,6 +1,7 @@
 // Scoped read-only filesystem tools: read, grep, find, ls. Repository-relative
 // paths only, no mutation, no process execution, bounded output and scan sizes.
 import {
+  constants,
   lstatSync,
   readdirSync,
   readFileSync,
@@ -8,7 +9,10 @@ import {
   type Stats,
   statSync,
 } from "node:fs";
+import { lstat, open, opendir } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { Worker } from "node:worker_threads";
+import { observeSafePath } from "./safe-path.ts";
 
 export const TOOL_LIMITS = {
   maxReadBytes: 50 * 1024,
@@ -16,6 +20,10 @@ export const TOOL_LIMITS = {
   maxGrepPattern: 1024,
   maxGrepFiles: 2000,
   maxGrepMillis: 5000,
+  maxGrepFileBytes: 1024 * 1024,
+  maxGrepScanBytes: 16 * 1024 * 1024,
+  maxGrepMatches: 1000,
+  maxGrepResultBytes: 50 * 1024,
   maxEntries: 20000,
 } as const;
 
@@ -171,10 +179,14 @@ export class ScopedObservationCollector {
 export interface ScopedToolDef {
   name: string;
   description: string;
-  execute(params: Record<string, unknown>): Promise<Record<string, unknown>>;
+  execute(
+    params: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown>>;
 }
 
 interface Options {
+  cwd?: string;
   roots: string[];
   allowedPaths?: string[];
   observer?: (obs: Observation) => void;
@@ -190,6 +202,7 @@ function resolveScoped(
   input: unknown,
   allowedPaths?: string[],
   allowScopedAncestor = false,
+  workspaceRoot = commonAncestor(roots),
 ): PathResult {
   if (typeof input !== "string" || input.length === 0) {
     return { ok: false, error: "missing path" };
@@ -206,59 +219,56 @@ function resolveScoped(
   if (input.startsWith("./") || input.includes("//") || input.endsWith("/.")) {
     return { ok: false, error: "noncanonical path rejected" };
   }
-  let insideRoot = false;
-  for (const root of roots) {
-    const abs = resolve(root, input);
-    const inside =
-      abs === root || abs.startsWith(root.endsWith("/") ? root : `${root}/`);
-    if (!inside) continue;
-    insideRoot = true;
-    if (
-      allowedPaths &&
-      !allowedPaths.some(
-        (allowed) =>
-          isWithinPath(abs, allowed) ||
-          (allowScopedAncestor && isWithinPath(allowed, abs)),
-      )
-    ) {
-      continue;
-    }
-    // Hidden directories are rejected unless the root itself is the hidden scope.
-    const hiddenRoot =
-      basename(realpathSync(root)) === ".git" ||
-      basename(realpathSync(root)) === "node_modules";
-    for (const segment of input.split("/").slice(0, -1)) {
-      if ((segment === ".git" || segment === "node_modules") && !hiddenRoot) {
-        return { ok: false, error: "hidden path rejected" };
-      }
-    }
-    // Reject symlinks on any existing component and verify realpath containment.
-    let current = root;
-    for (const segment of input.split("/")) {
-      current = join(current, segment);
-      let st: Stats | undefined;
-      try {
-        st = lstatSync(current);
-      } catch {
-        break; // nonexistent leaf is fine for absent markers
-      }
-      if (st.isSymbolicLink()) return { ok: false, error: "symlink rejected" };
-    }
-    if (existsSync(current)) {
-      const real = realpathSync(current);
-      const realRoot = realpathSync(root);
-      if (real !== realRoot && !real.startsWith(`${realRoot}/`)) {
-        return { ok: false, error: "path escapes the approved root" };
-      }
-    }
-    return { ok: true, abs: abs, rel: relative(root, abs) || "." };
+  if (/^[a-z]:/iu.test(input))
+    return { ok: false, error: "absolute path rejected" };
+  const abs = resolve(workspaceRoot, input);
+  const root = [...roots]
+    .sort((a, b) => b.length - a.length)
+    .find(
+      (candidate) =>
+        isWithinPath(abs, candidate) ||
+        (allowScopedAncestor && isWithinPath(candidate, abs)),
+    );
+  if (!root || !isWithinPath(abs, workspaceRoot)) {
+    return { ok: false, error: "path is outside every approved root" };
   }
-  return {
-    ok: false,
-    error: insideRoot
-      ? "path is outside the declared read/write scope"
-      : "path is outside every approved root",
-  };
+  if (
+    !isAllowedContent(abs, allowedPaths) &&
+    !(allowScopedAncestor && isRelatedToAllowedPath(abs, allowedPaths))
+  ) {
+    return {
+      ok: false,
+      error: "path is outside the declared read/write scope",
+    };
+  }
+  // Check all components from the workspace, including the admitted root.
+  const hiddenRoot =
+    basename(root) === ".git" || basename(root) === "node_modules";
+  if (
+    !hiddenRoot &&
+    input
+      .split("/")
+      .some((segment) => segment === ".git" || segment === "node_modules")
+  ) {
+    return { ok: false, error: "hidden path rejected" };
+  }
+  let current = workspaceRoot;
+  for (const segment of [".", ...relative(workspaceRoot, abs).split(sep)]) {
+    current = join(current, segment);
+    try {
+      if (lstatSync(current).isSymbolicLink())
+        return { ok: false, error: "symlink rejected" };
+    } catch {
+      break;
+    }
+  }
+  if (existsSync(current)) {
+    const real = realpathSync(current);
+    const realRoot = realpathSync(workspaceRoot);
+    if (!isWithinPath(real, realRoot))
+      return { ok: false, error: "path escapes the approved root" };
+  }
+  return { ok: true, abs, rel: relativePath(workspaceRoot, abs) };
 }
 
 function existsSync(p: string): boolean {
@@ -282,38 +292,57 @@ function utf8Text(abs: string): string | null {
 
 export function createScopedTools(opts: Options): ScopedToolDef[] {
   const roots = opts.roots.map((r) => resolve(r));
+  if (roots.length === 0) throw new Error("approved roots are required");
+  const workspaceRoot = resolve(opts.cwd ?? commonAncestor(roots));
+  if (!roots.every((root) => isWithinPath(root, workspaceRoot)))
+    throw new Error("approved root outside workspace");
   const allowedPaths = opts.allowedPaths?.map((p) => resolve(p));
   const observe = opts.observer ?? (() => {});
-  const virtualRoot = commonAncestor(roots);
 
   function resolveScanTargets(
     input: unknown,
   ):
-    | { ok: true; targets: ResolvedPath[]; virtual: boolean }
+    | { ok: true; targets: ResolvedPath[]; virtual: boolean; base: string }
     | { ok: false; error: string } {
-    if (input !== undefined) {
-      const resolved = resolveScoped(roots, input, allowedPaths, true);
-      return resolved.ok
-        ? { ok: true, targets: [resolved], virtual: false }
-        : resolved;
+    const resolved = resolveScoped(
+      roots,
+      input ?? ".",
+      allowedPaths,
+      true,
+      workspaceRoot,
+    );
+    if (!resolved.ok) return resolved;
+    if (roots.some((root) => isWithinPath(resolved.abs, root))) {
+      return {
+        ok: true,
+        targets: [resolved],
+        virtual: false,
+        base: resolved.abs,
+      };
     }
     const targets: ResolvedPath[] = [];
     for (const root of roots) {
-      const resolved = resolveScoped([root], ".", allowedPaths, true);
-      if (resolved.ok) targets.push(resolved);
+      if (!isWithinPath(root, resolved.abs)) continue;
+      const target = resolveScoped(
+        roots,
+        relativePath(workspaceRoot, root),
+        allowedPaths,
+        true,
+        workspaceRoot,
+      );
+      if (
+        target.ok &&
+        !targets.some((existing) => isWithinPath(target.abs, existing.abs))
+      )
+        targets.push(target);
     }
     return targets.length > 0
-      ? { ok: true, targets, virtual: roots.length > 1 }
-      : {
-          ok: false,
-          error: "path is outside the declared read/write scope",
-        };
+      ? { ok: true, targets, virtual: true, base: resolved.abs }
+      : { ok: false, error: "path is outside the declared read/write scope" };
   }
 
-  function rootRelativePath(path: string, virtual: boolean): string {
-    if (virtual) return relativePath(virtualRoot, path);
-    const root = roots.find((candidate) => isWithinPath(path, candidate));
-    return relativePath(root ?? roots[0], path);
+  function rootRelativePath(path: string): string {
+    return relativePath(workspaceRoot, path);
   }
 
   const readTool: ScopedToolDef = {
@@ -321,7 +350,13 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
     description:
       "Read a regular UTF-8 text file within the approved scope (max 2,000 lines / 50 KiB).",
     async execute(params) {
-      const resolved = resolveScoped(roots, params.path, allowedPaths);
+      const resolved = resolveScoped(
+        roots,
+        params.path,
+        allowedPaths,
+        false,
+        workspaceRoot,
+      );
       if (!resolved.ok) return { ok: false, error: resolved.error };
       let st: Stats | undefined;
       try {
@@ -374,8 +409,9 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
   const grepTool: ScopedToolDef = {
     name: "grep",
     description:
-      "Search regular text files with a bounded JavaScript regular expression (max 1,024 chars, 2,000 files).",
-    async execute(params) {
+      "Search scoped UTF-8 files using a cancellable JavaScript regexp (5 seconds, 1 MiB/file, 16 MiB total, 1,000 matches / 50 KiB output); truncated results are marked.",
+    async execute(params, signal) {
+      if (signal?.aborted) return { ok: false, error: "search cancelled" };
       const pattern = params.pattern;
       if (typeof pattern !== "string" || pattern.length === 0) {
         return { ok: false, error: "missing pattern" };
@@ -386,47 +422,199 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
           error: `pattern exceeds ${TOOL_LIMITS.maxGrepPattern} characters`,
         };
       }
-      const scan = resolveScanTargets(params.path);
-      if (!scan.ok) return { ok: false, error: scan.error };
-      let regex: RegExp;
       try {
-        regex = new RegExp(pattern, "u");
+        new RegExp(pattern, "u");
       } catch {
         return { ok: false, error: "invalid regular expression" };
       }
-      const start = performance.now();
-      const matches: { path: string; line: number; text: string }[] = [];
-      let scanned = 0;
+      const scan = resolveScanTargets(params.path);
+      if (!scan.ok) return { ok: false, error: scan.error };
+      const deadline = performance.now() + TOOL_LIMITS.maxGrepMillis;
       const files: string[] = [];
-      for (const target of scan.targets) {
-        collectFiles(target.abs, files, TOOL_LIMITS.maxEntries, allowedPaths);
-      }
-      files.sort((left, right) => {
-        const leftPath = rootRelativePath(left, scan.virtual);
-        const rightPath = rootRelativePath(right, scan.virtual);
-        return leftPath < rightPath ? -1 : leftPath > rightPath ? 1 : 0;
-      });
-      for (const file of files) {
-        if (scanned >= TOOL_LIMITS.maxGrepFiles) break;
-        if (performance.now() - start > TOOL_LIMITS.maxGrepMillis) break;
-        scanned++;
-        const text = utf8Text(file);
-        if (text === null) continue;
-        const path = rootRelativePath(file, scan.virtual);
-        observe({ kind: "file", path });
-        const lines = text.split("\n");
-        for (let i = 0; i < lines.length; i++) {
-          regex.lastIndex = 0;
-          if (regex.test(lines[i])) {
-            matches.push({
+      const matches: Array<{ path: string; line: number; text: string }> = [];
+      let truncated = false;
+      let visited = 0;
+      let scanBytes = 0;
+      let resultBytes = 0;
+      let worker: Worker | undefined;
+      const checkSearch = () => {
+        if (signal?.aborted) throw new Error("search cancelled");
+        if (performance.now() >= deadline) throw new Error("search timed out");
+      };
+      const collectSearchFiles = async (directory: string): Promise<void> => {
+        checkSearch();
+        const target = await lstat(directory);
+        checkSearch();
+        if (target.isFile()) {
+          if (isAllowedContent(directory, allowedPaths)) files.push(directory);
+          return;
+        }
+        if (!target.isDirectory()) return;
+        const entries = await opendir(directory);
+        for await (const entry of entries) {
+          checkSearch();
+          if (
+            ++visited > TOOL_LIMITS.maxEntries ||
+            files.length >= TOOL_LIMITS.maxGrepFiles
+          ) {
+            truncated = true;
+            break;
+          }
+          if (isHidden(entry.name, roots)) continue;
+          const full = join(directory, entry.name);
+          if (entry.isDirectory() && isRelatedToAllowedPath(full, allowedPaths))
+            await collectSearchFiles(full);
+          else if (entry.isFile() && isAllowedContent(full, allowedPaths))
+            files.push(full);
+        }
+      };
+      try {
+        for (const target of scan.targets) await collectSearchFiles(target.abs);
+        const ordered = [...new Set(files)].sort((left, right) => {
+          const a = rootRelativePath(left);
+          const b = rootRelativePath(right);
+          return a < b ? -1 : a > b ? 1 : 0;
+        });
+        if (ordered.length > TOOL_LIMITS.maxGrepFiles) truncated = true;
+        checkSearch();
+        worker = new Worker(
+          new URL("./scoped-grep-worker.mjs", import.meta.url),
+          {
+            resourceLimits: { maxOldGenerationSizeMb: 64 },
+          },
+        );
+        // Keep one rejection path installed between requests as well, so a late
+        // worker error cannot become an uncaught EventEmitter error.
+        let workerFailed = false;
+        worker.on("error", () => {
+          workerFailed = true;
+        });
+        for (const file of ordered.slice(0, TOOL_LIMITS.maxGrepFiles)) {
+          checkSearch();
+          if (scanBytes >= TOOL_LIMITS.maxGrepScanBytes) {
+            truncated = true;
+            break;
+          }
+          const limit = Math.min(
+            TOOL_LIMITS.maxGrepFileBytes,
+            TOOL_LIMITS.maxGrepScanBytes - scanBytes,
+          );
+          // Read at most the budget plus one byte, even if the file grows after
+          // admission. Oversized files are skipped explicitly, never decoded in full.
+          const buffer = Buffer.alloc(limit + 1);
+          const path = rootRelativePath(file);
+          if (observeSafePath(workspaceRoot, path).kind !== "file") {
+            truncated = true;
+            continue;
+          }
+          const fd = await open(
+            file,
+            constants.O_RDONLY |
+              (constants.O_NOFOLLOW ?? 0) |
+              (constants.O_NONBLOCK ?? 0),
+          );
+          let length = 0;
+          try {
+            if (!(await fd.stat()).isFile()) {
+              truncated = true;
+              continue;
+            }
+            while (length < buffer.length) {
+              checkSearch();
+              const { bytesRead: count } = await fd.read(
+                buffer,
+                length,
+                buffer.length - length,
+                null,
+              );
+              if (count === 0) break;
+              length += count;
+            }
+          } finally {
+            await fd.close();
+          }
+          checkSearch();
+          scanBytes += Math.min(length, limit);
+          if (length > limit) {
+            truncated = true;
+            continue;
+          }
+          let text: string;
+          try {
+            text = new TextDecoder("utf-8", { fatal: true }).decode(
+              buffer.subarray(0, length),
+            );
+          } catch {
+            continue;
+          }
+          observe({ kind: "file", path });
+          if (workerFailed) return { ok: false, error: "search unavailable" };
+          const currentWorker = worker;
+          const result = await new Promise<{
+            matches: typeof matches;
+            bytes: number;
+            truncated: boolean;
+          }>((resolve, reject) => {
+            const cleanup = () => {
+              clearTimeout(timer);
+              signal?.removeEventListener("abort", onAbort);
+              currentWorker.removeListener("message", onMessage);
+              currentWorker.removeListener("error", onError);
+              currentWorker.removeListener("exit", onError);
+            };
+            const fail = (message: string) => {
+              cleanup();
+              reject(new Error(message));
+            };
+            const onAbort = () => fail("search cancelled");
+            const onError = () => fail("search unavailable");
+            const onMessage = (value: {
+              matches: typeof matches;
+              bytes: number;
+              truncated: boolean;
+            }) => {
+              cleanup();
+              resolve(value);
+            };
+            const timer = setTimeout(
+              () => fail("search timed out"),
+              Math.max(1, deadline - performance.now()),
+            );
+            signal?.addEventListener("abort", onAbort, { once: true });
+            currentWorker.once("message", onMessage);
+            currentWorker.once("error", onError);
+            currentWorker.once("exit", onError);
+            if (signal?.aborted) {
+              onAbort();
+              return;
+            }
+            currentWorker.postMessage({
+              pattern,
               path,
-              line: i + 1,
-              text: lines[i].slice(0, 500),
+              text,
+              maxMatches: TOOL_LIMITS.maxGrepMatches - matches.length,
+              maxBytes: TOOL_LIMITS.maxGrepResultBytes - resultBytes,
             });
+          });
+          matches.push(...result.matches);
+          resultBytes += result.bytes;
+          if (result.truncated) {
+            truncated = true;
+            break;
           }
         }
+        return { ok: true, matches, truncated };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        return {
+          ok: false,
+          error: ["search cancelled", "search timed out"].includes(message)
+            ? message
+            : "search unavailable",
+        };
+      } finally {
+        await worker?.terminate();
       }
-      return { ok: true, matches };
     },
   };
 
@@ -447,13 +635,13 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
         if (!st.isDirectory()) return { ok: false, error: "not a directory" };
         observe({
           kind: "dir",
-          path: rootRelativePath(target.abs, scan.virtual),
+          path: rootRelativePath(target.abs),
         });
       }
       if (scan.virtual) {
         const names = new Set(
           scan.targets.map(
-            (target) => relativePath(virtualRoot, target.abs).split("/")[0],
+            (target) => relativePath(scan.base, target.abs).split("/")[0],
           ),
         );
         return {
@@ -485,7 +673,7 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
   const findTool: ScopedToolDef = {
     name: "find",
     description:
-      "Search for files by glob pattern within the approved scope; paths are relative to the search directory (max 20,000 entries).",
+      "Search for files by glob pattern within the approved scope; returned paths are workspace-relative (max 20,000 entries).",
     async execute(params) {
       const pattern = params.pattern;
       if (typeof pattern !== "string" || pattern.length === 0) {
@@ -510,7 +698,7 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
         if (!st.isDirectory()) return { ok: false, error: "not a directory" };
         observe({
           kind: "dir",
-          path: rootRelativePath(target.abs, scan.virtual),
+          path: rootRelativePath(target.abs),
         });
       }
       const matcher = globToRegExp(pattern);
@@ -521,11 +709,12 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
       for (const target of scan.targets) {
         collectFiles(target.abs, files, TOOL_LIMITS.maxEntries, allowedPaths);
       }
-      const findBase = scan.virtual ? virtualRoot : scan.targets[0].abs;
-      const out = files.map((abs) => relativePath(findBase, abs));
-      const entries = out.filter(
-        (rel) => matcher.test(rel) || matcher.test(basename(rel)),
-      );
+      const entries = [...new Set(files)]
+        .filter((abs) => {
+          const searched = relativePath(scan.base, abs);
+          return matcher.test(searched) || matcher.test(basename(abs));
+        })
+        .map((abs) => rootRelativePath(abs));
       return {
         ok: true,
         entries: entries
@@ -540,6 +729,10 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
     out: string[],
     limit: number,
     scopedPaths?: string[],
+    traversal = {
+      remaining: TOOL_LIMITS.maxEntries as number,
+      truncated: false,
+    },
   ): string[] {
     if (out.length >= limit) return out;
     const target = statSync(dir);
@@ -550,12 +743,15 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
     if (!target.isDirectory()) return out;
     const entries = readdirSync(dir, { withFileTypes: true });
     for (const e of entries) {
-      if (out.length >= limit) break;
+      if (out.length >= limit || traversal.remaining-- <= 0) {
+        traversal.truncated = true;
+        break;
+      }
       if (isHidden(e.name, roots)) continue;
       const full = join(dir, e.name);
       if (e.isDirectory()) {
         if (isRelatedToAllowedPath(full, scopedPaths)) {
-          collectFiles(full, out, limit, scopedPaths);
+          collectFiles(full, out, limit, scopedPaths, traversal);
         }
       } else if (e.isFile() && isAllowedContent(full, scopedPaths)) {
         out.push(full);
@@ -568,7 +764,7 @@ export function createScopedTools(opts: Options): ScopedToolDef[] {
     if (name !== ".git" && name !== "node_modules") return false;
     // Explicit scope: the approved root itself is the hidden directory.
     for (const scope of scopes) {
-      if (basename(realpathSync(scope)) === name) return false;
+      if (basename(scope) === name) return false;
     }
     return true;
   }

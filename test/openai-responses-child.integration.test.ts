@@ -636,7 +636,7 @@ describe("installed openai-responses child route", () => {
     );
     await pi.emit(
       "input",
-      { type: "input", text: "/abel-design responses" },
+      { type: "input", source: "interactive", text: "/abel-design responses" },
       context,
     );
     await pi.emit(

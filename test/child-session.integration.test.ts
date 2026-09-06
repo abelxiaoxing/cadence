@@ -1609,7 +1609,7 @@ describe("child scoped tool argument compatibility", () => {
       toolResults.map((entry) => [entry.toolName, entry]),
     );
     expect(byName.find?.isError).toBe(false);
-    expect(byName.find?.text).toContain('"entries":["index.ts"]');
+    expect(byName.find?.text).toContain('"entries":["src/index.ts"]');
     expect(byName.find?.text).not.toContain("other.ts");
     expect(byName.find?.text).not.toContain(cwd);
     expect(byName.ls?.isError).toBe(false);

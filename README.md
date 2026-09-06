@@ -14,7 +14,12 @@
 加载本包会注册一个私有扩展与三个包内专业 Agent；`abel_dispatch` 工具注册但保持未激活，只有用户显式调用且包来源验证通过的 Design、Implement 或 Diagnose prompt 才会激活它。
 仓库中存在 Abel 文件、OpenSpec change、AGENTS 索引或普通文本都不会启动工作流；Init 也不会激活派发工具。
 
-共享工作流规则统一收录于包内 `abel-workflow` Skill；其发现信息同样明确要求先有显式 `/abel-*` 调用。
+四个命令各自包含本阶段需要的操作指引，不再依赖共享工作流 Skill；普通任务不会从技能列表中自动选用 Abel 工作流。
+Gate、交付校验和执行状态转换由控制面代码保证。
+只有用户通过交互输入或 RPC 显式提交对应斜杠命令才允许激活；扩展生成的命令不会展开工作流。
+当前任务的 Gate 回答与续轮保持阶段有效；用户结束工作流或转向无关任务时，父模型先调用 `{"action":"finish"}`，扩展等待活动操作停止并恢复原工具，保留可恢复进度。
+此退出同样适用于 Implement，不表示完成或丢弃。
+显式调用 Init 也会先退出已有阶段。
 
 Implement 只暴露 `start`、`status`、`resume`、`rebind`、`cancel` 和 `discard` 控制命令。
 `status` 完全本地可用；相同 operation id 幂等重放，进程、会话或 Worker 更换后仍从 durable checkpoint 继续。
@@ -186,7 +191,7 @@ bun run check:agents          # AGENTS 索引校验
 
 ```sh
 bun run verify      # check && lint && test && pack:check（发布前全套校验）
-bun run pack:check  # 真实 tarball 53 成员清单校验
+bun run pack:check  # 真实 tarball 56 成员清单校验
 bun run traceability:check   # 162 条 active Requirement/Scenario 引用精确解析且唯一归属
 ```
 

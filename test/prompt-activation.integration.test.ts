@@ -95,7 +95,10 @@ function activePackageTool(
     },
   };
   registrar(pi as never);
-  handlers.get("input")?.({ text: `/${prompt} verified input` });
+  handlers.get("input")?.({
+    source: "interactive",
+    text: `/${prompt} verified input`,
+  });
   handlers.get("before_agent_start")?.(
     {
       prompt: `<abel-request>verified input</abel-request> <!-- ABEL:PROMPT:${prompt} -->`,
@@ -126,6 +129,98 @@ function objectSchemas(value: unknown): Array<Record<string, any>> {
 }
 
 describe("package Prompt provenance activates abel_dispatch", () => {
+  it("does not discover a workflow Skill or apply stage rules to ordinary work", async () => {
+    const { session } = await promptSession();
+    expect(session.systemPrompt).not.toContain("<name>abel-workflow</name>");
+    await session.prompt(
+      'Discuss "/abel-design, /abel-diagnose, /abel-implement, /abel-init"; fix a typo directly.',
+    );
+    expect(session.getActiveToolNames()).not.toContain(DISPATCH_TOOL);
+    expect(session.systemPrompt).toContain("Abel workflow is inactive");
+    session.dispose();
+  });
+
+  for (const name of [
+    "abel-init",
+    "abel-design",
+    "abel-implement",
+    "abel-diagnose",
+  ]) {
+    it(`does not expand extension-generated /${name} into a workflow`, async () => {
+      const { session } = await promptSession();
+      await session.prompt(`/${name} generated request`, {
+        source: "extension",
+      });
+      expect(session.getActiveToolNames()).not.toContain(DISPATCH_TOOL);
+      expect(session.state.messages).toEqual([]);
+      session.dispose();
+    });
+  }
+
+  it("accepts an explicit RPC invocation", async () => {
+    const { session } = await promptSession();
+    await session.prompt("/abel-design verified input", { source: "rpc" });
+    expect(session.getActiveToolNames()).toContain(DISPATCH_TOOL);
+    session.dispose();
+  });
+
+  it("restores ordinary tools when Init follows an unfinished Design", async () => {
+    const { session } = await promptSession([
+      fauxAssistantMessage("waiting"),
+      fauxAssistantMessage("done"),
+    ]);
+    const initialTools = session.getActiveToolNames();
+    await session.prompt("/abel-design verified input");
+    expect(session.getActiveToolNames()).not.toContain("bash");
+    await session.prompt("/abel-init");
+    expect(session.getActiveToolNames()).toEqual(initialTools);
+    session.dispose();
+  });
+
+  for (const name of ["abel-design", "abel-implement", "abel-diagnose"]) {
+    it(`exits ${name} before handling an unrelated task`, async () => {
+      const { session } = await promptSession([
+        fauxAssistantMessage("waiting"),
+        fauxAssistantMessage(
+          fauxToolCall(DISPATCH_TOOL, { action: "finish" }),
+          { stopReason: "toolUse" },
+        ),
+        fauxAssistantMessage(
+          fauxToolCall("bash", { command: "printf ordinary-task" }),
+          { stopReason: "toolUse" },
+        ),
+        fauxAssistantMessage("ordinary task handled"),
+        fauxAssistantMessage("done"),
+      ]);
+      const initialTools = session.getActiveToolNames();
+      await session.prompt(`/${name} verified input`);
+      expect(session.systemPrompt).toContain("unrelated task");
+      await session.prompt(
+        "Leave this workflow and fix a README typo directly.",
+      );
+      const result = session.state.messages.find(
+        (message) =>
+          message.role === "toolResult" && message.toolName === DISPATCH_TOOL,
+      );
+      expect(result?.role === "toolResult" && result.isError).toBe(false);
+      const ordinaryResult = session.state.messages.find(
+        (message) =>
+          message.role === "toolResult" && message.toolName === "bash",
+      );
+      expect(
+        ordinaryResult?.role === "toolResult" && ordinaryResult.isError,
+      ).toBe(false);
+      expect(ordinaryResult).toMatchObject({
+        content: [{ type: "text", text: "ordinary-task" }],
+      });
+      expect(session.getActiveToolNames()).toEqual(initialTools);
+      await session.prompt("Another ordinary task");
+      expect(session.systemPrompt).toContain("Abel workflow is inactive");
+      expect(session.getActiveToolNames()).not.toContain(DISPATCH_TOOL);
+      session.dispose();
+    });
+  }
+
   it("requests parallel tool calls for an active Design Responses turn", () => {
     const handlers = new Map<string, (...args: any[]) => unknown>();
     let active: string[] = [];
@@ -151,7 +246,10 @@ describe("package Prompt provenance activates abel_dispatch", () => {
       },
     };
     register(pi as never);
-    handlers.get("input")?.({ text: "/abel-design verified input" });
+    handlers.get("input")?.({
+      source: "interactive",
+      text: "/abel-design verified input",
+    });
     handlers.get("before_agent_start")?.(
       {
         prompt:
@@ -200,7 +298,10 @@ describe("package Prompt provenance activates abel_dispatch", () => {
       },
       close() {},
     }));
-    handlers.get("input")?.({ text: "/abel-design verified input" });
+    handlers.get("input")?.({
+      source: "interactive",
+      text: "/abel-design verified input",
+    });
     handlers.get("before_agent_start")?.(
       {
         prompt:
@@ -283,13 +384,13 @@ describe("package Prompt provenance activates abel_dispatch", () => {
     expect(tool.parameters).not.toHaveProperty("oneOf");
   });
 
-  it("publishes only the default command surface during Implement", () => {
+  it("publishes durable commands and a separate stage exit during Implement", () => {
     const tool = activePackageTool("abel-implement") as {
       parameters: Record<string, any>;
       prepareArguments?: (args: unknown) => unknown;
     };
     expect(tool.parameters).toMatchObject({
-      required: ["command", "stage", "change"],
+      required: [],
       additionalProperties: false,
       properties: {
         command: {
@@ -306,11 +407,36 @@ describe("package Prompt provenance activates abel_dispatch", () => {
       "deliveryRevision",
       "receiptHash",
       "routeId",
+      "action",
     ]);
     expect(tool.parameters.properties).not.toHaveProperty("version");
-    expect(tool.parameters.properties).not.toHaveProperty("action");
+    expect(tool.parameters.properties.action).toEqual({
+      type: "string",
+      enum: ["finish"],
+    });
     expect(tool.parameters).not.toHaveProperty("oneOf");
     expect(tool.prepareArguments).toBeTypeOf("function");
+    expect(
+      tool.prepareArguments?.({
+        action: "finish",
+        command: null,
+        stage: null,
+        change: null,
+        operationId: null,
+      }),
+    ).toEqual({ action: "finish" });
+    expect(
+      tool.prepareArguments?.({
+        command: "status",
+        stage: "abel-implement",
+        change: "retained",
+        action: null,
+      }),
+    ).toEqual({
+      command: "status",
+      stage: "abel-implement",
+      change: "retained",
+    });
     expect(
       tool.prepareArguments?.({
         command: "start",

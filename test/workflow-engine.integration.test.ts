@@ -397,6 +397,50 @@ function openEngine(input: {
 }
 
 describe("WorkflowEngine command authority", () => {
+  it.each(["close", "cancel"])("settles delivery loading before %s completes", async (control) => {
+    const change = `delivery-loading-${control}`;
+    const consumerRoot = makeConsumer(change);
+    const state = temporaryRoot("loading-state");
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let entered!: () => void;
+    const loading = new Promise<void>(resolve => { entered = resolve; });
+    let receivedSignal: AbortSignal | undefined;
+    class DelayedSource extends DeliverySource {
+      override async load(input: Record<string, unknown>) {
+        receivedSignal = input.signal as AbortSignal | undefined;
+        entered();
+        await held;
+        return super.load(input);
+      }
+    }
+    const delivery = new DelayedSource();
+    delivery.set(change, plan(change, [task("T1")]));
+    const worker = new ScriptedWorker();
+    const engine = openEngine({ consumerRoot, delivery, worker, xdgStateHome: state });
+    let startSettled = false;
+    const pending = engine.execute(command("start", change))
+      .then(result => result, error => ({ error: String(error) }))
+      .finally(() => { startSettled = true; });
+    try {
+      await loading;
+      if (control === "close") await Promise.all([engine.close(), engine.close()]);
+      else await engine.execute(command("cancel", change));
+      expect(startSettled).toBe(true);
+      expect(receivedSignal?.aborted).toBe(true);
+      expect(await pending).toMatchObject({ state: "paused" });
+      expect(worker.calls).toEqual([]);
+    } finally {
+      release();
+      await pending;
+      await engine.close();
+    }
+    const reopened = openEngine({ consumerRoot, delivery, worker, xdgStateHome: state });
+    try {
+      expect(await reopened.execute(command("status", change))).toMatchObject({ state: "paused" });
+    } finally { await reopened.close(); }
+  });
+
   it("serves local not-started status without loading delivery or contacting a Worker", async () => {
     const change = "engine-not-started-status";
     const consumerRoot = makeConsumer("not-started-status");
@@ -1100,6 +1144,72 @@ describe("WorkflowEngine command authority", () => {
       ],
     });
     await engine.close();
+  });
+
+  it("limits independent task execution and preserves the capacity queue across restart", async () => {
+    const change = "engine-capacity-queue";
+    const consumerRoot = makeConsumer("capacity-queue");
+    const xdgStateHome = temporaryRoot("capacity-state");
+    const delivery = new DeliverySource();
+    delivery.set(change, plan(change, Array.from({ length: 8 }, (_, i) => task(`T${i}`, { verificationLock: `lock-${i}` }))));
+    let started!: () => void;
+    const saturated = new Promise<void>(resolve => { started = resolve; });
+    const calls: string[] = [];
+    class HeldWorker extends ScriptedWorker {
+      override async runAttempt(input: Record<string, unknown>): Promise<AttemptOutcome> {
+        calls.push(String(input.taskId));
+        if (calls.length === 4) started();
+        const signal = input.signal as AbortSignal;
+        return new Promise(resolve => {
+          const abort = () => resolve({ kind: "operation-cancelled", code: "cancelled" });
+          if (signal.aborted) abort(); else signal.addEventListener("abort", abort, { once: true });
+        });
+      }
+    }
+    let engine = openEngine({ consumerRoot, xdgStateHome, delivery, worker: new HeldWorker() });
+    const running = engine.execute(command("start", change));
+    try {
+      await saturated;
+      const status = await engine.execute(command("status", change));
+      expect(calls).toEqual(["T0", "T1", "T2", "T3"]);
+      expect(status.queue).toEqual(["T4", "T5", "T6", "T7"].map((taskId, i) => ({ taskId, position: i + 1, reason: "capacity" })));
+    } finally { await engine.close(); await running; }
+    let active = 0; let peak = 0;
+    class MeasuringWorker extends ScriptedWorker {
+      override async runAttempt(input: Record<string, unknown>): Promise<AttemptOutcome> {
+        active++; peak = Math.max(peak, active);
+        try { await new Promise(resolve => setTimeout(resolve, 5)); return committed(String(input.phase)); }
+        finally { active--; }
+      }
+    }
+    engine = openEngine({ consumerRoot, xdgStateHome, delivery, worker: new MeasuringWorker() });
+    try {
+      const result = await engine.execute(command("resume", change));
+      expect(peak).toBe(4);
+      expect((result.tasks as { state: string }[]).every(row => row.state === "verified")).toBe(true);
+      expect(result.queue).toEqual([]);
+    } finally { await engine.close(); }
+  });
+
+  it("shares execution capacity across concurrent runs without starving queued work", async () => {
+    const consumerRoot = makeConsumer("multi-run-capacity");
+    const delivery = new DeliverySource();
+    const changes = ["capacity-one", "capacity-two"];
+    for (const change of changes) delivery.set(change, plan(change, Array.from({ length: 5 }, (_, i) => task(`T${i}`, { verificationLock: `lock-${i}` }))));
+    let active = 0; let peak = 0;
+    class MeasuringWorker extends ScriptedWorker {
+      override async runAttempt(input: Record<string, unknown>): Promise<AttemptOutcome> {
+        active++; peak = Math.max(peak, active);
+        try { await new Promise(resolve => setTimeout(resolve, 10)); return committed(String(input.phase)); }
+        finally { active--; }
+      }
+    }
+    const engine = openEngine({ consumerRoot, delivery, worker: new MeasuringWorker() });
+    try {
+      const results = await Promise.all(changes.map(change => engine.execute(command("start", change, { operationId: `start-${change}` }))));
+      expect(peak).toBe(4);
+      for (const result of results) expect((result.tasks as { state: string }[]).every(row => row.state === "verified")).toBe(true);
+    } finally { await engine.close(); }
   });
 
   it("persists FIFO conflicts and committed sibling work across restart", async () => {

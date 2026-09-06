@@ -80,10 +80,10 @@ Prompt discovery SHALL be non-recursive.
 - **WHEN** `abel-design`, `abel-implement`, or `abel-diagnose` receives no uniquely valid required input
 - **THEN** the workflow stops and asks for the missing or ambiguous information rather than guessing
 
-### Requirement: Self-contained shared workflow contract
+### Requirement: Self-contained stage contracts
 
-The package SHALL bundle an `abel-workflow` skill that defines the shared four-stage responsibilities, Gate semantics, design-delivery integrity checks, Red-Green-Refactor rules, AGENTS index maintenance, and parent-versus-subagent boundaries needed to execute the workflow.
-The prompts and bundled skill together SHALL remain understandable when no user-global `AGENTS.md` provides Abel-specific instructions.
+Each of the four prompts SHALL contain the instructions needed for its own stage without a shared workflow Skill prerequisite or full copies of other stage procedures. The package SHALL NOT distribute an `abel-workflow` Skill.
+The stage prompts SHALL remain understandable when no user-global `AGENTS.md` provides Abel-specific instructions. Shared activation, Gate validation, delivery integrity, and durable execution invariants SHALL be enforced by their owning runtime modules; architecture explanations belong in ordinary documentation.
 Gate A and Gate B SHALL approve behavioral and technical contracts respectively and SHALL NOT approve tool permissions.
 
 #### Scenario: No global Abel context exists
@@ -99,20 +99,20 @@ Gate A and Gate B SHALL approve behavioral and technical contracts respectively 
 #### Scenario: Shared rules are maintained once
 
 - **WHEN** a rule applies to multiple workflow stages
-- **THEN** the package can place the authoritative shared rule in `abel-workflow` instead of requiring unbounded copies in all four prompt bodies
+- **THEN** the owning runtime module enforces the invariant and each prompt describes only the stage-specific operation or decision needed from its parent
 
 ### Requirement: Initialization behavior
 
 `abel-init` SHALL resolve one canonical target root, preserve baseline dirty and human-authored content, respect nested repository boundaries, select exactly one usable Bun-or-npm toolchain, and probe OpenSpec capability before and after any write.
-It SHALL load the bundled `abel-workflow` Skill before modifying OpenSpec or AGENTS and stop with executable package-resource remediation when that core Skill is unavailable.
+It SHALL execute from its self-contained prompt without loading a shared workflow Skill. Generated AGENTS indexes SHALL describe repository locations and commands without requiring ordinary engineering work to enter an Abel workflow.
 It SHALL initialize only an absent OpenSpec root and otherwise repair only missing or mechanically invalid configuration without `--force` or wholesale replacement.
 It SHALL create or update only verified marker-bounded AGENTS regions, preserve every byte outside those regions, never edit `openspec/AGENTS.md`, and be idempotent for a second identical invocation.
 Missing optional bundled research Skills SHALL make final readiness partial with executable remediation but SHALL NOT prevent safe OpenSpec or AGENTS repair.
 
-#### Scenario: Core workflow skill is unavailable
+#### Scenario: Init has no shared workflow dependency
 
-- **WHEN** `abel-init` cannot load the bundled `abel-workflow` Skill
-- **THEN** initialization stops before modifying OpenSpec or AGENTS files and reports how to restore or reinstall the package resource
+- **WHEN** the package exposes its Init prompt without any shared workflow Skill
+- **THEN** initialization uses its own deterministic procedure and does not request restoration of a removed resource
 
 #### Scenario: Research skills are available
 
@@ -503,7 +503,7 @@ A request that actually requires new observable behavior, dependency, path, arch
 
 ### Requirement: Bundled and external skills
 
-The package SHALL bundle discoverable skills named `abel-workflow`, `context7-auto-research`, `grok-search`, and `git-commit` together with the distributable runtime resources required by those skills.
+The package SHALL bundle discoverable skills named `context7-auto-research`, `grok-search`, and `git-commit` together with the distributable runtime resources required by those skills.
 The workflow SHALL NOT automatically commit merely because `git-commit` is installed.
 The dedicated `time` skill SHALL NOT be a distributed or validated prerequisite.
 `dev-browser` SHALL remain external and SHALL block only a task whose approved verification contract explicitly requires browser E2E execution.
@@ -511,7 +511,7 @@ The dedicated `time` skill SHALL NOT be a distributed or validated prerequisite.
 #### Scenario: Bundled skills are discovered
 
 - **WHEN** the package is loaded independently
-- **THEN** Pi discovers exactly the four bundled skill names from the package skill surface
+- **THEN** Pi discovers exactly the three bundled skill names from the package skill surface
 
 #### Scenario: Commit skill is present without a commit request
 
@@ -533,7 +533,7 @@ The dedicated `time` skill SHALL NOT be a distributed or validated prerequisite.
 The package MUST NOT contain credentials, real `.env` files, virtual environments, backup files, user run data, child-session transcripts, model outputs, or symbolic links to external workflow, configuration, state, or reference-repository locations.
 It MUST NOT load, import, link to, or reference as a runtime, development, test, packing, or installation dependency `/home/abelxiaoxing/work/AbelWorkflow`, `/home/abelxiaoxing/.agents/`, either reference-repository path, `@gotgenes/pi-subagents`, or another `@gotgenes/*` package.
 Read-only implementation evidence citations and required third-party attribution or license text SHALL not constitute product resolution dependencies.
-Its tarball SHALL contain package metadata, user documentation, license and attribution, four prompts, four skills, the private extension runtime, package-owned professional Agent definitions, and required runtime resources while excluding development indexes, tests, OpenSpec artifacts, toolchain configuration, credentials, and runtime state.
+Its tarball SHALL contain package metadata, user documentation, license and attribution, four prompts, three skills, the private extension runtime, package-owned professional Agent definitions, and required runtime resources while excluding development indexes, tests, OpenSpec artifacts, toolchain configuration, credentials, and runtime state.
 
 At runtime the package MAY create only the approved owner-private control-plane journal, sealed artifacts, and change workspace outside the package, project repository, and OpenSpec change root.
 It MUST NOT persist raw prompts, hidden reasoning, complete child transcripts, raw model outputs, credentials, endpoint secrets, or environment values.
@@ -632,9 +632,10 @@ This change SHALL NOT publish the package, create a remote repository, or config
 
 ### Requirement: Explicit invocation and stage isolation
 
-The shared Abel workflow Skill and private dispatch tool SHALL become active only after a user explicitly invokes a package-proven `/abel-design`, `/abel-implement`, or `/abel-diagnose` prompt; `/abel-init` SHALL remain local and dispatch-free.
+The private dispatch tool SHALL become active only after a user explicitly invokes a package-proven `/abel-design`, `/abel-implement`, or `/abel-diagnose` prompt; `/abel-init` SHALL remain local and dispatch-free.
 Merely discovering prompt or Skill files, an OpenSpec change, an AGENTS index entry, or ordinary text mentioning Abel SHALL NOT activate workflow authority.
-Each active stage SHALL admit only its own command or bounded packet schema, and no stage SHALL inherit another stage's write, Gate, retry, or recovery authority.
+Only interactive or RPC user input SHALL supply invocation authority. Extension-generated commands SHALL be stopped before prompt expansion.
+Each active stage SHALL admit only its own command or bounded packet schema plus the exact session-exit envelope `{"action":"finish"}`, and no stage SHALL inherit another stage's write, Gate, retry, or recovery authority. Inactive dispatch execution SHALL fail closed even if a stale tool reference is retained.
 
 #### Scenario: Ordinary engineering work mentions Abel
 
@@ -677,7 +678,7 @@ The package SHALL continue to expose exactly `/abel-init`, `/abel-design`, `/abe
 
 ### Requirement: Explicit stage completion
 
-Each eligible stage SHALL keep private dispatch active only while a multi-turn workflow interaction is in progress. Design readiness, Implement terminal settlement, Diagnose completion, or an explicit finish SHALL remove only `abel_dispatch`, clear the active stage identity, and preserve unrelated active tools. A nonterminal Gate wait or resumable pause SHALL remain active for its immediate user follow-up.
+Each eligible stage SHALL keep private dispatch active only while a multi-turn workflow interaction is in progress. Design readiness, Implement terminal settlement, Diagnose completion, or an explicit finish SHALL remove only `abel_dispatch`, clear the active stage identity, and preserve unrelated active tools. A nonterminal Gate wait or resumable pause SHALL remain active for its immediate same-task user follow-up. For an unrelated task or an explicit user exit, the parent SHALL first send `{"action":"finish"}`; the extension SHALL settle active operations, clear stage authority, restore the pre-Design tool set where applicable, and retain resumable progress without marking it completed or discarded. A verified Init invocation SHALL leave any previous stage before its local procedure. Each new parent interaction SHALL receive the current activation boundary so historical workflow text cannot independently reactivate a stage.
 
 #### Scenario: Design becomes ready
 

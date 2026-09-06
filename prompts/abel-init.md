@@ -3,13 +3,15 @@ description: Initialize or safely repair an Abel OpenSpec project
 argument-hint: "[project-path]"
 ---
 
-Load the bundled `abel-workflow` Skill before inspecting or writing the target.
-If it is unavailable, stop before writes and report one executable package restore or reinstall command.
+This procedure applies only when the user explicitly invokes `/abel-init`.
+Reading this file, mentioning the command, or finding OpenSpec artifacts does not activate it.
 Read the complete value inside `<abel-request>` without tokenizing it a second time.
 
 <abel-request>
 $ARGUMENTS
 </abel-request>
+
+<!-- ABEL:PROMPT:abel-init -->
 
 The request is an optional project path; when absent, use the current working directory.
 Resolve and report the canonical target root before action.
@@ -34,6 +36,8 @@ Resolve and report the canonical target root before action.
 5. Resolve and validate the selected schema and templates before claiming readiness.
 6. Create or repair only verified `<!-- ABEL:AGENTS-INDEX:START -->` … `<!-- ABEL:AGENTS-INDEX:END -->` managed regions.
    Preserve every byte of human content outside those markers and do not cross nested repositories.
+   Keep the index descriptive: file locations and ordinary project commands only; never instruct ordinary tasks to enter an Abel workflow.
+   Never record runtime/session ids, credentials, approval state, or dirty-state ledgers.
 7. Re-run all probes after writes.
    A second identical Init must produce no additional changes.
 
@@ -43,3 +47,6 @@ Do not probe `git-commit`, external `dev-browser`, or a dedicated time Skill; no
 
 Report one final result with the root, selected toolchain, actions actually taken, OpenSpec capability/schema/template evidence, AGENTS files changed or unchanged, research-Skill paths or remediation, and `ready | partial | paused`.
 Never report success from the initial probe when the post-write recheck did not pass.
+
+Init ends with that report; later ordinary tasks use normal engineering behavior.
+Never start another Abel stage, archive, publish, release, stage, or commit implicitly.

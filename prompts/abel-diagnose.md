@@ -3,13 +3,21 @@ description: Diagnose and minimally repair one or more existing bugs
 argument-hint: "<problem-description>"
 ---
 
-Load the bundled `abel-workflow` Skill before work and read the complete value inside `<abel-request>` without tokenizing it a second time.
+This procedure applies only when the user explicitly invokes `/abel-diagnose`.
+Reading this file, mentioning the command, or finding OpenSpec artifacts does not activate it.
+Read the complete value inside `<abel-request>` without tokenizing it a second time.
 
 <abel-request>
 $ARGUMENTS
 </abel-request>
 
 <!-- ABEL:PROMPT:abel-diagnose -->
+
+This stage is scoped to the invoked task.
+Direct answers and same-task continuations stay in this stage.
+If the user ends the workflow or requests an unrelated task, first send `{"action":"finish"}` to `abel_dispatch`, then handle the new task normally with the restored tools.
+Exit preserves resumable work and never means completion or discard.
+Never start another stage automatically.
 
 The request must uniquely identify one or more existing defects.
 If required input is missing or ambiguous, stop before work and ask one focused question.
@@ -41,6 +49,7 @@ For each defect, keep this order:
    Run the regression after every edit and the affected suite after refactoring.
 6. Compare the full suite with baseline and require no introduced failure.
    Classify any AGENTS impact and apply only a verified managed-region update at a stable parent checkpoint.
+   Preserve every byte outside `<!-- ABEL:AGENTS-INDEX:START -->` and `<!-- ABEL:AGENTS-INDEX:END -->`; never give a Worker an AGENTS write path or put runtime/session ids, credentials, or approval state in the index.
 
 If reproduction is unavailable, root-cause evidence is insufficient, the regression cannot witness the defect, or an external capability is unavailable, return `paused` with the exact safe evidence and a concrete resume condition.
 Do not invent a repair.

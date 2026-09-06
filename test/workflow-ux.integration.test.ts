@@ -89,7 +89,10 @@ function invokePrompt(
   name: string,
   argument = "smooth-workflow",
 ) {
-  harness.handlers.get("input")?.({ text: `/${name} ${argument}` });
+  harness.handlers.get("input")?.({
+    source: "interactive",
+    text: `/${name} ${argument}`,
+  });
   harness.handlers.get("before_agent_start")?.(
     {
       prompt: `<abel-request>${argument}</abel-request> <!-- ABEL:PROMPT:${name} -->`,
@@ -101,7 +104,10 @@ function invokePrompt(
 describe("four-workflow user experience", () => {
   it("does not activate Abel control for ordinary work or Init", () => {
     const harness = workflowHarness();
-    harness.handlers.get("input")?.({ text: "please inspect this repository" });
+    harness.handlers.get("input")?.({
+      source: "interactive",
+      text: "please inspect this repository",
+    });
     harness.handlers.get("before_agent_start")?.(
       { prompt: "please inspect this repository" },
       { cwd: packageRoot },
@@ -110,10 +116,6 @@ describe("four-workflow user experience", () => {
 
     invokePrompt(harness, "abel-init", ".");
     expect(harness.activeTools()).toEqual(["read"]);
-
-    const skill = packageText("skills/abel-workflow/SKILL.md");
-    expect(skill).toMatch(/only after an explicit \/abel-init/i);
-    expect(skill).toMatch(/ordinary engineering request/i);
   });
 
   it("activates workflow control only for a verified package prompt", () => {
@@ -132,7 +134,7 @@ describe("four-workflow user experience", () => {
       "cancel",
       "discard",
     ]);
-    expect(parameters.required).toEqual(["command", "stage", "change"]);
+    expect(parameters.required).toEqual([]);
     expect(parameters.anyOf).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -188,7 +190,10 @@ describe("four-workflow user experience", () => {
       registerWorkflowControl(pi as never, async () => {
         throw new RunStoreFormatError(databasePath);
       });
-      handlers.get("input")?.({ text: "/abel-implement schema-status" });
+      handlers.get("input")?.({
+        source: "interactive",
+        text: "/abel-implement schema-status",
+      });
       handlers.get("before_agent_start")?.(
         {
           prompt:
@@ -242,7 +247,10 @@ describe("four-workflow user experience", () => {
       expect(status.details).toEqual(expected);
       expect(start.details).toEqual(expected);
 
-      handlers.get("input")?.({ text: "/abel-design schema-status" });
+      await handlers.get("input")?.({
+        source: "interactive",
+        text: "/abel-design schema-status",
+      });
       handlers.get("before_agent_start")?.(
         {
           prompt:

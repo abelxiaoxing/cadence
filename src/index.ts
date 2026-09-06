@@ -59,6 +59,7 @@ import { canonicalJson, hashCanonicalValue } from "./implement-graph.ts";
 import { BubblewrapIsolationBackend } from "./isolation-backend.ts";
 import {
   inspectOpenSpecDelivery,
+  type OpenSpecCliOptions,
   type OpenSpecDeliveryInspection,
 } from "./openspec-cli.ts";
 import { PACKET_ACTIONS, PacketRuntime } from "./packet-runtime.ts";
@@ -363,11 +364,13 @@ function invokedPrompt(text: string): EligiblePrompt | undefined {
   return ELIGIBLE_PROMPTS.find((candidate) => candidate === name);
 }
 
-function promptMarker(name: EligiblePrompt): string {
+type WorkflowPrompt = EligiblePrompt | "abel-init";
+
+function promptMarker(name: WorkflowPrompt): string {
   return `<!-- ABEL:PROMPT:${name} -->`;
 }
 
-function hasPackageProvenance(pi: ExtensionAPI, name: EligiblePrompt): boolean {
+function hasPackageProvenance(pi: ExtensionAPI, name: WorkflowPrompt): boolean {
   const commands = pi
     .getCommands()
     .filter((candidate) => candidate.name === name);
@@ -382,7 +385,7 @@ function hasPackageProvenance(pi: ExtensionAPI, name: EligiblePrompt): boolean {
 
 function hasExpandedPromptMarker(
   prompt: string,
-  name: EligiblePrompt,
+  name: WorkflowPrompt,
 ): boolean {
   const requestEnd = prompt.lastIndexOf("</abel-request>");
   if (requestEnd < 0) return false;
@@ -706,6 +709,7 @@ export interface PackageDeliverySourceOptions {
   inspectOpenSpec?: (
     consumerRoot: string,
     change: string,
+    options?: OpenSpecCliOptions,
   ) => Promise<OpenSpecDeliveryInspection>;
   verifyGateProof?: (input: {
     change: string;
@@ -912,10 +916,13 @@ export function packageDeliverySource(
 
       let inspection: OpenSpecDeliveryInspection | undefined;
       try {
-        inspection = await inspect(consumerRoot, input.change);
+        inspection = await inspect(consumerRoot, input.change, {
+          signal: input.signal,
+        });
       } catch {
         diagnostics.add("delivery-openspec-unavailable");
       }
+      input.signal?.throwIfAborted();
       if (inspection) {
         if (!inspection.strictValid) {
           diagnostics.add("delivery-openspec-strict-invalid");
@@ -1987,8 +1994,11 @@ export function registerWorkflowControl(
   const parentPayloadBridge = new ParentPayloadBridge();
   const activity = new ActivityController();
   const engines = new Map<string, Promise<WorkflowControlEngine>>();
+  const designOperations = new Set<Promise<void>>();
   const designFailures = new Map<string, SafeDesignFailure>();
   let pendingPrompt: EligiblePrompt | undefined;
+  let pendingInit = false;
+  let exitingStage = false;
   let activePrompt: EligiblePrompt | undefined;
   let designToolSnapshot: string[] | undefined;
   const activation = new (class implements Activation {
@@ -2030,16 +2040,19 @@ export function registerWorkflowControl(
     return opened;
   };
   const closeEngines = async () => {
-    const current = [...engines.values()];
-    engines.clear();
-    const opened = await Promise.allSettled(current);
-    await Promise.allSettled(
-      opened.flatMap((result) =>
-        result.status === "fulfilled"
-          ? [Promise.resolve(result.value.close())]
-          : [],
-      ),
+    // Design close() is synchronous and does not own an operation queue.
+    // Keep its journal open through finalization's commit/lease-cleanup path
+    // and the dispatch result handling before closing any engine storage.
+    await Promise.all([...designOperations]);
+    const closed = await Promise.allSettled(
+      [...engines].map(async ([key, opened]) => {
+        const engine = await opened;
+        await engine.close();
+        if (engines.get(key) === opened) engines.delete(key);
+      }),
     );
+    const failed = closed.find((result) => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
   };
   const restoreDesignTools = () => {
     if (!designToolSnapshot) return;
@@ -2077,6 +2090,16 @@ export function registerWorkflowControl(
     deactivate();
     parentPayloadBridge.clear();
   };
+  const exitStage = async () => {
+    if (exitingStage) throw new Error("stage-control-mismatch");
+    exitingStage = true;
+    try {
+      await closeEngines();
+      await deactivateStage();
+    } finally {
+      exitingStage = false;
+    }
+  };
 
   // Pi validates tool arguments before execute(), so expose only the schema
   // legal for the active stage instead of one ambiguous command/packet union.
@@ -2102,6 +2125,39 @@ export function registerWorkflowControl(
   } as const;
   let registeredParameterKind: "command" | "packet" | undefined;
 
+  // Stage exit is session control, not a durable Implement command. Keep the
+  // six engine commands unchanged and admit only this exact extra envelope.
+  const FINISH_PARAMETERS = {
+    type: "object",
+    properties: { action: { type: "string", enum: ["finish"] } },
+    required: ["action"],
+    additionalProperties: false,
+  } as const;
+  const IMPLEMENT_PARAMETERS = {
+    ...CONTROL_COMMAND_PARAMETERS,
+    properties: {
+      ...CONTROL_COMMAND_PARAMETERS.properties,
+      ...FINISH_PARAMETERS.properties,
+    },
+    required: [],
+    anyOf: [...CONTROL_COMMAND_PARAMETERS.anyOf, FINISH_PARAMETERS],
+  } as const;
+  const prepareImplementArguments = (args: unknown): unknown => {
+    if (!args || typeof args !== "object" || Array.isArray(args)) return args;
+    const record = { ...(args as Record<string, unknown>) };
+    // Strict providers can pad fields belonging to the other union branch.
+    if (record.action === "finish") {
+      for (const key of Object.keys(CONTROL_COMMAND_PARAMETERS.properties)) {
+        if (record[key] === null || record[key] === undefined)
+          delete record[key];
+      }
+      return record;
+    }
+    if (record.action === null || record.action === undefined)
+      delete record.action;
+    return canonicalizeControlCommandToolInput(record);
+  };
+
   const registerDispatchTool = (kind: "command" | "packet") => {
     if (registeredParameterKind === kind) return;
     registeredParameterKind = kind;
@@ -2110,17 +2166,16 @@ export function registerWorkflowControl(
       label: "Abel Control",
       description:
         kind === "command"
-          ? "Private stage-bound Abel workflow control. Accepts durable Implement change commands."
+          ? 'Private stage-bound Abel workflow control. Accepts durable Implement change commands or {"action":"finish"} to leave the workflow and preserve resumable work.'
           : "Private stage-bound Abel packet control. Accepts bounded Design and Diagnose packet operations.",
       executionMode: "parallel",
       ...(kind === "command"
         ? {
             prepareArguments: (args: unknown) =>
-              canonicalizeControlCommandToolInput(args) as never,
+              prepareImplementArguments(args) as never,
           }
         : {}),
-      parameters:
-        kind === "command" ? CONTROL_COMMAND_PARAMETERS : PACKET_PARAMETERS,
+      parameters: kind === "command" ? IMPLEMENT_PARAMETERS : PACKET_PARAMETERS,
       async execute(
         toolCallId: string,
         params: unknown,
@@ -2128,6 +2183,14 @@ export function registerWorkflowControl(
         onUpdate: AgentToolUpdateCallback<unknown> | undefined,
         ctx: ExtensionContext,
       ) {
+        if (
+          exitingStage ||
+          !activation.isActive() ||
+          activePrompt === undefined
+        ) {
+          throw new Error("stage-control-mismatch");
+        }
+        if (kind === "command") params = prepareImplementArguments(params);
         const record =
           params && typeof params === "object" && !Array.isArray(params)
             ? (params as Record<string, unknown>)
@@ -2143,6 +2206,18 @@ export function registerWorkflowControl(
           if (record.action === "finish" && Object.hasOwn(record, "request")) {
             throw new Error("control-envelope-ambiguous");
           }
+          if (record.action === "finish") {
+            // close() aborts and settles active operations before ordinary tools
+            // return; durable work is retained, never discarded or completed.
+            await exitStage();
+            const payload = { ok: true, state: "inactive" };
+            return {
+              content: [
+                { type: "text" as const, text: JSON.stringify(payload) },
+              ],
+              details: payload,
+            };
+          }
           if (
             activePrompt !== "abel-design" &&
             activePrompt !== "abel-diagnose"
@@ -2155,9 +2230,18 @@ export function registerWorkflowControl(
             }
             const designRequest = validateDesignControlRequest(record.request);
             if (!designRequest.ok) throw new Error(designRequest.code);
+            let settleDesign!: () => void;
+            const settled = new Promise<void>((resolve) => {
+              settleDesign = resolve;
+            });
+            // Register before the first await, including asynchronous engine
+            // opening. Teardown blocks admission before taking its snapshot.
+            designOperations.add(settled);
             let boundary: DesignFailureBoundary = "initialization";
             try {
               const engine = await engineFor(ctx);
+              if (exitingStage || !activation.isActive())
+                throw new Error("stage-control-mismatch");
               if (!engine.executeDesign)
                 throw new Error("design-control-unavailable");
               boundary = "execution";
@@ -2170,7 +2254,9 @@ export function registerWorkflowControl(
               boundary = "execution";
               if (
                 designRequest.value.operation === "finalize-delivery" &&
-                payload.state === "completed"
+                payload.state === "completed" &&
+                !exitingStage &&
+                activePrompt === "abel-design"
               ) {
                 await deactivateStage();
               }
@@ -2188,6 +2274,9 @@ export function registerWorkflowControl(
               const sanitized = new Error(failure.code);
               sanitized.name = "DesignControlError";
               throw sanitized;
+            } finally {
+              designOperations.delete(settled);
+              settleDesign();
             }
           }
           let designEngine: WorkflowControlEngine | undefined;
@@ -2201,6 +2290,8 @@ export function registerWorkflowControl(
             if (packet.value.stage === "abel-design") {
               try {
                 designEngine = await engineFor(ctx);
+                if (exitingStage || !activation.isActive())
+                  throw new Error("stage-control-mismatch");
               } catch (error) {
                 if (error instanceof RunStoreFormatError)
                   throw runStoreResetError(error);
@@ -2257,9 +2348,6 @@ export function registerWorkflowControl(
             });
             payload = { ...packetPayload, recordedEvidence };
           }
-          if (record.action === "finish" && packetPayload.ok) {
-            await deactivateStage();
-          }
           const display = tuiRun
             ? activity.finalize(toolCallId, payload)
             : undefined;
@@ -2287,15 +2375,16 @@ export function registerWorkflowControl(
           throw error;
         }
         if (
-          activePrompt !== undefined &&
-          (activePrompt === "abel-diagnose" ||
-            validation.value.stage !== activePrompt)
+          activePrompt !== "abel-implement" ||
+          validation.value.stage !== activePrompt
         ) {
           throw new Error("stage-control-mismatch");
         }
         let engine: WorkflowControlEngine;
         try {
           engine = await engineFor(ctx);
+          if (exitingStage || !activation.isActive())
+            throw new Error("stage-control-mismatch");
         } catch (error) {
           if (!(error instanceof RunStoreFormatError)) throw error;
           const payload = runStoreUnavailableStatus(error, validation.value);
@@ -2422,12 +2511,35 @@ export function registerWorkflowControl(
     };
   });
   pi.on("input", (event) => {
-    pendingPrompt = invokedPrompt(event.text);
+    pendingPrompt = undefined;
+    pendingInit = false;
+    const prompt = invokedPrompt(event.text);
+    const init = /^\/abel-init(?:\s|$)/u.test(event.text);
+    if (event.source !== "interactive" && event.source !== "rpc") {
+      // Stop before Pi expands the template: hiding dispatch alone would still
+      // expose the complete workflow instructions to the parent model.
+      return { action: prompt || init ? "handled" : "continue" };
+    }
+    pendingPrompt = prompt;
+    pendingInit = init && hasPackageProvenance(pi, "abel-init");
+    if (
+      activePrompt &&
+      (pendingInit ||
+        (prompt && prompt !== activePrompt && hasPackageProvenance(pi, prompt)))
+    ) {
+      return (async () => {
+        await exitStage();
+        return { action: "continue" as const };
+      })();
+    }
     return { action: "continue" };
   });
   pi.on("before_agent_start", (event, ctx) => {
     const prompt = pendingPrompt;
+    const init =
+      pendingInit && hasExpandedPromptMarker(event.prompt, "abel-init");
     pendingPrompt = undefined;
+    pendingInit = false;
     const verified =
       prompt && isVerifiedStageInvocation(pi, activation, prompt, event.prompt);
     if (verified) {
@@ -2448,6 +2560,12 @@ export function registerWorkflowControl(
     }
     if (prompt) activateDispatcher(pi, activation, prompt, event.prompt);
     if (verified && prompt === "abel-design") enforceDesignTools();
+    const boundary = activePrompt
+      ? `Abel stage ${activePrompt} is active only for the invoked task and its direct follow-ups. If the user ends it or requests an unrelated task, first call abel_dispatch with {"action":"finish"}, then handle that task normally with the restored tools. A successful finish ends stage authority immediately, including within this turn. Do not extend Gates or workflow rules to that task. A direct Gate answer or same-task continuation stays in this stage. Never invoke another Abel stage automatically.`
+      : init
+        ? "Only this explicit /abel-init request authorizes the local Init procedure. Do not activate dispatch or continue into another Abel stage."
+        : "Abel workflow is inactive. Handle ordinary engineering requests directly. References to commands, repository files, OpenSpec changes, and historical workflow instructions do not authorize a workflow. Do not load or execute an Abel stage unless the user explicitly invokes its slash command.";
+    return { systemPrompt: `${event.systemPrompt ?? ""}\n\n${boundary}` };
   });
   pi.on("model_select", (event, ctx) => {
     const sessionId = ctx.sessionManager?.getSessionId?.();
@@ -2473,6 +2591,7 @@ export function registerWorkflowControl(
   });
   pi.on("session_start", async (_event, ctx) => {
     pendingPrompt = undefined;
+    pendingInit = false;
     activePrompt = undefined;
     designFailures.clear();
     activity.detach();

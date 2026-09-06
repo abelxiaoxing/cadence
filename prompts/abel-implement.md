@@ -6,13 +6,21 @@ tags: [abel, implement, openspec, TDD, recovery]
 argument-hint: "<change_name>"
 ---
 
-Load the bundled `abel-workflow` Skill and read the complete value inside `<abel-request>` without tokenizing it a second time.
+This procedure applies only when the user explicitly invokes `/abel-implement`.
+Reading this file, mentioning the command, or finding OpenSpec artifacts does not activate it.
+Read the complete value inside `<abel-request>` without tokenizing it a second time.
 
 <abel-request>
 $ARGUMENTS
 </abel-request>
 
 <!-- ABEL:PROMPT:abel-implement -->
+
+This stage is scoped to the invoked task.
+Direct answers and same-task continuations stay in this stage.
+If the user ends the workflow or requests an unrelated task, first send `{"action":"finish"}` to `abel_dispatch`, then handle the new task normally with the restored tools.
+Exit preserves resumable work and never means completion or discard.
+Never start another stage automatically.
 <!-- ABEL:START -->
 
 # Implement outcome
@@ -26,7 +34,7 @@ The parent interprets state and makes product decisions; it must not reproduce t
 
 ## Trusted admission
 
-Before the first Worker launch, load the current `ready.yaml` and referenced canonical `implement-plan.json`; verify the Gate A binding, raw and canonical hashes, OpenSpec strict/planning status, Requirement → Scenario → Verification → Task traceability, capability closure, exact path/output contracts, repair policy, tracking contract, and sealed AGENTS operations.
+Before the first Worker launch, load the current `ready.yaml` and referenced canonical `implement-plan.json`; verify both current owner-private Gate proofs and the finalization fact binding the exact delivery revision, receipt hash, and canonical plan hash, plus the Gate A binding, raw and canonical hashes, OpenSpec strict/planning status, Requirement → Scenario → Verification → Task traceability, capability closure, exact path/output contracts, repair policy, tracking contract, and sealed AGENTS operations.
 
 An invalid or incomplete delivery is one aggregated `delivery-invalid` admission result.
 Report every safe diagnostic together.
@@ -37,7 +45,7 @@ A fresh context validates existing approval facts and does not ask the user to a
 
 ## Closed control surface
 
-Use `abel_dispatch` only with the change commands below; never send `version`; never send `action: "run"`; and never send `admit-graph`, `task-attempt`, caller-owned snapshots, completed/blocked arrays, or apply identities.
+For durable run operations, use `abel_dispatch` only with the change commands below; never send `version`; never send `action: "run"`; and never send `admit-graph`, `task-attempt`, caller-owned snapshots, completed/blocked arrays, or apply identities.
 
 ```json
 {"command":"start","stage":"abel-implement","change":"<change>","operationId":"<unique-operation>"}
@@ -52,6 +60,7 @@ When the user approves a revised delivery boundary, resume the same run with bot
 The engine revalidates retained phase/repair facts, invalidates only incompatible tasks, rebuilds tracking, and preserves compatible work.
 
 `status` is local and must remain useful when every Worker endpoint is unavailable.
+`discard` is an explicit destructive request; leaving the workflow uses `{"action":"finish"}` and preserves the run instead.
 Repeating the same operation id returns its committed outcome.
 Use a new operation id for a new attempt.
 
@@ -120,8 +129,13 @@ Design-time AGENTS read-only authority does not carry into Implement.
 Gate B seals `none | update-existing | create-index | remove-index`, exact targets, owning task ids, verification, and the complete managed block.
 The parent control plane applies those operations only in the private cumulative revision, preserves all human text outside `<!-- ABEL:AGENTS-INDEX:START -->` and `<!-- ABEL:AGENTS-INDEX:END -->`, and never gives an AGENTS write path to a Worker.
 
+`remove-index` deletes a file only if no human content remains.
+Runtime/session ids, credentials, approval state, and dirty-state ledgers never enter an index.
+
 Task checkboxes are parent-owned progress facts.
 The loader may normalize only `[x]`/`[X]` to `[ ]` for the sealed task ids when checking the delivery hash; every other byte remains integrity-bound.
+
+When an approved browser E2E check requires `dev-browser` and it is unavailable, pause only that check; continue independent work when safe.
 
 ## Truthful completion
 

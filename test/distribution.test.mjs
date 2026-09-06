@@ -31,7 +31,6 @@ const expectedFiles = [
   "package/skills/_shared/http-client.mjs",
   "package/skills/_shared/load-config.d.mts",
   "package/skills/_shared/load-config.mjs",
-  "package/skills/abel-workflow/SKILL.md",
   "package/skills/context7-auto-research/SKILL.md",
   "package/skills/context7-auto-research/context7.mjs",
   "package/skills/git-commit/SKILL.md",
@@ -61,6 +60,7 @@ const expectedFiles = [
   "package/src/run-state.ts",
   "package/src/run-store.ts",
   "package/src/safe-path.ts",
+  "package/src/scoped-grep-worker.mjs",
   "package/src/scoped-tools.ts",
   "package/src/state-root.ts",
   "package/src/subagent-activity.ts",
@@ -139,7 +139,7 @@ describe("real npm tarball", () => {
     expect(files.length).toBeGreaterThan(0);
   });
 
-  it("ships the four prompts and four skills with expected names", () => {
+  it("ships the four prompts and three skills with expected names", () => {
     const prompts = listFiles(path.join(packedPackageDir, "prompts"))
       .map((f) => f.relative)
       .sort();
@@ -154,7 +154,6 @@ describe("real npm tarball", () => {
     );
     expect(skills).toEqual(
       expect.arrayContaining([
-        "abel-workflow/SKILL.md",
         "context7-auto-research/SKILL.md",
         "git-commit/SKILL.md",
         "grok-search/SKILL.md",
@@ -198,15 +197,8 @@ describe("real npm tarball", () => {
   it("[SLICE-5:pi-tool-error] ships no worker or Implement recovery channel", () => {
     const resource = (relative) =>
       readFileSync(path.join(packedPackageDir, relative), "utf8");
-    const skill = resource("skills/abel-workflow/SKILL.md");
-    const implementSkill = skill.slice(
-      skill.indexOf("## Recovery versus approval"),
-      skill.indexOf("## AGENTS indexes"),
-    );
-    expect(implementSkill).not.toBe("");
     const implementResources = [
       resource("prompts/abel-implement.md"),
-      implementSkill,
       resource("agents/implementation-worker.md"),
     ].join("\n");
     expect(implementResources).not.toMatch(
@@ -259,7 +251,7 @@ describe("real npm tarball", () => {
 });
 
 describe("installed-directory loading", () => {
-  it("loads the same four prompts, four skills, and extension from absolute and relative local directories", async () => {
+  it("loads the same four prompts and three skills from absolute and relative local directories", async () => {
     const { DefaultResourceLoader } = await import(
       "@earendil-works/pi-coding-agent"
     );
@@ -270,6 +262,7 @@ describe("installed-directory loading", () => {
         cwd,
         agentDir,
         additionalPromptTemplatePaths: [path.resolve(cwd, "prompts")],
+        additionalSkillPaths: [path.resolve(cwd, "skills")],
         noExtensions: false,
         noSkills: false,
         noThemes: true,
@@ -293,6 +286,11 @@ describe("installed-directory loading", () => {
       "abel-init",
     ]);
     expect(abs.prompts).toEqual(rel.prompts);
+    expect(abs.skills).toEqual([
+      "context7-auto-research",
+      "git-commit",
+      "grok-search",
+    ]);
     expect(abs.skills).toEqual(rel.skills);
   }, 15_000);
 });

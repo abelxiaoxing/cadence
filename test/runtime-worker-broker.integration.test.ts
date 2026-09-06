@@ -697,6 +697,20 @@ describe("durable WorkflowEngine service composition", () => {
       on(name: string, handler: (...args: unknown[]) => unknown) {
         handlers.set(name, handler);
       },
+      getCommands: () => [
+        {
+          name: "abel-implement",
+          source: "prompt",
+          sourceInfo: {
+            origin: "package",
+            baseDir: path.resolve(import.meta.dirname, ".."),
+            path: path.resolve(
+              import.meta.dirname,
+              "../prompts/abel-implement.md",
+            ),
+          },
+        },
+      ],
       getActiveTools: () => [],
       setActiveTools() {},
     };
@@ -728,6 +742,17 @@ describe("durable WorkflowEngine service composition", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "cadence-v2-tool-signal-"));
     roots.push(cwd);
     const context = { cwd, marker: "owning-tool-context" };
+    handlers.get("input")?.({
+      source: "interactive",
+      text: "/abel-implement tool-signal-binding",
+    });
+    handlers.get("before_agent_start")?.(
+      {
+        prompt:
+          "<abel-request>tool-signal-binding</abel-request> <!-- ABEL:PROMPT:abel-implement -->",
+      },
+      context,
+    );
     const controller = new AbortController();
     controller.abort(new Error("fixture tool cancellation"));
     const result = await registeredTool?.execute(
@@ -3901,7 +3926,10 @@ describe("durable WorkflowEngine service composition", () => {
       throw new Error("Diagnose packets must not open Implement engine");
     });
     const fixture = directEngineFixture("diagnose-stage-routing");
-    handlers.get("input")?.({ text: "/abel-diagnose broken value" });
+    handlers.get("input")?.({
+      source: "interactive",
+      text: "/abel-diagnose broken value",
+    });
     handlers.get("before_agent_start")?.(
       {
         prompt:

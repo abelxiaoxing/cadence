@@ -120,6 +120,7 @@ function wrapScopedTools(
 ) {
   const order = ["read", "grep", "find", "ls"];
   return createScopedTools({
+    cwd,
     roots,
     ...(allowedPaths
       ? {
@@ -162,9 +163,10 @@ function wrapScopedTools(
                 : Type.Object({
                     path: Type.Optional(Type.String()),
                   }),
-        async execute(_id, params) {
+        async execute(_id, params, signal) {
           const result = await scoped.execute(
             params as Record<string, unknown>,
+            signal,
           );
           return {
             content: [{ type: "text" as const, text: JSON.stringify(result) }],
@@ -625,8 +627,7 @@ export async function runChildSession(input: {
     }
     const failureKind: ChildFailureKind = timedOut
       ? "timed-out"
-      : input.signal !== undefined &&
-          (input.signal.aborted || abort.signal.reason === input.signal.reason)
+      : input.signal?.aborted === true
         ? "cancelled"
         : "failed";
     const classification = classifySession();
