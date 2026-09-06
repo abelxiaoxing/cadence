@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import {
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -10,67 +11,16 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Worker } from "node:worker_threads";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const packageDir = path.resolve(import.meta.dirname, "..");
-const expectedFiles = [
-  "package/THIRD_PARTY_NOTICES.md",
-  "package/LICENSE",
-  "package/README.md",
-  "package/agents/design-explorer.md",
-  "package/agents/diagnosis-worker.md",
-  "package/agents/implementation-worker.md",
-  "package/config/.env.example",
-  "package/config/routes.example.json",
-  "package/licenses/pi-subagents-MIT.txt",
-  "package/package.json",
-  "package/prompts/abel-design.md",
-  "package/prompts/abel-diagnose.md",
-  "package/prompts/abel-implement.md",
-  "package/prompts/abel-init.md",
-  "package/skills/_shared/http-client.mjs",
-  "package/skills/_shared/load-config.d.mts",
-  "package/skills/_shared/load-config.mjs",
-  "package/skills/context7-auto-research/SKILL.md",
-  "package/skills/context7-auto-research/context7.mjs",
-  "package/skills/git-commit/SKILL.md",
-  "package/skills/grok-search/SKILL.md",
-  "package/skills/grok-search/grok-search.mjs",
-  "package/src/activation.ts",
-  "package/src/agent-registry.ts",
-  "package/src/apply-transaction.ts",
-  "package/src/artifact-store.ts",
-  "package/src/candidate-patch.ts",
-  "package/src/parent-payload-bridge.ts",
-  "package/src/child-session.ts",
-  "package/src/contracts.ts",
-  "package/src/control-contracts.ts",
-  "package/src/delivery-compiler.ts",
-  "package/src/design-control.ts",
-  "package/src/design-journal.ts",
-  "package/src/empty-resource-loader.ts",
-  "package/src/file-snapshot.ts",
-  "package/src/index.ts",
-  "package/src/implement-graph.ts",
-  "package/src/isolation-backend.ts",
-  "package/src/openspec-cli.ts",
-  "package/src/packet-runtime.ts",
-  "package/src/parent-provider.ts",
-  "package/src/route-policy.ts",
-  "package/src/run-state.ts",
-  "package/src/run-store.ts",
-  "package/src/safe-path.ts",
-  "package/src/scoped-grep-worker.mjs",
-  "package/src/scoped-tools.ts",
-  "package/src/state-root.ts",
-  "package/src/subagent-activity.ts",
-  "package/src/submit-tool.ts",
-  "package/src/task-ledger.ts",
-  "package/src/verification-capability.ts",
-  "package/src/worker-broker.ts",
-  "package/src/workflow-engine.ts",
-  "package/src/workspace-store.ts",
-].sort();
+const expectedFiles = JSON.parse(
+  readFileSync(
+    path.join(packageDir, "provenance/package-members.json"),
+    "utf8",
+  ),
+);
 
 const obsoleteControlPattern =
   /\b(?:RECOVERY_CODES|RecoveryCode|RecoveryNext|RecoveryRecord|RecoveryIdentity|recoveryFailure|normalizedArtifactRejection|WorkerContract|WorkerTaskContract|WorkerPhaseContract|LogicalWorker|WorkerState|contractOf|sameContract|samePhaseContract|branchBlocked|dependentsBlocked|partialResultUsable|independentResultsPreserved|nextStep|artifact-correction-pending|stale-redispatch-pending|artifact-correction-required|reasonCode|artifact-invalid|transport-failed|environment-unavailable|result-too-large|mechanical-redispatch-exhausted|implementation-artifact-delivery-blocked|environment-blocked|finish-unaffected|correct-artifact|repair-environment)\b|design-required|design-contract|return-to-design|candidate preflight rejected|split condition/i;
@@ -292,6 +242,49 @@ describe("installed-directory loading", () => {
       "grok-search",
     ]);
     expect(abs.skills).toEqual(rel.skills);
+  }, 15_000);
+});
+
+describe("installed native I/O worker", () => {
+  it("executes from node_modules without a runtime TypeScript loader", async () => {
+    const installed = path.join(
+      tempRoot,
+      "consumer-install/node_modules/@abelxiaoxing/cadence",
+    );
+    mkdirSync(path.dirname(installed), { recursive: true });
+    cpSync(packedPackageDir, installed, { recursive: true });
+    const consumer = path.join(tempRoot, "io-consumer");
+    mkdirSync(consumer);
+    exec("git", ["init", "-q"], { cwd: consumer });
+    const worker = new Worker(
+      path.join(installed, "src/workspace-io-worker.mjs"),
+      {
+        execArgv: [],
+        workerData: {
+          root: path.join(tempRoot, "io-workspaces"),
+          artifactRoot: path.join(tempRoot, "io-artifacts"),
+          operation: "captureBaseline",
+          args: [{ consumerRoot: consumer }],
+          cancelled: new SharedArrayBuffer(4),
+        },
+      },
+    );
+    const result = await new Promise((resolve, reject) => {
+      let message;
+      worker.once("message", (value) => {
+        message = value;
+      });
+      worker.once("error", reject);
+      worker.once("exit", (code) =>
+        code === 0 && message
+          ? resolve(message)
+          : reject(new Error("installed-worker-failed")),
+      );
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      result: { revisionId: expect.stringMatching(/^[a-f0-9]{64}$/) },
+    });
   }, 15_000);
 });
 

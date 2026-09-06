@@ -2,14 +2,16 @@ import { createHash } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-
 import type { ArtifactStore } from "./artifact-store.ts";
+import { compareCanonicalStrings } from "./canonical.ts";
 import {
   diffWritePaths,
   IMPLEMENTATION_PHASES,
   type ImplementationPhase,
   isValidRelativePath,
 } from "./contracts.ts";
+import { configureSqlite, ensureSqliteSchema } from "./sqlite-schema.ts";
+import { TASK_SCHEMA } from "./storage-schema.ts";
 
 export const TASK_LEDGER_LIMITS = {
   maxSegmentBytes: 128 * 1024,
@@ -413,7 +415,9 @@ function normalizeContextRefs(value: unknown): TaskContextReference[] {
   if (new Set(identities).size !== identities.length) {
     throw new Error("ledger-context-refs-invalid");
   }
-  return refs.sort((left, right) => left.path.localeCompare(right.path));
+  return refs.sort((left, right) =>
+    compareCanonicalStrings(left.path, right.path),
+  );
 }
 
 function safeText(value: unknown, code: string, maximum = 256): string {
@@ -694,57 +698,8 @@ export class TaskLedger {
       throw new Error("task-ledger-database-invalid");
     }
     this.#database = new DatabaseSync(databasePath);
-    this.#database.exec(
-      "PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;",
-    );
-    this.#database.exec(`
-      CREATE TABLE IF NOT EXISTS candidates (
-        candidate_id TEXT PRIMARY KEY,
-        identity_json TEXT NOT NULL,
-        state TEXT NOT NULL,
-        next_sequence INTEGER NOT NULL,
-        total_bytes INTEGER NOT NULL,
-        artifact_hash TEXT,
-        candidate_hash TEXT,
-        segment_count INTEGER,
-        paths_json TEXT,
-        pause_code TEXT
-      ) STRICT;
-      CREATE TABLE IF NOT EXISTS candidate_segments (
-        candidate_id TEXT NOT NULL REFERENCES candidates(candidate_id) ON DELETE CASCADE,
-        sequence INTEGER NOT NULL,
-        artifact_hash TEXT NOT NULL,
-        size_bytes INTEGER NOT NULL,
-        segment_hash TEXT NOT NULL,
-        PRIMARY KEY (candidate_id, sequence)
-      ) STRICT;
-      CREATE TABLE IF NOT EXISTS task_ledger (
-        run_id TEXT NOT NULL,
-        task_id TEXT NOT NULL,
-        delivery_revision INTEGER NOT NULL,
-        boundary_hash TEXT NOT NULL,
-        objective TEXT NOT NULL,
-        context_refs_json TEXT NOT NULL,
-        initial_phase TEXT NOT NULL,
-        PRIMARY KEY (run_id, task_id)
-      ) STRICT;
-      CREATE TABLE IF NOT EXISTS task_events (
-        run_id TEXT NOT NULL,
-        task_id TEXT NOT NULL,
-        ordinal INTEGER NOT NULL,
-        event_id TEXT NOT NULL,
-        event_json TEXT NOT NULL,
-        prior_hash TEXT NOT NULL,
-        event_hash TEXT NOT NULL,
-        PRIMARY KEY (run_id, task_id, ordinal),
-        UNIQUE (run_id, task_id, event_id),
-        FOREIGN KEY (run_id, task_id) REFERENCES task_ledger(run_id, task_id) ON DELETE CASCADE
-      ) STRICT;
-      CREATE TABLE IF NOT EXISTS durable_facts (
-        fact_key TEXT PRIMARY KEY,
-        fact_json TEXT NOT NULL
-      ) STRICT;
-    `);
+    configureSqlite(this.#database);
+    ensureSqliteSchema(this.#database, TASK_SCHEMA);
     chmodSync(databasePath, 0o600);
   }
 

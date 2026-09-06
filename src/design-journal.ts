@@ -1,62 +1,20 @@
 import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { compareCanonicalStrings } from "./canonical.ts";
 import {
   type DesignEvidenceResult,
   validateEvidenceResult,
 } from "./contracts.ts";
 import { canonicalJson } from "./run-state.ts";
+import { configureSqlite, ensureSqliteSchema } from "./sqlite-schema.ts";
 import { prepareStateRoot, type ResolvedStateRoot } from "./state-root.ts";
+import { DESIGN_SCHEMA as SCHEMA } from "./storage-schema.ts";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const IDENTIFIER = /^[a-z0-9](?:[a-z0-9._:-]{0,126}[a-z0-9])?$/iu;
 const ZERO_HASH = "0".repeat(64);
 const MAX_PLAN_BYTES = 16 * 1024 * 1024;
 const MAX_CONTRACT_BYTES = 256 * 1024;
-
-const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS design_facts (
-    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
-    sequence INTEGER NOT NULL,
-    kind TEXT NOT NULL,
-    identity TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    canonical_hash TEXT NOT NULL,
-    prior_record_hash TEXT NOT NULL,
-    record_hash TEXT NOT NULL,
-    PRIMARY KEY (run_id, sequence),
-    UNIQUE (run_id, kind, identity),
-    UNIQUE (run_id, record_hash)
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS design_operations (
-    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
-    operation_id TEXT NOT NULL,
-    operation TEXT NOT NULL,
-    request_hash TEXT NOT NULL,
-    outcome_json TEXT NOT NULL,
-    PRIMARY KEY (run_id, operation_id)
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS design_compiled_plans (
-    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
-    revision INTEGER NOT NULL,
-    fact_sequence INTEGER NOT NULL,
-    raw_sha256 TEXT NOT NULL,
-    canonical_hash TEXT NOT NULL,
-    plan_bytes BLOB NOT NULL,
-    PRIMARY KEY (run_id, revision),
-    UNIQUE (run_id, fact_sequence),
-    FOREIGN KEY (run_id, fact_sequence)
-      REFERENCES design_facts(run_id, sequence) ON DELETE CASCADE
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS design_finalization_leases (
-    run_id TEXT PRIMARY KEY REFERENCES runs(run_id) ON DELETE CASCADE,
-    operation_id TEXT NOT NULL,
-    token TEXT NOT NULL UNIQUE,
-    expires_at INTEGER NOT NULL
-  ) STRICT;
-`;
 
 type DecisionCategory = "behavior" | "technical";
 type DesignGate = "gate-a" | "gate-b";
@@ -283,7 +241,9 @@ function normalizeRefs(refs: readonly string[]): string[] {
   ) {
     throw new Error("design-decision-refs-invalid");
   }
-  return [...new Set(refs)].sort((left, right) => left.localeCompare(right));
+  return [...new Set(refs)].sort((left, right) =>
+    compareCanonicalStrings(left, right),
+  );
 }
 
 export class DesignJournal {
@@ -318,11 +278,8 @@ export class DesignJournal {
     const stateRoot = prepareStateRoot(unresolved);
     const database = new DatabaseSync(stateRoot.databasePath);
     try {
-      database.exec("PRAGMA foreign_keys = ON");
-      database.exec("PRAGMA journal_mode = WAL");
-      database.exec("PRAGMA synchronous = FULL");
-      database.exec("PRAGMA busy_timeout = 5000");
-      database.exec(SCHEMA);
+      configureSqlite(database);
+      ensureSqliteSchema(database, SCHEMA);
       return new DesignJournal(stateRoot, database, options);
     } catch (error) {
       try {
@@ -868,10 +825,10 @@ export class DesignJournal {
           }))
           .sort(
             (left, right) =>
-              left.path.localeCompare(right.path) ||
+              compareCanonicalStrings(left.path, right.path) ||
               left.lineStart - right.lineStart ||
               left.lineEnd - right.lineEnd ||
-              left.claimHash.localeCompare(right.claimHash),
+              compareCanonicalStrings(left.claimHash, right.claimHash),
           ),
       };
       const fact = this.#appendFact(
@@ -1614,7 +1571,7 @@ export class DesignJournal {
       ...(run.change_name ? { change: run.change_name } : {}),
       evidence,
       decisions: [...latestDecisions.values()].sort((left, right) =>
-        left.decisionId.localeCompare(right.decisionId),
+        compareCanonicalStrings(left.decisionId, right.decisionId),
       ),
       gates: this.#gateStatus(runId),
       plan: this.#currentPlanProjection(runId) ?? null,

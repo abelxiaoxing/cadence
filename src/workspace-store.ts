@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
@@ -14,10 +14,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-
+import { promisify } from "node:util";
 import type { ArtifactStore } from "./artifact-store.ts";
+import { compareCanonicalStrings } from "./canonical.ts";
 import { isValidRelativePath } from "./contracts.ts";
 import { observeSafePath } from "./safe-path.ts";
+import { runWorkspaceIo, type WorkspaceIoMetrics } from "./workspace-io.ts";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 
@@ -43,6 +45,7 @@ export interface WorkspaceRevision {
 }
 
 export interface CaptureBaselineInput {
+  gitTimeoutMs?: number;
   consumerRoot: string;
   approvedUntracked?: string[];
   absent?: string[];
@@ -80,7 +83,7 @@ function hash(...values: Array<string | Uint8Array>): string {
 function stableEntries(entries: WorkspaceEntries): WorkspaceEntries {
   return Object.fromEntries(
     Object.entries(entries)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => compareCanonicalStrings(left, right))
       .map(([relative, entry]) => [relative, { ...entry }]),
   );
 }
@@ -258,7 +261,19 @@ export class WorkspaceStore {
   readonly #revisions: string;
   readonly #artifacts: ArtifactStore;
 
-  constructor(root: string, artifacts: ArtifactStore) {
+  readonly #checkCancelled: () => void;
+  readonly #onMetrics?: (metrics: WorkspaceIoMetrics) => void;
+
+  constructor(
+    root: string,
+    artifacts: ArtifactStore,
+    options: {
+      checkCancelled?: () => void;
+      onMetrics?: (metrics: WorkspaceIoMetrics) => void;
+    } = {},
+  ) {
+    this.#checkCancelled = options.checkCancelled ?? (() => {});
+    this.#onMetrics = options.onMetrics;
     if (!path.isAbsolute(root)) throw new Error("workspace-store-root-invalid");
     this.root = path.resolve(root);
     this.#revisions = path.join(this.root, "revisions");
@@ -296,8 +311,12 @@ export class WorkspaceStore {
     }
 
     writeAtomic(target, Buffer.from(`${JSON.stringify(revision)}\n`));
-    for (const entry of Object.values(entries)) {
-      if (entry.kind === "file") this.#artifacts.retain(entry.hash);
+    const inherited = parentRevisionId
+      ? this.getRevision(parentRevisionId).entries
+      : {};
+    for (const [relative, entry] of Object.entries(entries)) {
+      if (entry.kind === "file" && !sameEntry(entry, inherited[relative]))
+        this.#artifacts.retain(entry.hash);
     }
     return structuredClone(revision);
   }
@@ -327,12 +346,27 @@ export class WorkspaceStore {
     const excluded = [".git", "node_modules", ...(input.excludedPaths ?? [])];
     for (const relative of excluded) requireSafeRelative(relative);
 
+    return this.#captureBaselineFiles(
+      input,
+      this.#trackedFiles(input),
+      consumerRoot,
+      excluded,
+    );
+  }
+
+  #trackedFiles(input: CaptureBaselineInput): string[] {
+    const timeout = input.gitTimeoutMs ?? 30_000;
+    if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 30_000)
+      throw new Error("workspace-git-timeout-invalid");
+    const consumerRoot = path.resolve(input.consumerRoot);
     let tracked: string[];
     try {
       tracked = parseNullSeparated(
         execFileSync("git", ["ls-files", "-z", "--cached"], {
           cwd: consumerRoot,
           maxBuffer: 32 * 1024 * 1024,
+          timeout,
+          killSignal: "SIGKILL",
         }),
       );
     } catch (error) {
@@ -342,11 +376,21 @@ export class WorkspaceStore {
       throw new Error("workspace-git-baseline-unavailable");
     }
 
+    return tracked;
+  }
+
+  #captureBaselineFiles(
+    input: CaptureBaselineInput,
+    tracked: string[],
+    consumerRoot: string,
+    excluded: string[],
+  ): WorkspaceRevision {
     const approved = input.approvedUntracked ?? [];
     const absent = input.absent ?? [];
     const selected = [...new Set([...tracked, ...approved])].sort();
     const entries: WorkspaceEntries = {};
     for (const relative of selected) {
+      this.#checkCancelled();
       requireSafeRelative(relative);
       if (isExcluded(relative, excluded)) continue;
       const observation = observeSafePath(consumerRoot, relative);
@@ -393,17 +437,12 @@ export class WorkspaceStore {
     const revision = requireRevisionShape(parsed);
     if (
       revision.revisionId !== id ||
-      manifestHash(revision.entries) !== revision.manifestHash ||
+      (manifestHash(revision.entries) !== revision.manifestHash &&
+        hash("cadence-workspace-manifest", JSON.stringify(revision.entries)) !==
+          revision.manifestHash) ||
       revisionId(revision.parentRevisionId, revision.manifestHash) !== id
     ) {
       throw new Error("workspace-revision-integrity-invalid");
-    }
-    for (const entry of Object.values(revision.entries)) {
-      if (entry.kind !== "file") continue;
-      const bytes = this.#artifacts.read(entry.hash);
-      if (bytes.byteLength !== entry.bytes) {
-        throw new Error("workspace-revision-integrity-invalid");
-      }
     }
     return structuredClone(revision);
   }
@@ -412,7 +451,7 @@ export class WorkspaceStore {
     const parent = this.getRevision(input.parentRevisionId);
     const entries = stableEntries(parent.entries);
     for (const [relative, change] of Object.entries(input.changes).sort(
-      ([left], [right]) => left.localeCompare(right),
+      ([left], [right]) => compareCanonicalStrings(left, right),
     )) {
       requireSafeRelative(relative);
       if (
@@ -498,6 +537,7 @@ export class WorkspaceStore {
     const root = path.resolve(destination);
     ensureDirectory(root);
     for (const [relative, entry] of Object.entries(revision.entries)) {
+      this.#checkCancelled();
       requireSafeRelative(relative);
       const observation = observeSafePath(root, relative);
       if (entry.kind === "absent") {
@@ -525,12 +565,78 @@ export class WorkspaceStore {
       if (observation.kind !== "absent") {
         throw new Error("workspace-materialize-conflict");
       }
-      const bytes = this.#artifacts.read(entry.hash);
-      if (bytes.byteLength !== entry.bytes) {
+      const bytes = this.#artifacts.copyVerified(entry.hash, target);
+      if (bytes !== entry.bytes)
         throw new Error("workspace-revision-integrity-invalid");
-      }
-      writeFileSync(target, bytes, { flag: "wx", mode: entry.mode });
       chmodSync(target, entry.mode);
     }
+  }
+  /** Used by the trusted I/O worker; Git is bounded and cancellable. */
+  async captureBaselineWithGit(
+    input: CaptureBaselineInput,
+    signal?: AbortSignal,
+  ): Promise<WorkspaceRevision> {
+    signal?.throwIfAborted();
+    const consumerRoot = path.resolve(input.consumerRoot);
+    const stat = lstatSync(consumerRoot, { throwIfNoEntry: false });
+    if (!stat?.isDirectory() || stat.isSymbolicLink())
+      throw new Error("unsafe-workspace-path");
+    const excluded = [".git", "node_modules", ...(input.excludedPaths ?? [])];
+    for (const relative of excluded) requireSafeRelative(relative);
+    const timeout = input.gitTimeoutMs ?? 30_000;
+    if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 30_000)
+      throw new Error("workspace-git-timeout-invalid");
+    let tracked: string[];
+    try {
+      const { stdout } = await promisify(execFile)(
+        "git",
+        ["ls-files", "-z", "--cached"],
+        {
+          cwd: consumerRoot,
+          encoding: "buffer",
+          maxBuffer: 32 * 1024 * 1024,
+          timeout,
+          killSignal: "SIGKILL",
+          signal,
+        },
+      );
+      tracked = parseNullSeparated(stdout);
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (error instanceof Error && error.message === "unsafe-workspace-path")
+        throw error;
+      throw new Error("workspace-git-baseline-unavailable");
+    }
+    this.#checkCancelled();
+    return this.#captureBaselineFiles(input, tracked, consumerRoot, excluded);
+  }
+
+  captureBaselineAsync(
+    input: CaptureBaselineInput,
+    signal?: AbortSignal,
+  ): Promise<WorkspaceRevision> {
+    return runWorkspaceIo({
+      root: this.root,
+      artifactRoot: this.#artifacts.root,
+      operation: "captureBaseline",
+      args: [input],
+      signal,
+      onMetrics: this.#onMetrics,
+    });
+  }
+
+  materializeAsync(
+    revisionId: string,
+    destination: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    return runWorkspaceIo({
+      root: this.root,
+      artifactRoot: this.#artifacts.root,
+      operation: "materialize",
+      args: [revisionId, destination],
+      signal,
+      onMetrics: this.#onMetrics,
+    });
   }
 }

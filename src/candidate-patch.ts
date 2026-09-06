@@ -1,6 +1,7 @@
 import { lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
+import { compareCanonicalStrings } from "./canonical.ts";
 
 import { isValidRelativePath } from "./contracts.ts";
 import { observeSafePath } from "./safe-path.ts";
@@ -242,7 +243,7 @@ export function compileCandidatePatch(input: {
 
   const diff = [...states.values()]
     .filter((state) => state.base !== state.current)
-    .sort((left, right) => left.path.localeCompare(right.path))
+    .sort((left, right) => compareCanonicalStrings(left.path, right.path))
     .map(renderFileDiff)
     .join("");
   if (diff.length === 0) throw new Error("candidate-patch-empty");

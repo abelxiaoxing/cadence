@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { canonicalJson } from "./canonical.ts";
 import { ROLES } from "./contracts.ts";
 
 export const ROUTE_DIALECTS = [
@@ -164,17 +165,6 @@ function httpUrl(value: unknown): value is string {
   } catch {
     return false;
   }
-}
-
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (isRecord(value)) {
-    return `{${Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
 }
 
 function routeFingerprint(route: Record<string, unknown>): string {

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { canonicalJson, compareCanonicalStrings } from "./canonical.ts";
 
 export const RUN_STAGES = ["abel-design", "abel-implement"] as const;
 export type RunStage = (typeof RUN_STAGES)[number];
@@ -161,21 +162,6 @@ const LEGAL_TRANSITIONS: Readonly<Record<RunState, readonly RunState[]>> = {
   rejected: [],
 };
 
-export function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
-  }
-  if (value && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, entry]) => entry !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right));
-    return `{${entries
-      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
-
 export function hashRunEvent(event: Omit<RunEvent, "hash">): string {
   return createHash("sha256").update(canonicalJson(event)).digest("hex");
 }
@@ -329,7 +315,7 @@ function applyVerifiedEvent(
         : [...projection.deliveryBindings, binding].sort(
             (left, right) =>
               left.revision - right.revision ||
-              left.gate.localeCompare(right.gate),
+              compareCanonicalStrings(left.gate, right.gate),
           );
       return {
         ...projection,
@@ -430,3 +416,5 @@ export function legalControlCommands(state: RunState): string[] {
   if (state === "recovering") return ["status", "resume", "discard"];
   return ["status", "cancel", "discard"];
 }
+
+export { canonicalJson } from "./canonical.ts";

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { canonicalJson } from "./canonical.ts";
 import {
   type ImplementationPhase,
   type ImplementGraphBoundary,
@@ -15,21 +16,6 @@ import {
   type VerificationRunnerEnvironment,
   validateVerificationAdapterCapability,
 } from "./verification-capability.ts";
-
-export function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
-  }
-  if (value && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, entry]) => entry !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right));
-    return `{${entries
-      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
 
 export function hashCanonicalValue(value: unknown): string {
   return createHash("sha256").update(canonicalJson(value)).digest("hex");
@@ -576,3 +562,5 @@ export function assessImplementGraphReadiness(
 
   return { closure, phases, outputs: outputReadiness };
 }
+
+export { canonicalJson } from "./canonical.ts";

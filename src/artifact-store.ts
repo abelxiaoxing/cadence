@@ -3,6 +3,7 @@ import {
   chmodSync,
   closeSync,
   constants,
+  copyFileSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
@@ -158,6 +159,22 @@ export class ArtifactStore {
     const bytes = readFileSync(target);
     if (digest(bytes) !== hash) throw new Error("artifact-integrity-invalid");
     return Buffer.from(bytes);
+  }
+
+  /** Clone when supported; always use a distinct inode and verify the copied bytes. */
+  copyVerified(hash: string, destination: string): number {
+    const source = this.#blobPath(hash);
+    const stat = lstatSync(source, { throwIfNoEntry: false });
+    if (!stat?.isFile() || stat.isSymbolicLink())
+      throw new Error("artifact-unavailable");
+    copyFileSync(
+      source,
+      destination,
+      constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE,
+    );
+    const bytes = readFileSync(destination);
+    if (digest(bytes) !== hash) throw new Error("artifact-integrity-invalid");
+    return bytes.byteLength;
   }
 
   referenceCount(hash: string): number {

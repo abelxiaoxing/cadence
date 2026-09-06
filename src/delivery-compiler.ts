@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { compareCanonicalStrings } from "./canonical.ts";
 import {
   type AgentsImpact,
   type ImplementGraphBoundary,
@@ -117,7 +118,7 @@ export class DesignPlanValidationError extends Error {
         diagnostics
           .map((diagnostic) => structuredClone(diagnostic))
           .sort((left, right) =>
-            canonicalJson(left).localeCompare(canonicalJson(right)),
+            compareCanonicalStrings(canonicalJson(left), canonicalJson(right)),
           )
           .map((diagnostic) => [canonicalJson(diagnostic), diagnostic]),
       ).values(),
@@ -371,7 +372,9 @@ function normalizeArtifactBindings(
     paths.add(binding.path);
     return { path: binding.path, rawSha256: binding.rawSha256 };
   });
-  return normalized.sort((left, right) => left.path.localeCompare(right.path));
+  return normalized.sort((left, right) =>
+    compareCanonicalStrings(left.path, right.path),
+  );
 }
 
 function requireReceiptIdentity(
@@ -405,7 +408,41 @@ function normalizeGateProof(value: GateApprovalProof): GateApprovalProof {
   return structuredClone(value);
 }
 
-function parseCanonicalReceipt<T>(bytes: Uint8Array, code: string): T {
+export interface DeliveryReadOptions {
+  /** Only the proof-bound delivery loader may admit historical collection ordering. */
+  allowLegacyOrder?: boolean;
+}
+
+const legacyPlans = new WeakMap<object, string>();
+
+function unorderedIdentity(value: unknown): string {
+  if (Array.isArray(value))
+    return `[${value.map(unorderedIdentity).sort().join(",")}]`;
+  if (isRecord(value))
+    return `{${Object.entries(value)
+      .sort(([a], [b]) => compareCanonicalStrings(a, b))
+      .map(
+        ([key, entry]) => `${JSON.stringify(key)}:${unorderedIdentity(entry)}`,
+      )
+      .join(",")}}`;
+  return JSON.stringify(value) ?? "null";
+}
+
+function sameNormalized(
+  left: unknown,
+  right: unknown,
+  options: DeliveryReadOptions,
+): boolean {
+  return options.allowLegacyOrder
+    ? unorderedIdentity(left) === unorderedIdentity(right)
+    : canonicalJson(left) === canonicalJson(right);
+}
+
+function parseCanonicalReceipt<T>(
+  bytes: Uint8Array,
+  code: string,
+  options: DeliveryReadOptions = {},
+): T {
   const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   let parsed: unknown;
   try {
@@ -413,7 +450,11 @@ function parseCanonicalReceipt<T>(bytes: Uint8Array, code: string): T {
   } catch {
     throw new Error(code);
   }
-  if (`${canonicalJson(parsed)}\n` !== text) throw new Error(code);
+  if (
+    `${canonicalJson(parsed)}\n` !== text &&
+    (!options.allowLegacyOrder || `${JSON.stringify(parsed)}\n` !== text)
+  )
+    throw new Error(code);
   return parsed as T;
 }
 
@@ -438,10 +479,14 @@ export function compileGateAReceipt(input: {
   };
 }
 
-export function parseGateAReceipt(bytes: Uint8Array): GateAReceipt {
+export function parseGateAReceipt(
+  bytes: Uint8Array,
+  options: DeliveryReadOptions = {},
+): GateAReceipt {
   const receipt = parseCanonicalReceipt<GateAReceipt>(
     bytes,
     "gate-a-receipt-invalid",
+    options,
   );
   if (
     !isRecord(receipt) ||
@@ -455,8 +500,8 @@ export function parseGateAReceipt(bytes: Uint8Array): GateAReceipt {
   const approval = normalizeGateProof(receipt.approval);
   const artifacts = normalizeArtifactBindings(receipt.artifacts);
   if (
-    canonicalJson(approval) !== canonicalJson(receipt.approval) ||
-    canonicalJson(artifacts) !== canonicalJson(receipt.artifacts)
+    !sameNormalized(approval, receipt.approval, options) ||
+    !sameNormalized(artifacts, receipt.artifacts, options)
   ) {
     throw new Error("gate-a-receipt-invalid");
   }
@@ -537,10 +582,14 @@ export function compileReadyReceipt(input: {
   };
 }
 
-export function parseReadyReceipt(bytes: Uint8Array): ReadyReceipt {
+export function parseReadyReceipt(
+  bytes: Uint8Array,
+  options: DeliveryReadOptions = {},
+): ReadyReceipt {
   const receipt = parseCanonicalReceipt<ReadyReceipt>(
     bytes,
     "delivery-receipt-invalid",
+    options,
   );
   if (
     !isRecord(receipt) ||
@@ -592,9 +641,9 @@ export function parseReadyReceipt(bytes: Uint8Array): ReadyReceipt {
   const traceability = normalizeTraceability(receipt.traceability);
   if (
     gateB.contractHash !== receipt.plan.canonicalHash ||
-    canonicalJson(gateB) !== canonicalJson(receipt.approvals.gateB) ||
-    canonicalJson(artifacts) !== canonicalJson(receipt.artifacts) ||
-    canonicalJson(traceability) !== canonicalJson(receipt.traceability)
+    !sameNormalized(gateB, receipt.approvals.gateB, options) ||
+    !sameNormalized(artifacts, receipt.artifacts, options) ||
+    !sameNormalized(traceability, receipt.traceability, options)
   ) {
     throw new Error("delivery-receipt-invalid");
   }
@@ -602,12 +651,14 @@ export function parseReadyReceipt(bytes: Uint8Array): ReadyReceipt {
 }
 
 function sortStrings(values: readonly string[]): string[] {
-  return [...values].sort((left, right) => left.localeCompare(right));
+  return [...values].sort((left, right) =>
+    compareCanonicalStrings(left, right),
+  );
 }
 
 function sortCanonical<T>(values: readonly T[]): T[] {
   return [...values].sort((left, right) =>
-    canonicalJson(left).localeCompare(canonicalJson(right)),
+    compareCanonicalStrings(canonicalJson(left), canonicalJson(right)),
   );
 }
 
@@ -758,8 +809,8 @@ function normalizeTask(value: unknown): PlanTaskDraft {
         searchEvidence: sortStrings(cloned.impactClosure.searchEvidence),
         relatedTests: [...cloned.impactClosure.relatedTests].sort(
           (left, right) =>
-            left.path.localeCompare(right.path) ||
-            left.disposition.localeCompare(right.disposition),
+            compareCanonicalStrings(left.path, right.path) ||
+            compareCanonicalStrings(left.disposition, right.disposition),
         ),
         affectedSuite: sortStrings(cloned.impactClosure.affectedSuite),
       },
@@ -936,7 +987,7 @@ function normalizeAgentsCheckpointOperations(
             : normalizeAgentsManagedBlock(operation.managedBlock),
       };
     })
-    .sort((left, right) => left.target.localeCompare(right.target));
+    .sort((left, right) => compareCanonicalStrings(left.target, right.target));
 }
 
 function normalizeVerificationPlan(value: unknown): PlanVerification {
@@ -1098,9 +1149,11 @@ function normalizeDraft(value: unknown): ImplementPlan {
     changeId: value.changeId,
     tasks: value.tasks
       .map(normalizeTask)
-      .sort((left, right) => left.taskId.localeCompare(right.taskId)),
+      .sort((left, right) =>
+        compareCanonicalStrings(left.taskId, right.taskId),
+      ),
     outputs: (structuredClone(value.outputs) as ImplementGraphOutput[]).sort(
-      (left, right) => left.id.localeCompare(right.id),
+      (left, right) => compareCanonicalStrings(left.id, right.id),
     ),
     verification: normalizeVerificationPlan(value.verification),
     tracking: normalizeTracking(value.tracking),
@@ -1170,7 +1223,11 @@ export function compileImplementPlan(
   options: { consumerRoot: string },
 ): CompiledDelivery {
   try {
-    const plan = normalizeDraft(draft);
+    const normalized = normalizeDraft(draft);
+    const plan =
+      isRecord(draft) && legacyPlans.get(draft) === JSON.stringify(draft)
+        ? (draft as unknown as ImplementPlan)
+        : normalized;
     const graph = graphFromPlan(plan);
     const readiness = assessImplementGraphReadiness(
       options.consumerRoot,
@@ -1217,7 +1274,10 @@ export function compileImplementPlan(
   }
 }
 
-export function parseImplementPlan(bytes: Uint8Array): ImplementPlan {
+export function parseImplementPlan(
+  bytes: Uint8Array,
+  options: DeliveryReadOptions = {},
+): ImplementPlan {
   const text = new TextDecoder().decode(bytes);
   let parsed: unknown;
   try {
@@ -1226,8 +1286,15 @@ export function parseImplementPlan(bytes: Uint8Array): ImplementPlan {
     throw new Error("delivery-plan-json-invalid");
   }
   const normalized = normalizeDraft(parsed);
-  if (`${canonicalJson(normalized)}\n` !== text) {
+  if (`${canonicalJson(normalized)}\n` === text) return normalized;
+  if (
+    !options.allowLegacyOrder ||
+    `${canonicalJson(parsed)}\n` !== text ||
+    !sameNormalized(normalized, parsed, options)
+  ) {
     throw new Error("delivery-plan-not-canonical");
   }
-  return normalized;
+  // Keep proof-bound historical bytes unchanged; a mutation invalidates this association.
+  legacyPlans.set(parsed as object, JSON.stringify(parsed));
+  return parsed as ImplementPlan;
 }

@@ -970,7 +970,9 @@ export class DesignController {
       }
       let compiled: ReturnType<typeof compileImplementPlan> | undefined;
       try {
-        const plan = parseImplementPlan(installedPlanBytes);
+        const plan = parseImplementPlan(installedPlanBytes, {
+          allowLegacyOrder: true,
+        });
         compiled = compileImplementPlan(plan, {
           consumerRoot: this.consumerRoot,
         });
@@ -1073,8 +1075,8 @@ export class DesignController {
       readyInstalled = true;
       const installedGateA = readSafeFile(this.consumerRoot, gateAPath);
       const installedReady = readSafeFile(this.consumerRoot, readyPath);
-      parseGateAReceipt(installedGateA);
-      parseReadyReceipt(installedReady);
+      parseGateAReceipt(installedGateA, { allowLegacyOrder: true });
+      parseReadyReceipt(installedReady, { allowLegacyOrder: true });
       if (
         !Buffer.from(installedGateA).equals(Buffer.from(gateAReceipt.bytes)) ||
         !Buffer.from(installedReady).equals(Buffer.from(readyReceipt.bytes))

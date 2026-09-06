@@ -53,3 +53,26 @@ jobs:
       # Explicit Node invocation prevents Bun from masking Node spawn behavior.
       # These cover Design receipt/retry/admission, not native Implement isolation.
       - run: node node_modules/vitest/vitest.mjs run test/openspec-cli.test.ts test/design-delivery.integration.test.ts test/stage-activation.integration.test.ts test/subagent-activity.property.test.ts
+
+  implement-isolation-contract:
+    name: Implement / Bubblewrap / Node ${{ matrix.node }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.13.0', '24.13.0']
+    env:
+      CADENCE_REAL_ISOLATION: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - run: sudo apt-get update
+      - run: sudo apt-get install --yes bubblewrap
+      - run: bun install --frozen-lockfile
+      # Opt-in means unavailable isolation fails the job; it never silently skips.
+      - run: node node_modules/vitest/vitest.mjs run test/isolation-real.integration.test.ts test/workspace-io.test.ts

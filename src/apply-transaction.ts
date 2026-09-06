@@ -20,10 +20,12 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-
 import type { ArtifactStore } from "./artifact-store.ts";
+import { compareCanonicalStrings } from "./canonical.ts";
 import { isValidRelativePath } from "./contracts.ts";
 import { observeSafePath } from "./safe-path.ts";
+import { configureSqlite, ensureSqliteSchema } from "./sqlite-schema.ts";
+import { APPLY_SCHEMA } from "./storage-schema.ts";
 import type {
   WorkspaceEntry,
   WorkspaceRevision,
@@ -548,7 +550,11 @@ export async function verifyCumulativeRevision(
   );
   chmodSync(temporary, 0o700);
   try {
-    input.workspaceStore.materialize(revision.revisionId, temporary);
+    await input.workspaceStore.materializeAsync(
+      revision.revisionId,
+      temporary,
+      input.signal,
+    );
     if (input.signal?.aborted) {
       return {
         ok: false,
@@ -629,16 +635,8 @@ export class ApplyTransaction {
       throw new Error("transaction-database-path-invalid");
     }
     this.#database = new DatabaseSync(databasePath);
-    this.#database.exec(
-      "PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;",
-    );
-    this.#database.exec(`
-      CREATE TABLE IF NOT EXISTS apply_transaction_journal (
-        transaction_id TEXT PRIMARY KEY,
-        journal_json TEXT NOT NULL,
-        journal_hash TEXT NOT NULL
-      ) STRICT;
-    `);
+    configureSqlite(this.#database);
+    ensureSqliteSchema(this.#database, APPLY_SCHEMA);
     chmodSync(databasePath, 0o600);
   }
 
@@ -986,7 +984,7 @@ export class ApplyTransaction {
     const deepestFirst = [...journal.createdDirectories].sort(
       (left, right) =>
         right.split("/").length - left.split("/").length ||
-        right.localeCompare(left),
+        compareCanonicalStrings(right, left),
     );
     for (const relative of deepestFirst) {
       const observation = observeSafePath(journal.consumerRoot, relative);
@@ -1244,7 +1242,11 @@ export class ApplyTransaction {
           path.join(this.root, "post-apply-verification-"),
         );
         try {
-          this.#workspaces.materialize(journal.finalRevisionId, isolatedRoot);
+          await this.#workspaces.materializeAsync(
+            journal.finalRevisionId,
+            isolatedRoot,
+            signal,
+          );
           const execution = Promise.resolve(
             this.#hooks.postApply({
               transactionId,

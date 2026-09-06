@@ -75,6 +75,18 @@
       "assist": {
         "enabled": false
       }
+    },
+    {
+      "includes": ["src/workspace-io-worker.mjs"],
+      "formatter": {
+        "enabled": false
+      },
+      "linter": {
+        "enabled": false
+      },
+      "assist": {
+        "enabled": false
+      }
     }
   ]
 }

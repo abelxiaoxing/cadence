@@ -11,11 +11,13 @@ import {
   reduceRunEvents,
   ZERO_EVENT_HASH,
 } from "./run-state.ts";
+import { configureSqlite, matchesSqliteSchema } from "./sqlite-schema.ts";
 import {
   prepareStateRoot,
   type ResolvedStateRoot,
   StateRootError,
 } from "./state-root.ts";
+import { RUN_SCHEMA as SCHEMA } from "./storage-schema.ts";
 
 export class RunStoreFormatError extends Error {
   readonly code = "run-store-reset-required" as const;
@@ -109,145 +111,10 @@ export interface OperationLeaseStatus {
   expiresAt?: number;
 }
 
-const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS runs (
-    run_id TEXT PRIMARY KEY,
-    root_hash TEXT NOT NULL,
-    stage TEXT NOT NULL,
-    lookup_key TEXT NOT NULL,
-    change_name TEXT,
-    provisional_key TEXT,
-    state TEXT NOT NULL,
-    sequence INTEGER NOT NULL,
-    event_hash TEXT NOT NULL,
-    delivery_revision INTEGER,
-    projection_json TEXT NOT NULL,
-    terminal_tombstone TEXT,
-    UNIQUE (root_hash, stage, lookup_key)
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS delivery_bindings (
-    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
-    gate TEXT NOT NULL,
-    revision INTEGER NOT NULL,
-    receipt_hash TEXT NOT NULL,
-    approval_revision INTEGER,
-    contract_hash TEXT,
-    record_hash TEXT,
-    operation_id TEXT NOT NULL,
-    PRIMARY KEY (run_id, gate, revision),
-    UNIQUE (run_id, operation_id)
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS events (
-    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
-    sequence INTEGER NOT NULL,
-    type TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    prior_hash TEXT NOT NULL,
-    event_hash TEXT NOT NULL,
-    PRIMARY KEY (run_id, sequence),
-    UNIQUE (run_id, event_hash)
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS tasks (
-    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
-    task_id TEXT NOT NULL,
-    state TEXT NOT NULL,
-    phase TEXT,
-    projection_json TEXT NOT NULL,
-    PRIMARY KEY (run_id, task_id)
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS operations (
-    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
-    operation_id TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    state TEXT NOT NULL,
-    outcome_json TEXT,
-    lease_token TEXT,
-    lease_expires_at INTEGER,
-    PRIMARY KEY (run_id, operation_id)
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS route_health (
-    route_fingerprint TEXT PRIMARY KEY,
-    state TEXT NOT NULL,
-    next_half_open_at INTEGER,
-    projection_json TEXT NOT NULL
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS artifacts (
-    content_hash TEXT PRIMARY KEY,
-    size_bytes INTEGER NOT NULL,
-    seal_state TEXT NOT NULL,
-    owner_run_id TEXT REFERENCES runs(run_id) ON DELETE CASCADE,
-    reference_count INTEGER NOT NULL
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS workspace_revisions (
-    revision_id TEXT PRIMARY KEY,
-    owner_run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
-    parent_revision_id TEXT,
-    manifest_hash TEXT NOT NULL
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS apply_transactions (
-    transaction_id TEXT PRIMARY KEY,
-    owner_run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
-    state TEXT NOT NULL,
-    intent_json TEXT NOT NULL,
-    recovery_json TEXT
-  ) STRICT;
-
-  CREATE TABLE IF NOT EXISTS bootstrap_handoffs (
-    handoff_id TEXT PRIMARY KEY,
-    owner_run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
-    receipt_hash TEXT NOT NULL UNIQUE,
-    state TEXT NOT NULL,
-    facts_json TEXT NOT NULL
-  ) STRICT;
-`;
-
 function requireIdentifier(value: string, label: string): void {
   if (!IDENTIFIER.test(value)) throw new Error(`invalid-${label}`);
 }
 
-function configureDatabase(
-  database: DatabaseSync,
-  busyTimeoutMs: number | undefined,
-): void {
-  database.exec("PRAGMA foreign_keys = ON");
-  database.exec("PRAGMA journal_mode = WAL");
-  database.exec("PRAGMA synchronous = FULL");
-  database.exec(
-    `PRAGMA busy_timeout = ${Math.max(1, Math.min(30_000, busyTimeoutMs ?? 5_000))}`,
-  );
-}
-
-const REQUIRED_TABLES = [
-  "runs",
-  "delivery_bindings",
-  "events",
-  "tasks",
-  "operations",
-  "route_health",
-  "artifacts",
-  "workspace_revisions",
-  "apply_transactions",
-  "bootstrap_handoffs",
-] as const;
-
-const REQUIRED_DELIVERY_BINDING_COLUMNS = [
-  "run_id",
-  "gate",
-  "revision",
-  "receipt_hash",
-  "approval_revision",
-  "contract_hash",
-  "record_hash",
-  "operation_id",
-] as const;
 const LEGACY_SCHEMA_VERSION = 4;
 
 function applicationTables(database: DatabaseSync): string[] {
@@ -272,15 +139,9 @@ function tableColumns(database: DatabaseSync, table: string): string[] {
 
 function hasRequiredCoreSchema(
   database: DatabaseSync,
-  tables: readonly string[],
+  _tables: readonly string[],
 ): boolean {
-  const deliveryBindingColumns = tableColumns(database, "delivery_bindings");
-  return (
-    REQUIRED_TABLES.every((table) => tables.includes(table)) &&
-    REQUIRED_DELIVERY_BINDING_COLUMNS.every((column) =>
-      deliveryBindingColumns.includes(column),
-    )
-  );
+  return matchesSqliteSchema(database, SCHEMA);
 }
 
 function hasCurrentSchema(
@@ -474,7 +335,7 @@ export class RunStore {
     let database: DatabaseSync | undefined;
     try {
       database = new DatabaseSync(stateRoot.databasePath);
-      configureDatabase(database, options.busyTimeoutMs);
+      configureSqlite(database, options.busyTimeoutMs);
       ensureCurrentSchema(database, stateRoot.databasePath);
     } catch (error) {
       try {

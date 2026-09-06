@@ -40,11 +40,12 @@
     "pack:check": "node scripts/pack-check.mjs",
     "traceability:check": "node scripts/traceability-check.mjs",
     "verify": "bun run check && bun run lint && bun run test && bun run pack:check",
-    "check": "node scripts/check-syntax.mjs && tsc --noEmit",
+    "check": "node scripts/check-syntax.mjs && bun scripts/build-workspace-io.mjs --check && tsc --noEmit",
     "lint": "biome check . && rumdl check .",
     "test": "vitest run",
     "test:target": "vitest run",
-    "check:agents": "node scripts/check-agents.mjs"
+    "check:agents": "node scripts/check-agents.mjs",
+    "build:workspace-io": "bun scripts/build-workspace-io.mjs"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
