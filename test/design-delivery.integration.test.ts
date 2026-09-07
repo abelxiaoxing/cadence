@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { normalizeChangeContract } from "../src/change-contract.ts";
 import {
   DesignPlanValidationError,
@@ -1233,6 +1233,60 @@ describe("safe private Design artifact mutation", () => {
     item.controller.close();
   });
 
+  it("preserves Gate A field diagnostics through the registered tool and accepts a corrected retry", async () => {
+    const item = fixture("gate-field-feedback");
+    const harness = extensionJourneyHarness(
+      item.consumerRoot,
+      {
+        execute: async () => ({}),
+        executeDesign: (request) => item.controller.execute(request),
+        close: async () => item.controller.close(),
+      },
+      "abel-design",
+    );
+    const { changeContract } = JSON.parse(
+      readFileSync(
+        new URL("../config/plan-draft.example.json", import.meta.url),
+        "utf8",
+      ),
+    );
+    const input = {
+      action: "design",
+      request: {
+        operation: "approve-gate",
+        runId: item.runId,
+        operationId: "field-gate",
+        gate: "gate-a",
+        contract: changeContract,
+      },
+    };
+    changeContract.policy.verificationModes = ["PRIVATE-invalid"];
+    try {
+      await expect(harness.execute("bad-gate", input)).rejects.toThrow(
+        "invalid-design-control-request",
+      );
+      const feedback = harness.handlers.get("tool_result")?.({
+        toolName: DISPATCH_TOOL,
+        toolCallId: "bad-gate",
+        isError: true,
+        input,
+        content: [{ type: "text", text: "invalid-design-control-request" }],
+      }) as { details: { designFailure: { diagnostics: unknown[] } } };
+      expect(feedback.details.designFailure.diagnostics).toContainEqual(
+        expect.objectContaining({
+          field: "contract.policy.verificationModes.0",
+        }),
+      );
+      expect(JSON.stringify(feedback)).not.toContain("PRIVATE");
+      changeContract.policy.verificationModes = ["behavior"];
+      await harness.execute("corrected-gate", input);
+      expect(item.controller.status(item.runId).gates.gateA.current).toBe(true);
+    } finally {
+      await harness.handlers.get("session_shutdown")?.();
+      item.controller.close();
+    }
+  });
+
   it("delivers actionable binding diagnostics through the real Design tool and accepts the omitted-field correction", async () => {
     const item = fixture("binding-feedback");
     await approveGateAOnly(item);
@@ -1293,6 +1347,14 @@ describe("safe private Design artifact mutation", () => {
       writeDraft();
       expect(await harness.execute("binding-corrected", input)).toMatchObject({
         valid: true,
+        summary: {
+          derivations: expect.arrayContaining([
+            expect.objectContaining({
+              field: "phases.red.verificationInputs",
+              source: "contract-and-declared-outputs",
+            }),
+          ]),
+        },
       });
       expect(item.controller.status(item.runId).plan).toBeNull();
     } finally {
@@ -1589,6 +1651,251 @@ describe("explicit four-entrypoint approval round trip", () => {
 });
 
 describe("code-owned Design delivery compilation", () => {
+  it
+    .skipIf(process.env.CADENCE_REAL_OPENSPEC !== "1")
+    .each([
+      "plan-draft.example.json",
+      "plan-draft.multiple-tasks.example.json",
+    ])(
+    "seals compact %s through real OpenSpec without authored verifier IDs",
+    async (example) => {
+      const item = fixture(`real-compact-${example}`);
+      item.controller.close();
+      const controller = DesignController.open({
+        consumerRoot: item.consumerRoot,
+        stateRoot: item.stateRoot,
+        inspectOpenSpec: inspectOpenSpecDelivery,
+      });
+      const draft = JSON.parse(
+        readFileSync(new URL(`../config/${example}`, import.meta.url), "utf8"),
+      );
+      draft.changeId = item.change;
+      mkdirSync(path.join(item.consumerRoot, "test"), { recursive: true });
+      for (const [file, content] of Object.entries({
+        "package.json": '{"type":"module"}',
+        "src/add.mjs": "export const add=(a,b)=>a-b;\n",
+        "src/double.mjs": "export const double=n=>n;\n",
+        "test/add.test.mjs":
+          "import assert from 'node:assert/strict'; import {add} from '../src/add.mjs'; assert.equal(add(0,0),0);\n",
+        "test/double.test.mjs":
+          "import assert from 'node:assert/strict'; import {double} from '../src/double.mjs'; assert.equal(double(0),0);\n",
+        "test/all.test.mjs":
+          "import './add.test.mjs'; import './double.test.mjs';\n",
+        "openspec/config.yaml": "schema: spec-driven\n",
+      }))
+        writeFileSync(path.join(item.consumerRoot, file), content);
+      const ids = draft.tasks.map(
+        (task: { taskId: string }) => task.taskId,
+      ) as string[];
+      try {
+        await controller.execute({
+          operation: "approve-gate",
+          runId: item.runId,
+          operationId: "approve-compact",
+          gate: "gate-a",
+          contract: draft.changeContract,
+        });
+        delete draft.changeContract;
+        const artifacts = {
+          "proposal.md":
+            "## Why\n\nRepair arithmetic.\n\n## What Changes\n\n- Repair existing arithmetic behavior.\n\n## Capabilities\n\n### New Capabilities\n- `example`: correct arithmetic.\n\n## Impact\n\nExisting source and tests only.\n",
+          "design.md":
+            "## Context\n\nPreserve zero cases and repair positive integer arithmetic with existing Node assertions.\n",
+          "specs/example/spec.md": `## ADDED Requirements\n\n### Requirement: Arithmetic\n\nArithmetic SHALL satisfy its accepted integer behavior.\n\n${ids.map((id) => `#### Scenario: ${id}\n\n- **WHEN** the accepted positive integer case is evaluated\n- **THEN** the result is correct and zero cases remain correct\n`).join("\n")}`,
+          "tasks.md": `## 1. Arithmetic\n\n${ids.map((id) => `- [ ] \`${id}\` implements its accepted arithmetic behavior.\n  - Owns \`specs/example/spec.md#Arithmetic/${id}\``).join("\n")}\n`,
+          "plan-draft.json": JSON.stringify(draft),
+        };
+        for (const [file, content] of Object.entries(artifacts)) {
+          await controller.execute({
+            operation: "write-artifact",
+            runId: item.runId,
+            operationId: `write-${Object.keys(artifacts).indexOf(file)}`,
+            path: file,
+            content,
+          });
+        }
+        await expect(
+          controller.execute({
+            operation: "validate-plan-draft",
+            runId: item.runId,
+          }),
+        ).resolves.toMatchObject({ valid: true });
+        await controller.execute({
+          operation: "compile-plan",
+          runId: item.runId,
+          operationId: "compile-compact",
+        });
+        await expect(
+          controller.execute({
+            operation: "finalize-delivery",
+            runId: item.runId,
+            operationId: "finalize-compact",
+          }),
+        ).resolves.toMatchObject({ completed: true });
+        const source = packageDeliverySource(item.consumerRoot, {
+          verifyGateProof: (input) => controller.verifyGateProof(input),
+          verifyFinalizedDelivery: (input) =>
+            controller.verifyFinalizedDelivery(input),
+        });
+        await expect(
+          source.load({ stage: "abel-implement", change: item.change }),
+        ).resolves.toMatchObject({ revision: 1 });
+      } finally {
+        controller.close();
+      }
+    },
+    60_000,
+  );
+
+  it("seals author task evidence without copying derived verifier identities", async () => {
+    const item = fixture("derived-traceability");
+    const tasksPath = path.join(item.changeRoot, "tasks.md");
+    const authored =
+      "\uFEFF" +
+      readFileSync(tasksPath, "utf8").replace(
+        "implements delivery-red then delivery-green.",
+        "closes the accepted delivery.",
+      );
+    writeFileSync(tasksPath, authored);
+    const draft = planDraft(item.change);
+    const compact = {
+      ...draft,
+      tasks: draft.tasks.map((task) => ({
+        ...task,
+        phases: Object.fromEntries(
+          Object.entries(task.phases).map(([phase, value]) => {
+            const {
+              id: _id,
+              classification: _classification,
+              ...command
+            } = value.verification;
+            return [phase, { ...value, verification: command }];
+          }),
+        ),
+      })),
+    };
+    writeFileSync(
+      path.join(item.changeRoot, "plan-draft.json"),
+      JSON.stringify(compact),
+    );
+    try {
+      await approveAndCompile(item);
+      const installed = readFileSync(tasksPath, "utf8");
+      expect(installed.startsWith(authored)).toBe(true);
+      expect(installed).toContain("<!-- ABEL:VERIFICATION-BINDINGS:START -->");
+      const before = item.controller.status(item.runId);
+      await item.controller.execute({
+        operation: "compile-plan",
+        runId: item.runId,
+        operationId: "same-plan",
+      });
+      expect(readFileSync(tasksPath, "utf8")).toBe(installed);
+      expect(item.controller.status(item.runId).gates).toEqual(before.gates);
+      await expect(
+        item.controller.execute({
+          operation: "finalize-delivery",
+          runId: item.runId,
+          operationId: "seal-derived",
+        }),
+      ).resolves.toMatchObject({ completed: true });
+    } finally {
+      item.controller.close();
+    }
+  });
+
+  it.each(["missing-task", "missing-scenario", "stale-bindings"])(
+    "does not let generated bindings conceal %s",
+    async (corruption) => {
+      const item = fixture(`bindings-${corruption}`);
+      try {
+        await approveAndCompile(item);
+        const tasksPath = path.join(item.changeRoot, "tasks.md");
+        const installed = readFileSync(tasksPath, "utf8");
+        const marker = installed.indexOf(
+          "<!-- ABEL:VERIFICATION-BINDINGS:START -->",
+        );
+        expect(marker).toBeGreaterThan(0);
+        const author = installed.slice(0, marker);
+        const bindings = installed.slice(marker);
+        writeFileSync(
+          tasksPath,
+          corruption === "missing-task"
+            ? author.replace("`delivery-task`", "unmapped") + bindings
+            : corruption === "missing-scenario"
+              ? author.replace(/`specs\/[^`]+`/u, "unmapped") + bindings
+              : author + bindings.replace("delivery-green", "forged-green"),
+        );
+        await expect(
+          item.controller.execute({
+            operation: "finalize-delivery",
+            runId: item.runId,
+            operationId: "reject-corrupt",
+          }),
+        ).rejects.toMatchObject({
+          diagnostics: expect.arrayContaining([
+            corruption === "missing-task"
+              ? "traceability-task-unmapped"
+              : corruption === "missing-scenario"
+                ? "traceability-reference-empty"
+                : "traceability-managed-region-stale",
+          ]),
+        });
+        expect(existsSync(path.join(item.changeRoot, "ready.yaml"))).toBe(
+          false,
+        );
+      } finally {
+        item.controller.close();
+      }
+    },
+  );
+
+  it("retries interrupted binding installation without duplicating or replacing author content", async () => {
+    const item = fixture("bindings-interrupted");
+    await approveGateAOnly(item);
+    const record = vi
+      .spyOn(DesignJournal.prototype, "recordCompiledPlan")
+      .mockImplementationOnce(() => {
+        throw new Error("injected-compile-interruption");
+      });
+    try {
+      const request = {
+        operation: "compile-plan" as const,
+        runId: item.runId,
+        operationId: "interrupted-compile",
+      };
+      await expect(item.controller.execute(request)).rejects.toThrow(
+        "injected-compile-interruption",
+      );
+      const installed = readFileSync(
+        path.join(item.changeRoot, "tasks.md"),
+        "utf8",
+      );
+      expect(installed).toContain("<!-- ABEL:VERIFICATION-BINDINGS:START -->");
+      item.controller.close();
+      item.controller = DesignController.open({
+        consumerRoot: item.consumerRoot,
+        stateRoot: item.stateRoot,
+        inspectOpenSpec: item.inspectOpenSpec,
+      });
+      await expect(item.controller.execute(request)).resolves.toMatchObject({
+        gates: { gateB: { current: true } },
+      });
+      expect(readFileSync(path.join(item.changeRoot, "tasks.md"), "utf8")).toBe(
+        installed,
+      );
+      await expect(
+        item.controller.execute({
+          operation: "finalize-delivery",
+          runId: item.runId,
+          operationId: "seal-retry",
+        }),
+      ).resolves.toMatchObject({ completed: true });
+    } finally {
+      record.mockRestore();
+      item.controller.close();
+    }
+  });
+
   it("inherits finalized decisions and Gates for a technical-only revision", async () => {
     const item = fixture("inherit-approval");
     await approveAndCompile(item);
@@ -1882,6 +2189,14 @@ describe("code-owned Design delivery compilation", () => {
           "The delivery SHALL be closed.",
         ),
       );
+      const tasksPath = path.join(item.changeRoot, "tasks.md");
+      writeFileSync(
+        tasksPath,
+        readFileSync(tasksPath, "utf8").replace(
+          "implements delivery-red then delivery-green.",
+          "closes the accepted delivery.",
+        ),
+      );
       await approveAndCompile(item);
       item.controller.close();
       const controller = DesignController.open({
@@ -1914,6 +2229,33 @@ describe("code-owned Design delivery compilation", () => {
             ...delivery,
           }),
         ).resolves.toMatchObject({ revision: 1, gate: "gate-b" });
+        const tasksBytes = readFileSync(tasksPath, "utf8");
+        writeFileSync(tasksPath, tasksBytes.replace("[ ]", "[x]"));
+        await expect(
+          source.load({
+            stage: "abel-implement",
+            change: item.change,
+            ...delivery,
+          }),
+        ).resolves.toMatchObject({ revision: 1 });
+        writeFileSync(
+          tasksPath,
+          tasksBytes.replace(
+            "Green: `delivery-green`",
+            "Green: `tampered-green`",
+          ),
+        );
+        await expect(
+          source.load({
+            stage: "abel-implement",
+            change: item.change,
+            ...delivery,
+          }),
+        ).rejects.toMatchObject({
+          diagnostics: expect.arrayContaining([
+            "delivery-artifact-hash-mismatch:tasks.md",
+          ]),
+        });
       } finally {
         controller.close();
       }

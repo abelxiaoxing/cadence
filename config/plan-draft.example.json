@@ -42,64 +42,33 @@
       "roots": ["."],
       "phases": {
         "red": {
-          "read": ["package.json", "src/add.mjs", "test/add.test.mjs"],
           "write": ["test/add.test.mjs"],
           "delete": [],
           "verification": {
-            "kind": "static-check",
-            "id": "add-red",
-            "runner": {
-              "kind": "node",
-              "script": "test/add.test.mjs"
-            },
-            "args": [],
-            "classification": "expected-red",
+            "use": "add-test",
             "expectedFailure": "[ADD:positive-integers]"
           }
         },
         "green": {
-          "read": ["package.json", "src/add.mjs", "test/add.test.mjs"],
           "write": ["src/add.mjs"],
           "delete": [],
           "verification": {
-            "kind": "static-check",
-            "id": "add-green",
-            "runner": {
-              "kind": "node",
-              "script": "test/add.test.mjs"
-            },
-            "args": [],
-            "classification": "expected-green"
+            "use": "add-test"
           }
         }
       },
       "affectedVerification": {
-        "kind": "static-check",
-        "id": "add-affected",
-        "runner": {
-          "kind": "node",
-          "script": "test/add.test.mjs"
-        },
-        "args": [],
-        "classification": "expected-green"
+        "use": "add-test"
       },
       "repairVerification": {
-        "kind": "static-check",
-        "id": "add-repair",
-        "runner": {
-          "kind": "node",
-          "script": "test/add.test.mjs"
-        },
-        "args": [],
-        "classification": "expected-green"
+        "use": "add-test"
       },
       "scheduling": {
         "conflicts": [],
         "resources": []
       },
       "agents": {
-        "impact": "none",
-        "managedOnly": true
+        "impact": "none"
       },
       "approvedDependencies": [],
       "impactClosure": {
@@ -114,62 +83,40 @@
           }
         ],
         "affectedSuite": ["test/add.test.mjs"]
-      }
+      },
+      "read": ["package.json", "src/add.mjs", "test/add.test.mjs"]
     }
   ],
   "outputs": [],
   "verification": {
     "baseline": {
-      "target": "task-red-contracts",
-      "affected": "task-affected-contracts",
       "fullSuite": {
-        "kind": "static-check",
-        "id": "add-baseline",
-        "runner": {
-          "kind": "node",
-          "script": "test/add.test.mjs"
-        },
-        "args": [],
-        "classification": "expected-green"
-      },
-      "failureIdentity": "normalized"
+        "use": "add-test"
+      }
     },
     "change": {
-      "affected": "task-affected-contracts",
       "fullSuite": {
-        "kind": "static-check",
-        "id": "add-full",
-        "runner": {
-          "kind": "node",
-          "script": "test/add.test.mjs"
-        },
-        "args": [],
-        "classification": "expected-green"
+        "use": "add-test"
       },
       "postApply": {
-        "kind": "static-check",
-        "id": "add-post-apply",
-        "runner": {
-          "kind": "node",
-          "script": "test/add.test.mjs"
-        },
-        "args": [],
-        "classification": "expected-green"
+        "use": "add-test"
       }
     },
     "artifactCorrection": {
       "maxAttempts": 2
     },
     "repair": {
-      "maxAttempts": 1,
-      "inBoundaryOnly": true,
-      "approvalOnBoundaryExpansion": true,
-      "attribution": ["pre-existing", "introduced", "unresolved", "environment"]
-    },
-    "agentsCheckpoint": {
-      "required": false,
-      "verification": null,
-      "operations": []
+      "maxAttempts": 1
+    }
+  },
+  "verificationDefinitions": {
+    "add-test": {
+      "kind": "static-check",
+      "runner": {
+        "kind": "node",
+        "script": "test/add.test.mjs"
+      },
+      "args": []
     }
   }
 }

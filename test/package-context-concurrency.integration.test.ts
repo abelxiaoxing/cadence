@@ -174,8 +174,16 @@ describe("package operation context isolation", () => {
       change: "context-isolation",
       operationId: "shared-operation",
     };
-    const owner = { cwd: consumerRoot, marker: "owner" };
-    const retry = { cwd: consumerRoot, marker: "retry" };
+    const owner = {
+      cwd: consumerRoot,
+      marker: "owner",
+      model: { id: "owner" },
+    };
+    const retry = {
+      cwd: consumerRoot,
+      marker: "retry",
+      model: { id: "retry" },
+    };
 
     try {
       const running = engine.execute(command, owner as never);
@@ -188,7 +196,9 @@ describe("package operation context isolation", () => {
         state: "paused",
         pause: { code: "context-captured" },
       });
-      expect(harness.observedContext).toBe(owner);
+      expect(harness.observedContext).not.toBe(owner);
+      expect(harness.observedContext?.model).toBe(owner.model);
+      expect(harness.observedContext).not.toHaveProperty("marker");
     } finally {
       release();
       await engine.close();

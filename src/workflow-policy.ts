@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import type { WorkflowActivityUpdate } from "./activity-contracts.ts";
 import { compareCanonicalStrings } from "./canonical.ts";
 import {
   type ApprovalBoundaryCode,
@@ -18,7 +19,6 @@ import type { RoutePolicy } from "./route-policy.ts";
 import { canonicalJson } from "./run-state.ts";
 import type { OperationLease } from "./run-store.ts";
 import type { ResolvedStateRoot } from "./state-root.ts";
-import type { WorkflowActivityUpdate } from "./subagent-activity.ts";
 import {
   type CandidateContextBoundary,
   type CandidateContextRef,
@@ -185,59 +185,20 @@ export interface RedArtifactCorrection {
   contextRequest?: WorkflowContextRequest;
 }
 
-export type RecoveryActionRequest = {
-  kind: "affected-repair" | "cumulative-repair" | "red-correction";
-  attempt: number;
-};
-export type RecoveryActionDecision =
-  | { allowed: true }
-  | {
-      allowed: false;
-      code: "repair-attempts-exhausted" | "artifact-attempts-exhausted";
-    };
+export type {
+  RecoveryActionDecision,
+  RecoveryActionRequest,
+  WorkflowRecoveryFact,
+  WorkflowRecoveryFeedback,
+} from "./workflow-recovery-policy.ts";
+export { decideRecoveryAction } from "./workflow-recovery-policy.ts";
 
-/** One policy for every nested recovery action; execution services supply facts only. */
-export function decideRecoveryAction(
-  plan: ImplementPlan,
-  request: RecoveryActionRequest,
-  authority: { additionalAttempt?: boolean; verificationOnly?: boolean } = {},
-): RecoveryActionDecision {
-  const correction = request.kind === "red-correction";
-  const limit =
-    authority.additionalAttempt || authority.verificationOnly
-      ? 1
-      : correction
-        ? plan.verification.artifactCorrection.maxAttempts
-        : plan.verification.repair.maxAttempts;
-  return Number.isSafeInteger(request.attempt) &&
-    request.attempt > 0 &&
-    request.attempt <= limit
-    ? { allowed: true }
-    : {
-        allowed: false,
-        code: correction
-          ? "artifact-attempts-exhausted"
-          : "repair-attempts-exhausted",
-      };
-}
-
-export interface WorkflowRecoveryFeedback {
-  code: string;
-  attempt: number;
-  maxAttempts: number;
-  strategy:
-    | "revise-candidate"
-    | "refresh-candidate"
-    | "repair-verification"
-    | "compact-patch";
-  failureIdentities?: string[];
-}
-
-export interface WorkflowRecoveryFact {
-  key: string;
-  failures: number;
-  feedback: WorkflowRecoveryFeedback;
-}
+import type {
+  RecoveryActionDecision,
+  RecoveryActionRequest,
+  WorkflowRecoveryFact,
+  WorkflowRecoveryFeedback,
+} from "./workflow-recovery-policy.ts";
 
 export const APPROVAL_AUTHORITY_CATEGORIES = [
   "observable-behavior",

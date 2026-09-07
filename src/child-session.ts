@@ -37,6 +37,12 @@ import {
   type SubmitClassification,
 } from "./submit-tool.ts";
 import { serializeTaskLedgerProjection } from "./task-ledger.ts";
+import { TransportTimeout } from "./transport-budget.ts";
+
+export const CHILD_EXECUTION_LIMITS = Object.freeze({
+  maxTurns: 64,
+  maxContextBytes: 4 * 1024 * 1024,
+});
 
 const ZERO_USAGE: Usage = {
   input: 0,
@@ -191,6 +197,7 @@ function safeChildError(failure: ChildFailure): string {
     case "stale":
     case "approval-boundary":
     case "verification-adapter":
+    case "execution-limit":
     case "result-limit":
       return "child result rejected";
   }
@@ -271,6 +278,7 @@ export async function runChildSession(input: {
     deletePaths: string[];
   };
   onStreamStart?: () => void;
+  onStreamHeaders?: () => void;
   onStreamProgress?: () => void;
 }): Promise<ChildSessionResult> {
   const submit = input.candidateArtifact
@@ -352,11 +360,9 @@ export async function runChildSession(input: {
   let structuralAttempts = 0;
   let last: AssistantMessage | undefined;
   let preflightRejected = false;
-  let streamStarted = false;
+  let turns = 0;
   let reminderUsed = false;
   const observeStart = () => {
-    if (streamStarted) return;
-    streamStarted = true;
     try {
       input.onStreamStart?.();
     } catch {
@@ -364,7 +370,6 @@ export async function runChildSession(input: {
     }
   };
   const observeProgress = () => {
-    observeStart();
     try {
       input.onStreamProgress?.();
     } catch {
@@ -400,6 +405,18 @@ export async function runChildSession(input: {
   try {
     for (;;) {
       abort.signal.throwIfAborted();
+      if (turns >= CHILD_EXECUTION_LIMITS.maxTurns) {
+        failure = { kind: "execution-limit", code: "child-turn-limit" };
+        break;
+      }
+      if (
+        Buffer.byteLength(JSON.stringify(context), "utf8") >
+        CHILD_EXECUTION_LIMITS.maxContextBytes
+      ) {
+        failure = { kind: "execution-limit", code: "child-context-limit" };
+        break;
+      }
+      turns++;
       const message = await requestChildTurn({
         client: input.modelRuntime,
         model: input.model,
@@ -407,6 +424,7 @@ export async function runChildSession(input: {
         signal: abort.signal,
         sessionId,
         onStart: observeStart,
+        onHeaders: input.onStreamHeaders,
         onProgress: observeProgress,
         onMessage: (message) => {
           usage.add(`assistant:${assistantSequence++}`, message.usage);
@@ -422,6 +440,13 @@ export async function runChildSession(input: {
         break;
       }
       context.messages.push(message);
+      if (
+        Buffer.byteLength(JSON.stringify(context), "utf8") >
+        CHILD_EXECUTION_LIMITS.maxContextBytes
+      ) {
+        failure = { kind: "execution-limit", code: "child-context-limit" };
+        break;
+      }
       // Only complete, normal turns may execute tools, including terminal submit.
       if (message.stopReason === "error" || message.stopReason === "aborted") {
         failure = {
@@ -538,10 +563,13 @@ export async function runChildSession(input: {
         break;
       }
     }
-  } catch {
+  } catch (error) {
     failure = {
       kind: "transport",
-      code: "child-provider-stream-error",
+      code:
+        error instanceof TransportTimeout
+          ? error.code
+          : "child-provider-stream-error",
       stage: "child-provider-stream",
     };
   } finally {
@@ -583,11 +611,18 @@ export async function runChildSession(input: {
           ? input.signal.reason.message
           : safeChildError(typed),
       failure: typed,
-      failureKind: timedOut
-        ? "timed-out"
-        : typed.kind === "cancelled"
-          ? "cancelled"
-          : "failed",
+      failureKind:
+        timedOut ||
+        (typed.kind === "transport" &&
+          [
+            "first-progress-timeout",
+            "stream-idle-timeout",
+            "attempt-timeout",
+          ].includes(typed.code))
+          ? "timed-out"
+          : typed.kind === "cancelled"
+            ? "cancelled"
+            : "failed",
       transportFailure: typed.kind === "transport",
       disposeCount,
       usage: usage.total(),

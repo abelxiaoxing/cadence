@@ -1,15 +1,11 @@
 import { compareCanonicalStrings } from "./canonical.ts";
+import { CHANGE_CONTRACT_SCHEMA } from "./change-contract-schema.ts";
 import {
   projectDesignDiagnostic,
   type SafeDesignDiagnostic,
 } from "./design-diagnostics.ts";
-import { packageDeliverySource } from "./package-delivery.ts";
-import {
-  changeVerificationResult,
-  executePackageVerification,
-  phaseVerificationResult,
-} from "./package-verification.ts";
-import { captureVerificationEnvironmentIdentity } from "./verification-environment.ts";
+import { openPackageWorkflowService } from "./package-workflow.ts";
+import { packageContext } from "./pi-adapter.ts";
 
 export {
   type PackageDeliverySourceOptions,
@@ -23,10 +19,8 @@ export { executePackageVerification } from "./package-verification.ts";
 // the active set at session start. Eligible-stage activation is wired by the
 // workflow routing (abel-design/implement/diagnose provenance) in the prompts
 // integration; abel-init and ordinary prompts never activate dispatch.
-import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash } from "node:crypto";
-import { homedir } from "node:os";
-import path, { dirname, join } from "node:path";
+
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
   AgentToolResult,
@@ -37,13 +31,8 @@ import type {
   ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
 import { type Activation, activateTool, deactivateTool } from "./activation.ts";
-import { loadAgentDefinitions } from "./agent-registry.ts";
-import { runChildSession } from "./child-session.ts";
-import {
-  type DesignEvidenceResult,
-  LIMITS,
-  type StructuredVerificationContract,
-} from "./contracts.ts";
+
+import type { DesignEvidenceResult } from "./contracts.ts";
 import {
   CONTROL_COMMAND_PARAMETERS,
   canonicalizeControlCommandToolInput,
@@ -54,24 +43,16 @@ import {
   DesignPlanValidationError,
 } from "./delivery-compiler.ts";
 import {
-  DesignController,
+  DesignControlValidationError,
   DesignFinalizationError,
   validateDesignControlRequest,
 } from "./design-control.ts";
 import { canonicalJson } from "./implement-graph.ts";
-import { inspectOpenSpecDelivery } from "./openspec-cli.ts";
 import { PACKET_ACTIONS, PacketRuntime } from "./packet-runtime.ts";
-import { runtimeForWorkerRoute } from "./parent-provider.ts";
-import {
-  inspectRoutePolicy,
-  loadRoutePolicy,
-  type RoutePolicyResolution,
-  unavailableRoutePolicy,
-  type WorkerRoutePolicy,
-} from "./route-policy.ts";
+
 import { RunStoreFormatError, RunStoreMigrationError } from "./run-store.ts";
-import { isSafeRegularFile } from "./safe-path.ts";
-import { resolveStateRoot, StateRootError } from "./state-root.ts";
+
+import { StateRootError } from "./state-root.ts";
 import {
   ACTIVITY_DETAILS_KEY,
   ActivityController,
@@ -79,11 +60,6 @@ import {
   renderActivityResult,
   type WorkflowActivityUpdate,
 } from "./subagent-activity.ts";
-import {
-  classifyCandidateContextRequest,
-  permitsContextRead,
-} from "./submit-tool.ts";
-import { openDurableWorkflowEngine } from "./workflow-engine.ts";
 
 export {
   inspectOpenSpecDelivery,
@@ -285,7 +261,7 @@ const DESIGN_CONTROL_REQUEST_SCHEMA = {
         operationId: { type: "string" },
         gate: { type: "string", enum: ["gate-a"] },
         contract: {
-          anyOf: [{ type: "string" }, { type: "object" }],
+          anyOf: [{ type: "string" }, CHANGE_CONTRACT_SCHEMA],
           description:
             "ChangeContract: {goal, acceptance:[{id,statement,verification}], constraints:[{id,statement}], policy:{writeRoots,dependencies,verificationModes}}. Pass the example's changeContract object, not its whole plan. Legacy prose remains readable; code hashes authority.",
         },
@@ -481,6 +457,13 @@ function classifyDesignFailure(
   field?: string;
 } {
   const message = error instanceof Error ? error.message : "";
+  if (error instanceof DesignControlValidationError) {
+    return {
+      code: "invalid-design-control-request",
+      category: "validation",
+      retryable: false,
+    };
+  }
   if (error instanceof DesignPlanValidationError) {
     return {
       code: "design-plan-validation-invalid",
@@ -656,398 +639,20 @@ export type WorkflowControlEngineFactory = (
   ctx: ExtensionContext,
 ) => WorkflowControlEngine | Promise<WorkflowControlEngine>;
 
-function sha256(value: Uint8Array | string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function affectedVerification(
-  task: Parameters<
-    Parameters<typeof openDurableWorkflowEngine>[0]["proposeCandidate"]
-  >[0]["task"],
-): StructuredVerificationContract {
-  if (task.affectedVerification) {
-    return structuredClone(task.affectedVerification);
-  }
-  const finalPhase = task.phases.refactor ?? task.phases.green;
-  const verification = structuredClone(finalPhase.verification);
-  const affected = [...new Set(task.impactClosure.affectedSuite)].sort();
-  if (affected.length === 0) return verification;
-  if (verification.kind === "vitest") {
-    return { ...verification, testFiles: affected };
-  }
-  if (verification.kind === "steps") {
-    return {
-      ...verification,
-      steps: verification.steps.map((step) =>
-        step.kind === "vitest" ? { ...step, testFiles: affected } : step,
-      ),
-    };
-  }
-  return verification;
-}
-
-function childRequestId(
-  operationId: string,
-  taskId: string,
-  phase: string,
-): string {
-  return `child-${sha256(`${operationId}\0${taskId}\0${phase}`).slice(0, 40)}`;
-}
-
+/** Pi adapter: project host capabilities before entering the package services. */
 export function openPackageWorkflowControlEngine(
   initialContext: ExtensionContext,
 ): WorkflowControlEngine {
-  const consumerRoot = path.resolve(initialContext.cwd);
-  const routeResolution = loadRoutePolicy({
-    cwd: consumerRoot,
-    home: homedir(),
-    ...(initialContext.model ? { parentModel: initialContext.model } : {}),
-  });
-  const stateRoot = resolveStateRoot({
-    consumerRoot,
-    xdgStateHome: process.env.XDG_STATE_HOME,
-  });
-  const contexts = new AsyncLocalStorage<ExtensionContext>();
-  const design = DesignController.open({
-    consumerRoot,
-    stateRoot,
-    inspectOpenSpec: inspectOpenSpecDelivery,
-  });
-  const implementationAgent = loadAgentDefinitions().find(
-    (agent) => agent.role === "implementation-worker",
-  );
-  if (!implementationAgent) {
-    throw new Error("implementation-worker-agent-unavailable");
-  }
-  const hostLimit = (name: string, fallback: number): number => {
-    const value =
-      process.env[name] === undefined ? fallback : Number(process.env[name]);
-    if (!Number.isSafeInteger(value) || value < 1)
-      throw new Error("verification-host-limit-invalid");
-    return value;
-  };
-  const maxReportBytes = hostLimit(
-    "ABEL_VERIFICATION_MAX_REPORT_BYTES",
-    64 * 1024 * 1024,
-  );
-  const workHardLimit = hostLimit("ABEL_WORK_MAX_UNITS", 512);
-  const engine = openDurableWorkflowEngine({
-    workHardLimit,
-    verificationPolicy: "report-file-v4",
-    verificationEnvironment: (plan, signal) =>
-      captureVerificationEnvironmentIdentity(
-        consumerRoot,
-        [
-          ...plan.tasks.flatMap((task) => [
-            ...Object.values(task.phases).map((phase) => phase.verification),
-            task.affectedVerification,
-            task.repairVerification,
-          ]),
-          plan.verification.baseline.fullSuite,
-          plan.verification.change.fullSuite,
-          plan.verification.change.postApply,
-          ...(plan.verification.agentsCheckpoint.verification
-            ? [plan.verification.agentsCheckpoint.verification]
-            : []),
-        ],
-        signal,
-      ),
-    consumerRoot,
-    stateRoot,
-    deliverySource: packageDeliverySource(consumerRoot, {
-      verifyGateProof: (input) => design.verifyGateProof(input),
-      verifyFinalizedDelivery: (input) => design.verifyFinalizedDelivery(input),
-    }),
-    routePolicy: routeResolution.ok
-      ? routeResolution.policy
-      : unavailableRoutePolicy(),
-    proposeCandidate: async (input) => {
-      const context = contexts.getStore();
-      if (!context) {
-        return { kind: "paused", code: "parent-context-unavailable" };
-      }
-      const phaseRuntime = await runtimeForWorkerRoute(
-        input.route as WorkerRoutePolicy,
-        context,
-        input.signal,
-        process.env,
-        { onResponse: input.onHeaders },
-      );
-      if (!phaseRuntime.ok) {
-        if (phaseRuntime.failure.kind === "cancelled") {
-          return { kind: "operation-cancelled", code: "cancelled" };
-        }
-        throw new Error(phaseRuntime.failure.code);
-      }
-      const phase = input.task.phases[input.phase];
-      if (!phase) {
-        return { kind: "paused", code: "task-phase-unavailable" };
-      }
-      const taskPhases = Object.values(input.task.phases);
-      const executionBoundary = input.artifactCorrection
-        ? {
-            read: [
-              ...new Set(
-                taskPhases.flatMap((boundary) => [
-                  ...boundary.read,
-                  ...boundary.write,
-                  ...boundary.delete,
-                ]),
-              ),
-            ].sort(),
-            write: [
-              ...new Set(taskPhases.flatMap((boundary) => boundary.write)),
-            ].sort(),
-            delete: [
-              ...new Set(taskPhases.flatMap((boundary) => boundary.delete)),
-            ].sort(),
-          }
-        : {
-            read: [
-              ...new Set(
-                taskPhases.flatMap((boundary) => [
-                  ...boundary.read,
-                  ...boundary.write,
-                  ...boundary.delete,
-                ]),
-              ),
-            ].sort(),
-            write: [...phase.write],
-            delete: [...phase.delete],
-          };
-      executionBoundary.read = [
-        ...new Set([
-          ...executionBoundary.read,
-          ...(input.contextReadPaths ?? []).filter(
-            (relative) =>
-              permitsContextRead(relative, input.task.roots) &&
-              isSafeRegularFile(input.workspaceRoot, relative),
-          ),
-        ]),
-      ].sort();
-      const phaseContract = {
-        candidateId: input.candidateArtifact.identity.candidateId,
-        taskId: input.taskId,
-        phase: input.phase,
-        readSet: executionBoundary.read,
-        writeSet: executionBoundary.write,
-        deleteSet: executionBoundary.delete,
-        verification: structuredClone(phase.verification),
-        agentsImpact: input.task.agents.impact,
-        agentsTarget: input.task.agents.target ?? null,
-        agentsManagedOnly: true,
-        agentsWriteAllowed: false,
-        impactClosure: structuredClone(input.task.impactClosure),
-        ...(input.artifactCorrection
-          ? { artifactCorrection: structuredClone(input.artifactCorrection) }
-          : {}),
-        ...(input.contextRequest
-          ? { requestedContext: structuredClone(input.contextRequest) }
-          : {}),
-        ...(input.recoveryFeedback
-          ? { recoveryFeedback: structuredClone(input.recoveryFeedback) }
-          : {}),
-        ...(input.repair
-          ? {
-              repair: {
-                attempt: input.repair.attempt,
-                attribution: input.repair.attribution,
-                failureIdentities: [...input.repair.failureIdentities],
-                verification: structuredClone(input.task.repairVerification),
-                inBoundaryOnly: true,
-              },
-            }
-          : {}),
-      };
-      const child = await runChildSession({
-        cwd: input.workspaceRoot,
-        modelRuntime: phaseRuntime.modelRuntime,
-        model: phaseRuntime.model,
-        systemPrompt: [
-          implementationAgent.content,
-          input.task.objective,
-          input.task.context.agents,
-          input.task.context.contract,
-          "Use recoveryFeedback to change the failing approach. For compact-patch, prefer exact replace operations and omit unchanged bodies; submit one complete atomic patch. Never repeat an unchanged failing submission or weaken verification to obtain a pass.",
-          `<phase-contract>${JSON.stringify(phaseContract)}</phase-contract>`,
-        ].join("\n\n"),
-        requestId: childRequestId(input.operationId, input.taskId, input.phase),
-        taskId: input.taskId,
-        role: "implementation-worker",
-        phase: input.phase,
-        output: "diff",
-        roots: input.task.roots.map((root) =>
-          path.resolve(input.workspaceRoot, root),
-        ),
-        allowedPaths: [
-          ...new Set([
-            ...executionBoundary.read,
-            ...executionBoundary.write,
-            ...executionBoundary.delete,
-          ]),
-        ],
-        timeoutMs: LIMITS.phaseTimeoutMs,
-        signal: input.signal,
-        ledgerProjection: input.ledgerProjection,
-        candidateArtifact: input.candidateArtifact,
-        onStreamProgress: input.onProgress,
-      });
-      if (!child.ok) {
-        if (child.failure.kind === "transport") {
-          throw new Error(child.failure.code);
-        }
-        if (child.failure.kind === "cancelled") {
-          return { kind: "operation-cancelled", code: "cancelled" };
-        }
-        if (child.failure.kind === "approval-boundary") {
-          return { kind: "approval-needed", code: child.failure.code };
-        }
-        if (child.failure.kind === "result-limit") {
-          return { kind: "retryable", code: "needs-task-split" };
-        }
-        const attemptDiagnostic = {
-          finalCategory: child.classification.finalCategory,
-          submitAttempts: child.classification.attempts,
-          schema: child.classification.schema,
-          identityMismatch: Object.entries(child.classification.identity)
-            .filter(([, matches]) => !matches)
-            .map(([dimension]) => dimension),
-        };
-        return child.failure.kind === "environment" ||
-          child.failure.kind === "verification-adapter"
-          ? { kind: "paused", code: child.failure.code, attemptDiagnostic }
-          : { kind: "retryable", code: child.failure.code, attemptDiagnostic };
-      }
-      const result = child.result;
-      if (result.kind === "context-request") {
-        return classifyCandidateContextRequest(result, {
-          phase: input.phase,
-          contextReadRoots: input.task.roots,
-          readPaths: phase.read,
-          writePaths: phase.write,
-          deletePaths: phase.delete,
-          taskPaths: [
-            ...new Set(
-              Object.values(input.task.phases).flatMap((boundary) => [
-                ...boundary.read,
-                ...boundary.write,
-                ...boundary.delete,
-              ]),
-            ),
-          ],
-          redWritePaths: input.task.phases.red.write,
-          agents: {
-            impact: input.task.agents.impact,
-            ...(input.task.agents.target
-              ? { target: input.task.agents.target }
-              : {}),
-          },
-        });
-      }
-      if (result.kind !== "sealed-candidate") {
-        return { kind: "retryable", code: "candidate-diff-invalid" };
-      }
-      return {
-        kind: "sealed-candidate",
-        candidateId: result.candidateId,
-        artifactHash: result.artifactHash,
-        bytes: result.bytes,
-        paths: [...result.paths],
-      };
-    },
-    verifyPhase: async (input) =>
-      phaseVerificationResult(
-        await executePackageVerification({
-          maxReportBytes,
-          executionWritePaths: input.executionWritePaths,
-          root: input.root,
-          dependencyOwner: consumerRoot,
-          verification: input.verification,
-          signal: input.signal,
-        }),
-      ),
-    verifyChange: async (input) => {
-      const verifications = input.verification
-        ? [input.verification]
-        : input.plan.tasks.map((task) => affectedVerification(task));
-      for (const verification of verifications) {
-        const result = await executePackageVerification({
-          maxReportBytes,
-          executionWritePaths: input.plan.tasks.flatMap((task) =>
-            Object.values(task.phases).flatMap((phase) => [
-              ...phase.write,
-              ...phase.delete,
-            ]),
-          ),
-          root: input.root,
-          dependencyOwner: consumerRoot,
-          verification,
-          signal: input.signal,
-        });
-        const observed = changeVerificationResult(result);
-        if (!observed.ok) return observed;
-      }
-      return {
-        ok: true,
-        exitCode: 0,
-        classification: "expected-green",
-      };
-    },
-  });
+  const service = openPackageWorkflowService(packageContext(initialContext));
   return {
-    async execute(
-      command: unknown,
-      context = initialContext,
-      signal,
-      onActivity,
-    ) {
-      const operationRouteResolution = loadRoutePolicy({
-        cwd: consumerRoot,
-        home: homedir(),
-        ...(context.model ? { parentModel: context.model } : {}),
-      });
-      engine.updateRoutePolicy(
-        operationRouteResolution.ok
-          ? operationRouteResolution.policy
-          : unavailableRoutePolicy(),
+    ...service,
+    execute(command, context = initialContext, signal, onActivity) {
+      return service.execute(
+        command,
+        packageContext(context),
+        signal,
+        onActivity,
       );
-      const validation = validateControlCommand(command);
-      if (!validation.ok) {
-        const error = new Error(validation.code);
-        error.name = "ControlCommandError";
-        throw error;
-      }
-      return contexts.run(context, async () => {
-        const outcome = await engine.execute(
-          validation.value,
-          signal,
-          onActivity,
-        );
-        const routePolicy = visibleRoutePolicyStatus(
-          operationRouteResolution,
-          engine.routePolicyStatus(),
-        );
-        return { ...outcome, routePolicy };
-      });
-    },
-    executeDesign(request: unknown) {
-      return design.execute(request);
-    },
-    executeAmendment(change: string, batchId: string, request: unknown) {
-      return engine.amend(change, batchId, request, (assertAuthority) =>
-        design.executeWithAuthority(request, assertAuthority),
-      );
-    },
-    assertDesignRun(runId: string) {
-      design.assertDesignRun(runId);
-    },
-    recordDesignEvidence(input) {
-      return design.recordEvidence(input);
-    },
-    async close() {
-      contexts.disable();
-      await engine.close();
-      design.close();
     },
   };
 }
@@ -1083,18 +688,6 @@ function runStoreResetError(error: RunStoreFormatError): Error {
   );
   reset.name = "RunStoreResetError";
   return reset;
-}
-
-function visibleRoutePolicyStatus(
-  resolution: RoutePolicyResolution,
-  brokerStatus: Record<string, unknown> | undefined,
-): Record<string, unknown> {
-  if (!resolution.ok) return inspectRoutePolicy(resolution);
-  const inspected = brokerStatus ?? inspectRoutePolicy(resolution);
-  return {
-    ...inspected,
-    source: { kind: resolution.source.kind },
-  };
 }
 
 export function registerWorkflowControl(
@@ -1338,7 +931,14 @@ export function registerWorkflowControl(
             throw new Error("stage-control-mismatch");
           }
           const parsed = validateDesignControlRequest(record.request);
-          if (!parsed.ok) throw new Error(parsed.code);
+          if (!parsed.ok) {
+            const error = new DesignControlValidationError(parsed.diagnostics);
+            designFailures.set(
+              toolCallId,
+              safeDesignFailure(error, "validation"),
+            );
+            throw error;
+          }
           const request = parsed.value;
           if (
             request.operation === "bind-change" ||
@@ -1461,7 +1061,16 @@ export function registerWorkflowControl(
               throw new Error("stage-control-mismatch");
             }
             const designRequest = validateDesignControlRequest(record.request);
-            if (!designRequest.ok) throw new Error(designRequest.code);
+            if (!designRequest.ok) {
+              const error = new DesignControlValidationError(
+                designRequest.diagnostics,
+              );
+              designFailures.set(
+                toolCallId,
+                safeDesignFailure(error, "validation"),
+              );
+              throw error;
+            }
             let settleDesign!: () => void;
             const settled = new Promise<void>((resolve) => {
               settleDesign = resolve;
@@ -1543,7 +1152,7 @@ export function registerWorkflowControl(
             ? await packetRuntime.execute(
                 record.action,
                 operation,
-                ctx,
+                packageContext(ctx),
                 signal,
                 activity.observe(
                   toolCallId,
@@ -1553,7 +1162,7 @@ export function registerWorkflowControl(
             : await packetRuntime.execute(
                 record.action,
                 operation,
-                ctx,
+                packageContext(ctx),
                 signal,
               );
           let payload:

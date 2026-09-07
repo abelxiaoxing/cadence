@@ -627,9 +627,41 @@ describe("WorkflowEngine command authority", () => {
     try {
       await engine.execute(command("resume", change, {operationId: "ordinary-resume"}));
       expect(worker.calls).toHaveLength(3);
+      const beforeRejectedGrant = await engine.execute(command("status", change));
       await expect(engine.execute(command("resume", change, {operationId: "stale-grant", recovery: recovery.additionalAttempt}))).rejects.toThrow("recovery-request-stale");
       expect(worker.calls).toHaveLength(3);
+      expect(await engine.execute(command("status", change))).toEqual(beforeRejectedGrant);
     } finally {await engine.close();}
+  });
+
+  it.each([false, true])("does not launch or report readiness for an invalid recovery grant (revised: %s)", async revised => {
+    const change = `rejected-recovery-${revised}`;
+    const consumerRoot = makeConsumer(change);
+    const delivery = new DeliverySource();
+    delivery.set(change, plan(change, [task("T1")]));
+    const worker = new ScriptedWorker();
+    worker.script("T1:red", [
+      {kind: "retryable", code: "invalid-structural-result", retryPolicy: "artifact", attemptDiagnostic: {finalCategory: "mixed", submitAttempts: 2, schema: "invalid"}},
+      {kind: "paused", code: "endpoint-unavailable"},
+    ]);
+    const engine = openEngine({consumerRoot, delivery, worker});
+    try {
+      const paused = await engine.execute(command("start", change));
+      expect(paused).toMatchObject({state: "paused", pause: {code: "endpoint-unavailable", diagnostic: {recovery: {failures: 1, feedback: {maxAttempts: 2}}}}});
+      if (revised) delivery.set(change, plan(change, [task("T2")]));
+      await expect(engine.execute(command("resume", change, {
+        operationId: "invalid-grant",
+        recovery: {incidentKey: HASH_A, failureSequence: 1, reason: "parent-directed-retry"},
+        ...(revised ? {deliveryRevision: 2, receiptHash: HASH_B} : {}),
+      }))).rejects.toThrow("recovery-request-stale");
+      expect(worker.calls).toHaveLength(2);
+      const after = await engine.execute(command("status", change));
+      if (revised) expect(after).toMatchObject({state: "paused", deliveryRevision: 2, pause: {code: "recovery-request-stale"}});
+      else expect(after).toEqual(paused);
+      const resumed = await engine.execute(command("resume", change, {operationId: "ordinary-after-rejection"}));
+      expect(resumed.state).not.toBe("ready");
+      expect(worker.calls.length).toBeGreaterThan(2);
+    } finally { await engine.close(); }
   });
 
   it.each([false, true])("preserves captured limits and exhausted history across reopen (legacy: %s)", async legacy => {

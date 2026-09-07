@@ -6,6 +6,8 @@ import {
   type Models,
 } from "@earendil-works/pi-ai";
 
+import { REQUEST_BOUNDS, TransportTimeout } from "./transport-budget.ts";
+
 /** Only the public model transport contract crosses into the child executor. */
 export type ChildModelClient = Pick<Models, "streamSimple">;
 
@@ -50,44 +52,72 @@ export async function requestChildTurn(input: {
   signal: AbortSignal;
   sessionId: string;
   onStart?: () => void;
+  onHeaders?: () => void;
   onProgress?: () => void;
   onMessage(message: AssistantMessage): void;
 }): Promise<AssistantMessage | undefined> {
   input.signal.throwIfAborted();
-  const stream = input.client.streamSimple(input.model, input.context, {
-    signal: input.signal,
-    reasoning: "low",
-    maxRetries: 0,
-    sessionId: input.sessionId,
-  });
+  const controller = new AbortController();
+  const forward = () => controller.abort(input.signal.reason);
+  input.signal.addEventListener("abort", forward, { once: true });
   let accepting = true;
-  let final: AssistantMessage | undefined;
-  const consume = (async () => {
-    for await (const event of stream) {
-      if (!accepting) break;
-      if (event.type === "start") notify(input.onStart);
-      else if (event.type === "done" || event.type === "error") {
-        final = event.type === "done" ? event.message : event.error;
-        input.onMessage(final);
-        break;
-      } else notify(input.onProgress);
-    }
-    return final;
-  })();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const schedule = (
+    code: "first-progress-timeout" | "stream-idle-timeout",
+    ms: number,
+  ) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => controller.abort(new TransportTimeout(code)), ms);
+  };
+  let consume: Promise<AssistantMessage | undefined> | undefined;
   try {
-    return await abortable(consume, input.signal);
+    schedule("first-progress-timeout", REQUEST_BOUNDS.firstProgressMs);
+    notify(input.onStart);
+    controller.signal.throwIfAborted();
+    const stream = input.client.streamSimple(input.model, input.context, {
+      signal: controller.signal,
+      reasoning: "low",
+      maxRetries: 0,
+      sessionId: input.sessionId,
+      onResponse: () => {
+        if (accepting && !controller.signal.aborted) notify(input.onHeaders);
+      },
+    });
+    consume = (async () => {
+      for await (const event of stream) {
+        if (!accepting) break;
+        if (event.type === "done" || event.type === "error") {
+          const final = event.type === "done" ? event.message : event.error;
+          // Cooperative cancellation may report terminal usage during bounded drain.
+          input.onMessage(final);
+          return final;
+        }
+        if (
+          !controller.signal.aborted &&
+          (event.type === "text_delta" ||
+            event.type === "thinking_delta" ||
+            event.type === "toolcall_delta") &&
+          event.delta.length > 0
+        ) {
+          schedule("stream-idle-timeout", REQUEST_BOUNDS.streamIdleMs);
+          notify(input.onProgress);
+        }
+      }
+      return undefined;
+    })();
+    return await abortable(consume, controller.signal);
   } finally {
-    if (input.signal.aborted) {
-      // Retain terminal usage from cooperative cancellation, but bound cleanup
-      // for a Provider which ignores AbortSignal. Late output is never admitted.
-      let timer: ReturnType<typeof setTimeout> | undefined;
+    clearTimeout(timer);
+    input.signal.removeEventListener("abort", forward);
+    if (controller.signal.aborted && consume) {
+      let drainTimer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
         consume.catch(() => undefined),
         new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, 250);
+          drainTimer = setTimeout(resolve, REQUEST_BOUNDS.cancellationDrainMs);
         }),
       ]);
-      if (timer !== undefined) clearTimeout(timer);
+      clearTimeout(drainTimer);
     }
     accepting = false;
   }

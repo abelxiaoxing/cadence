@@ -9,6 +9,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, it } from "vitest";
 import {
+  assessDeliveryTraceability,
+  bindTaskVerifications,
   compileImplementPlan,
   DesignPlanValidationError,
   type PlanDraft,
@@ -109,8 +111,8 @@ it("derives producer bindings and still rejects ambiguous or unavailable phase a
     ]),
   );
   const outside = structuredClone(draft);
-  outside.tasks[0]!.phases.red.read = [];
-  outside.tasks[0]!.phases.red.write = ["value.txt"];
+  outside.tasks[0]!.phases.red!.read = [];
+  outside.tasks[0]!.phases.red!.write = ["value.txt"];
   expect(diagnostics(outside, consumerRoot)).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ category: "verification-input-not-declared" }),
@@ -175,7 +177,7 @@ it("infers a unique other test owner but asks for an explicit owner when several
   const second = structuredClone(draft.tasks[0]!);
   second.taskId = "second-task";
   second.dependsOn = ["real-task"];
-  second.phases.red.write = ["value.txt"];
+  second.phases.red!.write = ["value.txt"];
   delete second.impactClosure.relatedTests[0]!.disposition;
   draft.tasks.push(second);
   delete draft.tracking;
@@ -232,4 +234,339 @@ it("bounds path feedback and only supplies code-owned correction hints", () => {
   expect(projectDesignDiagnostic({ code: "constructor" })).toEqual({
     code: "constructor",
   });
+});
+
+it("expands named verifications and explicit common reads while sealing only complete contracts", () => {
+  const { consumerRoot, plan } = fixture();
+  const draft = structuredClone(plan) as unknown as Record<string, any>;
+  draft.verificationDefinitions = {
+    regression: {
+      kind: "static-check",
+      runner: { kind: "node", script: "test/regression.mjs" },
+      args: [],
+    },
+  };
+  const task = draft.tasks[0];
+  task.read = task.phases.red.read;
+  for (const [name, phase] of Object.entries(task.phases) as [string, any][]) {
+    delete phase.read;
+    delete phase.verificationInputs;
+    phase.verification = {
+      use: "regression",
+      ...(name === "red" ? { expectedFailure: "real-regression" } : {}),
+    };
+  }
+  task.affectedVerification = { use: "regression" };
+  task.repairVerification = { use: "regression" };
+  delete draft.tracking;
+  delete draft.verification.baseline.target;
+  delete draft.verification.baseline.affected;
+  delete draft.verification.baseline.failureIdentity;
+  delete draft.verification.change.affected;
+  delete draft.verification.repair.inBoundaryOnly;
+  delete draft.verification.repair.approvalOnBoundaryExpansion;
+  delete draft.verification.repair.attribution;
+  delete task.agents.managedOnly;
+  const before = structuredClone(draft);
+  const compiled = compileImplementPlan(draft, {
+    consumerRoot,
+    bindExecutionInputs: true,
+  });
+  expect(draft).toEqual(before);
+  expect(compiled.plan).not.toHaveProperty("verificationDefinitions");
+  expect(compiled.plan.tasks[0]).not.toHaveProperty("read");
+  expect(compiled.plan.tasks[0]!.phases.red.read).toEqual(
+    [...task.read].sort(),
+  );
+  expect(compiled.plan.tasks[0]!.phases.red.verification.classification).toBe(
+    "expected-red",
+  );
+  expect(compiled.plan.tasks[0]!.phases.green.verification.classification).toBe(
+    "expected-green",
+  );
+  expect(compiled.plan.tasks[0]!.affectedVerification.id).not.toBe(
+    compiled.plan.tasks[0]!.repairVerification.id,
+  );
+  expect(compileImplementPlan(compiled.plan, { consumerRoot }).bytes).toEqual(
+    compiled.bytes,
+  );
+  expect(parseImplementPlan(compiled.bytes)).toEqual(compiled.plan);
+  expect(() =>
+    parseImplementPlan(Buffer.from(JSON.stringify(draft))),
+  ).toThrow();
+  const invalid = structuredClone(draft);
+  invalid.verification.repair.inBoundaryOnly = false;
+  expect(() => compileImplementPlan(invalid, { consumerRoot })).toThrow();
+  invalid.verification.repair.inBoundaryOnly = true;
+  invalid.tasks[0].phases.red.verification = {
+    use: "missing",
+    expectedFailure: "real-regression",
+  };
+  expect(diagnostics(invalid, consumerRoot)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        code: "verification-reference-unavailable",
+        field: "phases.red.verification",
+      }),
+    ]),
+  );
+});
+
+it("never infers missing authority and rejects reference overrides or executable definitions", () => {
+  const { consumerRoot, plan } = fixture();
+  const draft = structuredClone(plan) as unknown as Record<string, any>;
+  draft.verificationDefinitions = {
+    regression: {
+      kind: "static-check",
+      runner: { kind: "node", script: "test/regression.mjs" },
+      args: [],
+    },
+  };
+  draft.tasks[0].phases.green.verification = {
+    use: "regression",
+    runner: { kind: "node", script: "other.mjs" },
+  };
+  expect(diagnostics(draft, consumerRoot)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ code: "verification-reference-invalid" }),
+    ]),
+  );
+  draft.tasks[0].phases.green.verification = { use: "regression" };
+  draft.verificationDefinitions.regression.executionBindings = {};
+  expect(diagnostics(draft, consumerRoot)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ code: "verification-definition-invalid" }),
+    ]),
+  );
+  delete draft.verificationDefinitions.regression.executionBindings;
+  draft.tasks[0].phases.green.read = ["value.txt"];
+  expect(() => compileImplementPlan(draft, { consumerRoot })).toThrow();
+});
+
+it("derives omitted inline verification identities and classifications without changing explicit ones", () => {
+  const { consumerRoot, plan } = fixture();
+  const draft = structuredClone(plan) as unknown as Record<string, any>;
+  delete draft.tasks[0].phases.red.verification.id;
+  delete draft.tasks[0].phases.red.verification.classification;
+  const compiled = compileImplementPlan(draft, { consumerRoot });
+  expect(compiled.plan.tasks[0]!.phases.red.verification.id).toMatch(
+    /^verify-[a-f0-9]{64}$/,
+  );
+  expect(compiled.plan.tasks[0]!.phases.green.verification.id).toBe(
+    plan.tasks[0]!.phases.green.verification.id,
+  );
+});
+
+it("compiles the shipped dependent-task draft and requires its declared producer edge", () => {
+  const { consumerRoot } = fixture();
+  mkdirSync(path.join(consumerRoot, "src"));
+  for (const file of [
+    "src/add.mjs",
+    "src/double.mjs",
+    "test/add.test.mjs",
+    "test/double.test.mjs",
+    "test/all.test.mjs",
+  ])
+    writeFileSync(path.join(consumerRoot, file), "export {};\n");
+  const draft = JSON.parse(
+    readFileSync(
+      new URL(
+        "../config/plan-draft.multiple-tasks.example.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  const compiled = compileImplementPlan(draft, {
+    consumerRoot,
+    bindExecutionInputs: true,
+  });
+  const downstream = compiled.plan.tasks.find(
+    (task) => task.taskId === "fix-double",
+  )!;
+  expect(downstream.phases.green.verificationInputs).toContainEqual({
+    kind: "output",
+    outputId: "add-regression",
+  });
+  expect(
+    downstream.impactClosure.relatedTests.find(
+      (test) => test.path === "test/add.test.mjs",
+    ),
+  ).toMatchObject({
+    disposition: "regression-task",
+    regressionTaskId: "fix-add",
+  });
+  expect(compileImplementPlan(compiled.plan, { consumerRoot }).bytes).toEqual(
+    compiled.bytes,
+  );
+  // Reordering author task declarations does not change generated verifier identity.
+  draft.tasks.reverse();
+  const reordered = compileImplementPlan(draft, {
+    consumerRoot,
+    bindExecutionInputs: true,
+  });
+  const authored = compiled.plan.tasks
+    .map((task) => `- [ ] \`${task.taskId}\` owns its observed behavior.`)
+    .join("\n");
+  expect(bindTaskVerifications(authored, reordered.plan)).toBe(
+    bindTaskVerifications(authored, compiled.plan),
+  );
+  expect(
+    reordered.plan.tasks.find((task) => task.taskId === "fix-add")!.phases.red
+      .verification.id,
+  ).toBe(
+    compiled.plan.tasks.find((task) => task.taskId === "fix-add")!.phases.red
+      .verification.id,
+  );
+  draft.tasks.find(
+    (task: { taskId: string }) => task.taskId === "fix-double",
+  ).dependsOn = [];
+  expect(diagnostics(draft, consumerRoot)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ code: "producer-not-dependency" }),
+    ]),
+  );
+});
+
+it.each(["behavior", "mechanical", "refactor"] as const)(
+  "projects %s bindings with optional Refactor and leaves semantic ownership to the author",
+  (mode) => {
+    const { consumerRoot, plan } = fixture();
+    const compiled = compileImplementPlan(plan, { consumerRoot }).plan;
+    const task = compiled.tasks[0]!;
+    task.verificationMode = mode;
+    task.phases.refactor = structuredClone(task.phases.green);
+    task.phases.refactor.verification.id = "refactor-check";
+    const author = `## Tasks\n\n- [ ] \`${task.taskId}\` implements the accepted behavior.\n  - Owns \`specs/example/spec.md#Behavior/Accepted case\`\n`;
+    const specs = [
+      {
+        path: "specs/example/spec.md",
+        text: "### Requirement: Behavior\n#### Scenario: Accepted case\n",
+      },
+    ];
+    const bound = bindTaskVerifications(author, compiled);
+    expect(bound.startsWith(author)).toBe(true);
+    expect(bound.includes("  - Red:")).toBe(mode === "behavior");
+    expect(bound).toContain("  - Refactor: `refactor-check`");
+    expect(
+      assessDeliveryTraceability({
+        tasksMarkdown: bound,
+        specs,
+        plan: compiled,
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      assessDeliveryTraceability({
+        tasksMarkdown: bound.replace("[ ]", "[x]"),
+        specs,
+        plan: compiled,
+      }),
+    ).toEqual(
+      assessDeliveryTraceability({
+        tasksMarkdown: bound,
+        specs,
+        plan: compiled,
+      }),
+    );
+    expect(
+      assessDeliveryTraceability({
+        tasksMarkdown: bound,
+        specs: [
+          {
+            ...specs[0]!,
+            text: specs[0]!.text.replace("Accepted case", "Renamed case"),
+          },
+        ],
+        plan: compiled,
+      }),
+    ).toMatchObject({
+      ok: false,
+      diagnostics: expect.arrayContaining([
+        "traceability-reference-unresolved",
+      ]),
+    });
+    expect(
+      assessDeliveryTraceability({
+        tasksMarkdown: `${bound}\n\`specs/example/spec.md#Behavior/Accepted case\``,
+        specs,
+        plan: compiled,
+      }),
+    ).toMatchObject({
+      ok: false,
+      diagnostics: expect.arrayContaining(["traceability-reference-duplicate"]),
+    });
+    const revised = structuredClone(compiled);
+    revised.tasks[0]!.phases.green.verification.id = "revised-green";
+    const revisedText = bindTaskVerifications(
+      `${bound}\nAuthor footer.\n`,
+      revised,
+    );
+    expect(revisedText.startsWith(author)).toBe(true);
+    expect(revisedText.endsWith("\nAuthor footer.\n")).toBe(true);
+    expect(revisedText).toContain("Green: `revised-green`");
+    expect(bindTaskVerifications(revisedText, revised)).toBe(revisedText);
+  },
+);
+
+it("rejects ambiguous managed markers rather than replacing author text", () => {
+  const { consumerRoot, plan } = fixture();
+  const compiled = compileImplementPlan(plan, { consumerRoot });
+  for (const markdown of [
+    "author\n<!-- ABEL:VERIFICATION-BINDINGS:START -->\nvaluable text",
+    "author\n<!-- ABEL:VERIFICATION-BINDINGS:END -->\nvaluable text",
+    `${compiled.tasksMarkdown}\n${compiled.tasksMarkdown}`,
+    `prefix ${compiled.tasksMarkdown}`,
+  ]) {
+    expect(() => bindTaskVerifications(markdown, compiled.plan)).toThrow(
+      "traceability-managed-region-invalid",
+    );
+  }
+});
+
+it("derives named package-script command bytes before expanding verifier identities while retaining explicit mismatches", () => {
+  const { consumerRoot, plan } = fixture();
+  const command = "node --test test/regression.mjs";
+  writeFileSync(
+    path.join(consumerRoot, "package.json"),
+    JSON.stringify({ type: "module", scripts: { test: command } }),
+  );
+  const draft: PlanDraft = structuredClone(plan);
+  draft.verificationDefinitions = {
+    suite: {
+      kind: "package-script",
+      packageManager: "npm",
+      script: "test",
+      args: [],
+    },
+  };
+  for (const [phase, value] of Object.entries(draft.tasks[0]!.phases)) {
+    value.verification = {
+      use: "suite",
+      ...(phase === "red" ? { expectedFailure: "[REGRESSION:changed]" } : {}),
+    };
+    delete value.verificationInputs;
+  }
+  const compiled = compileImplementPlan(draft, {
+    consumerRoot,
+    bindExecutionInputs: true,
+  });
+  expect(compiled.plan.tasks[0]!.phases.green.verification).toMatchObject({
+    kind: "package-script",
+    command,
+  });
+  const explicit = structuredClone(draft);
+  const suite = explicit.verificationDefinitions!.suite!;
+  if (suite.kind !== "package-script") throw new Error("fixture-suite-kind");
+  suite.command = command;
+  expect(
+    compileImplementPlan(explicit, { consumerRoot, bindExecutionInputs: true })
+      .bytes,
+  ).toEqual(compiled.bytes);
+  suite.command = "npm run test";
+  expect(() =>
+    compileImplementPlan(explicit, { consumerRoot, bindExecutionInputs: true }),
+  ).toThrow("script-command-mismatch");
+  expect(() =>
+    parseImplementPlan(Buffer.from(JSON.stringify(draft))),
+  ).toThrow();
 });

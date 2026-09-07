@@ -9,15 +9,14 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
+import type {
+  PacketActivityEvent,
+  PacketActivityObserver,
+} from "./activity-contracts.ts";
 import {
   projectDesignDiagnostic,
   type SafeDesignDiagnostic,
 } from "./design-diagnostics.ts";
-import type {
-  PacketActivityEvent,
-  PacketActivityObserver,
-  PacketActivityState,
-} from "./packet-runtime.ts";
 
 export const ACTIVITY_DETAILS_KEY = "activityDisplay" as const;
 export const ACTIVITY_WIDGET_KEY = "abel-subagents" as const;
@@ -26,51 +25,20 @@ export const ACTIVITY_REFRESH_MS = 100;
 export const ACTIVITY_WIDGET_MAX_LINES = 12;
 export const ACTIVITY_WIDGET_MIN_WIDTH = 3;
 
-export const WORKFLOW_ACTIVITY_STATES = [
-  "queued",
-  "connecting",
-  "waiting-first-response",
-  "running",
-  "validating",
-  "retrying",
-  "verifying",
-  "paused",
-  "approval-needed",
-  "applying",
-  "recovering",
-  "operation-cancelled",
-  "discarded",
-  "rejected",
-  "completed",
-] as const;
+export type {
+  ActivityState,
+  TerminalActivityState,
+  WorkflowActivityState,
+  WorkflowActivityUpdate,
+} from "./activity-contracts.ts";
+export { WORKFLOW_ACTIVITY_STATES } from "./activity-contracts.ts";
 
-export type WorkflowActivityState = (typeof WORKFLOW_ACTIVITY_STATES)[number];
-export type ActivityState = PacketActivityState | WorkflowActivityState;
-export type TerminalActivityState =
-  | Exclude<
-      PacketActivityState,
-      | "queued"
-      | "connecting"
-      | "waiting-first-response"
-      | "running"
-      | "retrying"
-    >
-  | WorkflowActivityState;
-
-export interface WorkflowActivityUpdate {
-  state: WorkflowActivityState;
-  stage?: "abel-design" | "abel-implement";
-  runId?: string;
-  change?: string;
-  taskId?: string;
-  phase?: string;
-  objective?: string;
-  code?: string;
-  attempt?: number;
-  maxAttempts?: number;
-  wait?: string;
-  legalCommands?: string[];
-}
+import type {
+  ActivityState,
+  TerminalActivityState,
+  WorkflowActivityState,
+  WorkflowActivityUpdate,
+} from "./activity-contracts.ts";
 
 export interface EvidenceActivitySummary {
   kind: "evidence";
@@ -308,6 +276,7 @@ function stateGlyph(state: ActivityState, spinnerFrame = 0): string {
   switch (state) {
     case "queued":
       return "…";
+    case "preparing":
     case "connecting":
     case "waiting-first-response":
     case "running":
@@ -556,6 +525,8 @@ function workflowStateOf(
     case "ready":
     case "queued":
       return "queued";
+    case "preparing":
+      return "preparing";
     case "connecting":
       return "connecting";
     case "waiting-first-response":
@@ -674,6 +645,7 @@ function workflowWait(
   ) {
     return approval.gate;
   }
+  if (state === "preparing") return "worker-setup";
   if (state === "connecting") return "connection";
   if (state === "waiting-first-response") return "first-response";
   if (state === "retrying") return "bounded-policy";
@@ -860,6 +832,7 @@ function terminalState(
 } {
   return ![
     "queued",
+    "preparing",
     "connecting",
     "waiting-first-response",
     "running",

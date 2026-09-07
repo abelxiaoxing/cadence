@@ -13,9 +13,11 @@ import {
   type ChangeContract,
   normalizeChangeContract,
 } from "./change-contract.ts";
+import { changeContractDiagnostics } from "./change-contract-schema.ts";
 import { isValidRelativePath } from "./contracts.ts";
 import {
   assessDeliveryTraceability,
+  bindTaskVerifications,
   compileGateAReceipt,
   compileImplementPlan,
   compileReadyReceipt,
@@ -26,6 +28,7 @@ import {
   parseImplementPlan,
   parseReadyReceipt,
 } from "./delivery-compiler.ts";
+import type { DesignPlanDiagnostic } from "./design-diagnostics.ts";
 import {
   type DesignArtifactOperationFacts,
   type DesignArtifactOperationOutcome,
@@ -33,6 +36,7 @@ import {
   type DesignStatusProjection,
 } from "./design-journal.ts";
 import { OpenSpecCliError, type OpenSpecDiagnostic } from "./openspec-cli.ts";
+import { planAuthoringSummary } from "./plan-draft-summary.ts";
 import { canonicalJson } from "./run-state.ts";
 import { RunStore } from "./run-store.ts";
 import { observeSafePath } from "./safe-path.ts";
@@ -199,7 +203,53 @@ function lifecycleOperationId(kind: string, runId: string): string {
     .slice(0, 32)}`;
 }
 
-export function validateDesignControlRequest(
+export class DesignControlValidationError extends DesignPlanValidationError {
+  constructor(diagnostics: readonly DesignPlanDiagnostic[]) {
+    super("invalid-design-control-request", diagnostics);
+  }
+}
+export function validateDesignControlRequest(value: unknown):
+  | { ok: true; value: DesignControlRequest }
+  | {
+      ok: false;
+      code: "invalid-design-control-request";
+      diagnostics: DesignPlanDiagnostic[];
+    } {
+  const parsed = parseDesignControlRequest(value);
+  if (parsed.ok) return parsed;
+  let diagnostics: DesignPlanDiagnostic[] = [];
+  if (
+    isRecord(value) &&
+    value.operation === "approve-gate" &&
+    value.gate === "gate-a" &&
+    typeof value.contract !== "string"
+  )
+    diagnostics = changeContractDiagnostics(value.contract);
+  if (!diagnostics.length) {
+    const field = !isRecord(value)
+      ? "request"
+      : typeof value.operation !== "string"
+        ? "operation"
+        : value.operation !== "start" &&
+            (typeof value.runId !== "string" || !IDENTIFIER.test(value.runId))
+          ? "runId"
+          : !["status", "validate-plan-draft"].includes(
+                String(value.operation),
+              ) &&
+              (typeof value.operationId !== "string" ||
+                !IDENTIFIER.test(value.operationId))
+            ? "operationId"
+            : value.operation === "approve-gate"
+              ? value.gate === "gate-a"
+                ? "contract"
+                : "gate"
+              : "request";
+    diagnostics = [{ code: "design-control-field-invalid", field }];
+  }
+  return { ...parsed, diagnostics };
+}
+
+function parseDesignControlRequest(
   value: unknown,
 ):
   | { ok: true; value: DesignControlRequest }
@@ -553,7 +603,8 @@ export class DesignController {
   async execute(value: unknown): Promise<Record<string, unknown>> {
     this.#assertOpen();
     const validation = validateDesignControlRequest(value);
-    if (!validation.ok) throw new Error(validation.code);
+    if (!validation.ok)
+      throw new DesignControlValidationError(validation.diagnostics);
     const request = validation.value;
     switch (request.operation) {
       case "start":
@@ -631,6 +682,30 @@ export class DesignController {
       completed: run.state === "completed",
       ...(run.pauseCode ? { pause: { code: run.pauseCode } } : {}),
       legalOperations,
+      nextStep: terminal
+        ? null
+        : !design.gates.gateA.current
+          ? {
+              operation: "approve-gate",
+              instruction:
+                "Read applicable instructions, the affected source and existing tests, and the verification manifest together. Resolve only remaining substantive choices; use existing same-task approval. Submit the accepted structured ChangeContract, not a prose placeholder.",
+            }
+          : !design.change
+            ? {
+                operation: "bind-change",
+                instruction: "Bind the approved change name to this runId.",
+              }
+            : !design.plan || !design.gates.gateB.current
+              ? {
+                  operation: "write-artifact",
+                  instruction:
+                    "Write proposal, design, specs, author task checkboxes with exact Scenario references, and plan-draft.json. Use the installed example named in the tool description; omit derived identities. Preflight then compile; compilation supplies verification bindings and Gate B.",
+                }
+              : {
+                  operation: "finalize-delivery",
+                  instruction:
+                    "Finalize the prepared artifacts. If tasks or the draft changed since compilation, preflight and compile again first. No separate Gate B approval is needed.",
+                },
       packetActions: terminal ? [] : ["finish"],
       design,
     };
@@ -866,6 +941,7 @@ export class DesignController {
         { code: "design-plan-draft-invalid", field: "plan-draft.json" },
       ]);
     }
+    const authoredDraft = structuredClone(draft);
     if (status.changeContract) {
       if (!draft || typeof draft !== "object" || Array.isArray(draft))
         throw new Error("change-contract-invalid");
@@ -888,7 +964,7 @@ export class DesignController {
         { code: "design-plan-change-mismatch", field: "changeId" },
       ]);
     }
-    return { status, compiled };
+    return { status, compiled, authoredDraft };
   }
 
   #validatePlanDraft(
@@ -897,11 +973,12 @@ export class DesignController {
       { operation: "validate-plan-draft" }
     >,
   ) {
-    const { compiled } = this.#readCompiledDraft(request.runId);
+    const { compiled, authoredDraft } = this.#readCompiledDraft(request.runId);
     return {
       operation: request.operation,
       runId: request.runId,
       valid: true,
+      summary: planAuthoringSummary(compiled.plan, authoredDraft),
       plan: {
         taskCount: compiled.plan.tasks.length,
         outputCount: compiled.plan.outputs.length,
@@ -931,7 +1008,29 @@ export class DesignController {
       if (!change) throw new Error("design-change-required");
       const readyPath = safeRelative(change, "ready.yaml");
       const gateAPath = safeRelative(change, "gate-a.yaml");
+      const tasksPath = safeRelative(change, "tasks.md");
+      if (observeSafePath(this.consumerRoot, tasksPath).kind === "absent") {
+        throw new DesignPlanValidationError(
+          "design-traceability-input-unavailable",
+          [{ code: "design-traceability-input-unavailable", path: "tasks.md" }],
+        );
+      }
+      const priorTasks = boundedArtifactBytes(this.consumerRoot, tasksPath);
+      const tasksBytes = Buffer.from(
+        bindTaskVerifications(
+          new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+            priorTasks,
+          ),
+          compiled.plan,
+        ),
+        "utf8",
+      );
+      if (tasksBytes.length > MAX_DESIGN_FILE_BYTES) {
+        throw new Error("design-artifact-content-too-large");
+      }
+      const tasksUnchanged = tasksBytes.equals(priorTasks);
       const unchanged =
+        tasksUnchanged &&
         status.gates.gateB.current &&
         status.plan?.rawSha256 === compiled.rawSha256 &&
         status.plan.canonicalHash === compiled.planHash;
@@ -940,6 +1039,16 @@ export class DesignController {
         removeSafeFile(this.consumerRoot, gateAPath);
       }
       this.#assertFinalizationLease(lease);
+      if (
+        !boundedArtifactBytes(this.consumerRoot, tasksPath).equals(priorTasks)
+      ) {
+        throw new Error("design-artifact-currentness-mismatch");
+      }
+      // The compilation journal commits only after both files are installed.
+      // A crash before that point can replay this deterministic projection;
+      // finalization always rechecks the plan and task bytes together.
+      if (!tasksUnchanged)
+        atomicWrite(this.consumerRoot, tasksPath, tasksBytes);
       atomicWrite(
         this.consumerRoot,
         safeRelative(change, "implement-plan.json"),

@@ -99,6 +99,12 @@ it("keeps host adapters and workflow transition authority out of execution polic
     "workflow-status.ts",
     "candidate-artifact.ts",
     "package-verification.ts",
+    "workflow-scheduling.ts",
+    "workflow-recovery-policy.ts",
+    "delivery-revision.ts",
+    "phase-execution.ts",
+    "change-verification.ts",
+    "package-candidate.ts",
   ]) {
     expect([...reachable(entry)], entry).not.toEqual(
       expect.arrayContaining(["workflow-state-machine.ts"]),
@@ -109,4 +115,41 @@ it("keeps host adapters and workflow transition authority out of execution polic
     expect([...reachable(entry)], entry).not.toContain("apply-transaction.ts");
     expect([...reachable(entry)], entry).not.toContain("run-store.ts");
   }
+});
+
+it("confines Pi session context and lifecycle types to the host adapter", () => {
+  for (const file of readdirSync(sourceRoot).filter(
+    (name) =>
+      name.endsWith(".ts") &&
+      ![
+        "index.ts",
+        "pi-adapter.ts",
+        "scoped-tools.ts",
+        "submit-tool.ts",
+      ].includes(name),
+  )) {
+    const source = readFileSync(path.join(sourceRoot, file), "utf8");
+    expect(source, file).not.toMatch(
+      /\bExtensionContext\b|\bExtensionAPI\b|\bsessionManager\b|\bsession_shutdown\b|\bbefore_agent_start\b/,
+    );
+  }
+  for (const file of [
+    "phase-execution.ts",
+    "change-verification.ts",
+    "durable-contracts.ts",
+  ]) {
+    const source = readFileSync(path.join(sourceRoot, file), "utf8");
+    expect(source, file).not.toMatch(
+      /\bApplyTransaction\b|\bRunStore\b|\bDatabaseSync\b/,
+    );
+  }
+  const graph = imports();
+  for (const file of [
+    "workflow-scheduling.ts",
+    "workflow-recovery-policy.ts",
+    "delivery-revision.ts",
+  ])
+    expect(graph.get(file), file).not.toEqual(
+      expect.arrayContaining(["durable-workflow.ts"]),
+    );
 });

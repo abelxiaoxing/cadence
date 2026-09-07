@@ -12,8 +12,10 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { requestChildTurn } from "../src/child-model.ts";
 import { runtimeForWorkerRoute } from "../src/parent-provider.ts";
 import { parentRoutePolicy } from "../src/route-policy.ts";
+import { REQUEST_BOUNDS } from "../src/transport-budget.ts";
 import {
   ROUTE_ATTEMPT_BOUNDS,
   RunWorkerBroker,
@@ -49,27 +51,16 @@ async function consumePhaseStream(
     onProgress(): void;
   },
 ) {
-  const stream = phase.modelRuntime.streamSimple(
-    phase.model,
-    requestContext(),
-    { maxRetries: 0, signal: attempt.signal },
-  );
-  for await (const event of stream) {
-    if (
-      [
-        "text_start",
-        "text_delta",
-        "thinking_start",
-        "thinking_delta",
-        "toolcall_start",
-        "toolcall_delta",
-      ].includes(event.type)
-    ) {
-      attempt.onProgress();
-    }
-    if (event.type === "error") throw new Error("provider-stream-failure");
-  }
-  const result = await stream.result();
+  const result = await requestChildTurn({
+    client: phase.modelRuntime,
+    model: phase.model,
+    context: requestContext(),
+    signal: attempt.signal,
+    sessionId: "transport-test",
+    onProgress: attempt.onProgress,
+    onMessage() {},
+  });
+  if (!result) throw new Error("no-terminal-message");
   if (result.stopReason === "error" || result.stopReason === "aborted") {
     throw new Error("provider-stream-failure");
   }
@@ -82,7 +73,7 @@ describe("Worker transport lifecycle", () => {
       provider: "transport-lifecycle-parent",
       api: "faux",
     });
-    faux.setResponses([fauxAssistantMessage("ready")]);
+    faux.setResponses([fauxAssistantMessage("ready again")]);
     const parentRuntime = await runtimeForProvider(faux.provider);
     const route = parentRoutePolicy({
       contextWindow: faux.getModel().contextWindow,
@@ -117,7 +108,7 @@ describe("Worker transport lifecycle", () => {
     expect(lifecycle).toContain("assistant:start");
   });
 
-  it("classifies two parallel inherited attempts with headers but no first delta as first-response-timeout", async () => {
+  it("classifies two parallel inherited attempts with headers but no first delta as first-progress-timeout", async () => {
     vi.useFakeTimers();
     const faux = fauxProvider({
       provider: "parallel-stalled-parent",
@@ -178,23 +169,21 @@ describe("Worker transport lifecycle", () => {
       attempt < ROUTE_ATTEMPT_BOUNDS.attemptsPerRoute;
       attempt += 1
     ) {
-      await vi.advanceTimersByTimeAsync(
-        ROUTE_ATTEMPT_BOUNDS.firstResponseMs + 1,
-      );
+      await vi.advanceTimersByTimeAsync(REQUEST_BOUNDS.firstProgressMs + 251);
     }
     const results = await Promise.all(pending);
     for (const result of results) {
       expect(result).toMatchObject({
         ok: false,
         state: "paused",
-        code: "first-response-timeout",
+        code: "first-progress-timeout",
       });
       expect(result.attempts).toHaveLength(
         ROUTE_ATTEMPT_BOUNDS.attemptsPerRoute,
       );
       expect(
         result.attempts.every(
-          (attempt) => attempt.code === "first-response-timeout",
+          (attempt) => attempt.code === "first-progress-timeout",
         ),
       ).toBe(true);
     }
@@ -208,7 +197,7 @@ describe("Worker transport lifecycle", () => {
       tokensPerSecond: 0.02,
       tokenSize: { min: 1, max: 1 },
     });
-    faux.setResponses([fauxAssistantMessage("ready")]);
+    faux.setResponses([fauxAssistantMessage("ready again")]);
     const parentRuntime = await runtimeForProvider(faux.provider);
     const context = {
       model: faux.getModel(),
@@ -252,25 +241,26 @@ describe("Worker transport lifecycle", () => {
       await vi.advanceTimersByTimeAsync(0);
     }
     expect(activity).toContain("waiting-first-response");
+    await vi.advanceTimersByTimeAsync(50_000);
     expect(activity).toContain("running");
 
-    await vi.advanceTimersByTimeAsync(ROUTE_ATTEMPT_BOUNDS.firstResponseMs + 1);
+    await vi.advanceTimersByTimeAsync(REQUEST_BOUNDS.firstProgressMs + 1);
     expect(settled).toBe(false);
     expect(activity).not.toContain("retrying");
 
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(200_000);
     const result = await pending;
 
     expect(result.ok).toBe(true);
     expect(activity.slice(0, 2)).toEqual([
-      "connecting",
+      "preparing",
       "waiting-first-response",
     ]);
     expect(activity.slice(2).every((state) => state === "running")).toBe(true);
     const settledActivity = [...activity];
     expect(vi.getTimerCount()).toBe(0);
     await vi.advanceTimersByTimeAsync(
-      ROUTE_ATTEMPT_BOUNDS.totalMs + ROUTE_ATTEMPT_BOUNDS.idleMs,
+      ROUTE_ATTEMPT_BOUNDS.totalMs + REQUEST_BOUNDS.streamIdleMs,
     );
     expect(activity).toEqual(settledActivity);
     expect(broker.status()).toMatchObject({

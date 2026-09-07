@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-
 import { parseRoutePolicy } from "../src/route-policy.ts";
+import { TransportTimeout } from "../src/transport-budget.ts";
 import { WorkerBroker } from "../src/worker-broker.ts";
 import { implementationRouteRequirements } from "../src/workflow-policy.ts";
 import { verificationFixturePlan } from "./helpers/verification-plan.ts";
@@ -200,7 +200,7 @@ describe("capability and health aware Worker broker", () => {
     });
   });
 
-  it("retries one route once after an independent first-response timeout", async () => {
+  it("retries one route once after an typed request timeout", async () => {
     vi.useFakeTimers();
     const parse = requiredFunction<(value: unknown) => Record<string, unknown>>(
       policyModule,
@@ -225,29 +225,16 @@ describe("capability and health aware Worker broker", () => {
       execute: async (attempt: { signal: AbortSignal; onHeaders(): void }) => {
         attempts += 1;
         attempt.onHeaders();
-        await new Promise((_resolve, reject) => {
-          attempt.signal.addEventListener(
-            "abort",
-            () => reject(attempt.signal.reason),
-            {
-              once: true,
-            },
-          );
-        });
+        throw new TransportTimeout("first-progress-timeout");
       },
     });
-    const bounds = brokerModule?.ROUTE_ATTEMPT_BOUNDS as {
-      firstResponseMs: number;
-    };
-    await vi.advanceTimersByTimeAsync(bounds.firstResponseMs + 1);
-    await vi.advanceTimersByTimeAsync(bounds.firstResponseMs + 1);
     await expect(pending).resolves.toMatchObject({
       ok: false,
       state: "paused",
-      code: "first-response-timeout",
+      code: "first-progress-timeout",
       attempts: [
-        { routeId: "custom-primary", code: "first-response-timeout" },
-        { routeId: "custom-primary", code: "first-response-timeout" },
+        { routeId: "custom-primary", code: "first-progress-timeout" },
+        { routeId: "custom-primary", code: "first-progress-timeout" },
       ],
     });
     expect(attempts).toBe(2);
@@ -276,16 +263,16 @@ describe("capability and health aware Worker broker", () => {
     });
 
     const bounds = brokerModule?.ROUTE_ATTEMPT_BOUNDS as {
-      firstResponseMs: number;
+      totalMs: number;
     };
-    await vi.advanceTimersByTimeAsync(bounds.firstResponseMs + 1);
-    await vi.advanceTimersByTimeAsync(bounds.firstResponseMs + 1);
+    await vi.advanceTimersByTimeAsync(bounds.totalMs + 1);
+    await vi.advanceTimersByTimeAsync(bounds.totalMs + 1);
     await expect(pending).resolves.toMatchObject({
       ok: false,
-      code: "first-response-timeout",
+      code: "attempt-timeout",
       attempts: [
-        { routeId: "custom-primary", code: "first-response-timeout" },
-        { routeId: "custom-primary", code: "first-response-timeout" },
+        { routeId: "custom-primary", code: "attempt-timeout" },
+        { routeId: "custom-primary", code: "attempt-timeout" },
       ],
     });
   });
@@ -325,11 +312,11 @@ describe("capability and health aware Worker broker", () => {
 
     expect(result).toMatchObject({ ok: true, value: { kind: "candidate" } });
     expect(activity.map((event) => event.state)).toEqual([
-      "connecting",
+      "preparing",
       "waiting-first-response",
       "running",
       "retrying",
-      "connecting",
+      "preparing",
       "waiting-first-response",
       "running",
     ]);

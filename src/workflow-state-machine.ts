@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import type { WorkflowActivityUpdate } from "./activity-contracts.ts";
 import {
   assertPlanWithinChangeContract,
   normalizeChangeContract,
@@ -18,6 +19,7 @@ import {
   type ImplementPlan,
   type PlanTaskDraft,
 } from "./delivery-compiler.ts";
+import { compareDeliveryRevision } from "./delivery-revision.ts";
 import { snapshotFiles } from "./file-snapshot.ts";
 import type { RoutePolicy } from "./route-policy.ts";
 import {
@@ -38,7 +40,6 @@ import {
   RECOVERY_SCHEMA,
   REJECTED_DELIVERY_SCHEMA,
 } from "./storage-schema.ts";
-import type { WorkflowActivityUpdate } from "./subagent-activity.ts";
 import { permitsContextRead } from "./submit-tool.ts";
 import {
   type ActiveOperation,
@@ -49,7 +50,6 @@ import {
   cancellableRead,
   classifyPersistedContextRequest,
   decideRecoveryAction,
-  deliveryBoundPaths,
   type EngineOperationRow,
   type EngineRunRow,
   type EngineTaskRow,
@@ -70,8 +70,6 @@ import {
   recoveryKey,
   type SafeAttemptDiagnostic,
   SHA256,
-  taskApprovalBoundary,
-  taskConflicts,
   type WorkflowApplication,
   type WorkflowApplicationContext,
   type WorkflowAttemptOutcome,
@@ -86,6 +84,11 @@ import {
   type WorkflowVerificationStatus,
   type WorkflowWorker,
 } from "./workflow-policy.ts";
+import {
+  assessRecoveryGrant,
+  recoveryExhausted,
+} from "./workflow-recovery-policy.ts";
+import { selectRunnableTasks } from "./workflow-scheduling.ts";
 import {
   firstPausedTask,
   projectWorkflowStatus,
@@ -949,36 +952,13 @@ export class WorkflowEngine {
       engineRun.current_revision === null
         ? undefined
         : this.#planForRevision(runId, engineRun.current_revision);
-    const priorTasks = new Map(
-      (priorPlan?.tasks ?? []).map((task) => [task.taskId, task]),
+    const comparison = compareDeliveryRevision(
+      priorPlan,
+      delivery.plan,
+      priorRows,
     );
-    const nextTasks = new Map(
-      delivery.plan.tasks.map((task) => [task.taskId, task]),
-    );
-    const priorBoundPaths = new Set(
-      priorPlan ? deliveryBoundPaths(priorPlan) : [],
-    );
-    const boundaryExpanded = deliveryBoundPaths(delivery.plan).some(
-      (relative) => !priorBoundPaths.has(relative),
-    );
-    const compatible = new Set<string>();
-    if (priorPlan) {
-      for (const [taskId, priorTask] of priorTasks) {
-        const nextTask = nextTasks.get(taskId);
-        if (
-          nextTask &&
-          taskApprovalBoundary(priorPlan, priorTask) ===
-            taskApprovalBoundary(delivery.plan, nextTask)
-        ) {
-          compatible.add(taskId);
-        }
-      }
-    }
-    let invalidated = new Set(
-      priorRows
-        .filter((row) => !compatible.has(row.task_id))
-        .map((row) => row.task_id),
-    );
+    const { compatible, boundaryExpanded } = comparison;
+    let invalidated = comparison.invalidated;
     let revalidatedWorkspace:
       | {
           baselineRevisionId: string;
@@ -1417,62 +1397,6 @@ export class WorkflowEngine {
     });
   }
 
-  #hasConflict(
-    row: EngineTaskRow,
-    rows: EngineTaskRow[],
-    selectedTaskIds: ReadonlySet<string>,
-  ): boolean {
-    const candidate = this.#taskPlan(row);
-    return rows.some((other) => {
-      if (other.task_id === row.task_id || other.state === "verified") {
-        return false;
-      }
-      if (other.state === "queued") {
-        if (row.state !== "queued") return false;
-        const candidatePosition = row.queue_position ?? Number.MAX_SAFE_INTEGER;
-        const otherPosition = other.queue_position ?? Number.MAX_SAFE_INTEGER;
-        if (
-          otherPosition > candidatePosition ||
-          (otherPosition === candidatePosition &&
-            other.task_order > row.task_order)
-        ) {
-          return false;
-        }
-      }
-      if (other.task_order > row.task_order && other.state === "pending") {
-        return false;
-      }
-      if (
-        other.state === "pending" &&
-        !this.#dependenciesVerified(other, rows)
-      ) {
-        return false;
-      }
-      const conflict = taskConflicts(candidate, this.#taskPlan(other));
-      return (
-        conflict.taskLifetime ||
-        (conflict.verification &&
-          ([
-            "pending",
-            "phase-ready",
-            "phase-running",
-            "validating",
-            "queued",
-          ].includes(other.state) ||
-            selectedTaskIds.has(other.task_id)))
-      );
-    });
-  }
-
-  #dependenciesVerified(row: EngineTaskRow, rows: EngineTaskRow[]): boolean {
-    const byId = new Map(
-      rows.map((candidate) => [candidate.task_id, candidate]),
-    );
-    return this.#taskPlan(row).dependsOn.every(
-      (dependency) => byId.get(dependency)?.state === "verified",
-    );
-  }
-
   #recordWorkspaceFacts(
     runId: string,
     outcome: WorkflowAttemptOutcome,
@@ -1663,9 +1587,7 @@ export class WorkflowEngine {
         recoveryKey(task, phase, row, current),
       );
       const verificationOnly =
-        !granted &&
-        activeRecovery &&
-        activeRecovery.failures >= maxRecoveryAttempts &&
+        recoveryExhausted(activeRecovery, maxRecoveryAttempts, granted) &&
         (await this.#worker.hasPendingVerification?.({
           runId,
           operationId,
@@ -1683,10 +1605,9 @@ export class WorkflowEngine {
             : {}),
         })) === true;
       if (
-        !granted &&
         !verificationOnly &&
         activeRecovery &&
-        activeRecovery.failures >= maxRecoveryAttempts
+        recoveryExhausted(activeRecovery, maxRecoveryAttempts, granted)
       ) {
         this.#setTask(
           runId,
@@ -2789,46 +2710,34 @@ export class WorkflowEngine {
     while (madeProgress && !signal.aborted) {
       madeProgress = false;
       const rows = this.#tasks(runId);
-      const runnable: Array<{
-        row: EngineTaskRow;
-        before: string;
-      }> = [];
-      const selectedTaskIds = new Set<string>();
-      let capacityBlocked = false;
-      for (const row of rows) {
-        if (row.state === "verified" || attempted.has(row.task_id)) continue;
-        if (!this.#dependenciesVerified(row, rows)) {
-          if (row.state !== "pending") {
-            this.#setTask(
-              runId,
-              row.task_id,
-              {
-                state: "pending",
-                pauseCode: null,
-                queuePosition: null,
-              },
-              lease,
-            );
-          }
-          continue;
-        }
-        if (this.#hasConflict(row, this.#tasks(runId), selectedTaskIds)) {
-          this.#queueTask(runId, row, lease);
-          continue;
-        }
-        if (
-          this.#activeTasks + runnable.length >=
-          LIMITS.maxActiveChildSessions
-        ) {
-          this.#queueTask(runId, row, lease, "capacity");
-          capacityBlocked = true;
-          continue;
-        }
-        const before = `${row.state}:${row.phase}`;
-        attempted.add(row.task_id);
-        selectedTaskIds.add(row.task_id);
-        runnable.push({ row, before });
+      const selected = selectRunnableTasks({
+        rows,
+        attempted,
+        activeTasks: this.#activeTasks,
+        capacity: LIMITS.maxActiveChildSessions,
+        nextQueuePosition: this.#engineRun(runId).next_queue_position,
+      });
+      const runnable = selected.runnable.map((taskId) => {
+        const row = rows.find((candidate) => candidate.task_id === taskId);
+        if (!row) throw new Error("scheduler-task-unavailable");
+        attempted.add(taskId);
+        return { row, before: `${row.state}:${row.phase}` };
+      });
+      for (const update of selected.updates) {
+        const row = rows.find(
+          (candidate) => candidate.task_id === update.taskId,
+        );
+        if (!row) throw new Error("scheduler-task-unavailable");
+        if (update.kind === "pending")
+          this.#setTask(
+            runId,
+            row.task_id,
+            { state: "pending", pauseCode: null, queuePosition: null },
+            lease,
+          );
+        else this.#queueTask(runId, row, lease, update.reason);
       }
+      const capacityBlocked = selected.capacityBlocked;
       if (runnable.length === 0 && capacityBlocked) {
         await this.#waitForCapacity(signal);
         madeProgress = true;
@@ -3017,20 +2926,22 @@ export class WorkflowEngine {
         .get(runId, request.incidentKey) as { conditions_json: string };
       const previous = JSON.parse(conditions.conditions_json);
       const observed = this.#recoveryConditions(runId, request.incidentKey);
-      if (
-        (request.reason === "route-changed" &&
-          (!previous.route || previous.route === observed.route)) ||
-        (request.reason === "context-extended" &&
-          (!previous.context || previous.context === observed.context))
-      )
-        throw new Error("recovery-evidence-unavailable");
       const budget = this.#database
         .prepare(
           "SELECT used, max_work FROM workflow_work_budget WHERE run_id = ?",
         )
         .get(runId) as { used: number; max_work: number };
-      if (!budget || budget.used >= budget.max_work)
-        throw new Error("change-work-budget-exhausted");
+      const rejected = assessRecoveryGrant({
+        current,
+        incident,
+        failureSequence: this.#failureSequence(runId, request.incidentKey),
+        requestedSequence: request.failureSequence,
+        reason: request.reason,
+        previous,
+        observed,
+        budget,
+      });
+      if (rejected) throw new Error(rejected);
       this.#database
         .prepare(
           "INSERT INTO workflow_recovery_grants(run_id, operation_id, incident_key, failure_sequence, reason) VALUES (?, ?, ?, ?, ?)",
@@ -3582,21 +3493,6 @@ export class WorkflowEngine {
           signal,
         );
         this.#admitDelivery(runId, delivery, lease);
-        this.#transition(
-          runId,
-          "ready",
-          `${command.operationId}:delivery-ready`,
-          undefined,
-          lease,
-        );
-      } else if (current.state !== "ready") {
-        this.#transition(
-          runId,
-          "ready",
-          `${command.operationId}:resume-ready`,
-          undefined,
-          lease,
-        );
       }
       if (command.recovery)
         this.#grantRecovery(
@@ -3605,6 +3501,13 @@ export class WorkflowEngine {
           command.recovery,
           lease,
         );
+      this.#transition(
+        runId,
+        "ready",
+        `${command.operationId}:resume-ready`,
+        undefined,
+        lease,
+      );
       return this.#launchAdvance(
         runId,
         command.operationId,
@@ -3628,6 +3531,25 @@ export class WorkflowEngine {
       );
       if (failure) {
         return this.#commitOperation(runId, command.operationId, failure);
+      }
+      // A revised delivery may invalidate a grant. Retain its admitted facts,
+      // but never leave a rejected resume looking ready or still validating.
+      if (
+        error instanceof Error &&
+        [
+          "recovery-request-stale",
+          "recovery-evidence-unavailable",
+          "change-work-budget-exhausted",
+        ].includes(error.message) &&
+        this.#runStore.status(runId).state === "validating-delivery"
+      ) {
+        this.#transition(
+          runId,
+          "paused",
+          `${command.operationId}:recovery-rejected`,
+          error.message,
+          lease,
+        );
       }
       this.#interruptOperation(runId, command.operationId);
       throw error;

@@ -29,8 +29,35 @@ Design resolves product and technical decisions, collects cited evidence, and co
 It never launches an implementation Worker, creates a product-code candidate, applies a product diff, runs Red/Green/Refactor, or mutates the main workspace.
 
 If no requirement can be identified or several changes cannot be distinguished, ask one focused question about the target.
-Otherwise investigate first: resolve discoverable unknowns from repository evidence and choose reversible defaults within existing authority; only unresolved substantive choices require a user decision.
+Otherwise make Design `start` the first control call, before repository discovery.
+It creates only private resumable identity and does not approve scope.
+Then resolve discoverable unknowns from repository evidence and choose reversible defaults within existing authority; only unresolved substantive choices require a user decision.
 An explicit `--change <name>` resumes only that existing change; never reinterpret a misspelling as a new requirement.
+
+## Durable Design identity
+
+Use the same `action: "design"` envelope from the first call through finalization.
+Call `start` once with either the complete new requirement or an explicit existing change name, then use the returned `runId` for every later Design operation.
+For a new requirement, the control plane normalizes and hashes the transient text itself; the raw requirement is not written to the durable journal.
+After Gate A fixes its name, bind that same provisional run with `bind-change` rather than starting a second run.
+Use `status` by `runId` to recover local lifecycle and Design facts without a model or endpoint request.
+A completed Design run is immutable; an explicit later `--change <change>` starts the next durable Design revision for that change while preserving prior approval facts for receipt verification.
+
+```json
+{"action":"design","request":{"operation":"start","requirement":"<complete-requirement>","operationId":"<unique-operation>"}}
+{"action":"design","request":{"operation":"start","change":"<existing-change>","operationId":"<unique-operation>"}}
+{"action":"design","request":{"operation":"status","runId":"<run-id>"}}
+{"action":"design","request":{"operation":"bind-change","runId":"<run-id>","operationId":"<unique-operation>","change":"<gate-a-approved-change>"}}
+```
+
+## Focused evidence collection
+
+For a local change with known paths, read applicable repository instructions, the package manifest, the affected implementation and existing tests in the same assistant turn when independent.
+Expand to callers, fixtures or architecture only for a concrete unresolved impact or verification question.
+Once observable behavior, authorized scope, existing-test impact and an executable verification command are established, proceed to the accepted contract and draft.
+Do not continue broad directory traversal or read Cadence implementation sources to reconstruct its protocol; use the current tool schema, its installed example paths and returned field diagnostics.
+The `start` / `status` response includes a current-step hint; it is guidance, not new approval authority.
+Evidence packets are optional: use them only for independent evidence gaps that justify another model call.
 
 ## Write boundary
 
@@ -54,22 +81,6 @@ Identical replay is idempotent and conflicting reuse of an operation id fails cl
 ```json
 {"action":"design","request":{"operation":"write-artifact","runId":"<run-id>","operationId":"<unique-operation>","path":"proposal.md","content":"<exact-utf8-content>"}}
 {"action":"design","request":{"operation":"delete-artifact","runId":"<run-id>","operationId":"<unique-operation>","path":"specs/<capability>/spec.md"}}
-```
-
-## Durable Design identity
-
-Use the same `action: "design"` envelope from the first call through finalization.
-Call `start` once with either the complete new requirement or an explicit existing change name, then use the returned `runId` for every later Design operation.
-For a new requirement, the control plane normalizes and hashes the transient text itself; the raw requirement is not written to the durable journal.
-After Gate A fixes its name, bind that same provisional run with `bind-change` rather than starting a second run.
-Use `status` by `runId` to recover local lifecycle and Design facts without a model or endpoint request.
-A completed Design run is immutable; an explicit later `--change <change>` starts the next durable Design revision for that change while preserving prior approval facts for receipt verification.
-
-```json
-{"action":"design","request":{"operation":"start","requirement":"<complete-requirement>","operationId":"<unique-operation>"}}
-{"action":"design","request":{"operation":"start","change":"<existing-change>","operationId":"<unique-operation>"}}
-{"action":"design","request":{"operation":"status","runId":"<run-id>"}}
-{"action":"design","request":{"operation":"bind-change","runId":"<run-id>","operationId":"<unique-operation>","change":"<gate-a-approved-change>"}}
 ```
 
 ## Read-only evidence packets
@@ -133,6 +144,19 @@ Design settles the goal, main decisions, explicit constraints, and non-goals.
 Make the implementation delegation clear in the accepted proposal: the parent will choose its recommended solution for later implementation choices within those constraints, record material decisions, and continue to verified results without another selection or confirmation round.
 Do not ask the user to approve this delegation separately or attempt to enumerate every future implementation detail.
 
+## Structured authority for new work
+
+Use a structured `ChangeContract` as the Gate A `contract` for new designs: `goal`, `acceptance` (stable `id`, accepted `statement`, complete structured `verification`), `constraints` (stable `id` and `statement`), and `policy` (`writeRoots`, allowed dependency names in `dependencies`, and `verificationModes`).
+Use `behavior` by default; explicitly permit `mechanical` or `refactor` only for suitable work.
+Present the accepted goal, constraints and scope together with the recommended choices.
+Do not include secrets or raw conversation in the contract.
+
+Code normalizes and hashes the object.
+The journal retains the normalized authority and injects it into compiled plans; callers do not compute hashes.
+Keep acceptance IDs and statements stable when reshaping a plan.
+Compilation rejects missing acceptance verification, outside-policy writes/dependencies, or substituted authority.
+Historical prose approvals remain readable; their existence does not authorize new scope.
+
 Gate A approves the complete WHAT: goal, observable scenarios, failures, scope/non-goals, compatibility/migration/security policy, and success criteria.
 Before approval, present the unresolved behavior decisions together.
 After explicit approval:
@@ -143,7 +167,7 @@ After explicit approval:
 4. materialize schema-ready behavior artifacts one at a time.
 
 ```json
-{"action":"design","request":{"operation":"approve-gate","runId":"<run-id>","operationId":"<unique-operation>","gate":"gate-a","contract":"<complete-approved-what-contract>"}}
+{"action":"design","request":{"operation":"approve-gate","runId":"<run-id>","operationId":"<unique-operation>","gate":"gate-a","contract":{"goal":"<accepted goal>","acceptance":[{"id":"<acceptance-id>","statement":"<accepted behavior>","verification":{"kind":"static-check","id":"<acceptance-verifier-id>","runner":{"kind":"node","script":"<observed-test-path>"},"args":[],"classification":"expected-green"}}],"constraints":[],"policy":{"writeRoots":["<approved-source-path>","<approved-test-path>"],"dependencies":[],"verificationModes":["behavior"]}}}}
 ```
 
 The control plane generates the canonical behavior-contract hash; the returned proof contains its approval revision, contract hash, and owner-private record hash.
@@ -165,12 +189,38 @@ The example's nested `changeContract` also shows the structured Gate A shape.
 Replace its goal, acceptance, paths, context, impact evidence, and verification commands with observed repository facts before approval; its sample evidence is not evidence about the current project.
 Use the project's actual full suite when adapting this single-test example.
 The control plane inherits the approved `changeContract`, so the draft may omit that duplicate object.
+Keep author input separate from the complete sealed execution plan; execution never reads author shorthand.
+Reuse an atomic command through `verificationDefinitions` and `{ "use": "name" }`; place `expectedFailure` on its Red use.
+Definitions contain an existing atomic verifier's command fields, without identity, classification, bindings, nested references, or arbitrary use-site overrides.
+Inline atomic contracts may also omit `id` and `classification`; the compiler derives stable purpose identities and phase classifications.
+In PlanDraft, omit a package-script `command` (including in a named definition or package-script runner) to bind the literal package.json script value before identity generation.
+An explicit `command` must be that exact manifest value, never a launcher such as `npm run test`.
+Gate A acceptance verifiers remain complete explicit contracts; use the observed literal script value there.
+Explicit task `read` supplies common reads to its phases, unioned with any phase-local `read`; writes, deletes, roots, dependencies, and output producers remain explicit.
+The compiler also supplies fixed baseline/repair boundary fields and `agents.managedOnly`; retain recovery attempt limits and observed AGENTS impact.
+It supplies an empty AGENTS checkpoint only when every explicitly declared impact is `none`.
+The [dependent-task example](../config/plan-draft.multiple-tasks.example.json) shows a Red-produced test consumed by another task's ordered verification, with an explicit dependency and producer.
+Ordered `steps` remain complete inline contracts; reuse means separate verification executions, never reuse of a prior successful report.
 Omit `tracking` to generate parent-owned `tasks.md` metadata from the task ids; an explicitly supplied block must match those ids and the fixed tracking policy.
+In the author portion of `tasks.md`, write one checkbox with each backticked task ID, its objective and its owned backticked `specs/<capability>/spec.md#Requirement title/Scenario title` references.
+Every Scenario must have exactly one reference.
+Do not copy generated phase verifier IDs into this text.
+Compilation installs their code-owned `ABEL:VERIFICATION-BINDINGS` region while preserving the author text.
+Editing tasks afterward requires recompilation before finalization.
 Omit phase `verificationInputs`: the compiler derives the exact paths from each verification contract and binds them to a unique declared output or an existing workspace file.
 Keep supporting sources and fixtures in `read`; input derivation never adds read/write paths, outputs, or dependencies.
 Omit each `relatedTests` entry's `disposition` and `regressionTaskId` to derive ownership from task writes; retain its observed `path` and `evidence`.
 An ambiguous producer or test owner requires an explicit correction; explicitly supplied fields are checked, never silently replaced.
-Scope, verification, recovery limits, and AGENTS operations remain explicit.
+Scope, verification choices, recovery limits, and necessary AGENTS operations remain explicit.
+
+Mechanical tasks may write document/data/config files (`.md`, `.txt`, `.json`, `.yaml`, `.yml`, `.toml`, `.lock`).
+Refactor tasks preserve accepted verifier inputs.
+Both must declare no public behavior change and require an explicitly allowed mode in Gate A. Specify task `verificationMode` and Green (plus optional Refactor); omit Red in the draft.
+The compiler handles its internal compatibility representation.
+Runtime captures baseline and executes Green with affected, cumulative and post-apply verification, without generating a Red candidate.
+Behavior tasks continue to require Red/Green.
+
+An AGENTS checkpoint additionally requires its exact target path in `policy.writeRoots`; a broad source root does not grant AGENTS authority.
 
 Each task must seal:
 
@@ -195,10 +245,10 @@ For public UI or API work, seal the relevant route authorization, page state, AP
 
 The plan admits only shell-free `vitest`, `package-script`, `static-check`, or ordered `steps` contracts.
 `dev-browser` is required only by an approved browser E2E contract; its absence does not block unrelated tasks or stages.
-Pin local runners, package scripts, arguments, `minTests`, classifications, and `noInstall` behavior.
+Pin local runners, package scripts, arguments, `minTests`, and `noInstall` behavior; sealed classifications are derived from phase/purpose when omitted.
 Reject shell operators, implicit downloads, absolute/escaping paths, missing local capability, and unsupported verification shapes during Design readiness.
 
-After current Gate A approval, send the complete draft through `write-artifact` only to the relative path `plan-draft.json`.
+After current Gate A approval, send the author draft through `write-artifact` only to the relative path `plan-draft.json`.
 Before mutation-owning compilation, use the read-only typed preflight; it validates the same fixed draft and returns task/output counts plus hashes without installing canonical files or journaling a plan revision:
 
 ```json
@@ -214,7 +264,8 @@ After preflight succeeds, invoke code-owned compilation:
 {"action":"design","request":{"operation":"compile-plan","runId":"<run-id>","operationId":"<unique-operation>"}}
 ```
 
-The compiler reads only that fixed safe path, validates capability and graph closure again, atomically installs canonical `implement-plan.json`, and returns its raw and canonical hashes.
+The compiler reads only that fixed safe path, validates capability and graph closure again, installs the generated verification bindings into the existing `tasks.md` and canonical `implement-plan.json` under the same compilation lease, and records the plan only after both writes succeed.
+It returns the plan’s raw and canonical hashes.
 Do not hand-assemble canonical plan bytes, hashes, generated task Markdown, or receipts.
 The canonical `ImplementPlan` contains:
 
@@ -275,6 +326,8 @@ Endpoint/transport failure in an evidence packet pauses that packet and retains 
 Missing package scripts/runners or a non-executable verification contract must be corrected before Gate B; they must not be deferred as an Implement surprise.
 
 Report `READY_TO_IMPLEMENT` only when strict validation passes, user decisions are resolved and both private proofs are current, all artifacts/hashes/traceability resolve, and the canonical plan is executable.
+After successful code-owned finalization, return one brief readiness response with the change and delivery revision.
+Do not reread receipts, survey directories or restate the full decision history after that success; finalization has already reread and validated the delivery.
 Successful finalization deactivates private dispatch before an unrelated later request.
 Gate waits remain active for direct follow-up; if the user explicitly ends an unfinished Design interaction, send `{"action":"finish"}`.
 Otherwise report the current Design state, retained evidence, and the one unresolved decision or artifact that prevents readiness.
@@ -284,25 +337,3 @@ Never send `operation: "finish"`; exit only with `{"action":"finish"}`.
 Do not implement product code and do not archive, publish, release, stage, or commit implicitly.
 
 <!-- ABEL:END -->
-
-## Structured authority for new work
-
-Use a structured `ChangeContract` as the Gate A `contract` for new designs: `goal`, `acceptance` (stable `id`, accepted `statement`, complete structured `verification`), `constraints` (stable `id` and `statement`), and `policy` (`writeRoots`, allowed dependency names in `dependencies`, and `verificationModes`).
-Use `behavior` by default; explicitly permit `mechanical` or `refactor` only for suitable work.
-Present the accepted goal, constraints and scope together with the recommended choices.
-Do not include secrets or raw conversation in the contract.
-
-Code normalizes and hashes the object.
-The journal retains the normalized authority and injects it into compiled plans; callers do not compute hashes.
-Keep acceptance IDs and statements stable when reshaping a plan.
-Compilation rejects missing acceptance verification, outside-policy writes/dependencies, or substituted authority.
-Historical prose approvals remain readable; their existence does not authorize new scope.
-
-Mechanical tasks may write document/data/config files (`.md`, `.txt`, `.json`, `.yaml`, `.yml`, `.toml`, `.lock`).
-Refactor tasks preserve accepted verifier inputs.
-Both must declare no public behavior change and require an explicitly allowed mode in Gate A. Specify task `verificationMode` and Green (plus optional Refactor); omit Red in the draft.
-The compiler handles its internal compatibility representation.
-Runtime captures baseline and executes Green with affected, cumulative and post-apply verification, without generating a Red candidate.
-Behavior tasks continue to require Red/Green.
-
-An AGENTS checkpoint additionally requires its exact target path in `policy.writeRoots`; a broad source root does not grant AGENTS authority.

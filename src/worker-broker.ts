@@ -5,11 +5,9 @@ import {
   type WorkerRole,
   type WorkerRoutePolicy,
 } from "./route-policy.ts";
+import { TransportTimeout } from "./transport-budget.ts";
 
 export const ROUTE_ATTEMPT_BOUNDS = Object.freeze({
-  connectMs: 10_000,
-  firstResponseMs: 90_000,
-  idleMs: 3 * 60_000,
   totalMs: 20 * 60_000,
   cooldownMs: 30_000,
   attemptsPerRoute: 2,
@@ -71,6 +69,7 @@ export interface RunWorkerAttemptInput<T> {
 export interface RouteAttemptContext {
   route: WorkerRoutePolicy;
   signal: AbortSignal;
+  onRequestStart(): void;
   onHeaders(): void;
   onProgress(): void;
 }
@@ -81,7 +80,7 @@ export interface BrokerAttemptEvidence {
 }
 
 export interface BrokerActivityUpdate {
-  state: "connecting" | "waiting-first-response" | "running" | "retrying";
+  state: "preparing" | "waiting-first-response" | "running" | "retrying";
   attempt: number;
   maxAttempts: number;
   code?: string;
@@ -100,12 +99,7 @@ function emitBrokerActivity(
 }
 
 class RouteAttemptStop extends Error {
-  readonly code:
-    | "connect-timeout"
-    | "first-response-timeout"
-    | "idle-timeout"
-    | "phase-timeout"
-    | "cancelled";
+  readonly code: "cancelled";
 
   constructor(code: RouteAttemptStop["code"]) {
     super(code);
@@ -182,7 +176,8 @@ function capable(
 }
 
 function safeFailureCode(error: unknown): string {
-  if (error instanceof RouteAttemptStop) return error.code;
+  if (error instanceof RouteAttemptStop || error instanceof TransportTimeout)
+    return error.code;
   return "transport-failure";
 }
 
@@ -331,59 +326,39 @@ export class WorkerBroker {
     onActivity?: (state: "waiting-first-response" | "running") => void,
   ): Promise<T> {
     const controller = new AbortController();
-    const timers = new Set<ReturnType<typeof setTimeout>>();
-    let headersSeen = false;
-    let connectTimer: ReturnType<typeof setTimeout> | undefined;
-    let firstResponseTimer: ReturnType<typeof setTimeout> | undefined;
-    let idleTimer: ReturnType<typeof setTimeout> | undefined;
-
-    const stop = (code: RouteAttemptStop["code"]) => {
-      if (!controller.signal.aborted)
-        controller.abort(new RouteAttemptStop(code));
-    };
-    const schedule = (code: RouteAttemptStop["code"], milliseconds: number) => {
-      const timer = setTimeout(() => stop(code), milliseconds);
-      timers.add(timer);
-      return timer;
-    };
-    const clear = (timer: ReturnType<typeof setTimeout> | undefined) => {
-      if (timer !== undefined) {
-        clearTimeout(timer);
-        timers.delete(timer);
-      }
-    };
-    const onParentAbort = () => stop("cancelled");
-    if (parentSignal?.aborted) stop("cancelled");
+    let accepting = true;
+    let running = false;
+    const onParentAbort = () =>
+      controller.abort(new RouteAttemptStop("cancelled"));
+    if (parentSignal?.aborted) onParentAbort();
     else parentSignal?.addEventListener("abort", onParentAbort, { once: true });
-
-    connectTimer = schedule("connect-timeout", ROUTE_ATTEMPT_BOUNDS.connectMs);
-    schedule("phase-timeout", ROUTE_ATTEMPT_BOUNDS.totalMs);
+    const timer = setTimeout(
+      () => controller.abort(new TransportTimeout("attempt-timeout")),
+      ROUTE_ATTEMPT_BOUNDS.totalMs,
+    );
     let removeAbortRace: () => void = () => {};
     try {
-      const execution = Promise.resolve().then(() =>
-        execute({
+      const execution = Promise.resolve().then(() => {
+        controller.signal.throwIfAborted();
+        return execute({
           route: structuredClone(route),
           signal: controller.signal,
-          onHeaders: () => {
-            if (controller.signal.aborted || headersSeen) return;
-            headersSeen = true;
-            clear(connectTimer);
+          onRequestStart: () => {
+            if (!accepting || controller.signal.aborted) return;
+            running = false;
             onActivity?.("waiting-first-response");
-            firstResponseTimer = schedule(
-              "first-response-timeout",
-              ROUTE_ATTEMPT_BOUNDS.firstResponseMs,
-            );
+          },
+          onHeaders: () => {
+            if (!accepting || controller.signal.aborted || running) return;
+            onActivity?.("waiting-first-response");
           },
           onProgress: () => {
-            if (controller.signal.aborted) return;
-            clear(connectTimer);
-            clear(firstResponseTimer);
-            clear(idleTimer);
-            idleTimer = schedule("idle-timeout", ROUTE_ATTEMPT_BOUNDS.idleMs);
+            if (!accepting || controller.signal.aborted) return;
+            running = true;
             onActivity?.("running");
           },
-        }),
-      );
+        });
+      });
       // A timed-out Provider may ignore its AbortSignal and settle later. The
       // broker owns the bounded result, so absorb that late settlement.
       void execution.catch(() => undefined);
@@ -403,7 +378,8 @@ export class WorkerBroker {
       return await Promise.race([execution, aborted]);
     } finally {
       removeAbortRace();
-      for (const timer of timers) clearTimeout(timer);
+      accepting = false;
+      clearTimeout(timer);
       parentSignal?.removeEventListener("abort", onParentAbort);
     }
   }
@@ -483,10 +459,10 @@ export class WorkerBroker {
       ).length;
       const attempt = evidence.length + 1;
       emitBrokerActivity(input.onActivity, {
-        state: "connecting",
+        state: "preparing",
         attempt,
         maxAttempts,
-        wait: "connection",
+        wait: "worker-setup",
       });
       try {
         const value = await this.#attempt(
@@ -576,6 +552,7 @@ export class WorkerBroker {
         code:
           | "approval-boundary"
           | "route-not-declared"
+          | "endpoint-unavailable"
           | "route-capability-insufficient";
       } {
     const allowed = new Set(["runId", "role", "routeId", "requirements"]);
@@ -597,12 +574,15 @@ export class WorkerBroker {
       routeId: input.routeId,
     });
     if (!selection.ok) {
+      const route = this.#policy.routes[input.routeId];
       return {
         ok: false,
         code:
           selection.code === "route-not-declared"
             ? "route-not-declared"
-            : "route-capability-insufficient",
+            : route && capable(route, input.role, input.requirements ?? {})
+              ? "endpoint-unavailable"
+              : "route-capability-insufficient",
       };
     }
     return {

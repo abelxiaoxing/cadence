@@ -1,4 +1,4 @@
-import { compareCanonicalStrings } from "./canonical.ts";
+import { canonicalJson, compareCanonicalStrings } from "./canonical.ts";
 import { isValidRelativePath } from "./contracts.ts";
 
 export type SafeDesignDiagnostic = Record<string, string | boolean | string[]>;
@@ -22,6 +22,32 @@ const IDENTITIES = new Set([
 ]);
 const HINTS = new Map<string, string>(
   Object.entries({
+    "change-contract-acceptance-missing":
+      "Read the current approved ChangeContract from Design status and include each accepted verification obligation in the plan's phase, affected, full-suite or post-apply verification. Command, arguments, inputs and classification must match; copying only its ID is insufficient. Keep accepted IDs, statements and scope unchanged.",
+    "script-command-mismatch":
+      "command must equal the literal package.json scripts[script] value, not an invocation such as npm run test. In PlanDraft, omit command to bind it from the manifest. Explicit commands, including approved Gate acceptance verifiers, remain exact and must be corrected rather than silently replaced.",
+    "design-traceability-input-unavailable":
+      "Write tasks.md with author task checkboxes and exact owned Scenario references, plus the referenced spec artifacts, before compilation and finalization.",
+    "traceability-managed-region-invalid":
+      "Repair the paired ABEL:VERIFICATION-BINDINGS markers in tasks.md without removing author evidence, then compile again. Code replaces only one complete managed region.",
+    "traceability-managed-region-stale":
+      "Compile the current draft again to regenerate phase verification bindings; do not copy verifier identities by hand.",
+    "traceability-task-unmapped":
+      "Put each planned task ID in backticks on its author checkbox outside the generated bindings region.",
+    "traceability-verification-unmapped":
+      "Compile after writing tasks.md so code installs phase verification bindings while preserving the author evidence.",
+    "traceability-reference-empty":
+      "Add exact backticked specs/<capability>/spec.md#Requirement title/Scenario title references under the owning author tasks. Code does not infer Scenario ownership.",
+    "change-contract-field-invalid":
+      "Correct the indicated ChangeContract field using the tool schema. Keep accepted scope and evidence unchanged.",
+    "design-control-field-invalid":
+      "Use the exact operation envelope and returned runId; inspect the indicated field in the tool schema.",
+    "verification-reference-unavailable":
+      "Use a declared verificationDefinitions name or an explicit verification contract.",
+    "verification-reference-invalid":
+      "A verification reference contains only use and optional Red expectedFailure. Put executable fields in its definition.",
+    "verification-definition-invalid":
+      "Define one existing atomic verifier without id, classification, executionBindings or references.",
     "current-task-outside-write-set":
       "Omit disposition to derive the test owner from task writes. Keep path and evidence; do not widen writes to satisfy this label.",
     "related-test-owner-ambiguous":
@@ -84,4 +110,41 @@ export function projectDesignDiagnostic(
   const hint = HINTS.get(String(result.category)) ?? HINTS.get(record.code);
   if (hint) result.hint = hint;
   return result;
+}
+
+export interface DesignPlanDiagnostic {
+  code: string;
+  taskId?: string;
+  phase?: string;
+  field?: string;
+  category?: string;
+  owner?: string;
+  verificationId?: string;
+  outputId?: string;
+  dependencyTaskId?: string;
+  producerTaskId?: string;
+  producerPhase?: string;
+  path?: string;
+  expectedPaths?: string[];
+  actualPaths?: string[];
+}
+
+export class DesignPlanValidationError extends Error {
+  readonly diagnostics: readonly DesignPlanDiagnostic[];
+
+  constructor(message: string, diagnostics: readonly DesignPlanDiagnostic[]) {
+    const normalized = [
+      ...new Map(
+        diagnostics
+          .map((diagnostic) => structuredClone(diagnostic))
+          .sort((left, right) =>
+            compareCanonicalStrings(canonicalJson(left), canonicalJson(right)),
+          )
+          .map((diagnostic) => [canonicalJson(diagnostic), diagnostic]),
+      ).values(),
+    ];
+    super(message);
+    this.name = "DesignPlanValidationError";
+    this.diagnostics = Object.freeze(normalized);
+  }
 }

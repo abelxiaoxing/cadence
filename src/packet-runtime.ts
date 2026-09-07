@@ -1,6 +1,5 @@
 import path from "node:path";
 import type { Usage } from "@earendil-works/pi-ai";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Activation, type ActivationState } from "./activation.ts";
 import { loadAgentDefinitions } from "./agent-registry.ts";
 import {
@@ -15,50 +14,34 @@ import {
   type PacketEnvelope,
   validatePacketEnvelope,
 } from "./contracts.ts";
+import type { PackageContext } from "./model-source.ts";
 import { runtimeForWorkerRoute } from "./parent-provider.ts";
 import {
   loadRoutePolicy,
   type RoutePolicy,
   type WorkerRole,
 } from "./route-policy.ts";
+import {
+  isTransportTimeoutCode,
+  transportFailureError,
+} from "./transport-budget.ts";
 import { type BrokerActivityUpdate, RunWorkerBroker } from "./worker-broker.ts";
 
 export const PACKET_ACTIONS = ["run", "cancel", "finish"] as const;
 export type PacketAction = (typeof PACKET_ACTIONS)[number];
 
-export type PacketActivityState =
-  | "queued"
-  | "connecting"
-  | "waiting-first-response"
-  | "running"
-  | "retrying"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "timed-out";
+import type {
+  PacketActivityEvent,
+  PacketActivityObserver,
+  PacketActivityState,
+} from "./activity-contracts.ts";
 
-export type PacketFailureReason =
-  | "subagent failed"
-  | "subagent cancelled"
-  | "phase timed out";
-
-export interface PacketActivityEvent {
-  state: PacketActivityState;
-  requestId: string;
-  role: string;
-  phase: string;
-  objective: string;
-  sequence: number;
-  attempt?: number;
-  maxAttempts?: number;
-  code?: string;
-  wait?: string;
-  failureReason?: PacketFailureReason;
-}
-
-export type PacketActivityObserver = (
-  event: PacketActivityEvent,
-) => void | Promise<void>;
+export type {
+  PacketActivityEvent,
+  PacketActivityObserver,
+  PacketActivityState,
+  PacketFailureReason,
+} from "./activity-contracts.ts";
 
 export type PacketDispatchResult =
   | {
@@ -84,10 +67,7 @@ export interface PacketRuntimeOptions {
   childRunner?: PacketChildRunner;
 }
 
-export type PacketContext = Pick<
-  ExtensionContext,
-  "cwd" | "model" | "modelRegistry"
->;
+export type PacketContext = PackageContext;
 
 export type PacketChildRunner = (input: {
   packet: PacketEnvelope;
@@ -373,7 +353,6 @@ export class PacketRuntime {
           context,
           attempt.signal,
           this.#environment,
-          { onResponse: attempt.onHeaders },
         );
         if (!phase.ok) {
           if (phase.failure.kind === "cancelled") {
@@ -417,18 +396,23 @@ export class PacketRuntime {
           ],
           timeoutMs: LIMITS.phaseTimeoutMs,
           signal: attempt.signal,
+          onStreamStart: attempt.onRequestStart,
+          onStreamHeaders: attempt.onHeaders,
           onStreamProgress: attempt.onProgress,
         });
         brokerUsage.add(`attempt:${childAttempt++}`, child.usage);
         if (!child.ok && child.failure.kind === "transport") {
-          throw new Error(child.failure.code);
+          throw transportFailureError(child.failure.code);
         }
         return { kind: "child" as const, child };
       },
     });
     if (!routed.ok) {
       const cancelled = routed.state === "cancelled" || signal.aborted;
-      const timedOut = !cancelled && routed.code === "phase-timeout";
+      const timedOut =
+        !cancelled &&
+        (isTransportTimeoutCode(routed.code) ||
+          routed.code === "phase-timeout");
       return withBrokerUsage(
         syntheticChildFailure(
           cancelled ? "packet cancelled" : routed.code,
@@ -437,7 +421,9 @@ export class PacketRuntime {
             : timedOut
               ? {
                   kind: "transport",
-                  code: "timeout",
+                  code: isTransportTimeoutCode(routed.code)
+                    ? routed.code
+                    : "timeout",
                   stage: "child-timeout",
                 }
               : {

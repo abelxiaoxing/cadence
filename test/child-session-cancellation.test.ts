@@ -285,10 +285,11 @@ describe("child transport and private conversation cancellation", () => {
       expect(requests[0].options?.sessionId).toBe(
         requests[1].options?.sessionId,
       );
-      expect(requests[0].options?.signal).toBe(requests[1].options?.signal);
+      expect(requests[0].options?.signal).not.toBe(requests[1].options?.signal);
       if (mode === "cancel") controller.abort(new Error("cancelled reminder"));
       else await vi.advanceTimersByTimeAsync(400);
       const result = await resultPromise;
+      expect(requests[1].options?.signal?.aborted).toBe(true);
       expect(result).toMatchObject({
         ok: false,
         disposeCount: 1,

@@ -2,28 +2,37 @@ import { createHash } from "node:crypto";
 import { compareCanonicalStrings } from "./canonical.ts";
 import {
   assertPlanWithinChangeContract,
-  type ChangeContract,
   normalizeChangeContract,
 } from "./change-contract.ts";
 import {
   type AgentsImpact,
   type ImplementGraphBoundary,
   type ImplementGraphOutput,
-  type ImplementTaskBoundary,
   isAgentsPath,
   isValidRelativePath,
   type PhaseBoundary,
   type StructuredVerificationContract,
   validateImplementGraphBoundary,
   validateVerificationContract,
-  verificationInputPaths,
 } from "./contracts.ts";
+import {
+  type DesignPlanDiagnostic,
+  DesignPlanValidationError,
+} from "./design-diagnostics.ts";
 import {
   assessImplementGraphReadiness,
   canonicalJson,
   hashCanonicalValue,
   type ImplementGraphReadiness,
 } from "./implement-graph.ts";
+import type {
+  ImplementPlan,
+  PlanAgentsCheckpointOperation,
+  PlanTaskDraft,
+  PlanTracking,
+  PlanVerification,
+} from "./implement-plan.ts";
+import { expandPlanDraft, preparePlanDraft } from "./plan-draft.ts";
 import {
   bindDraftVerificationInputs,
   validateVerificationAdapterCapability,
@@ -104,43 +113,6 @@ export class DeliveryValidationError extends Error {
   }
 }
 
-export interface DesignPlanDiagnostic {
-  code: string;
-  taskId?: string;
-  phase?: string;
-  field?: string;
-  category?: string;
-  owner?: string;
-  verificationId?: string;
-  outputId?: string;
-  dependencyTaskId?: string;
-  producerTaskId?: string;
-  producerPhase?: string;
-  path?: string;
-  expectedPaths?: string[];
-  actualPaths?: string[];
-}
-
-export class DesignPlanValidationError extends Error {
-  readonly diagnostics: readonly DesignPlanDiagnostic[];
-
-  constructor(message: string, diagnostics: readonly DesignPlanDiagnostic[]) {
-    const normalized = [
-      ...new Map(
-        diagnostics
-          .map((diagnostic) => structuredClone(diagnostic))
-          .sort((left, right) =>
-            compareCanonicalStrings(canonicalJson(left), canonicalJson(right)),
-          )
-          .map((diagnostic) => [canonicalJson(diagnostic), diagnostic]),
-      ).values(),
-    ];
-    super(message);
-    this.name = "DesignPlanValidationError";
-    this.diagnostics = Object.freeze(normalized);
-  }
-}
-
 const SAFE_PLAN_ERROR_CODE = /^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$/u;
 
 function planErrorCode(error: unknown): string {
@@ -186,6 +158,22 @@ export function assessDeliveryTraceability(input: {
   plan: ImplementPlan;
 }): DeliveryTraceabilityAssessment {
   const diagnostics = new Set<string>();
+  let authorMarkdown = input.tasksMarkdown;
+  let bindings: string | undefined;
+  try {
+    const region = taskVerificationRegion(input.tasksMarkdown);
+    if (region) {
+      authorMarkdown =
+        input.tasksMarkdown.slice(0, region.start) +
+        input.tasksMarkdown.slice(region.end);
+      bindings = region.text;
+      if (bindings !== renderTasks(input.plan)) {
+        diagnostics.add("traceability-managed-region-stale");
+      }
+    }
+  } catch {
+    return { ok: false, diagnostics: ["traceability-managed-region-invalid"] };
+  }
   const headings = new Set<string>();
   for (const spec of input.specs) {
     if (!isValidRelativePath(spec.path) || !spec.path.endsWith("/spec.md")) {
@@ -210,7 +198,7 @@ export function assessDeliveryTraceability(input: {
     }
   }
   const references = [
-    ...input.tasksMarkdown.matchAll(/`(specs\/[^`\n]+\/spec\.md#[^`\n]+)`/gu),
+    ...authorMarkdown.matchAll(/`(specs\/[^`\n]+\/spec\.md#[^`\n]+)`/gu),
   ].flatMap((match) => (match[1] ? [match[1].trim()] : []));
   if (references.length === 0) diagnostics.add("traceability-reference-empty");
   const referenceSet = new Set(references);
@@ -224,9 +212,7 @@ export function assessDeliveryTraceability(input: {
     diagnostics.add("traceability-scenario-unowned");
   }
   const taskIds = input.plan.tasks.map((task) => task.taskId).sort();
-  if (
-    taskIds.some((taskId) => !input.tasksMarkdown.includes(`\`${taskId}\``))
-  ) {
+  if (taskIds.some((taskId) => !authorMarkdown.includes(`\`${taskId}\``))) {
     diagnostics.add("traceability-task-unmapped");
   }
   const verificationIds = input.plan.tasks
@@ -240,7 +226,8 @@ export function assessDeliveryTraceability(input: {
     .sort();
   if (
     verificationIds.some(
-      (verificationId) => !input.tasksMarkdown.includes(verificationId),
+      (verificationId) =>
+        !(bindings ?? authorMarkdown).includes(verificationId),
     )
   ) {
     diagnostics.add("traceability-verification-unmapped");
@@ -264,95 +251,16 @@ export function assessDeliveryTraceability(input: {
   };
 }
 
-export type PlanPhaseDraft = Omit<PhaseBoundary, "verificationInputs"> & {
-  verificationInputs?: PhaseBoundary["verificationInputs"];
-};
-
-export interface PlanTaskDraft extends Omit<ImplementTaskBoundary, "phases"> {
-  phases: {
-    red: PhaseBoundary;
-    green: PhaseBoundary;
-    refactor?: PhaseBoundary;
-  };
-  affectedVerification: StructuredVerificationContract;
-  repairVerification: StructuredVerificationContract;
-}
-
-export interface PlanVerification {
-  baseline: {
-    target: "task-red-contracts";
-    affected: "task-affected-contracts";
-    fullSuite: StructuredVerificationContract;
-    failureIdentity: "normalized";
-  };
-  change: {
-    affected: "task-affected-contracts";
-    fullSuite: StructuredVerificationContract;
-    postApply: StructuredVerificationContract;
-  };
-  artifactCorrection: {
-    maxAttempts: number;
-  };
-  repair: {
-    maxAttempts: number;
-    inBoundaryOnly: true;
-    approvalOnBoundaryExpansion: true;
-    attribution: ["pre-existing", "introduced", "unresolved", "environment"];
-  };
-  agentsCheckpoint: {
-    required: boolean;
-    verification: StructuredVerificationContract | null;
-    operations: PlanAgentsCheckpointOperation[];
-  };
-}
-
-export interface PlanAgentsCheckpointOperation {
-  target: string;
-  impact: Exclude<AgentsImpact, "none">;
-  taskIds: string[];
-  managedBlock: string | null;
-}
-
-export interface PlanTracking {
-  path: "tasks.md";
-  format: "markdown-checkbox";
-  taskIds: string[];
-  completionOwner: "parent";
-}
-
-export interface PlanDraft {
-  changeContract?: ChangeContract;
-  changeId: string;
-  tasks: PlanTaskInput[];
-  outputs: ImplementGraphOutput[];
-  verification: PlanVerification;
-  tracking?: PlanTracking;
-}
-
-/** Authoring input; execution continues to consume the complete PlanTaskDraft. */
-export interface PlanTaskInput
-  extends Omit<PlanTaskDraft, "phases" | "impactClosure"> {
-  phases: {
-    red: PlanPhaseDraft;
-    green: PlanPhaseDraft;
-    refactor?: PlanPhaseDraft;
-  };
-  impactClosure: Omit<PlanTaskDraft["impactClosure"], "relatedTests"> & {
-    relatedTests: Array<
-      Omit<
-        PlanTaskDraft["impactClosure"]["relatedTests"][number],
-        "disposition"
-      > & {
-        disposition?: PlanTaskDraft["impactClosure"]["relatedTests"][number]["disposition"];
-      }
-    >;
-  };
-}
-
-export interface ImplementPlan extends Omit<PlanDraft, "tasks"> {
-  tasks: PlanTaskDraft[];
-  tracking: PlanTracking;
-}
+export type { DesignPlanDiagnostic } from "./design-diagnostics.ts";
+export { DesignPlanValidationError } from "./design-diagnostics.ts";
+export type {
+  ImplementPlan,
+  PlanAgentsCheckpointOperation,
+  PlanTaskDraft,
+  PlanTracking,
+  PlanVerification,
+} from "./implement-plan.ts";
+export type { PlanDraft, PlanPhaseDraft, PlanTaskInput } from "./plan-draft.ts";
 
 export interface CompiledDelivery {
   plan: ImplementPlan;
@@ -1276,140 +1184,62 @@ function normalizeDraft(value: unknown): ImplementPlan {
   return plan;
 }
 
-function renderTasks(plan: ImplementPlan): string {
-  const lines = ["# Implementation tasks", ""];
-  for (const task of plan.tasks) {
-    lines.push(`- [ ] ${task.taskId} — ${task.objective}`);
-    lines.push(
-      `  - Depends on: ${task.dependsOn.length > 0 ? task.dependsOn.join(", ") : "[]"}`,
+const TASK_BINDINGS_START = "<!-- ABEL:VERIFICATION-BINDINGS:START -->";
+const TASK_BINDINGS_END = "<!-- ABEL:VERIFICATION-BINDINGS:END -->";
+
+function taskVerificationRegion(markdown: string) {
+  const markers = markdown.match(/<!-- ABEL:VERIFICATION-BINDINGS/gu) ?? [];
+  if (markers.length === 0) return undefined;
+  const match =
+    /^<!-- ABEL:VERIFICATION-BINDINGS:START -->\r?\n[\s\S]*?^<!-- ABEL:VERIFICATION-BINDINGS:END -->(?=\r?$)/mu.exec(
+      markdown,
     );
-    if (!task.verificationMode || task.verificationMode === "behavior")
-      lines.push(`  - Red verification: ${task.phases.red.verification.id}`);
-    else
-      lines.push(
-        `  - Evidence mode: ${task.verificationMode}; baseline and postconditions required`,
-      );
-    lines.push(`  - Green verification: ${task.phases.green.verification.id}`);
+  if (markers.length !== 2 || !match) {
+    throw new DesignPlanValidationError("traceability-managed-region-invalid", [
+      { code: "traceability-managed-region-invalid", path: "tasks.md" },
+    ]);
   }
-  lines.push("");
+  return {
+    start: match.index,
+    end: match.index + match[0].length,
+    text: match[0],
+  };
+}
+
+// Only identity bindings are generated. Author task checkboxes and Scenario
+// ownership remain outside this region and are validated independently.
+function renderTasks(plan: ImplementPlan): string {
+  const lines = [TASK_BINDINGS_START, "## Compiled verification bindings", ""];
+  for (const task of [...plan.tasks].sort((a, b) =>
+    compareCanonicalStrings(a.taskId, b.taskId),
+  )) {
+    lines.push(
+      `- Task \`${task.taskId}\` (${task.verificationMode ?? "behavior"})`,
+    );
+    if (!task.verificationMode || task.verificationMode === "behavior") {
+      lines.push(`  - Red: \`${task.phases.red.verification.id}\``);
+    }
+    lines.push(`  - Green: \`${task.phases.green.verification.id}\``);
+    if (task.phases.refactor) {
+      lines.push(`  - Refactor: \`${task.phases.refactor.verification.id}\``);
+    }
+  }
+  lines.push(TASK_BINDINGS_END);
   return lines.join("\n");
 }
 
-/** Derive only omitted fields; the strict normalizer and graph still own admission. */
-function preparePlanDraft(value: unknown): unknown {
-  if (
-    !isRecord(value) ||
-    !Array.isArray(value.tasks) ||
-    value.tasks.length > 128 ||
-    !Array.isArray(value.outputs) ||
-    value.outputs.length > 512
-  )
-    return value;
-  const draft = structuredClone(value);
-  let changed = false;
-  const tasks = (draft.tasks as unknown[]).filter(isRecord);
-  const outputs = (draft.outputs as unknown[]).filter(isRecord);
-  const diagnostics: DesignPlanDiagnostic[] = [];
-  const writes = (task: Record<string, unknown>): Set<string> => {
-    const paths = new Set<string>();
-    if (!isRecord(task.phases)) return paths;
-    for (const [phase, boundary] of Object.entries(task.phases)) {
-      if (!isRecord(boundary)) continue;
-      if (
-        phase === "red" &&
-        ["mechanical", "refactor"].includes(String(task.verificationMode))
-      )
-        continue;
-      for (const candidates of [boundary.write, boundary.delete]) {
-        if (!Array.isArray(candidates)) continue;
-        for (const file of candidates)
-          if (isValidRelativePath(file)) paths.add(file);
-      }
-    }
-    return paths;
-  };
-  const owners = new Map<string, Record<string, unknown>[]>();
-  for (const task of tasks)
-    for (const file of writes(task))
-      owners.set(file, [...(owners.get(file) ?? []), task]);
-  if (!Object.hasOwn(draft, "tracking")) {
-    changed = true;
-    draft.tracking = {
-      path: "tasks.md",
-      format: "markdown-checkbox",
-      taskIds: (draft.tasks as unknown[]).map((task) =>
-        isRecord(task) ? task.taskId : undefined,
-      ),
-      completionOwner: "parent",
-    };
-  }
-  for (const task of tasks) {
-    const taskId = typeof task.taskId === "string" ? task.taskId : undefined;
-    if (isRecord(task.phases))
-      for (const [phase, boundary] of Object.entries(task.phases)) {
-        if (
-          !isRecord(boundary) ||
-          Object.hasOwn(boundary, "verificationInputs")
-        )
-          continue;
-        const verification = validateVerificationContract(
-          boundary.verification,
-        );
-        // Invalid commands get their normal structural diagnostic; never infer from invalid paths.
-        if (!verification.ok) continue;
-        changed = true;
-        boundary.verificationInputs = verificationInputPaths(
-          verification.value,
-        ).map((file) => {
-          const producers = outputs.filter((output) => output.path === file);
-          if (producers.length > 1)
-            diagnostics.push({
-              code: "multiple-output-producers",
-              taskId,
-              phase,
-              field: "outputs",
-              path: file,
-            });
-          return producers.length === 1
-            ? { kind: "output", outputId: producers[0]?.id }
-            : { kind: "workspace", path: file };
-        });
-      }
-    if (
-      !isRecord(task.impactClosure) ||
-      !Array.isArray(task.impactClosure.relatedTests)
-    )
-      continue;
-    for (const test of task.impactClosure.relatedTests) {
-      if (
-        !isRecord(test) ||
-        Object.hasOwn(test, "disposition") ||
-        !isValidRelativePath(test.path)
-      )
-        continue;
-      changed = true;
-      const writers = owners.get(test.path) ?? [];
-      if (writers.includes(task)) test.disposition = "current-task";
-      else if (writers.length === 0) test.disposition = "unaffected";
-      else if (writers.length === 1) {
-        test.disposition = "regression-task";
-        if (!Object.hasOwn(test, "regressionTaskId"))
-          test.regressionTaskId = writers[0]?.taskId;
-      } else
-        diagnostics.push({
-          code: "related-test-owner-ambiguous",
-          taskId,
-          field: "impactClosure.relatedTests",
-          path: test.path,
-        });
-    }
-  }
-  if (diagnostics.length)
-    throw new DesignPlanValidationError(
-      "delivery-plan-inference-ambiguous",
-      diagnostics,
+export function bindTaskVerifications(
+  markdown: string,
+  plan: ImplementPlan,
+): string {
+  const region = taskVerificationRegion(markdown);
+  const bindings = renderTasks(plan);
+  if (region) {
+    return (
+      markdown.slice(0, region.start) + bindings + markdown.slice(region.end)
     );
-  return changed ? draft : value;
+  }
+  return `${markdown}${markdown.endsWith("\n") ? "\n" : "\n\n"}${bindings}\n`;
 }
 
 export function compileImplementPlan(
@@ -1417,6 +1247,12 @@ export function compileImplementPlan(
   options: { consumerRoot: string; bindExecutionInputs?: boolean },
 ): CompiledDelivery {
   try {
+    // Resolve omitted manifest command bytes before named definitions are
+    // validated and purpose identities are hashed. The second pass below
+    // binds execution inputs on the expanded contracts with their final IDs.
+    if (options.bindExecutionInputs)
+      draft = bindDraftVerificationInputs(options.consumerRoot, draft);
+    draft = expandPlanDraft(draft);
     if (options.bindExecutionInputs)
       draft = bindDraftVerificationInputs(options.consumerRoot, draft);
     draft = preparePlanDraft(draft);

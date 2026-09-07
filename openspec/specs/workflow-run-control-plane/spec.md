@@ -404,6 +404,7 @@ Invoking Implement SHALL delegate remaining implementation choices to the parent
 ### Requirement: Explicit bounded recovery continuation
 
 Exhausted automatic correction SHALL remain exhausted across ordinary resume, restart and rebind. The parent MAY explicitly authorize one additional attempt against the current incident and failure sequence without resetting consumption. Authorizations and launches SHALL be durable, idempotent and lease-bound. Successful delivery admission MAY grow work capacity by the largest admitted phase count, within a fixed run hard limit; renaming, replay and shrinking then regrowing SHALL NOT repeatedly replenish capacity. The cumulative work budget SHALL replace the independent run-wide failure-count stop.
+Recovery authorization SHALL be validated before transitioning to ready. Rejection without a revised delivery SHALL preserve the prior paused state and budget; if an admitted revised delivery invalidates the grant, the run SHALL retain that delivery and pause without launching work.
 
 #### Scenario: The parent retries an exhausted incident
 
@@ -442,3 +443,42 @@ Every nested affected repair, cumulative repair and Red correction SHALL ask the
 
 - **WHEN** a repair requests work beyond its automatic limit or single additional grant
 - **THEN** the parent refuses the action without launching another candidate or refunding previous work
+
+### Requirement: Separate author input and sealed execution plan
+
+The compiler SHALL expand finite PlanDraft shorthand into an independently typed complete ImplementPlan before strict validation and sealing.
+Named atomic verification commands, omitted manifest script command bytes, purpose identities/classifications, task common reads, tracking, verifier input bindings, test ownership and fixed execution-policy fields MAY be derived only by deterministic local rules.
+Dependencies, producers, phase writes/deletes, investigative evidence, recovery counts and approval authority SHALL remain explicit.
+Manifest command binding SHALL precede named definition validation and identity generation; explicitly mismatched commands and approved Gate verification authority SHALL NOT be rewritten.
+Sealed-plan parsing SHALL reject author shorthand and SHALL NOT rewrite historical full plans or explicit identities.
+Gate A tool parameters and runtime validation SHALL share a structural schema and provide bounded field-only correction diagnostics through the actual tool error path.
+Preflight SHALL expose bounded final permissions, verification purposes and actual derivation sources without creating approval or finalization authority.
+
+#### Scenario: Dependent verifier uses a declared output
+
+- **WHEN** shorthand references a verifier whose input has a uniquely declared producer
+- **THEN** compilation derives the output binding and rejects a missing producer dependency instead of adding the dependency
+
+#### Scenario: Invalid Gate field is corrected
+
+- **WHEN** a Gate A field has an invalid enum or structure
+- **THEN** the registered tool reports its schema-owned field path without echoing submitted values or dynamic keys and accepts a valid corrected request under the existing approval rules
+
+### Requirement: Compiler-owned task verification bindings
+
+New Design compilation SHALL project phase verifier identities into one managed region of the existing tasks.md, preserving all author text and task checkboxes outside it. Author task identities and exact Scenario references SHALL be assessed outside the generated region; the region SHALL match the current full plan. Historical deliveries without this region SHALL retain their existing validation path. Compilation SHALL install both task bindings and plan under the existing lease before recording its committed operation; interrupted uncommitted installation SHALL support deterministic replay without inventing approval.
+
+#### Scenario: Compact author evidence is sealed
+
+- **WHEN** tasks.md contains task goals and exact owned Scenario references but omits compiler-derived phase verification IDs
+- **THEN** compilation supplies only mechanical bindings and finalization validates the author evidence and installed plan together
+
+#### Scenario: Generated bindings cannot substitute for author evidence
+
+- **WHEN** an author task or Scenario reference is absent, or a generated region is malformed or stale
+- **THEN** readiness is rejected with bounded diagnostics; a complete managed region can be regenerated without replacing surrounding author content
+
+#### Scenario: Compilation installation is interrupted
+
+- **WHEN** task bindings are installed but compilation has not committed and the control plane reopens
+- **THEN** replay installs the same projection before journaling, without duplicate regions or repeated Gate approval

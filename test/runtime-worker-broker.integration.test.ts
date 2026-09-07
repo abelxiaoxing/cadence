@@ -3114,186 +3114,262 @@ describe("durable WorkflowEngine service composition", () => {
     await engine.close();
   });
 
-  it("persists route cooldown and initial private revision facts across restart", async () => {
-    const module = (await import("../src/workflow-engine.ts")) as Record<
-      string,
-      unknown
-    >;
-    const openDurableWorkflowEngine = module.openDurableWorkflowEngine as (
-      options: Record<string, unknown>,
-    ) => {
-      execute(command: unknown): Promise<Record<string, unknown>>;
-      close(): Promise<void> | void;
-    };
-    const consumerRoot = mkdtempSync(
-      path.join(tmpdir(), "cadence-durable-health-consumer-"),
-    );
-    const stateBase = mkdtempSync(
-      path.join(tmpdir(), "cadence-durable-health-state-"),
-    );
-    const homeDir = mkdtempSync(
-      path.join(tmpdir(), "cadence-durable-health-home-"),
-    );
-    roots.push(consumerRoot, stateBase, homeDir);
-    mkdirSync(path.join(consumerRoot, "test"), { recursive: true });
-    writeFileSync(
-      path.join(consumerRoot, "package.json"),
-      `${JSON.stringify({ scripts: { "test:target": "vitest run" } })}\n`,
-    );
-    writeFileSync(
-      path.join(consumerRoot, "test/fixture.test.ts"),
-      "export {};\n",
-    );
-    writeFileSync(path.join(consumerRoot, "value.txt"), "base\n");
-    execFileSync("git", ["init", "-q"], { cwd: consumerRoot });
-    execFileSync("git", ["add", "."], { cwd: consumerRoot });
-    const stateRoot = resolveStateRoot({
-      consumerRoot,
-      xdgStateHome: stateBase,
-      homeDir,
-    });
-    const change = "durable-route-health";
-    const phase = (name: "red" | "green") => ({
-      read: ["package.json", "test/fixture.test.ts", "value.txt"],
-      write: ["value.txt"],
-      delete: [],
-      verification: {
-        kind: "vitest" as const,
-        id: `health-${name}`,
-        runner: {
-          kind: "package-script" as const,
-          packageManager: "bun" as const,
-          script: "test:target",
-          command: "vitest run",
-        },
-        testFiles: ["test/fixture.test.ts"],
-        args: [],
-        minTests: 1,
-        classification:
-          name === "red"
-            ? ("expected-red" as const)
-            : ("expected-green" as const),
-        ...(name === "red" ? { expectedFailure: "health-red" } : {}),
-      },
-      verificationInputs: [
-        { kind: "workspace" as const, path: "test/fixture.test.ts" },
-      ],
-      verificationLock: "durable-health",
-    });
-    const plan = {
-      changeId: change,
-      tasks: [
-        {
-          taskId: "health-task",
-          dependsOn: [],
-          objective: "Retain route health",
-          context: { agents: "root", contract: "approved health task" },
-          roots: ["."],
-          phases: { red: phase("red"), green: phase("green") },
-          scheduling: { conflicts: [], resources: ["durable-health"] },
-          agents: { impact: "none" as const, managedOnly: true as const },
-          approvedDependencies: [],
-          impactClosure: {
-            changedSurfaces: ["none" as const],
-            searchEvidence: [],
-            relatedTests: [
-              {
-                path: "test/fixture.test.ts",
-                disposition: "current-task" as const,
-                evidence: "durable health fixture",
-              },
-            ],
-            affectedSuite: ["test/fixture.test.ts"],
+  it.each(["transport-failure", "invalid-structural-result"])(
+    "persists %s route cooldown and private revisions across resume and restart",
+    async (failureCode) => {
+      const module = (await import("../src/workflow-engine.ts")) as Record<
+        string,
+        unknown
+      >;
+      const openDurableWorkflowEngine = module.openDurableWorkflowEngine as (
+        options: Record<string, unknown>,
+      ) => {
+        execute(command: unknown): Promise<Record<string, unknown>>;
+        close(): Promise<void> | void;
+      };
+      const consumerRoot = mkdtempSync(
+        path.join(tmpdir(), "cadence-durable-health-consumer-"),
+      );
+      const stateBase = mkdtempSync(
+        path.join(tmpdir(), "cadence-durable-health-state-"),
+      );
+      const homeDir = mkdtempSync(
+        path.join(tmpdir(), "cadence-durable-health-home-"),
+      );
+      roots.push(consumerRoot, stateBase, homeDir);
+      mkdirSync(path.join(consumerRoot, "test"), { recursive: true });
+      writeFileSync(
+        path.join(consumerRoot, "package.json"),
+        `${JSON.stringify({ scripts: { "test:target": "vitest run" } })}\n`,
+      );
+      writeFileSync(
+        path.join(consumerRoot, "test/fixture.test.ts"),
+        "export {};\n",
+      );
+      writeFileSync(path.join(consumerRoot, "value.txt"), "base\n");
+      execFileSync("git", ["init", "-q"], { cwd: consumerRoot });
+      execFileSync("git", ["add", "."], { cwd: consumerRoot });
+      const stateRoot = resolveStateRoot({
+        consumerRoot,
+        xdgStateHome: stateBase,
+        homeDir,
+      });
+      const change = "durable-route-health";
+      const phase = (name: "red" | "green") => ({
+        read: ["package.json", "test/fixture.test.ts", "value.txt"],
+        write: ["value.txt"],
+        delete: [],
+        verification: {
+          kind: "vitest" as const,
+          id: `health-${name}`,
+          runner: {
+            kind: "package-script" as const,
+            packageManager: "bun" as const,
+            script: "test:target",
+            command: "vitest run",
           },
+          testFiles: ["test/fixture.test.ts"],
+          args: [],
+          minTests: 1,
+          classification:
+            name === "red"
+              ? ("expected-red" as const)
+              : ("expected-green" as const),
+          ...(name === "red" ? { expectedFailure: "health-red" } : {}),
         },
-      ],
-      outputs: [],
-      verification: { artifactCorrection: { maxAttempts: 2 } },
-    };
-    const deliverySource = {
-      load: async () => ({
-        gate: "gate-b" as const,
-        revision: 1,
-        receiptHash: "b".repeat(64),
-        plan,
-      }),
-    };
-    const firstRoutes: string[] = [];
-    let engine = openDurableWorkflowEngine({
-      consumerRoot,
-      stateRoot,
-      deliverySource,
-      routePolicy: policy(),
-      now: () => 1_000,
-      proposeCandidate: async (input: Record<string, unknown>) => {
-        firstRoutes.push(String((input.route as { id?: unknown }).id));
-        throw new Error("fixture-route-failure");
-      },
-      verifyPhase: async () => {
-        throw new Error("failed route must not verify");
-      },
-      verifyChange: async () => {
-        throw new Error("failed route must not verify change");
-      },
-    });
-    const paused = await engine.execute({
-      command: "start",
-      stage: "abel-implement",
-      change,
-      operationId: "health-start",
-    });
-    expect(paused).toMatchObject({
-      state: "paused",
-      completed: false,
-      pause: { code: "transport-failure" },
-      privateData: {
-        retained: true,
-        cleanup: "retained",
-        baselineRevisionId: expect.stringMatching(/^[a-f0-9]{64}$/u),
-        currentRevisionId: expect.stringMatching(/^[a-f0-9]{64}$/u),
-      },
-    });
-    expect(firstRoutes).toEqual(["primary", "inherited"]);
-    await engine.close();
-
-    const replacementRoutes: string[] = [];
-    engine = openDurableWorkflowEngine({
-      consumerRoot,
-      stateRoot,
-      deliverySource,
-      routePolicy: policy(),
-      now: () => 1_000,
-      proposeCandidate: async (input: Record<string, unknown>) => {
-        replacementRoutes.push(String((input.route as { id?: unknown }).id));
-        throw new Error("cooldown-route-must-not-run");
-      },
-      verifyPhase: async () => {
-        throw new Error("cooldown route must not verify");
-      },
-      verifyChange: async () => {
-        throw new Error("cooldown route must not verify change");
-      },
-    });
-    await expect(
-      engine.execute({
-        command: "resume",
+        verificationInputs: [
+          { kind: "workspace" as const, path: "test/fixture.test.ts" },
+        ],
+        verificationLock: "durable-health",
+      });
+      const plan = {
+        changeId: change,
+        tasks: [
+          {
+            taskId: "health-task",
+            dependsOn: [],
+            objective: "Retain route health",
+            context: { agents: "root", contract: "approved health task" },
+            roots: ["."],
+            phases: { red: phase("red"), green: phase("green") },
+            scheduling: { conflicts: [], resources: ["durable-health"] },
+            agents: { impact: "none" as const, managedOnly: true as const },
+            approvedDependencies: [],
+            impactClosure: {
+              changedSurfaces: ["none" as const],
+              searchEvidence: [],
+              relatedTests: [
+                {
+                  path: "test/fixture.test.ts",
+                  disposition: "current-task" as const,
+                  evidence: "durable health fixture",
+                },
+              ],
+              affectedSuite: ["test/fixture.test.ts"],
+            },
+          },
+        ],
+        outputs: [],
+        verification: { artifactCorrection: { maxAttempts: 2 } },
+      };
+      const deliverySource = {
+        load: async () => ({
+          gate: "gate-b" as const,
+          revision: 1,
+          receiptHash: "b".repeat(64),
+          plan,
+        }),
+      };
+      const firstRoutes: string[] = [];
+      let observedTime = 1_000;
+      const routePolicy = policy();
+      const selectedPolicy =
+        failureCode === "invalid-structural-result"
+          ? {
+              routes: routePolicy.routes,
+              roles: {
+                "design-explorer": ["inherited"],
+                "implementation-worker": ["inherited"],
+                "diagnosis-worker": ["inherited"],
+              },
+            }
+          : routePolicy;
+      let engine = openDurableWorkflowEngine({
+        consumerRoot,
+        stateRoot,
+        deliverySource,
+        routePolicy: selectedPolicy,
+        now: () => observedTime,
+        proposeCandidate: async (input: Record<string, unknown>) => {
+          firstRoutes.push(String((input.route as { id?: unknown }).id));
+          if (failureCode === "invalid-structural-result")
+            return {
+              kind: "retryable",
+              code: failureCode,
+              attemptDiagnostic: {
+                finalCategory: "mixed",
+                submitAttempts: 2,
+                schema: "invalid",
+              },
+            };
+          throw new Error("fixture-route-failure");
+        },
+        verifyPhase: async () => {
+          throw new Error("failed route must not verify");
+        },
+        verifyChange: async () => {
+          throw new Error("failed route must not verify change");
+        },
+      });
+      const paused = await engine.execute({
+        command: "start",
         stage: "abel-implement",
         change,
-        operationId: "health-resume",
-      }),
-    ).resolves.toMatchObject({
-      runId: paused.runId,
-      state: "paused",
-      completed: false,
-      pause: { code: "endpoint-unavailable" },
-      privateData: {
-        retained: true,
-        cleanup: "retained",
-      },
-    });
-    expect(replacementRoutes).toEqual([]);
-    await engine.close();
-  });
+        operationId: "health-start",
+      });
+      expect(paused).toMatchObject({
+        state: "paused",
+        completed: false,
+        pause: {
+          code:
+            failureCode === "invalid-structural-result"
+              ? "endpoint-unavailable"
+              : failureCode,
+        },
+        privateData: {
+          retained: true,
+          cleanup: "retained",
+          baselineRevisionId: expect.stringMatching(/^[a-f0-9]{64}$/u),
+          currentRevisionId: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        },
+      });
+      expect(firstRoutes).toEqual(
+        failureCode === "invalid-structural-result"
+          ? ["inherited", "inherited"]
+          : ["primary", "inherited"],
+      );
+      const launches = firstRoutes.length;
+      await expect(
+        engine.execute({
+          command: "resume",
+          stage: "abel-implement",
+          change,
+          operationId: "health-same-session",
+        }),
+      ).resolves.toMatchObject({
+        runId: paused.runId,
+        state: "paused",
+        pause: { code: "endpoint-unavailable" },
+      });
+      expect(firstRoutes).toHaveLength(launches);
+      if (failureCode === "invalid-structural-result")
+        expect(paused).toMatchObject({
+          pause: {
+            diagnostic: {
+              schema: "invalid",
+              submitAttempts: 2,
+              recovery: { failures: 1, feedback: { maxAttempts: 2 } },
+            },
+          },
+        });
+      await engine.close();
+
+      const replacementRoutes: string[] = [];
+      engine = openDurableWorkflowEngine({
+        consumerRoot,
+        stateRoot,
+        deliverySource,
+        routePolicy: selectedPolicy,
+        now: () => observedTime,
+        proposeCandidate: async (input: Record<string, unknown>) => {
+          replacementRoutes.push(String((input.route as { id?: unknown }).id));
+          if (observedTime > 1_000)
+            return { kind: "paused", code: "worker-reached" };
+          throw new Error("cooldown-route-must-not-run");
+        },
+        verifyPhase: async () => {
+          throw new Error("cooldown route must not verify");
+        },
+        verifyChange: async () => {
+          throw new Error("cooldown route must not verify change");
+        },
+      });
+      await expect(
+        engine.execute({
+          command: "resume",
+          stage: "abel-implement",
+          change,
+          operationId: "health-resume",
+        }),
+      ).resolves.toMatchObject({
+        runId: paused.runId,
+        state: "paused",
+        completed: false,
+        pause: { code: "endpoint-unavailable" },
+        privateData: {
+          retained: true,
+          cleanup: "retained",
+        },
+      });
+      expect(replacementRoutes).toEqual([]);
+      observedTime = 1_000_000;
+      await expect(
+        engine.execute({
+          command: "resume",
+          stage: "abel-implement",
+          change,
+          operationId: "health-cooldown-ended",
+        }),
+      ).resolves.toMatchObject({
+        state: "paused",
+        pause: { code: "worker-reached" },
+      });
+      expect(replacementRoutes).toEqual([
+        failureCode === "invalid-structural-result" ? "inherited" : "primary",
+      ]);
+      await engine.close();
+    },
+  );
 
   it("renews the authoritative operation lease while a Worker attempt is pending", async () => {
     const module = (await import("../src/workflow-engine.ts")) as Record<

@@ -391,6 +391,12 @@ var LIMITS = {
   phaseTimeoutMs: 20 * 60 * 1000,
   maxCompleteResultBytes: 64 * 1024
 };
+var VERIFICATION_LIMITS = Object.freeze({
+  minSteps: 1,
+  maxSteps: 8,
+  minTestFiles: 1,
+  maxTestFiles: 64
+});
 var NONCANONICAL = /(^|\/)\.\.(\/|$)|(^|\/)\/|^\//;
 var RELATIVE_PATH_PATTERN = String.raw`^(?:\.|(?!/)(?![a-zA-Z]:/)(?!\./)(?![\s\S]*\.\.)(?![\s\S]*[\\\u0000])(?![\s\S]*//)(?![\s\S]*/\.(?:/|$))(?![\s\S]*/$)[\s\S]+)$`;
 function isValidRelativePath(p) {

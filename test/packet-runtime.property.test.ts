@@ -234,7 +234,7 @@ describe("PacketRuntime", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        state: "connecting",
+        state: "preparing",
         attempt: 2,
         maxAttempts: 2,
       }),

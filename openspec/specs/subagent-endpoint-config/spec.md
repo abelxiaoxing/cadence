@@ -59,6 +59,7 @@ Before a Worker attempt, the route broker SHALL filter the role's allowed ordere
 It SHALL select only from routes explicitly present in the effective policy and SHALL NOT silently fall back to an undeclared endpoint, model, Provider, or parent identity.
 Health and circuit state SHALL affect new attempts but SHALL NOT alter an already committed candidate or verification fact.
 If no route is currently eligible, the owning packet or task SHALL pause as endpoint-unavailable while the run and committed independent work remain resumable.
+Restoring a persisted binding or explicitly rebinding a capable but cooling route SHALL report temporary endpoint-unavailable rather than capability insufficiency, without clearing its health history.
 Route health SHALL be observable through safe typed status without revealing endpoint or credential data.
 
 #### Scenario: First route is unhealthy
@@ -106,7 +107,12 @@ The run SHALL retain local status, permit corrected-policy resume, and require e
 
 ### Requirement: Bounded route-attempt behavior
 
-Every route attempt SHALL have separately observable finite bounds for connection, first response, idle progress, and total phase duration, all cancellable through the owning operation signal.
+Each model request SHALL have finite first-progress and stream-idle bounds owned by the child model adapter, cancellable through the owning operation signal.
+The broker SHALL retain a finite per-attempt total bound, covering preparation and all request/tool turns, and SHALL remain the sole retry owner.
+HTTP headers SHALL be observation only, not evidence of TCP/TLS connection or accepted model progress.
+Only nonempty text, thinking or tool-call deltas SHALL refresh idle timing; a complete terminal response SHALL settle without requiring a delta.
+Local tool gaps SHALL have no model stream timer; every subsequent request SHALL start a new first-progress budget.
+Historical timeout facts SHALL remain readable without reinterpretation.
 A request SHALL use the selected route's configured model, credentials, dialect, context, and output capabilities.
 Inherited-parent routes SHALL snapshot the effective Provider, selected model and freshly resolved authentication for each attempt, without parent registry mutation or implicit host-session payload callback inheritance; custom routes SHALL use only their own configured request contract.
 Provider-owned stream behavior SHALL remain effective, but no route SHALL require a prior parent request to capture a callback.
@@ -114,20 +120,20 @@ Provider-managed hidden retry SHALL remain disabled; route failover and retry SH
 Timeout or transport failure SHALL update route health and the owning transport policy only and SHALL NOT consume stale, artifact, verification, or checkpoint policy.
 Partial model output SHALL remain unusable unless it formed a valid sealed artifact under the delivery contract.
 
-#### Scenario: Connection bound expires
+#### Scenario: Headers arrive after eleven seconds
 
-- **WHEN** a selected route does not establish its request within the connection bound
-- **THEN** the attempt is cancelled, transport evidence is recorded, and broker policy selects another allowed route or pauses the work
+- **WHEN** a local server receives a request promptly but delays headers for eleven seconds and then supplies a normal terminal response within the first-progress budget
+- **THEN** the request succeeds without a connection timeout or retry
 
 #### Scenario: First response never arrives
 
-- **WHEN** connection succeeds but no first response arrives within its bound
-- **THEN** the attempt ends as first-response-timeout without waiting for the total phase bound
+- **WHEN** a request supplies no accepted progress within its first-progress bound, whether or not headers arrived
+- **THEN** the attempt ends as first-progress-timeout without waiting for the per-attempt total bound
 
 #### Scenario: Stream becomes idle
 
 - **WHEN** a response begins and then makes no accepted progress for the idle bound
-- **THEN** the attempt ends as idle-timeout and no partial unsealed output is accepted
+- **THEN** the attempt ends as stream-idle-timeout and no partial unsealed output is accepted
 
 #### Scenario: Custom route sends a request
 

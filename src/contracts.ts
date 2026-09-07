@@ -52,6 +52,14 @@ export const LIMITS = {
   maxCompleteResultBytes: 64 * 1024,
 } as const;
 
+/** Shared collection bounds for runtime verification and author-facing schemas. */
+export const VERIFICATION_LIMITS = Object.freeze({
+  minSteps: 1,
+  maxSteps: 8,
+  minTestFiles: 1,
+  maxTestFiles: 64,
+});
+
 export const ARTIFACT_FAILURE_CODES = [
   "agents-impact-mismatch",
   "agents-target-mismatch",
@@ -149,6 +157,9 @@ export const VERIFICATION_ADAPTER_CODES = [
   "verification-config-unsafe",
 ] as const;
 export const CHILD_TRANSPORT_CODES = [
+  "first-progress-timeout",
+  "stream-idle-timeout",
+  "attempt-timeout",
   "child-no-final-assistant",
   "child-provider-stream-aborted",
   "child-provider-stream-error",
@@ -231,6 +242,10 @@ export type CandidateFailure =
   | { kind: "result-limit"; limitBytes: number };
 
 export type ChildFailure =
+  | {
+      kind: "execution-limit";
+      code: "child-turn-limit" | "child-context-limit";
+    }
   | CandidateFailure
   | {
       kind: "transport";
@@ -656,8 +671,8 @@ function validateAtomicVerification(
       validateExecutableRunner(contract.runner) &&
       validateVitestRunner(executableRunner) &&
       Array.isArray(contract.testFiles) &&
-      contract.testFiles.length > 0 &&
-      contract.testFiles.length <= 64 &&
+      contract.testFiles.length >= VERIFICATION_LIMITS.minTestFiles &&
+      contract.testFiles.length <= VERIFICATION_LIMITS.maxTestFiles &&
       contract.testFiles.every(isValidRelativePath) &&
       new Set(contract.testFiles).size === contract.testFiles.length &&
       validVerificationArgs(contract.args) &&
@@ -725,8 +740,8 @@ function validateStructuredVerification(
       String(contract.classification),
     ) ||
     !Array.isArray(contract.steps) ||
-    contract.steps.length === 0 ||
-    contract.steps.length > 8 ||
+    contract.steps.length < VERIFICATION_LIMITS.minSteps ||
+    contract.steps.length > VERIFICATION_LIMITS.maxSteps ||
     !contract.steps.every((step) => validateAtomicVerification(step))
   ) {
     return false;

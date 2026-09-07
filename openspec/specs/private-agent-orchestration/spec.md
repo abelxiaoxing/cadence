@@ -271,6 +271,7 @@ Run journals, plan bindings, task ledgers, sealed artifacts, cumulative workspac
 Private child conversations, Provider request objects, live Scheduler promises, AbortControllers, and active UI widgets SHALL remain process-local and disposable.
 Each child execution SHALL use a Cadence-owned explicit model/tool loop with package-owned prompts, no external resource discovery, disabled Provider-managed retry, and cancellation forwarded through authentication, requests, tool execution, and private conversation disposal.
 The loop SHALL NOT create a Pi AgentSession, replace Agent termination hooks, or depend on session-event history ordering. It SHALL execute only tool calls from complete normal responses, count structural attempts before argument validation, allow at most one missing-submit reminder, and retain the original deadline.
+The loop SHALL enforce code-owned finite turn and serialized context limits; limit exhaustion SHALL preserve evidence, reject further execution and SHALL NOT count as route transport failure.
 Inherited Provider requests SHALL snapshot the effective Provider, selected model, and fresh authentication for the admitted attempt without mutating the host registry, requiring a parent request, or capturing host-session payload callbacks.
 Provider-owned stream behavior and model configuration SHALL remain effective; host-session request callbacks SHALL NOT be implicitly inherited. Custom endpoint requests SHALL use only their selected configured route behavior. Output bounds SHALL follow the declared model/Provider contract without implicit payload cap removal.
 Stage exit or process shutdown SHALL cancel and dispose live resources, durably mark uncommitted operations interrupted, and leave paused runs recoverable.
@@ -300,7 +301,7 @@ Completion or discard SHALL idempotently clean private code and artifact state w
 ### Requirement: Truthful private lifecycle activity
 
 Interactive activity SHALL render the authoritative control-plane state rather than infer success from Tool-call completion.
-The visible vocabulary SHALL distinguish queued, connecting, waiting-first-response, running, validating, retrying with policy count, verifying, paused with safe code, approval-needed, applying, recovering, cancelled operation, discarded run, rejected run, and completed run.
+The visible vocabulary SHALL distinguish queued, preparing, waiting-first-response, running, validating, retrying with policy count, verifying, paused with safe code, approval-needed, applying, recovering, cancelled operation, discarded run, rejected run, and completed run.
 A blocked, paused, retryable, deferred, dependency-waiting, approval-needed, or failed-verification outcome MUST NOT display a completed check mark or completed label.
 Every visible item SHALL identify the stage or role, run or task, phase, concise objective, elapsed time, current bounded wait or policy when applicable, and one legal next action without exposing Provider identity, endpoint, path, code, credential, prompt, or raw failure output.
 Print, JSON, and RPC modes SHALL receive the same semantic lifecycle states without ANSI or Widget data.
@@ -328,7 +329,7 @@ Presentation failure SHALL NOT alter scheduling, cancellation, recovery, verific
 
 ### Requirement: Control-plane domain outcomes and Tool errors
 
-The private extension SHALL return valid domain outcomes normally for run-created, run-resumed, route-rebound, status, queued, connecting, candidate-sealed, candidate-rejected, phase-committed, retryable, paused, approval-needed, verifying, applying, recovering, completed, operation-cancelled, discarded, and rejected operations.
+The private extension SHALL return valid domain outcomes normally for run-created, run-resumed, route-rebound, status, queued, preparing, candidate-sealed, candidate-rejected, phase-committed, retryable, paused, approval-needed, verifying, applying, recovering, completed, operation-cancelled, discarded, and rejected operations.
 Recoverable, paused, approval-needed, verification-failed, and operation-cancelled outcomes SHALL NOT be Pi Tool errors merely because the run did not complete.
 Unknown actions, invalid command or packet schemas, incompatible run identity, illegal state transitions, forged mechanical identities, missing retained artifacts, journal integrity failure at mutation time, and internal invariant violations SHALL throw so Pi reports a real Tool error.
 The extension SHALL NOT synthesize an `isError` flag inside a normal domain payload as a substitute for throwing.
@@ -496,3 +497,16 @@ Verification SHALL bind installed dependency bytes and runner identity in additi
 
 - **WHEN** final apply is interrupted and its host reopens with a different verification environment
 - **THEN** the retained transaction rejects old evidence, safely rolls back and allows a later resume to revalidate before a new application
+
+### Requirement: Cohesive internal execution boundaries
+
+The workflow state machine SHALL remain the sole run/task transition and budget transaction authority.
+Scheduling, recovery policy and delivery compatibility comparison SHALL operate on already-read facts without storage or execution callbacks.
+Phase and change-verification services SHALL use explicit narrow ports; phase resources SHALL NOT expose main-workspace application transactions.
+The durable composition SHALL retain resource lifetime, merge ordering, currentness revalidation and command drain before close.
+Core services SHALL consume code-owned model capabilities and activity data rather than Pi session contexts or lifecycle event details.
+
+#### Scenario: Host context is projected
+
+- **WHEN** Pi starts or resumes a control operation
+- **THEN** its adapter forwards only the required working-directory/model capabilities and the operation retains its own model source across concurrent calls

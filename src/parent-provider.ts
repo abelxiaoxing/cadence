@@ -8,8 +8,8 @@ import {
   type Provider,
   type StreamOptions,
 } from "@earendil-works/pi-ai";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ChildFailure } from "./contracts.ts";
+import type { ParentModelSource } from "./model-source.ts";
 import {
   type CustomRoutePolicy,
   type InheritedRoutePolicy,
@@ -252,7 +252,7 @@ function sameSelectedModel(
 }
 
 export async function runtimeFromContext(
-  ctx: Pick<ExtensionContext, "model" | "modelRegistry">,
+  ctx: ParentModelSource,
   signal?: AbortSignal,
   observer?: PhaseTransportObserver,
 ): Promise<PhaseRuntimeResult> {
@@ -349,7 +349,7 @@ export async function runtimeFromContext(
 
 export async function runtimeForWorkerRoute(
   route: CustomRoutePolicy | InheritedRoutePolicy,
-  ctx: Pick<ExtensionContext, "model" | "modelRegistry">,
+  ctx: ParentModelSource,
   signal?: AbortSignal,
   environment: Readonly<Record<string, string | undefined>> = process.env,
   observer?: PhaseTransportObserver,

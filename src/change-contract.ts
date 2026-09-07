@@ -1,3 +1,4 @@
+import { changeContractDiagnostics } from "./change-contract-schema.ts";
 import {
   type ImplementTaskBoundary,
   isValidRelativePath,
@@ -5,6 +6,7 @@ import {
   validateVerificationContract,
   verificationInputPaths,
 } from "./contracts.ts";
+import { DesignPlanValidationError } from "./design-diagnostics.ts";
 import { canonicalJson } from "./run-state.ts";
 
 export interface ChangeContract {
@@ -38,6 +40,9 @@ function text(value: unknown): value is string {
 const identifier = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
 
 export function normalizeChangeContract(value: unknown): ChangeContract {
+  const diagnostics = changeContractDiagnostics(value);
+  if (diagnostics.length)
+    throw new DesignPlanValidationError("change-contract-invalid", diagnostics);
   if (
     !record(value) ||
     !keys(value, ["goal", "acceptance", "constraints", "policy"]) ||

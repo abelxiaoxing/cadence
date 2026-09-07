@@ -26,8 +26,12 @@ Implement 只暴露 `start`、`status`、`resume`、`rebind`、`cancel` 和 `dis
 Design 从第一步起统一使用 `action: "design"`：新需求通过 `start(requirement)` 进入，已有 change 通过 `start(change)` 进入，后续只携带返回的 `runId`。
 需求、决策合同与 Gate A 合同由控制面规范化并计算哈希，调用方无需 SHA-256 工具；Gate B 自动绑定当前已编译 canonical plan，原始瞬时文本不会写入 durable journal。
 `validate-plan-draft` 可在 `compile-plan` 前只读运行同一套编译检查，并以结构化 `taskId` / phase / field / verification 诊断定位问题；Design finalization 的安全诊断码也会进入错误详情与可展开 TUI，而不再只显示统一失败标题。
-随包提供的 [单任务计划示例](config/plan-draft.example.json) 展示完整 PlanDraft 和结构化 Gate A 合同；按实际仓库替换示例中的路径、证据与验证命令。
+随包提供的 [单任务计划示例](config/plan-draft.example.json) 展示精简 PlanDraft 和结构化 Gate A 合同；按实际仓库替换示例中的路径、证据与验证命令。
 草稿可省略 `tracking`、阶段 `verificationInputs` 和现有测试的 `disposition`，编译器按任务、验证契约和已声明产物生成这些机械字段；已批准的 `changeContract` 由控制面继承，无需重复填写。
+原子验证命令可放在 `verificationDefinitions` 中，用 `{ "use": "name" }` 在各验证义务引用；Red 的 `expectedFailure` 仍需明确填写。
+内联原子验证也可省略 `id` / `classification`；任务公共 `read` 与阶段读取合并，固定 baseline/repair 保护字段由编译器补齐，恢复次数和 AGENTS 影响仍需作者明确选择。
+[多任务示例](config/plan-draft.multiple-tasks.example.json) 保留显式依赖和产物 producer；ordered steps 仍使用完整内联合同。
+`validate-plan-draft` 返回有界的最终权限、验证用途、恢复次数和实际派生来源摘要；摘要不充当批准或封存证明。
 推导有歧义时拒绝编译，显式错误仍会报错；代码不会据此扩大路径、依赖或产物权限，封存计划保持完整、严格的结构。
 预检集中返回不同任务的独立结构错误，并提供字段位置、期望/实际路径和修正提示；工具反馈与 TUI 共用有界脱敏投影。
 Design status 将可调用的 `legalOperations` 与顶层 `packetActions` 分开；显式退出只能发送 `{"action":"finish"}`，不能伪装成 `operation: "finish"`。
@@ -60,7 +64,7 @@ Design 完成主要决策后，Implement 中的新实施选择默认由父模型
 增量修订或用户主动选择的 Design 完成后，新的 Implement 上下文都能本地发现并校验交付，继续同一 run。
 
 交互式 TUI、print、JSON 和 RPC 都保留 durable semantic state；父模型有自动继续动作时，TUI 显示 recovering，不把内部待编译状态显示成用户待确认，也不提示用户手动 resume。
-queued、connecting、waiting-first-response、running、validating、retrying、verifying、paused、approval-needed、applying 和 recovering 都不是完成；operation-cancelled 表示本次操作取消但 run 仍可恢复，discarded 与 rejected 是非成功终态。
+queued、preparing、waiting-first-response、running、validating、retrying、verifying、paused、approval-needed、applying 和 recovering 都不是完成；operation-cancelled 表示本次操作取消但 run 仍可恢复，discarded 与 rejected 是非成功终态。
 只有最终 apply 与 post-apply verification 提交后的 `completed` 才显示成功。
 Design finalization、Implement 终态、Diagnose/显式 `finish` 或 session shutdown 会清除 active stage 与私有子执行状态；Design 还会恢复进入前的精确父工具集合，其他阶段只撤下 `abel_dispatch`。
 Gate 等待和可恢复暂停保持激活以接收直接后续操作。
@@ -129,7 +133,7 @@ npm install -g @abelxiaoxing/cadence
 - **已安装 tarball 目录（installed tarball directory）** — 运行 `bun pm pack --destination <tmp>` 生成真实 tarball（.tgz），安装或解压到隔离目录后指向该目录；tarball 文件本身永远不会被当作本地包传给 Pi。
 
 本包要求 Node.js `>=22.13.0`，以使用稳定可用的内置 `node:sqlite`；不从参考仓库源安装。
-当前验证的 Pi SDK 为 `0.84.3`，声明支持同一 `0.84` 补丁系列；不宣称跨 minor 版本兼容，升级须重新运行集成验收。
+Pi 相关 peer 依赖使用 `*`，不限制宿主 Pi 的版本；开发依赖的固定版本仅用于仓库构建与测试。
 
 ## OpenSpec 启动与平台范围
 
@@ -313,7 +317,7 @@ Vitest 的 JSON 报告与普通 stdout/stderr 分离，日志超过捕获预算�
 
 ```sh
 bun run eval:workflow
-bun run eval:workflow --live --scenario small-fix --output /tmp/cadence-evaluation.json
+bun run eval:workflow --live --scenario small-fix --output /tmp/cadence-evaluation.json --progress-output /tmp/cadence-progress.json
 bun run eval:workflow --live --scenario multiple-tasks
 bun run eval:workflow --live --scenario restart-recovery
 bun run eval:workflow --live --scenario missing-capability
@@ -321,8 +325,30 @@ bun run eval:workflow --live --scenario missing-capability
 
 `--live` 使用 Pi 当前配置的模型，也可传 `--model provider/model`；需要可用的 Provider、OpenSpec 和 Linux Bubblewrap。
 报告记录完成状态、用户介入、重复修订、耗时及宿主报告的 token/成本；最终行为另由隔离 oracle 检查。
+`trace` 提供有界的工具/操作计数、安全错误分类、阶段里程碑、重复提交、工具活动区间并集和消息 usage；截止时冻结快照，未到达的里程碑为 null。
+非工具时间不是纯模型计算时间。
+`configurations` 记录实际模型、reasoning 和非秘密路由指纹，`sourceSha256` / `sourceUnchanged` 标识工作树版本和运行期间是否变化。
+可选 `--progress-output` 每 15 秒写一份有界进度快照；无原始参数、提示或响应正文。
+源码读取统计只覆盖明确的成功 read，未分类访问不能当作零。
 `modelFailureDiagnostics` 最多保留 16 条脱敏错误分类及可从 SDK 错误文字识别的 HTTP 状态；无法识别时明确记录 `unclassified` / `null`。
 `autoRetries` 与 `retryDelayMs` 单独记录宿主自动重试次数和计划退避时间，避免把同一请求的多次失败误读为独立故障。
 模型服务不可用、阶段停滞、取消与 Design 完成都不会被计为 Implement 成功。
 缺少能力的场景用于观察保留状态，不能把任意停滞当作正确恢复。
 无原始对话落盘。
+
+## 内部架构与请求预算
+
+`PlanDraft` 只表示作者输入，`ImplementPlan` 独立定义完整执行合同；命名引用和默认值仅在编译入口展开，旧封存计划不被重写。
+PlanDraft 的命名或内联 package-script 可以省略 `command`，编译器从 manifest 绑定脚本原文后生成身份；显式不匹配仍拒绝，Gate A 的完整验证合同不被替换。
+作者在 `tasks.md` 保留任务 checkbox、目标和精确 Scenario 归属；`compile-plan` 生成独立的验证 ID 绑定区域，保留作者正文，并在两份文件安装成功后记录编译。
+旧封存交付仍可读取；缺失作者证据或篡改绑定不能通过追溯检查。
+`workflow-state-machine` 继续独占 run/task 状态转换与预算事务；调度、恢复策略和交付差异比较使用只接受事实的内部函数。
+`durable-workflow` 管理资源生命周期和交付重放，`phase-execution` 执行候选阶段，`change-verification` 管理基线及变更验证；阶段服务没有主工作区 apply 能力。
+Pi 入口负责激活、工具交互、模型能力投影和展示；`package-workflow` 组合控制服务，`package-candidate` 执行受限候选请求，核心不接收 Pi 会话事件或完整宿主上下文。
+
+每次模型请求独立计时：90 秒内没有非空文本、思考或工具参数增量时返回 `first-progress-timeout`；已有进展后空闲 180 秒返回 `stream-idle-timeout`。
+HTTP 响应头用于观察，不刷新进展预算；完整终态可直接结束请求，本地工具执行间隙不计入流空闲，下一轮重新计时。
+Broker 保留每 attempt 20 分钟总上限和原有有限重试；该上限不代表跨重试的 workflow 总时限。
+新请求不再发出 `connect-timeout`，也不声称观测到了 TCP/TLS 建连；旧超时事实和 `connecting` 展示仍可读取。
+子执行器限制为 64 轮、4 MiB 序列化上下文，不自动压缩或静默截断证据；达到限制返回执行限制失败，候选任务暂停并要求拆分，不作为端点故障重试。
+取消后的用量结算最多等待 250 ms，迟到结果不能进入候选提交或主工作区应用。
