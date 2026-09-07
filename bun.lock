@@ -6,6 +6,7 @@
       "name": "@abelxiaoxing/cadence",
       "devDependencies": {
         "@biomejs/biome": "^2.4.16",
+        "@earendil-works/pi-ai": "0.84.3",
         "@earendil-works/pi-coding-agent": "0.84.3",
         "@earendil-works/pi-tui": "0.84.3",
         "@types/node": "^22.15.3",
@@ -14,8 +15,9 @@
         "vitest": "^4.1.8",
       },
       "peerDependencies": {
-        "@earendil-works/pi-coding-agent": "*",
-        "@earendil-works/pi-tui": "*",
+        "@earendil-works/pi-ai": "~0.84.3",
+        "@earendil-works/pi-coding-agent": "~0.84.3",
+        "@earendil-works/pi-tui": "~0.84.3",
         "typebox": "*",
       },
     },

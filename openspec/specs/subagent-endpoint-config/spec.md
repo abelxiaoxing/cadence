@@ -108,7 +108,8 @@ The run SHALL retain local status, permit corrected-policy resume, and require e
 
 Every route attempt SHALL have separately observable finite bounds for connection, first response, idle progress, and total phase duration, all cancellable through the owning operation signal.
 A request SHALL use the selected route's configured model, credentials, dialect, context, and output capabilities.
-Inherited-parent routes SHALL preserve the effective parent authentication and payload-composition contract; custom routes SHALL bypass parent payload transformation and use only their own configured request contract.
+Inherited-parent routes SHALL snapshot the effective Provider, selected model and freshly resolved authentication for each attempt, without parent registry mutation or implicit host-session payload callback inheritance; custom routes SHALL use only their own configured request contract.
+Provider-owned stream behavior SHALL remain effective, but no route SHALL require a prior parent request to capture a callback.
 Provider-managed hidden retry SHALL remain disabled; route failover and retry SHALL be controlled and recorded by the route broker.
 Timeout or transport failure SHALL update route health and the owning transport policy only and SHALL NOT consume stale, artifact, verification, or checkpoint policy.
 Partial model output SHALL remain unusable unless it formed a valid sealed artifact under the delivery contract.
@@ -136,7 +137,7 @@ Partial model output SHALL remain unusable unless it formed a valid sealed artif
 #### Scenario: Inherited route sends a request
 
 - **WHEN** an inherited-parent route is selected
-- **THEN** the request uses fresh parent authentication and effective parent payload composition for that attempt
+- **THEN** the request uses fresh parent authentication and the admitted effective Provider/model snapshot for that attempt without invoking host-session payload callbacks
 
 ### Requirement: Explicit run route rebinding
 

@@ -1,338 +1,406 @@
+import {
+  type AssistantMessage,
+  type Context,
+  createAssistantMessageEventStream,
+  fauxAssistantMessage,
+  fauxToolCall,
+  registerSessionResourceCleanup,
+  type SimpleStreamOptions,
+} from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ChildModelClient } from "../src/child-model.ts";
+import { runChildSession } from "../src/child-session.ts";
 
-const fixture = vi.hoisted(() => {
-  type Factory = (options: Record<string, unknown>) => Promise<unknown>;
-  let resolveCreation!: (value: unknown) => void;
-  let creation!: Promise<unknown>;
-  let factory!: Factory;
-  const reset = () => {
-    creation = new Promise<unknown>((accept) => {
-      resolveCreation = accept;
-    });
-    factory = () => creation;
-  };
-  reset();
-  return {
-    createAgentSession: vi.fn((options: Record<string, unknown>) =>
-      factory(options),
-    ),
-    resolveCreation: (value: unknown) => resolveCreation(value),
-    setFactory: (next: Factory) => {
-      factory = next;
+const model = { id: "test", provider: "test", api: "faux" } as never;
+function run(client: ChildModelClient, signal?: AbortSignal, timeoutMs = 1000) {
+  return runChildSession({
+    cwd: process.cwd(),
+    modelRuntime: client,
+    model,
+    systemPrompt: "investigate",
+    requestId: "packet-1",
+    role: "design-explorer",
+    output: "evidence",
+    roots: [process.cwd()],
+    timeoutMs,
+    signal,
+  });
+}
+function terminal(
+  stream: ReturnType<typeof createAssistantMessageEventStream>,
+  message: AssistantMessage,
+) {
+  if (message.stopReason === "aborted" || message.stopReason === "error")
+    stream.push({ type: "error", reason: message.stopReason, error: message });
+  else stream.push({ type: "done", reason: "stop", message });
+  stream.end();
+}
+afterEach(() => vi.useRealTimers());
+
+const validSubmission = {
+  id: "packet-1",
+  role: "implementation-worker",
+  kind: "diff",
+  taskId: "task-1",
+  phase: "red",
+  summary: "change a.txt",
+  diff: "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n",
+  expectedVerification: "check a.txt",
+  risks: [],
+  contractCompliant: true,
+};
+const rejections = [
+  {
+    name: "preflight",
+    submission: { ...validSubmission, summary: { invalid: true } },
+    code: "invalid-structural-result",
+    schema: "invalid",
+  },
+  {
+    name: "identity",
+    submission: { ...validSubmission, taskId: "wrong-task" },
+    code: "structural-identity-mismatch",
+    schema: "valid",
+  },
+];
+function runAfterRejection(
+  submission: Record<string, unknown>,
+  next: ChildModelClient["streamSimple"],
+  signal?: AbortSignal,
+) {
+  let calls = 0;
+  const result = runChildSession({
+    cwd: process.cwd(),
+    modelRuntime: {
+      streamSimple(...args) {
+        if (++calls > 1) return next(...args);
+        const stream = createAssistantMessageEventStream();
+        terminal(
+          stream,
+          fauxAssistantMessage(fauxToolCall("abel_submit_result", submission), {
+            stopReason: "toolUse",
+          }),
+        );
+        return stream;
+      },
     },
-    reset,
-  };
-});
+    model,
+    systemPrompt: "submit",
+    requestId: "packet-1",
+    taskId: "task-1",
+    role: "implementation-worker",
+    phase: "red",
+    output: "diff",
+    roots: [process.cwd()],
+    timeoutMs: 1000,
+    signal,
+  });
+  return { result, calls: () => calls };
+}
 
-vi.mock(
-  "@earendil-works/pi-coding-agent",
-  async (importOriginal): Promise<Record<string, unknown>> => {
-    const actual = await importOriginal<Record<string, unknown>>();
-    return { ...actual, createAgentSession: fixture.createAgentSession };
+describe.each(rejections)(
+  "retained $name submission rejection",
+  (rejection) => {
+    it.each(["error", "aborted", "throw", "iterator-throw", "empty", "length"])(
+      "survives a subsequent Provider %s",
+      async (mode) => {
+        const pending = runAfterRejection(rejection.submission, () => {
+          if (mode === "throw") throw new Error("SECRET provider failure");
+          const stream = createAssistantMessageEventStream();
+          if (mode === "iterator-throw") {
+            stream[Symbol.asyncIterator] = () => ({
+              async next() {
+                throw new Error("SECRET stream failure");
+              },
+            });
+          } else if (mode === "empty") stream.end();
+          else
+            terminal(
+              stream,
+              fauxAssistantMessage([], {
+                stopReason: mode as "error" | "aborted" | "length",
+                errorMessage: "SECRET provider failure",
+              }),
+            );
+          return stream;
+        });
+        const result = await pending.result;
+        expect(result).toMatchObject({
+          ok: false,
+          failure: {
+            kind: "artifact",
+            code: rejection.code,
+            stage: "structural-submit",
+            details: { submitAttempts: 1, schema: rejection.schema },
+          },
+          transportFailure: false,
+          disposeCount: 1,
+          classification: { attempts: 1, schema: rejection.schema },
+        });
+        if (rejection.name === "identity")
+          expect(result).toMatchObject({
+            failure: { details: { identityMismatch: ["task"] } },
+          });
+        expect(pending.calls()).toBe(2);
+        expect(JSON.stringify(result)).not.toContain("SECRET");
+      },
+    );
+
+    it("clears the rejection after a valid correction", async () => {
+      const pending = runAfterRejection(rejection.submission, () => {
+        const stream = createAssistantMessageEventStream();
+        terminal(
+          stream,
+          fauxAssistantMessage(
+            fauxToolCall("abel_submit_result", validSubmission),
+            {
+              stopReason: "toolUse",
+            },
+          ),
+        );
+        return stream;
+      });
+      expect(await pending.result).toMatchObject({
+        ok: true,
+        result: validSubmission,
+        submitCount: 2,
+        classification: {
+          attempts: 2,
+          schema: "valid",
+          identity: { task: true },
+        },
+      });
+      expect(pending.calls()).toBe(2);
+    });
+
+    it.each(["cancel", "deadline"])("yields to %s", async (mode) => {
+      vi.useFakeTimers();
+      const controller = new AbortController();
+      const pending = runAfterRejection(
+        rejection.submission,
+        (_model, _context, options) => {
+          const stream = createAssistantMessageEventStream();
+          options?.signal?.addEventListener("abort", () =>
+            terminal(
+              stream,
+              fauxAssistantMessage([], { stopReason: "aborted" }),
+            ),
+          );
+          return stream;
+        },
+        controller.signal,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(pending.calls()).toBe(2);
+      if (mode === "cancel") controller.abort();
+      else await vi.advanceTimersByTimeAsync(1000);
+      expect(await pending.result).toMatchObject({
+        ok: false,
+        failure:
+          mode === "cancel"
+            ? { kind: "cancelled", code: "cancelled" }
+            : { kind: "transport", code: "child-timeout" },
+        failureKind: mode === "cancel" ? "cancelled" : "timed-out",
+        disposeCount: 1,
+      });
+    });
   },
 );
 
-import { runChildSession } from "../src/child-session";
-
-afterEach(() => {
-  fixture.reset();
-  fixture.createAgentSession.mockClear();
-});
-
-function within<T>(promise: Promise<T>, timeoutMs = 500): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error("child cancellation did not settle")),
-      timeoutMs,
-    );
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
-
-describe("child session creation cancellation", () => {
-  it.each([false, true])(
-    "returns a terminal safe code on creation failure (signal=%s)",
-    async (withSignal) => {
-      fixture.setFactory(async () => {
-        throw new Error("provider headers=private payload=must-not-leak");
-      });
-
-      const outcome = await runChildSession({
-        cwd: process.cwd(),
-        modelRuntime: {} as never,
-        model: {} as never,
-        systemPrompt: "submit",
-        requestId: "create-failed",
-        role: "design-explorer",
-        output: "evidence",
-        roots: [process.cwd()],
-        timeoutMs: 5_000,
-        ...(withSignal ? { signal: new AbortController().signal } : {}),
-      });
-
-      expect(outcome).toMatchObject({
-        ok: false,
-        failure: {
-          kind: "environment",
-          code: "child-session-create-failed",
-          stage: "child-session-create",
+describe("child transport and private conversation cancellation", () => {
+  it("cleans only the child's unique provider session resources once", async () => {
+    const cleaned: Array<string | undefined> = [];
+    let childId: string | undefined;
+    const unregister = registerSessionResourceCleanup((id) => cleaned.push(id));
+    try {
+      await run({
+        streamSimple(_model, _context, options) {
+          childId = options?.sessionId;
+          const stream = createAssistantMessageEventStream();
+          terminal(stream, fauxAssistantMessage("done"));
+          return stream;
         },
       });
-      expect(JSON.stringify(outcome)).not.toMatch(/headers|private|payload/i);
+      expect(childId).toEqual(expect.any(String));
+      expect(cleaned).toEqual([childId]);
+    } finally {
+      unregister();
+    }
+  });
+
+  it("reports cleanup failure without exposing private errors or throwing from finalization", async () => {
+    const unregister = registerSessionResourceCleanup(() => {
+      throw new Error("SECRET cleanup");
+    });
+    try {
+      const result = await run({
+        streamSimple() {
+          const stream = createAssistantMessageEventStream();
+          terminal(stream, fauxAssistantMessage("done"));
+          return stream;
+        },
+      });
+      expect(result.ok).toBe(false);
+      expect(result.disposeCount).toBe(1);
+      expect(JSON.stringify(result)).not.toContain("SECRET");
+    } finally {
+      unregister();
+    }
+  });
+
+  it.each(["cancel", "deadline"])(
+    "preserves %s and the original deadline during reminder",
+    async (mode) => {
+      vi.useFakeTimers();
+      const controller = new AbortController();
+      const requests: { context: Context; options?: SimpleStreamOptions }[] =
+        [];
+      const client: ChildModelClient = {
+        streamSimple(_model, context, options) {
+          requests.push({ context: structuredClone(context), options });
+          const stream = createAssistantMessageEventStream();
+          if (requests.length === 1)
+            setTimeout(
+              () => terminal(stream, fauxAssistantMessage("done")),
+              600,
+            );
+          options?.signal?.addEventListener(
+            "abort",
+            () =>
+              terminal(
+                stream,
+                fauxAssistantMessage([], { stopReason: "aborted" }),
+              ),
+            { once: true },
+          );
+          return stream;
+        },
+      };
+      const resultPromise = run(client, controller.signal);
+      await vi.advanceTimersByTimeAsync(600);
+      expect(requests).toHaveLength(2);
+      expect(JSON.stringify(requests[1].context.messages)).toContain(
+        "original deadline",
+      );
+      expect(requests[0].options?.sessionId).toBe(
+        requests[1].options?.sessionId,
+      );
+      expect(requests[0].options?.signal).toBe(requests[1].options?.signal);
+      if (mode === "cancel") controller.abort(new Error("cancelled reminder"));
+      else await vi.advanceTimersByTimeAsync(400);
+      const result = await resultPromise;
+      expect(result).toMatchObject({
+        ok: false,
+        disposeCount: 1,
+        failureKind: mode === "cancel" ? "cancelled" : "timed-out",
+      });
+      expect(requests).toHaveLength(2);
     },
   );
 
-  it("distinguishes a completed prompt with no final assistant", async () => {
-    const dispose = vi.fn();
-    let receivedPrompt = "";
-    fixture.setFactory(async () => ({
-      session: {
-        messages: [],
-        subscribe() {
-          return () => {};
-        },
-        async prompt(prompt: string) {
-          receivedPrompt = prompt;
-        },
-        abort: vi.fn(),
-        dispose,
-      },
-    }));
-
-    const outcome = await runChildSession({
-      cwd: process.cwd(),
-      modelRuntime: {} as never,
-      model: {} as never,
-      systemPrompt: "submit",
-      requestId: "no-final-assistant",
-      role: "design-explorer",
-      output: "evidence",
-      roots: [process.cwd()],
-      timeoutMs: 5_000,
-      ledgerProjection: {
-        runId: "replacement-run",
-        taskId: "replacement-task",
-        currentPhase: "green",
-        history: [{ phase: "red", kind: "phase-verified" }],
-      },
-    });
-
-    expect(outcome).toMatchObject({
+  it("does not call a Provider when already cancelled", async () => {
+    const streamSimple = vi.fn();
+    const controller = new AbortController();
+    controller.abort();
+    expect(await run({ streamSimple }, controller.signal)).toMatchObject({
       ok: false,
-      failure: {
-        kind: "transport",
-        code: "child-no-final-assistant",
-        stage: "child-finalization",
-      },
+      failureKind: "cancelled",
     });
-    expect(dispose).toHaveBeenCalledTimes(1);
-    expect(receivedPrompt).toContain("<abel-task-ledger-projection>");
-    expect(receivedPrompt).toContain('"currentPhase":"green"');
+    expect(streamSimple).not.toHaveBeenCalled();
   });
 
-  it("settles immediately and disposes a session that is created late", async () => {
+  it("bounds cleanup for a Provider which ignores cancellation and rejects late output", async () => {
+    vi.useFakeTimers();
+    const stream = createAssistantMessageEventStream();
     const controller = new AbortController();
-    const dispose = vi.fn();
-    const run = runChildSession({
-      cwd: process.cwd(),
-      modelRuntime: {} as never,
-      model: {} as never,
-      systemPrompt: "submit",
-      requestId: "cancel-creation",
-      role: "design-explorer",
-      output: "evidence",
-      roots: [process.cwd()],
-      timeoutMs: 5_000,
-      signal: controller.signal,
-    });
-    await vi.waitFor(() =>
-      expect(fixture.createAgentSession).toHaveBeenCalledTimes(1),
+    const resultPromise = run(
+      { streamSimple: () => stream },
+      controller.signal,
     );
-
-    controller.abort(new Error("cancelled during session creation"));
-    const outcome = await within(run);
-
-    expect(outcome.ok).toBe(false);
-    if (!outcome.ok) {
-      expect(outcome.error).toMatch(/cancelled during session creation/i);
-    }
-    fixture.resolveCreation({ session: { dispose } });
-    await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1));
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(250);
+    const result = await resultPromise;
+    expect(result).toMatchObject({
+      ok: false,
+      failureKind: "cancelled",
+      disposeCount: 1,
+    });
+    const before = structuredClone(result);
+    terminal(stream, fauxAssistantMessage("late private output"));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(result).toEqual(before);
   });
 
-  it("retains usage emitted while an active child settles cancellation", async () => {
-    const listeners = new Set<(event: Record<string, unknown>) => void>();
-    const messages: Record<string, unknown>[] = [];
-    let markStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      markStarted = resolve;
-    });
-    const dispose = vi.fn();
-    const abort = vi.fn(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      const message = assistantMessage(9, "aborted");
-      messages.push(message);
-      for (const listener of listeners)
-        listener({ type: "message_end", message });
-    });
-    fixture.setFactory(async () => ({
-      session: {
-        messages,
-        subscribe(listener: (event: Record<string, unknown>) => void) {
-          listeners.add(listener);
-          return () => listeners.delete(listener);
-        },
-        prompt() {
-          markStarted();
-          return new Promise<void>(() => {});
-        },
-        abort,
-        dispose,
-      },
-    }));
+  it("retains usage emitted while cooperative cancellation settles", async () => {
+    vi.useFakeTimers();
     const controller = new AbortController();
-    const run = runChildSession({
-      cwd: process.cwd(),
-      modelRuntime: {} as never,
-      model: {} as never,
-      systemPrompt: "submit",
-      requestId: "cancel-active",
-      role: "design-explorer",
-      output: "evidence",
-      roots: [process.cwd()],
-      timeoutMs: 5_000,
-      signal: controller.signal,
-    });
-    await started;
-
-    controller.abort(new Error("cancelled during active stream"));
-    const outcome = await within(run);
-
-    expect(outcome).toMatchObject({
+    const client: ChildModelClient = {
+      streamSimple(_model, _context, options) {
+        const stream = createAssistantMessageEventStream();
+        options?.signal?.addEventListener("abort", () =>
+          setTimeout(() => {
+            const message = fauxAssistantMessage([], { stopReason: "aborted" });
+            message.usage.totalTokens = 9;
+            terminal(stream, message);
+          }, 10),
+        );
+        return stream;
+      },
+    };
+    const pending = run(client, controller.signal);
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await pending).toMatchObject({
       ok: false,
       failureKind: "cancelled",
       usage: { totalTokens: 9 },
     });
-    expect(abort).toHaveBeenCalledTimes(1);
-    expect(dispose).toHaveBeenCalledTimes(1);
   });
 
-  it("bounds cancellation cleanup when a child never becomes idle", async () => {
-    let markStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      markStarted = resolve;
-    });
-    const abort = vi.fn(() => new Promise<void>(() => {}));
-    const dispose = vi.fn();
-    fixture.setFactory(async () => ({
-      session: {
-        messages: [],
-        subscribe() {
-          return () => {};
-        },
-        prompt() {
-          markStarted();
-          return new Promise<void>(() => {});
-        },
-        abort,
-        dispose,
+  it("distinguishes a stream ending without a terminal message", async () => {
+    const result = await run({
+      streamSimple() {
+        const stream = createAssistantMessageEventStream();
+        stream.end();
+        return stream;
       },
-    }));
-    const controller = new AbortController();
-    const run = runChildSession({
-      cwd: process.cwd(),
-      modelRuntime: {} as never,
-      model: {} as never,
-      systemPrompt: "submit",
-      requestId: "cancel-nonresponsive",
-      role: "design-explorer",
-      output: "evidence",
-      roots: [process.cwd()],
-      timeoutMs: 5_000,
-      signal: controller.signal,
     });
-    await started;
-
-    controller.abort(new Error("cancelled nonresponsive child"));
-    const outcome = await within(run);
-
-    expect(outcome).toMatchObject({ ok: false, failureKind: "cancelled" });
-    expect(abort).toHaveBeenCalledTimes(1);
-    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      ok: false,
+      failure: { kind: "transport", code: "child-no-final-assistant" },
+    });
   });
 
-  it("counts distinct assistant turns even when their timestamps collide", async () => {
-    const listeners = new Set<(event: Record<string, unknown>) => void>();
-    const messages: Record<string, unknown>[] = [];
-    const dispose = vi.fn();
-    fixture.setFactory(async () => ({
-      session: {
-        messages,
-        subscribe(listener: (event: Record<string, unknown>) => void) {
-          listeners.add(listener);
-          return () => listeners.delete(listener);
-        },
-        async prompt() {
-          for (const tokens of [5, 7]) {
-            const message = assistantMessage(tokens, "stop", 1);
-            messages.push(message);
-            for (const listener of listeners)
-              listener({ type: "message_end", message });
-          }
-        },
-        abort: vi.fn(),
-        dispose,
+  it("classifies synchronous Provider failures without exposing raw text", async () => {
+    const result = await run({
+      streamSimple() {
+        throw new Error("SECRET credential payload");
       },
-    }));
-
-    const outcome = await runChildSession({
-      cwd: process.cwd(),
-      modelRuntime: {} as never,
-      model: {} as never,
-      systemPrompt: "submit",
-      requestId: "same-timestamp",
-      role: "design-explorer",
-      output: "evidence",
-      roots: [process.cwd()],
-      timeoutMs: 5_000,
     });
+    expect(result).toMatchObject({
+      ok: false,
+      failure: { kind: "transport", code: "child-provider-stream-error" },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/SECRET|credential|payload/);
+  });
 
-    expect(outcome).toMatchObject({
+  it("counts distinct terminal messages even when timestamps collide", async () => {
+    let count = 0;
+    const result = await run({
+      streamSimple() {
+        const stream = createAssistantMessageEventStream();
+        const message = fauxAssistantMessage("done");
+        message.timestamp = 1;
+        message.usage.totalTokens = ++count === 1 ? 5 : 7;
+        terminal(stream, message);
+        return stream;
+      },
+    });
+    expect(result).toMatchObject({
       ok: false,
       usage: { totalTokens: 12 },
+      disposeCount: 1,
     });
-    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(count).toBe(2);
   });
 });
-
-function assistantMessage(
-  totalTokens: number,
-  stopReason: "stop" | "aborted",
-  timestamp = 1,
-) {
-  return {
-    role: "assistant",
-    content: [{ type: "text", text: "done" }],
-    provider: "test-provider",
-    model: "test-model",
-    timestamp,
-    stopReason,
-    usage: {
-      input: totalTokens,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
-  };
-}

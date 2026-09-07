@@ -1,5 +1,58 @@
 import { createHash } from "node:crypto";
 
+/** Infer only closed diagnostics from SDK display text; never retain the text. */
+function classifyModelFailure(value) {
+  const message = String(value ?? "").slice(0, 65536);
+  const status = message.match(
+    /(?:^\s*|\bHTTP(?:\/\d(?:\.\d)?)?\s+|\bstatus(?:\s+code)?[\s:=]+|\bAPI error \()([45]\d{2})\b/iu,
+  );
+  const httpStatus = status ? Number(status[1]) : null;
+  let kind = "unclassified";
+  if (
+    /insufficient_quota|quota[\s_-]*(?:exceeded|exhausted)|billing|out of budget/iu.test(
+      message,
+    )
+  )
+    kind = "quota";
+  else if (
+    httpStatus === 429 ||
+    /rate.?limit|too many requests/iu.test(message)
+  )
+    kind = "rate-limit";
+  else if (
+    httpStatus === 401 ||
+    httpStatus === 403 ||
+    /invalid_api_key|unauthori[sz]ed|authenticat/iu.test(message)
+  )
+    kind = "authentication";
+  else if (
+    /context.{0,30}(?:length|window|limit)|too many tokens/iu.test(message)
+  )
+    kind = "context-limit";
+  else if (httpStatus >= 500) kind = "server-error";
+  else if (httpStatus >= 400) kind = "request-rejected";
+  else if (/timeout|timed? out|ETIMEDOUT/iu.test(message)) kind = "timeout";
+  else if (
+    /stream ended (?:without|before)|stream.*(?:interrupted|premature)/iu.test(
+      message,
+    )
+  )
+    kind = "stream-interrupted";
+  else if (
+    /connect|fetch|network|ECONN|ENOTFOUND|EAI_AGAIN|UND_ERR|socket/iu.test(
+      message,
+    )
+  )
+    kind = "transport";
+  else if (
+    /overloaded|service.?unavailable|server.?error|internal.?error/iu.test(
+      message,
+    )
+  )
+    kind = "server-error";
+  return { kind, httpStatus };
+}
+
 /** Retain allowlisted measurements, never conversations, tool arguments or provider output. */
 export function createEvaluationMetrics() {
   const result = {
@@ -13,6 +66,9 @@ export function createEvaluationMetrics() {
     cancellations: 0,
     modelErrors: 0,
     modelFailure: null,
+    modelFailureDiagnostics: [],
+    autoRetries: 0,
+    retryDelayMs: 0,
     tokens: 0,
     cost: 0,
   };
@@ -27,13 +83,22 @@ export function createEvaluationMetrics() {
         event.message.stopReason === "error"
       ) {
         result.modelErrors++;
-        const message = String(event.message.errorMessage ?? "");
+        const diagnosis = classifyModelFailure(event.message.errorMessage);
+        if (result.modelFailureDiagnostics.length < 16)
+          result.modelFailureDiagnostics.push(diagnosis);
         result.modelFailure =
-          /api.?key|unauthori[sz]ed|authenticat|\b401\b|\b403\b/iu.test(message)
+          diagnosis.kind === "authentication"
             ? "authentication"
-            : /timeout|connect|fetch|network/iu.test(message)
+            : ["transport", "timeout", "stream-interrupted"].includes(
+                  diagnosis.kind,
+                )
               ? "transport"
               : "provider";
+      }
+      if (event.type === "auto_retry_start") {
+        result.autoRetries++;
+        if (Number.isSafeInteger(event.delayMs) && event.delayMs >= 0)
+          result.retryDelayMs += event.delayMs;
       }
       if (event.type === "tool_execution_start") {
         result.toolCalls++;

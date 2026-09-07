@@ -20,7 +20,6 @@ import {
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApplyTransaction } from "../src/apply-transaction.ts";
-
 import { runChildSession } from "../src/child-session.ts";
 import {
   assessDeliveryTraceability,
@@ -33,15 +32,12 @@ import {
   parseReadyReceipt,
 } from "../src/delivery-compiler.ts";
 import { DesignJournal } from "../src/design-journal.ts";
-import {
-  runtimeForProvider,
-  runtimeForWorkerRoute,
-} from "../src/parent-provider.ts";
+import { runtimeForWorkerRoute } from "../src/parent-provider.ts";
 import { parseRoutePolicy } from "../src/route-policy.ts";
 import { RunStore } from "../src/run-store.ts";
 import { resolveStateRoot } from "../src/state-root.ts";
 import { RunWorkerBroker } from "../src/worker-broker.ts";
-import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
+import { runtimeForProvider } from "./helpers/model-runtime.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -496,7 +492,6 @@ describe("run-bound Worker attempts", () => {
         const phase = await runtimeForWorkerRoute(
           attempt.route,
           context,
-          new PassthroughParentPayloadBridge(),
           attempt.signal,
         );
         if (!phase.ok) throw new Error(phase.error);
@@ -513,7 +508,6 @@ describe("run-bound Worker attempts", () => {
           allowedPaths: ["evidence.txt"],
           timeoutMs: 2_000,
           signal: attempt.signal,
-          failureOverride: phase.failureOverride,
         });
         attempt.onProgress();
         return child;
@@ -1059,7 +1053,6 @@ describe("durable WorkflowEngine service composition", () => {
     const openPackageWorkflowControlEngine =
       module.openPackageWorkflowControlEngine as (
         context: Record<string, unknown>,
-        bridge: Record<string, unknown>,
       ) => { close(): Promise<void> | void };
     const consumerRoot = mkdtempSync(
       path.join(tmpdir(), "cadence-package-state-consumer-"),
@@ -1096,7 +1089,7 @@ describe("durable WorkflowEngine service composition", () => {
     process.env.XDG_STATE_HOME = stateBase;
     let engine: { close(): Promise<void> | void } | undefined;
     try {
-      engine = openPackageWorkflowControlEngine({ cwd: consumerRoot }, {});
+      engine = openPackageWorkflowControlEngine({ cwd: consumerRoot });
       const expected = resolveStateRoot({
         consumerRoot,
         xdgStateHome: stateBase,
@@ -1115,7 +1108,6 @@ describe("durable WorkflowEngine service composition", () => {
     const openPackageWorkflowControlEngine =
       module.openPackageWorkflowControlEngine as (
         context: Record<string, unknown>,
-        bridge: Record<string, unknown>,
       ) => {
         execute(command: unknown): Promise<Record<string, unknown>>;
         close(): Promise<void> | void;
@@ -1243,10 +1235,11 @@ describe("durable WorkflowEngine service composition", () => {
     process.env.PATH = `${commandRoot}${path.delimiter}${previousPath ?? ""}`;
     let engine: ReturnType<typeof openPackageWorkflowControlEngine> | undefined;
     try {
-      engine = openPackageWorkflowControlEngine(
-        { cwd: consumerRoot, model: undefined, modelRegistry: {} },
-        {},
-      );
+      engine = openPackageWorkflowControlEngine({
+        cwd: consumerRoot,
+        model: undefined,
+        modelRegistry: {},
+      });
       await expect(
         engine.execute({
           command: "start",
@@ -1278,7 +1271,6 @@ describe("durable WorkflowEngine service composition", () => {
     const openPackageWorkflowControlEngine =
       module.openPackageWorkflowControlEngine as (
         context: Record<string, unknown>,
-        bridge: Record<string, unknown>,
       ) => {
         execute(command: unknown): Promise<Record<string, unknown>>;
         close(): Promise<void> | void;
@@ -1301,7 +1293,7 @@ describe("durable WorkflowEngine service composition", () => {
     process.env.XDG_STATE_HOME = stateBase;
     let engine: ReturnType<typeof openPackageWorkflowControlEngine> | undefined;
     try {
-      engine = openPackageWorkflowControlEngine({ cwd: consumerRoot }, {});
+      engine = openPackageWorkflowControlEngine({ cwd: consumerRoot });
       const started = await engine.execute({
         command: "start",
         stage: "abel-implement",

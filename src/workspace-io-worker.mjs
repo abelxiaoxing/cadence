@@ -392,6 +392,7 @@ var LIMITS = {
   maxCompleteResultBytes: 64 * 1024
 };
 var NONCANONICAL = /(^|\/)\.\.(\/|$)|(^|\/)\/|^\//;
+var RELATIVE_PATH_PATTERN = String.raw`^(?:\.|(?!/)(?![a-zA-Z]:/)(?!\./)(?![\s\S]*\.\.)(?![\s\S]*[\\\u0000])(?![\s\S]*//)(?![\s\S]*/\.(?:/|$))(?![\s\S]*/$)[\s\S]+)$`;
 function isValidRelativePath(p) {
   return typeof p === "string" && p.length > 0 && p.length <= 512 && !NONCANONICAL.test(p) && !p.startsWith("/") && !/^[a-z]:\//iu.test(p) && (p === "." || !p.startsWith("./") && !p.endsWith("/") && !p.split("/").includes(".")) && !p.includes("..") && !p.includes("\\") && !p.includes("\x00");
 }

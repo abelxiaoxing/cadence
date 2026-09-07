@@ -12,18 +12,14 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-import {
-  runtimeForProvider,
-  runtimeForWorkerRoute,
-} from "../src/parent-provider.ts";
+import { runtimeForWorkerRoute } from "../src/parent-provider.ts";
 import { parentRoutePolicy } from "../src/route-policy.ts";
 import {
   ROUTE_ATTEMPT_BOUNDS,
   RunWorkerBroker,
   WorkerBroker,
 } from "../src/worker-broker.ts";
-import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
+import { runtimeForProvider } from "./helpers/model-runtime.ts";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -101,7 +97,6 @@ describe("Worker transport lifecycle", () => {
         model: faux.getModel(),
         modelRegistry: new ModelRegistry(parentRuntime),
       },
-      new PassthroughParentPayloadBridge(),
       undefined,
       process.env,
       { onResponse: () => lifecycle.push("headers") },
@@ -161,7 +156,6 @@ describe("Worker transport lifecycle", () => {
           const phase = await runtimeForWorkerRoute(
             attempt.route,
             context,
-            new PassthroughParentPayloadBridge(),
             attempt.signal,
             process.env,
             { onResponse: attempt.onHeaders },
@@ -238,7 +232,6 @@ describe("Worker transport lifecycle", () => {
           const phase = await runtimeForWorkerRoute(
             attempt.route,
             context,
-            new PassthroughParentPayloadBridge(),
             attempt.signal,
             process.env,
             { onResponse: attempt.onHeaders },
@@ -356,7 +349,6 @@ describe("Worker transport lifecycle", () => {
           const phase = await runtimeForWorkerRoute(
             attempt.route,
             context,
-            new PassthroughParentPayloadBridge(),
             attempt.signal,
             process.env,
             { onResponse: attempt.onHeaders },

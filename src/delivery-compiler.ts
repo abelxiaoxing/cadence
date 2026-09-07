@@ -16,6 +16,7 @@ import {
   type StructuredVerificationContract,
   validateImplementGraphBoundary,
   validateVerificationContract,
+  verificationInputPaths,
 } from "./contracts.ts";
 import {
   assessImplementGraphReadiness,
@@ -115,6 +116,9 @@ export interface DesignPlanDiagnostic {
   dependencyTaskId?: string;
   producerTaskId?: string;
   producerPhase?: string;
+  path?: string;
+  expectedPaths?: string[];
+  actualPaths?: string[];
 }
 
 export class DesignPlanValidationError extends Error {
@@ -260,13 +264,15 @@ export function assessDeliveryTraceability(input: {
   };
 }
 
-export type PlanPhaseDraft = PhaseBoundary;
+export type PlanPhaseDraft = Omit<PhaseBoundary, "verificationInputs"> & {
+  verificationInputs?: PhaseBoundary["verificationInputs"];
+};
 
 export interface PlanTaskDraft extends Omit<ImplementTaskBoundary, "phases"> {
   phases: {
-    red: PlanPhaseDraft;
-    green: PlanPhaseDraft;
-    refactor?: PlanPhaseDraft;
+    red: PhaseBoundary;
+    green: PhaseBoundary;
+    refactor?: PhaseBoundary;
   };
   affectedVerification: StructuredVerificationContract;
   repairVerification: StructuredVerificationContract;
@@ -317,13 +323,36 @@ export interface PlanTracking {
 export interface PlanDraft {
   changeContract?: ChangeContract;
   changeId: string;
-  tasks: PlanTaskDraft[];
+  tasks: PlanTaskInput[];
   outputs: ImplementGraphOutput[];
   verification: PlanVerification;
-  tracking: PlanTracking;
+  tracking?: PlanTracking;
 }
 
-export type ImplementPlan = PlanDraft;
+/** Authoring input; execution continues to consume the complete PlanTaskDraft. */
+export interface PlanTaskInput
+  extends Omit<PlanTaskDraft, "phases" | "impactClosure"> {
+  phases: {
+    red: PlanPhaseDraft;
+    green: PlanPhaseDraft;
+    refactor?: PlanPhaseDraft;
+  };
+  impactClosure: Omit<PlanTaskDraft["impactClosure"], "relatedTests"> & {
+    relatedTests: Array<
+      Omit<
+        PlanTaskDraft["impactClosure"]["relatedTests"][number],
+        "disposition"
+      > & {
+        disposition?: PlanTaskDraft["impactClosure"]["relatedTests"][number]["disposition"];
+      }
+    >;
+  };
+}
+
+export interface ImplementPlan extends Omit<PlanDraft, "tasks"> {
+  tasks: PlanTaskDraft[];
+  tracking: PlanTracking;
+}
 
 export interface CompiledDelivery {
   plan: ImplementPlan;
@@ -690,7 +719,7 @@ function normalizeVerification(
   return cloned;
 }
 
-function normalizePhase(value: unknown, readOnly = false): PlanPhaseDraft {
+function normalizePhase(value: unknown, readOnly = false): PhaseBoundary {
   if (
     !isRecord(value) ||
     !exactKeys(value, [
@@ -837,7 +866,7 @@ function normalizeTask(value: unknown): PlanTaskDraft {
 }
 
 function graphFromPlan(plan: ImplementPlan): ImplementGraphBoundary {
-  const stripPhase = (phase: PlanPhaseDraft): PhaseBoundary => ({
+  const stripPhase = (phase: PhaseBoundary): PhaseBoundary => ({
     read: phase.read,
     write: phase.write,
     delete: phase.delete,
@@ -1177,7 +1206,7 @@ function normalizeDraft(value: unknown): ImplementPlan {
   if (!draftGraph.ok) {
     throw new DesignPlanValidationError(
       `delivery-plan-invalid:${draftGraph.reason}`,
-      [draftGraph.diagnostic],
+      draftGraph.diagnostics ?? [draftGraph.diagnostic],
     );
   }
   const plan: ImplementPlan = {
@@ -1266,6 +1295,123 @@ function renderTasks(plan: ImplementPlan): string {
   return lines.join("\n");
 }
 
+/** Derive only omitted fields; the strict normalizer and graph still own admission. */
+function preparePlanDraft(value: unknown): unknown {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.tasks) ||
+    value.tasks.length > 128 ||
+    !Array.isArray(value.outputs) ||
+    value.outputs.length > 512
+  )
+    return value;
+  const draft = structuredClone(value);
+  let changed = false;
+  const tasks = (draft.tasks as unknown[]).filter(isRecord);
+  const outputs = (draft.outputs as unknown[]).filter(isRecord);
+  const diagnostics: DesignPlanDiagnostic[] = [];
+  const writes = (task: Record<string, unknown>): Set<string> => {
+    const paths = new Set<string>();
+    if (!isRecord(task.phases)) return paths;
+    for (const [phase, boundary] of Object.entries(task.phases)) {
+      if (!isRecord(boundary)) continue;
+      if (
+        phase === "red" &&
+        ["mechanical", "refactor"].includes(String(task.verificationMode))
+      )
+        continue;
+      for (const candidates of [boundary.write, boundary.delete]) {
+        if (!Array.isArray(candidates)) continue;
+        for (const file of candidates)
+          if (isValidRelativePath(file)) paths.add(file);
+      }
+    }
+    return paths;
+  };
+  const owners = new Map<string, Record<string, unknown>[]>();
+  for (const task of tasks)
+    for (const file of writes(task))
+      owners.set(file, [...(owners.get(file) ?? []), task]);
+  if (!Object.hasOwn(draft, "tracking")) {
+    changed = true;
+    draft.tracking = {
+      path: "tasks.md",
+      format: "markdown-checkbox",
+      taskIds: (draft.tasks as unknown[]).map((task) =>
+        isRecord(task) ? task.taskId : undefined,
+      ),
+      completionOwner: "parent",
+    };
+  }
+  for (const task of tasks) {
+    const taskId = typeof task.taskId === "string" ? task.taskId : undefined;
+    if (isRecord(task.phases))
+      for (const [phase, boundary] of Object.entries(task.phases)) {
+        if (
+          !isRecord(boundary) ||
+          Object.hasOwn(boundary, "verificationInputs")
+        )
+          continue;
+        const verification = validateVerificationContract(
+          boundary.verification,
+        );
+        // Invalid commands get their normal structural diagnostic; never infer from invalid paths.
+        if (!verification.ok) continue;
+        changed = true;
+        boundary.verificationInputs = verificationInputPaths(
+          verification.value,
+        ).map((file) => {
+          const producers = outputs.filter((output) => output.path === file);
+          if (producers.length > 1)
+            diagnostics.push({
+              code: "multiple-output-producers",
+              taskId,
+              phase,
+              field: "outputs",
+              path: file,
+            });
+          return producers.length === 1
+            ? { kind: "output", outputId: producers[0]?.id }
+            : { kind: "workspace", path: file };
+        });
+      }
+    if (
+      !isRecord(task.impactClosure) ||
+      !Array.isArray(task.impactClosure.relatedTests)
+    )
+      continue;
+    for (const test of task.impactClosure.relatedTests) {
+      if (
+        !isRecord(test) ||
+        Object.hasOwn(test, "disposition") ||
+        !isValidRelativePath(test.path)
+      )
+        continue;
+      changed = true;
+      const writers = owners.get(test.path) ?? [];
+      if (writers.includes(task)) test.disposition = "current-task";
+      else if (writers.length === 0) test.disposition = "unaffected";
+      else if (writers.length === 1) {
+        test.disposition = "regression-task";
+        if (!Object.hasOwn(test, "regressionTaskId"))
+          test.regressionTaskId = writers[0]?.taskId;
+      } else
+        diagnostics.push({
+          code: "related-test-owner-ambiguous",
+          taskId,
+          field: "impactClosure.relatedTests",
+          path: test.path,
+        });
+    }
+  }
+  if (diagnostics.length)
+    throw new DesignPlanValidationError(
+      "delivery-plan-inference-ambiguous",
+      diagnostics,
+    );
+  return changed ? draft : value;
+}
+
 export function compileImplementPlan(
   draft: unknown,
   options: { consumerRoot: string; bindExecutionInputs?: boolean },
@@ -1273,6 +1419,7 @@ export function compileImplementPlan(
   try {
     if (options.bindExecutionInputs)
       draft = bindDraftVerificationInputs(options.consumerRoot, draft);
+    draft = preparePlanDraft(draft);
     const normalized = normalizeDraft(draft);
     const plan =
       isRecord(draft) && legacyPlans.get(draft) === JSON.stringify(draft)

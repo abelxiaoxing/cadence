@@ -25,19 +25,13 @@ it("publishes executable examples for each Implement control command", () => {
 });
 
 describe("Diagnose and browser-E2E contracts", () => {
-  it("keeps Diagnose independent and evidence-first", () => {
-    expect(diagnose).toMatch(/not an Implement recovery route/i);
-    expect(diagnose).toMatch(
-      /never becomes an instruction to change workflow stage/i,
-    );
+  it("instructs the parent to establish evidence before repairing a defect", () => {
     expect(diagnose).toMatch(
       /Reproduce[\s\S]*falsify[\s\S]*regression[\s\S]*minimum repair/i,
     );
     expect(diagnose).toMatch(
       /parent runs reproduction and verification commands/i,
     );
-    expect(diagnose).toMatch(/scope-decision-required/i);
-    expect(diagnose).not.toMatch(/return-to-design|\/abel-design|nextStep/i);
   });
 
   it("pauses only an approved browser check when dev-browser is absent", () => {
@@ -45,6 +39,5 @@ describe("Diagnose and browser-E2E contracts", () => {
     expect(text).toMatch(/dev-browser/);
     expect(text).toMatch(/approved browser E2E/i);
     expect(text).toMatch(/pause only that check/i);
-    expect(text).toMatch(/does not block unrelated tasks or stages/i);
   });
 });

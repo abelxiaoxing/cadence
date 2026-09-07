@@ -5,6 +5,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -26,9 +27,11 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
+import { runChildSession } from "../src/child-session.ts";
 import { registerWorkflowControl as register } from "../src/index";
-import { runtimeForProvider } from "../src/parent-provider";
+import { customPhaseRuntime } from "../src/parent-provider.ts";
 import { serializeTaskLedgerProjection } from "../src/task-ledger.ts";
+import { runtimeForProvider } from "./helpers/model-runtime.ts";
 
 type PayloadCallback = NonNullable<SimpleStreamOptions["onPayload"]>;
 
@@ -384,6 +387,79 @@ function designRunIdFromContext(context: Context): string {
 }
 
 describe("installed openai-responses child route", () => {
+  it.each([true, false])(
+    "runs a custom Responses child through real HTTP without parent auth (key=%s)",
+    async (keyed) => {
+      const received: {
+        body: Record<string, unknown>;
+        authorization?: string;
+      }[] = [];
+      const requestId = "custom-http-child";
+      const server = createServer(async (request, response) => {
+        let body = "";
+        for await (const chunk of request) body += chunk;
+        received.push({
+          body: JSON.parse(body),
+          authorization: request.headers.authorization,
+        });
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.end(responseEvents(JSON.stringify(evidence(requestId))));
+      });
+      await new Promise<void>((resolve) =>
+        server.listen(0, "127.0.0.1", resolve),
+      );
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new Error("missing server port");
+      try {
+        const phase = await customPhaseRuntime(
+          {
+            id: "custom",
+            kind: "custom",
+            fingerprint: "a".repeat(64),
+            url: `http://127.0.0.1:${address.port}/v1`,
+            model: "custom-model",
+            dialect: "openai-responses",
+            ...(keyed ? { apiKeyEnv: "TEST_CHILD_KEY" } : {}),
+            capabilities: {
+              roles: ["design-explorer"],
+              dialects: ["openai-responses"],
+              contextWindow: 128000,
+              maxTokens: 4096,
+            },
+          },
+          undefined,
+          { TEST_CHILD_KEY: "child-only-key" },
+        );
+        if (!phase.ok) throw new Error(phase.error);
+        const result = await runChildSession({
+          cwd: process.cwd(),
+          modelRuntime: phase.modelRuntime,
+          model: phase.model,
+          systemPrompt: "submit",
+          requestId,
+          role: "design-explorer",
+          output: "evidence",
+          roots: [process.cwd()],
+          timeoutMs: 5000,
+        });
+        expect(result.ok).toBe(true);
+        expect(received).toHaveLength(1);
+        expect(received[0].authorization).toBe(
+          keyed ? "Bearer child-only-key" : undefined,
+        );
+        expect(received[0].body.model).toBe("custom-model");
+        expect(received[0].body.max_output_tokens).toEqual(expect.any(Number));
+        expect(JSON.stringify(received[0].body)).not.toContain("execute");
+      } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
+    },
+  );
+
   it("[RESPONSES-FIRST-DISPATCH:capture-ready] serves the first legal Design packet in the Pi lifecycle", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "cadence-responses-design-"));
     roots.push(cwd);
@@ -539,7 +615,7 @@ describe("installed openai-responses child route", () => {
     }
   });
 
-  it("uses the captured original delegate once with fresh auth, five tools, transformed request data, and no resources or output cap", async () => {
+  it("uses the effective delegate with fresh auth and no captured host callbacks", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "cadence-responses-child-"));
     roots.push(cwd);
     writeFileSync(join(cwd, "sentinel.txt"), "unchanged\n");
@@ -686,7 +762,7 @@ describe("installed openai-responses child route", () => {
       onPayload: parentCallback,
     } as never);
     for await (const _event of parentStream) {
-      // Successful completion arms the exact model capture.
+      // A parent-only callback must not be captured by Cadence.
     }
     expect((await parentStream.result()).stopReason).toBe("stop");
     await Promise.resolve();
@@ -727,9 +803,9 @@ describe("installed openai-responses child route", () => {
     expect(result.ok).toBe(true);
     expect(result.result).toEqual(evidence(requestId));
 
-    expect(registry.registrations).toHaveLength(1);
+    expect(registry.registrations).toHaveLength(0);
     expect(parentPayloads).toHaveLength(1);
-    expect(parentCallbackKinds).toEqual(["parent", "child"]);
+    expect(parentCallbackKinds).toEqual(["parent"]);
     expect(registry.authCalls).toBe(1);
 
     const childCalls = delegateCalls.filter((call) => call.child);
@@ -756,12 +832,12 @@ describe("installed openai-responses child route", () => {
       "Bearer fresh-child-responses-key",
     );
     expect(sent.headers.get("x-fresh-auth")).toBe("child");
-    expect(sent.body.instructions).toBe(`compat-instructions:${requestId}`);
-    expect((sent.body.input as unknown[])[0]).toEqual({
+    expect(sent.body.instructions).not.toBe(`compat-instructions:${requestId}`);
+    expect((sent.body.input as unknown[])[0]).not.toEqual({
       role: "developer",
       content: `compat-input:${requestId}`,
     });
-    expect(sent.body).not.toHaveProperty("max_output_tokens");
+    expect(sent.body.max_output_tokens).toEqual(expect.any(Number));
     expect(sent.body).not.toHaveProperty("resources");
     expect(
       (sent.body.tools as Array<{ name: string }>).map((tool) => tool.name),

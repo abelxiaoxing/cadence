@@ -1,13 +1,20 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
-import type { AssistantMessage, Model, Usage } from "@earendil-works/pi-ai";
 import {
-  createAgentSession,
-  defineTool,
-  type ModelRuntime,
-  SessionManager,
-  SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+  type AssistantMessage,
+  type Context,
+  type Model,
+  type Usage,
+  validateToolArguments,
+} from "@earendil-works/pi-ai";
+import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import {
+  abortable,
+  type ChildModelClient,
+  disposeChildTransport,
+  requestChildTurn,
+} from "./child-model.ts";
 import type {
   ChildFailure,
   DiffResult,
@@ -15,7 +22,6 @@ import type {
   IdentityDimension,
   SafeFailureDetails,
 } from "./contracts.ts";
-import { EmptyResourceLoader } from "./empty-resource-loader.ts";
 import {
   createScopedTools,
   type Observation,
@@ -28,40 +34,9 @@ import {
   createCandidateArtifactTool,
   createStructuredPatchTool,
   createSubmitTool,
-  type FinalCategory,
   type SubmitClassification,
 } from "./submit-tool.ts";
 import { serializeTaskLedgerProjection } from "./task-ledger.ts";
-
-function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  signal.throwIfAborted();
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => {
-      signal.removeEventListener("abort", onAbort);
-      reject(signal.reason);
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    promise
-      .then(resolve, reject)
-      .finally(() => signal.removeEventListener("abort", onAbort));
-  });
-}
-
-const ABORT_SETTLE_GRACE_MS = 250;
-
-async function settleAbort(promise: Promise<void>): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      promise.catch(() => undefined),
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, ABORT_SETTLE_GRACE_MS);
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
 
 const ZERO_USAGE: Usage = {
   input: 0,
@@ -189,26 +164,10 @@ function finalDeliveryContent(message: AssistantMessage | undefined) {
   );
 }
 
-function hasStructuralSubmit(message: AssistantMessage | undefined) {
-  return finalDeliveryContent(message).some(
-    (content) =>
-      content.type === "toolCall" && content.name === "abel_submit_result",
-  );
-}
-
-function structuralSubmitCount(message: AssistantMessage | undefined) {
-  return finalDeliveryContent(message).filter(
-    (content) =>
-      content.type === "toolCall" && content.name === "abel_submit_result",
-  ).length;
-}
-
 function safeChildError(failure: ChildFailure): string {
   switch (failure.kind) {
     case "environment":
-      return failure.code === "child-session-create-failed"
-        ? "child session creation failed"
-        : "child environment unavailable";
+      return "child environment unavailable";
     case "transport":
       switch (failure.code) {
         case "child-timeout":
@@ -291,7 +250,7 @@ export type ChildSessionResult =
 
 export async function runChildSession(input: {
   cwd: string;
-  modelRuntime: ModelRuntime;
+  modelRuntime: ChildModelClient;
   model: Model<string>;
   systemPrompt: string;
   requestId: string;
@@ -303,7 +262,6 @@ export async function runChildSession(input: {
   allowedPaths?: string[];
   timeoutMs: number;
   signal?: AbortSignal;
-  failureOverride?: () => ChildFailure | undefined;
   ledgerProjection?: unknown;
   captureObservations?: boolean;
   candidateArtifact?: CandidateArtifactSubmission;
@@ -315,7 +273,6 @@ export async function runChildSession(input: {
   onStreamStart?: () => void;
   onStreamProgress?: () => void;
 }): Promise<ChildSessionResult> {
-  const candidateProtocol = input.candidateArtifact !== undefined;
   const submit = input.candidateArtifact
     ? createCandidateArtifactTool(input.candidateArtifact)
     : input.structuredPatch
@@ -375,303 +332,278 @@ export async function runChildSession(input: {
     timedOut = true;
     abort.abort(new Error("child phase timeout"));
   }, input.timeoutMs);
-  let session:
-    | Awaited<ReturnType<typeof createAgentSession>>["session"]
-    | undefined;
-  let unsubscribe: (() => void) | undefined;
-  let abortSettlement: Promise<void> | undefined;
+  const context: Context = {
+    systemPrompt: effectivePrompt,
+    messages: [
+      {
+        role: "user",
+        content: "Complete the bounded task and submit its result.",
+        timestamp: Date.now(),
+      },
+    ],
+    tools: customTools.map(({ name, description, parameters }) => ({
+      name,
+      description,
+      parameters,
+    })),
+  };
+  const sessionId = randomUUID();
   let assistantSequence = 0;
+  let structuralAttempts = 0;
+  let last: AssistantMessage | undefined;
+  let preflightRejected = false;
   let streamStarted = false;
-  const notifyStreamStart = () => {
+  let reminderUsed = false;
+  const observeStart = () => {
     if (streamStarted) return;
     streamStarted = true;
     try {
       input.onStreamStart?.();
     } catch {
-      // Stream observation cannot influence child execution.
+      /* observation only */
     }
   };
-  const notifyStreamProgress = () => {
-    notifyStreamStart();
+  const observeProgress = () => {
+    observeStart();
     try {
       input.onStreamProgress?.();
     } catch {
-      // Stream observation cannot influence child execution.
+      /* observation only */
     }
   };
-  const disposeOnce = () => {
-    if (session) {
-      session.dispose();
-      disposeCount++;
-      session = undefined;
-    }
-  };
-  const classifySession = (): SubmitClassification => {
-    const assistants =
-      session?.messages.filter((m) => m.role === "assistant") ?? [];
-    const last = assistants.at(-1);
-    const structuralAttempts = assistants.reduce(
-      (count, message) => count + structuralSubmitCount(message),
-      0,
-    );
-    let finalCategory: FinalCategory;
-    if (submit.getResult() !== undefined) {
-      finalCategory =
-        structuralAttempts > 1 ? "multiple-submit" : "single-submit-only";
-    } else if (!last) {
-      finalCategory = "no-final-assistant";
-    } else {
-      const content = finalDeliveryContent(last);
-      finalCategory =
-        content.length === 1 && content[0]?.type === "text"
-          ? "text-only"
-          : "mixed";
-    }
-    return {
-      finalCategory,
-      attempts: submit.getAttempts(),
-      schema: submit.getSchema(),
-      identity: submit.getIdentity(),
-    };
-  };
-  const transportFailure = ():
-    | Extract<ChildFailure, { kind: "transport" }>
-    | undefined => {
-    const final = session?.messages
-      .filter((message) => message.role === "assistant")
-      .at(-1);
-    if (final === undefined) {
-      return {
-        kind: "transport",
-        code: "child-no-final-assistant",
-        stage: "child-finalization",
-      };
-    }
-    if (final.stopReason === "error") {
-      return submit.getAttempts() === 0 &&
-        !final.content.some(
-          (content) =>
-            content.type === "toolCall" &&
-            content.name === "abel_submit_result",
-        )
-        ? {
-            kind: "transport",
-            code: "child-provider-stream-error",
-            stage: "child-provider-stream",
-          }
-        : undefined;
-    }
-    if (final.stopReason === "aborted") {
-      return {
-        kind: "transport",
-        code: "child-provider-stream-aborted",
-        stage: "child-provider-stream",
-      };
-    }
-    return undefined;
-  };
-  const noStructuralSubmit = (): ChildFailure => {
-    const final = session?.messages
-      .filter((message) => message.role === "assistant")
-      .at(-1);
-    return submit.getAttempts() === 0 && !hasStructuralSubmit(final)
-      ? {
-          kind: "artifact",
-          code: "child-no-structural-submit",
-          stage: "child-finalization",
-        }
-      : {
-          kind: "artifact",
-          code: "invalid-structural-result",
-          stage: "structural-submit",
-        };
-  };
+  const classification = (): SubmitClassification => ({
+    finalCategory:
+      submit.getResult() !== undefined
+        ? structuralAttempts > 1
+          ? "multiple-submit"
+          : "single-submit-only"
+        : !last
+          ? "no-final-assistant"
+          : finalDeliveryContent(last).length === 1 &&
+              finalDeliveryContent(last)[0]?.type === "text"
+            ? "text-only"
+            : "mixed",
+    attempts: structuralAttempts,
+    schema: preflightRejected ? "invalid" : submit.getSchema(),
+    identity: submit.getIdentity(),
+  });
+  let failure: ChildFailure | undefined;
+  const missingResult = (): ChildFailure => ({
+    kind: "artifact",
+    code:
+      structuralAttempts === 0
+        ? "child-no-structural-submit"
+        : "invalid-structural-result",
+    stage:
+      structuralAttempts === 0 ? "child-finalization" : "structural-submit",
+  });
   try {
-    abort.signal.throwIfAborted();
-    const creation = createAgentSession({
-      cwd: input.cwd,
-      modelRuntime: input.modelRuntime,
-      model: input.model,
-      thinkingLevel: "low",
-      tools: toolNames,
-      customTools,
-      resourceLoader: new EmptyResourceLoader(effectivePrompt),
-      sessionManager: SessionManager.inMemory(input.cwd),
-      settingsManager: SettingsManager.inMemory({
-        compaction: { enabled: false },
-        retry: { enabled: false, maxRetries: 0, provider: { maxRetries: 0 } },
-      }),
-    });
-    try {
-      ({ session } = await abortable(creation, abort.signal));
-    } catch (error) {
-      void creation
-        .then(({ session: lateSession }) => lateSession.dispose())
-        .catch(() => undefined);
-      throw error;
-    }
-    const childAgent = session.agent;
-    if (childAgent) {
-      const previousShouldStopAfterTurn = childAgent.shouldStopAfterTurn;
-      childAgent.shouldStopAfterTurn = async (turn, signal) => {
-        if (submit.getResult() !== undefined) {
-          return true;
+    for (;;) {
+      abort.signal.throwIfAborted();
+      const message = await requestChildTurn({
+        client: input.modelRuntime,
+        model: input.model,
+        context,
+        signal: abort.signal,
+        sessionId,
+        onStart: observeStart,
+        onProgress: observeProgress,
+        onMessage: (message) => {
+          usage.add(`assistant:${assistantSequence++}`, message.usage);
+        },
+      });
+      last = message;
+      if (!message) {
+        failure = {
+          kind: "transport",
+          code: "child-no-final-assistant",
+          stage: "child-finalization",
+        };
+        break;
+      }
+      context.messages.push(message);
+      // Only complete, normal turns may execute tools, including terminal submit.
+      if (message.stopReason === "error" || message.stopReason === "aborted") {
+        failure = {
+          kind: "transport",
+          code:
+            message.stopReason === "error"
+              ? "child-provider-stream-error"
+              : "child-provider-stream-aborted",
+          stage: "child-provider-stream",
+        };
+        break;
+      }
+      if (message.stopReason !== "toolUse" && message.stopReason !== "stop") {
+        failure = missingResult();
+        break;
+      }
+      const calls = message.content.filter((part) => part.type === "toolCall");
+      if (calls.length === 0) {
+        if (
+          !reminderUsed &&
+          structuralAttempts === 0 &&
+          message.stopReason === "stop" &&
+          finalDeliveryContent(message).length > 0 &&
+          finalDeliveryContent(message).every((part) => part.type === "text")
+        ) {
+          reminderUsed = true;
+          context.messages.push({
+            role: "user",
+            timestamp: Date.now(),
+            content:
+              "No result has been accepted. Submit existing findings through abel_submit_result, not prose. Do not repeat investigation or expand scope. Keep evidence gaps explicit; use context-request if available and needed. This is the only missing-submit reminder; the original deadline still applies.",
+          });
+          continue;
         }
-        const structuralAttempts =
-          session?.messages
-            .filter((message) => message.role === "assistant")
-            .reduce(
-              (count, message) => count + structuralSubmitCount(message),
-              0,
-            ) ?? 0;
-        if (structuralAttempts >= 2) return true;
-        return (await previousShouldStopAfterTurn?.(turn, signal)) ?? false;
-      };
-    }
-    unsubscribe = session.subscribe((event) => {
-      if (
-        event.type === "message_start" &&
-        event.message.role === "assistant"
-      ) {
-        notifyStreamStart();
+        failure = missingResult();
+        break;
       }
-      if (
-        event.type === "message_update" &&
-        event.message.role === "assistant"
-      ) {
-        notifyStreamProgress();
-      }
-      if (event.type === "message_end" && event.message.role === "assistant") {
-        usage.add(`assistant:${assistantSequence++}`, event.message.usage);
-      }
-    });
-    const startAbortSettlement = () => {
-      if (session && !abortSettlement) abortSettlement = session.abort();
-      return abortSettlement;
-    };
-    const onAbort = () => {
-      void startAbortSettlement()?.catch(() => undefined);
-    };
-    abort.signal.addEventListener("abort", onAbort, { once: true });
-    try {
-      if (abort.signal.aborted) {
-        onAbort();
-        throw abort.signal.reason;
-      }
-      await Promise.race([
-        session.prompt(effectivePrompt, { expandPromptTemplates: false }),
-        new Promise<never>((_, reject) =>
-          abort.signal.addEventListener(
-            "abort",
-            () => reject(abort.signal.reason),
-            { once: true },
-          ),
-        ),
-      ]);
-    } finally {
-      abort.signal.removeEventListener("abort", onAbort);
-    }
-    const result = submit.getResult();
-    const attempts = submit.getAttempts();
-    const classification = classifySession();
-    const terminalSubmitFailure = submit.getFailure();
-    const candidateComplete =
-      candidateProtocol &&
-      result !== undefined &&
-      (result.kind === "sealed-candidate" || result.kind === "context-request");
-    if (
-      !result ||
-      terminalSubmitFailure !== undefined ||
-      (candidateProtocol && !candidateComplete)
-    ) {
-      const failure = withSubmitDetails(
-        terminalSubmitFailure ??
-          input.failureOverride?.() ??
-          transportFailure() ??
-          noStructuralSubmit(),
-        classification,
-      );
-      const isTransport = failure.kind === "transport";
-      disposeOnce();
-      return {
-        ok: false,
-        error: safeChildError(failure),
-        failure,
-        failureKind: "failed",
-        transportFailure: isTransport,
-        disposeCount,
-        usage: usage.total(),
-        classification,
-        ...observationMetadata(),
-      };
-    }
-    // The trusted submit tool already validates and seals the one accepted
-    // result. Harmless text or read-only calls do not alter that admission;
-    // another terminal submission does.
-    disposeOnce();
-    return {
-      ok: true,
-      result,
-      toolNames,
-      submitCount: attempts,
-      disposeCount,
-      usage: usage.total(),
-      classification,
-      ...observationMetadata(),
-    };
-  } catch (error) {
-    if (abort.signal.aborted && session) {
-      const settlement = abortSettlement ?? session.abort();
-      abortSettlement = settlement;
-      await settleAbort(settlement);
-    }
-    const failureKind: ChildFailureKind = timedOut
-      ? "timed-out"
-      : input.signal?.aborted === true
-        ? "cancelled"
-        : "failed";
-    const classification = classifySession();
-    const failure: ChildFailure = withSubmitDetails(
-      timedOut
-        ? {
-            kind: "transport",
-            code: "child-timeout",
-            stage: "child-timeout",
+      // Source-order execution is a Cadence contract, not Pi's batch scheduling.
+      // Process the batch even after acceptance to reject a duplicate terminal
+      // submission while still allowing harmless scoped reads in that batch.
+      for (const call of calls) {
+        abort.signal.throwIfAborted();
+        const isSubmit = call.name === "abel_submit_result";
+        if (isSubmit) {
+          structuralAttempts++;
+          if (structuralAttempts > 2) {
+            failure = {
+              kind: "artifact",
+              code: "invalid-structural-result",
+              stage: "structural-submit",
+            };
+            break;
           }
-        : failureKind === "cancelled"
-          ? { kind: "cancelled", code: "cancelled" }
-          : session === undefined
-            ? {
-                kind: "environment",
-                code: "child-session-create-failed",
-                stage: "child-session-create",
-              }
-            : (submit.getFailure() ??
-              input.failureOverride?.() ??
-              transportFailure() ??
-              noStructuralSubmit()),
-      classification,
-    );
-    const isTransport = failure.kind === "transport";
-    disposeOnce();
-    return {
-      ok: false,
-      error:
-        failure.kind === "cancelled" && error instanceof Error
-          ? error.message
-          : safeChildError(failure),
-      failure,
-      failureKind,
-      transportFailure: isTransport,
-      disposeCount,
-      usage: usage.total(),
-      classification,
-      ...observationMetadata(),
+          if (submit.getResult() !== undefined) {
+            preflightRejected = true;
+            failure = {
+              kind: "artifact",
+              code: "invalid-structural-result",
+              stage: "structural-submit",
+            };
+            break;
+          }
+        }
+        const tool = customTools.find((tool) => tool.name === call.name);
+        let content: Array<{ type: "text"; text: string }>;
+        let isError = false;
+        let validated = false;
+        try {
+          if (!tool) throw new Error("unknown scoped tool");
+          const params = validateToolArguments(tool, call);
+          validated = true;
+          if (isSubmit) preflightRejected = false;
+          const result = await abortable(
+            tool.execute(
+              call.id,
+              params as never,
+              abort.signal,
+              undefined,
+              {} as never,
+            ),
+            abort.signal,
+          );
+          content = result.content as typeof content;
+        } catch (error) {
+          abort.signal.throwIfAborted();
+          isError = true;
+          if (isSubmit && !validated) preflightRejected = true;
+          content = [
+            {
+              type: "text",
+              text:
+                error instanceof Error
+                  ? error.message
+                  : "tool execution failed",
+            },
+          ];
+        }
+        context.messages.push({
+          role: "toolResult",
+          toolCallId: call.id,
+          toolName: call.name,
+          content,
+          isError,
+          timestamp: Date.now(),
+        });
+      }
+      if (failure) break;
+      if (submit.getResult() !== undefined) break;
+      if (
+        structuralAttempts >= 2 ||
+        submit.getFailure()?.kind === "result-limit"
+      ) {
+        failure = missingResult();
+        break;
+      }
+    }
+  } catch {
+    failure = {
+      kind: "transport",
+      code: "child-provider-stream-error",
+      stage: "child-provider-stream",
     };
   } finally {
     clearTimeout(timer);
     input.signal?.removeEventListener("abort", forwardCancellation);
-    unsubscribe?.();
-    disposeOnce();
+    // Dispose our conversation and only this child's provider session resources.
+    context.messages.length = 0;
+    try {
+      disposeChildTransport(sessionId);
+    } catch {
+      failure ??= {
+        kind: "environment",
+        code: "sandbox-runtime-unavailable",
+        stage: "child-finalization",
+      };
+    }
+    disposeCount++;
   }
+  const result = submit.getResult();
+  // All exit paths share the same priority, including thrown/empty streams.
+  // A later transport failure cannot erase a rejected submission. Preflight
+  // rejection never reaches execute, so retain it independently of the tool.
+  // A valid correction clears both the tool failure and preflightRejected.
+  const terminalFailure: ChildFailure | undefined = timedOut
+    ? { kind: "transport", code: "child-timeout", stage: "child-timeout" }
+    : input.signal?.aborted
+      ? { kind: "cancelled", code: "cancelled" }
+      : (submit.getFailure() ??
+        (preflightRejected ? missingResult() : undefined) ??
+        failure ??
+        (!result ? missingResult() : undefined));
+  const projection = classification();
+  if (terminalFailure) {
+    const typed = withSubmitDetails(terminalFailure, projection);
+    return {
+      ok: false,
+      error:
+        typed.kind === "cancelled" && input.signal?.reason instanceof Error
+          ? input.signal.reason.message
+          : safeChildError(typed),
+      failure: typed,
+      failureKind: timedOut
+        ? "timed-out"
+        : typed.kind === "cancelled"
+          ? "cancelled"
+          : "failed",
+      transportFailure: typed.kind === "transport",
+      disposeCount,
+      usage: usage.total(),
+      classification: projection,
+      ...observationMetadata(),
+    };
+  }
+  if (!result) throw new Error("child-result-invariant");
+  return {
+    ok: true,
+    result,
+    toolNames,
+    submitCount: structuralAttempts,
+    disposeCount,
+    usage: usage.total(),
+    classification: projection,
+    ...observationMetadata(),
+  };
 }

@@ -158,6 +158,20 @@ Compiling identical canonical bytes after unchanged decisions preserves the exis
 Derive HOW from Gate A plus repository evidence.
 Ask only unresolved substantive technical decisions, then build a complete task DAG with stable Requirement → Scenario → Verification → Task references.
 
+Start from the package's [single-task PlanDraft example](../config/plan-draft.example.json), resolved relative to this prompt's installed path.
+It describes a small Node consumer with `package.json`, `src/add.mjs` exporting `add`, and one existing `test/add.test.mjs` that uses Node assertions and currently covers `add(0, 0) === 0`.
+The Red phase preserves that assertion and adds `add(2, 3) === 5` with the failure marker `[ADD:positive-integers]`; Green repairs the function.
+The example's nested `changeContract` also shows the structured Gate A shape.
+Replace its goal, acceptance, paths, context, impact evidence, and verification commands with observed repository facts before approval; its sample evidence is not evidence about the current project.
+Use the project's actual full suite when adapting this single-test example.
+The control plane inherits the approved `changeContract`, so the draft may omit that duplicate object.
+Omit `tracking` to generate parent-owned `tasks.md` metadata from the task ids; an explicitly supplied block must match those ids and the fixed tracking policy.
+Omit phase `verificationInputs`: the compiler derives the exact paths from each verification contract and binds them to a unique declared output or an existing workspace file.
+Keep supporting sources and fixtures in `read`; input derivation never adds read/write paths, outputs, or dependencies.
+Omit each `relatedTests` entry's `disposition` and `regressionTaskId` to derive ownership from task writes; retain its observed `path` and `evidence`.
+An ambiguous producer or test owner requires an explicit correction; explicitly supplied fields are checked, never silently replaced.
+Scope, verification, recovery limits, and AGENTS operations remain explicit.
+
 Each task must seal:
 
 - stable id, objective, exact dependencies and edge reasons;
@@ -174,6 +188,9 @@ This task-wide read authority is part of the proposal, not an ad hoc escalation 
 Keep tasks small enough for one complete patch using compact exact replacements, and separate independent outputs during planning.
 
 Impact closure must name affected existing tests and fixtures; a suite made only from newly added tests is insufficient.
+In `impactClosure.relatedTests`, `current-task` means this task edits that test: its path must appear in a phase's `write` set.
+Use `regression-task` with `regressionTaskId` when another planned task owns the edit; use `unaffected` with evidence when an existing test is preserved without edits, even if it remains in `affectedSuite`.
+Do not expand write sets merely to satisfy a disposition label.
 For public UI or API work, seal the relevant route authorization, page state, API response and contract, public HTML/template/theme behavior, and an approved browser E2E check when those surfaces are affected.
 
 The plan admits only shell-free `vitest`, `package-script`, `static-check`, or ordered `steps` contracts.
@@ -188,7 +205,8 @@ Before mutation-owning compilation, use the read-only typed preflight; it valida
 {"action":"design","request":{"operation":"validate-plan-draft","runId":"<run-id>"}}
 ```
 
-If preflight fails, use its safe structured diagnostics (`code`, and when applicable `taskId`, `phase`, `field`, `category`, `owner`, `verificationId`, or `outputId`) to repair the exact boundary.
+If preflight fails, correct the returned diagnostic batch using `field`, `path`, `expectedPaths`, `actualPaths`, and code-owned `hint` where available.
+Path lists marked `pathsTruncated` are partial; inspect only the identified boundary when more detail is needed.
 Do not bisect the draft blindly or repeat an unchanged validation/finalization request.
 After preflight succeeds, invoke code-owned compilation:
 

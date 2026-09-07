@@ -18,63 +18,14 @@ import {
   validateEvidenceResult,
 } from "./contracts.ts";
 import {
+  completeEvidenceDraft,
+  evidenceDraftSchema,
+} from "./evidence-draft.ts";
+import {
   type BeginCandidateInput,
   TASK_LEDGER_LIMITS,
   type TaskLedger,
 } from "./task-ledger.ts";
-
-const compactEvidenceSchema = Type.Object({
-  id: Type.String(),
-  role: Type.String(),
-  kind: Type.Literal("evidence"),
-  conclusions: Type.Array(Type.String()),
-  citations: Type.Array(
-    Type.Object({ path: Type.String(), lines: Type.String() }),
-  ),
-  constraints: Type.Array(Type.String()),
-  dependencies: Type.Array(Type.String()),
-  risks: Type.Array(Type.String()),
-  blockingQuestions: Type.Array(Type.String()),
-  hints: Type.Object({
-    writeSet: Type.Array(Type.String()),
-    verification: Type.String(),
-    agentsImpact: Type.String(),
-  }),
-});
-
-const designEvidenceSchema = Type.Object(
-  {
-    id: Type.String(),
-    role: Type.Literal("design-explorer"),
-    kind: Type.Literal("evidence"),
-    packet_id: Type.String(),
-    module_name: Type.String(),
-    scope: Type.Array(Type.String()),
-    files_read: Type.Array(Type.String()),
-    evidence: Type.Array(
-      Type.Object(
-        {
-          claim: Type.String(),
-          path: Type.String(),
-          line_start: Type.Integer({ minimum: 1 }),
-          line_end: Type.Integer({ minimum: 1 }),
-        },
-        { additionalProperties: false },
-      ),
-    ),
-    existing_structures: Type.Array(Type.String()),
-    existing_conventions: Type.Array(Type.String()),
-    constraints_discovered: Type.Array(Type.String()),
-    open_questions: Type.Array(Type.String()),
-    dependencies: Type.Array(Type.String()),
-    write_set_hints: Type.Array(Type.String()),
-    validation_hints: Type.Array(Type.String()),
-    agents_impact_hints: Type.Array(Type.String()),
-    risks: Type.Array(Type.String()),
-    success_criteria_hints: Type.Array(Type.String()),
-  },
-  { additionalProperties: false },
-);
 
 const diffSchema = Type.Object({
   id: Type.String(),
@@ -881,13 +832,11 @@ export function createSubmitTool(input: {
     name: "abel_submit_result",
     label: "Submit Abel Result",
     description:
-      "Submit the one final structured Abel evidence or complete unified-diff result.",
+      "Submit one accepted final result. Evidence identity and omitted advisory fields are completed by this tool; keep citations, constraints, risks, and open questions explicit. After a rejection, correct once in this same session. Brief accompanying text is harmless.",
     executionMode: "sequential",
     parameters:
       input.output === "evidence"
-        ? input.role === "design-explorer"
-          ? designEvidenceSchema
-          : compactEvidenceSchema
+        ? evidenceDraftSchema(input.requestId, input.role)
         : diffSchema,
     async execute(_toolCallId, params) {
       attempts++;
@@ -916,7 +865,11 @@ export function createSubmitTool(input: {
         phase: true,
       };
       failure = undefined;
-      const value = params as unknown as Record<string, unknown>;
+      const value = (
+        input.output === "evidence"
+          ? completeEvidenceDraft(params, input.requestId, input.role)
+          : params
+      ) as Record<string, unknown>;
       if (value === null || typeof value !== "object") {
         identity.request = false;
         identity.role = false;
@@ -963,7 +916,15 @@ export function createSubmitTool(input: {
               stage: "structural-submit",
             });
         throw new Error(
-          validation.reason ?? "submitted result identity does not match",
+          JSON.stringify({
+            code: "code" in failure ? failure.code : failure.kind,
+            reason:
+              validation.reason ?? "submitted result identity does not match",
+            identityMismatch: Object.entries(identity)
+              .filter(([, matches]) => !matches)
+              .map(([field]) => field),
+            remainingCorrections: Math.max(0, 2 - attempts),
+          }),
         );
       }
       submitted = structuredClone(value) as unknown as

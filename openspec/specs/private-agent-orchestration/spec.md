@@ -72,6 +72,7 @@ The package SHALL expose no general Subagent command, public orchestration API, 
 ### Requirement: Sealed structured artifact delivery
 
 Design and diagnosis Agents SHALL return structured evidence with originating identity, bounded scope, concise claims, exact citations, constraints, dependencies, risks, open questions, and implementation-boundary hints.
+The authoring tool MAY complete omitted code-owned identity and advisory fields before strict result validation; explicit incorrect values SHALL be rejected, and citations, constraints, risks and open questions SHALL remain explicit.
 Implementation Workers SHALL make one terminal submission containing either a complete ordered structured patch or a typed request for context, task reshaping, or capacity handling.
 Context refs SHALL distinguish requested paths with read or write access, source citations with path and line, and contract or diagnostic refs; only normalized requested paths SHALL participate in path-boundary computation.
 One structurally rejected submission MAY be corrected once inside the same disposable child session; a second rejection SHALL end that session, and only one accepted terminal result may survive.
@@ -267,9 +268,11 @@ A successful completion SHALL expose the entire approved cumulative result; stal
 ### Requirement: Durable run and ephemeral child lifecycle
 
 Run journals, plan bindings, task ledgers, sealed artifacts, cumulative workspace facts, retry classifications, and terminal cleanup facts SHALL follow the private durable control-plane contract.
-Child sessions, Provider request objects, parent payload capture, live Scheduler promises, AbortControllers, and active UI widgets SHALL remain process-local and disposable.
-Each child session SHALL use package-owned prompts and scoped tools with no external resource discovery, disabled Provider-managed retry, and cancellation forwarded through creation, prompting, and disposal.
-Inherited Provider requests SHALL preserve effective parent payload composition; custom endpoint requests SHALL use only their selected configured route behavior.
+Private child conversations, Provider request objects, live Scheduler promises, AbortControllers, and active UI widgets SHALL remain process-local and disposable.
+Each child execution SHALL use a Cadence-owned explicit model/tool loop with package-owned prompts, no external resource discovery, disabled Provider-managed retry, and cancellation forwarded through authentication, requests, tool execution, and private conversation disposal.
+The loop SHALL NOT create a Pi AgentSession, replace Agent termination hooks, or depend on session-event history ordering. It SHALL execute only tool calls from complete normal responses, count structural attempts before argument validation, allow at most one missing-submit reminder, and retain the original deadline.
+Inherited Provider requests SHALL snapshot the effective Provider, selected model, and fresh authentication for the admitted attempt without mutating the host registry, requiring a parent request, or capturing host-session payload callbacks.
+Provider-owned stream behavior and model configuration SHALL remain effective; host-session request callbacks SHALL NOT be implicitly inherited. Custom endpoint requests SHALL use only their selected configured route behavior. Output bounds SHALL follow the declared model/Provider contract without implicit payload cap removal.
 Stage exit or process shutdown SHALL cancel and dispose live resources, durably mark uncommitted operations interrupted, and leave paused runs recoverable.
 Nested model usage SHALL be aggregated exactly once into the owning operation facts.
 Completion or discard SHALL idempotently clean private code and artifact state without deleting unrelated runs.

@@ -9,6 +9,10 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
+import {
+  projectDesignDiagnostic,
+  type SafeDesignDiagnostic,
+} from "./design-diagnostics.ts";
 import type {
   PacketActivityEvent,
   PacketActivityObserver,
@@ -224,7 +228,7 @@ export function sanitizeFailureReason(value: unknown, maxLength = 240): string {
 function safeDesignFailure(value: unknown): {
   operation: string;
   code: string;
-  diagnostics: Array<Record<string, string>>;
+  diagnostics: SafeDesignDiagnostic[];
 } | null {
   const failure = asRecord(value);
   if (
@@ -237,23 +241,9 @@ function safeDesignFailure(value: unknown): {
   ) {
     return null;
   }
-  const diagnostics = failure.diagnostics.flatMap((candidate) => {
-    const record = asRecord(candidate);
-    if (
-      !record ||
-      typeof record.code !== "string" ||
-      !SAFE_DESIGN_DETAIL_VALUE.test(record.code)
-    ) {
-      return [];
-    }
-    return [
-      Object.fromEntries(
-        Object.entries(record).filter(
-          ([, entry]) =>
-            typeof entry === "string" && SAFE_DESIGN_DETAIL_VALUE.test(entry),
-        ),
-      ) as Record<string, string>,
-    ];
+  const diagnostics = failure.diagnostics.slice(0, 64).flatMap((candidate) => {
+    const diagnostic = projectDesignDiagnostic(candidate);
+    return diagnostic ? [diagnostic] : [];
   });
   return {
     operation: failure.operation,
@@ -286,7 +276,10 @@ function renderDesignFailure(
   const lines = failure.diagnostics.map((diagnostic) => {
     const details = Object.entries(diagnostic)
       .filter(([key]) => key !== "code")
-      .map(([key, value]) => `${key}=${value}`)
+      .map(
+        ([key, value]) =>
+          `${key}=${Array.isArray(value) ? JSON.stringify(value) : value}`,
+      )
       .join(" · ");
     return `  - ${diagnostic.code}${details ? ` · ${details}` : ""}`;
   });

@@ -147,7 +147,7 @@ export function compileCandidatePatch(input: {
     return state;
   };
 
-  for (const operation of input.operations) {
+  for (const [operationIndex, operation] of input.operations.entries()) {
     if (
       !operation ||
       typeof operation !== "object" ||
@@ -166,20 +166,40 @@ export function compileCandidatePatch(input: {
           throw new Error("candidate-patch-replace-invalid");
         }
         const relative = requirePath(operation.path);
+        const reject = (reason: string, hint: string): never => {
+          throw new Error(
+            JSON.stringify({
+              code: "candidate-patch-replace-invalid",
+              operationIndex,
+              ...(relative.length <= 512 && !/[\p{Cc}\p{Cf}]/u.test(relative)
+                ? { path: relative }
+                : {}),
+              reason,
+              hint,
+            }),
+          );
+        };
         if (!writePaths.has(relative)) {
-          throw new Error("candidate-patch-replace-invalid");
+          reject(
+            "path-not-authorized",
+            "Use only approved write paths; request context instead of widening authority.",
+          );
         }
         const state = load(relative);
-        if (
-          state.current === null ||
-          occurrenceCount(state.current, operation.oldText) !== 1
-        ) {
-          throw new Error("candidate-patch-replace-invalid");
+        const current =
+          state.current ??
+          reject(
+            "file-not-found",
+            "Use create for a new approved file, or correct the path.",
+          );
+        const occurrences = occurrenceCount(current, operation.oldText);
+        if (occurrences !== 1) {
+          reject(
+            occurrences === 0 ? "old-text-not-found" : "old-text-ambiguous",
+            "Read the approved file and supply exact unique oldText, including enough surrounding context. Operations are applied in order.",
+          );
         }
-        state.current = state.current.replace(
-          operation.oldText,
-          operation.newText,
-        );
+        state.current = current.replace(operation.oldText, operation.newText);
         break;
       }
       case "rewrite": {

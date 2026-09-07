@@ -38,48 +38,84 @@ let accumulatedTokens = 0;
 let accumulatedCost = 0;
 const controller = new AbortController();
 let oracle;
+let evaluation;
+let closingHost;
 const pending = new Map();
 let commandId = 0;
 
 function send(type, rest = {}) {
+  const host = child;
+  if (
+    !host ||
+    host.exitCode !== null ||
+    host.stdin.destroyed ||
+    host.stdin.writableEnded
+  )
+    return Promise.reject(new Error("evaluation-host-stopped"));
   const id = String(++commandId);
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
+    const settle = (callback, value) => {
+      if (!pending.has(id)) return;
       pending.delete(id);
-      reject(new Error("evaluation-rpc-timeout"));
-    }, 15000);
-    pending.set(id, (response) => {
       clearTimeout(timer);
-      resolve(response);
+      callback(value);
+    };
+    const request = {
+      host,
+      resolve: (response) => settle(resolve, response),
+      reject: (error) => settle(reject, error),
+    };
+    const timer = setTimeout(
+      () => request.reject(new Error("evaluation-rpc-timeout")),
+      15000,
+    );
+    pending.set(id, request);
+    host.stdin.write(`${JSON.stringify({ id, type, ...rest })}\n`, (error) => {
+      if (error) request.reject(new Error("evaluation-host-stopped"));
     });
-    child.stdin.write(`${JSON.stringify({ id, type, ...rest })}\n`);
   });
 }
 async function closeHost() {
+  if (closingHost) return closingHost;
   if (!child) return;
   const current = child;
-  try {
-    await send("abort");
-  } catch {
-    /* Still terminate and join on protocol failure. */
-  }
-  current.stdin.end();
-  const terminate = (signal) => {
+  const stopped = stop;
+  closingHost = (async () => {
     try {
-      if (process.platform === "win32") current.kill(signal);
-      else process.kill(-current.pid, signal);
+      await send("abort");
     } catch {
-      current.kill(signal);
+      /* Still terminate and join on protocol failure. */
     }
-  };
-  terminate("SIGTERM");
-  const force = setTimeout(() => terminate("SIGKILL"), 1500);
-  await stop;
-  clearTimeout(force);
-  terminate("SIGKILL");
-  child = undefined;
+    try {
+      // Collect each host once, including completed calls before a deadline.
+      await statistics();
+    } catch {
+      /* A stopped host cannot report additional usage. */
+    }
+    current.stdin.end();
+    const terminate = (signal) => {
+      try {
+        if (process.platform === "win32") current.kill(signal);
+        else process.kill(-current.pid, signal);
+      } catch {
+        current.kill(signal);
+      }
+    };
+    terminate("SIGTERM");
+    const force = setTimeout(() => terminate("SIGKILL"), 1500);
+    await stopped;
+    clearTimeout(force);
+    terminate("SIGKILL");
+    child = undefined;
+  })();
+  try {
+    await closingHost;
+  } finally {
+    closingHost = undefined;
+  }
 }
 async function openHost() {
+  controller.signal.throwIfAborted();
   sessions++;
   const model = option("--model");
   child = spawn(
@@ -116,6 +152,15 @@ async function openHost() {
     child.once("close", resolve);
     child.once("error", resolve);
   });
+  const host = child;
+  const rejectRequests = () => {
+    for (const request of pending.values())
+      if (request.host === host)
+        request.reject(new Error("evaluation-host-stopped"));
+  };
+  host.stdin.on("error", rejectRequests);
+  host.once("close", rejectRequests);
+  host.once("error", rejectRequests);
   let buffer = "";
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk) => {
@@ -134,8 +179,7 @@ async function openHost() {
         const event = JSON.parse(line);
         metrics.observe(event);
         if (event.type === "response" && pending.has(event.id)) {
-          pending.get(event.id)(event);
-          pending.delete(event.id);
+          pending.get(event.id).resolve(event);
         }
         if (event.type === "agent_settled") wake?.();
       } catch {
@@ -144,6 +188,7 @@ async function openHost() {
     }
   });
   const commands = await send("get_commands");
+  controller.signal.throwIfAborted();
   if (
     !commands.success ||
     !commands.data?.commands?.some(
@@ -156,6 +201,7 @@ async function openHost() {
     throw new Error("evaluation-package-activation-unavailable");
 }
 async function prompt(message) {
+  controller.signal.throwIfAborted();
   settled = new Promise((resolve) => {
     wake = resolve;
   });
@@ -167,6 +213,7 @@ async function prompt(message) {
       throw new Error("evaluation-host-stopped");
     }),
   ]);
+  controller.signal.throwIfAborted();
 }
 async function statistics() {
   const stats = await send("get_session_stats");
@@ -229,84 +276,79 @@ try {
     }, timeoutMs);
     timer.unref();
   });
-  await Promise.race([
-    (async () => {
+  evaluation = (async () => {
+    await openHost();
+    if (!live) return;
+    await prompt(
+      `/abel-design ${scenario.requirement} Use change name eval-${scenario.id}. The requirement is approved: choose reasonable implementation defaults, record a structured ChangeContract, preserve these acceptance criteria, and compile the delivery. Use the existing Node runner without installing dependencies. You may edit src/ and test/ and change artifacts in this disposable fixture.`,
+    );
+    if (!metrics.result.designCompleted) {
+      reason = metrics.result.modelErrors
+        ? "evaluation-model-unavailable"
+        : scenario.expected === "blocked"
+          ? "capability-or-design-blocked"
+          : "design-stalled";
+      if (!metrics.result.modelErrors) metrics.result.userInterventions++;
+      return;
+    }
+    if (scenario.restart) {
+      await closeHost();
       await openHost();
-      if (!live) return;
-      await prompt(
-        `/abel-design ${scenario.requirement} Use change name eval-${scenario.id}. The requirement is approved: choose reasonable implementation defaults, record a structured ChangeContract, preserve these acceptance criteria, and compile the delivery. Use the existing Node runner without installing dependencies. You may edit src/ and test/ and change artifacts in this disposable fixture.`,
+    }
+    const priorModelErrors = metrics.result.modelErrors;
+    await prompt(`/abel-implement eval-${scenario.id}`);
+    if (!metrics.result.completed) {
+      const modelUnavailable = metrics.result.modelErrors > priorModelErrors;
+      reason = modelUnavailable
+        ? "evaluation-model-unavailable"
+        : "implementation-stalled";
+      if (!modelUnavailable) metrics.result.userInterventions++;
+      return;
+    }
+    const assertion =
+      scenario.id === "multiple-tasks"
+        ? "if(add(2,3)!==5||multiply(2,3)!==6)process.exit(1)"
+        : "if(add(2,3)!==5)process.exit(1)";
+    oracle = (async () => {
+      const { BubblewrapIsolationBackend } = await import(
+        "../src/isolation-backend.ts"
       );
-      if (!metrics.result.designCompleted) {
-        reason = metrics.result.modelErrors
-          ? "evaluation-model-unavailable"
-          : scenario.expected === "blocked"
-            ? "capability-or-design-blocked"
-            : "design-stalled";
-        if (!metrics.result.modelErrors) metrics.result.userInterventions++;
-        await statistics();
-        return;
+      const { prepareVerificationEnvironment } = await import(
+        "../src/verification-environment.ts"
+      );
+      const { resolveVerificationRunner } = await import(
+        "../src/verification-capability.ts"
+      );
+      const runner = resolveVerificationRunner("node");
+      if (!runner) throw new Error("evaluation-oracle-unavailable");
+      const environment = prepareVerificationEnvironment(consumer, consumer, [
+        runner,
+      ]);
+      try {
+        const result = await new BubblewrapIsolationBackend({
+          timeoutMs: 5000,
+        }).run({
+          root: consumer,
+          executable: environment.bindings[0].executablePath,
+          args: [
+            "--input-type=module",
+            "-e",
+            `import {add,multiply} from './src/math.mjs';${assertion}`,
+          ],
+          mounts: environment.mounts,
+          environment: environment.environment,
+          signal: controller.signal,
+        });
+        if (!result.ok || result.exitCode !== 0)
+          throw new Error("evaluation-oracle-rejected");
+      } finally {
+        environment.cleanup();
       }
-      if (scenario.restart) {
-        await statistics();
-        await closeHost();
-        await openHost();
-      }
-      const priorModelErrors = metrics.result.modelErrors;
-      await prompt(`/abel-implement eval-${scenario.id}`);
-      await statistics();
-      if (!metrics.result.completed) {
-        const modelUnavailable = metrics.result.modelErrors > priorModelErrors;
-        reason = modelUnavailable
-          ? "evaluation-model-unavailable"
-          : "implementation-stalled";
-        if (!modelUnavailable) metrics.result.userInterventions++;
-        return;
-      }
-      const assertion =
-        scenario.id === "multiple-tasks"
-          ? "if(add(2,3)!==5||multiply(2,3)!==6)process.exit(1)"
-          : "if(add(2,3)!==5)process.exit(1)";
-      oracle = (async () => {
-        const { BubblewrapIsolationBackend } = await import(
-          "../src/isolation-backend.ts"
-        );
-        const { prepareVerificationEnvironment } = await import(
-          "../src/verification-environment.ts"
-        );
-        const { resolveVerificationRunner } = await import(
-          "../src/verification-capability.ts"
-        );
-        const runner = resolveVerificationRunner("node");
-        if (!runner) throw new Error("evaluation-oracle-unavailable");
-        const environment = prepareVerificationEnvironment(consumer, consumer, [
-          runner,
-        ]);
-        try {
-          const result = await new BubblewrapIsolationBackend({
-            timeoutMs: 5000,
-          }).run({
-            root: consumer,
-            executable: environment.bindings[0].executablePath,
-            args: [
-              "--input-type=module",
-              "-e",
-              `import {add,multiply} from './src/math.mjs';${assertion}`,
-            ],
-            mounts: environment.mounts,
-            environment: environment.environment,
-            signal: controller.signal,
-          });
-          if (!result.ok || result.exitCode !== 0)
-            throw new Error("evaluation-oracle-rejected");
-        } finally {
-          environment.cleanup();
-        }
-      })();
-      await oracle;
-      reason = "verified-completion";
-    })(),
-    timeout,
-  ]);
+    })();
+    await oracle;
+    reason = "verified-completion";
+  })();
+  await Promise.race([evaluation, timeout]);
 } catch (error) {
   reason = [
     "evaluation-deadline",
@@ -319,8 +361,9 @@ try {
     : "evaluation-failed";
 } finally {
   controller.abort();
-  if (oracle) await oracle.catch(() => {});
   await closeHost();
+  if (evaluation) await evaluation.catch(() => {});
+  if (oracle) await oracle.catch(() => {});
   rmSync(root, { recursive: true, force: true });
 }
 const report = {

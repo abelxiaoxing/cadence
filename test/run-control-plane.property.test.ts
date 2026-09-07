@@ -507,6 +507,11 @@ describe("canonical delivery compilation", () => {
     expect(left.rawSha256).toBe(right.rawSha256);
     expect(left.planHash).toBe(right.planHash);
     expect(String(left.tasksMarkdown)).toContain("T1-control-store-delivery");
+
+    const draft = planDraft();
+    delete draft.tracking;
+    expect(compile(draft, { consumerRoot }).bytes).toEqual(left.bytes);
+    expect(draft).not.toHaveProperty("tracking");
   });
 
   it("rejects a phase with no writable or deletable boundary", () => {
@@ -573,6 +578,28 @@ describe("canonical delivery compilation", () => {
         consumerRoot: path.resolve(import.meta.dirname, ".."),
       }),
     ).toThrow(/delivery-plan-invalid/u);
+
+    const consumerRoot = path.resolve(import.meta.dirname, "..");
+    const draft = planDraft() as any;
+    for (const tracking of [
+      null,
+      { ...draft.tracking, completionOwner: "worker" },
+      { ...draft.tracking, taskIds: ["another-task"] },
+    ]) {
+      expect(() =>
+        compilePlan({ ...draft, tracking }, { consumerRoot }),
+      ).toThrow(/delivery-tracking-/u);
+    }
+    const parsePlan = requiredFunction<(bytes: Uint8Array) => unknown>(
+      deliveryCompiler,
+      "parseImplementPlan",
+    );
+    const canonical = compilePlan(draft, { consumerRoot }).plan as any;
+    delete canonical.tracking;
+    // Stored deliveries must remain complete, even though drafts may omit tracking.
+    expect(() => parsePlan(Buffer.from(JSON.stringify(canonical)))).toThrow(
+      /delivery-plan-invalid/u,
+    );
 
     const compileGateA = requiredFunction<
       (input: Record<string, unknown>) => Record<string, any>

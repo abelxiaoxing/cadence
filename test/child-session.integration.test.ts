@@ -17,12 +17,14 @@ import {
   createStructuredPatchTool,
 } from "../src/submit-tool";
 import { TaskLedger } from "../src/task-ledger";
+import { runtimeForProvider } from "./helpers/model-runtime.ts";
 
 let child: typeof import("../src/child-session") | null = null;
-let parentProvider: typeof import("../src/parent-provider") | null = null;
+let parentProvider: { runtimeForProvider: typeof runtimeForProvider } | null =
+  null;
 try {
   child = await import("../src/child-session");
-  parentProvider = await import("../src/parent-provider");
+  parentProvider = { runtimeForProvider };
 } catch {
   child = null;
   parentProvider = null;
@@ -163,6 +165,38 @@ describe("real isolated child session", () => {
     } finally {
       ledger.close();
     }
+  });
+
+  it("accepts a reduced Design draft through the real SDK, not just direct execute", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const full = evidence();
+    const draft = {
+      module_name: full.module_name,
+      scope: full.scope,
+      files_read: full.files_read,
+      evidence: full.evidence,
+      constraints_discovered: [],
+      open_questions: [],
+      risks: [],
+    };
+    const result = await runChildSessionFixture(
+      child,
+      parentProvider,
+      "reduced-design",
+      fauxAssistantMessage(fauxToolCall("abel_submit_result", draft), {
+        stopReason: "toolUse",
+      }),
+      { requestId: "packet-1", role: "design-explorer", output: "evidence" },
+    );
+    expect(result.ok).toBe(true);
+    expect(result.result).toMatchObject({
+      ...draft,
+      id: "packet-1",
+      packet_id: "packet-1",
+      role: "design-explorer",
+      kind: "evidence",
+      dependencies: [],
+    });
   });
 
   it("uses empty resources, exactly five scoped tools, one structural submit, usage, and disposal", async () => {
@@ -1105,7 +1139,9 @@ async function runChildSessionFixture(
   roots.push(cwd);
   writeFileSync(join(cwd, "a.txt"), "old\n");
   const faux = fauxProvider({ provider: `abel-fc-${tag}`, api: "faux" });
-  faux.setResponses([response]);
+  faux.setResponses(
+    response.stopReason === "stop" ? [response, response] : [response],
+  );
   const modelRuntime = await parentRef.runtimeForProvider(faux.provider);
   return (await childRef.runChildSession({
     cwd,
@@ -1164,6 +1200,177 @@ const submitResponse = (submitted: typeof validDiffSubmit): FauxResponse =>
   });
 
 describe("structural submission fixture precheck", () => {
+  it.each(["length", "error", "aborted"] as const)(
+    "never executes a submit from a %s response",
+    async (stopReason) => {
+      if (!child || !parentProvider) return notReady("child session");
+      const result = await runChildSessionResponses(
+        child,
+        parentProvider,
+        `incomplete-${stopReason}`,
+        [
+          fauxAssistantMessage(
+            fauxToolCall("abel_submit_result", validDiffSubmit),
+            { stopReason },
+          ),
+          submitResponse(validDiffSubmit),
+        ],
+      );
+      expect(result.ok).toBe(false);
+      expect(result.result).toBeUndefined();
+      expect(result.classification).toMatchObject({ attempts: 0 });
+    },
+  );
+
+  it("accepts corrected submissions after preflight rejection without a stale invalid schema flag", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const result = await runChildSessionResponses(
+      child,
+      parentProvider,
+      "preflight-corrected",
+      [
+        submitResponse({ ...validDiffSubmit, summary: { bad: true } } as never),
+        submitResponse(validDiffSubmit),
+      ],
+    );
+    expect(result.ok).toBe(true);
+    expect(result.classification).toMatchObject({
+      attempts: 2,
+      schema: "valid",
+    });
+  });
+
+  it("counts a validator rejection after preflight rejection as the final correction", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const result = await runChildSessionResponses(
+      child,
+      parentProvider,
+      "preflight-then-identity",
+      [
+        submitResponse({ ...validDiffSubmit, summary: { bad: true } } as never),
+        submitResponse({ ...validDiffSubmit, taskId: "wrong" }),
+        submitResponse(validDiffSubmit),
+      ],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.classification).toMatchObject({
+      attempts: 2,
+      schema: "valid",
+      identity: { task: false },
+    });
+  });
+
+  it("bounds SDK-rejected schema submissions and never gives a third attempt", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const result = await runChildSessionResponses(
+      child,
+      parentProvider,
+      "sdk-schema-limit",
+      [
+        submitResponse({
+          ...validDiffSubmit,
+          summary: { invalid: true },
+        } as never),
+        submitResponse({
+          ...validDiffSubmit,
+          summary: { invalid: true },
+        } as never),
+        submitResponse(validDiffSubmit),
+      ],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.classification).toMatchObject({
+      attempts: 2,
+      schema: "invalid",
+    });
+  });
+
+  it("retains SDK rejection classification when the child subsequently stops with prose", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const result = await runChildSessionResponses(
+      child,
+      parentProvider,
+      "sdk-rejected-then-prose",
+      [
+        submitResponse({
+          ...validDiffSubmit,
+          summary: { invalid: true },
+        } as never),
+        fauxAssistantMessage("I cannot submit."),
+        submitResponse(validDiffSubmit),
+      ],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.failure).toMatchObject({ code: "invalid-structural-result" });
+    expect(result.classification).toMatchObject({
+      attempts: 1,
+      schema: "invalid",
+    });
+  });
+
+  it("does not remind after a rejected submit followed by prose", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const result = await runChildSessionResponses(
+      child,
+      parentProvider,
+      "rejected-then-prose",
+      [
+        submitResponse({ ...validDiffSubmit, taskId: "wrong" }),
+        fauxAssistantMessage("I cannot submit."),
+        submitResponse(validDiffSubmit),
+      ],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.classification).toMatchObject({ attempts: 1 });
+  });
+
+  it("requests one same-session submission after a text-only stop", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const result = await runChildSessionResponses(
+      child,
+      parentProvider,
+      "text-then-submit",
+      [
+        fauxAssistantMessage("The investigation is complete."),
+        submitResponse(validDiffSubmit),
+      ],
+    );
+    expect(result.ok).toBe(true);
+    expect(result.disposeCount).toBe(1);
+  });
+
+  it("does not repeatedly prompt a text-only child", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const result = await runChildSessionResponses(
+      child,
+      parentProvider,
+      "text-twice",
+      [
+        fauxAssistantMessage("The investigation is complete."),
+        fauxAssistantMessage("Still no submit."),
+        submitResponse(validDiffSubmit),
+      ],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.failure).toMatchObject({
+      code: "child-no-structural-submit",
+    });
+  });
+
+  it("does not prompt a truncated response for submission", async () => {
+    if (!child || !parentProvider) return notReady("child session");
+    const result = await runChildSessionResponses(
+      child,
+      parentProvider,
+      "text-truncated",
+      [
+        fauxAssistantMessage("Partial result", { stopReason: "length" }),
+        submitResponse(validDiffSubmit),
+      ],
+    );
+    expect(result.ok).toBe(false);
+  });
+
   it("runs one valid strict diff submit through a real in-memory child session", async () => {
     if (!child || !parentProvider) return notReady("child session");
     const result = await runChildSessionFixture(

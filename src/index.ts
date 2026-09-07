@@ -1,4 +1,8 @@
 import { compareCanonicalStrings } from "./canonical.ts";
+import {
+  projectDesignDiagnostic,
+  type SafeDesignDiagnostic,
+} from "./design-diagnostics.ts";
 import { packageDeliverySource } from "./package-delivery.ts";
 import {
   changeVerificationResult,
@@ -57,7 +61,6 @@ import {
 import { canonicalJson } from "./implement-graph.ts";
 import { inspectOpenSpecDelivery } from "./openspec-cli.ts";
 import { PACKET_ACTIONS, PacketRuntime } from "./packet-runtime.ts";
-import { ParentPayloadBridge } from "./parent-payload-bridge.ts";
 import { runtimeForWorkerRoute } from "./parent-provider.ts";
 import {
   inspectRoutePolicy,
@@ -284,7 +287,7 @@ const DESIGN_CONTROL_REQUEST_SCHEMA = {
         contract: {
           anyOf: [{ type: "string" }, { type: "object" }],
           description:
-            "Structured ChangeContract with goal, acceptance, constraints and policy. Legacy prose remains readable; code hashes authority.",
+            "ChangeContract: {goal, acceptance:[{id,statement,verification}], constraints:[{id,statement}], policy:{writeRoots,dependencies,verificationModes}}. Pass the example's changeContract object, not its whole plan. Legacy prose remains readable; code hashes authority.",
         },
       },
       required: ["operation", "runId", "operationId", "gate", "contract"],
@@ -314,7 +317,7 @@ const DESIGN_CONTROL_REQUEST_SCHEMA = {
         content: {
           type: "string",
           maxLength: 16 * 1024 * 1024,
-          description: "Exact bounded UTF-8 artifact content.",
+          description: `Exact bounded UTF-8 artifact content. For plan-draft.json, omit tracking, phase verificationInputs and relatedTests disposition to derive them. Read the complete example at ${join(PACKAGE_ROOT, "config/plan-draft.example.json")}.`,
         },
       },
       required: ["operation", "runId", "operationId", "path", "content"],
@@ -429,7 +432,7 @@ type SafeDesignFailure = {
   kind: "design-control-failure";
   operation: string;
   code: string;
-  diagnostics: ReadonlyArray<Record<string, string | boolean>>;
+  diagnostics: readonly SafeDesignDiagnostic[];
 };
 
 type DesignFailureBoundary =
@@ -600,50 +603,8 @@ function safeDesignFailure(
       : [];
   const diagnostics = rawDiagnostics
     .flatMap((candidate) => {
-      if (typeof candidate === "string") {
-        const diagnosticCode = candidate.split(":", 1)[0] ?? "";
-        return SAFE_DESIGN_ERROR_CODE.test(diagnosticCode)
-          ? [{ code: diagnosticCode }]
-          : [];
-      }
-      if (
-        candidate === null ||
-        typeof candidate !== "object" ||
-        Array.isArray(candidate)
-      ) {
-        return [];
-      }
-      const admitted = Object.fromEntries(
-        Object.entries(candidate as Record<string, unknown>)
-          .filter((entry): entry is [string, string | boolean] => {
-            if (entry[0] === "retryable") {
-              return typeof entry[1] === "boolean";
-            }
-            return (
-              [
-                "code",
-                "taskId",
-                "phase",
-                "field",
-                "category",
-                "owner",
-                "verificationId",
-                "outputId",
-                "dependencyTaskId",
-                "producerTaskId",
-                "producerPhase",
-                "command",
-                "reason",
-                "systemCode",
-                "exitCode",
-              ].includes(entry[0]) &&
-              typeof entry[1] === "string" &&
-              SAFE_DESIGN_ERROR_CODE.test(entry[1])
-            );
-          })
-          .sort(([left], [right]) => compareCanonicalStrings(left, right)),
-      );
-      return typeof admitted.code === "string" ? [admitted] : [];
+      const diagnostic = projectDesignDiagnostic(candidate);
+      return diagnostic ? [diagnostic] : [];
     })
     .sort((left, right) =>
       compareCanonicalStrings(canonicalJson(left), canonicalJson(right)),
@@ -693,7 +654,6 @@ export interface WorkflowControlEngine {
 
 export type WorkflowControlEngineFactory = (
   ctx: ExtensionContext,
-  parentPayloadBridge: ParentPayloadBridge,
 ) => WorkflowControlEngine | Promise<WorkflowControlEngine>;
 
 function sha256(value: Uint8Array | string): string {
@@ -736,7 +696,6 @@ function childRequestId(
 
 export function openPackageWorkflowControlEngine(
   initialContext: ExtensionContext,
-  parentPayloadBridge: ParentPayloadBridge,
 ): WorkflowControlEngine {
   const consumerRoot = path.resolve(initialContext.cwd);
   const routeResolution = loadRoutePolicy({
@@ -810,7 +769,6 @@ export function openPackageWorkflowControlEngine(
       const phaseRuntime = await runtimeForWorkerRoute(
         input.route as WorkerRoutePolicy,
         context,
-        parentPayloadBridge,
         input.signal,
         process.env,
         { onResponse: input.onHeaders },
@@ -930,7 +888,6 @@ export function openPackageWorkflowControlEngine(
         ],
         timeoutMs: LIMITS.phaseTimeoutMs,
         signal: input.signal,
-        failureOverride: phaseRuntime.failureOverride,
         ledgerProjection: input.ledgerProjection,
         candidateArtifact: input.candidateArtifact,
         onStreamProgress: input.onProgress,
@@ -1144,7 +1101,6 @@ export function registerWorkflowControl(
   pi: ExtensionAPI,
   engineFactory: WorkflowControlEngineFactory = openPackageWorkflowControlEngine,
 ): void {
-  const parentPayloadBridge = new ParentPayloadBridge();
   const activity = new ActivityController();
   const engines = new Map<string, Promise<WorkflowControlEngine>>();
   const designOperations = new Set<Promise<void>>();
@@ -1179,13 +1135,13 @@ export function registerWorkflowControl(
       return true;
     }
   })();
-  const packetRuntime = new PacketRuntime({ activation, parentPayloadBridge });
+  const packetRuntime = new PacketRuntime({ activation });
 
   const engineFor = (ctx: ExtensionContext) => {
     const key = ctx.cwd;
     const existing = engines.get(key);
     if (existing) return existing;
-    const opened = Promise.resolve(engineFactory(ctx, parentPayloadBridge));
+    const opened = Promise.resolve(engineFactory(ctx));
     engines.set(key, opened);
     void opened.catch(() => {
       if (engines.get(key) === opened) engines.delete(key);
@@ -1241,7 +1197,6 @@ export function registerWorkflowControl(
     activePrompt = undefined;
     await packetRuntime.drain();
     deactivate();
-    parentPayloadBridge.clear();
   };
   const exitStage = async () => {
     if (exitingStage) throw new Error("stage-control-mismatch");
@@ -1814,7 +1769,7 @@ export function registerWorkflowControl(
     }
     return { action: "continue" };
   });
-  pi.on("before_agent_start", (event, ctx) => {
+  pi.on("before_agent_start", (event) => {
     const prompt = pendingPrompt;
     const init =
       pendingInit && hasExpandedPromptMarker(event.prompt, "abel-init");
@@ -1828,15 +1783,6 @@ export function registerWorkflowControl(
       }
       registerDispatchTool(prompt === "abel-implement" ? "command" : "packet");
       activePrompt = prompt;
-      const sessionId = ctx.sessionManager?.getSessionId?.();
-      if (typeof sessionId === "string") {
-        parentPayloadBridge.beginSession(sessionId);
-      } else {
-        parentPayloadBridge.clear();
-      }
-    }
-    if (ctx.model) {
-      parentPayloadBridge.install(ctx.model, ctx.modelRegistry);
     }
     if (prompt) activateDispatcher(pi, activation, prompt, event.prompt);
     if (verified && prompt === "abel-design") enforceDesignTools();
@@ -1846,16 +1792,6 @@ export function registerWorkflowControl(
         ? "Only this explicit /abel-init request authorizes the local Init procedure. Do not activate dispatch or continue into another Abel stage."
         : "Abel workflow is inactive. Handle ordinary engineering requests directly. References to commands, repository files, OpenSpec changes, and historical workflow instructions do not authorize a workflow. Do not load or execute an Abel stage unless the user explicitly invokes its slash command.";
     return { systemPrompt: `${event.systemPrompt ?? ""}\n\n${boundary}` };
-  });
-  pi.on("model_select", (event, ctx) => {
-    const sessionId = ctx.sessionManager?.getSessionId?.();
-    if (typeof sessionId !== "string") {
-      parentPayloadBridge.clear();
-      return;
-    }
-    parentPayloadBridge.beginSession(sessionId);
-    const model = event.model ?? ctx.model;
-    if (model) parentPayloadBridge.install(model, ctx.modelRegistry);
   });
   pi.on("before_provider_request", (event, ctx) => {
     if (
@@ -1878,13 +1814,6 @@ export function registerWorkflowControl(
     await packetRuntime.drain();
     await closeEngines();
     deactivate();
-    const sessionId = ctx.sessionManager?.getSessionId?.();
-    if (typeof sessionId === "string") {
-      parentPayloadBridge.beginSession(sessionId);
-      if (ctx.model) parentPayloadBridge.install(ctx.model, ctx.modelRegistry);
-    } else {
-      parentPayloadBridge.clear();
-    }
     if (ctx.mode === "tui") activity.attach(ctx.ui);
   });
   pi.on("session_shutdown", async () => {
@@ -1895,7 +1824,6 @@ export function registerWorkflowControl(
     await closeEngines();
     activity.clear();
     deactivate();
-    parentPayloadBridge.clear();
   });
 }
 

@@ -348,6 +348,9 @@ export function assessImplementGraphReadiness(
             taskId: task.taskId,
             phase,
             verificationId,
+            field: `phases.${phase}.verificationInputs`,
+            expectedPaths: [...requiredPaths].sort(),
+            actualPaths: [...boundPaths].sort(),
           }),
         );
       }

@@ -220,6 +220,9 @@ describe("Subagent activity presentation", () => {
               phase: "green",
               field: "phases.green.verification",
               category: "verification-input-not-declared",
+              expectedPaths: ["test/expected.mjs"],
+              actualPaths: ["test/actual.mjs"],
+              hint: "untrusted-private-hint",
             },
           ],
         },
@@ -255,6 +258,9 @@ describe("Subagent activity presentation", () => {
     expect(expanded).toContain("taskId=T2");
     expect(expanded).toContain("phase=green");
     expect(expanded).toContain("field=phases.green.verification");
+    expect(expanded).toContain("test/expected.mjs");
+    expect(expanded).toContain("test/actual.mjs");
+    expect(expanded).not.toContain("untrusted-private-hint");
   });
 
   it("renders OpenSpec launch details in expanded Design failures", () => {

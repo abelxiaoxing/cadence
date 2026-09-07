@@ -1,25 +1,15 @@
 import {
+  createModels,
+  createProvider,
   InMemoryCredentialStore,
+  lazyApi,
   type Model,
+  type Models,
   type Provider,
   type StreamOptions,
 } from "@earendil-works/pi-ai";
-import {
-  createProvider,
-  stream as subagentStream,
-  streamSimple as subagentStreamSimple,
-} from "@earendil-works/pi-ai/compat";
-import {
-  type ExtensionContext,
-  ModelRuntime,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ChildFailure } from "./contracts.ts";
-import {
-  type ParentPayloadBridge,
-  ParentPayloadBridgeError,
-  type ParentPayloadCallback,
-  type ParentPayloadCapture,
-} from "./parent-payload-bridge.ts";
 import {
   type CustomRoutePolicy,
   type InheritedRoutePolicy,
@@ -31,26 +21,6 @@ const SUBAGENT_PROVIDER_ID = "abel-subagent";
 
 export interface PhaseTransportObserver {
   onResponse?(): void;
-}
-
-function customStreamOptions<T extends StreamOptions>(
-  model: Model<string>,
-  options?: T,
-): T | undefined {
-  if (model.api !== "openai-responses") return options;
-  const childOnPayload = options?.onPayload;
-  return {
-    ...options,
-    onPayload: async (payload, requestModel) => {
-      const transformed = await childOnPayload?.(payload, requestModel);
-      const current = transformed === undefined ? payload : transformed;
-      if (!current || typeof current !== "object" || Array.isArray(current))
-        return current;
-      const normalized = { ...current } as Record<string, unknown>;
-      delete normalized.max_output_tokens;
-      return normalized;
-    },
-  } as T;
 }
 
 function observedStreamOptions<T extends StreamOptions>(
@@ -68,39 +38,46 @@ function observedStreamOptions<T extends StreamOptions>(
   } as T;
 }
 
-// The compat dispatchers resolve the concrete API implementation from
-// model.api at call time, so one pair serves all supported dialects.
-function subagentStreams(observer?: PhaseTransportObserver) {
+// Public API modules, selected explicitly by the closed route dialect. No
+// global compat registry or provider-specific payload rewriting is involved.
+const routeApis = {
+  "openai-completions": lazyApi(
+    () => import("@earendil-works/pi-ai/api/openai-completions"),
+  ),
+  "openai-responses": lazyApi(
+    () => import("@earendil-works/pi-ai/api/openai-responses"),
+  ),
+  "anthropic-messages": lazyApi(
+    () => import("@earendil-works/pi-ai/api/anthropic-messages"),
+  ),
+};
+
+function subagentStreams(
+  dialect: ResolvedCustomRoute["dialect"],
+  observer?: PhaseTransportObserver,
+) {
+  const api = routeApis[dialect];
   return {
-    stream(
-      model: Parameters<typeof subagentStream>[0],
-      context: Parameters<typeof subagentStream>[1],
-      options?: Parameters<typeof subagentStream>[2],
-    ) {
-      return subagentStream(
+    stream: ((model, context, options) =>
+      api.stream(
         model,
         context,
-        observedStreamOptions(
-          customStreamOptions(model as Model<string>, options),
-          observer,
-        ),
-      );
-    },
-    streamSimple(
-      model: Parameters<typeof subagentStreamSimple>[0],
-      context: Parameters<typeof subagentStreamSimple>[1],
-      options?: Parameters<typeof subagentStreamSimple>[2],
-    ) {
-      return subagentStreamSimple(
+        observedStreamOptions({ ...options, maxRetries: 0 }, observer),
+      )) as Provider["stream"],
+    streamSimple: ((model, context, options) =>
+      api.streamSimple(
         model,
         context,
-        observedStreamOptions(
-          customStreamOptions(model as Model<string>, options),
-          observer,
-        ),
-      );
-    },
+        observedStreamOptions({ ...options, maxRetries: 0 }, observer),
+      )) as Provider["streamSimple"],
   };
+}
+
+function modelsForProvider(provider: Provider, signal?: AbortSignal): Models {
+  signal?.throwIfAborted();
+  const models = createModels({ credentials: new InMemoryCredentialStore() });
+  models.setProvider(provider);
+  return models;
 }
 
 function customSubagentModel(endpoint: ResolvedCustomRoute): Model<string> {
@@ -146,7 +123,7 @@ function customSubagentProvider(
       },
     },
     models: [model],
-    api: subagentStreams(observer),
+    api: subagentStreams(endpoint.dialect, observer),
   }) as Provider;
 }
 
@@ -160,20 +137,15 @@ export async function customPhaseRuntime(
   const endpoint = resolveCustomRoute(route, environment);
   const model = customSubagentModel(endpoint);
   const provider = customSubagentProvider(endpoint, model, observer);
-  let modelRuntime: ModelRuntime;
+  let modelRuntime: Models;
   try {
-    modelRuntime = await runtimeForProvider(provider, signal);
+    modelRuntime = modelsForProvider(provider, signal);
   } catch (error) {
     if (isCancellation(error, signal)) return cancelledPhaseRuntime();
     throw error;
   }
   if (signal?.aborted) return cancelledPhaseRuntime();
   return { ok: true, modelRuntime, model };
-}
-
-export interface PhasePayloadBridge {
-  readonly bridge: ParentPayloadBridge;
-  readonly capture: ParentPayloadCapture;
 }
 
 type PhaseRuntimeFailure = Extract<
@@ -184,9 +156,8 @@ type PhaseRuntimeFailure = Extract<
 export type PhaseRuntimeResult =
   | {
       ok: true;
-      modelRuntime: ModelRuntime;
+      modelRuntime: Models;
       model: Model<string>;
-      failureOverride?: () => PhaseRuntimeFailure | undefined;
     }
   | { ok: false; error: string; failure: PhaseRuntimeFailure };
 
@@ -208,53 +179,6 @@ function isCancellation(error: unknown, signal?: AbortSignal): boolean {
   return signal?.aborted === true && error === signal.reason;
 }
 
-function phasePayloadCallback(
-  payloadBridge: PhasePayloadBridge,
-  childOnPayload: ParentPayloadCallback | undefined,
-  signal: AbortSignal | undefined,
-  diagnostic?: { failure?: PhaseRuntimeFailure },
-): ParentPayloadCallback {
-  return async (payload, model) => {
-    try {
-      return await payloadBridge.bridge.composePayload(
-        payloadBridge.capture,
-        payload,
-        model,
-        childOnPayload,
-        signal,
-      );
-    } catch (error) {
-      if (error instanceof ParentPayloadBridgeError && diagnostic) {
-        diagnostic.failure = {
-          kind: "environment",
-          code: error.code,
-          stage: "child-provider-stream",
-        };
-      }
-      throw error;
-    }
-  };
-}
-
-export async function runtimeForProvider(
-  provider: Provider,
-  signal?: AbortSignal,
-): Promise<ModelRuntime> {
-  signal?.throwIfAborted();
-  const runtime = await abortable(
-    ModelRuntime.create({
-      credentials: new InMemoryCredentialStore(),
-      modelsPath: null,
-      refreshOnCreate: false,
-      signal,
-    }),
-    signal,
-  );
-  signal?.throwIfAborted();
-  runtime.registerNativeProvider(provider);
-  return runtime;
-}
-
 export function phaseProvider(
   parent: Provider,
   auth: {
@@ -263,12 +187,13 @@ export function phaseProvider(
     baseUrl?: string;
     env?: Record<string, string>;
   },
-  payloadBridge: PhasePayloadBridge,
-  diagnostic?: { failure?: PhaseRuntimeFailure },
   observer?: PhaseTransportObserver,
 ): Provider {
+  auth = structuredClone(auth);
   return {
-    ...parent,
+    id: parent.id,
+    name: parent.name,
+    getModels: () => parent.getModels(),
     baseUrl: auth.baseUrl ?? parent.baseUrl,
     headers: { ...parent.headers, ...auth.headers },
     auth: {
@@ -285,35 +210,21 @@ export function phaseProvider(
       },
     },
     stream(model, context, options) {
-      const onPayload = phasePayloadCallback(
-        payloadBridge,
-        options?.onPayload as ParentPayloadCallback | undefined,
-        options?.signal,
-        diagnostic,
-      );
       return parent.stream(model, context, {
         ...observedStreamOptions(options, observer),
         apiKey: auth.apiKey,
         headers: { ...options?.headers, ...auth.headers },
         env: { ...options?.env, ...auth.env },
         maxRetries: 0,
-        onPayload,
       } as never);
     },
     streamSimple(model, context, options) {
-      const onPayload = phasePayloadCallback(
-        payloadBridge,
-        options?.onPayload as ParentPayloadCallback | undefined,
-        options?.signal,
-        diagnostic,
-      );
       return parent.streamSimple(model, context, {
         ...observedStreamOptions(options, observer),
         apiKey: auth.apiKey,
         headers: { ...options?.headers, ...auth.headers },
         env: { ...options?.env, ...auth.env },
         maxRetries: 0,
-        onPayload,
       });
     },
   };
@@ -342,7 +253,6 @@ function sameSelectedModel(
 
 export async function runtimeFromContext(
   ctx: Pick<ExtensionContext, "model" | "modelRegistry">,
-  payloadBridge: ParentPayloadBridge,
   signal?: AbortSignal,
   observer?: PhaseTransportObserver,
 ): Promise<PhaseRuntimeResult> {
@@ -353,8 +263,11 @@ export async function runtimeFromContext(
       "parent model is unavailable",
     );
   }
-  const selectedModel = ctx.model;
+  const selectedModel = structuredClone(ctx.model);
   const selectedModelKey = modelKeyFor(selectedModel);
+  const admittedProvider = ctx.modelRegistry.getProvider(
+    selectedModel.provider,
+  );
   let resolved: Awaited<
     ReturnType<typeof ctx.modelRegistry.getApiKeyAndHeaders>
   >;
@@ -378,97 +291,72 @@ export async function runtimeFromContext(
     ...selectedModel,
     baseUrl: resolved.baseUrl ?? selectedModel.baseUrl,
   } as Model<string>;
-  const effectiveModelKey = modelKeyFor(model);
-  const capture = payloadBridge.capture(effectiveModelKey, ctx.modelRegistry);
-  if (!capture) {
-    const code =
-      payloadBridge.diagnoseCapture(effectiveModelKey, ctx.modelRegistry) ??
-      "parent-bridge-capture-not-ready";
-    return phaseRuntimeFailure(
-      { kind: "environment", code, stage: "phase-runtime" },
-      code,
-    );
-  }
-  const captureFailure = () => {
-    const currentModel = ctx.model;
-    if (
-      currentModel === undefined ||
-      !sameSelectedModel(currentModel, selectedModelKey)
-    ) {
-      return "parent-bridge-model-key-mismatch" as const;
-    }
-    if (
-      payloadBridge.capture(effectiveModelKey, ctx.modelRegistry) === capture
-    ) {
-      return undefined;
-    }
-    return (
-      payloadBridge.diagnoseCapture(effectiveModelKey, ctx.modelRegistry) ??
-      "parent-bridge-capture-not-ready"
-    );
-  };
-  const initialCaptureFailure = captureFailure();
-  if (initialCaptureFailure) {
+  const delegate = ctx.modelRegistry.getProvider(model.provider);
+  if (delegate !== admittedProvider)
     return phaseRuntimeFailure(
       {
         kind: "environment",
-        code: initialCaptureFailure,
+        code: "sandbox-runtime-unavailable",
         stage: "phase-runtime",
       },
-      initialCaptureFailure,
+      "parent Provider changed during authentication",
     );
-  }
-  const delegate = capture.delegate;
-  if (!delegate) throw new Error("parent Provider is unavailable");
-  const diagnostic: { failure?: PhaseRuntimeFailure } = {};
-  const provider = phaseProvider(
-    delegate,
-    resolved,
-    {
-      bridge: payloadBridge,
-      capture,
-    },
-    diagnostic,
-    observer,
-  );
-  let modelRuntime: ModelRuntime;
+  if (!delegate)
+    return phaseRuntimeFailure(
+      {
+        kind: "environment",
+        code: "sandbox-runtime-unavailable",
+        stage: "phase-runtime",
+      },
+      "parent Provider is unavailable",
+    );
+  if (!ctx.model || !sameSelectedModel(ctx.model, selectedModelKey))
+    return phaseRuntimeFailure(
+      {
+        kind: "environment",
+        code: "sandbox-runtime-unavailable",
+        stage: "phase-runtime",
+      },
+      "parent model changed during authentication",
+    );
+  // Snapshot effective Provider behavior and auth, never mutate its registry or
+  // capture host-session callbacks. Explicit provider implementations still run.
+  const provider = phaseProvider(delegate, resolved, observer);
+  let modelRuntime: Models;
   try {
-    modelRuntime = await runtimeForProvider(provider, signal);
+    modelRuntime = modelsForProvider(provider, signal);
   } catch (error) {
     if (isCancellation(error, signal)) return cancelledPhaseRuntime();
     throw error;
   }
   if (signal?.aborted) return cancelledPhaseRuntime();
-  const finalCaptureFailure = captureFailure();
-  if (finalCaptureFailure) {
+  if (
+    !ctx.model ||
+    !sameSelectedModel(ctx.model, selectedModelKey) ||
+    ctx.modelRegistry.getProvider(model.provider) !== delegate
+  ) {
     return phaseRuntimeFailure(
       {
         kind: "environment",
-        code: finalCaptureFailure,
+        code: "sandbox-runtime-unavailable",
         stage: "phase-runtime",
       },
-      finalCaptureFailure,
+      "parent model or Provider changed during admission",
     );
   }
-  return {
-    ok: true,
-    modelRuntime,
-    model,
-    failureOverride: () => diagnostic.failure,
-  };
+  return { ok: true, modelRuntime, model };
 }
 
 export async function runtimeForWorkerRoute(
   route: CustomRoutePolicy | InheritedRoutePolicy,
   ctx: Pick<ExtensionContext, "model" | "modelRegistry">,
-  payloadBridge: ParentPayloadBridge,
   signal?: AbortSignal,
   environment: Readonly<Record<string, string | undefined>> = process.env,
   observer?: PhaseTransportObserver,
 ): Promise<PhaseRuntimeResult> {
   return route.kind === "custom"
     ? customPhaseRuntime(route, signal, environment, observer)
-    : runtimeFromContext(ctx, payloadBridge, signal, observer);
+    : runtimeFromContext(ctx, signal, observer);
 }
 
 function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {

@@ -34,6 +34,43 @@ function workspace(label: string): string {
 }
 
 describe("trusted candidate patch compilation", () => {
+  it.each([
+    ["missing", "absent", "old-text-not-found"],
+    ["ambiguous", "same", "old-text-ambiguous"],
+  ])(
+    "provides actionable bounded replacement diagnostics: %s",
+    (_label, oldText, reason) => {
+      const root = workspace("diagnostics");
+      writeFileSync(
+        path.join(root, "src/value.ts"),
+        "same same PRIVATE SOURCE\n",
+      );
+      let message = "";
+      try {
+        compileCandidatePatch({
+          root,
+          writePaths: ["src/value.ts"],
+          deletePaths: [],
+          maxBytes: 1024,
+          operations: [
+            {
+              kind: "replace",
+              path: "src/value.ts",
+              oldText,
+              newText: "PRIVATE REPLACEMENT",
+            },
+          ],
+        });
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toContain(reason);
+      expect(message).toContain('"operationIndex":0');
+      expect(message).toContain('"path":"src/value.ts"');
+      expect(message).not.toMatch(/PRIVATE|cadence-patch-/u);
+    },
+  );
+
   it("generates one applicable diff from exact replace, create, and delete operations", () => {
     const root = workspace("applicable");
     const diff = compileCandidatePatch({

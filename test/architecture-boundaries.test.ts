@@ -4,6 +4,40 @@ import ts from "typescript";
 import { expect, it } from "vitest";
 
 const sourceRoot = path.resolve(import.meta.dirname, "../src");
+it("keeps child execution independent of Pi sessions and parent callback capture", () => {
+  const child = readFileSync(path.join(sourceRoot, "child-session.ts"), "utf8");
+  expect(child).not.toMatch(
+    /createAgentSession|SessionManager|SettingsManager|shouldStopAfterTurn|session\.agent|session\.subscribe/,
+  );
+  const parent = readFileSync(
+    path.join(sourceRoot, "parent-provider.ts"),
+    "utf8",
+  );
+  expect(parent).not.toMatch(
+    /ParentPayloadBridge|capture\(|getRegisteredNativeProvider|ModelRuntime|registerNativeProvider|onPayload|new Proxy/,
+  );
+  for (const file of readdirSync(sourceRoot).filter((name) =>
+    name.endsWith(".ts"),
+  )) {
+    expect(readFileSync(path.join(sourceRoot, file), "utf8"), file).not.toMatch(
+      /from ["'][^"']*dist\/core\//,
+    );
+  }
+  for (const file of readdirSync(path.resolve(sourceRoot, "../test")).filter(
+    (name) => /\.(ts|mjs)$/.test(name),
+  )) {
+    expect(
+      readFileSync(path.resolve(sourceRoot, "../test", file), "utf8"),
+      file,
+    ).not.toMatch(/from ["'][^"']*dist\/core\//);
+  }
+  const modelAdapter = readFileSync(
+    path.join(sourceRoot, "child-model.ts"),
+    "utf8",
+  );
+  expect(modelAdapter).not.toContain("@earendil-works/pi-coding-agent");
+  expect(modelAdapter).not.toContain("@earendil-works/pi-agent-core");
+});
 function imports() {
   const graph = new Map<string, string[]>();
   for (const file of readdirSync(sourceRoot).filter((name) =>
@@ -62,6 +96,8 @@ it("keeps host adapters and workflow transition authority out of execution polic
     "child-session.ts",
     "packet-runtime.ts",
     "workflow-policy.ts",
+    "workflow-status.ts",
+    "candidate-artifact.ts",
     "package-verification.ts",
   ]) {
     expect([...reachable(entry)], entry).not.toEqual(

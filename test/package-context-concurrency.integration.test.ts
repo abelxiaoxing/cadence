@@ -117,13 +117,10 @@ describe("package operation context isolation", () => {
     roots.push(consumerRoot, stateRoot);
     const previousStateHome = process.env.XDG_STATE_HOME;
     process.env.XDG_STATE_HOME = stateRoot;
-    const engine = module.openPackageWorkflowControlEngine(
-      {
-        cwd: consumerRoot,
-        model: { contextWindow: 256_000, maxTokens: 128_000 },
-      } as never,
-      {} as never,
-    );
+    const engine = module.openPackageWorkflowControlEngine({
+      cwd: consumerRoot,
+      model: { contextWindow: 256_000, maxTokens: 128_000 },
+    } as never);
 
     try {
       await engine.execute(
@@ -168,10 +165,9 @@ describe("package operation context isolation", () => {
       started = resolve;
     });
     harness.started = started;
-    const engine = module.openPackageWorkflowControlEngine(
-      { cwd: consumerRoot } as never,
-      {} as never,
-    );
+    const engine = module.openPackageWorkflowControlEngine({
+      cwd: consumerRoot,
+    } as never);
     const command = {
       command: "start",
       stage: "abel-implement",

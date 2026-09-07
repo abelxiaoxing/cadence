@@ -7,7 +7,7 @@ import {
   fauxToolCall,
 } from "@earendil-works/pi-ai/providers/faux";
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { Activation } from "../src/activation.ts";
 import type { ChildSessionResult } from "../src/child-session.ts";
 import type { PacketEnvelope } from "../src/contracts.ts";
@@ -17,10 +17,8 @@ import {
   type PacketContext,
   PacketRuntime,
 } from "../src/packet-runtime.ts";
-import { ParentPayloadBridge } from "../src/parent-payload-bridge.ts";
-import { runtimeForProvider } from "../src/parent-provider.ts";
 import { parentRoutePolicy, parseRoutePolicy } from "../src/route-policy.ts";
-import { PassthroughParentPayloadBridge } from "./helpers/passthrough-parent-payload-bridge.ts";
+import { runtimeForProvider } from "./helpers/model-runtime.ts";
 
 const ZERO_USAGE = {
   input: 0,
@@ -132,14 +130,13 @@ function failed(
 
 function activeRuntime(
   childRunner: PacketChildRunner,
-  options: { concurrency?: number; bridge?: ParentPayloadBridge } = {},
+  options: { concurrency?: number } = {},
 ): PacketRuntime {
   const activation = new Activation();
   activation.request();
   activation.activate();
   return new PacketRuntime({
     activation,
-    parentPayloadBridge: options.bridge ?? new ParentPayloadBridge(),
     childRunner,
     ...(options.concurrency ? { concurrency: options.concurrency } : {}),
   });
@@ -204,7 +201,6 @@ describe("PacketRuntime", () => {
     activation.activate();
     const runtime = new PacketRuntime({
       activation,
-      parentPayloadBridge: new ParentPayloadBridge(),
       routePolicy: parsed.policy,
       environment: {},
     });
@@ -254,7 +250,6 @@ describe("PacketRuntime", () => {
       activation.activate();
       const runtime = new PacketRuntime({
         activation,
-        parentPayloadBridge: new ParentPayloadBridge(),
         routePolicyHome: home,
       });
       await expect(
@@ -281,7 +276,6 @@ describe("PacketRuntime", () => {
       activation.activate();
       const runtime = new PacketRuntime({
         activation,
-        parentPayloadBridge: new ParentPayloadBridge(),
         routePolicyHome: home,
         environment: { PACKET_TEST_KEY: "fixture-secret" },
       });
@@ -566,7 +560,6 @@ describe("PacketRuntime", () => {
       activation.activate();
       const runtime = new PacketRuntime({
         activation,
-        parentPayloadBridge: new PassthroughParentPayloadBridge(),
         routePolicy: parentRoutePolicy({
           contextWindow: faux.getModel().contextWindow,
           maxTokens: faux.getModel().maxTokens,
@@ -613,12 +606,9 @@ describe("PacketRuntime", () => {
     expect(retriedTokens).toBeGreaterThan(baselineTokens);
   });
 
-  it("drains activation and parent payload state on finish", async () => {
-    const bridge = new ParentPayloadBridge();
-    const clear = vi.spyOn(bridge, "clear");
-    const runtime = activeRuntime(
-      async ({ packet: request }) => completed(request.id),
-      { bridge },
+  it("drains activation on finish without parent registry mutation", async () => {
+    const runtime = activeRuntime(async ({ packet: request }) =>
+      completed(request.id),
     );
 
     await expect(runtime.execute("finish", {})).resolves.toEqual({
@@ -626,6 +616,5 @@ describe("PacketRuntime", () => {
       action: "finish",
     });
     expect(runtime.state).toBe("inactive");
-    expect(clear).toHaveBeenCalledOnce();
   });
 });

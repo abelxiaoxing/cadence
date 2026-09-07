@@ -1,0 +1,175 @@
+{
+  "changeContract": {
+    "goal": "Fix integer addition while preserving the existing zero case",
+    "acceptance": [
+      {
+        "id": "integer-addition",
+        "statement": "add(2, 3) returns 5 and add(0, 0) remains 0",
+        "verification": {
+          "kind": "static-check",
+          "id": "add-acceptance",
+          "runner": {
+            "kind": "node",
+            "script": "test/add.test.mjs"
+          },
+          "args": [],
+          "classification": "expected-green"
+        }
+      }
+    ],
+    "constraints": [
+      {
+        "id": "no-dependencies",
+        "statement": "Keep the existing function signature and add no dependencies"
+      }
+    ],
+    "policy": {
+      "writeRoots": ["src/add.mjs", "test/add.test.mjs"],
+      "dependencies": [],
+      "verificationModes": ["behavior"]
+    }
+  },
+  "changeId": "fix-integer-addition",
+  "tasks": [
+    {
+      "taskId": "fix-add",
+      "dependsOn": [],
+      "objective": "Preserve the existing zero assertion; add a failing positive-integer assertion with [ADD:positive-integers], then fix addition",
+      "context": {
+        "agents": "No AGENTS.md in this example consumer; use the actual repository instructions when adapting",
+        "contract": "Gate A integer-addition acceptance; only src/add.mjs and test/add.test.mjs may change"
+      },
+      "roots": ["."],
+      "phases": {
+        "red": {
+          "read": ["package.json", "src/add.mjs", "test/add.test.mjs"],
+          "write": ["test/add.test.mjs"],
+          "delete": [],
+          "verification": {
+            "kind": "static-check",
+            "id": "add-red",
+            "runner": {
+              "kind": "node",
+              "script": "test/add.test.mjs"
+            },
+            "args": [],
+            "classification": "expected-red",
+            "expectedFailure": "[ADD:positive-integers]"
+          }
+        },
+        "green": {
+          "read": ["package.json", "src/add.mjs", "test/add.test.mjs"],
+          "write": ["src/add.mjs"],
+          "delete": [],
+          "verification": {
+            "kind": "static-check",
+            "id": "add-green",
+            "runner": {
+              "kind": "node",
+              "script": "test/add.test.mjs"
+            },
+            "args": [],
+            "classification": "expected-green"
+          }
+        }
+      },
+      "affectedVerification": {
+        "kind": "static-check",
+        "id": "add-affected",
+        "runner": {
+          "kind": "node",
+          "script": "test/add.test.mjs"
+        },
+        "args": [],
+        "classification": "expected-green"
+      },
+      "repairVerification": {
+        "kind": "static-check",
+        "id": "add-repair",
+        "runner": {
+          "kind": "node",
+          "script": "test/add.test.mjs"
+        },
+        "args": [],
+        "classification": "expected-green"
+      },
+      "scheduling": {
+        "conflicts": [],
+        "resources": []
+      },
+      "agents": {
+        "impact": "none",
+        "managedOnly": true
+      },
+      "approvedDependencies": [],
+      "impactClosure": {
+        "changedSurfaces": ["none"],
+        "searchEvidence": [
+          "Example consumer: src/add.mjs exports add; test/add.test.mjs is its only caller and existing test"
+        ],
+        "relatedTests": [
+          {
+            "path": "test/add.test.mjs",
+            "evidence": "Existing add(0, 0) assertion passes; preserve it while adding the positive-integer regression"
+          }
+        ],
+        "affectedSuite": ["test/add.test.mjs"]
+      }
+    }
+  ],
+  "outputs": [],
+  "verification": {
+    "baseline": {
+      "target": "task-red-contracts",
+      "affected": "task-affected-contracts",
+      "fullSuite": {
+        "kind": "static-check",
+        "id": "add-baseline",
+        "runner": {
+          "kind": "node",
+          "script": "test/add.test.mjs"
+        },
+        "args": [],
+        "classification": "expected-green"
+      },
+      "failureIdentity": "normalized"
+    },
+    "change": {
+      "affected": "task-affected-contracts",
+      "fullSuite": {
+        "kind": "static-check",
+        "id": "add-full",
+        "runner": {
+          "kind": "node",
+          "script": "test/add.test.mjs"
+        },
+        "args": [],
+        "classification": "expected-green"
+      },
+      "postApply": {
+        "kind": "static-check",
+        "id": "add-post-apply",
+        "runner": {
+          "kind": "node",
+          "script": "test/add.test.mjs"
+        },
+        "args": [],
+        "classification": "expected-green"
+      }
+    },
+    "artifactCorrection": {
+      "maxAttempts": 2
+    },
+    "repair": {
+      "maxAttempts": 1,
+      "inBoundaryOnly": true,
+      "approvalOnBoundaryExpansion": true,
+      "attribution": ["pre-existing", "introduced", "unresolved", "environment"]
+    },
+    "agentsCheckpoint": {
+      "required": false,
+      "verification": null,
+      "operations": []
+    }
+  }
+}

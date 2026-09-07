@@ -26,6 +26,10 @@ Implement 只暴露 `start`、`status`、`resume`、`rebind`、`cancel` 和 `dis
 Design 从第一步起统一使用 `action: "design"`：新需求通过 `start(requirement)` 进入，已有 change 通过 `start(change)` 进入，后续只携带返回的 `runId`。
 需求、决策合同与 Gate A 合同由控制面规范化并计算哈希，调用方无需 SHA-256 工具；Gate B 自动绑定当前已编译 canonical plan，原始瞬时文本不会写入 durable journal。
 `validate-plan-draft` 可在 `compile-plan` 前只读运行同一套编译检查，并以结构化 `taskId` / phase / field / verification 诊断定位问题；Design finalization 的安全诊断码也会进入错误详情与可展开 TUI，而不再只显示统一失败标题。
+随包提供的 [单任务计划示例](config/plan-draft.example.json) 展示完整 PlanDraft 和结构化 Gate A 合同；按实际仓库替换示例中的路径、证据与验证命令。
+草稿可省略 `tracking`、阶段 `verificationInputs` 和现有测试的 `disposition`，编译器按任务、验证契约和已声明产物生成这些机械字段；已批准的 `changeContract` 由控制面继承，无需重复填写。
+推导有歧义时拒绝编译，显式错误仍会报错；代码不会据此扩大路径、依赖或产物权限，封存计划保持完整、严格的结构。
+预检集中返回不同任务的独立结构错误，并提供字段位置、期望/实际路径和修正提示；工具反馈与 TUI 共用有界脱敏投影。
 Design status 将可调用的 `legalOperations` 与顶层 `packetActions` 分开；显式退出只能发送 `{"action":"finish"}`，不能伪装成 `operation: "finish"`。
 
 普通 artifact、错误 Red、transport、environment、stale、conflict、baseline 与验证失败都留在同一 Implement run 中恢复。
@@ -58,7 +62,7 @@ Design 完成主要决策后，Implement 中的新实施选择默认由父模型
 交互式 TUI、print、JSON 和 RPC 都保留 durable semantic state；父模型有自动继续动作时，TUI 显示 recovering，不把内部待编译状态显示成用户待确认，也不提示用户手动 resume。
 queued、connecting、waiting-first-response、running、validating、retrying、verifying、paused、approval-needed、applying 和 recovering 都不是完成；operation-cancelled 表示本次操作取消但 run 仍可恢复，discarded 与 rejected 是非成功终态。
 只有最终 apply 与 post-apply verification 提交后的 `completed` 才显示成功。
-Design finalization、Implement 终态、Diagnose/显式 `finish` 或 session shutdown 会清除 active stage 与 parent bridge；Design 还会恢复进入前的精确父工具集合，其他阶段只撤下 `abel_dispatch`。
+Design finalization、Implement 终态、Diagnose/显式 `finish` 或 session shutdown 会清除 active stage 与私有子执行状态；Design 还会恢复进入前的精确父工具集合，其他阶段只撤下 `abel_dispatch`。
 Gate 等待和可恢复暂停保持激活以接收直接后续操作。
 
 私有 journal、artifact 与 change workspace 位于 consumer repository 之外的 owner-private state root。
@@ -69,7 +73,14 @@ Gate 等待和可恢复暂停保持激活以接收直接后续操作。
 
 扩展入口负责宿主生命周期与服务装配，交付加载和验证适配器分别由独立模块负责。
 工作流入口保留原有导出，状态机仍是唯一状态转换权威；执行服务通过类型化接口返回事实。
+状态机读取运行与预算事实，独立的 `workflow-status.ts` 纯函数生成状态、阻塞批次及继续动作，不访问存储或启动执行。
+普通阶段和修复阶段共用 `candidate-artifact.ts` 校验、封存候选；恢复旧候选仍按当前批准路径检查，调用方分别处理普通越界和修复权限扩展。
 测试检查模块依赖无环，以及子会话无法导入主工作区应用和 run 状态权限。
+
+Implement 父模型属于受信任的宿主编排层，保留原有工具以调查和修复已授权的环境问题；产品修改应通过控制面完成。
+子 Worker 和控制面执行路径有代码边界；父模型直接使用宿主工具不经过这些路径，阶段指令约束其行为。
+只有 Design 会收紧父工具。
+结构化验收固定验证义务，目标是否被充分覆盖仍取决于验收测试的质量。
 
 新身份统一采用 UTF-16 码元排序，不依赖宿主语言环境。
 旧 workspace manifest 按已保存的条目顺序验证原身份；已绑定批准证明的历史交付可保留原有集合顺序，仍需验证原始字节哈希和私有批准事实。
@@ -117,7 +128,8 @@ npm install -g @abelxiaoxing/cadence
 - **本地包目录（local package directory）** — 将 Pi 指向本仓库的绝对路径或相对路径（absolute or relative path，例如 `./cadence`），Pi 发现同样的资源。
 - **已安装 tarball 目录（installed tarball directory）** — 运行 `bun pm pack --destination <tmp>` 生成真实 tarball（.tgz），安装或解压到隔离目录后指向该目录；tarball 文件本身永远不会被当作本地包传给 Pi。
 
-本包要求 Node.js `>=22.13.0`，以使用稳定可用的内置 `node:sqlite`；不从参考仓库源安装，也不维护 Pi 主机版本兼容矩阵。
+本包要求 Node.js `>=22.13.0`，以使用稳定可用的内置 `node:sqlite`；不从参考仓库源安装。
+当前验证的 Pi SDK 为 `0.84.3`，声明支持同一 `0.84` 补丁系列；不宣称跨 minor 版本兼容，升级须重新运行集成验收。
 
 ## OpenSpec 启动与平台范围
 
@@ -169,6 +181,20 @@ bun run test:target test/openspec-cli.test.ts test/design-delivery.integration.t
 inherited route 声明的能力会与当前父模型真实能力取交集，不能通过夸大的配置绕过 admission。
 Implement 保留 16,000 context / 8,000 output 的最低容量要求；任务复杂度估算只影响自动选择的优先级，满足最低要求的 route 仍可作为 fallback 或显式 rebind。
 transport 与 malformed structural result 都只在声明的 route 集合内做有界 failover；优先选择达到容量估算的 route，同一优先级保持声明顺序，只有一个 route 时会原地重试一次。
+
+子任务由 Cadence 自己维护模型／工具循环，通过 `pi-ai` 公开接口请求完整响应，不创建 Pi `AgentSession`、覆盖 Agent 钩子或扫描宿主事件历史决定终止。
+模型流事件只用于进度与完整响应适配；只有正常完整响应的工具调用可以执行，错误、截断或取消不得提交产物。
+继承路由快照当前有效 Provider、模型及每次 attempt 新鲜解析的认证，不修改父 Provider 注册表，也不要求父请求预热。
+Provider 自身的流式实现和模型配置仍然生效；宿主 session 的 `before_provider_request`／`onPayload` 不会自动移植到子任务。
+需要通用请求定制时，应使用明确配置的 Provider 实现或 custom route；子请求使用自己的 `low` reasoning 请求，最终由模型映射解释。
+输出上限沿用声明的模型／Provider 合同，不再隐式删除 Responses 的 `max_output_tokens`。
+
+子 Agent 的 evidence 提交使用精简草稿：工具绑定省略的身份，补齐未提供的提示性字段，然后按严格内部结果合同校验。
+引用、约束、风险和未决问题仍须显式提供；省略提示不等于已验证的“没有影响”，也不增加授权。
+一次被拒绝的提交可在原会话纠正一次；只有正常以文字结束且从未提交时，才额外提示补交一次。
+补交沿用原工具权限、总时限、取消和用量统计，不重新调查，不把文字直接当作交付；传输错误、截断和取消不触发补交。
+合法提交可附带简短文字，但接受后不得重复提交或覆盖结果。
+
 相同 pause 的安全指纹与重复计数通过 `status` 暴露，凭据、URL 和原始输出仍保持私有。
 `rebind` 只能选择已获 policy 授权且能力匹配的 route，不会扩大任务边界。
 
@@ -295,6 +321,8 @@ bun run eval:workflow --live --scenario missing-capability
 
 `--live` 使用 Pi 当前配置的模型，也可传 `--model provider/model`；需要可用的 Provider、OpenSpec 和 Linux Bubblewrap。
 报告记录完成状态、用户介入、重复修订、耗时及宿主报告的 token/成本；最终行为另由隔离 oracle 检查。
+`modelFailureDiagnostics` 最多保留 16 条脱敏错误分类及可从 SDK 错误文字识别的 HTTP 状态；无法识别时明确记录 `unclassified` / `null`。
+`autoRetries` 与 `retryDelayMs` 单独记录宿主自动重试次数和计划退避时间，避免把同一请求的多次失败误读为独立故障。
 模型服务不可用、阶段停滞、取消与 Design 完成都不会被计为 Implement 成功。
 缺少能力的场景用于观察保留状态，不能把任意停滞当作正确恢复。
 无原始对话落盘。

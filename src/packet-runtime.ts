@@ -15,7 +15,6 @@ import {
   type PacketEnvelope,
   validatePacketEnvelope,
 } from "./contracts.ts";
-import type { ParentPayloadBridge } from "./parent-payload-bridge.ts";
 import { runtimeForWorkerRoute } from "./parent-provider.ts";
 import {
   loadRoutePolicy,
@@ -78,7 +77,6 @@ export type PacketDispatchResult =
 
 export interface PacketRuntimeOptions {
   activation?: Activation;
-  parentPayloadBridge: ParentPayloadBridge;
   routePolicy?: RoutePolicy;
   routePolicyHome?: string;
   environment?: Readonly<Record<string, string | undefined>>;
@@ -162,7 +160,6 @@ function syntheticChildFailure(
 export class PacketRuntime {
   readonly activation: Activation;
   readonly limits = LIMITS;
-  readonly #parentPayloadBridge: ParentPayloadBridge;
   readonly #routePolicy?: RoutePolicy;
   readonly #routePolicyHome?: string;
   readonly #environment: Readonly<Record<string, string | undefined>>;
@@ -178,7 +175,6 @@ export class PacketRuntime {
 
   constructor(options: PacketRuntimeOptions) {
     this.activation = options.activation ?? new Activation();
-    this.#parentPayloadBridge = options.parentPayloadBridge;
     this.#routePolicy = options.routePolicy;
     this.#routePolicyHome = options.routePolicyHome;
     this.#environment = options.environment ?? process.env;
@@ -375,7 +371,6 @@ export class PacketRuntime {
         const phase = await runtimeForWorkerRoute(
           attempt.route,
           context,
-          this.#parentPayloadBridge,
           attempt.signal,
           this.#environment,
           { onResponse: attempt.onHeaders },
@@ -422,7 +417,6 @@ export class PacketRuntime {
           ],
           timeoutMs: LIMITS.phaseTimeoutMs,
           signal: attempt.signal,
-          failureOverride: phase.failureOverride,
           onStreamProgress: attempt.onProgress,
         });
         brokerUsage.add(`attempt:${childAttempt++}`, child.usage);
@@ -582,7 +576,6 @@ export class PacketRuntime {
     await this.cancel();
     this.#brokers.clear();
     this.#brokerPolicies.clear();
-    this.#parentPayloadBridge.clear();
   }
 
   get state(): ActivationState {

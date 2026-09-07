@@ -49,9 +49,10 @@
     "eval:workflow": "node --experimental-strip-types scripts/evaluate-workflow.mjs"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*",
-    "typebox": "*"
+    "@earendil-works/pi-coding-agent": "~0.84.3",
+    "@earendil-works/pi-tui": "~0.84.3",
+    "typebox": "*",
+    "@earendil-works/pi-ai": "~0.84.3"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
@@ -60,7 +61,8 @@
     "@types/node": "^22.15.3",
     "rumdl": "^0.2.10",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.8",
+    "@earendil-works/pi-ai": "0.84.3"
   },
   "repository": {
     "type": "git",

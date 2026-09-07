@@ -1172,9 +1172,43 @@ describe("safe private Design artifact mutation", () => {
     item.controller.close();
   });
 
-  it("preflights a valid PlanDraft without installing or journaling a canonical plan", async () => {
+  it("preflights the shipped PlanDraft example without installing or journaling a canonical plan", async () => {
     const item = fixture("plan-preflight");
-    await approveGateAOnly(item);
+    const example = JSON.parse(
+      readFileSync(
+        path.resolve(import.meta.dirname, "../config/plan-draft.example.json"),
+        "utf8",
+      ),
+    );
+    const { changeContract, ...draft } = example;
+    draft.changeId = item.change;
+    mkdirSync(path.join(item.consumerRoot, "test"));
+    writeFileSync(
+      path.join(item.consumerRoot, "package.json"),
+      '{"type":"module"}\n',
+    );
+    writeFileSync(
+      path.join(item.consumerRoot, "src/add.mjs"),
+      "export const add = (left, right) => left - right;\n",
+    );
+    writeFileSync(
+      path.join(item.consumerRoot, "test/add.test.mjs"),
+      'import assert from "node:assert/strict";\nimport { add } from "../src/add.mjs";\nassert.equal(add(0, 0), 0);\n',
+    );
+    await item.controller.execute({
+      operation: "approve-gate",
+      runId: item.runId,
+      operationId: "example-gate-a",
+      gate: "gate-a",
+      contract: changeContract,
+    });
+    await item.controller.execute({
+      operation: "write-artifact",
+      runId: item.runId,
+      operationId: "example-draft",
+      path: "plan-draft.json",
+      content: JSON.stringify(draft),
+    });
 
     const validated = await item.controller.execute({
       operation: "validate-plan-draft",
@@ -1197,6 +1231,74 @@ describe("safe private Design artifact mutation", () => {
     );
     expect(item.controller.status(item.runId).plan).toBeNull();
     item.controller.close();
+  });
+
+  it("delivers actionable binding diagnostics through the real Design tool and accepts the omitted-field correction", async () => {
+    const item = fixture("binding-feedback");
+    await approveGateAOnly(item);
+    const draft: PlanDraft = planDraft(item.change);
+    for (const phase of Object.values(draft.tasks[0]!.phases))
+      phase.verificationInputs!.push({
+        kind: "workspace",
+        path: "src/value.ts",
+      });
+    const writeDraft = () =>
+      writeFileSync(
+        path.join(item.changeRoot, "plan-draft.json"),
+        JSON.stringify(draft),
+      );
+    writeDraft();
+    const harness = extensionJourneyHarness(
+      item.consumerRoot,
+      {
+        execute: async () => ({}),
+        executeDesign: (request) => item.controller.execute(request),
+        close: async () => item.controller.close(),
+      },
+      "abel-design",
+    );
+    const input = {
+      action: "design",
+      request: { operation: "validate-plan-draft", runId: item.runId },
+    };
+    try {
+      await expect(harness.execute("binding-error", input)).rejects.toThrow(
+        "design-plan-validation-invalid",
+      );
+      const feedback = harness.handlers.get("tool_result")?.({
+        toolName: DISPATCH_TOOL,
+        toolCallId: "binding-error",
+        isError: true,
+        input,
+        content: [{ type: "text", text: "design-plan-validation-invalid" }],
+      }) as {
+        details: { designFailure: { diagnostics: Record<string, unknown>[] } };
+      };
+      const found = feedback.details.designFailure.diagnostics;
+      expect(found).toHaveLength(2);
+      for (const diagnostic of found)
+        expect(diagnostic).toMatchObject({
+          code: "verification-input-binding-mismatch",
+          field: `phases.${diagnostic.phase}.verificationInputs`,
+          expectedPaths: ["verify.mjs"],
+          actualPaths: ["src/value.ts", "verify.mjs"],
+          hint: expect.stringContaining("Omit verificationInputs"),
+        });
+      expect(item.controller.status(item.runId).plan).toBeNull();
+      expect(
+        existsSync(path.join(item.changeRoot, "implement-plan.json")),
+      ).toBe(false);
+      for (const phase of Object.values(draft.tasks[0]!.phases))
+        delete phase.verificationInputs;
+      writeDraft();
+      expect(await harness.execute("binding-corrected", input)).toMatchObject({
+        valid: true,
+      });
+      expect(item.controller.status(item.runId).plan).toBeNull();
+    } finally {
+      await harness.handlers.get("session_shutdown")?.();
+      item.controller.close();
+    }
   });
 
   it("reports the exact task, phase, field, and category for an invalid draft", async () => {

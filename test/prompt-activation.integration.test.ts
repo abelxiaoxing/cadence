@@ -14,7 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 import register, { DISPATCH_TOOL, registerWorkflowControl } from "../src/index";
-import { runtimeForProvider } from "../src/parent-provider";
+import { runtimeForProvider } from "./helpers/model-runtime.ts";
 
 const packageDir = join(import.meta.dirname, "..");
 const roots: string[] = [];

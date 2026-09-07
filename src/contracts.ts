@@ -117,7 +117,6 @@ export const ENVIRONMENT_FAILURE_CODES = [
   "checkout-failed",
   "clone-alternates",
   "clone-failed",
-  "child-session-create-failed",
   "dependency-path-unsafe",
   "git-apply-check-unavailable",
   "git-apply-failed",
@@ -125,11 +124,6 @@ export const ENVIRONMENT_FAILURE_CODES = [
   "git-ignore-check-failed",
   "git-index-unavailable",
   "invalid-subagent-endpoint",
-  "parent-bridge-capture-not-ready",
-  "parent-bridge-generation-invalidated",
-  "parent-bridge-model-key-mismatch",
-  "parent-bridge-provider-not-installed",
-  "parent-bridge-session-unavailable",
   "root-unavailable",
   "sandbox-runtime-unavailable",
 ] as const;
@@ -437,6 +431,9 @@ type ImplementGraphDiagnosticDetails = Partial<{
   producerTaskId: string;
   producerPhase: ImplementationPhase;
   dependencyTaskId: string;
+  field: string;
+  expectedPaths: string[];
+  actualPaths: string[];
 }>;
 
 export type ImplementGraphReadinessDiagnostic =
@@ -477,6 +474,10 @@ export interface PacketEnvelope {
   };
   output: "evidence" | "diff";
 }
+
+// JSON-schema counterpart for model-visible path arguments; keep its behavior
+// checked against isValidRelativePath rather than hiding constraints in prose.
+export const RELATIVE_PATH_PATTERN = String.raw`^(?:\.|(?!/)(?![a-zA-Z]:/)(?!\./)(?![\s\S]*\.\.)(?![\s\S]*[\\\u0000])(?![\s\S]*//)(?![\s\S]*/\.(?:/|$))(?![\s\S]*/$)[\s\S]+)$`;
 
 export function isValidRelativePath(p: unknown): p is string {
   return (
@@ -1198,6 +1199,9 @@ export type ImplementGraphContractDiagnostic =
       field?: string;
       category?: string;
       outputId?: string;
+      path?: string;
+      expectedPaths?: string[];
+      actualPaths?: string[];
     }
   | {
       code: "invalid-output-path";
@@ -1456,6 +1460,26 @@ function taskBoundaryContractDiagnostic(
     snapshot,
   );
   if (impactReason !== null) {
+    if (impactReason === "current-task related test is outside the write set") {
+      const related = (value.impactClosure as ImpactClosureContract)
+        .relatedTests;
+      const index = related.findIndex(
+        (test) =>
+          test.disposition === "current-task" &&
+          !declared.write.includes(test.path),
+      );
+      const test = related[index];
+      if (test)
+        return {
+          ...diagnostic(
+            `impactClosure.relatedTests.${index}.disposition`,
+            "current-task-outside-write-set",
+          ),
+          path: test.path,
+          expectedPaths: [...declared.write].sort(),
+          actualPaths: [test.path],
+        };
+    }
     return diagnostic("impactClosure", impactClosureCategory(impactReason));
   }
   return validateTaskBoundary(value, snapshot)
@@ -1469,6 +1493,7 @@ export function validateImplementGraphBoundary(value: unknown):
       ok: false;
       reason: string;
       diagnostic: ImplementGraphContractDiagnostic;
+      diagnostics?: ImplementGraphContractDiagnostic[];
     } {
   if (
     !hasExactKeys(value, ["changeId", "tasks", "outputs"]) ||
@@ -1478,29 +1503,33 @@ export function validateImplementGraphBoundary(value: unknown):
     value.tasks.length > 128 ||
     !Array.isArray(value.outputs) ||
     value.outputs.length > 512
-  ) {
+  )
     return {
       ok: false,
       reason: "invalid Implement graph boundary",
       diagnostic: { code: "invalid-implement-graph" },
     };
-  }
 
+  // Collect independent task/output failures without admitting a partial graph.
+  const failures: Array<{
+    reason: string;
+    diagnostic: ImplementGraphContractDiagnostic;
+  }> = [];
   for (const candidate of value.tasks) {
     if (
       !candidate ||
       typeof candidate !== "object" ||
       Array.isArray(candidate)
     ) {
-      return {
-        ok: false,
+      failures.push({
         reason: "invalid Implement task boundary",
         diagnostic: {
           code: "invalid-implement-graph",
           field: "tasks",
           category: "shape",
         },
-      };
+      });
+      continue;
     }
     const task = candidate as Record<string, unknown>;
     const diagnostic = Object.hasOwn(task, "changeId")
@@ -1513,31 +1542,27 @@ export function validateImplementGraphBoundary(value: unknown):
           { changeId: value.changeId, ...task },
           undefined,
         );
-    if (diagnostic) {
-      return {
-        ok: false,
+    if (diagnostic)
+      failures.push({
         reason: "invalid Implement task boundary",
         diagnostic: { code: "invalid-implement-graph", ...diagnostic },
-      };
-    }
+      });
   }
-
   for (const candidate of value.outputs) {
     if (
       !candidate ||
       typeof candidate !== "object" ||
       Array.isArray(candidate)
     ) {
-      return {
-        ok: false,
+      failures.push({
         reason: "invalid Implement graph output",
         diagnostic: { code: "invalid-implement-graph" },
-      };
+      });
+      continue;
     }
     const output = candidate as Record<string, unknown>;
     if (!isValidRelativePath(output.path)) {
-      return {
-        ok: false,
+      failures.push({
         reason: "invalid Implement graph output path",
         diagnostic: {
           code: "invalid-output-path",
@@ -1545,7 +1570,8 @@ export function validateImplementGraphBoundary(value: unknown):
           field: "outputs.path",
           category: "path",
         },
-      };
+      });
+      continue;
     }
     if (
       !hasExactKeys(output, ["id", "path", "producer", "postcondition"]) ||
@@ -1557,8 +1583,7 @@ export function validateImplementGraphBoundary(value: unknown):
       ) ||
       output.postcondition !== "regular-file"
     ) {
-      return {
-        ok: false,
+      failures.push({
         reason: "invalid Implement graph output",
         diagnostic: {
           code: "invalid-implement-graph",
@@ -1566,10 +1591,18 @@ export function validateImplementGraphBoundary(value: unknown):
           field: "outputs",
           category: "shape",
         },
-      };
+      });
     }
   }
-
+  const first = failures[0];
+  if (first)
+    return {
+      ok: false,
+      ...first,
+      ...(failures.length > 1
+        ? { diagnostics: failures.map((failure) => failure.diagnostic) }
+        : {}),
+    };
   return {
     ok: true,
     value: structuredClone(value) as unknown as ImplementGraphBoundary,
@@ -1976,6 +2009,24 @@ export interface DiffResult {
   contractCompliant: boolean;
 }
 
+// Diagnostics contain only code-owned field names, never unexpected keys or values.
+function evidenceFieldsFailure(
+  value: unknown,
+  fields: readonly string[],
+  location: string,
+): { ok: false; reason: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return { ok: false, reason: `${location}: expected an object` };
+  const missing = fields.filter((field) => !Object.hasOwn(value, field));
+  return {
+    ok: false,
+    reason:
+      missing.length > 0
+        ? `${location}: missing fields ${missing.join(", ")}`
+        : `${location}: unexpected fields; allowed fields ${fields.join(", ")}`,
+  };
+}
+
 export function validateEvidenceResult(value: unknown): {
   ok: boolean;
   reason?: string;
@@ -1999,7 +2050,7 @@ export function validateEvidenceResult(value: unknown): {
     "hints",
   ] as const;
   if (!hasExactKeys(r, fields)) {
-    return { ok: false, reason: "invalid evidence result fields" };
+    return evidenceFieldsFailure(r, fields, "result");
   }
   if (!validIdentifier(r.id) || typeof r.role !== "string")
     return { ok: false, reason: "invalid identity" };
@@ -2019,25 +2070,38 @@ export function validateEvidenceResult(value: unknown): {
       return { ok: false, reason: `invalid evidence field: ${field}` };
     }
   }
-  if (
-    !Array.isArray(r.citations) ||
-    r.citations.some(
-      (citation) =>
-        !hasExactKeys(citation, ["path", "lines"]) ||
-        !isValidRelativePath(citation.path) ||
-        typeof citation.lines !== "string",
-    )
-  ) {
-    return { ok: false, reason: "invalid evidence citations" };
+  if (!Array.isArray(r.citations))
+    return { ok: false, reason: "citations: expected an array" };
+  for (const [index, citation] of r.citations.entries()) {
+    const field = `citations[${index}]`;
+    if (!hasExactKeys(citation, ["path", "lines"]))
+      return evidenceFieldsFailure(citation, ["path", "lines"], field);
+    if (!isValidRelativePath(citation.path))
+      return {
+        ok: false,
+        reason: `${field}.path: expected a canonical relative path`,
+      };
+    if (typeof citation.lines !== "string")
+      return { ok: false, reason: `${field}.lines: expected a string` };
   }
-  if (
-    !hasExactKeys(r.hints, ["writeSet", "verification", "agentsImpact"]) ||
-    !validatePathSet(r.hints.writeSet) ||
-    typeof r.hints.verification !== "string" ||
-    !(AGENTS_IMPACTS as readonly unknown[]).includes(r.hints.agentsImpact)
-  ) {
-    return { ok: false, reason: "invalid evidence hints" };
-  }
+  if (!hasExactKeys(r.hints, ["writeSet", "verification", "agentsImpact"]))
+    return evidenceFieldsFailure(
+      r.hints,
+      ["writeSet", "verification", "agentsImpact"],
+      "hints",
+    );
+  if (!validatePathSet(r.hints.writeSet))
+    return {
+      ok: false,
+      reason: "hints.writeSet: expected unique canonical relative paths",
+    };
+  if (typeof r.hints.verification !== "string")
+    return { ok: false, reason: "hints.verification: expected a string" };
+  if (!(AGENTS_IMPACTS as readonly unknown[]).includes(r.hints.agentsImpact))
+    return {
+      ok: false,
+      reason: `hints.agentsImpact: expected one of ${AGENTS_IMPACTS.join(", ")}`,
+    };
   const serialized = JSON.stringify(r);
   if (Buffer.byteLength(serialized, "utf8") > LIMITS.maxCompleteResultBytes) {
     return {
@@ -2078,36 +2142,65 @@ function validateDesignEvidenceResult(r: Record<string, unknown>): {
     "success_criteria_hints",
   ] as const;
   if (!hasExactKeys(r, fields)) {
-    return { ok: false, reason: "invalid Design evidence result fields" };
+    return evidenceFieldsFailure(r, fields, "result");
   }
-  if (
-    !validIdentifier(r.id) ||
-    r.packet_id !== r.id ||
-    !isValidRelativePath(r.module_name)
-  ) {
-    return { ok: false, reason: "invalid Design evidence identity" };
-  }
+  if (!validIdentifier(r.id))
+    return { ok: false, reason: "id: expected a valid identifier" };
+  if (r.packet_id !== r.id)
+    return { ok: false, reason: "packet_id: must equal id" };
+  if (!isValidRelativePath(r.module_name))
+    return {
+      ok: false,
+      reason: "module_name: expected a canonical relative path or module slug",
+    };
   if (!validatePathSet(r.scope) || r.scope.length === 0) {
-    return { ok: false, reason: "invalid Design evidence scope" };
+    return {
+      ok: false,
+      reason:
+        "scope: expected a nonempty set of unique canonical relative paths",
+    };
   }
-  if (!validatePathSet(r.files_read) || !validatePathSet(r.write_set_hints)) {
-    return { ok: false, reason: "invalid Design evidence path set" };
+  for (const field of ["files_read", "write_set_hints"] as const) {
+    if (!validatePathSet(r[field]))
+      return {
+        ok: false,
+        reason: `${field}: expected unique canonical relative paths`,
+      };
   }
-  if (
-    !Array.isArray(r.evidence) ||
-    r.evidence.some(
-      (entry) =>
-        !hasExactKeys(entry, ["claim", "path", "line_start", "line_end"]) ||
-        typeof entry.claim !== "string" ||
-        entry.claim.length === 0 ||
-        !isValidRelativePath(entry.path) ||
-        !Number.isSafeInteger(entry.line_start) ||
-        !Number.isSafeInteger(entry.line_end) ||
-        (entry.line_start as number) < 1 ||
-        (entry.line_end as number) < (entry.line_start as number),
+  if (!Array.isArray(r.evidence))
+    return { ok: false, reason: "evidence: expected an array" };
+  for (const [index, entry] of r.evidence.entries()) {
+    const field = `evidence[${index}]`;
+    if (!hasExactKeys(entry, ["claim", "path", "line_start", "line_end"])) {
+      return evidenceFieldsFailure(
+        entry,
+        ["claim", "path", "line_start", "line_end"],
+        field,
+      );
+    }
+    if (typeof entry.claim !== "string" || entry.claim.length === 0)
+      return { ok: false, reason: `${field}.claim: expected nonempty text` };
+    if (!isValidRelativePath(entry.path))
+      return {
+        ok: false,
+        reason: `${field}.path: expected a canonical relative path`,
+      };
+    if (
+      !Number.isSafeInteger(entry.line_start) ||
+      (entry.line_start as number) < 1
     )
-  ) {
-    return { ok: false, reason: "invalid Design evidence citations" };
+      return {
+        ok: false,
+        reason: `${field}.line_start: expected a positive safe integer`,
+      };
+    if (
+      !Number.isSafeInteger(entry.line_end) ||
+      (entry.line_end as number) < (entry.line_start as number)
+    )
+      return {
+        ok: false,
+        reason: `${field}.line_end: expected a safe integer >= line_start`,
+      };
   }
   for (const field of [
     "existing_structures",

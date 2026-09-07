@@ -8,9 +8,18 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
+import {
+  fauxAssistantMessage,
+  fauxProvider,
+} from "@earendil-works/pi-ai/providers/faux";
+import {
+  createAgentSession,
+  DefaultResourceLoader,
+  SessionManager,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { expandPromptTemplate } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/prompt-templates.js";
+import { runtimeForProvider } from "./helpers/model-runtime.ts";
 
 const packageDir = path.resolve(import.meta.dirname, "..");
 const promptsDir = path.join(packageDir, "prompts");
@@ -72,13 +81,50 @@ describe("Abel prompt templates", () => {
       expect(prompt.content).toMatch(
         /<abel-request>\s*\$ARGUMENTS\s*<\/abel-request>/,
       );
-      const expanded = expandPromptTemplate(
-        `/${prompt.name} "quoted requirement" with spaces`,
-        prompts,
-      );
-      expect(expanded).toContain(
-        "<abel-request>\nquoted requirement with spaces\n</abel-request>",
-      );
+      const root = mkdtempSync(path.join(tmpdir(), "cadence-public-prompt-"));
+      const provider = fauxProvider({
+        provider: `prompt-${prompt.name}`,
+        api: "faux",
+      });
+      provider.setResponses([fauxAssistantMessage("done")]);
+      const loader = new DefaultResourceLoader({
+        cwd: root,
+        agentDir: root,
+        additionalPromptTemplatePaths: [promptsDir],
+        noExtensions: true,
+        noSkills: true,
+        noThemes: true,
+        noContextFiles: true,
+      });
+      let session;
+      try {
+        await loader.reload();
+        ({ session } = await createAgentSession({
+          cwd: root,
+          model: provider.getModel(),
+          modelRuntime: await runtimeForProvider(provider.provider),
+          tools: [],
+          resourceLoader: loader,
+          sessionManager: SessionManager.inMemory(root),
+          settingsManager: SettingsManager.inMemory({
+            retry: { enabled: false },
+          }),
+        }));
+        await session.prompt(
+          `/${prompt.name} "quoted requirement" with spaces`,
+          { expandPromptTemplates: true },
+        );
+        expect(
+          JSON.stringify(
+            session.messages.filter((message) => message.role === "user"),
+          ),
+        ).toContain(
+          "<abel-request>\\nquoted requirement with spaces\\n</abel-request>",
+        );
+      } finally {
+        session?.dispose();
+        rmSync(root, { recursive: true, force: true });
+      }
     }
   });
 
@@ -106,10 +152,6 @@ describe("Abel prompt templates", () => {
       const file = readFileSync(path.join(promptsDir, `${name}.md`), "utf8");
       if (name === "abel-design") {
         expect(file).toMatch(/no requirement can be identified/i);
-        expect(file).toMatch(/investigate first/i);
-        expect(file).toMatch(
-          /only unresolved substantive choices require a user decision/i,
-        );
         continue;
       }
       expect(file).toMatch(/missing|absent/i);

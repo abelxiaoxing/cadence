@@ -25,8 +25,11 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     expect(pkg.engines?.node).toBe(">=22.13.0");
     expect(pkg.license).toBe("MIT");
     expect(pkg.keywords).toContain("pi-package");
-    expect(pkg.peerDependencies?.["@earendil-works/pi-coding-agent"]).toBe("*");
-    expect(pkg.peerDependencies?.["@earendil-works/pi-tui"]).toBe("*");
+    expect(pkg.peerDependencies?.["@earendil-works/pi-coding-agent"]).toBe(
+      "~0.84.3",
+    );
+    expect(pkg.peerDependencies?.["@earendil-works/pi-tui"]).toBe("~0.84.3");
+    expect(pkg.peerDependencies?.["@earendil-works/pi-ai"]).toBe("~0.84.3");
     expect(pkg.peerDependencies?.typebox).toBe("*");
     expect(pkg.devDependencies?.["@earendil-works/pi-tui"]).toBe("0.84.3");
     expect(pkg.dependencies).toBeUndefined();
@@ -66,13 +69,12 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     ).toBe(true);
   });
 
-  it("documents local-directory and installed-tarball loading without version or publication claims", () => {
+  it("documents loading and the tested SDK boundary without broad compatibility claims", () => {
     const readme = read(path.join(root, "README.md"));
     expect(readme).toMatch(/local package|tarball|\.tgz|installed/i);
     expect(readme).toMatch(/\.\/|absolute|relative/i);
-    expect(readme).not.toMatch(
-      /0\.84\.1|supported.*version|version.*support|compatib/i,
-    );
+    expect(readme).toContain("0.84.3");
+    expect(readme).toContain("不宣称跨 minor 版本兼容");
     // published as @abelxiaoxing/cadence only; no other @abel/ scope or bare scope installs
     expect(readme).not.toMatch(/npm install @abel(?![a-z]+\/)/i);
     expect(readme).not.toMatch(/@abel\/(?!xiaoxing)/i);

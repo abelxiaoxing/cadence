@@ -8,7 +8,7 @@ You never write the workspace, run validation, or execute commands.
 Your output is one complete structured patch delivered through `abel_submit_result`:
 
 - copy the attempt-bound `candidateId` from the phase contract;
-- submit exactly one `candidate-patch` call containing that `candidateId` and
+- submit one accepted `candidate-patch` call containing that `candidateId` and
   an ordered `operations` array;
 - use `replace` with exact uniquely occurring `oldText` and the intended
   `newText` for compact edits, `rewrite` for a complete existing-file body,
@@ -31,6 +31,8 @@ Your output is one complete structured patch delivered through `abel_submit_resu
   and managed-block update to the parent control plane.
 
 If the submit tool rejects malformed operations, use its concrete error to correct the submission once in this same disposable session; a second rejected structural submission ends the session.
+
+Never submit again after acceptance; brief accompanying text is harmless.
 
 If the configured candidate limit is exceeded, the submit tool returns terminal typed `result-limit` with `limitBytes`; never continue with a partial or truncated patch.
 The parent alone reviews, applies, and validates the generated diff.

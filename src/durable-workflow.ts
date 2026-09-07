@@ -1,3 +1,7 @@
+import {
+  inspectCandidateArtifact,
+  sealCandidateArtifact,
+} from "./candidate-artifact.ts";
 import { compareCanonicalStrings } from "./canonical.ts";
 import { configureSqlite, ensureSqliteSchema } from "./sqlite-schema.ts";
 import { ROUTE_HEALTH_SCHEMA } from "./storage-schema.ts";
@@ -27,10 +31,7 @@ import {
   verifyCumulativeRevision,
 } from "./apply-transaction.ts";
 import { ArtifactStore } from "./artifact-store.ts";
-import {
-  diffWritePaths,
-  type StructuredVerificationContract,
-} from "./contracts.ts";
+import type { StructuredVerificationContract } from "./contracts.ts";
 import type { ImplementPlan, PlanTaskDraft } from "./delivery-compiler.ts";
 import type { RoutePolicy, WorkerRoutePolicy } from "./route-policy.ts";
 import { observeSafePath } from "./safe-path.ts";
@@ -38,7 +39,6 @@ import type { ResolvedStateRoot } from "./state-root.ts";
 import type { CandidateArtifactSubmission } from "./submit-tool.ts";
 import {
   type BeginCandidateInput,
-  TASK_LEDGER_LIMITS,
   TaskLedger,
   type VerifiedTaskEvent,
 } from "./task-ledger.ts";
@@ -2219,93 +2219,29 @@ class DurableWorkflowComposition
             });
       }
       emitWorkflowActivity(request.onActivity, { state: "validating" });
-      ledger.beginCandidate(identity);
-      let bytes: Buffer;
-      if (proposal.kind === "sealed-candidate") {
-        if (
-          proposal.candidateId !== identity.candidateId ||
-          !SHA256.test(proposal.artifactHash) ||
-          !Number.isSafeInteger(proposal.bytes) ||
-          proposal.bytes < 1 ||
-          !Array.isArray(proposal.paths)
-        ) {
-          return reject(
-            { kind: "retryable", code: "candidate-diff-invalid" },
-            {
-              category: "artifact",
-              code: "candidate-diff-invalid",
-              stage: "candidate-seal",
-            },
-          );
-        }
-        bytes = Buffer.from(ledger.readSealedCandidate(identity.candidateId));
-        if (
-          bytes.length !== proposal.bytes ||
-          sha256Bytes(bytes) !== proposal.artifactHash
-        ) {
-          throw new Error("candidate-seal-integrity-invalid");
-        }
-      } else {
-        if (
-          !(proposal.bytes instanceof Uint8Array) ||
-          proposal.bytes.length === 0
-        ) {
-          return reject(
-            { kind: "retryable", code: "candidate-diff-invalid" },
-            {
-              category: "artifact",
-              code: "candidate-diff-invalid",
-              stage: "candidate-submit",
-            },
-          );
-        }
-        bytes = Buffer.from(proposal.bytes);
-      }
-      let candidatePaths: string[];
-      try {
-        candidatePaths = diffWritePaths(
-          new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-        ).paths;
-      } catch {
-        return reject(
-          { kind: "retryable", code: "candidate-diff-invalid" },
-          {
-            category: "artifact",
-            code: "candidate-diff-invalid",
-            stage: "candidate-diff",
-          },
-        );
-      }
-      if (
-        candidatePaths.some((relative) => !approvedPaths.includes(relative))
-      ) {
+      const inspected = inspectCandidateArtifact({
+        ledger,
+        identity,
+        proposal,
+        approvedPaths,
+      });
+      if (!inspected.ok) {
+        const code =
+          inspected.code === "write-set-mismatch"
+            ? "repair-boundary-expansion"
+            : inspected.code;
         return reject(
           {
-            kind: "approval-needed",
-            code: "repair-boundary-expansion",
+            kind:
+              inspected.code === "write-set-mismatch"
+                ? "approval-needed"
+                : "retryable",
+            code,
           },
-          {
-            category: "artifact",
-            code: "repair-boundary-expansion",
-            stage: "candidate-boundary",
-          },
+          { category: "artifact", code, stage: inspected.stage },
         );
       }
-      if (proposal.kind === "sealed-candidate") {
-        if (
-          JSON.stringify([...proposal.paths].sort()) !==
-          JSON.stringify([...candidatePaths].sort())
-        ) {
-          return reject(
-            { kind: "retryable", code: "candidate-diff-invalid" },
-            {
-              category: "artifact",
-              code: "candidate-diff-invalid",
-              stage: "candidate-seal",
-            },
-          );
-        }
-      }
+      const { bytes, paths: candidatePaths } = inspected;
       const dependencySensitive = candidatePaths.some(
         (relative) => relative === "package.json" || LOCKFILES.has(relative),
       );
@@ -2396,56 +2332,19 @@ class DurableWorkflowComposition
         }
       }
 
-      let artifactHash: string;
-      if (proposal.kind === "sealed-candidate") {
-        artifactHash = proposal.artifactHash;
-      } else {
-        let sequence = 0;
-        for (
-          let offset = 0;
-          offset < bytes.length;
-          offset += TASK_LEDGER_LIMITS.maxSegmentBytes
-        ) {
-          const segment = bytes.subarray(
-            offset,
-            Math.min(offset + TASK_LEDGER_LIMITS.maxSegmentBytes, bytes.length),
-          );
-          const accepted = ledger.appendCandidateSegment({
-            ...identity,
-            sequence,
-            bytes: segment,
-            segmentHash: sha256Bytes(segment),
-          });
-          if (!accepted.ok) {
-            return reject(
-              { kind: "paused", code: accepted.code },
-              {
-                category: "artifact",
-                code: accepted.code,
-                stage: "candidate-segment",
-              },
-            );
-          }
-          sequence += 1;
-        }
-        const sealed = ledger.sealCandidate({
-          ...identity,
-          segmentCount: sequence,
-          totalBytes: bytes.length,
-          candidateHash: sha256Bytes(bytes),
-        });
-        if (!sealed.ok) {
-          return reject(
-            { kind: "retryable", code: sealed.code },
-            {
-              category: "artifact",
-              code: sealed.code,
-              stage: "candidate-seal",
-            },
-          );
-        }
-        artifactHash = sealed.artifactHash;
+      const sealed = sealCandidateArtifact({
+        ledger,
+        identity,
+        proposal,
+        bytes,
+      });
+      if (!sealed.ok) {
+        return reject(
+          { kind: sealed.kind, code: sealed.code },
+          { category: "artifact", code: sealed.code, stage: sealed.stage },
+        );
       }
+      const { artifactHash } = sealed;
       const candidate = resources.workspaces.createRevision({
         parentRevisionId: baseRevisionId,
         changes: revisionChanges(proposalRoot, approvedPaths),
@@ -3409,89 +3308,23 @@ class DurableWorkflowComposition
             });
       }
       emitWorkflowActivity(input.onActivity, { state: "validating" });
-      ledger.beginCandidate(identity);
-      let bytes: Buffer;
-      if (proposal.kind === "sealed-candidate") {
-        if (
-          proposal.candidateId !== identity.candidateId ||
-          !SHA256.test(proposal.artifactHash) ||
-          !Number.isSafeInteger(proposal.bytes) ||
-          proposal.bytes < 1 ||
-          !Array.isArray(proposal.paths)
-        ) {
-          return reject(
-            { kind: "retryable", code: "candidate-diff-invalid" },
-            {
-              category: "artifact",
-              code: "candidate-diff-invalid",
-              stage: "candidate-seal",
-            },
-          );
-        }
-        bytes = Buffer.from(ledger.readSealedCandidate(identity.candidateId));
-        if (
-          bytes.length !== proposal.bytes ||
-          sha256Bytes(bytes) !== proposal.artifactHash
-        ) {
-          throw new Error("candidate-seal-integrity-invalid");
-        }
-      } else {
-        if (
-          !(proposal.bytes instanceof Uint8Array) ||
-          proposal.bytes.length === 0
-        ) {
-          return reject(
-            { kind: "retryable", code: "candidate-diff-invalid" },
-            {
-              category: "artifact",
-              code: "candidate-diff-invalid",
-              stage: "candidate-submit",
-            },
-          );
-        }
-        bytes = Buffer.from(proposal.bytes);
-      }
-      let candidatePaths: string[];
-      try {
-        const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-        candidatePaths = diffWritePaths(text).paths;
-      } catch {
+      const inspected = inspectCandidateArtifact({
+        ledger,
+        identity,
+        proposal,
+        approvedPaths,
+      });
+      if (!inspected.ok) {
         return reject(
-          { kind: "retryable", code: "candidate-diff-invalid" },
+          { kind: "retryable", code: inspected.code },
           {
             category: "artifact",
-            code: "candidate-diff-invalid",
-            stage: "candidate-diff",
+            code: inspected.code,
+            stage: inspected.stage,
           },
         );
       }
-      if (
-        candidatePaths.some((relative) => !approvedPaths.includes(relative))
-      ) {
-        return reject(
-          { kind: "retryable", code: "write-set-mismatch" },
-          {
-            category: "artifact",
-            code: "write-set-mismatch",
-            stage: "candidate-boundary",
-          },
-        );
-      }
-      if (proposal.kind === "sealed-candidate") {
-        if (
-          JSON.stringify([...proposal.paths].sort()) !==
-          JSON.stringify([...candidatePaths].sort())
-        ) {
-          return reject(
-            { kind: "retryable", code: "candidate-diff-invalid" },
-            {
-              category: "artifact",
-              code: "candidate-diff-invalid",
-              stage: "candidate-seal",
-            },
-          );
-        }
-      }
+      const { bytes, paths: candidatePaths } = inspected;
       const dependencySensitive = candidatePaths.some(
         (relative) => relative === "package.json" || LOCKFILES.has(relative),
       );
@@ -3580,56 +3413,19 @@ class DurableWorkflowComposition
           );
         }
       }
-      let artifactHash: string;
-      if (proposal.kind === "sealed-candidate") {
-        artifactHash = proposal.artifactHash;
-      } else {
-        let sequence = 0;
-        for (
-          let offset = 0;
-          offset < bytes.length;
-          offset += TASK_LEDGER_LIMITS.maxSegmentBytes
-        ) {
-          const segment = bytes.subarray(
-            offset,
-            Math.min(offset + TASK_LEDGER_LIMITS.maxSegmentBytes, bytes.length),
-          );
-          const accepted = ledger.appendCandidateSegment({
-            ...identity,
-            sequence,
-            bytes: segment,
-            segmentHash: sha256Bytes(segment),
-          });
-          if (!accepted.ok) {
-            return reject(
-              { kind: "paused", code: accepted.code },
-              {
-                category: "artifact",
-                code: accepted.code,
-                stage: "candidate-segment",
-              },
-            );
-          }
-          sequence += 1;
-        }
-        const sealed = ledger.sealCandidate({
-          ...identity,
-          segmentCount: sequence,
-          totalBytes: bytes.length,
-          candidateHash: sha256Bytes(bytes),
-        });
-        if (!sealed.ok) {
-          return reject(
-            { kind: "retryable", code: sealed.code },
-            {
-              category: "artifact",
-              code: sealed.code,
-              stage: "candidate-seal",
-            },
-          );
-        }
-        artifactHash = sealed.artifactHash;
+      const sealed = sealCandidateArtifact({
+        ledger,
+        identity,
+        proposal,
+        bytes,
+      });
+      if (!sealed.ok) {
+        return reject(
+          { kind: sealed.kind, code: sealed.code },
+          { category: "artifact", code: sealed.code, stage: sealed.stage },
+        );
       }
+      const { artifactHash } = sealed;
       const candidate = resources.workspaces.createRevision({
         parentRevisionId: baseRevisionId,
         changes: revisionChanges(proposalRoot, approvedPaths),
