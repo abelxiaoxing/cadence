@@ -314,6 +314,14 @@ createInterface({input:process.stdin}).on('line', line => {
         success: false,
         completed: false,
         userInterventions: 0,
+        sourceUnchanged: true,
+        sourceSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        trace: {
+          stages: expect.arrayContaining([
+            expect.objectContaining({ name: phase, ended: false }),
+          ]),
+        },
+        configurations: expect.any(Array),
         sessions: restart ? 2 : 1,
         tokens: phase === "design" ? 17 : 34,
         cost: phase === "design" ? 0.17 : 0.34,
@@ -324,3 +332,290 @@ createInterface({input:process.stdin}).on('line', line => {
   },
   15000,
 );
+
+it("accounts for parallel tool wall time, interrupted stages and unfinished calls", () => {
+  let now = 0;
+  const metrics = createEvaluationMetrics({ now: () => now });
+  metrics.setStage("design");
+  now = 10;
+  metrics.observe({
+    type: "tool_execution_start",
+    toolName: "read",
+    toolCallId: "a",
+    args: { path: "private.txt" },
+  });
+  now = 20;
+  metrics.observe({
+    type: "tool_execution_start",
+    toolName: "abel_dispatch",
+    toolCallId: "b",
+    args: { action: "run" },
+  });
+  now = 30;
+  metrics.observe({
+    type: "tool_execution_end",
+    toolName: "read",
+    toolCallId: "a",
+    result: {},
+  });
+  now = 60;
+  const report = metrics.snapshot();
+  expect(report.trace).toMatchObject({
+    elapsedMs: 60,
+    toolWallMs: 50,
+    childToolWallMs: 40,
+    localToolExclusiveMs: 10,
+    nonToolMs: 10,
+    stages: [{ name: "design", startMs: 0, elapsedMs: 60, ended: false }],
+    unfinishedTools: [{ tool: "abel_dispatch", action: "run", elapsedMs: 40 }],
+  });
+  expect(JSON.stringify(report)).not.toContain("private.txt");
+});
+
+it("records actual Design failure fields, protocol attempts and source reads without source text", () => {
+  const metrics = createEvaluationMetrics({
+    packageRoot: "/package",
+    consumerRoot: "/consumer",
+  });
+  metrics.observe({
+    type: "tool_execution_start",
+    toolName: "read",
+    toolCallId: "source",
+    args: { path: "/package/src/delivery-compiler.ts" },
+  });
+  metrics.observe({
+    type: "tool_execution_end",
+    toolName: "read",
+    toolCallId: "source",
+    result: { content: [{ type: "text", text: "PRIVATE source" }] },
+  });
+  for (const [id, isError] of [
+    ["bad", true],
+    ["good", false],
+  ]) {
+    metrics.observe({
+      type: "tool_execution_start",
+      toolName: "abel_dispatch",
+      toolCallId: id,
+      args: {
+        action: "design",
+        request: {
+          operation: "approve-gate",
+          gate: "gate-a",
+          contract: "PRIVATE authority",
+        },
+      },
+    });
+    metrics.observe({
+      type: "tool_execution_end",
+      toolName: "abel_dispatch",
+      toolCallId: id,
+      isError,
+      result: isError
+        ? {
+            details: {
+              designFailure: {
+                code: "invalid-design-control-request",
+                diagnostics: [
+                  {
+                    code: "change-contract-field-invalid",
+                    field: "contract.policy.verificationModes.0",
+                    hint: "PRIVATE hint",
+                  },
+                  { code: "PRIVATE", field: "contract.PRIVATE" },
+                ],
+              },
+            },
+          }
+        : { details: { operation: "approve-gate" } },
+    });
+  }
+  const { trace } = metrics.snapshot();
+  expect(trace.harnessSourceReads).toBe(1);
+  expect(trace.operations["design:approve-gate"]).toMatchObject({
+    calls: 2,
+    failures: 1,
+    successes: 1,
+  });
+  expect(trace.failures[0]).toMatchObject({
+    operation: "approve-gate",
+    code: "invalid-design-control-request",
+    diagnostics: [
+      {
+        code: "change-contract-field-invalid",
+        field: "contract.policy.verificationModes.0",
+      },
+    ],
+  });
+  expect(JSON.stringify(trace)).not.toMatch(/PRIVATE|\/package|\/consumer/);
+});
+
+it("bounds trace samples and records observed assistant windows with separate usage dimensions", () => {
+  let now = 0;
+  const metrics = createEvaluationMetrics({ now: () => now });
+  metrics.observe({ type: "message_start", message: { role: "assistant" } });
+  now = 100;
+  metrics.observe({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      stopReason: "toolUse",
+      content: [{ type: "thinking", thinking: "PRIVATE reasoning" }],
+      usage: {
+        input: 1000,
+        output: 10,
+        cacheRead: 200,
+        cacheWrite: 0,
+        totalTokens: 1210,
+      },
+    },
+  });
+  for (let i = 0; i < 300; i++) {
+    metrics.observe({
+      type: "tool_execution_start",
+      toolName: "read",
+      toolCallId: String(i),
+      args: { path: "PRIVATE" },
+    });
+    metrics.observe({
+      type: "tool_execution_end",
+      toolName: "read",
+      toolCallId: String(i),
+      result: {},
+    });
+  }
+  const { trace } = metrics.snapshot();
+  expect(trace.assistant).toMatchObject({
+    completed: 1,
+    observedMs: 100,
+    input: 1000,
+    output: 10,
+    cacheRead: 200,
+    cacheWrite: 0,
+  });
+  expect(trace.timeline.length).toBeLessThanOrEqual(128);
+  expect(trace.truncated).toBe(true);
+  expect(JSON.stringify(trace)).not.toContain("PRIVATE");
+});
+
+it("freezes deadline metrics before late cancellation drain events", () => {
+  const metrics = createEvaluationMetrics();
+  const atDeadline = metrics.snapshot();
+  metrics.observe({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      stopReason: "error",
+      errorMessage: "HTTP 503",
+    },
+  });
+  expect(atDeadline.modelFailureDiagnostics).toEqual([]);
+  expect(atDeadline.modelErrors).toBe(0);
+  expect(metrics.snapshot().modelErrors).toBe(1);
+});
+
+it("distinguishes expected Design gate waits from execution blockers", () => {
+  const metrics = createEvaluationMetrics();
+  const observe = (id, stage, pauseCode) => {
+    metrics.observe({
+      type: "tool_execution_start",
+      toolName: "abel_dispatch",
+      toolCallId: id,
+      args: { action: "design", request: { operation: "start" } },
+    });
+    metrics.observe({
+      type: "tool_execution_end",
+      toolName: "abel_dispatch",
+      toolCallId: id,
+      isError: false,
+      result: {
+        details: { stage, state: "paused", pause: { code: pauseCode } },
+      },
+    });
+  };
+  observe("initial", "abel-design", "design-awaiting-gate-a");
+  observe("bound", "abel-design", "design-awaiting-evidence");
+  expect(metrics.snapshot().trace.failures).toEqual([]);
+  expect(metrics.snapshot().trace.operations["design:start"]).toMatchObject({
+    successes: 2,
+    domainFailures: 0,
+  });
+  observe("blocked", "abel-implement", "endpoint-unavailable");
+  observe("unknown", "abel-design", "unknown-pause");
+  expect(metrics.snapshot().trace.operations["design:start"]).toMatchObject({
+    domainFailures: 2,
+  });
+});
+
+it("classifies flat Implement commands and bounded pause diagnostics", () => {
+  const metrics = createEvaluationMetrics();
+  for (const [id, result, isError] of [
+    [
+      "start",
+      {
+        details: {
+          state: "paused",
+          pause: {
+            code: "endpoint-unavailable",
+            diagnostic: {
+              finalCategory: "mixed",
+              submitAttempts: 2,
+              schema: "invalid",
+              secret: "PRIVATE",
+            },
+          },
+        },
+      },
+      false,
+    ],
+    [
+      "resume",
+      { content: [{ type: "text", text: "recovery-request-stale" }] },
+      true,
+    ],
+  ]) {
+    metrics.observe({
+      type: "tool_execution_start",
+      toolName: "abel_dispatch",
+      toolCallId: id,
+      args: {
+        command: id,
+        stage: "abel-implement",
+        change: "PRIVATE",
+        ...(id === "resume" ? { recovery: { incidentKey: "PRIVATE" } } : {}),
+      },
+    });
+    metrics.observe({
+      type: "tool_execution_end",
+      toolName: "abel_dispatch",
+      toolCallId: id,
+      result,
+      isError,
+    });
+  }
+  const { trace } = metrics.snapshot();
+  expect(trace.operations["control:start"]).toMatchObject({
+    calls: 1,
+    domainFailures: 1,
+  });
+  expect(trace.operations["control:resume"]).toMatchObject({
+    calls: 1,
+    failures: 1,
+  });
+  expect(trace.failures).toMatchObject([
+    {
+      code: "endpoint-unavailable",
+      attemptDiagnostic: {
+        finalCategory: "mixed",
+        submitAttempts: 2,
+        schema: "invalid",
+      },
+    },
+    {
+      code: "recovery-request-stale",
+      recoveryRequested: true,
+      deliveryRevisionRequested: false,
+    },
+  ]);
+  expect(JSON.stringify(trace)).not.toContain("PRIVATE");
+});

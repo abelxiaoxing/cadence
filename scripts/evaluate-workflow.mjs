@@ -1,5 +1,13 @@
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,7 +35,55 @@ const live = args.includes("--live");
 const root = mkdtempSync(path.join(tmpdir(), "cadence-evaluation-"));
 const consumer = path.join(root, "consumer");
 const started = Date.now();
-const metrics = createEvaluationMetrics();
+const metrics = createEvaluationMetrics({
+  packageRoot,
+  consumerRoot: consumer,
+});
+const configurations = [];
+let snapshotAtStop;
+const sourceFingerprint = () => {
+  const hash = createHash("sha256");
+  const files = ["package.json", "bun.lock"];
+  const visit = (relative) => {
+    for (const entry of readdirSync(path.join(packageRoot, relative), {
+      withFileTypes: true,
+    })) {
+      const file = `${relative}/${entry.name}`;
+      if (entry.isDirectory()) visit(file);
+      else if (entry.isFile()) files.push(file);
+    }
+  };
+  for (const dir of ["src", "config", "prompts", "scripts"]) visit(dir);
+  for (const file of files.sort())
+    hash
+      .update(file)
+      .update("\0")
+      .update(readFileSync(path.join(packageRoot, file)))
+      .update("\0");
+  return hash.digest("hex");
+};
+const sourceSha256 = sourceFingerprint();
+const progressOutput = option("--progress-output");
+let progressWriteFailed = false;
+const progressTimer = progressOutput
+  ? setInterval(() => {
+      try {
+        writeFileSync(
+          progressOutput,
+          JSON.stringify({
+            scenario: scenario.id,
+            mode: live ? "live-model" : "preflight",
+            ...metrics.snapshot(),
+            configurations,
+          }),
+          { mode: 0o600 },
+        );
+      } catch {
+        progressWriteFailed = true;
+      }
+    }, 15000)
+  : undefined;
+progressTimer?.unref();
 let child;
 let stop;
 let settled;
@@ -199,6 +255,51 @@ async function openHost() {
     )
   )
     throw new Error("evaluation-package-activation-unavailable");
+  const state = await send("get_state");
+  const data = state.success ? state.data : undefined;
+  const modelState = data?.model;
+  const label = (value) =>
+    typeof value === "string" &&
+    /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,127}$/u.test(value) &&
+    !value.includes("://")
+      ? value
+      : null;
+  configurations.push({
+    session: sessions,
+    observed: !!modelState,
+    model: label(modelState?.id),
+    provider: label(modelState?.provider),
+    api: label(modelState?.api),
+    thinkingLevel: [
+      "off",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ].includes(data?.thinkingLevel)
+      ? data.thinkingLevel
+      : null,
+    contextWindow: Number.isSafeInteger(modelState?.contextWindow)
+      ? modelState.contextWindow
+      : null,
+    maxTokens: Number.isSafeInteger(modelState?.maxTokens)
+      ? modelState.maxTokens
+      : null,
+    routeFingerprint: modelState
+      ? createHash("sha256")
+          .update(
+            JSON.stringify([
+              modelState.id,
+              modelState.provider,
+              modelState.api,
+              modelState.baseUrl,
+            ]),
+          )
+          .digest("hex")
+      : null,
+  });
 }
 async function prompt(message) {
   controller.signal.throwIfAborted();
@@ -279,6 +380,7 @@ try {
   evaluation = (async () => {
     await openHost();
     if (!live) return;
+    metrics.setStage("design");
     await prompt(
       `/abel-design ${scenario.requirement} Use change name eval-${scenario.id}. The requirement is approved: choose reasonable implementation defaults, record a structured ChangeContract, preserve these acceptance criteria, and compile the delivery. Use the existing Node runner without installing dependencies. You may edit src/ and test/ and change artifacts in this disposable fixture.`,
     );
@@ -291,11 +393,13 @@ try {
       if (!metrics.result.modelErrors) metrics.result.userInterventions++;
       return;
     }
+    metrics.setStage("handoff");
     if (scenario.restart) {
       await closeHost();
       await openHost();
     }
     const priorModelErrors = metrics.result.modelErrors;
+    metrics.setStage("implement");
     await prompt(`/abel-implement eval-${scenario.id}`);
     if (!metrics.result.completed) {
       const modelUnavailable = metrics.result.modelErrors > priorModelErrors;
@@ -309,6 +413,7 @@ try {
       scenario.id === "multiple-tasks"
         ? "if(add(2,3)!==5||multiply(2,3)!==6)process.exit(1)"
         : "if(add(2,3)!==5)process.exit(1)";
+    metrics.setStage("oracle");
     oracle = (async () => {
       const { BubblewrapIsolationBackend } = await import(
         "../src/isolation-backend.ts"
@@ -347,6 +452,7 @@ try {
     })();
     await oracle;
     reason = "verified-completion";
+    metrics.setStage("done");
   })();
   await Promise.race([evaluation, timeout]);
 } catch (error) {
@@ -360,6 +466,8 @@ try {
     ? error.message
     : "evaluation-failed";
 } finally {
+  clearInterval(progressTimer);
+  snapshotAtStop = metrics.snapshot();
   controller.abort();
   await closeHost();
   if (evaluation) await evaluation.catch(() => {});
@@ -373,7 +481,11 @@ const report = {
   success: live && reason === "verified-completion",
   elapsedMs: Date.now() - started,
   sessions,
-  ...metrics.result,
+  ...snapshotAtStop,
+  configurations,
+  progressWriteFailed,
+  sourceSha256,
+  sourceUnchanged: sourceFingerprint() === sourceSha256,
   tokens: accumulatedTokens,
   cost: accumulatedCost,
 };
