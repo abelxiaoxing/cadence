@@ -1,0 +1,791 @@
+{
+  "scenario": "small-fix",
+  "mode": "live-model",
+  "reason": "evaluation-deadline",
+  "success": false,
+  "elapsedMs": 300350,
+  "sessions": 1,
+  "toolCalls": 42,
+  "failedTools": 5,
+  "amendments": 0,
+  "repeatedAmendments": 0,
+  "userInterventions": 0,
+  "designCompleted": false,
+  "completed": false,
+  "cancellations": 0,
+  "modelErrors": 0,
+  "modelFailure": null,
+  "modelFailureDiagnostics": [],
+  "autoRetries": 0,
+  "retryDelayMs": 0,
+  "tokens": 548006,
+  "cost": 0,
+  "trace": {
+    "elapsedMs": 300026,
+    "toolWallMs": 295,
+    "childToolWallMs": 0,
+    "localToolExclusiveMs": 295,
+    "nonToolMs": 299731,
+    "stages": [
+      {
+        "name": "setup",
+        "startMs": 0,
+        "elapsedMs": 548,
+        "ended": true
+      },
+      {
+        "name": "design",
+        "startMs": 548,
+        "elapsedMs": 299478,
+        "ended": false
+      }
+    ],
+    "milestones": {
+      "gateA": null,
+      "draftWritten": null,
+      "preflightPassed": null,
+      "compiled": null,
+      "designFinalized": null,
+      "implementStarted": null,
+      "implementCompleted": null,
+      "oraclePassed": null
+    },
+    "operations": {
+      "read": {
+        "calls": 18,
+        "failures": 3,
+        "domainFailures": 0,
+        "successes": 15,
+        "summedMs": 181,
+        "repeatedPayloads": 0
+      },
+      "ls": {
+        "calls": 12,
+        "failures": 0,
+        "domainFailures": 0,
+        "successes": 12,
+        "summedMs": 133,
+        "repeatedPayloads": 0
+      },
+      "grep": {
+        "calls": 8,
+        "failures": 0,
+        "domainFailures": 0,
+        "successes": 8,
+        "summedMs": 266,
+        "repeatedPayloads": 0
+      },
+      "find": {
+        "calls": 4,
+        "failures": 2,
+        "domainFailures": 0,
+        "successes": 2,
+        "summedMs": 130,
+        "repeatedPayloads": 0
+      }
+    },
+    "failures": [
+      {
+        "atMs": 52903,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 9,
+        "isError": true,
+        "code": "unclassified"
+      },
+      {
+        "atMs": 52904,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 9,
+        "isError": true,
+        "code": "unclassified"
+      },
+      {
+        "atMs": 52904,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 9,
+        "isError": true,
+        "code": "unclassified"
+      },
+      {
+        "atMs": 183472,
+        "event": "tool-end",
+        "tool": "find",
+        "elapsedMs": 19,
+        "isError": true,
+        "code": "unclassified"
+      },
+      {
+        "atMs": 296971,
+        "event": "tool-end",
+        "tool": "find",
+        "elapsedMs": 31,
+        "isError": true,
+        "code": "unclassified"
+      }
+    ],
+    "timeline": [
+      {
+        "atMs": 52887,
+        "event": "tool-start",
+        "tool": "read",
+        "readTarget": "plan-example"
+      },
+      {
+        "atMs": 52893,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 52894,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 52894,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 52895,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 52895,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 52895,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 52903,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 9,
+        "isError": true,
+        "code": "unclassified"
+      },
+      {
+        "atMs": 52904,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 9,
+        "isError": true,
+        "code": "unclassified"
+      },
+      {
+        "atMs": 52904,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 9,
+        "isError": true,
+        "code": "unclassified"
+      },
+      {
+        "atMs": 52909,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 14,
+        "isError": false
+      },
+      {
+        "atMs": 52910,
+        "event": "tool-end",
+        "tool": "read",
+        "readTarget": "plan-example",
+        "elapsedMs": 23,
+        "isError": false
+      },
+      {
+        "atMs": 52910,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 16,
+        "isError": false
+      },
+      {
+        "atMs": 52910,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 17,
+        "isError": false
+      },
+      {
+        "atMs": 58881,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 58881,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 58881,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 58882,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 58882,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 58882,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 58884,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 58885,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 4,
+        "isError": false
+      },
+      {
+        "atMs": 58885,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 4,
+        "isError": false
+      },
+      {
+        "atMs": 58885,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 3,
+        "isError": false
+      },
+      {
+        "atMs": 58885,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 4,
+        "isError": false
+      },
+      {
+        "atMs": 58886,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 4,
+        "isError": false
+      },
+      {
+        "atMs": 62013,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 62013,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 62013,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 62015,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 62015,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 62015,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 106563,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 106563,
+        "event": "tool-start",
+        "tool": "read",
+        "readTarget": "plan-example"
+      },
+      {
+        "atMs": 106564,
+        "event": "tool-start",
+        "tool": "grep"
+      },
+      {
+        "atMs": 106585,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 22,
+        "isError": false
+      },
+      {
+        "atMs": 106588,
+        "event": "tool-end",
+        "tool": "read",
+        "readTarget": "plan-example",
+        "elapsedMs": 25,
+        "isError": false
+      },
+      {
+        "atMs": 106602,
+        "event": "tool-end",
+        "tool": "grep",
+        "elapsedMs": 38,
+        "isError": false
+      },
+      {
+        "atMs": 143145,
+        "event": "tool-start",
+        "tool": "grep"
+      },
+      {
+        "atMs": 143145,
+        "event": "tool-start",
+        "tool": "grep"
+      },
+      {
+        "atMs": 143145,
+        "event": "tool-start",
+        "tool": "grep"
+      },
+      {
+        "atMs": 143184,
+        "event": "tool-end",
+        "tool": "grep",
+        "elapsedMs": 39,
+        "isError": false
+      },
+      {
+        "atMs": 143187,
+        "event": "tool-end",
+        "tool": "grep",
+        "elapsedMs": 42,
+        "isError": false
+      },
+      {
+        "atMs": 143189,
+        "event": "tool-end",
+        "tool": "grep",
+        "elapsedMs": 44,
+        "isError": false
+      },
+      {
+        "atMs": 152508,
+        "event": "tool-start",
+        "tool": "grep"
+      },
+      {
+        "atMs": 152508,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 152522,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 14,
+        "isError": false
+      },
+      {
+        "atMs": 152530,
+        "event": "tool-end",
+        "tool": "grep",
+        "elapsedMs": 22,
+        "isError": false
+      },
+      {
+        "atMs": 157037,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 157037,
+        "event": "tool-start",
+        "tool": "find"
+      },
+      {
+        "atMs": 157054,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 17,
+        "isError": false
+      },
+      {
+        "atMs": 157082,
+        "event": "tool-end",
+        "tool": "find",
+        "elapsedMs": 45,
+        "isError": false
+      },
+      {
+        "atMs": 161777,
+        "event": "tool-start",
+        "tool": "read",
+        "readTarget": "harness-source"
+      },
+      {
+        "atMs": 161778,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 161781,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 3,
+        "isError": false
+      },
+      {
+        "atMs": 161781,
+        "event": "tool-end",
+        "tool": "read",
+        "readTarget": "harness-source",
+        "elapsedMs": 4,
+        "isError": false
+      },
+      {
+        "atMs": 183453,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 183453,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 183453,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 183453,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 183453,
+        "event": "tool-start",
+        "tool": "find"
+      },
+      {
+        "atMs": 183470,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 17,
+        "isError": false
+      },
+      {
+        "atMs": 183470,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 17,
+        "isError": false
+      },
+      {
+        "atMs": 183470,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 17,
+        "isError": false
+      },
+      {
+        "atMs": 183471,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 18,
+        "isError": false
+      },
+      {
+        "atMs": 183472,
+        "event": "tool-end",
+        "tool": "find",
+        "elapsedMs": 19,
+        "isError": true,
+        "code": "unclassified"
+      },
+      {
+        "atMs": 197942,
+        "event": "tool-start",
+        "tool": "grep"
+      },
+      {
+        "atMs": 197942,
+        "event": "tool-start",
+        "tool": "grep"
+      },
+      {
+        "atMs": 197973,
+        "event": "tool-end",
+        "tool": "grep",
+        "elapsedMs": 31,
+        "isError": false
+      },
+      {
+        "atMs": 197974,
+        "event": "tool-end",
+        "tool": "grep",
+        "elapsedMs": 32,
+        "isError": false
+      },
+      {
+        "atMs": 211213,
+        "event": "tool-start",
+        "tool": "read",
+        "readTarget": "harness-source"
+      },
+      {
+        "atMs": 211216,
+        "event": "tool-end",
+        "tool": "read",
+        "readTarget": "harness-source",
+        "elapsedMs": 3,
+        "isError": false
+      },
+      {
+        "atMs": 220237,
+        "event": "tool-start",
+        "tool": "read",
+        "readTarget": "harness-source"
+      },
+      {
+        "atMs": 220239,
+        "event": "tool-end",
+        "tool": "read",
+        "readTarget": "harness-source",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 268122,
+        "event": "tool-start",
+        "tool": "read",
+        "readTarget": "harness-source"
+      },
+      {
+        "atMs": 268124,
+        "event": "tool-end",
+        "tool": "read",
+        "readTarget": "harness-source",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 273215,
+        "event": "tool-start",
+        "tool": "grep"
+      },
+      {
+        "atMs": 273233,
+        "event": "tool-end",
+        "tool": "grep",
+        "elapsedMs": 18,
+        "isError": false
+      },
+      {
+        "atMs": 296940,
+        "event": "tool-start",
+        "tool": "find"
+      },
+      {
+        "atMs": 296940,
+        "event": "tool-start",
+        "tool": "find"
+      },
+      {
+        "atMs": 296940,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 296969,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 29,
+        "isError": false
+      },
+      {
+        "atMs": 296971,
+        "event": "tool-end",
+        "tool": "find",
+        "elapsedMs": 31,
+        "isError": true,
+        "code": "unclassified"
+      },
+      {
+        "atMs": 296975,
+        "event": "tool-end",
+        "tool": "find",
+        "elapsedMs": 35,
+        "isError": false
+      }
+    ],
+    "assistant": {
+      "started": 16,
+      "completed": 15,
+      "observedMs": 256283,
+      "input": 533401,
+      "output": 14605,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "maximumInput": 58911
+    },
+    "turns": [
+      {
+        "atMs": 52885,
+        "observedMs": 47026,
+        "input": 12734,
+        "output": 2051,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 58881,
+        "observedMs": 4828,
+        "input": 15889,
+        "output": 256,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 62012,
+        "observedMs": 2625,
+        "input": 16204,
+        "output": 139,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 106563,
+        "observedMs": 43874,
+        "input": 16458,
+        "output": 2292,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 143145,
+        "observedMs": 32397,
+        "input": 27205,
+        "output": 1875,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 152508,
+        "observedMs": 6675,
+        "input": 31920,
+        "output": 436,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 157037,
+        "observedMs": 3395,
+        "input": 32397,
+        "output": 221,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 161777,
+        "observedMs": 4044,
+        "input": 32653,
+        "output": 263,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 183452,
+        "observedMs": 18394,
+        "input": 37109,
+        "output": 1194,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 197942,
+        "observedMs": 10033,
+        "input": 42530,
+        "output": 646,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 211213,
+        "observedMs": 8593,
+        "input": 47965,
+        "output": 537,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 220237,
+        "observedMs": 6340,
+        "input": 49637,
+        "output": 403,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 268122,
+        "observedMs": 44275,
+        "input": 54016,
+        "output": 2804,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 273215,
+        "observedMs": 1691,
+        "input": 57773,
+        "output": 107,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 296939,
+        "observedMs": 22093,
+        "input": 58911,
+        "output": 1381,
+        "stopReason": "toolUse"
+      }
+    ],
+    "harnessSourceReads": 4,
+    "exampleReads": 2,
+    "unclassifiedShellCalls": 0,
+    "unfinishedTools": [],
+    "truncated": false
+  },
+  "configurations": [
+    {
+      "session": 1,
+      "observed": true,
+      "model": "LocalModel",
+      "provider": "abel",
+      "api": "openai-completions",
+      "thinkingLevel": "xhigh",
+      "contextWindow": 262144,
+      "maxTokens": 32768,
+      "routeFingerprint": "49182c7cd63b7b27b374d1251b24dbbfb4f721706c778b6e6c29cedb783ef1c3"
+    }
+  ],
+  "progressWriteFailed": false,
+  "sourceSha256": "7a912a08437250641a88de050970400dfedf251a96607415dfa6d17c4941bbb2",
+  "sourceUnchanged": true
+}

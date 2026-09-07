@@ -1,0 +1,1044 @@
+{
+  "scenario": "small-fix",
+  "mode": "live-model",
+  "reason": "evaluation-deadline",
+  "success": false,
+  "elapsedMs": 600091,
+  "sessions": 1,
+  "toolCalls": 37,
+  "failedTools": 7,
+  "amendments": 0,
+  "repeatedAmendments": 0,
+  "userInterventions": 0,
+  "designCompleted": false,
+  "completed": false,
+  "cancellations": 0,
+  "modelErrors": 0,
+  "modelFailure": null,
+  "modelFailureDiagnostics": [],
+  "autoRetries": 0,
+  "retryDelayMs": 0,
+  "tokens": 584448,
+  "cost": 0,
+  "trace": {
+    "elapsedMs": 600032,
+    "toolWallMs": 420,
+    "childToolWallMs": 0,
+    "localToolExclusiveMs": 420,
+    "nonToolMs": 599612,
+    "stages": [
+      {
+        "name": "setup",
+        "startMs": 0,
+        "elapsedMs": 1130,
+        "ended": true
+      },
+      {
+        "name": "design",
+        "startMs": 1130,
+        "elapsedMs": 598902,
+        "ended": false
+      }
+    ],
+    "milestones": {
+      "gateA": 241748,
+      "draftWritten": 417204,
+      "preflightPassed": null,
+      "compiled": null,
+      "designFinalized": null,
+      "implementStarted": null,
+      "implementCompleted": null,
+      "oraclePassed": null
+    },
+    "operations": {
+      "design:start": {
+        "calls": 2,
+        "failures": 1,
+        "domainFailures": 1,
+        "successes": 1,
+        "summedMs": 92,
+        "repeatedPayloads": 0
+      },
+      "ls": {
+        "calls": 8,
+        "failures": 0,
+        "domainFailures": 0,
+        "successes": 8,
+        "summedMs": 92,
+        "repeatedPayloads": 0
+      },
+      "read": {
+        "calls": 9,
+        "failures": 2,
+        "domainFailures": 0,
+        "successes": 7,
+        "summedMs": 140,
+        "repeatedPayloads": 0
+      },
+      "find": {
+        "calls": 2,
+        "failures": 0,
+        "domainFailures": 0,
+        "successes": 2,
+        "summedMs": 76,
+        "repeatedPayloads": 0
+      },
+      "design:record-decision": {
+        "calls": 1,
+        "failures": 0,
+        "domainFailures": 0,
+        "successes": 1,
+        "summedMs": 3,
+        "repeatedPayloads": 0
+      },
+      "design:approve-gate": {
+        "calls": 2,
+        "failures": 0,
+        "domainFailures": 0,
+        "successes": 2,
+        "summedMs": 38,
+        "repeatedPayloads": 0
+      },
+      "design:bind-change": {
+        "calls": 1,
+        "failures": 0,
+        "domainFailures": 1,
+        "successes": 1,
+        "summedMs": 13,
+        "repeatedPayloads": 0
+      },
+      "design:write-artifact": {
+        "calls": 8,
+        "failures": 0,
+        "domainFailures": 0,
+        "successes": 8,
+        "summedMs": 277,
+        "repeatedPayloads": 0
+      },
+      "design:validate-plan-draft": {
+        "calls": 4,
+        "failures": 4,
+        "domainFailures": 0,
+        "successes": 0,
+        "summedMs": 125,
+        "repeatedPayloads": 3
+      }
+    },
+    "failures": [
+      {
+        "atMs": 45489,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "start",
+        "elapsedMs": 34,
+        "isError": true,
+        "code": "invalid-design-control-request",
+        "diagnostics": [
+          {
+            "code": "design-control-field-invalid",
+            "field": "request"
+          }
+        ]
+      },
+      {
+        "atMs": 55287,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "start",
+        "elapsedMs": 58,
+        "isError": false,
+        "domainFailure": true,
+        "state": "paused",
+        "code": "unclassified"
+      },
+      {
+        "atMs": 63619,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 25,
+        "isError": true,
+        "code": "unclassified"
+      },
+      {
+        "atMs": 63620,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 26,
+        "isError": true,
+        "code": "unclassified"
+      },
+      {
+        "atMs": 248265,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "bind-change",
+        "elapsedMs": 13,
+        "isError": false,
+        "domainFailure": true,
+        "state": "paused",
+        "code": "unclassified"
+      },
+      {
+        "atMs": 424550,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "validate-plan-draft",
+        "elapsedMs": 21,
+        "isError": true,
+        "code": "design-plan-validation-invalid"
+      },
+      {
+        "atMs": 467570,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "validate-plan-draft",
+        "elapsedMs": 46,
+        "isError": true,
+        "code": "design-plan-validation-invalid",
+        "diagnostics": [
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          }
+        ]
+      },
+      {
+        "atMs": 526637,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "validate-plan-draft",
+        "elapsedMs": 19,
+        "isError": true,
+        "code": "design-plan-validation-invalid",
+        "diagnostics": [
+          {
+            "code": "change-contract-acceptance-missing"
+          }
+        ]
+      },
+      {
+        "atMs": 587020,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "validate-plan-draft",
+        "elapsedMs": 39,
+        "isError": true,
+        "code": "design-plan-validation-invalid",
+        "diagnostics": [
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          }
+        ]
+      }
+    ],
+    "timeline": [
+      {
+        "atMs": 45455,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "start"
+      },
+      {
+        "atMs": 45489,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "start",
+        "elapsedMs": 34,
+        "isError": true,
+        "code": "invalid-design-control-request",
+        "diagnostics": [
+          {
+            "code": "design-control-field-invalid",
+            "field": "request"
+          }
+        ]
+      },
+      {
+        "atMs": 55229,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "start"
+      },
+      {
+        "atMs": 55287,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "start",
+        "elapsedMs": 58,
+        "isError": false,
+        "domainFailure": true,
+        "state": "paused",
+        "code": "unclassified"
+      },
+      {
+        "atMs": 63591,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 63593,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 63594,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 63594,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 63594,
+        "event": "tool-start",
+        "tool": "find"
+      },
+      {
+        "atMs": 63595,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 63595,
+        "event": "tool-start",
+        "tool": "read",
+        "readTarget": "plan-example"
+      },
+      {
+        "atMs": 63619,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 25,
+        "isError": true,
+        "code": "unclassified"
+      },
+      {
+        "atMs": 63620,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 26,
+        "isError": true,
+        "code": "unclassified"
+      },
+      {
+        "atMs": 63624,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 29,
+        "isError": false
+      },
+      {
+        "atMs": 63625,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 34,
+        "isError": false
+      },
+      {
+        "atMs": 63625,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 32,
+        "isError": false
+      },
+      {
+        "atMs": 63625,
+        "event": "tool-end",
+        "tool": "read",
+        "readTarget": "plan-example",
+        "elapsedMs": 30,
+        "isError": false
+      },
+      {
+        "atMs": 63636,
+        "event": "tool-end",
+        "tool": "find",
+        "elapsedMs": 42,
+        "isError": false
+      },
+      {
+        "atMs": 70323,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 70324,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 70324,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 70324,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 70324,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 70324,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 70326,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 70326,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 70326,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 3,
+        "isError": false
+      },
+      {
+        "atMs": 70326,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 70326,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 70327,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 3,
+        "isError": false
+      },
+      {
+        "atMs": 75423,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 75423,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 75425,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 75425,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 129037,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 129037,
+        "event": "tool-start",
+        "tool": "find"
+      },
+      {
+        "atMs": 129037,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 129055,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 18,
+        "isError": false
+      },
+      {
+        "atMs": 129055,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 18,
+        "isError": false
+      },
+      {
+        "atMs": 129071,
+        "event": "tool-end",
+        "tool": "find",
+        "elapsedMs": 34,
+        "isError": false
+      },
+      {
+        "atMs": 230905,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "record-decision"
+      },
+      {
+        "atMs": 230908,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "record-decision",
+        "elapsedMs": 3,
+        "isError": false
+      },
+      {
+        "atMs": 241722,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "approve-gate"
+      },
+      {
+        "atMs": 241748,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "approve-gate",
+        "elapsedMs": 26,
+        "isError": false
+      },
+      {
+        "atMs": 248252,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "bind-change"
+      },
+      {
+        "atMs": 248265,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "bind-change",
+        "elapsedMs": 13,
+        "isError": false,
+        "domainFailure": true,
+        "state": "paused",
+        "code": "unclassified"
+      },
+      {
+        "atMs": 417160,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "proposal.md"
+      },
+      {
+        "atMs": 417160,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "design.md"
+      },
+      {
+        "atMs": 417161,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "spec-or-other"
+      },
+      {
+        "atMs": 417161,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "tasks.md"
+      },
+      {
+        "atMs": 417161,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "plan-draft.json"
+      },
+      {
+        "atMs": 417162,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": ".openspec.yaml"
+      },
+      {
+        "atMs": 417204,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "proposal.md",
+        "elapsedMs": 44,
+        "isError": false
+      },
+      {
+        "atMs": 417204,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "design.md",
+        "elapsedMs": 44,
+        "isError": false
+      },
+      {
+        "atMs": 417204,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "spec-or-other",
+        "elapsedMs": 43,
+        "isError": false
+      },
+      {
+        "atMs": 417204,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "tasks.md",
+        "elapsedMs": 43,
+        "isError": false
+      },
+      {
+        "atMs": 417204,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "plan-draft.json",
+        "elapsedMs": 43,
+        "isError": false
+      },
+      {
+        "atMs": 417204,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": ".openspec.yaml",
+        "elapsedMs": 42,
+        "isError": false
+      },
+      {
+        "atMs": 424529,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "validate-plan-draft"
+      },
+      {
+        "atMs": 424550,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "validate-plan-draft",
+        "elapsedMs": 21,
+        "isError": true,
+        "code": "design-plan-validation-invalid"
+      },
+      {
+        "atMs": 436348,
+        "event": "tool-start",
+        "tool": "read",
+        "readTarget": "plan-example"
+      },
+      {
+        "atMs": 436350,
+        "event": "tool-end",
+        "tool": "read",
+        "readTarget": "plan-example",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 464526,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "plan-draft.json"
+      },
+      {
+        "atMs": 464533,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "plan-draft.json",
+        "elapsedMs": 7,
+        "isError": false
+      },
+      {
+        "atMs": 467524,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "validate-plan-draft"
+      },
+      {
+        "atMs": 467570,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "validate-plan-draft",
+        "elapsedMs": 46,
+        "isError": true,
+        "code": "design-plan-validation-invalid",
+        "diagnostics": [
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          }
+        ]
+      },
+      {
+        "atMs": 516558,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "plan-draft.json"
+      },
+      {
+        "atMs": 516569,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "plan-draft.json",
+        "elapsedMs": 11,
+        "isError": false
+      },
+      {
+        "atMs": 526618,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "validate-plan-draft"
+      },
+      {
+        "atMs": 526637,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "validate-plan-draft",
+        "elapsedMs": 19,
+        "isError": true,
+        "code": "design-plan-validation-invalid",
+        "diagnostics": [
+          {
+            "code": "change-contract-acceptance-missing"
+          }
+        ]
+      },
+      {
+        "atMs": 581929,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "approve-gate"
+      },
+      {
+        "atMs": 581941,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "approve-gate",
+        "elapsedMs": 12,
+        "isError": false
+      },
+      {
+        "atMs": 586981,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "validate-plan-draft"
+      },
+      {
+        "atMs": 587020,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "validate-plan-draft",
+        "elapsedMs": 39,
+        "isError": true,
+        "code": "design-plan-validation-invalid",
+        "diagnostics": [
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          },
+          {
+            "code": "script-command-mismatch"
+          }
+        ]
+      }
+    ],
+    "assistant": {
+      "started": 19,
+      "completed": 18,
+      "observedMs": 549788,
+      "input": 556094,
+      "output": 28354,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "maximumInput": 48823
+    },
+    "turns": [
+      {
+        "atMs": 45454,
+        "observedMs": 40348,
+        "input": 13132,
+        "output": 2735,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 55229,
+        "observedMs": 8648,
+        "input": 15938,
+        "output": 578,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 63591,
+        "observedMs": 7520,
+        "input": 16733,
+        "output": 500,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 70323,
+        "observedMs": 5678,
+        "input": 18316,
+        "output": 377,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 75423,
+        "observedMs": 1605,
+        "input": 18752,
+        "output": 107,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 129037,
+        "observedMs": 53043,
+        "input": 18955,
+        "output": 3498,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 230905,
+        "observedMs": 100700,
+        "input": 22519,
+        "output": 6576,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 241722,
+        "observedMs": 9837,
+        "input": 29330,
+        "output": 637,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 248252,
+        "observedMs": 2471,
+        "input": 30165,
+        "output": 157,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 417160,
+        "observedMs": 167566,
+        "input": 31276,
+        "output": 5445,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 424529,
+        "observedMs": 2882,
+        "input": 37466,
+        "output": 140,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 436348,
+        "observedMs": 10898,
+        "input": 37668,
+        "output": 527,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 464526,
+        "observedMs": 25835,
+        "input": 40755,
+        "output": 1255,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 467524,
+        "observedMs": 2081,
+        "input": 42149,
+        "output": 101,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 516558,
+        "observedMs": 47837,
+        "input": 42839,
+        "output": 2450,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 526618,
+        "observedMs": 7754,
+        "input": 45428,
+        "output": 370,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 581929,
+        "observedMs": 53107,
+        "input": 45850,
+        "output": 2775,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 586981,
+        "observedMs": 1978,
+        "input": 48823,
+        "output": 126,
+        "stopReason": "toolUse"
+      }
+    ],
+    "harnessSourceReads": 0,
+    "exampleReads": 2,
+    "unclassifiedShellCalls": 0,
+    "unfinishedTools": [],
+    "truncated": false
+  },
+  "configurations": [
+    {
+      "session": 1,
+      "observed": true,
+      "model": "LocalModel",
+      "provider": "abel",
+      "api": "openai-completions",
+      "thinkingLevel": "xhigh",
+      "contextWindow": 262144,
+      "maxTokens": 32768,
+      "routeFingerprint": "49182c7cd63b7b27b374d1251b24dbbfb4f721706c778b6e6c29cedb783ef1c3"
+    }
+  ],
+  "progressWriteFailed": false,
+  "sourceSha256": "38eb6392992041afbd6ee7ff9157060eb53440310c2eed1e0f09c838b02dc796",
+  "sourceUnchanged": false
+}

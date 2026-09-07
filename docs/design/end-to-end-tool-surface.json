@@ -1,0 +1,6 @@
+{
+  "observed": true,
+  "recognizedTools": ["abel_dispatch", "find", "grep", "ls", "read"],
+  "unknownTools": 0,
+  "toolSchemaBytes": 20872
+}

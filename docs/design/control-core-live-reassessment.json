@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 2,
+  "evaluatedAt": "2026-09-07T01:48:19+00:00",
+  "baseCommit": "6c6673cfa31ade0d2d80f4c7f78bf4198dc7c9be",
+  "includesUncommittedControlCoreChanges": true,
+  "runtime": {
+    "platform": "linux",
+    "node": "26.7.0",
+    "piHost": "0.85.1",
+    "packageDevelopmentPi": "0.84.3",
+    "configuredThinkingLevel": "xhigh",
+    "peakConcurrentEvaluations": 4
+  },
+  "method": {
+    "fixture": "disposable Git consumer, unchanged evaluationScenarios",
+    "host": "real Pi RPC, no persisted session, transparent allowlisted metadata proxy",
+    "success": "workflow completed and independent Bubblewrap oracle passed before deadline",
+    "defaultSettingsChanged": false,
+    "statistics": "host-reported cumulative tokens; custom reported cost is not a billing assertion",
+    "snapshotSamplingSeconds": 10,
+    "comparability": "exploratory attempts with different deadlines and selective follow-up; not a statistical model comparison"
+  },
+  "harnessRepair": {
+    "files": [
+      "scripts/evaluate-workflow.mjs",
+      "test/workflow-evaluation.test.mjs"
+    ],
+    "diagnosis": "Timeout cleanup ended RPC input before the losing evaluation branch requested statistics; ERR_STREAM_WRITE_AFTER_END prevented reporting.",
+    "validation": {
+      "evaluationTestsPassed": 11,
+      "fullTestsPassed": 726,
+      "conditionalTestsSkipped": 14,
+      "packMembers": 72,
+      "verifyPassed": true
+    },
+    "sha256": "1daeb1135cfad03c2cfe2070009f2e8ebb8a70718652542ec1383af459d6f896"
+  },
+  "invalidPreRepairAttempts": [
+    {
+      "scenario": "small-fix",
+      "providerModel": "abel/LocalModel",
+      "timeoutMs": 600000,
+      "outcome": "harness-crashed-on-deadline",
+      "includedInResults": false
+    },
+    {
+      "scenario": "missing-capability",
+      "providerModel": "abel/LocalModel",
+      "timeoutMs": 600000,
+      "outcome": "harness-crashed-on-deadline",
+      "includedInResults": false
+    }
+  ],
+  "counts": {
+    "validAttempts": 6,
+    "verifiedCompletion": 1,
+    "deadline": 3,
+    "modelUnavailable": 2
+  },
+  "attempts": [
+    {
+      "case": "small-fix",
+      "reportPath": "docs/design/reassessment-small-fix.json",
+      "providerModel": "abel/LocalModel",
+      "modelSelection": "inherited-settings",
+      "timeoutMs": 300000
+    },
+    {
+      "case": "gpt-small-fix",
+      "reportPath": "docs/design/reassessment-gpt-small-fix.json",
+      "providerModel": "gpt/gpt-6-astra",
+      "modelSelection": "explicit-model",
+      "timeoutMs": 600000
+    },
+    {
+      "case": "multiple-tasks",
+      "reportPath": "docs/design/reassessment-multiple-tasks.json",
+      "providerModel": "gpt/gpt-6-astra",
+      "modelSelection": "explicit-model",
+      "timeoutMs": 600000
+    },
+    {
+      "case": "restart-recovery",
+      "reportPath": "docs/design/reassessment-restart-recovery.json",
+      "providerModel": "gpt/gpt-6-astra",
+      "modelSelection": "explicit-model",
+      "timeoutMs": 1800000
+    },
+    {
+      "case": "missing-capability",
+      "reportPath": "docs/design/reassessment-missing-capability.json",
+      "providerModel": "gpt/gpt-6-astra",
+      "modelSelection": "explicit-model",
+      "timeoutMs": 600000
+    },
+    {
+      "case": "gpt-small-fix-extended",
+      "reportPath": "docs/design/reassessment-gpt-small-fix-extended.json",
+      "providerModel": "gpt/gpt-6-astra",
+      "modelSelection": "explicit-model",
+      "timeoutMs": 1200000
+    }
+  ],
+  "detailsPath": "docs/design/archive/control-core-live-reassessment-details.json"
+}

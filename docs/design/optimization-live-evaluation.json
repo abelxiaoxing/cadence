@@ -1,0 +1,330 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-09-07T05:07:14.977117+00:00",
+  "baseCommit": "6c6673cfa31ade0d2d80f4c7f78bf4198dc7c9be",
+  "includesUncommittedChanges": true,
+  "sourceSha256": {
+    "src/delivery-compiler.ts": "83eb58aeb68b5a2c1098d0cda9c1ac5d512ef4b1465111b3d5af0ef7f90fef28",
+    "src/workflow-status.ts": "4ebc3cd0a1df8241f25e74ad847f4b5efe39ee3b8bff6a1b66d9146ab932b1d3",
+    "src/candidate-artifact.ts": "2c6182619af2353592fd08bb0128ce24d45b96b6ce9b044eb22768f5ab951a77",
+    "prompts/abel-design.md": "c7b396aa966ec0240d386c71b25cac4f522e18ec0a9e1959e85f8477f36607aa",
+    "config/plan-draft.example.json": "fbc0ef2156f52db735fa21c9d6d754d3483ea50ea39a0b1c2132b979d3f36808",
+    "scripts/evaluate-workflow.mjs": "1daeb1135cfad03c2cfe2070009f2e8ebb8a70718652542ec1383af459d6f896",
+    "scripts/workflow-evaluation.mjs": "b9fa7042b92ee666716092d507b00b5dc324e0b1f82eb8fb7a8fb20287e45219"
+  },
+  "method": {
+    "model": "gpt/gpt-6-astra",
+    "timeoutMs": 600000,
+    "scenarios": ["small-fix", "multiple-tasks"],
+    "execution": "serial",
+    "fixture": "existing evaluator, unchanged requirements and independent Bubblewrap oracle",
+    "interventions": "none planned; no injected drafts, code or approvals",
+    "observations": "transparent Pi RPC proxy and read-only node:diagnostics_channel subscriptions; allowlisted metadata only",
+    "defaultSettingsChanged": false
+  },
+  "instrumentationSha256": {
+    "small-fix": "474ddebc311ac25b2bba7c4db383b90e28d272f68c62cd4f5efdfddb90103be4",
+    "multiple-tasks": "5152a28f666dafbbff225a4cab5830817b50ebd4cceef9a35b5d04cbfd8e48ad",
+    "wire": "39321f72652450a69fb786848b04d736a06e60ea26f5e8fb2e5dc8939ef870fa"
+  },
+  "followUp": {
+    "scenario": "multiple-tasks",
+    "reason": "Read-only compiler reproduction found unchanged existing tests labelled current-task in both task boundaries.",
+    "change": "Explain relatedTests dispositions in the existing Design prompt; no validator or permission changes.",
+    "promptSha256": "408fb96beab6c8d3ffbfed033e9c7a5819b732ed192c00738856b08a179cc1f4",
+    "timeoutMs": 600000,
+    "additionalAttempts": 1
+  },
+  "evaluatedAt": "2026-09-07T05:39:35.698951+00:00",
+  "runtime": {
+    "platform": "linux",
+    "node": "26.7.0",
+    "piHost": "0.85.1",
+    "packageDevelopmentPi": "0.84.3",
+    "configuredThinkingLevel": "xhigh"
+  },
+  "measurementDefinitions": {
+    "packageSourceReadCalls": "Parent read/grep/find/ls calls whose resolved target is the Cadence src directory or a descendant; child internal tools are excluded.",
+    "exampleReadCalls": "Parent read calls resolving to config/plan-draft.example.json in this package.",
+    "http": "Read-only undici events filtered to the configured gpt/abel origins; no URL, headers, request body or raw error retained.",
+    "tokens": "CLI host-reported cumulative usage includes repeated context; not an all-session billing measurement.",
+    "comparison": "Exploratory single attempts; initial two use unchanged evaluation inputs and 10-minute windows. Follow-up changes only the prompt disposition guidance. Earlier runs had differing concurrency and time-varying Provider conditions."
+  },
+  "attempts": [
+    {
+      "case": "small-fix",
+      "reportPath": "docs/design/optimized-small-fix.json",
+      "promptVariant": "initial-optimization",
+      "observations": {
+        "packageSourceReadCalls": 7,
+        "exampleReadCalls": 1,
+        "toolCallsByName": {
+          "abel_dispatch": 20,
+          "ls": 7,
+          "find": 7,
+          "read": 14,
+          "grep": 6
+        },
+        "toolErrorsByOperationOrName": {
+          "read": 2,
+          "find": 1,
+          "approve-gate": 1,
+          "validate-plan-draft": 1,
+          "finalize-delivery": 1
+        },
+        "draftSubmissions": [
+          {
+            "elapsedMs": 352563,
+            "tasks": 1,
+            "trackingOmitted": true
+          },
+          {
+            "elapsedMs": 407912,
+            "tasks": 1,
+            "trackingOmitted": true
+          }
+        ],
+        "planChecks": [
+          {
+            "elapsedMs": 358529,
+            "operation": "validate-plan-draft",
+            "ok": false
+          },
+          {
+            "elapsedMs": 412912,
+            "operation": "validate-plan-draft",
+            "ok": true
+          },
+          {
+            "elapsedMs": 418303,
+            "operation": "compile-plan",
+            "ok": true
+          },
+          {
+            "elapsedMs": 424923,
+            "operation": "finalize-delivery",
+            "ok": false
+          },
+          {
+            "elapsedMs": 519313,
+            "operation": "finalize-delivery",
+            "ok": true
+          }
+        ],
+        "timingMs": {
+          "designCompleted": 519313,
+          "implementStarted": 538822,
+          "implementCompleted": 570053
+        },
+        "http": {
+          "requests": 45,
+          "statusCounts": {
+            "200": 45
+          },
+          "errorEvents": []
+        },
+        "abortedAssistantMessages": [],
+        "diagnosticCoverage": "Nested Design error codes were not captured in this attempt; counts and control outcomes were retained."
+      }
+    },
+    {
+      "case": "multiple-tasks",
+      "reportPath": "docs/design/optimized-multiple-tasks.json",
+      "promptVariant": "initial-optimization",
+      "observations": {
+        "packageSourceReadCalls": 10,
+        "exampleReadCalls": 1,
+        "toolCallsByName": {
+          "abel_dispatch": 13,
+          "ls": 3,
+          "find": 7,
+          "read": 11,
+          "grep": 8
+        },
+        "toolErrorsByOperationOrName": {
+          "approve-gate": 1,
+          "validate-plan-draft": 1
+        },
+        "draftSubmissions": [
+          {
+            "elapsedMs": 507605,
+            "tasks": 2,
+            "trackingOmitted": true
+          }
+        ],
+        "planChecks": [
+          {
+            "elapsedMs": 513649,
+            "operation": "validate-plan-draft",
+            "ok": false,
+            "diagnostics": [
+              {
+                "code": "invalid-implement-graph",
+                "category": "current-task-outside-write-set"
+              }
+            ]
+          }
+        ],
+        "timingMs": {
+          "designCompleted": null,
+          "implementStarted": null,
+          "implementCompleted": null
+        },
+        "http": {
+          "requests": 32,
+          "statusCounts": {
+            "200": 32
+          },
+          "errorEvents": [
+            {
+              "elapsedMs": 599935,
+              "event": "request-error",
+              "id": 32,
+              "code": "unclassified"
+            }
+          ],
+          "errorContext": "One unclassified request-error event coincided with harness deadline cancellation and an aborted assistant message; no SDK timeout or model error was reported."
+        },
+        "abortedAssistantMessages": [599982]
+      },
+      "readOnlyRecheck": {
+        "readOnlyRecheck": true,
+        "ok": false,
+        "mismatches": [
+          {
+            "taskIndex": 0,
+            "existingTestReadOnly": true,
+            "testDeclaredReadable": true,
+            "disposition": "current-task"
+          },
+          {
+            "taskIndex": 1,
+            "existingTestReadOnly": true,
+            "testDeclaredReadable": true,
+            "disposition": "current-task"
+          }
+        ],
+        "diagnostics": [
+          {
+            "code": "invalid-implement-graph",
+            "field": "impactClosure",
+            "category": "current-task-outside-write-set"
+          }
+        ]
+      }
+    },
+    {
+      "case": "multiple-tasks-followup",
+      "reportPath": "docs/design/optimized-multiple-tasks-followup.json",
+      "promptVariant": "disposition-guidance",
+      "observations": {
+        "packageSourceReadCalls": 5,
+        "exampleReadCalls": 1,
+        "toolCallsByName": {
+          "abel_dispatch": 16,
+          "ls": 3,
+          "find": 6,
+          "read": 9,
+          "grep": 4
+        },
+        "toolErrorsByOperationOrName": {
+          "grep": 1,
+          "validate-plan-draft": 1
+        },
+        "draftSubmissions": [
+          {
+            "elapsedMs": 397248,
+            "tasks": 2,
+            "trackingOmitted": true
+          },
+          {
+            "elapsedMs": 508530,
+            "tasks": 2,
+            "trackingOmitted": true
+          }
+        ],
+        "planChecks": [
+          {
+            "elapsedMs": 407051,
+            "operation": "validate-plan-draft",
+            "ok": false,
+            "diagnostics": [
+              {
+                "code": "verification-input-binding-mismatch"
+              },
+              {
+                "code": "verification-input-binding-mismatch"
+              },
+              {
+                "code": "verification-input-binding-mismatch"
+              },
+              {
+                "code": "verification-input-binding-mismatch"
+              }
+            ]
+          },
+          {
+            "elapsedMs": 517240,
+            "operation": "validate-plan-draft",
+            "ok": true
+          },
+          {
+            "elapsedMs": 541371,
+            "operation": "compile-plan",
+            "ok": true
+          },
+          {
+            "elapsedMs": 582774,
+            "operation": "finalize-delivery",
+            "ok": true
+          }
+        ],
+        "timingMs": {
+          "designCompleted": 582774,
+          "implementStarted": null,
+          "implementCompleted": null
+        },
+        "http": {
+          "requests": 26,
+          "statusCounts": {
+            "200": 25
+          },
+          "errorEvents": [
+            {
+              "elapsedMs": 599926,
+              "event": "request-error",
+              "id": 26,
+              "code": "unclassified"
+            }
+          ],
+          "errorContext": "One unclassified request-error event coincided with harness deadline cancellation and an aborted assistant message; no SDK timeout or model error was reported."
+        },
+        "abortedAssistantMessages": [599968]
+      },
+      "readOnlyRecheck": {
+        "readOnlyRecheck": true,
+        "ok": false,
+        "currentTaskOutsideWriteSet": [],
+        "diagnostics": [
+          {
+            "code": "verification-input-binding-mismatch",
+            "phase": "green"
+          },
+          {
+            "code": "verification-input-binding-mismatch",
+            "phase": "green"
+          },
+          {
+            "code": "verification-input-binding-mismatch",
+            "phase": "red"
+          },
+          {
+            "code": "verification-input-binding-mismatch",
+            "phase": "red"
+          }
+        ]
+      }
+    }
+  ],
+  "onlySourceChangeDuringEvaluation": "The documented three-line relatedTests disposition guidance in prompts/abel-design.md, between the second and third attempts."
+}

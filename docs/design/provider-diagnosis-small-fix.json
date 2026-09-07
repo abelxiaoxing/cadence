@@ -1,0 +1,20 @@
+{
+  "scenario": "small-fix",
+  "mode": "live-model",
+  "reason": "verified-completion",
+  "success": true,
+  "elapsedMs": 564937,
+  "sessions": 1,
+  "toolCalls": 45,
+  "failedTools": 1,
+  "amendments": 0,
+  "repeatedAmendments": 0,
+  "userInterventions": 0,
+  "designCompleted": true,
+  "completed": true,
+  "cancellations": 0,
+  "modelErrors": 0,
+  "modelFailure": null,
+  "tokens": 857383,
+  "cost": 0
+}

@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 2,
+  "evaluatedAt": "2026-09-07T02:21:35+00:00",
+  "baseCommit": "6c6673cfa31ade0d2d80f4c7f78bf4198dc7c9be",
+  "includesUncommittedChanges": true,
+  "runtime": {
+    "piHost": "0.85.1",
+    "node": "26.7.0",
+    "configuredDefaultModel": "abel/LocalModel",
+    "comparisonModel": "gpt/gpt-6-astra",
+    "configuredThinkingLevel": "xhigh",
+    "providersShareOrigin": false,
+    "defaultSettingsChanged": false
+  },
+  "conclusions": {
+    "historicalProviderFailureRootCause": "not-established",
+    "realProviderFailureReproduced": false,
+    "diagnosticMisclassificationReproduced": true,
+    "wireStatusCounts": {
+      "200": 57
+    },
+    "wireErrorCount": 0,
+    "successfulMinimalProbes": 11,
+    "successfulIndependentWorkflowOracles": 1
+  },
+  "instrumentation": {
+    "wire": "node:diagnostics_channel undici request create/headers/error; configured endpoints only",
+    "payload": "read-only before_provider_request observer; retains sizes, counts and allowlisted model/effort fields only",
+    "rpc": "assistant stop reason, safe error taxonomy, retry count/delay and tool metadata only",
+    "noRawContentRetained": true,
+    "coverageNote": "The first short GPT probe preceded working wire instrumentation. Its RPC completion is recorded but its HTTP status is unknown. Workflow started before the metric classifier update; its original CLI report is preserved."
+  },
+  "workflow": {
+    "reportPath": "docs/design/provider-diagnosis-small-fix.json"
+  },
+  "sdkTimeoutReproduction": {
+    "kind": "deterministic-local-sdk-timeout-reproduction",
+    "realNetworkRequests": 0,
+    "injectedFetchCalls": 1,
+    "sdkVersion": "6.40.0",
+    "isConnectionTimeout": true,
+    "standardTimeoutMessage": true,
+    "previousCategory": "provider",
+    "currentCategory": "transport",
+    "diagnostics": [
+      {
+        "kind": "timeout",
+        "httpStatus": null
+      }
+    ]
+  },
+  "diagnosticChange": {
+    "files": [
+      "scripts/workflow-evaluation.mjs",
+      "test/workflow-evaluation.test.mjs",
+      "README.md"
+    ],
+    "classificationSource": "SDK display text; httpStatus is inferred, not an independently observed response header",
+    "boundedDiagnosticSamples": 16,
+    "sourceSha256": "b9fa7042b92ee666716092d507b00b5dc324e0b1f82eb8fb7a8fb20287e45219",
+    "tests": {
+      "newRegressionCases": 13,
+      "evaluationTestsPassed": 24,
+      "fullTestsPassed": 739,
+      "conditionalTestsSkipped": 14,
+      "packMembers": 72,
+      "verifyPassed": true
+    }
+  },
+  "limitations": [
+    "Historical attempts retained neither HTTP status nor raw SDK messages; they cannot be retrospectively classified with certainty.",
+    "Four concurrent synthetic requests are a bounded burst, not a sustained throughput test or a reproduction of four whole workflows.",
+    "No server-side logs were available in this investigation.",
+    "Wire HTTP 200 alone does not establish complete SSE success; the workflow also passed its independent oracle.",
+    "Host token totals include repeated context and do not establish billed cost or all child-session usage."
+  ],
+  "detailsPath": "docs/design/archive/provider-error-diagnosis-details.json"
+}

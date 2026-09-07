@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-09-07T06:35:04.151234+00:00",
+  "baseCommit": "6c6673cfa31ade0d2d80f4c7f78bf4198dc7c9be",
+  "includesUncommittedChanges": true,
+  "sourceSha256": {
+    "src/delivery-compiler.ts": "8322651f1c21d984a81d4b4d7ff1dd8dedbb01be4d8b77da69f6bd8ab1a3e7c9",
+    "src/contracts.ts": "a42792c59784a46f4e8be8dc6c6e0ea7913225cef4956220a5ea45834bc3842f",
+    "src/implement-graph.ts": "239fe554a6d142cb01a84ff983e2b9c460f3437013f9ecbfdd59c34c3967f5dd",
+    "src/design-diagnostics.ts": "f15570872a690ecef502ad9aea8b51ee70fe55b17f7a46c04e5af11de6790d7a",
+    "src/index.ts": "ba4c84fcd0d6d8589afbcae4994eb0b1b9c1b0d73d40572e5dfd04ffc88d1672",
+    "src/subagent-activity.ts": "a03f4f27f5a65555e06d4c9a5f9fda0a1efbbcb7e303003920d423d5b9c482cc",
+    "prompts/abel-design.md": "84883c8cfbfccca7461c3e2695356a76d4174f4c1000054b3cde977a5c384f6b",
+    "config/plan-draft.example.json": "5cfceaf7537ce42fba4655604f4037834fd6ad599d2da080a67766de54a5f131",
+    "scripts/evaluate-workflow.mjs": "1daeb1135cfad03c2cfe2070009f2e8ebb8a70718652542ec1383af459d6f896",
+    "scripts/workflow-evaluation.mjs": "b9fa7042b92ee666716092d507b00b5dc324e0b1f82eb8fb7a8fb20287e45219"
+  },
+  "instrumentationSha256": {
+    "pi-observer.mjs": "b2ddc6c820d31679ce80f897f98aac0ccf0c20585e18ff52853b036650a52c53",
+    "wire.mjs": "39321f72652450a69fb786848b04d736a06e60ea26f5e8fb2e5dc8939ef870fa"
+  },
+  "method": {
+    "model": "gpt/gpt-6-astra",
+    "timeoutMs": 600000,
+    "scenarios": ["multiple-tasks", "small-fix"],
+    "execution": "serial",
+    "fixture": "Existing evaluator; unchanged requirements and independent Bubblewrap oracle",
+    "interventions": "No injected drafts, code, corrections or approvals",
+    "observations": "Transparent Pi RPC proxy and read-only diagnostics_channel subscriptions; allowlisted metadata only",
+    "defaultSettingsChanged": false
+  },
+  "evaluatedAt": "2026-09-07T06:48:32.915263+00:00",
+  "runtime": {
+    "platform": "linux",
+    "node": "26.7.0",
+    "piHost": "0.85.1",
+    "packageDevelopmentPi": "0.84.3",
+    "configuredThinkingLevel": "xhigh"
+  },
+  "measurementDefinitions": {
+    "packageSourceReadCalls": "Parent read/grep/find/ls calls targeting the Cadence src directory or its descendants; child tools excluded.",
+    "http": "Read-only undici events filtered to configured gpt/abel origins; no URL, headers, body or raw errors retained.",
+    "tokens": "Host-reported cumulative usage includes repeated context; not all-session billing.",
+    "comparison": "One attempt per scenario, identical model, requirement and time limit. Model randomness and varying service latency prevent causal speed claims."
+  },
+  "attempts": [
+    {
+      "case": "multiple-tasks",
+      "reportPath": "docs/design/redesigned-multiple-tasks.json",
+      "observations": {
+        "packageSourceReadCalls": 3,
+        "exampleReadCalls": 1,
+        "toolCallsByName": {
+          "abel_dispatch": 11,
+          "ls": 2,
+          "read": 7,
+          "find": 3,
+          "grep": 4
+        },
+        "toolErrorsByOperationOrName": {
+          "approve-gate": 1
+        },
+        "draftSubmissions": [],
+        "firstPreflightPassed": null,
+        "planChecks": [],
+        "timingMs": {
+          "designCompleted": null,
+          "implementStarted": null,
+          "implementCompleted": null
+        },
+        "http": {
+          "requests": 30,
+          "statusCounts": {
+            "200": 27
+          },
+          "errorEvents": [
+            {
+              "elapsedMs": 411886,
+              "event": "request-error",
+              "id": 22,
+              "code": "unclassified"
+            },
+            {
+              "elapsedMs": 421891,
+              "event": "request-error",
+              "id": 23,
+              "code": "unclassified"
+            },
+            {
+              "elapsedMs": 599926,
+              "event": "request-error",
+              "id": 30,
+              "code": "unclassified"
+            }
+          ],
+          "errorContext": "Two unclassified request errors occurred during the Design child call, before the harness deadline; another coincided with final deadline cancellation. The observer did not retain child failure details, so the first two cannot be diagnosed as SDK timeout or Provider root cause."
+        },
+        "abortedAssistantMessages": [599969]
+      },
+      "benchmarkEligible": true
+    },
+    {
+      "case": "small-fix",
+      "reportPath": "docs/design/redesigned-small-fix.json",
+      "observations": {
+        "packageSourceReadCalls": 4,
+        "exampleReadCalls": 1,
+        "toolCallsByName": {
+          "abel_dispatch": 1,
+          "ls": 1,
+          "read": 6,
+          "find": 2,
+          "grep": 4
+        },
+        "toolErrorsByOperationOrName": {},
+        "draftSubmissions": [],
+        "firstPreflightPassed": null,
+        "planChecks": [],
+        "timingMs": {
+          "designCompleted": null,
+          "implementStarted": null,
+          "implementCompleted": null
+        },
+        "http": {
+          "requests": 11,
+          "statusCounts": {
+            "200": 10
+          },
+          "errorEvents": [
+            {
+              "elapsedMs": 161860,
+              "event": "request-error",
+              "id": 11,
+              "code": "unclassified"
+            }
+          ]
+        },
+        "abortedAssistantMessages": []
+      },
+      "benchmarkEligible": false,
+      "interruption": {
+        "cause": "operator-stop-after-user-model-switch",
+        "reportReason": "evaluation-host-stopped",
+        "tokens": "Unavailable after host shutdown; zero is not zero consumption.",
+        "modelFailure": false
+      }
+    }
+  ],
+  "sourceUnchangedDuringEvaluation": true,
+  "handoff": {
+    "reason": "User switched to LocalModel and requested a new goal context; the old-model small-fix host was explicitly stopped.",
+    "currentModel": {
+      "provider": "abel",
+      "model": "LocalModel",
+      "api": "openai-completions",
+      "thinkingLevel": "xhigh"
+    },
+    "modelConfigurationModifiedByAgent": false,
+    "knownOutstandingFix": "projectDesignDiagnostic permits an incoming pathsTruncated:false to overwrite a computed true truncation flag."
+  }
+}

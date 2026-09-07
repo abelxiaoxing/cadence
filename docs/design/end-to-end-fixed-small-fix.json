@@ -1,0 +1,1064 @@
+{
+  "scenario": "small-fix",
+  "mode": "live-model",
+  "reason": "evaluation-deadline",
+  "success": false,
+  "elapsedMs": 600092,
+  "sessions": 1,
+  "toolCalls": 48,
+  "failedTools": 5,
+  "amendments": 0,
+  "repeatedAmendments": 0,
+  "userInterventions": 0,
+  "designCompleted": true,
+  "completed": false,
+  "cancellations": 0,
+  "modelErrors": 0,
+  "modelFailure": null,
+  "modelFailureDiagnostics": [],
+  "autoRetries": 0,
+  "retryDelayMs": 0,
+  "tokens": 997060,
+  "cost": 0,
+  "trace": {
+    "elapsedMs": 600027,
+    "toolWallMs": 1453,
+    "childToolWallMs": 0,
+    "localToolExclusiveMs": 1453,
+    "nonToolMs": 598574,
+    "stages": [
+      {
+        "name": "setup",
+        "startMs": 0,
+        "elapsedMs": 530,
+        "ended": true
+      },
+      {
+        "name": "design",
+        "startMs": 530,
+        "elapsedMs": 599497,
+        "ended": false
+      }
+    ],
+    "milestones": {
+      "gateA": 268171,
+      "draftWritten": 342180,
+      "preflightPassed": 493188,
+      "compiled": 499192,
+      "designFinalized": 554943,
+      "implementStarted": null,
+      "implementCompleted": null,
+      "oraclePassed": null
+    },
+    "operations": {
+      "design:start": {
+        "calls": 1,
+        "failures": 0,
+        "domainFailures": 0,
+        "successes": 1,
+        "summedMs": 68,
+        "repeatedPayloads": 0
+      },
+      "ls": {
+        "calls": 10,
+        "failures": 0,
+        "domainFailures": 0,
+        "successes": 10,
+        "summedMs": 59,
+        "repeatedPayloads": 0
+      },
+      "read": {
+        "calls": 17,
+        "failures": 2,
+        "domainFailures": 0,
+        "successes": 15,
+        "summedMs": 122,
+        "repeatedPayloads": 0
+      },
+      "find": {
+        "calls": 3,
+        "failures": 0,
+        "domainFailures": 0,
+        "successes": 3,
+        "summedMs": 90,
+        "repeatedPayloads": 0
+      },
+      "bash": {
+        "calls": 1,
+        "failures": 1,
+        "domainFailures": 0,
+        "successes": 0,
+        "summedMs": 0,
+        "repeatedPayloads": 0
+      },
+      "design:record-decision": {
+        "calls": 2,
+        "failures": 0,
+        "domainFailures": 0,
+        "successes": 2,
+        "summedMs": 10,
+        "repeatedPayloads": 0
+      },
+      "design:approve-gate": {
+        "calls": 1,
+        "failures": 0,
+        "domainFailures": 0,
+        "successes": 1,
+        "summedMs": 25,
+        "repeatedPayloads": 0
+      },
+      "design:bind-change": {
+        "calls": 1,
+        "failures": 0,
+        "domainFailures": 0,
+        "successes": 1,
+        "summedMs": 12,
+        "repeatedPayloads": 0
+      },
+      "design:write-artifact": {
+        "calls": 7,
+        "failures": 0,
+        "domainFailures": 0,
+        "successes": 7,
+        "summedMs": 183,
+        "repeatedPayloads": 0
+      },
+      "design:validate-plan-draft": {
+        "calls": 2,
+        "failures": 1,
+        "domainFailures": 0,
+        "successes": 1,
+        "summedMs": 112,
+        "repeatedPayloads": 1
+      },
+      "design:compile-plan": {
+        "calls": 1,
+        "failures": 0,
+        "domainFailures": 0,
+        "successes": 1,
+        "summedMs": 76,
+        "repeatedPayloads": 0
+      },
+      "design:finalize-delivery": {
+        "calls": 2,
+        "failures": 1,
+        "domainFailures": 0,
+        "successes": 1,
+        "summedMs": 990,
+        "repeatedPayloads": 1
+      }
+    },
+    "failures": [
+      {
+        "atMs": 22436,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 4,
+        "isError": true,
+        "code": "unclassified"
+      },
+      {
+        "atMs": 22437,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 4,
+        "isError": true,
+        "code": "unclassified"
+      },
+      {
+        "atMs": 78770,
+        "event": "tool-end",
+        "tool": "bash",
+        "elapsedMs": 0,
+        "isError": true,
+        "code": "tool-unavailable"
+      },
+      {
+        "atMs": 347852,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "validate-plan-draft",
+        "elapsedMs": 28,
+        "isError": true,
+        "code": "design-plan-validation-invalid"
+      },
+      {
+        "atMs": 504008,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "finalize-delivery",
+        "elapsedMs": 492,
+        "isError": true,
+        "code": "design-finalization-invalid"
+      }
+    ],
+    "timeline": [
+      {
+        "atMs": 15639,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "start"
+      },
+      {
+        "atMs": 15707,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "start",
+        "elapsedMs": 68,
+        "isError": false,
+        "state": "paused"
+      },
+      {
+        "atMs": 22430,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 22432,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 22432,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 22433,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 22436,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 4,
+        "isError": true,
+        "code": "unclassified"
+      },
+      {
+        "atMs": 22437,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 4,
+        "isError": true,
+        "code": "unclassified"
+      },
+      {
+        "atMs": 22440,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 8,
+        "isError": false
+      },
+      {
+        "atMs": 22440,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 10,
+        "isError": false
+      },
+      {
+        "atMs": 25425,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 25425,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 25425,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 25426,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 1,
+        "isError": false
+      },
+      {
+        "atMs": 25427,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 25427,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 31456,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 31456,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 31457,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 31457,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 31457,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 31458,
+        "event": "tool-start",
+        "tool": "find"
+      },
+      {
+        "atMs": 31476,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 19,
+        "isError": false
+      },
+      {
+        "atMs": 31476,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 19,
+        "isError": false
+      },
+      {
+        "atMs": 31477,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 21,
+        "isError": false
+      },
+      {
+        "atMs": 31478,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 22,
+        "isError": false
+      },
+      {
+        "atMs": 31478,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 21,
+        "isError": false
+      },
+      {
+        "atMs": 31493,
+        "event": "tool-end",
+        "tool": "find",
+        "elapsedMs": 35,
+        "isError": false
+      },
+      {
+        "atMs": 48647,
+        "event": "tool-start",
+        "tool": "read",
+        "readTarget": "plan-example"
+      },
+      {
+        "atMs": 48647,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 48647,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 48648,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 1,
+        "isError": false
+      },
+      {
+        "atMs": 48648,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 1,
+        "isError": false
+      },
+      {
+        "atMs": 48649,
+        "event": "tool-end",
+        "tool": "read",
+        "readTarget": "plan-example",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 78770,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 78770,
+        "event": "tool-start",
+        "tool": "find"
+      },
+      {
+        "atMs": 78770,
+        "event": "tool-start",
+        "tool": "bash"
+      },
+      {
+        "atMs": 78770,
+        "event": "tool-end",
+        "tool": "bash",
+        "elapsedMs": 0,
+        "isError": true,
+        "code": "tool-unavailable"
+      },
+      {
+        "atMs": 78783,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 13,
+        "isError": false
+      },
+      {
+        "atMs": 78796,
+        "event": "tool-end",
+        "tool": "find",
+        "elapsedMs": 26,
+        "isError": false
+      },
+      {
+        "atMs": 90517,
+        "event": "tool-start",
+        "tool": "find"
+      },
+      {
+        "atMs": 90517,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 90529,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 12,
+        "isError": false
+      },
+      {
+        "atMs": 90546,
+        "event": "tool-end",
+        "tool": "find",
+        "elapsedMs": 29,
+        "isError": false
+      },
+      {
+        "atMs": 95455,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 95455,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 95455,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 95457,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 95457,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 95458,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 3,
+        "isError": false
+      },
+      {
+        "atMs": 258958,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "record-decision"
+      },
+      {
+        "atMs": 258959,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "record-decision"
+      },
+      {
+        "atMs": 258963,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "record-decision",
+        "elapsedMs": 5,
+        "isError": false
+      },
+      {
+        "atMs": 258964,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "record-decision",
+        "elapsedMs": 5,
+        "isError": false
+      },
+      {
+        "atMs": 268146,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "approve-gate"
+      },
+      {
+        "atMs": 268171,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "approve-gate",
+        "elapsedMs": 25,
+        "isError": false
+      },
+      {
+        "atMs": 272485,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "bind-change"
+      },
+      {
+        "atMs": 272497,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "bind-change",
+        "elapsedMs": 12,
+        "isError": false,
+        "state": "paused"
+      },
+      {
+        "atMs": 342145,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": ".openspec.yaml"
+      },
+      {
+        "atMs": 342146,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "proposal.md"
+      },
+      {
+        "atMs": 342146,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "spec-or-other"
+      },
+      {
+        "atMs": 342146,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "tasks.md"
+      },
+      {
+        "atMs": 342146,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "plan-draft.json"
+      },
+      {
+        "atMs": 342180,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": ".openspec.yaml",
+        "elapsedMs": 35,
+        "isError": false
+      },
+      {
+        "atMs": 342180,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "proposal.md",
+        "elapsedMs": 34,
+        "isError": false
+      },
+      {
+        "atMs": 342180,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "spec-or-other",
+        "elapsedMs": 34,
+        "isError": false
+      },
+      {
+        "atMs": 342180,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "tasks.md",
+        "elapsedMs": 34,
+        "isError": false
+      },
+      {
+        "atMs": 342180,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "plan-draft.json",
+        "elapsedMs": 34,
+        "isError": false
+      },
+      {
+        "atMs": 347824,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "validate-plan-draft"
+      },
+      {
+        "atMs": 347852,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "validate-plan-draft",
+        "elapsedMs": 28,
+        "isError": true,
+        "code": "design-plan-validation-invalid"
+      },
+      {
+        "atMs": 359491,
+        "event": "tool-start",
+        "tool": "read",
+        "readTarget": "plan-example"
+      },
+      {
+        "atMs": 359493,
+        "event": "tool-end",
+        "tool": "read",
+        "readTarget": "plan-example",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 487272,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "plan-draft.json"
+      },
+      {
+        "atMs": 487279,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "plan-draft.json",
+        "elapsedMs": 7,
+        "isError": false
+      },
+      {
+        "atMs": 493104,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "validate-plan-draft"
+      },
+      {
+        "atMs": 493188,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "validate-plan-draft",
+        "elapsedMs": 84,
+        "isError": false
+      },
+      {
+        "atMs": 499116,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "compile-plan"
+      },
+      {
+        "atMs": 499192,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "compile-plan",
+        "elapsedMs": 76,
+        "isError": false
+      },
+      {
+        "atMs": 503516,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "finalize-delivery"
+      },
+      {
+        "atMs": 504008,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "finalize-delivery",
+        "elapsedMs": 492,
+        "isError": true,
+        "code": "design-finalization-invalid"
+      },
+      {
+        "atMs": 510138,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 510138,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 510140,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 510140,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 533356,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 533356,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 533357,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 1,
+        "isError": false
+      },
+      {
+        "atMs": 533358,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 2,
+        "isError": false
+      },
+      {
+        "atMs": 549475,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "design.md"
+      },
+      {
+        "atMs": 549480,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "write-artifact",
+        "artifact": "design.md",
+        "elapsedMs": 5,
+        "isError": false
+      },
+      {
+        "atMs": 554445,
+        "event": "tool-start",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "finalize-delivery"
+      },
+      {
+        "atMs": 554943,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "action": "design",
+        "operation": "finalize-delivery",
+        "elapsedMs": 498,
+        "isError": false,
+        "state": "completed"
+      },
+      {
+        "atMs": 586023,
+        "event": "tool-start",
+        "tool": "ls"
+      },
+      {
+        "atMs": 586024,
+        "event": "tool-start",
+        "tool": "read"
+      },
+      {
+        "atMs": 586025,
+        "event": "tool-end",
+        "tool": "read",
+        "elapsedMs": 1,
+        "isError": false
+      },
+      {
+        "atMs": 586025,
+        "event": "tool-end",
+        "tool": "ls",
+        "elapsedMs": 2,
+        "isError": false
+      }
+    ],
+    "assistant": {
+      "started": 24,
+      "completed": 23,
+      "observedMs": 513195,
+      "input": 964360,
+      "output": 32700,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "maximumInput": 69301
+    },
+    "turns": [
+      {
+        "atMs": 15639,
+        "observedMs": 10696,
+        "input": 13214,
+        "output": 618,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 22430,
+        "observedMs": 5565,
+        "input": 14047,
+        "output": 317,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 25425,
+        "observedMs": 2364,
+        "input": 14500,
+        "output": 135,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 31456,
+        "observedMs": 5239,
+        "input": 14675,
+        "output": 327,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 48647,
+        "observedMs": 16569,
+        "input": 15133,
+        "output": 1102,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 78770,
+        "observedMs": 29169,
+        "input": 17181,
+        "output": 1944,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 90517,
+        "observedMs": 9496,
+        "input": 19891,
+        "output": 626,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 95455,
+        "observedMs": 4137,
+        "input": 20996,
+        "output": 271,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 258958,
+        "observedMs": 158249,
+        "input": 32426,
+        "output": 10251,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 268146,
+        "observedMs": 7939,
+        "input": 43127,
+        "output": 505,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 272485,
+        "observedMs": 2431,
+        "input": 43815,
+        "output": 156,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 342145,
+        "observedMs": 68269,
+        "input": 44960,
+        "output": 4311,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 347824,
+        "observedMs": 1969,
+        "input": 49899,
+        "output": 126,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 359491,
+        "observedMs": 9113,
+        "input": 50087,
+        "output": 574,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 487272,
+        "observedMs": 123468,
+        "input": 53221,
+        "output": 7794,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 493104,
+        "observedMs": 4118,
+        "input": 61149,
+        "output": 260,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 499116,
+        "observedMs": 4183,
+        "input": 62624,
+        "output": 264,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 503516,
+        "observedMs": 2963,
+        "input": 63410,
+        "output": 185,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 510138,
+        "observedMs": 5113,
+        "input": 63644,
+        "output": 318,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 533356,
+        "observedMs": 21859,
+        "input": 64285,
+        "output": 1351,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 549475,
+        "observedMs": 12930,
+        "input": 68361,
+        "output": 806,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 554445,
+        "observedMs": 3944,
+        "input": 69301,
+        "output": 245,
+        "stopReason": "toolUse"
+      },
+      {
+        "atMs": 586023,
+        "observedMs": 3412,
+        "input": 64414,
+        "output": 214,
+        "stopReason": "toolUse"
+      }
+    ],
+    "harnessSourceReads": 0,
+    "exampleReads": 2,
+    "unclassifiedShellCalls": 1,
+    "unfinishedTools": [],
+    "truncated": false
+  },
+  "configurations": [
+    {
+      "session": 1,
+      "observed": true,
+      "model": "LocalModel",
+      "provider": "abel",
+      "api": "openai-completions",
+      "thinkingLevel": "xhigh",
+      "contextWindow": 262144,
+      "maxTokens": 32768,
+      "routeFingerprint": "49182c7cd63b7b27b374d1251b24dbbfb4f721706c778b6e6c29cedb783ef1c3"
+    }
+  ],
+  "progressWriteFailed": false,
+  "sourceSha256": "ad292c7071c02ce7256d7244ec5825167322d713272b3c07ad6157c3c3593264",
+  "sourceUnchanged": false
+}

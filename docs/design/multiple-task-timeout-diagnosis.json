@@ -1,0 +1,403 @@
+{
+  "startedAt": "2026-09-07T06:56:13.215638+00:00",
+  "baseCommit": "6c6673cfa31ade0d2d80f4c7f78bf4198dc7c9be",
+  "model": "abel/LocalModel",
+  "thinkingLevel": "xhigh",
+  "timeoutMs": 600000,
+  "scenario": "multiple-tasks",
+  "sourceSha256": {
+    "src/worker-broker.ts": "7d4c4a3a2359a8456060defd94fa961f33498b88179c63f11139b2b5c9884759",
+    "src/parent-provider.ts": "0efcb7eab64990161894739d95b7cd9e2aea3583f0aa119ac4d3ab31ec6822e6",
+    "src/packet-runtime.ts": "110a119d024869dc8bbdc3ff6e17e65bf54f680253dc4ce932e515d87fb80a16",
+    "src/child-session.ts": "c4c8319608351d970998b13f15559d44542d6be0b1953ee92121c6b55a98fb68",
+    "src/delivery-compiler.ts": "8322651f1c21d984a81d4b4d7ff1dd8dedbb01be4d8b77da69f6bd8ab1a3e7c9",
+    "src/design-control.ts": "51131c84329facfaa0a4e8705d4bd319fa674adadd77da1432282cf72f2d9f07",
+    "src/index.ts": "ba4c84fcd0d6d8589afbcae4994eb0b1b9c1b0d73d40572e5dfd04ffc88d1672",
+    "src/contracts.ts": "a42792c59784a46f4e8be8dc6c6e0ea7913225cef4956220a5ea45834bc3842f",
+    "src/design-diagnostics.ts": "f15570872a690ecef502ad9aea8b51ee70fe55b17f7a46c04e5af11de6790d7a",
+    "prompts/abel-design.md": "84883c8cfbfccca7461c3e2695356a76d4174f4c1000054b3cde977a5c384f6b",
+    "config/plan-draft.example.json": "5cfceaf7537ce42fba4655604f4037834fd6ad599d2da080a67766de54a5f131",
+    "scripts/evaluate-workflow.mjs": "1daeb1135cfad03c2cfe2070009f2e8ebb8a70718652542ec1383af459d6f896",
+    "scripts/workflow-evaluation.mjs": "b9fa7042b92ee666716092d507b00b5dc324e0b1f82eb8fb7a8fb20287e45219"
+  },
+  "instrumentationSha256": {
+    "pi-observer.mjs": "ad207f862e19c0d6b0352d0a8ddc7a26a13717987f64a6d7596019b4ea40f770",
+    "wire.mjs": "235b7f295f2ebba4b70e5f1ca7994aa21476dbe98e071c8dff0b347feac0962c"
+  },
+  "interventions": "None; unchanged evaluator requirement and oracle; only explicit model selection changed.",
+  "globalConfigModified": false,
+  "completedAt": "2026-09-07T07:07:56.825552+00:00",
+  "historical": {
+    "reportPath": "docs/design/redesigned-multiple-tasks.json",
+    "toolElapsedMs": 20365,
+    "nonToolElapsedMs": 579635,
+    "localToolsExcludingChildMs": 350,
+    "childCallMs": 20015,
+    "headersLatencyMs": {
+      "count": 27,
+      "sum": 363512,
+      "median": 12323,
+      "min": 4553,
+      "max": 30845,
+      "aboveChildConnectBound": 17
+    },
+    "windows": [
+      {
+        "label": "Initial inspection",
+        "startMs": 0,
+        "endMs": 199666,
+        "elapsedMs": 199666
+      },
+      {
+        "label": "Decisions, Gate A correction and change binding",
+        "startMs": 199666,
+        "endMs": 362389,
+        "elapsedMs": 162723
+      },
+      {
+        "label": "Child dispatch planning and child call",
+        "startMs": 362389,
+        "endMs": 421934,
+        "elapsedMs": 59545
+      },
+      {
+        "label": "Four design artifact writes",
+        "startMs": 421934,
+        "endMs": 560401,
+        "elapsedMs": 138467
+      },
+      {
+        "label": "Further compiler source inspection and deadline",
+        "startMs": 560401,
+        "endMs": 600000,
+        "elapsedMs": 39599
+      }
+    ],
+    "gateCorrectionMs": 42717,
+    "parentRequestCount": 28,
+    "childRequestCount": 2,
+    "planSubmitted": false,
+    "planValidated": false,
+    "implementStarted": false,
+    "limitations": [
+      "Historical observer did not record response completion or child failure details.",
+      "Non-tool time includes model processing, response transfer and host handling; it is not pure model compute.",
+      "HTTP response header latency cannot distinguish proxy queueing, provider processing, network or buffering."
+    ]
+  },
+  "localModel": {
+    "reportPath": "docs/design/localmodel-multiple-tasks.json",
+    "toolCount": 40,
+    "toolExecutionUnionMs": 138939,
+    "childToolExecutionUnionMs": 138681,
+    "localToolExclusiveMs": 258,
+    "nonToolElapsedMs": 461061,
+    "toolCounts": {
+      "abel_dispatch": 9,
+      "ls": 14,
+      "read": 11,
+      "find": 4,
+      "grep": 2
+    },
+    "toolFailures": [
+      {
+        "elapsedMs": 29562,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "callId": 1,
+        "action": "design",
+        "operation": "start",
+        "sourceRead": false,
+        "exampleRead": false,
+        "isError": true,
+        "diagnostics": [
+          {
+            "code": "invalid-design-control-request",
+            "category": "validation"
+          }
+        ]
+      },
+      {
+        "elapsedMs": 73279,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "callId": 16,
+        "action": "run",
+        "sourceRead": false,
+        "exampleRead": false,
+        "isError": true
+      },
+      {
+        "elapsedMs": 552586,
+        "event": "tool-end",
+        "tool": "abel_dispatch",
+        "callId": 36,
+        "action": "design",
+        "operation": "approve-gate",
+        "sourceRead": false,
+        "exampleRead": false,
+        "gateShape": {
+          "gate": "gate-a",
+          "missingFields": [],
+          "extraFieldCount": 0,
+          "contractType": "object"
+        },
+        "isError": true,
+        "diagnostics": [
+          {
+            "code": "invalid-design-control-request",
+            "category": "validation"
+          }
+        ]
+      }
+    ],
+    "parentModelCalls": 23,
+    "childModelCalls": 6,
+    "parentHeadersLatencyMs": {
+      "count": 23,
+      "sum": 34229,
+      "median": 1402,
+      "min": 349,
+      "max": 3805
+    },
+    "childHeadersLatencyMs": {
+      "count": 6,
+      "sum": 7414,
+      "median": 1129.0,
+      "min": 274,
+      "max": 2763
+    },
+    "longestParentTurns": [
+      {
+        "startMs": 388202,
+        "endMs": 517386,
+        "streamMs": 129184,
+        "stopReason": "toolUse",
+        "usage": {
+          "input": 31065,
+          "output": 8302,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 39367
+        },
+        "toolCalls": 1
+      },
+      {
+        "startMs": 277945,
+        "endMs": 357706,
+        "streamMs": 79761,
+        "stopReason": "toolUse",
+        "usage": {
+          "input": 22978,
+          "output": 5243,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 28221
+        },
+        "toolCalls": 2
+      },
+      {
+        "startMs": 225007,
+        "endMs": 276838,
+        "streamMs": 51831,
+        "stopReason": "toolUse",
+        "usage": {
+          "input": 18146,
+          "output": 3444,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 21590
+        },
+        "toolCalls": 1
+      },
+      {
+        "startMs": 4391,
+        "endMs": 29538,
+        "streamMs": 25147,
+        "stopReason": "toolUse",
+        "usage": {
+          "input": 8551,
+          "output": 1730,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 10281
+        },
+        "toolCalls": 2
+      },
+      {
+        "startMs": 528525,
+        "endMs": 552583,
+        "streamMs": 24058,
+        "stopReason": "toolUse",
+        "usage": {
+          "input": 40486,
+          "output": 1538,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 42024
+        },
+        "toolCalls": 1
+      }
+    ],
+    "completedParentStreamMs": 417075,
+    "parentUsageSum": {
+      "input": 579469,
+      "output": 27278,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 606747
+    },
+    "childCalls": [
+      {
+        "startMs": 73270,
+        "endMs": 73279,
+        "elapsedMs": 9,
+        "isError": true
+      },
+      {
+        "startMs": 73270,
+        "endMs": 168432,
+        "elapsedMs": 95162,
+        "isError": false,
+        "ok": true
+      },
+      {
+        "startMs": 178493,
+        "endMs": 222012,
+        "elapsedMs": 43519,
+        "isError": false,
+        "ok": true
+      }
+    ],
+    "sourceReadCalls": 4,
+    "exampleReadCalls": 1,
+    "planSubmissions": [],
+    "planChecks": [],
+    "httpStatusCounts": {
+      "200": 29
+    },
+    "httpErrors": [
+      {
+        "elapsedMs": 599964,
+        "event": "request-error",
+        "id": 29,
+        "code": "unclassified"
+      }
+    ]
+  },
+  "headerBoundReproduction": {
+    "bounds": {
+      "connectMs": 10000,
+      "firstResponseMs": 90000,
+      "idleMs": 180000,
+      "totalMs": 1200000,
+      "cooldownMs": 30000,
+      "attemptsPerRoute": 2
+    },
+    "cases": [
+      {
+        "headerDelayMs": 11000,
+        "bodyDelayMs": 0,
+        "elapsedMs": 20019,
+        "tcpConnectedMs": [18, 10022, 10026],
+        "httpRequestReceivedMs": [23, 10026],
+        "result": {
+          "ok": false,
+          "state": "paused",
+          "code": "connect-timeout",
+          "attempts": [
+            {
+              "routeId": "probe",
+              "code": "connect-timeout"
+            },
+            {
+              "routeId": "probe",
+              "code": "connect-timeout"
+            }
+          ]
+        },
+        "activity": [
+          {
+            "elapsedMs": 10,
+            "state": "connecting",
+            "attempt": 1,
+            "maxAttempts": 2,
+            "wait": "connection"
+          },
+          {
+            "elapsedMs": 10017,
+            "state": "retrying",
+            "attempt": 1,
+            "maxAttempts": 2,
+            "code": "connect-timeout",
+            "wait": "bounded-policy"
+          },
+          {
+            "elapsedMs": 10018,
+            "state": "connecting",
+            "attempt": 2,
+            "maxAttempts": 2,
+            "wait": "connection"
+          }
+        ]
+      },
+      {
+        "headerDelayMs": 0,
+        "bodyDelayMs": 11000,
+        "elapsedMs": 11014,
+        "tcpConnectedMs": [4],
+        "httpRequestReceivedMs": [6],
+        "result": {
+          "ok": true,
+          "routeId": "probe",
+          "value": true,
+          "attempts": []
+        },
+        "activity": [
+          {
+            "elapsedMs": 2,
+            "state": "connecting",
+            "attempt": 1,
+            "maxAttempts": 2,
+            "wait": "connection"
+          },
+          {
+            "elapsedMs": 16,
+            "state": "waiting-first-response",
+            "attempt": 1,
+            "maxAttempts": 2,
+            "wait": "first-response"
+          },
+          {
+            "elapsedMs": 11013,
+            "state": "running",
+            "attempt": 1,
+            "maxAttempts": 2,
+            "wait": "worker-progress"
+          }
+        ]
+      }
+    ]
+  },
+  "reproductionScriptSha256": "744f7a0fd48fdfd1d8e05ec6b248ba62c57fd440bef97b1b62d2723f36d8726d",
+  "measurementNotes": [
+    "Tool durations use interval union because LocalModel issued parallel calls; summing overlapping tools would overcount wall time.",
+    "Parent/child HTTP attribution uses request-start timestamps inside outer Design child tool intervals with a shared time origin.",
+    "HTTP pre-header latency does not isolate TCP connection, remote queue, processing or proxy buffering.",
+    "Parent stream durations begin at assistant-start, after HTTP headers; they include generation and transport, not pure compute.",
+    "Host tokens include repeated context; interrupted usage can be missing and cost zero does not mean free.",
+    "Only safe counts, paths within package source and closed error metadata were retained; no prompts, reasoning text, request bodies, URLs or credentials.",
+    "The old-model small-fix attempt was operator-stopped after the model switch and is excluded from this comparison."
+  ],
+  "sourceUnchangedDuringEvaluation": true,
+  "postEvaluationFix": {
+    "file": "src/design-diagnostics.ts",
+    "description": "Preserve a computed true path-truncation flag when input supplies false; unrelated to model timing or request bounds.",
+    "sourceSha256": "c58b488464c2548b04493269bc01bdcd18729d9f108238b0481f3e65315458ca",
+    "verification": {
+      "red": "Existing bounded feedback test reproduced false overriding true.",
+      "green": "69 passed, 1 conditional skip across PlanDraft, real Design tool integration and TUI tests."
+    },
+    "liveEvaluationRepeated": false
+  }
+}

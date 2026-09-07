@@ -1,0 +1,23 @@
+{
+  "scenario": "small-fix",
+  "mode": "live-model",
+  "reason": "evaluation-host-stopped",
+  "success": false,
+  "elapsedMs": 162018,
+  "sessions": 1,
+  "toolCalls": 14,
+  "failedTools": 0,
+  "amendments": 0,
+  "repeatedAmendments": 0,
+  "userInterventions": 0,
+  "designCompleted": false,
+  "completed": false,
+  "cancellations": 0,
+  "modelErrors": 0,
+  "modelFailure": null,
+  "modelFailureDiagnostics": [],
+  "autoRetries": 0,
+  "retryDelayMs": 0,
+  "tokens": 0,
+  "cost": 0
+}

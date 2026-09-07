@@ -1,0 +1,8 @@
+{
+  "probe": "public-rpc-without-model-call",
+  "installedPi": "0.85.1",
+  "requestedModel": "abel/LocalModel:medium",
+  "observedModel": "LocalModel",
+  "observedThinkingLevel": "xhigh",
+  "availableThinkingLevels": ["xhigh"]
+}

@@ -1,0 +1,1046 @@
+{
+  "schemaVersion": 1,
+  "evaluatedAt": "2026-09-07T02:21:35+00:00",
+  "workflow": {
+    "wireTrace": [
+      {
+        "elapsedMs": 499,
+        "event": "wire-start",
+        "id": 1,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 4266,
+        "event": "wire-response",
+        "id": 1,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 3767
+      },
+      {
+        "elapsedMs": 7912,
+        "event": "wire-start",
+        "id": 2,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 11106,
+        "event": "wire-response",
+        "id": 2,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 3194
+      },
+      {
+        "elapsedMs": 11363,
+        "event": "wire-start",
+        "id": 3,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 15443,
+        "event": "wire-response",
+        "id": 3,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 4080
+      },
+      {
+        "elapsedMs": 16110,
+        "event": "wire-start",
+        "id": 4,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 24811,
+        "event": "wire-response",
+        "id": 4,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 8701
+      },
+      {
+        "elapsedMs": 26062,
+        "event": "wire-start",
+        "id": 5,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 30689,
+        "event": "wire-response",
+        "id": 5,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 4627
+      },
+      {
+        "elapsedMs": 34447,
+        "event": "wire-start",
+        "id": 6,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 37435,
+        "event": "wire-response",
+        "id": 6,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 2988
+      },
+      {
+        "elapsedMs": 39120,
+        "event": "wire-start",
+        "id": 7,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 43251,
+        "event": "wire-response",
+        "id": 7,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 4131
+      },
+      {
+        "elapsedMs": 44259,
+        "event": "wire-start",
+        "id": 8,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 47340,
+        "event": "wire-response",
+        "id": 8,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 3081
+      },
+      {
+        "elapsedMs": 49069,
+        "event": "wire-start",
+        "id": 9,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 58495,
+        "event": "wire-response",
+        "id": 9,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 9426
+      },
+      {
+        "elapsedMs": 58861,
+        "event": "wire-start",
+        "id": 10,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 62507,
+        "event": "wire-response",
+        "id": 10,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 3646
+      },
+      {
+        "elapsedMs": 64646,
+        "event": "wire-start",
+        "id": 11,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 68391,
+        "event": "wire-response",
+        "id": 11,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 3745
+      },
+      {
+        "elapsedMs": 70153,
+        "event": "wire-start",
+        "id": 12,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 80699,
+        "event": "wire-response",
+        "id": 12,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 10546
+      },
+      {
+        "elapsedMs": 80857,
+        "event": "wire-start",
+        "id": 13,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 84489,
+        "event": "wire-response",
+        "id": 13,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 3632
+      },
+      {
+        "elapsedMs": 90151,
+        "event": "wire-start",
+        "id": 14,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 93141,
+        "event": "wire-response",
+        "id": 14,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 2990
+      },
+      {
+        "elapsedMs": 104091,
+        "event": "wire-start",
+        "id": 15,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 107444,
+        "event": "wire-response",
+        "id": 15,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 3353
+      },
+      {
+        "elapsedMs": 112727,
+        "event": "wire-start",
+        "id": 16,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 116597,
+        "event": "wire-response",
+        "id": 16,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 3870
+      },
+      {
+        "elapsedMs": 128350,
+        "event": "wire-start",
+        "id": 17,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 133260,
+        "event": "wire-response",
+        "id": 17,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 4910
+      },
+      {
+        "elapsedMs": 135324,
+        "event": "wire-start",
+        "id": 18,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 138761,
+        "event": "wire-response",
+        "id": 18,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 3437
+      },
+      {
+        "elapsedMs": 146076,
+        "event": "wire-start",
+        "id": 19,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 152212,
+        "event": "wire-response",
+        "id": 19,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 6136
+      },
+      {
+        "elapsedMs": 152489,
+        "event": "wire-start",
+        "id": 20,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 157868,
+        "event": "wire-response",
+        "id": 20,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 5379
+      },
+      {
+        "elapsedMs": 157938,
+        "event": "wire-start",
+        "id": 21,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 159958,
+        "event": "wire-response",
+        "id": 21,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 2020
+      },
+      {
+        "elapsedMs": 192821,
+        "event": "wire-start",
+        "id": 22,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 196662,
+        "event": "wire-response",
+        "id": 22,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 3841
+      },
+      {
+        "elapsedMs": 198181,
+        "event": "wire-start",
+        "id": 23,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 203823,
+        "event": "wire-response",
+        "id": 23,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 5642
+      },
+      {
+        "elapsedMs": 204336,
+        "event": "wire-start",
+        "id": 24,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 208412,
+        "event": "wire-response",
+        "id": 24,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 4076
+      },
+      {
+        "elapsedMs": 208547,
+        "event": "wire-start",
+        "id": 25,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 212791,
+        "event": "wire-response",
+        "id": 25,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 4244
+      },
+      {
+        "elapsedMs": 252147,
+        "event": "wire-start",
+        "id": 26,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 254243,
+        "event": "wire-response",
+        "id": 26,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 2096
+      },
+      {
+        "elapsedMs": 256214,
+        "event": "wire-start",
+        "id": 27,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 262111,
+        "event": "wire-response",
+        "id": 27,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 5897
+      },
+      {
+        "elapsedMs": 269765,
+        "event": "wire-start",
+        "id": 28,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 274696,
+        "event": "wire-response",
+        "id": 28,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 4931
+      },
+      {
+        "elapsedMs": 289524,
+        "event": "wire-start",
+        "id": 29,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 293270,
+        "event": "wire-response",
+        "id": 29,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 3746
+      },
+      {
+        "elapsedMs": 299481,
+        "event": "wire-start",
+        "id": 30,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 303917,
+        "event": "wire-response",
+        "id": 30,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 4436
+      },
+      {
+        "elapsedMs": 330017,
+        "event": "wire-start",
+        "id": 31,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 334422,
+        "event": "wire-response",
+        "id": 31,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 4405
+      },
+      {
+        "elapsedMs": 337739,
+        "event": "wire-start",
+        "id": 32,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 342164,
+        "event": "wire-response",
+        "id": 32,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 4425
+      },
+      {
+        "elapsedMs": 389944,
+        "event": "wire-start",
+        "id": 33,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 394088,
+        "event": "wire-response",
+        "id": 33,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 4144
+      },
+      {
+        "elapsedMs": 395686,
+        "event": "wire-start",
+        "id": 34,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 400215,
+        "event": "wire-response",
+        "id": 34,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 4529
+      },
+      {
+        "elapsedMs": 402058,
+        "event": "wire-start",
+        "id": 35,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 407462,
+        "event": "wire-response",
+        "id": 35,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 5404
+      },
+      {
+        "elapsedMs": 408273,
+        "event": "wire-start",
+        "id": 36,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 413681,
+        "event": "wire-response",
+        "id": 36,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 5408
+      },
+      {
+        "elapsedMs": 416337,
+        "event": "wire-start",
+        "id": 37,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 420069,
+        "event": "wire-response",
+        "id": 37,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 3732
+      },
+      {
+        "elapsedMs": 433004,
+        "event": "wire-start",
+        "id": 38,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 437451,
+        "event": "wire-response",
+        "id": 38,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 4447
+      },
+      {
+        "elapsedMs": 465957,
+        "event": "wire-start",
+        "id": 39,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 474494,
+        "event": "wire-response",
+        "id": 39,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 8537
+      },
+      {
+        "elapsedMs": 476651,
+        "event": "wire-start",
+        "id": 40,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 484312,
+        "event": "wire-response",
+        "id": 40,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 7661
+      },
+      {
+        "elapsedMs": 505351,
+        "event": "wire-start",
+        "id": 41,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 511021,
+        "event": "wire-response",
+        "id": 41,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 5670
+      },
+      {
+        "elapsedMs": 515170,
+        "event": "wire-start",
+        "id": 42,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 518455,
+        "event": "wire-response",
+        "id": 42,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 3285
+      },
+      {
+        "elapsedMs": 519631,
+        "event": "wire-start",
+        "id": 43,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 523330,
+        "event": "wire-response",
+        "id": 43,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 3698
+      },
+      {
+        "elapsedMs": 527833,
+        "event": "wire-start",
+        "id": 44,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 532022,
+        "event": "wire-response",
+        "id": 44,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 4189
+      },
+      {
+        "elapsedMs": 532942,
+        "event": "wire-start",
+        "id": 45,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 536473,
+        "event": "wire-response",
+        "id": 45,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 3531
+      },
+      {
+        "elapsedMs": 542496,
+        "event": "wire-start",
+        "id": 46,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 548037,
+        "event": "wire-response",
+        "id": 46,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 5541
+      },
+      {
+        "elapsedMs": 552377,
+        "event": "wire-start",
+        "id": 47,
+        "provider": "gpt"
+      },
+      {
+        "elapsedMs": 560467,
+        "event": "wire-response",
+        "id": 47,
+        "provider": "gpt",
+        "status": 200,
+        "durationMs": 8090
+      }
+    ],
+    "payloadSummary": {
+      "count": 47,
+      "minBytes": 7340,
+      "maxBytes": 210230,
+      "efforts": {
+        "high": 35,
+        "medium": 12
+      }
+    },
+    "rpcModelErrors": [],
+    "rpcRetries": []
+  },
+  "probes": [
+    {
+      "case": "short-gpt-1",
+      "result": {
+        "model": "gpt/gpt-6-astra",
+        "mode": "real-pi-rpc-without-cadence",
+        "agentRetry": false,
+        "events": [
+          {
+            "elapsedMs": 7372,
+            "event": "message-end",
+            "stopReason": "stop",
+            "tokens": 409
+          }
+        ],
+        "reason": "settled",
+        "elapsedMs": 7395
+      },
+      "wireTrace": []
+    },
+    {
+      "case": "short-gpt-2",
+      "result": {
+        "model": "gpt/gpt-6-astra",
+        "mode": "real-pi-rpc-without-cadence",
+        "agentRetry": false,
+        "events": [
+          {
+            "elapsedMs": 4085,
+            "event": "message-end",
+            "stopReason": "stop",
+            "tokens": 409
+          }
+        ],
+        "reason": "settled",
+        "elapsedMs": 4116
+      },
+      "wireTrace": [
+        {
+          "elapsedMs": 414,
+          "event": "wire-start",
+          "id": 1,
+          "provider": "gpt"
+        },
+        {
+          "elapsedMs": 3694,
+          "event": "wire-response",
+          "id": 1,
+          "provider": "gpt",
+          "status": 200,
+          "durationMs": 3280
+        }
+      ]
+    },
+    {
+      "case": "concurrent-gpt-1",
+      "result": {
+        "model": "gpt/gpt-6-astra",
+        "mode": "real-pi-rpc-without-cadence",
+        "agentRetry": false,
+        "events": [
+          {
+            "elapsedMs": 3166,
+            "event": "message-end",
+            "stopReason": "stop",
+            "tokens": 409
+          }
+        ],
+        "reason": "settled",
+        "elapsedMs": 3196
+      },
+      "wireTrace": [
+        {
+          "elapsedMs": 461,
+          "event": "wire-start",
+          "id": 1,
+          "provider": "gpt"
+        },
+        {
+          "elapsedMs": 2863,
+          "event": "wire-response",
+          "id": 1,
+          "provider": "gpt",
+          "status": 200,
+          "durationMs": 2402
+        }
+      ]
+    },
+    {
+      "case": "concurrent-gpt-2",
+      "result": {
+        "model": "gpt/gpt-6-astra",
+        "mode": "real-pi-rpc-without-cadence",
+        "agentRetry": false,
+        "events": [
+          {
+            "elapsedMs": 5417,
+            "event": "message-end",
+            "stopReason": "stop",
+            "tokens": 409
+          }
+        ],
+        "reason": "settled",
+        "elapsedMs": 5439
+      },
+      "wireTrace": [
+        {
+          "elapsedMs": 426,
+          "event": "wire-start",
+          "id": 1,
+          "provider": "gpt"
+        },
+        {
+          "elapsedMs": 4868,
+          "event": "wire-response",
+          "id": 1,
+          "provider": "gpt",
+          "status": 200,
+          "durationMs": 4442
+        }
+      ]
+    },
+    {
+      "case": "concurrent-gpt-3",
+      "result": {
+        "model": "gpt/gpt-6-astra",
+        "mode": "real-pi-rpc-without-cadence",
+        "agentRetry": false,
+        "events": [
+          {
+            "elapsedMs": 4134,
+            "event": "message-end",
+            "stopReason": "stop",
+            "tokens": 409
+          }
+        ],
+        "reason": "settled",
+        "elapsedMs": 4157
+      },
+      "wireTrace": [
+        {
+          "elapsedMs": 454,
+          "event": "wire-start",
+          "id": 1,
+          "provider": "gpt"
+        },
+        {
+          "elapsedMs": 3918,
+          "event": "wire-response",
+          "id": 1,
+          "provider": "gpt",
+          "status": 200,
+          "durationMs": 3464
+        }
+      ]
+    },
+    {
+      "case": "concurrent-gpt-4",
+      "result": {
+        "model": "gpt/gpt-6-astra",
+        "mode": "real-pi-rpc-without-cadence",
+        "agentRetry": false,
+        "events": [
+          {
+            "elapsedMs": 3110,
+            "event": "message-end",
+            "stopReason": "stop",
+            "tokens": 409
+          }
+        ],
+        "reason": "settled",
+        "elapsedMs": 3140
+      },
+      "wireTrace": [
+        {
+          "elapsedMs": 440,
+          "event": "wire-start",
+          "id": 1,
+          "provider": "gpt"
+        },
+        {
+          "elapsedMs": 2790,
+          "event": "wire-response",
+          "id": 1,
+          "provider": "gpt",
+          "status": 200,
+          "durationMs": 2350
+        }
+      ]
+    },
+    {
+      "case": "short-abel-1",
+      "result": {
+        "model": "abel/LocalModel",
+        "mode": "real-pi-rpc-without-cadence",
+        "agentRetry": false,
+        "events": [
+          {
+            "elapsedMs": 1969,
+            "event": "message-end",
+            "stopReason": "stop",
+            "tokens": 489
+          }
+        ],
+        "reason": "settled",
+        "elapsedMs": 1995
+      },
+      "wireTrace": [
+        {
+          "elapsedMs": 448,
+          "event": "wire-start",
+          "id": 1,
+          "provider": "abel"
+        },
+        {
+          "elapsedMs": 1567,
+          "event": "wire-response",
+          "id": 1,
+          "provider": "abel",
+          "status": 200,
+          "durationMs": 1119
+        }
+      ]
+    },
+    {
+      "case": "concurrent-long-gpt-1",
+      "result": {
+        "model": "gpt/gpt-6-astra",
+        "mode": "real-pi-rpc-without-cadence",
+        "agentRetry": false,
+        "syntheticContextChars": 182600,
+        "startedAt": "2026-09-07T02:16:43.511Z",
+        "events": [
+          {
+            "elapsedMs": 10223,
+            "event": "message-end",
+            "stopReason": "stop",
+            "tokens": 33425
+          }
+        ],
+        "reason": "settled",
+        "elapsedMs": 10258
+      },
+      "wireTrace": [
+        {
+          "elapsedMs": 437,
+          "event": "wire-start",
+          "id": 1,
+          "provider": "gpt"
+        },
+        {
+          "elapsedMs": 9842,
+          "event": "wire-response",
+          "id": 1,
+          "provider": "gpt",
+          "status": 200,
+          "durationMs": 9405
+        }
+      ]
+    },
+    {
+      "case": "concurrent-long-gpt-2",
+      "result": {
+        "model": "gpt/gpt-6-astra",
+        "mode": "real-pi-rpc-without-cadence",
+        "agentRetry": false,
+        "syntheticContextChars": 182600,
+        "startedAt": "2026-09-07T02:16:43.490Z",
+        "events": [
+          {
+            "elapsedMs": 8787,
+            "event": "message-end",
+            "stopReason": "stop",
+            "tokens": 33425
+          }
+        ],
+        "reason": "settled",
+        "elapsedMs": 8815
+      },
+      "wireTrace": [
+        {
+          "elapsedMs": 436,
+          "event": "wire-start",
+          "id": 1,
+          "provider": "gpt"
+        },
+        {
+          "elapsedMs": 8582,
+          "event": "wire-response",
+          "id": 1,
+          "provider": "gpt",
+          "status": 200,
+          "durationMs": 8146
+        }
+      ]
+    },
+    {
+      "case": "concurrent-long-gpt-3",
+      "result": {
+        "model": "gpt/gpt-6-astra",
+        "mode": "real-pi-rpc-without-cadence",
+        "agentRetry": false,
+        "syntheticContextChars": 182600,
+        "startedAt": "2026-09-07T02:16:43.529Z",
+        "events": [
+          {
+            "elapsedMs": 9243,
+            "event": "message-end",
+            "stopReason": "stop",
+            "tokens": 33425
+          }
+        ],
+        "reason": "settled",
+        "elapsedMs": 9276
+      },
+      "wireTrace": [
+        {
+          "elapsedMs": 445,
+          "event": "wire-start",
+          "id": 1,
+          "provider": "gpt"
+        },
+        {
+          "elapsedMs": 8667,
+          "event": "wire-response",
+          "id": 1,
+          "provider": "gpt",
+          "status": 200,
+          "durationMs": 8222
+        }
+      ]
+    },
+    {
+      "case": "concurrent-long-gpt-4",
+      "result": {
+        "model": "gpt/gpt-6-astra",
+        "mode": "real-pi-rpc-without-cadence",
+        "agentRetry": false,
+        "syntheticContextChars": 182600,
+        "startedAt": "2026-09-07T02:16:43.557Z",
+        "events": [
+          {
+            "elapsedMs": 8567,
+            "event": "message-end",
+            "stopReason": "stop",
+            "tokens": 33425
+          }
+        ],
+        "reason": "settled",
+        "elapsedMs": 8626
+      },
+      "wireTrace": [
+        {
+          "elapsedMs": 434,
+          "event": "wire-start",
+          "id": 1,
+          "provider": "gpt"
+        },
+        {
+          "elapsedMs": 8509,
+          "event": "wire-response",
+          "id": 1,
+          "provider": "gpt",
+          "status": 200,
+          "durationMs": 8075
+        }
+      ]
+    }
+  ]
+}
