@@ -1,0 +1,50 @@
+name: Live workflow evaluation
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Configured provider/model on the evaluation runner
+        required: true
+        type: string
+      repeats:
+        description: Repetitions per scenario (1-10)
+        default: '3'
+        type: string
+permissions:
+  contents: read
+jobs:
+  evaluate:
+    # Operator-managed runner provides Provider credentials, OpenSpec and Bubblewrap.
+    runs-on: [self-hosted, linux, cadence-evaluation]
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - name: Evaluate configured model (explicit paid-model opt-in)
+        env:
+          EVALUATION_MODEL: ${{ inputs.model }}
+          EVALUATION_REPEATS: ${{ inputs.repeats }}
+        run: bun run eval:matrix --live --model "$EVALUATION_MODEL" --repeats "$EVALUATION_REPEATS" --output evaluation.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: workflow-evaluation
+          path: evaluation.json
+
+  capability-observation:
+    runs-on: [self-hosted, linux, cadence-evaluation]
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: bun install --frozen-lockfile
+      - name: Observe unavailable capability (not a release gate)
+        env:
+          EVALUATION_MODEL: ${{ inputs.model }}
+        run: bun run eval:workflow --live --scenario missing-capability --model "$EVALUATION_MODEL" --output capability-observation.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: capability-observation
+          path: capability-observation.json

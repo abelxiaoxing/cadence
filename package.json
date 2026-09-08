@@ -49,7 +49,8 @@
     "eval:workflow": "node --experimental-strip-types scripts/evaluate-workflow.mjs",
     "doctor": "node --experimental-strip-types src/operator-cli.mjs doctor",
     "runs": "node --experimental-strip-types src/operator-cli.mjs runs",
-    "benchmark:verification": "node --experimental-strip-types scripts/benchmark-verification.mjs"
+    "benchmark:verification": "node --experimental-strip-types scripts/benchmark-verification.mjs",
+    "eval:matrix": "node --experimental-strip-types scripts/evaluate-matrix.mjs"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

@@ -3,6 +3,73 @@
 [![npm](https://img.shields.io/npm/v/@abelxiaoxing/cadence)](https://www.npmjs.com/package/@abelxiaoxing/cadence)
 [![GitHub](https://img.shields.io/github/license/abelxiaoxing/cadence)](https://github.com/abelxiaoxing/cadence)
 
+## 先看这里：适用范围与最短路径
+
+适合需要明确验收、跨任务验证和断点恢复的修改；普通的小修小补可以直接使用 Pi，不必启用完整工作流。
+只有你显式输入阶段命令才会进入 Abel。
+
+1. 安装 Node.js >=22.13、Git、Pi，以及 `@fission-ai/openspec@1.5.0`。
+2. 在 Pi 中安装：`pi install npm:@abelxiaoxing/cadence`。
+3. 默认 Implement 需要可用的 Linux Bubblewrap；Windows 请使用 WSL。
+4. 首次进入项目先运行 `/abel-init`，然后 `/abel-design <需求>`，确认集中呈现的目标与方案，设计完成后运行 `/abel-implement <change>`。
+5. 暂停时先查看原因和建议，不要靠反复 resume 或重启“碰运气”；未完成的工作会保留。
+
+### 先检查环境，不先花模型调用
+
+在 Cadence 开发仓库中可用：
+
+```sh
+bun run doctor /absolute/path/to/consumer
+bun run runs /absolute/path/to/consumer
+```
+
+安装包也包含预构建的纯 JavaScript 命令，无需在 node_modules 下加载 TypeScript：
+
+```sh
+node /absolute/path/to/cadence/src/operator-cli.mjs doctor /path/to/consumer
+node /absolute/path/to/cadence/src/operator-cli.mjs runs /path/to/consumer
+```
+
+`doctor` 检查 Git、Node、OpenSpec 入口、实际 Bubblewrap 启动、请求预算和常用脚本静态能力；不调用模型、不执行产品测试、不保证所有集成服务均可用。
+`runs` 只读列出该项目最多 1,000 个 run 和有界存储占用；不会创建、迁移或删除数据库，不自动清理暂停任务。
+
+### 可信本地项目：显式复用宿主环境
+
+默认 `isolated` 不变。
+对于自己信任的 Linux 项目，可在启动 Pi **之前**选择：
+
+```sh
+export ABEL_EXECUTION_MODE=local-trusted
+export ABEL_VERIFICATION_ENV=DATABASE_URL,NODE_ENV
+export ABEL_VERIFICATION_TIMEOUT_MS=900000
+```
+
+可信模式仍在独立候选目录执行，并复制依赖以避免普通缓存写入修改 consumer 的依赖，但**不是沙箱**：测试可访问宿主文件、网络及显式继承的环境变量，产生的外部副作用不能回滚。
+HOME、临时目录和报告仍独立；PATH 复用宿主，仓库内 workspace 链接映射到候选代码。
+该模式仍要求 Linux Bubblewrap 的 PID namespace 管理后代进程（包括 detached 后代），但不隔离宿主文件和网络；缺少该能力时暂停，不回退到普通进程组。
+原生 macOS/Windows 不提供此执行模式，Windows 可使用 WSL。
+依赖副本准备、替换与清理在 I/O Worker 中执行，复制支持取消并等待线程退出；大型依赖复制仍有额外成本；需要安装新依赖、宿主浏览器缓存或服务启动编排时仍需配置/准备，不会自动下载。
+
+可选宿主参数还包括 `ABEL_BWRAP_PATH`、`ABEL_FIRST_PROGRESS_MS` 和 `ABEL_STREAM_IDLE_MS`。
+后两者单位为毫秒，默认 90,000 / 180,000，允许 1..1,200,000；验证超时默认 600,000，允许 1..86,400,000。
+执行配置和显式环境值的摘要参与验证环境身份，改变配置后会重新验证，不把旧证据当作新环境下的成功。
+
+### 小任务、失败排查与真实评估
+
+- 单任务可采用 [精简作者示例](config/plan-draft.quick.example.json)：只填写一个 `singleTask`，代码生成重复的任务和验证结构，仍经过完整编译。
+  明确的验收、影响证据、AGENTS 影响、Red 写入及失败标记仍由作者提供；不代替 Gate A，不支持用简写偷偷增加依赖、删除文件或多任务产物。
+- 验证失败返回分离的 stdout/stderr、断言摘要和下一步提示；当前操作的后续 Worker 直接收到这些有界诊断，避免仅凭哈希猜测修复。
+  摘要是待解释证据，不是指令或授权；不持久化全文，进程重启后由复验重新采集。
+- 非 Vitest 通用命令没有可靠断言级报告时，不再仅凭日志相同认定为旧失败；已有失败基线的归因不明会暂停，不误报通过或自动改无关代码。
+- 认证失败暂停修复配置，上下文超限要求拆分，429 保留限流分类；上下文在请求前按模型窗口保守预留输出空间，不静默截断证据。
+- `bun run benchmark:verification 10000` 测量依赖扫描；只合并 I/O 尚未开始的同批扫描，验证后的检查不会加入更早的在途扫描；已完成证据不作为下一次 currentness 缓存。
+- `bun run eval:matrix` 只做预检；`--live --repeats 3 --model provider/model --output report.json` 才显式调用模型，报告真实完成率、耗时、token、费用及重复修订。
+  默认门禁只运行三个具有产品 oracle 的场景；`--include-observations` 可额外收集缺能力场景，该场景不改变门禁结果，也不被宣称为恢复验收成功。
+  CI 将缺能力观察放入独立的非门禁 job。
+  发布前可手动触发 `Live workflow evaluation`，需要带 `cadence-evaluation` 标签、已配置模型和依赖的 Linux 自托管 runner；普通 CI 不隐式消费模型额度。
+
+## 工作流与执行合同
+
 **Cadence** 是一个面向 Pi 的规范驱动四阶段工作流扩展包，内置可恢复的私有代理编排：
 
 - `/abel-init [project-path]` — 本地、固定顺序且幂等地初始化或安全修复 OpenSpec 与 AGENTS 托管索引，不派发子代理。
@@ -164,7 +231,8 @@ inspection 不可用时不再级联误报 traceability 输入缺失，且绝不�
 CLI 的其他版本必须满足相同 JSON 协议；新增支持版本应加入契约测试。
 
 **此矩阵不代表原生 Implement 隔离已全平台可用。**
-当前隔离后端仍为 Linux Bubblewrap；Windows/macOS 的原生隔离、ACL 与完整文件应用语义需要单独实现和验收，缺少隔离能力时保持暂停，不降级为主工作区直接执行。
+默认隔离后端仍为 Linux Bubblewrap；Windows/macOS 的原生隔离、ACL 与完整文件应用语义需要单独实现和验收，缺少隔离能力时保持暂停，不降级为主工作区直接执行。
+可信 Linux 项目可以显式选择上面的 `local-trusted` 候选目录执行模式。
 
 本地可用 `CADENCE_REAL_OPENSPEC=1` 启用真实 CLI 测试（Windows 可用 PowerShell 设置 `$env:CADENCE_REAL_OPENSPEC = "1"`），然后运行：
 
@@ -203,7 +271,7 @@ Provider 自身的流式实现和模型配置仍然生效；宿主 session 的 `
 `rebind` 只能选择已获 policy 授权且能力匹配的 route，不会扩大任务边界。
 
 验证归因使用完整失败集合；大基线以哈希校验的私有 artifact 持久化，Worker 和状态只接收最多 256 条失败摘要。
-非 Vitest 失败身份由执行入口、参数和失败证据决定，不受合同显示 ID 影响。
+非 Vitest 失败身份由执行入口、参数和失败证据决定，不受合同显示 ID 影响；身份用于诊断聚类，但不单独证明两个失败属于同一断言。
 
 ## 跨项目验证合同（Cross-project verification）
 
@@ -278,13 +346,13 @@ MIT — 详见 [LICENSE](LICENSE) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTIC
 
 ## 验证执行环境与明确恢复
 
-验证使用独立 HOME、Vite 缓存和报告目录；consumer 依赖保持只读。
+验证使用独立 HOME、Vite 缓存和报告目录；隔离模式挂载只读 consumer 依赖，可信模式使用候选依赖副本。
 Vitest 的 JSON 报告与普通 stdout/stderr 分离，日志超过捕获预算只截取头尾，不终止正常测试。
 报告缺失、损坏或超限属于验证不可用，不作为产品失败基线或自动改代码的理由。
 已封存候选在环境故障后可重新验证，并在存储重开后复用；即使自动生成次数已耗尽，普通 resume 仍可只复验该候选，不启动新的补丁生成。
 非 Vitest 的 Red 证据通过有界流式匹配保留，不受日志头尾截取影响。
 完整的已批准 package-script 可包含组合命令、引号和嵌套脚本；包管理器在隔离环境中解释，manifest、lockfile 和项目配置绑定 currentness。
-配置注释和普通值不触发禁用词检查；有效的凭据或宿主执行配置仍被拒绝。
+配置注释和普通值不触发禁用词检查；隔离模式中的有效凭据或宿主执行配置仍被拒绝；可信模式允许操作者显式配置。
 计划已授权的 manifest/配置写入可在隔离候选中验证；未授权路径仍需匹配设计时哈希，实际入口脚本仍必须与批准命令相同，执行期间的输入漂移仍会使验证失效。
 专门的 Vitest 合同仍拥有 JSON reporter、测试数量及 Red 身份检查，复合脚本不会自动获得断言级语义。
 
@@ -346,9 +414,9 @@ PlanDraft 的命名或内联 package-script 可以省略 `command`，编译器�
 `durable-workflow` 管理资源生命周期和交付重放，`phase-execution` 执行候选阶段，`change-verification` 管理基线及变更验证；阶段服务没有主工作区 apply 能力。
 Pi 入口负责激活、工具交互、模型能力投影和展示；`package-workflow` 组合控制服务，`package-candidate` 执行受限候选请求，核心不接收 Pi 会话事件或完整宿主上下文。
 
-每次模型请求独立计时：90 秒内没有非空文本、思考或工具参数增量时返回 `first-progress-timeout`；已有进展后空闲 180 秒返回 `stream-idle-timeout`。
+每次模型请求独立计时，默认 90 秒内没有非空文本、思考或工具参数增量时返回 `first-progress-timeout`；已有进展后空闲 180 秒返回 `stream-idle-timeout`。
 HTTP 响应头用于观察，不刷新进展预算；完整终态可直接结束请求，本地工具执行间隙不计入流空闲，下一轮重新计时。
 Broker 保留每 attempt 20 分钟总上限和原有有限重试；该上限不代表跨重试的 workflow 总时限。
 新请求不再发出 `connect-timeout`，也不声称观测到了 TCP/TLS 建连；旧超时事实和 `connecting` 展示仍可读取。
-子执行器限制为 64 轮、4 MiB 序列化上下文，不自动压缩或静默截断证据；达到限制返回执行限制失败，候选任务暂停并要求拆分，不作为端点故障重试。
+子执行器限制为 64 轮，序列化上下文取 4 MiB 与模型窗口保守预算中的较小值，不自动压缩或静默截断证据；达到限制返回执行限制失败，候选任务暂停并要求拆分，不作为端点故障重试。
 取消后的用量结算最多等待 250 ms，迟到结果不能进入候选提交或主工作区应用。
