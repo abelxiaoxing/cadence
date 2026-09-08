@@ -253,3 +253,29 @@ describe("AGENTS validation routes", () => {
     );
   });
 });
+
+it("runs the shipped operator CLI from node_modules without TypeScript stripping", () => {
+  const installed = path.join(
+    tempRoot,
+    "operator-install/node_modules/cadence",
+  );
+  cpSync(packedPackageDir, installed, { recursive: true });
+  const consumer = path.join(tempRoot, "operator-consumer");
+  mkdirSync(consumer);
+  const result = spawnSync(
+    process.execPath,
+    [path.join(installed, "src/operator-cli.mjs"), "runs", consumer],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        XDG_STATE_HOME: path.join(tempRoot, "operator-state"),
+      },
+    },
+  );
+  expect(result.status, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    runs: [],
+    truncated: false,
+  });
+});

@@ -367,7 +367,7 @@ describe("cross-project verification capability", () => {
 
   it.each(["bun test", "node before.mjs && bun test", "npm run nested"])(
     "retains private runtime mounts and PATH for approved script %s",
-    (command) => {
+    async (command) => {
       const root = consumer("npm");
       const runtime = path.join(root, "private-home/.bun/bin");
       mkdirSync(runtime, { recursive: true });
@@ -402,7 +402,7 @@ describe("cross-project verification capability", () => {
         executablePath: path.join(runtime, "bun"),
         mountSource: runtime,
       });
-      const environment = prepareVerificationEnvironment(
+      const environment = await prepareVerificationEnvironment(
         root,
         root,
         capability.runnerBindings,
@@ -416,7 +416,7 @@ describe("cross-project verification capability", () => {
           mount!.target,
         );
       } finally {
-        environment.cleanup();
+        await environment.cleanup();
       }
     },
   );

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { runChildSession } from "./child-session.ts";
+import type { VerificationFailureSummary } from "./contracts.ts";
 import { LIMITS } from "./contracts.ts";
 import type { DurableWorkflowEngineOptions } from "./durable-contracts.ts";
 import type { ParentModelSource } from "./model-source.ts";
@@ -25,6 +26,7 @@ export async function proposePackageCandidate(
   input: Parameters<DurableWorkflowEngineOptions["proposeCandidate"]>[0],
   context: ParentModelSource | undefined,
   implementationAgent: { content: string },
+  verificationDiagnostics: VerificationFailureSummary[] = [],
 ): Promise<DurableCandidateProposal> {
   if (!context) {
     return { kind: "paused", code: "parent-context-unavailable" };
@@ -88,6 +90,7 @@ export async function proposePackageCandidate(
     ]),
   ].sort();
   const phaseContract = {
+    verificationDiagnostics,
     candidateId: input.candidateArtifact.identity.candidateId,
     taskId: input.taskId,
     phase: input.phase,

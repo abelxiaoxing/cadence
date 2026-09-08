@@ -9,6 +9,7 @@ import type {
 } from "./contracts.ts";
 import { validateControlCommand } from "./control-contracts.ts";
 import { DesignController } from "./design-control.ts";
+import { executionProfile } from "./execution-profile.ts";
 import type { PackageContext } from "./model-source.ts";
 import { inspectOpenSpecDelivery } from "./openspec-cli.ts";
 import { proposePackageCandidate } from "./package-candidate.ts";
@@ -25,7 +26,9 @@ import {
   unavailableRoutePolicy,
 } from "./route-policy.ts";
 import { resolveStateRoot } from "./state-root.ts";
+import { VerificationFeedback } from "./verification-diagnostics.ts";
 import { captureVerificationEnvironmentIdentity } from "./verification-environment.ts";
+import { coalesceVerificationScans } from "./verification-scan.ts";
 import { openDurableWorkflowEngine } from "./workflow-engine.ts";
 export interface PackageWorkflowService {
   execute(
@@ -88,6 +91,12 @@ export function openPackageWorkflowService(
     xdgStateHome: process.env.XDG_STATE_HOME,
   });
   const contexts = new AsyncLocalStorage<PackageContext>();
+  const feedback = new AsyncLocalStorage<VerificationFeedback>();
+  const verify: typeof executePackageVerification = async (input) => {
+    const result = await executePackageVerification(input);
+    feedback.getStore()?.observe(result);
+    return result;
+  };
   const design = DesignController.open({
     consumerRoot,
     stateRoot,
@@ -113,25 +122,27 @@ export function openPackageWorkflowService(
   const workHardLimit = hostLimit("ABEL_WORK_MAX_UNITS", 512);
   const engine = openDurableWorkflowEngine({
     workHardLimit,
-    verificationPolicy: "report-file-v4",
-    verificationEnvironment: (plan, signal) =>
-      captureVerificationEnvironmentIdentity(
-        consumerRoot,
-        [
-          ...plan.tasks.flatMap((task) => [
-            ...Object.values(task.phases).map((phase) => phase.verification),
-            task.affectedVerification,
-            task.repairVerification,
-          ]),
-          plan.verification.baseline.fullSuite,
-          plan.verification.change.fullSuite,
-          plan.verification.change.postApply,
-          ...(plan.verification.agentsCheckpoint.verification
-            ? [plan.verification.agentsCheckpoint.verification]
-            : []),
-        ],
-        signal,
-      ),
+    verificationPolicy: `report-file-v5:${JSON.stringify(executionProfile())}`,
+    verificationEnvironment: coalesceVerificationScans(
+      (plan: import("./implement-plan.ts").ImplementPlan, signal) =>
+        captureVerificationEnvironmentIdentity(
+          consumerRoot,
+          [
+            ...plan.tasks.flatMap((task) => [
+              ...Object.values(task.phases).map((phase) => phase.verification),
+              task.affectedVerification,
+              task.repairVerification,
+            ]),
+            plan.verification.baseline.fullSuite,
+            plan.verification.change.fullSuite,
+            plan.verification.change.postApply,
+            ...(plan.verification.agentsCheckpoint.verification
+              ? [plan.verification.agentsCheckpoint.verification]
+              : []),
+          ],
+          signal,
+        ),
+    ),
     consumerRoot,
     stateRoot,
     deliverySource: packageDeliverySource(consumerRoot, {
@@ -142,10 +153,15 @@ export function openPackageWorkflowService(
       ? routeResolution.policy
       : unavailableRoutePolicy(),
     proposeCandidate: (input) =>
-      proposePackageCandidate(input, contexts.getStore(), implementationAgent),
+      proposePackageCandidate(
+        input,
+        contexts.getStore(),
+        implementationAgent,
+        feedback.getStore()?.current(),
+      ),
     verifyPhase: async (input) =>
       phaseVerificationResult(
-        await executePackageVerification({
+        await verify({
           maxReportBytes,
           executionWritePaths: input.executionWritePaths,
           root: input.root,
@@ -158,8 +174,9 @@ export function openPackageWorkflowService(
       const verifications = input.verification
         ? [input.verification]
         : input.plan.tasks.map((task) => affectedVerification(task));
+      let failure: ReturnType<typeof changeVerificationResult> | undefined;
       for (const verification of verifications) {
-        const result = await executePackageVerification({
+        const result = await verify({
           maxReportBytes,
           executionWritePaths: input.plan.tasks.flatMap((task) =>
             Object.values(task.phases).flatMap((phase) => [
@@ -173,8 +190,22 @@ export function openPackageWorkflowService(
           signal: input.signal,
         });
         const observed = changeVerificationResult(result);
-        if (!observed.ok) return observed;
+        if (!observed.ok) {
+          if (observed.kind !== "verification") return observed;
+          if (failure && !failure.ok && failure.kind === "verification") {
+            failure.failureIdentities = [
+              ...new Set([
+                ...(failure.failureIdentities ?? []),
+                ...(observed.failureIdentities ?? []),
+              ]),
+            ];
+            failure.attributionReliable =
+              failure.attributionReliable !== false &&
+              observed.attributionReliable !== false;
+          } else failure = observed;
+        }
       }
+      if (failure) return failure;
       return {
         ok: true,
         exitCode: 0,
@@ -205,18 +236,24 @@ export function openPackageWorkflowService(
         error.name = "ControlCommandError";
         throw error;
       }
-      return contexts.run(context, async () => {
-        const outcome = await engine.execute(
-          validation.value,
-          signal,
-          onActivity,
-        );
-        const routePolicy = visibleRoutePolicyStatus(
-          operationRouteResolution,
-          engine.routePolicyStatus(),
-        );
-        return { ...outcome, routePolicy };
-      });
+      return feedback.run(new VerificationFeedback(), () =>
+        contexts.run(context, async () => {
+          const outcome = await engine.execute(
+            validation.value,
+            signal,
+            onActivity,
+          );
+          const routePolicy = visibleRoutePolicyStatus(
+            operationRouteResolution,
+            engine.routePolicyStatus(),
+          );
+          return {
+            ...outcome,
+            routePolicy,
+            verificationDiagnostics: feedback.getStore()?.current() ?? [],
+          };
+        }),
+      );
     },
     executeDesign(request: unknown) {
       return design.execute(request);
@@ -235,6 +272,7 @@ export function openPackageWorkflowService(
     async close() {
       contexts.disable();
       await engine.close();
+      feedback.disable();
       design.close();
     },
   };

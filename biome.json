@@ -77,7 +77,7 @@
       }
     },
     {
-      "includes": ["src/workspace-io-worker.mjs"],
+      "includes": ["src/workspace-io-worker.mjs", "src/operator-cli.mjs"],
       "formatter": {
         "enabled": false
       },

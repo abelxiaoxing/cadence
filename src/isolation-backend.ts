@@ -54,6 +54,8 @@ export interface BubblewrapIsolationOptions {
   timeoutMs?: number;
   maxOutputBytes?: number;
   terminateGraceMs?: number;
+  /** Explicit operator opt-in; never an availability fallback. */
+  localTrusted?: boolean;
 }
 
 function defaultProbe(executable: string): boolean {
@@ -124,6 +126,7 @@ class BoundedLog {
 
 /** Linux isolation capability. Lack of Bubblewrap is a pause, never a fallback. */
 export class BubblewrapIsolationBackend {
+  readonly #localTrusted: boolean;
   readonly #bwrapPath: string;
   readonly #probe: (path: string) => boolean | Promise<boolean>;
   readonly #spawn: typeof spawn;
@@ -132,6 +135,7 @@ export class BubblewrapIsolationBackend {
   readonly #terminateGraceMs: number;
 
   constructor(options: BubblewrapIsolationOptions = {}) {
+    this.#localTrusted = options.localTrusted === true;
     this.#bwrapPath = options.bwrapPath ?? "/usr/bin/bwrap";
     this.#probe = options.probe ?? defaultProbe;
     this.#spawn = options.spawnProcess ?? spawn;
@@ -154,6 +158,7 @@ export class BubblewrapIsolationBackend {
 
   async available(): Promise<boolean> {
     try {
+      if (this.#localTrusted && process.platform !== "linux") return false;
       return Boolean(await this.#probe(this.#bwrapPath));
     } catch {
       return false;
@@ -183,47 +188,64 @@ export class BubblewrapIsolationBackend {
     if (!rootStat?.isDirectory() || rootStat.isSymbolicLink()) {
       throw new Error("isolation-root-invalid");
     }
-    const argv = [
-      "--die-with-parent",
-      "--new-session",
-      "--unshare-all",
-      "--proc",
-      "/proc",
-      "--dev",
-      "/dev",
-      "--tmpfs",
-      "/tmp",
-      "--bind",
-      root,
-      "/workspace",
-      "--chdir",
-      "/workspace",
-      "--clearenv",
-      "--setenv",
-      "PATH",
-      "/usr/local/bin:/usr/bin:/bin",
-    ];
-    for (const systemRoot of ["/usr", "/bin", "/lib", "/lib64"]) {
-      const stat = lstatSync(systemRoot, { throwIfNoEntry: false });
-      if (!stat) continue;
-      argv.push("--ro-bind", systemRoot, systemRoot);
-    }
-    for (const mount of input.mounts ?? []) {
-      if (!path.isAbsolute(mount.source) || !path.isAbsolute(mount.target)) {
-        throw new Error("isolation-mount-invalid");
+    // Trusted mode shares host files/network, but still needs a PID namespace:
+    // process groups alone cannot contain detached descendants. No fallback.
+    const argv = this.#localTrusted
+      ? [
+          "--die-with-parent",
+          "--new-session",
+          "--unshare-pid",
+          "--bind",
+          "/",
+          "/",
+          "--proc",
+          "/proc",
+          "--dev",
+          "/dev",
+          "--chdir",
+          root,
+          "--clearenv",
+        ]
+      : [
+          "--die-with-parent",
+          "--new-session",
+          "--unshare-all",
+          "--proc",
+          "/proc",
+          "--dev",
+          "/dev",
+          "--tmpfs",
+          "/tmp",
+          "--bind",
+          root,
+          "/workspace",
+          "--chdir",
+          "/workspace",
+          "--clearenv",
+          "--setenv",
+          "PATH",
+          "/usr/local/bin:/usr/bin:/bin",
+        ];
+    if (!this.#localTrusted) {
+      for (const systemRoot of ["/usr", "/bin", "/lib", "/lib64"]) {
+        if (lstatSync(systemRoot, { throwIfNoEntry: false }))
+          argv.push("--ro-bind", systemRoot, systemRoot);
       }
-      argv.push(
-        mount.writable ? "--bind" : "--ro-bind",
-        mount.source,
-        mount.target,
-      );
+      for (const mount of input.mounts ?? []) {
+        if (!path.isAbsolute(mount.source) || !path.isAbsolute(mount.target))
+          throw new Error("isolation-mount-invalid");
+        argv.push(
+          mount.writable ? "--bind" : "--ro-bind",
+          mount.source,
+          mount.target,
+        );
+      }
     }
     for (const [name, value] of Object.entries(
       input.environment ?? {},
     ).sort()) {
-      if (!validEnvironmentName(name) || value.includes("\0")) {
+      if (!validEnvironmentName(name) || value.includes("\0"))
         throw new Error("isolation-environment-invalid");
-      }
       argv.push("--setenv", name, value);
     }
     argv.push("--", input.executable, ...(input.args ?? []));
@@ -243,16 +265,16 @@ export class BubblewrapIsolationBackend {
         input.signal?.removeEventListener("abort", abort);
         resolve(result);
       };
+      const kill = (signal: NodeJS.Signals) => {
+        child?.kill(signal);
+      };
       const terminate = (result: IsolationRunResult): void => {
         if (settled || terminationResult) return;
         terminationResult = result;
         if (executionTimer) clearTimeout(executionTimer);
-        killTimer = setTimeout(
-          () => child?.kill("SIGKILL"),
-          this.#terminateGraceMs,
-        );
+        killTimer = setTimeout(() => kill("SIGKILL"), this.#terminateGraceMs);
         killTimer.unref?.();
-        child?.kill("SIGTERM");
+        kill("SIGTERM");
       };
       const abort = (): void => {
         terminate({ ok: false, state: "cancelled", code: "cancelled" });

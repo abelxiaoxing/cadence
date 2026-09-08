@@ -1,5 +1,7 @@
+import { rmSync } from "node:fs";
 import { parentPort, workerData } from "node:worker_threads";
 import { ArtifactStore } from "./artifact-store.ts";
+import { prepareVerificationEnvironmentIo } from "./verification-environment-io.ts";
 import { verificationEnvironmentDigest } from "./verification-identity.ts";
 import { WorkspaceStore } from "./workspace-store.ts";
 
@@ -10,7 +12,23 @@ const checkCancelled = () => {
   if (Atomics.load(flag, 0)) throw new Error("cancelled");
 };
 try {
-  if (workerData.operation === "verificationIdentity") {
+  if (workerData.operation === "prepareVerification") {
+    const [root, owner, bindings, profile, environment, scratch] =
+      workerData.args;
+    const result = prepareVerificationEnvironmentIo(
+      root,
+      owner,
+      bindings,
+      profile,
+      environment,
+      checkCancelled,
+      scratch,
+    );
+    parentPort.postMessage({ ok: true, result, files: 0, bytes: 0 });
+  } else if (workerData.operation === "cleanupVerification") {
+    rmSync(workerData.args[0], { recursive: true, force: true });
+    parentPort.postMessage({ ok: true, files: 0, bytes: 0 });
+  } else if (workerData.operation === "verificationIdentity") {
     const result = verificationEnvironmentDigest(
       workerData.args[0],
       checkCancelled,

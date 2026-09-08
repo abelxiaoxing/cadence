@@ -7,6 +7,7 @@ import {
   type VerificationObservation,
   verificationSteps,
 } from "./contracts.ts";
+import { executionProfile } from "./execution-profile.ts";
 import { canonicalJson } from "./implement-graph.ts";
 import { BubblewrapIsolationBackend } from "./isolation-backend.ts";
 import { observeSafePath } from "./safe-path.ts";
@@ -15,6 +16,7 @@ import {
   isVerificationCapabilityCurrent,
   type VerificationRunnerBinding,
 } from "./verification-capability.ts";
+import { diagnosticText } from "./verification-diagnostics.ts";
 import { prepareVerificationEnvironment } from "./verification-environment.ts";
 
 function sha256(value: Uint8Array | string): string {
@@ -247,7 +249,7 @@ function normalizedFailureIdentities(input: {
     .replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "gu"), "")
     .replace(/\r\n?/gu, "\n")
     .replace(/\b\d+(?:\.\d+)?(?:ms|s)\b/gu, "<duration>")
-    .slice(0, 64 * 1024);
+    .replace(/\b\d{4}-\d{2}-\d{2}T[\d:.]+Z\b/gu, "<timestamp>");
   return [
     sha256(
       canonicalJson({
@@ -313,6 +315,9 @@ export async function executePackageVerification(input: {
   maxReportBytes?: number;
   executionWritePaths?: readonly string[];
 }): Promise<VerificationObservation> {
+  let executionDiagnostic:
+    | import("./contracts.ts").VerificationFailureSummary
+    | undefined;
   const unavailable = (
     code: string,
     category: "environment" | "adapter" | "resource" = "adapter",
@@ -321,6 +326,16 @@ export async function executePackageVerification(input: {
     category,
     code,
     verificationId: input.verification.id,
+    ...(executionDiagnostic
+      ? {
+          diagnostic: {
+            ...executionDiagnostic,
+            code,
+            nextStep:
+              "Repair the runner, environment or report adapter; do not treat missing evidence as a product failure.",
+          },
+        }
+      : {}),
   });
   if (input.signal.aborted) return { kind: "cancelled" };
   const maxReportBytes = input.maxReportBytes ?? VERIFICATION_REPORT_LIMIT;
@@ -335,18 +350,37 @@ export async function executePackageVerification(input: {
     },
   );
   if (!capability.ok) return unavailable(capability.diagnostic.code);
-  let environment: ReturnType<typeof prepareVerificationEnvironment>;
+  let environment: Awaited<ReturnType<typeof prepareVerificationEnvironment>>;
   try {
-    environment = prepareVerificationEnvironment(
+    environment = await prepareVerificationEnvironment(
       input.root,
       input.dependencyOwner,
       capability.value.runnerBindings,
+      input.signal,
     );
-  } catch {
-    return unavailable("verification-environment-unavailable", "environment");
+  } catch (error) {
+    if (input.signal.aborted) return { kind: "cancelled" };
+    const code =
+      error instanceof Error &&
+      [
+        "workspace-dependency-missing",
+        "dependency-path-unsafe",
+        "execution-mode-invalid",
+        "verification-timeout-invalid",
+        "verification-environment-names-invalid",
+        "verification-environment-requires-trusted-mode",
+      ].includes(error.message)
+        ? error.message
+        : "verification-environment-unavailable";
+    return unavailable(code, "environment");
   }
   try {
-    const isolation = new BubblewrapIsolationBackend();
+    const profile = executionProfile();
+    const isolation = new BubblewrapIsolationBackend({
+      bwrapPath: profile.bwrapPath,
+      timeoutMs: profile.timeoutMs,
+      localTrusted: profile.mode === "local-trusted",
+    });
     let final: VerificationObservation | undefined;
     let sequence = 0;
     for (const step of verificationSteps(input.verification)) {
@@ -354,9 +388,17 @@ export async function executePackageVerification(input: {
       const invocation = verificationInvocation(
         step,
         environment.bindings,
-        `/cadence/${relative}`,
+        `${environment.reportRoot}/${relative}`,
       );
       if (!invocation) return unavailable("runner-missing");
+      if (profile.mode === "local-trusted") {
+        const translate = (value: string) =>
+          value.startsWith("/workspace/")
+            ? path.join(input.root, value.slice(11))
+            : value;
+        invocation.executable = translate(invocation.executable);
+        invocation.args = invocation.args.map(translate);
+      }
       const executed = await isolation.run({
         root: input.root,
         ...invocation,
@@ -376,6 +418,20 @@ export async function executePackageVerification(input: {
             : "environment",
         );
       }
+      executionDiagnostic = {
+        verificationId: step.id,
+        code: "verification-rejected",
+        exitCode: executed.exitCode,
+        failures: [],
+        stdout: diagnosticText(executed.stdout),
+        stderr: diagnosticText(executed.stderr),
+        truncated:
+          executed.logs.stdout.truncated ||
+          executed.logs.stderr.truncated ||
+          executed.stdout.length > 4096 ||
+          executed.stderr.length > 4096,
+        nextStep: "Inspect the reported verification failure.",
+      };
       let report: ReturnType<typeof vitestReport>;
       if (step.kind === "vitest") {
         try {
@@ -426,6 +482,7 @@ export async function executePackageVerification(input: {
         classification: step.classification,
         policy: "report-file-v3" as const,
         ...(report ? { tests: report.total } : {}),
+        attributionReliable: step.kind === "vitest",
         failureIdentities: accepted
           ? []
           : normalizedFailureIdentities({
@@ -443,12 +500,31 @@ export async function executePackageVerification(input: {
               ? "red-not-witnessed"
               : "verification-rejected",
           evidence,
+          diagnostic: {
+            verificationId: step.id,
+            code: "verification-rejected",
+            exitCode: executed.exitCode,
+            failures: (report?.failedText ?? [])
+              .slice(0, 16)
+              .map((text) => diagnosticText(text, 1024)),
+            stdout: diagnosticText(executed.stdout),
+            stderr: diagnosticText(executed.stderr),
+            truncated:
+              executed.logs.stdout.truncated ||
+              executed.logs.stderr.truncated ||
+              executed.stdout.length > 4096 ||
+              executed.stderr.length > 4096,
+            nextStep:
+              step.classification === "expected-red"
+                ? "Make the approved regression fail for the expected assertion, not an environment error."
+                : "Fix the reported failure in the candidate; preserve the accepted verification contract.",
+          },
         };
       final = { kind: "accepted", evidence };
     }
     return final ?? unavailable("verification-contract-unsupported");
   } finally {
-    environment.cleanup();
+    await environment.cleanup();
   }
 }
 
@@ -469,6 +545,7 @@ export function phaseVerificationResult(result: VerificationObservation) {
       kind: "retryable" as const,
       code: result.code,
       failureIdentities: result.evidence.failureIdentities,
+      attributionReliable: result.evidence.attributionReliable,
     };
   return {
     ok: false as const,
@@ -497,6 +574,7 @@ export function changeVerificationResult(result: VerificationObservation) {
       kind: "verification" as const,
       code: result.code,
       failureIdentities: result.evidence.failureIdentities,
+      attributionReliable: result.evidence.attributionReliable,
     };
   return {
     ok: false as const,

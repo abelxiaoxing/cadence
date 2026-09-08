@@ -178,6 +178,8 @@ function capable(
 function safeFailureCode(error: unknown): string {
   if (error instanceof RouteAttemptStop || error instanceof TransportTimeout)
     return error.code;
+  if (error instanceof Error && error.message === "child-provider-rate-limited")
+    return error.message;
   return "transport-failure";
 }
 

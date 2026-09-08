@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyEvaluationOracle } from "./evaluation-oracle.mjs";
 import {
   createEvaluationMetrics,
   evaluationScenarios,
@@ -409,47 +410,8 @@ try {
       if (!modelUnavailable) metrics.result.userInterventions++;
       return;
     }
-    const assertion =
-      scenario.id === "multiple-tasks"
-        ? "if(add(2,3)!==5||multiply(2,3)!==6)process.exit(1)"
-        : "if(add(2,3)!==5)process.exit(1)";
     metrics.setStage("oracle");
-    oracle = (async () => {
-      const { BubblewrapIsolationBackend } = await import(
-        "../src/isolation-backend.ts"
-      );
-      const { prepareVerificationEnvironment } = await import(
-        "../src/verification-environment.ts"
-      );
-      const { resolveVerificationRunner } = await import(
-        "../src/verification-capability.ts"
-      );
-      const runner = resolveVerificationRunner("node");
-      if (!runner) throw new Error("evaluation-oracle-unavailable");
-      const environment = prepareVerificationEnvironment(consumer, consumer, [
-        runner,
-      ]);
-      try {
-        const result = await new BubblewrapIsolationBackend({
-          timeoutMs: 5000,
-        }).run({
-          root: consumer,
-          executable: environment.bindings[0].executablePath,
-          args: [
-            "--input-type=module",
-            "-e",
-            `import {add,multiply} from './src/math.mjs';${assertion}`,
-          ],
-          mounts: environment.mounts,
-          environment: environment.environment,
-          signal: controller.signal,
-        });
-        if (!result.ok || result.exitCode !== 0)
-          throw new Error("evaluation-oracle-rejected");
-      } finally {
-        environment.cleanup();
-      }
-    })();
+    oracle = verifyEvaluationOracle(consumer, scenario.id, controller.signal);
     await oracle;
     reason = "verified-completion";
     metrics.setStage("done");

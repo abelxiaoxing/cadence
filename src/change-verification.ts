@@ -95,7 +95,9 @@ export function parseVerificationBaseline(
     IDENTIFIER.test(observation.verificationId) &&
     Array.isArray(observation.failureIdentities) &&
     observation.failureIdentities.every((identity) => SHA256.test(identity)) &&
-    (observation.code === undefined || typeof observation.code === "string");
+    (observation.code === undefined || typeof observation.code === "string") &&
+    (observation.attributionReliable === undefined ||
+      typeof observation.attributionReliable === "boolean");
   if (
     !baseline.targetContracts.every(
       (entry) =>
@@ -338,6 +340,7 @@ export class ChangeVerification {
               input.scope,
             ),
             code: result.code,
+            attributionReliable: result.attributionReliable,
           },
         };
       }
@@ -495,6 +498,11 @@ export class ChangeVerification {
     if (current.observation.status === "passed") {
       return { kind: "verified", attribution: "none" };
     }
+    if (
+      current.observation.attributionReliable === false &&
+      baseline.observation.status === "failed"
+    )
+      return { kind: "paused", code: "verification-attribution-unresolved" };
     const prior = new Set(baseline.observation.failureIdentities);
     const introduced = current.observation.failureIdentities.filter(
       (identity) => !prior.has(identity),
@@ -734,6 +742,14 @@ export class ChangeVerification {
                 };
         }
         if (current.observation.status === "failed") {
+          if (
+            current.observation.attributionReliable === false &&
+            baseline.observation.status === "failed"
+          )
+            return {
+              kind: "paused",
+              code: "verification-attribution-unresolved",
+            };
           const prior = new Set(baseline.observation.failureIdentities);
           const introduced = current.observation.failureIdentities.filter(
             (identity) => !prior.has(identity),
@@ -773,6 +789,14 @@ export class ChangeVerification {
               };
       }
       if (fullSuite.observation.status === "failed") {
+        if (
+          fullSuite.observation.attributionReliable === false &&
+          captured.baseline.fullSuite.status === "failed"
+        )
+          return {
+            kind: "paused",
+            code: "verification-attribution-unresolved",
+          };
         const baselineFailures = new Set(
           captured.baseline.fullSuite.failureIdentities,
         );

@@ -283,3 +283,30 @@ it("rejects an oversized completed turn before executing its submission tool", a
     classification: { attempts: 0 },
   });
 });
+
+it("admits against the actual model window before its first request", async () => {
+  const streamSimple = vi.fn(() => {
+    throw new Error("must not launch");
+  });
+  const result = await runChildSession({
+    cwd: process.cwd(),
+    model: {
+      ...(model as object),
+      contextWindow: 16000,
+      maxTokens: 8000,
+    } as never,
+    modelRuntime: { streamSimple },
+    systemPrompt: "x".repeat(20000),
+    requestId: "small-window",
+    role: "design-explorer",
+    output: "evidence",
+    roots: [process.cwd()],
+    timeoutMs: 1000,
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    failure: { kind: "execution-limit", code: "child-context-limit" },
+    transportFailure: false,
+  });
+  expect(streamSimple).not.toHaveBeenCalled();
+});

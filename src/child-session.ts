@@ -9,6 +9,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { childContextBudget, classifyProviderFailure } from "./child-budget.ts";
 import {
   abortable,
   type ChildModelClient,
@@ -361,6 +362,7 @@ export async function runChildSession(input: {
   let last: AssistantMessage | undefined;
   let preflightRejected = false;
   let turns = 0;
+  const contextBudget = childContextBudget(input.model);
   let reminderUsed = false;
   const observeStart = () => {
     try {
@@ -409,10 +411,7 @@ export async function runChildSession(input: {
         failure = { kind: "execution-limit", code: "child-turn-limit" };
         break;
       }
-      if (
-        Buffer.byteLength(JSON.stringify(context), "utf8") >
-        CHILD_EXECUTION_LIMITS.maxContextBytes
-      ) {
+      if (Buffer.byteLength(JSON.stringify(context), "utf8") > contextBudget) {
         failure = { kind: "execution-limit", code: "child-context-limit" };
         break;
       }
@@ -440,23 +439,20 @@ export async function runChildSession(input: {
         break;
       }
       context.messages.push(message);
-      if (
-        Buffer.byteLength(JSON.stringify(context), "utf8") >
-        CHILD_EXECUTION_LIMITS.maxContextBytes
-      ) {
+      if (Buffer.byteLength(JSON.stringify(context), "utf8") > contextBudget) {
         failure = { kind: "execution-limit", code: "child-context-limit" };
         break;
       }
       // Only complete, normal turns may execute tools, including terminal submit.
       if (message.stopReason === "error" || message.stopReason === "aborted") {
-        failure = {
-          kind: "transport",
-          code:
-            message.stopReason === "error"
-              ? "child-provider-stream-error"
-              : "child-provider-stream-aborted",
-          stage: "child-provider-stream",
-        };
+        failure =
+          message.stopReason === "error"
+            ? classifyProviderFailure(message.errorMessage)
+            : {
+                kind: "transport",
+                code: "child-provider-stream-aborted",
+                stage: "child-provider-stream",
+              };
         break;
       }
       if (message.stopReason !== "toolUse" && message.stopReason !== "stop") {
@@ -564,14 +560,14 @@ export async function runChildSession(input: {
       }
     }
   } catch (error) {
-    failure = {
-      kind: "transport",
-      code:
-        error instanceof TransportTimeout
-          ? error.code
-          : "child-provider-stream-error",
-      stage: "child-provider-stream",
-    };
+    failure =
+      error instanceof TransportTimeout
+        ? {
+            kind: "transport",
+            code: error.code,
+            stage: "child-provider-stream",
+          }
+        : classifyProviderFailure(error);
   } finally {
     clearTimeout(timer);
     input.signal?.removeEventListener("abort", forwardCancellation);

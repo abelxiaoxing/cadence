@@ -7,6 +7,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
@@ -33,6 +34,7 @@ import { verificationFixturePlan } from "./helpers/verification-plan.ts";
 
 const roots: string[] = [];
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
 });
@@ -54,6 +56,44 @@ describe.skipIf(!enabled)("real Linux isolation contract", () => {
     expect(
       await backend.run({ root: temporary(), executable: "/bin/true" }),
     ).toMatchObject({ ok: true, exitCode: 0 });
+  });
+
+  it("resolves scoped workspace packages against candidate bytes", async () => {
+    const owner = temporary();
+    const root = temporary();
+    mkdirSync(path.join(owner, "node_modules/@scope"), { recursive: true });
+    mkdirSync(path.join(owner, "packages/lib"), { recursive: true });
+    mkdirSync(path.join(root, "packages/lib"), { recursive: true });
+    symlinkSync(
+      "../../packages/lib",
+      path.join(owner, "node_modules/@scope/lib"),
+    );
+    writeFileSync(
+      path.join(owner, "packages/lib/index.js"),
+      'module.exports="host";',
+    );
+    writeFileSync(
+      path.join(root, "packages/lib/index.js"),
+      'module.exports="candidate";',
+    );
+    writeFileSync(
+      path.join(root, "check.cjs"),
+      'require("node:assert/strict").equal(require("@scope/lib"), "candidate");',
+    );
+    expect(
+      await executePackageVerification({
+        root,
+        dependencyOwner: owner,
+        signal: new AbortController().signal,
+        verification: {
+          kind: "static-check",
+          id: "workspace-link",
+          runner: { kind: "node", script: "check.cjs" },
+          args: [],
+          classification: "expected-green",
+        },
+      }),
+    ).toMatchObject({ kind: "accepted" });
   });
 
   it("hides host files and environment, denies host networking, and protects mounted dependencies", async () => {
@@ -152,174 +192,180 @@ describe.skipIf(!enabled)("real Linux isolation contract", () => {
     expect(readFileSync(path.join(root, "heartbeat"), "utf8")).toBe(stopped);
   });
 
-  it("executes Red, resumes after durable storage reopen, then Green, cumulative verification and final apply", async () => {
-    const root = temporary();
-    const consumerRoot = path.join(root, "consumer");
-    mkdirSync(consumerRoot);
-    mkdirSync(path.join(consumerRoot, "test"));
-    writeFileSync(
-      path.join(consumerRoot, "package.json"),
-      '{"type":"module"}\n',
-    );
-    writeFileSync(path.join(consumerRoot, "value.txt"), "0\n");
-    writeFileSync(
-      path.join(consumerRoot, "test/regression.mjs"),
-      "export {};\n",
-    );
-    writeFileSync(
-      path.join(consumerRoot, "test/health.mjs"),
-      "import {readFileSync} from 'node:fs'; if (!/^[01]\\n$/.test(readFileSync('value.txt','utf8'))) process.exit(1);\n",
-    );
-    const change = "real-isolation";
-    const tasksPath = path.join(
-      consumerRoot,
-      "openspec/changes",
-      change,
-      "tasks.md",
-    );
-    mkdirSync(path.dirname(tasksPath), { recursive: true });
-    writeFileSync(tasksPath, "# Tasks\n\n- [ ] real-task\n");
-    execFileSync("git", ["init", "-q"], { cwd: consumerRoot });
-    execFileSync("git", ["add", "."], { cwd: consumerRoot });
-    const { plan, check } = verificationFixturePlan(change);
-    const roles = [
-      "design-explorer",
-      "implementation-worker",
-      "diagnosis-worker",
-    ];
-    const routing = parseRoutePolicy({
-      routes: {
-        local: {
-          kind: "inherited",
-          capabilities: {
-            roles,
-            dialects: ["openai-responses"],
-            contextWindow: 256_000,
-            maxTokens: 128_000,
+  it.each(["isolated", "local-trusted"])(
+    "executes Red, storage reopen, Green, cumulative verification and apply in %s mode",
+    async (mode) => {
+      vi.stubEnv("ABEL_EXECUTION_MODE", mode);
+      const root = temporary();
+      const consumerRoot = path.join(root, "consumer");
+      mkdirSync(consumerRoot);
+      mkdirSync(path.join(consumerRoot, "test"));
+      writeFileSync(
+        path.join(consumerRoot, "package.json"),
+        '{"type":"module"}\n',
+      );
+      writeFileSync(path.join(consumerRoot, "value.txt"), "0\n");
+      writeFileSync(
+        path.join(consumerRoot, "test/regression.mjs"),
+        "export {};\n",
+      );
+      writeFileSync(
+        path.join(consumerRoot, "test/health.mjs"),
+        "import {readFileSync} from 'node:fs'; if (!/^[01]\\n$/.test(readFileSync('value.txt','utf8'))) process.exit(1);\n",
+      );
+      const change = "real-isolation";
+      const tasksPath = path.join(
+        consumerRoot,
+        "openspec/changes",
+        change,
+        "tasks.md",
+      );
+      mkdirSync(path.dirname(tasksPath), { recursive: true });
+      writeFileSync(tasksPath, "# Tasks\n\n- [ ] real-task\n");
+      execFileSync("git", ["init", "-q"], { cwd: consumerRoot });
+      execFileSync("git", ["add", "."], { cwd: consumerRoot });
+      const { plan, check } = verificationFixturePlan(change);
+      const roles = [
+        "design-explorer",
+        "implementation-worker",
+        "diagnosis-worker",
+      ];
+      const routing = parseRoutePolicy({
+        routes: {
+          local: {
+            kind: "inherited",
+            capabilities: {
+              roles,
+              dialects: ["openai-responses"],
+              contextWindow: 256_000,
+              maxTokens: 128_000,
+            },
           },
         },
-      },
-      roles: Object.fromEntries(roles.map((role) => [role, ["local"]])),
-    });
-    if (!routing.ok) throw new Error("fixture-routing");
-    const stateRoot = resolveStateRoot({
-      consumerRoot,
-      xdgStateHome: path.join(root, "state"),
-    });
-    const phases: string[] = [];
-    const observations: string[] = [];
-    let pauseGreen = true;
-    const open = () =>
-      openDurableWorkflowEngine({
+        roles: Object.fromEntries(roles.map((role) => [role, ["local"]])),
+      });
+      if (!routing.ok) throw new Error("fixture-routing");
+      const stateRoot = resolveStateRoot({
         consumerRoot,
-        stateRoot,
-        routePolicy: routing.policy,
-        verificationPolicy: pauseGreen ? undefined : "report-file-v3",
-        verificationEnvironment: (current, signal) =>
-          captureVerificationEnvironmentIdentity(
-            consumerRoot,
-            [current.verification.change.fullSuite],
-            signal,
-          ),
-        deliverySource: {
-          load: async () => ({
-            gate: "gate-b",
-            revision: 1,
-            receiptHash: "a".repeat(64),
-            plan,
-          }),
-        },
-        proposeCandidate: async (input) => {
-          input.onHeaders();
-          input.onProgress();
-          phases.push(input.phase);
-          const relative =
-            input.phase === "red" ? "test/regression.mjs" : "value.txt";
-          const content =
-            input.phase === "red"
-              ? "import assert from 'node:assert/strict'; import {readFileSync} from 'node:fs'; assert.equal(readFileSync('value.txt','utf8'), '1\\n', 'real-regression');\n"
-              : "1\n";
-          return {
-            kind: "candidate",
-            bytes: Buffer.from(
-              compileCandidatePatch({
-                root: input.workspaceRoot,
-                writePaths: input.task.phases[input.phase]!.write,
-                deletePaths: [],
-                operations: [{ kind: "rewrite", path: relative, content }],
-                maxBytes: 65536,
-              }),
+        xdgStateHome: path.join(root, "state"),
+      });
+      const phases: string[] = [];
+      const observations: string[] = [];
+      let pauseGreen = true;
+      const open = () =>
+        openDurableWorkflowEngine({
+          consumerRoot,
+          stateRoot,
+          routePolicy: routing.policy,
+          verificationPolicy: pauseGreen ? undefined : "report-file-v3",
+          verificationEnvironment: (current, signal) =>
+            captureVerificationEnvironmentIdentity(
+              consumerRoot,
+              [current.verification.change.fullSuite],
+              signal,
             ),
-          };
-        },
-        verifyPhase: async (input) => {
-          if (input.phase === "green" && pauseGreen)
-            return { ok: false, kind: "paused", code: "fixture-reopen" };
-          const result = await executePackageVerification({
-            ...input,
-            dependencyOwner: consumerRoot,
-          });
-          if (result.kind === "accepted") observations.push(input.phase);
-          return phaseVerificationResult(result);
-        },
-        verifyChange: async (input) => {
-          const verification =
-            input.verification ?? check("real-fallback", "test/regression.mjs");
-          const result = await executePackageVerification({
-            root: input.root,
-            dependencyOwner: consumerRoot,
-            verification,
-            signal: input.signal,
-          });
-          const observed = changeVerificationResult(result);
-          if (!observed.ok) return observed;
-          observations.push(input.scope ?? "change");
-          return { ok: true, exitCode: 0, classification: "expected-green" };
-        },
-      });
-    let engine = open();
-    try {
-      const first = await engine.execute({
-        command: "start",
-        stage: "abel-implement",
-        change,
-        operationId: "real-start",
-      });
-      expect(first).toMatchObject({
-        state: "paused",
-        pause: { code: "fixture-reopen" },
-      });
-      expect(readFileSync(path.join(consumerRoot, "value.txt"), "utf8")).toBe(
-        "0\n",
-      );
-      await engine.close();
-      pauseGreen = false;
-      mkdirSync(path.join(consumerRoot, "node_modules"), { recursive: true });
-      writeFileSync(
-        path.join(consumerRoot, "node_modules/environment-marker.mjs"),
-        "export const revision = 2;\n",
-      );
-      engine = open();
-      const finished = await engine.execute({
-        command: "resume",
-        stage: "abel-implement",
-        change,
-        operationId: "real-resume",
-      });
-      expect(finished).toMatchObject({ state: "completed", completed: true });
-      expect(phases).toEqual(["red", "green"]);
-      expect(observations.filter((phase) => phase === "red")).toHaveLength(2);
-      expect(observations).toEqual(
-        expect.arrayContaining(["red", "green", "post-apply"]),
-      );
-      expect(readFileSync(path.join(consumerRoot, "value.txt"), "utf8")).toBe(
-        "1\n",
-      );
-      expect(readFileSync(tasksPath, "utf8")).toContain("- [x] real-task");
-    } finally {
-      await engine.close();
-    }
-  }, 60_000);
+          deliverySource: {
+            load: async () => ({
+              gate: "gate-b",
+              revision: 1,
+              receiptHash: "a".repeat(64),
+              plan,
+            }),
+          },
+          proposeCandidate: async (input) => {
+            input.onHeaders();
+            input.onProgress();
+            phases.push(input.phase);
+            const relative =
+              input.phase === "red" ? "test/regression.mjs" : "value.txt";
+            const content =
+              input.phase === "red"
+                ? "import assert from 'node:assert/strict'; import {readFileSync} from 'node:fs'; assert.equal(readFileSync('value.txt','utf8'), '1\\n', 'real-regression');\n"
+                : "1\n";
+            return {
+              kind: "candidate",
+              bytes: Buffer.from(
+                compileCandidatePatch({
+                  root: input.workspaceRoot,
+                  writePaths: input.task.phases[input.phase]!.write,
+                  deletePaths: [],
+                  operations: [{ kind: "rewrite", path: relative, content }],
+                  maxBytes: 65536,
+                }),
+              ),
+            };
+          },
+          verifyPhase: async (input) => {
+            if (input.phase === "green" && pauseGreen)
+              return { ok: false, kind: "paused", code: "fixture-reopen" };
+            const result = await executePackageVerification({
+              ...input,
+              dependencyOwner: consumerRoot,
+            });
+            if (result.kind === "accepted") observations.push(input.phase);
+            return phaseVerificationResult(result);
+          },
+          verifyChange: async (input) => {
+            const verification =
+              input.verification ??
+              check("real-fallback", "test/regression.mjs");
+            const result = await executePackageVerification({
+              root: input.root,
+              dependencyOwner: consumerRoot,
+              verification,
+              signal: input.signal,
+            });
+            const observed = changeVerificationResult(result);
+            if (!observed.ok) return observed;
+            observations.push(input.scope ?? "change");
+            return { ok: true, exitCode: 0, classification: "expected-green" };
+          },
+        });
+      let engine = open();
+      try {
+        const first = await engine.execute({
+          command: "start",
+          stage: "abel-implement",
+          change,
+          operationId: "real-start",
+        });
+        expect(first).toMatchObject({
+          state: "paused",
+          pause: { code: "fixture-reopen" },
+        });
+        expect(readFileSync(path.join(consumerRoot, "value.txt"), "utf8")).toBe(
+          "0\n",
+        );
+        await engine.close();
+        pauseGreen = false;
+        mkdirSync(path.join(consumerRoot, "node_modules"), { recursive: true });
+        writeFileSync(
+          path.join(consumerRoot, "node_modules/environment-marker.mjs"),
+          "export const revision = 2;\n",
+        );
+        engine = open();
+        const finished = await engine.execute({
+          command: "resume",
+          stage: "abel-implement",
+          change,
+          operationId: "real-resume",
+        });
+        expect(finished).toMatchObject({ state: "completed", completed: true });
+        expect(phases).toEqual(["red", "green"]);
+        expect(observations.filter((phase) => phase === "red")).toHaveLength(2);
+        expect(observations).toEqual(
+          expect.arrayContaining(["red", "green", "post-apply"]),
+        );
+        expect(readFileSync(path.join(consumerRoot, "value.txt"), "utf8")).toBe(
+          "1\n",
+        );
+        expect(readFileSync(tasksPath, "utf8")).toContain("- [x] real-task");
+      } finally {
+        await engine.close();
+      }
+    },
+    60_000,
+  );
   it("preserves npm hooks, nested scripts and short circuiting while protecting host dependencies", async () => {
     const root = temporary();
     const dependencyOwner = temporary();

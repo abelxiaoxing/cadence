@@ -28,5 +28,25 @@ export function isTransportTimeoutCode(
 export function transportFailureError(code: string): Error {
   return isTransportTimeoutCode(code)
     ? new TransportTimeout(code)
-    : new Error("transport-failure");
+    : new Error(
+        code === "child-provider-rate-limited" ? code : "transport-failure",
+      );
+}
+
+/** Snapshot at the start of each request; Workers cannot override these values. */
+export function requestBounds(env: NodeJS.ProcessEnv = process.env) {
+  const read = (name: string, fallback: number) => {
+    const value = Number(env[name] ?? fallback);
+    if (!Number.isSafeInteger(value) || value < 1 || value > 1_200_000)
+      throw new Error("request-budget-invalid");
+    return value;
+  };
+  return {
+    ...REQUEST_BOUNDS,
+    firstProgressMs: read(
+      "ABEL_FIRST_PROGRESS_MS",
+      REQUEST_BOUNDS.firstProgressMs,
+    ),
+    streamIdleMs: read("ABEL_STREAM_IDLE_MS", REQUEST_BOUNDS.streamIdleMs),
+  };
 }

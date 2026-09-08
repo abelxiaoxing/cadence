@@ -6,7 +6,7 @@ import {
   type Models,
 } from "@earendil-works/pi-ai";
 
-import { REQUEST_BOUNDS, TransportTimeout } from "./transport-budget.ts";
+import { requestBounds, TransportTimeout } from "./transport-budget.ts";
 
 /** Only the public model transport contract crosses into the child executor. */
 export type ChildModelClient = Pick<Models, "streamSimple">;
@@ -57,6 +57,7 @@ export async function requestChildTurn(input: {
   onMessage(message: AssistantMessage): void;
 }): Promise<AssistantMessage | undefined> {
   input.signal.throwIfAborted();
+  const bounds = requestBounds();
   const controller = new AbortController();
   const forward = () => controller.abort(input.signal.reason);
   input.signal.addEventListener("abort", forward, { once: true });
@@ -71,12 +72,24 @@ export async function requestChildTurn(input: {
   };
   let consume: Promise<AssistantMessage | undefined> | undefined;
   try {
-    schedule("first-progress-timeout", REQUEST_BOUNDS.firstProgressMs);
+    schedule("first-progress-timeout", bounds.firstProgressMs);
     notify(input.onStart);
     controller.signal.throwIfAborted();
     const stream = input.client.streamSimple(input.model, input.context, {
       signal: controller.signal,
       reasoning: "low",
+      ...(Number.isFinite(input.model.contextWindow) &&
+      Number.isFinite(input.model.maxTokens)
+        ? {
+            maxTokens: Math.max(
+              1,
+              Math.min(
+                input.model.maxTokens,
+                Math.floor(input.model.contextWindow / 2),
+              ),
+            ),
+          }
+        : {}),
       maxRetries: 0,
       sessionId: input.sessionId,
       onResponse: () => {
@@ -99,7 +112,7 @@ export async function requestChildTurn(input: {
             event.type === "toolcall_delta") &&
           event.delta.length > 0
         ) {
-          schedule("stream-idle-timeout", REQUEST_BOUNDS.streamIdleMs);
+          schedule("stream-idle-timeout", bounds.streamIdleMs);
           notify(input.onProgress);
         }
       }
@@ -114,7 +127,7 @@ export async function requestChildTurn(input: {
       await Promise.race([
         consume.catch(() => undefined),
         new Promise<void>((resolve) => {
-          drainTimer = setTimeout(resolve, REQUEST_BOUNDS.cancellationDrainMs);
+          drainTimer = setTimeout(resolve, bounds.cancellationDrainMs);
         }),
       ]);
       clearTimeout(drainTimer);

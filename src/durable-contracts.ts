@@ -46,6 +46,7 @@ export type DurableChangeVerificationResult =
       exitCode: 0;
       classification: string;
       failureIdentities?: string[];
+      attributionReliable?: boolean;
     }
   | {
       ok: false;
@@ -58,6 +59,7 @@ export type DurableChangeVerificationResult =
         | "cancelled";
       code: string;
       failureIdentities?: string[];
+      attributionReliable?: boolean;
     };
 
 export interface DurableVerificationObservation {
@@ -65,6 +67,7 @@ export interface DurableVerificationObservation {
   verificationId: string;
   failureIdentities: string[];
   code?: string;
+  attributionReliable?: boolean;
 }
 
 export interface DurableVerificationBaseline {

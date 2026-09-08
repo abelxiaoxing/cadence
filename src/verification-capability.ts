@@ -16,6 +16,7 @@ import {
   verificationInputPaths,
   verificationSteps,
 } from "./contracts.ts";
+import { executionProfile } from "./execution-profile.ts";
 import {
   type Bound,
   isCurrent,
@@ -828,9 +829,10 @@ function validateAtomicCapability(
       continue;
     if (
       lstatSync(path.join(root, relative)).size > 64 * 1024 ||
-      unsupportedExecutionConfiguration(
-        readFileSync(path.join(root, relative), "utf8"),
-      )
+      (executionProfile().mode !== "local-trusted" &&
+        unsupportedExecutionConfiguration(
+          readFileSync(path.join(root, relative), "utf8"),
+        ))
     ) {
       return adapterFailure(
         step.id,

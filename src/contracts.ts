@@ -117,6 +117,7 @@ export const STALE_FAILURE_CODES = [
   "stale-snapshot",
 ] as const;
 export const ENVIRONMENT_FAILURE_CODES = [
+  "child-provider-authentication-failed",
   "bubblewrap-launch-failed",
   "bubblewrap-or-dependency-unavailable",
   "bun-executable-unavailable",
@@ -157,6 +158,7 @@ export const VERIFICATION_ADAPTER_CODES = [
   "verification-config-unsafe",
 ] as const;
 export const CHILD_TRANSPORT_CODES = [
+  "child-provider-rate-limited",
   "first-progress-timeout",
   "stream-idle-timeout",
   "attempt-timeout",
@@ -261,6 +263,17 @@ export type VerificationClassification =
   | "expected-green"
   | "expected-refactor";
 
+export interface VerificationFailureSummary {
+  verificationId: string;
+  code: string;
+  exitCode?: number;
+  failures: string[];
+  stdout: string;
+  stderr: string;
+  truncated: boolean;
+  nextStep: string;
+}
+
 /** Runtime-owned evidence; unavailable checks never become product baselines. */
 export interface VerificationEvidence {
   id: string;
@@ -269,6 +282,7 @@ export interface VerificationEvidence {
   tests?: number;
   failureIdentities: string[];
   policy: "report-file-v3";
+  attributionReliable?: boolean;
 }
 export type VerificationObservation =
   | { kind: "accepted"; evidence: VerificationEvidence }
@@ -276,12 +290,14 @@ export type VerificationObservation =
       kind: "rejected";
       code: "red-not-witnessed" | "verification-rejected";
       evidence: VerificationEvidence;
+      diagnostic?: VerificationFailureSummary;
     }
   | {
       kind: "unavailable";
       category: "environment" | "adapter" | "resource";
       code: string;
       verificationId: string;
+      diagnostic?: VerificationFailureSummary;
     }
   | { kind: "cancelled" };
 
