@@ -1,5 +1,6 @@
 import { isValidRelativePath } from "./contracts.ts";
 import type { ImplementPlan } from "./implement-plan.ts";
+import { expandSingleTaskDraft } from "./single-task-draft.ts";
 
 /** Review data only: no executable callbacks, evidence cache or approval authority. */
 function record(value: unknown): Record<string, unknown> {
@@ -11,7 +12,8 @@ export function planAuthoringSummary(
   plan: ImplementPlan,
   authoredDraft?: unknown,
 ) {
-  const authored = record(authoredDraft);
+  const quick = record(authoredDraft).singleTask !== undefined;
+  const authored = record(expandSingleTaskDraft(authoredDraft));
   const derivations: Array<{ field: string; source: string; taskId?: string }> =
     [];
   let derivationsTruncated = false;
@@ -22,6 +24,7 @@ export function planAuthoringSummary(
     }
     derivations.push({ field, source, ...(taskId ? { taskId } : {}) });
   };
+  if (quick) derived("singleTask", "single-task-author-input");
   if (authoredDraft !== undefined) {
     if (!Object.hasOwn(authored, "tracking")) derived("tracking", "task-ids");
     if (plan.changeContract && !Object.hasOwn(authored, "changeContract"))

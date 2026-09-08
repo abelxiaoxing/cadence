@@ -182,6 +182,14 @@ Compiling identical canonical bytes after unchanged decisions preserves the exis
 Derive HOW from Gate A plus repository evidence.
 Ask only unresolved substantive technical decisions, then build a complete task DAG with stable Requirement → Scenario → Verification → Task references.
 
+For one local task with no new dependencies, deletes, outputs or scheduling conflicts, prefer the package's [quick single-task author example](../config/plan-draft.quick.example.json).
+Write it to the same `plan-draft.json` artifact.
+Its `singleTask` is expanded mechanically by the existing compiler; do not also supply `tasks` or duplicate verification bookkeeping.
+Keep the observed full suite, impact evidence, AGENTS impact, phase writes and Red witness explicit.
+Recovery defaults are two artifact corrections and one repair; override `recovery` only for an intentional resource choice.
+Use the full draft for work outside those limits.
+This shortcut does not infer acceptance evidence or change Gate approval.
+
 Start from the package's [single-task PlanDraft example](../config/plan-draft.example.json), resolved relative to this prompt's installed path.
 It describes a small Node consumer with `package.json`, `src/add.mjs` exporting `add`, and one existing `test/add.test.mjs` that uses Node assertions and currently covers `add(0, 0) === 0`.
 The Red phase preserves that assertion and adds `add(2, 3) === 5` with the failure marker `[ADD:positive-integers]`; Green repairs the function.

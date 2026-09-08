@@ -33,6 +33,7 @@ import type {
   PlanVerification,
 } from "./implement-plan.ts";
 import { expandPlanDraft, preparePlanDraft } from "./plan-draft.ts";
+import { expandSingleTaskDraft } from "./single-task-draft.ts";
 import {
   bindDraftVerificationInputs,
   validateVerificationAdapterCapability,
@@ -1247,6 +1248,7 @@ export function compileImplementPlan(
   options: { consumerRoot: string; bindExecutionInputs?: boolean },
 ): CompiledDelivery {
   try {
+    draft = expandSingleTaskDraft(draft);
     // Resolve omitted manifest command bytes before named definitions are
     // validated and purpose identities are hashed. The second pass below
     // binds execution inputs on the expanded contracts with their final IDs.
