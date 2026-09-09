@@ -76,7 +76,7 @@ describe("self-contained stage resources", () => {
     expect(init).toMatch(/resolved paths/i);
     expect(init).toMatch(/absence does not prevent OpenSpec or AGENTS repair/i);
     expect(init).toMatch(/final readiness is `partial`/i);
-    expect(init).toMatch(/git-commit[\s\S]*dev-browser[\s\S]*time Skill/i);
+    expect(init).toMatch(/git-commit[\s\S]*time Skill/i);
     expect(init).toMatch(/none is an Init prerequisite/i);
   });
 });

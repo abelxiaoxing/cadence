@@ -34,10 +34,14 @@ describe("Diagnose and browser-E2E contracts", () => {
     );
   });
 
-  it("pauses only an approved browser check when dev-browser is absent", () => {
-    const text = `${design}\n${implement}\n${diagnose}`;
-    expect(text).toMatch(/dev-browser/);
-    expect(text).toMatch(/approved browser E2E/i);
-    expect(text).toMatch(/pause only that check/i);
+  it("keeps browser verification without requiring dev-browser", () => {
+    for (const prompt of [read("abel-init"), design, implement, diagnose])
+      expect(prompt).not.toMatch(/dev-browser/i);
+    expect(design).toMatch(/approved browser E2E check/i);
+    for (const prompt of [implement, diagnose]) {
+      expect(prompt).toMatch(/approved browser E2E check cannot run/i);
+      expect(prompt).toMatch(/pause only that check/i);
+      expect(prompt).toMatch(/continue independent[\s\S]*when safe/i);
+    }
   });
 });

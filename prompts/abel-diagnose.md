@@ -57,7 +57,7 @@ Do not invent a repair.
 If the requested result actually requires new observable behavior, a new dependency, wider paths, substantive architecture/policy, or another product decision, return `scope-decision-required` with the evidence and decision that the user must make.
 Do not silently widen Diagnose and do not transform an ordinary repair failure into that result.
 
-When an approved browser E2E check requires `dev-browser` and it is unavailable, pause only that check and provide executable remediation; continue independent non-browser evidence when safe.
+When an approved browser E2E check cannot run, pause only that check and provide executable remediation; continue independent non-browser evidence when safe.
 
 Finish only when reproduction, falsification, failing regression, minimum repair, affected verification, and baseline comparison are all evidenced.
 After presenting the final structural diagnosis/repair result, send `{"action":"finish"}` so private dispatch is deactivated.

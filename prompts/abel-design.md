@@ -252,7 +252,6 @@ Do not expand write sets merely to satisfy a disposition label.
 For public UI or API work, seal the relevant route authorization, page state, API response and contract, public HTML/template/theme behavior, and an approved browser E2E check when those surfaces are affected.
 
 The plan admits only shell-free `vitest`, `package-script`, `static-check`, or ordered `steps` contracts.
-`dev-browser` is required only by an approved browser E2E contract; its absence does not block unrelated tasks or stages.
 Pin local runners, package scripts, arguments, `minTests`, and `noInstall` behavior; sealed classifications are derived from phase/purpose when omitted.
 Reject shell operators, implicit downloads, absolute/escaping paths, missing local capability, and unsupported verification shapes during Design readiness.
 

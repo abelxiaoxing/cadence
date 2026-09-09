@@ -126,7 +126,7 @@ Missing optional bundled research Skills SHALL make final readiness partial with
 
 #### Scenario: Non-init skills are absent
 
-- **WHEN** `git-commit`, `dev-browser`, or a dedicated `time` Skill is unavailable during initialization
+- **WHEN** `git-commit`, browser automation, or a dedicated `time` Skill is unavailable during initialization
 - **THEN** their absence does not affect the Init readiness check
 
 #### Scenario: Default project path
@@ -506,7 +506,7 @@ A request that actually requires new observable behavior, dependency, path, arch
 The package SHALL bundle discoverable skills named `context7-auto-research`, `grok-search`, and `git-commit` together with the distributable runtime resources required by those skills.
 The workflow SHALL NOT automatically commit merely because `git-commit` is installed.
 The dedicated `time` skill SHALL NOT be a distributed or validated prerequisite.
-`dev-browser` SHALL remain external and SHALL block only a task whose approved verification contract explicitly requires browser E2E execution.
+Unavailable browser automation SHALL block only checks whose approved verification contract requires it.
 
 #### Scenario: Bundled skills are discovered
 
@@ -521,12 +521,12 @@ The dedicated `time` skill SHALL NOT be a distributed or validated prerequisite.
 #### Scenario: Browser E2E is not required
 
 - **WHEN** a task's approved verification contract has no browser E2E step
-- **THEN** absence of `dev-browser` does not block the task or other workflow stages
+- **THEN** unavailable browser automation does not block the task or other workflow stages
 
 #### Scenario: Browser E2E is required but unavailable
 
-- **WHEN** an approved task requires browser E2E and `dev-browser` is unavailable
-- **THEN** the task stops with the missing capability and an executable remediation rather than reporting a passing verification
+- **WHEN** an approved task requires browser E2E and browser automation is unavailable
+- **THEN** only the affected check pauses with the missing capability and an executable remediation rather than reporting a passing verification
 
 ### Requirement: Safe package contents and independence
 

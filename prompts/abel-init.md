@@ -43,7 +43,7 @@ Resolve and report the canonical target root before action.
 
 Discover the bundled `context7-auto-research` and `grok-search` Skills and report their resolved paths.
 Their absence does not prevent OpenSpec or AGENTS repair, but final readiness is `partial` and must include an actionable package-resource restore command.
-Do not probe `git-commit`, external `dev-browser`, or a dedicated time Skill; none is an Init prerequisite.
+Do not probe `git-commit` or a dedicated time Skill; none is an Init prerequisite.
 
 Report one final result with the root, selected toolchain, actions actually taken, OpenSpec capability/schema/template evidence, AGENTS files changed or unchanged, research-Skill paths or remediation, and `ready | partial | paused`.
 Never report success from the initial probe when the post-write recheck did not pass.

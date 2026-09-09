@@ -204,7 +204,7 @@ Runtime/session ids, credentials, approval state, and dirty-state ledgers never 
 Task checkboxes are parent-owned progress facts.
 The loader may normalize only `[x]`/`[X]` to `[ ]` for the sealed task ids when checking the delivery hash; every other byte remains integrity-bound.
 
-When an approved browser E2E check requires `dev-browser` and it is unavailable, pause only that check; continue independent work when safe.
+When an approved browser E2E check cannot run, pause only that check; continue independent work when safe.
 
 ## Truthful completion
 
