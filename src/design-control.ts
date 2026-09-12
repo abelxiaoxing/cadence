@@ -978,6 +978,7 @@ export class DesignController {
       operation: request.operation,
       runId: request.runId,
       valid: true,
+      checks: { ...compiled.checks, gateA: "current" },
       summary: planAuthoringSummary(compiled.plan, authoredDraft),
       plan: {
         taskCount: compiled.plan.tasks.length,

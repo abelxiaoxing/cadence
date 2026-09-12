@@ -11,6 +11,7 @@ const IDENTITIES = new Set([
   "category",
   "owner",
   "verificationId",
+  "acceptanceId",
   "outputId",
   "dependencyTaskId",
   "producerTaskId",
@@ -22,6 +23,11 @@ const IDENTITIES = new Set([
 ]);
 const HINTS = new Map<string, string>(
   Object.entries({
+    "duplicate-path":
+      "Remove the repeated path at the indicated index; keep the existing declaration and do not widen phase permissions.",
+    enum: "Use one of allowedValues at the indicated field. For public impact, choose the actual changed surface; do not substitute none to bypass closure checks.",
+    "related-test-missing":
+      "Add this affected-suite test to relatedTests with evidence and its actual owner. Do not remove public impact or widen writes to satisfy ownership.",
     "change-contract-acceptance-missing":
       "Read the current approved ChangeContract from Design status and include each accepted verification obligation in the plan's phase, affected, full-suite or post-apply verification. Command, arguments, inputs and classification must match; copying only its ID is insufficient. Keep accepted IDs, statements and scope unchanged.",
     "script-command-mismatch":
@@ -96,6 +102,18 @@ export function projectDesignDiagnostic(
           : entry;
     else if (key === "path" && safePath(entry)) result.path = entry;
     else if (
+      (key === "allowedValues" || key === "mismatchedFields") &&
+      Array.isArray(entry)
+    ) {
+      result[key] = [
+        ...new Set(
+          entry.filter(
+            (item): item is string =>
+              typeof item === "string" && CODE.test(item),
+          ),
+        ),
+      ].slice(0, 32);
+    } else if (
       (key === "expectedPaths" || key === "actualPaths") &&
       Array.isArray(entry)
     ) {
@@ -120,6 +138,9 @@ export interface DesignPlanDiagnostic {
   category?: string;
   owner?: string;
   verificationId?: string;
+  acceptanceId?: string;
+  allowedValues?: string[];
+  mismatchedFields?: string[];
   outputId?: string;
   dependencyTaskId?: string;
   producerTaskId?: string;

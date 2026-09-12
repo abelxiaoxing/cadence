@@ -887,6 +887,8 @@ export function registerWorkflowControl(
     pi.registerTool({
       name: DISPATCH_TOOL,
       label: "Abel Control",
+      promptSnippet:
+        "Control the explicitly activated Abel stage; retain paused work across same-task follow-ups.",
       description:
         kind === "command"
           ? 'Private stage-bound Abel workflow control. Accepts durable Implement commands, batch-bound {"action":"amend"} artifact revisions, or {"action":"finish"} to leave and preserve resumable work.'
@@ -1394,7 +1396,8 @@ export function registerWorkflowControl(
       activePrompt = prompt;
     }
     if (prompt) activateDispatcher(pi, activation, prompt, event.prompt);
-    if (verified && prompt === "abel-design") enforceDesignTools();
+    if (activation.isActive() && activePrompt === "abel-design")
+      enforceDesignTools();
     const boundary = activePrompt
       ? `Abel stage ${activePrompt} is active only for the invoked task and its direct follow-ups. If the user ends it or requests an unrelated task, first call abel_dispatch with {"action":"finish"}, then handle that task normally with the restored tools. A successful finish ends stage authority immediately, including within this turn. Do not extend Gates or workflow rules to that task. A direct Gate answer or same-task continuation stays in this stage. Never invoke another Abel stage automatically.`
       : init

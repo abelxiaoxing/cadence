@@ -1219,6 +1219,13 @@ describe("safe private Design artifact mutation", () => {
       operation: "validate-plan-draft",
       runId: item.runId,
       valid: true,
+      checks: {
+        structure: "passed",
+        verificationCapability: "passed",
+        contractCoverage: "passed",
+        gateA: "current",
+        sealing: "not-performed",
+      },
       plan: {
         taskCount: 1,
         outputCount: 0,

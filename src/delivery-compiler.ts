@@ -264,6 +264,13 @@ export type {
 export type { PlanDraft, PlanPhaseDraft, PlanTaskInput } from "./plan-draft.ts";
 
 export interface CompiledDelivery {
+  /** Static checks only: neither compilation nor preflight seals a delivery. */
+  checks: {
+    structure: "passed";
+    verificationCapability: "passed";
+    contractCoverage: "passed" | "not-checked";
+    sealing: "not-performed";
+  };
   plan: ImplementPlan;
   bytes: Uint8Array;
   rawSha256: string;
@@ -946,6 +953,20 @@ function normalizeAgentsCheckpointOperations(
 
 function normalizeVerificationPlan(value: unknown): PlanVerification {
   if (
+    isRecord(value) &&
+    isRecord(value.change) &&
+    value.change.affected !== "task-affected-contracts"
+  ) {
+    throw new DesignPlanValidationError("delivery-verification-plan-invalid", [
+      {
+        code: "delivery-verification-plan-invalid",
+        field: "verification.change.affected",
+        category: "enum",
+        allowedValues: ["task-affected-contracts"],
+      },
+    ]);
+  }
+  if (
     !isRecord(value) ||
     !exactKeys(value, [
       "baseline",
@@ -1289,6 +1310,12 @@ export function compileImplementPlan(
     const planHash = hashCanonicalValue(plan);
     const closure = structuredClone(readiness.closure);
     return {
+      checks: {
+        structure: "passed",
+        verificationCapability: "passed",
+        contractCoverage: plan.changeContract ? "passed" : "not-checked",
+        sealing: "not-performed",
+      },
       plan,
       bytes,
       rawSha256,

@@ -4,6 +4,7 @@ import {
   normalizeChangeContract,
   verificationObligation,
 } from "../src/change-contract.ts";
+import { projectDesignDiagnostic } from "../src/design-diagnostics.ts";
 import { decideRecoveryAction } from "../src/workflow-policy.ts";
 
 const check = {
@@ -138,5 +139,63 @@ it("uses one recovery decision policy for nested repairs and explicit one-attemp
     expect(decideRecoveryAction(plan, { kind, attempt: 0 })).toMatchObject({
       allowed: false,
     });
+  }
+});
+
+it("reports all missing acceptance identities and unambiguous verifier differences without echoing values", () => {
+  const contract = approved();
+  contract.acceptance.push({ ...contract.acceptance[0], id: "A2" });
+  try {
+    assertPlanWithinChangeContract(
+      contract,
+      [],
+      [
+        {
+          ...check,
+          args: ["private-secret"],
+          classification: "expected-refactor",
+        },
+      ],
+    );
+    throw new Error("expected rejection");
+  } catch (error) {
+    expect(error).toMatchObject({
+      message: "change-contract-acceptance-missing",
+      diagnostics: expect.arrayContaining(
+        ["A1", "A2"].map((acceptanceId, index) =>
+          expect.objectContaining({
+            acceptanceId,
+            field: `changeContract.acceptance.${index}.verification`,
+            verificationId: "accepted",
+            mismatchedFields: ["args", "classification"],
+          }),
+        ),
+      ),
+    });
+    expect(JSON.stringify(error)).not.toContain("private-secret");
+  }
+});
+
+it("keeps acceptance diagnostics safe and does not guess among ambiguous or renamed verifiers", () => {
+  for (const candidates of [
+    [{ ...check, id: "renamed", args: ["--different"] }],
+    [
+      { ...check, args: ["--first"] },
+      { ...check, args: ["--second"] },
+    ],
+  ]) {
+    try {
+      assertPlanWithinChangeContract(approved(), [], candidates);
+      throw new Error("expected rejection");
+    } catch (error) {
+      const diagnostics = (error as { diagnostics: unknown[] }).diagnostics;
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0]).not.toHaveProperty("mismatchedFields");
+      expect(projectDesignDiagnostic(diagnostics[0])).toMatchObject({
+        acceptanceId: "A1",
+        verificationId: "accepted",
+        hint: expect.any(String),
+      });
+    }
   }
 });

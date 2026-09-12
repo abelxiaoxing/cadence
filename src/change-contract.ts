@@ -6,7 +6,10 @@ import {
   validateVerificationContract,
   verificationInputPaths,
 } from "./contracts.ts";
-import { DesignPlanValidationError } from "./design-diagnostics.ts";
+import {
+  type DesignPlanDiagnostic,
+  DesignPlanValidationError,
+} from "./design-diagnostics.ts";
 import { canonicalJson } from "./run-state.ts";
 
 export interface ChangeContract {
@@ -151,25 +154,73 @@ export function assertPlanWithinChangeContract(
   })[],
   verifications: readonly StructuredVerificationContract[],
 ): void {
-  const available = new Set(
-    [
-      ...verifications,
-      ...tasks.flatMap((task) => [
-        task.affectedVerification,
-        ...Object.entries(task.phases)
-          .filter(
-            ([phase]) =>
-              phase !== "red" ||
-              !task.verificationMode ||
-              task.verificationMode === "behavior",
-          )
-          .map(([, phase]) => phase.verification),
-      ]),
-    ].map(verificationObligation),
-  );
-  for (const accepted of contract.acceptance)
-    if (!available.has(verificationObligation(accepted.verification)))
-      throw new Error("change-contract-acceptance-missing");
+  const candidates = [
+    ...verifications,
+    ...tasks.flatMap((task) => [
+      task.affectedVerification,
+      ...Object.entries(task.phases)
+        .filter(
+          ([phase]) =>
+            phase !== "red" ||
+            !task.verificationMode ||
+            task.verificationMode === "behavior",
+        )
+        .map(([, phase]) => phase.verification),
+    ]),
+  ];
+  const available = new Set(candidates.map(verificationObligation));
+  const diagnostics: DesignPlanDiagnostic[] = [];
+  for (const [index, accepted] of contract.acceptance.entries()) {
+    if (available.has(verificationObligation(accepted.verification))) continue;
+    // Only attribute a mismatch when the display ID selects one distinct
+    // obligation. Never guess a "closest" verifier or echo command/argument bytes.
+    const matching = [
+      ...new Set(
+        candidates
+          .filter((candidate) => candidate.id === accepted.verification.id)
+          .map(verificationObligation),
+      ),
+    ];
+    const expected = JSON.parse(verificationObligation(accepted.verification));
+    const actual =
+      matching.length === 1 && matching[0]
+        ? JSON.parse(matching[0])
+        : undefined;
+    diagnostics.push({
+      code: "change-contract-acceptance-missing",
+      acceptanceId: accepted.id,
+      verificationId: accepted.verification.id,
+      field: `changeContract.acceptance.${index}.verification`,
+      ...(actual
+        ? {
+            mismatchedFields: [
+              "kind",
+              "runner",
+              "packageManager",
+              "script",
+              "command",
+              "args",
+              "testFiles",
+              "minTests",
+              "classification",
+              "expectedFailure",
+              "steps",
+            ]
+              .filter(
+                (key) =>
+                  canonicalJson(expected[key] ?? null) !==
+                  canonicalJson(actual[key] ?? null),
+              )
+              .sort(),
+          }
+        : {}),
+    });
+  }
+  if (diagnostics.length)
+    throw new DesignPlanValidationError(
+      "change-contract-acceptance-missing",
+      diagnostics,
+    );
   for (const task of tasks) {
     if (
       !contract.policy.verificationModes.includes(

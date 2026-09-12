@@ -73,6 +73,9 @@ function harness(
     tool,
     context,
     active: () => [...active],
+    setActive: (next: string[]) => {
+      active = [...next];
+    },
     handlers,
     invoke,
   };
@@ -108,6 +111,50 @@ async function capturedDesignFailure(
 }
 
 describe("semantic stage activation teardown", () => {
+  it("keeps failed Design preflight resumable and repairs same-stage tool drift without finishing", async () => {
+    const close = vi.fn(async () => {});
+    const executeDesign = vi.fn(async (request: { operation: string }) => {
+      if (request.operation === "validate-plan-draft")
+        throw new Error("change-contract-acceptance-missing");
+      return { state: "paused", runId: "continued-design" };
+    });
+    const item = harness("abel-design", {
+      ...baseEngine(),
+      executeDesign,
+      close,
+    });
+    const call = (operation: string) =>
+      item.tool.execute(
+        operation,
+        {
+          action: "design",
+          request:
+            operation === "start"
+              ? { operation, requirement: "Keep working", operationId: "start" }
+              : { operation, runId: "continued-design" },
+        },
+        undefined,
+        undefined,
+        item.context,
+      );
+    await call("start");
+    await expect(call("validate-plan-draft")).rejects.toThrow();
+    expect(item.active()).toEqual(["read", DISPATCH_TOOL]);
+    item.setActive(["read", "bash", "write"]);
+    item.handlers.get("input")?.({ source: "interactive", text: "继续" });
+    item.handlers.get("before_agent_start")?.({ prompt: "继续" }, item.context);
+    expect(item.active()).toEqual(["read", DISPATCH_TOOL]);
+    await call("status");
+    expect(executeDesign).toHaveBeenCalledTimes(3);
+    expect(close).not.toHaveBeenCalled();
+    expect(item.tool.promptSnippet).toEqual(expect.any(String));
+    await item.handlers.get("session_start")?.({}, item.context);
+    item.handlers.get("input")?.({ source: "interactive", text: "继续" });
+    item.handlers.get("before_agent_start")?.({ prompt: "继续" }, item.context);
+    expect(item.active()).not.toContain(DISPATCH_TOOL);
+    await expect(call("status")).rejects.toThrow("stage-control-mismatch");
+  });
+
   it("waits for safe engine exit before restoring tools and rejects concurrent or stale dispatch", async () => {
     let settle!: () => void;
     const settled = new Promise<void>((resolve) => {

@@ -8,6 +8,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -71,6 +72,50 @@ afterAll(() => {
 });
 
 describe("real npm tarball", () => {
+  it("ships doctor selection diagnostics without changing consumer locks or running scripts", () => {
+    const root = path.join(tempRoot, "doctor-consumer");
+    mkdirSync(root);
+    const locks = ["bun.lock", "package-lock.json"];
+    for (const lock of locks) writeFileSync(path.join(root, lock), "retained");
+    const manifest = { scripts: { test: "node missing-product-test.mjs" } };
+    const probe = () => {
+      const result = spawnSync(
+        process.execPath,
+        [path.join(packedPackageDir, "src/operator-cli.mjs"), "doctor", root],
+        {
+          encoding: "utf8",
+          timeout: 30000,
+        },
+      );
+      expect(result.error).toBeUndefined();
+      return JSON.parse(result.stdout);
+    };
+    writeFileSync(path.join(root, "package.json"), JSON.stringify(manifest));
+    expect(probe()).toMatchObject({
+      selectedPackageManager: null,
+      selectionSource: "ambiguous",
+      ambiguousLockfiles: true,
+      ok: false,
+    });
+    writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({ ...manifest, packageManager: "npm@10.0.0" }),
+    );
+    const selected = probe();
+    expect(selected).toMatchObject({
+      selectedPackageManager: "npm",
+      selectionSource: "package.json",
+      ambiguousLockfiles: true,
+    });
+    expect(
+      selected.checks.find((check) => check.name === "script:test").detail,
+    ).toMatch(
+      /^(?:statically admitted; tests not executed|npm:runner-missing)$/u,
+    );
+    for (const lock of locks)
+      expect(readFileSync(path.join(root, lock), "utf8")).toBe("retained");
+  });
+
   it("contains exactly the approved runtime and user-documentation files", () => {
     const members = exec("tar", ["tzf", archivePath])
       .split("\n")

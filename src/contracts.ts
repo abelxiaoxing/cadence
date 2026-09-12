@@ -1233,6 +1233,7 @@ export type ImplementGraphContractDiagnostic =
       path?: string;
       expectedPaths?: string[];
       actualPaths?: string[];
+      allowedValues?: string[];
     }
   | {
       code: "invalid-output-path";
@@ -1518,6 +1519,88 @@ function taskBoundaryContractDiagnostic(
     : diagnostic("task", "contract");
 }
 
+/** Refine rejected author input; this never admits a partial or repaired task. */
+function taskFieldDiagnostics(
+  task: Record<string, unknown>,
+): ImplementGraphContractDiagnostic[] {
+  const diagnostics: ImplementGraphContractDiagnostic[] = [];
+  const add = (
+    detail: Omit<
+      Extract<
+        ImplementGraphContractDiagnostic,
+        { code: "invalid-implement-graph" }
+      >,
+      "code"
+    >,
+  ) => {
+    if (diagnostics.length < 64)
+      diagnostics.push({
+        code: "invalid-implement-graph",
+        ...(validIdentifier(task.taskId) ? { taskId: task.taskId } : {}),
+        ...detail,
+      });
+  };
+  if (task.phases && typeof task.phases === "object") {
+    const phases = task.phases as Record<string, unknown>;
+    for (const phase of IMPLEMENTATION_PHASES) {
+      const boundary = phases[phase];
+      if (!boundary || typeof boundary !== "object") continue;
+      for (const field of ["read", "write", "delete"] as const) {
+        const paths = (boundary as Record<string, unknown>)[field];
+        if (!Array.isArray(paths)) continue;
+        const seen = new Set<string>();
+        for (const [index, file] of paths.entries()) {
+          if (!isValidRelativePath(file)) continue;
+          if (seen.has(file))
+            add({
+              phase,
+              field: `phases.${phase}.${field}.${index}`,
+              category: "duplicate-path",
+              path: file,
+            });
+          seen.add(file);
+        }
+      }
+    }
+  }
+  if (task.impactClosure && typeof task.impactClosure === "object") {
+    const closure = task.impactClosure as Record<string, unknown>;
+    if (Array.isArray(closure.changedSurfaces)) {
+      for (const [index, surface] of closure.changedSurfaces.entries()) {
+        if (!(IMPACT_SURFACES as readonly unknown[]).includes(surface))
+          add({
+            field: `impactClosure.changedSurfaces.${index}`,
+            category: "enum",
+            allowedValues: [...IMPACT_SURFACES],
+          });
+      }
+      if (
+        closure.changedSurfaces.some(
+          (surface) =>
+            surface !== "none" &&
+            (IMPACT_SURFACES as readonly unknown[]).includes(surface),
+        ) &&
+        Array.isArray(closure.affectedSuite) &&
+        Array.isArray(closure.relatedTests)
+      ) {
+        const related = new Set(
+          closure.relatedTests.flatMap((item) =>
+            item && typeof item === "object" ? [item.path] : [],
+          ),
+        );
+        for (const [index, file] of closure.affectedSuite.entries())
+          if (isValidRelativePath(file) && !related.has(file))
+            add({
+              field: `impactClosure.affectedSuite.${index}`,
+              category: "related-test-missing",
+              path: file,
+            });
+      }
+    }
+  }
+  return diagnostics;
+}
+
 export function validateImplementGraphBoundary(value: unknown):
   | { ok: true; value: ImplementGraphBoundary }
   | {
@@ -1573,11 +1656,24 @@ export function validateImplementGraphBoundary(value: unknown):
           { changeId: value.changeId, ...task },
           undefined,
         );
-    if (diagnostic)
-      failures.push({
-        reason: "invalid Implement task boundary",
-        diagnostic: { code: "invalid-implement-graph", ...diagnostic },
-      });
+    if (diagnostic) {
+      const fields = taskFieldDiagnostics(task);
+      // Replace a broad diagnostic only when these details refine that field;
+      // retain unrelated shape/authority failures in the same batch.
+      if (
+        !fields.some(
+          (detail) =>
+            diagnostic.field &&
+            detail.field?.startsWith(`${diagnostic.field}.`),
+        )
+      )
+        fields.push({ code: "invalid-implement-graph", ...diagnostic });
+      for (const detail of fields)
+        failures.push({
+          reason: "invalid Implement task boundary",
+          diagnostic: detail,
+        });
+    }
   }
   for (const candidate of value.outputs) {
     if (

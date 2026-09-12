@@ -14,6 +14,59 @@ export interface DoctorCheck {
   detail: string;
   nextStep?: string;
 }
+const PACKAGE_LOCKS = {
+  bun: ["bun.lock", "bun.lockb"],
+  npm: ["package-lock.json", "npm-shrinkwrap.json"],
+  pnpm: ["pnpm-lock.yaml"],
+  yarn: ["yarn.lock"],
+} as const;
+type PackageManager = keyof typeof PACKAGE_LOCKS;
+
+function packageManagerSelection(root: string, declaration: unknown) {
+  const managers = Object.keys(PACKAGE_LOCKS) as PackageManager[];
+  const lockfiles = managers.flatMap((manager) =>
+    PACKAGE_LOCKS[manager].filter((file) =>
+      lstatSync(path.join(root, file), { throwIfNoEntry: false })?.isFile(),
+    ),
+  );
+  const inferred = managers.filter((manager) =>
+    PACKAGE_LOCKS[manager].some((file) => lockfiles.includes(file)),
+  );
+  const declared =
+    typeof declaration === "string"
+      ? managers.find((manager) =>
+          new RegExp(
+            `^${manager}@[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][a-z0-9._+-]+)?$`,
+            "iu",
+          ).test(declaration),
+        )
+      : undefined;
+  const selectedPackageManager =
+    declaration !== undefined
+      ? (declared ?? null)
+      : inferred.length === 1
+        ? (inferred[0] ?? null)
+        : inferred.length > 1
+          ? null
+          : "npm";
+  const selectionSource =
+    declaration !== undefined
+      ? declared
+        ? "package.json"
+        : "invalid-declaration"
+      : inferred.length === 1
+        ? "lockfile"
+        : inferred.length > 1
+          ? "ambiguous"
+          : "default";
+  return {
+    selectedPackageManager,
+    selectionSource,
+    lockfiles,
+    ambiguousLockfiles: inferred.length > 1,
+  };
+}
+
 export function inspectConsumer(root: string) {
   root = realpathSync(root);
   const checks: DoctorCheck[] = [];
@@ -136,6 +189,7 @@ export function inspectConsumer(root: string) {
     "Repair dangling/external workspace links and ensure local package sources are tracked or admitted in the candidate.",
   );
   const manifest = path.join(root, "package.json");
+  let selection = packageManagerSelection(root, undefined);
   if (lstatSync(manifest, { throwIfNoEntry: false })?.isFile()) {
     check(
       "manifest",
@@ -151,51 +205,51 @@ export function inspectConsumer(root: string) {
     );
     const parsed = (() => {
       try {
-        return JSON.parse(readFileSync(manifest, "utf8"));
+        const value = JSON.parse(readFileSync(manifest, "utf8"));
+        return value && typeof value === "object" && !Array.isArray(value)
+          ? value
+          : {};
       } catch {
         return {};
       }
     })();
+    selection = packageManagerSelection(root, parsed.packageManager);
+    check(
+      "package-manager",
+      () => {
+        if (!selection.selectedPackageManager)
+          throw new Error(`package-manager-${selection.selectionSource}`);
+        return `${selection.selectedPackageManager} (${selection.selectionSource})`;
+      },
+      "Declare the intended packageManager in package.json; doctor does not read private plans, install runners or remove lockfiles.",
+    );
     for (const script of ["test", "check", "build"].filter(
       (name) => typeof parsed.scripts?.[name] === "string",
     )) {
       check(
         `script:${script}`,
         () => {
-          const manager =
-            ["bun", "pnpm", "yarn", "npm"].find((name) =>
-              lstatSync(
-                path.join(
-                  root,
-                  (
-                    {
-                      bun: "bun.lock",
-                      pnpm: "pnpm-lock.yaml",
-                      yarn: "yarn.lock",
-                      npm: "package-lock.json",
-                    } as Record<string, string>
-                  )[name],
-                ),
-                { throwIfNoEntry: false },
-              ),
-            ) ?? "npm";
+          const manager = selection.selectedPackageManager;
+          if (!manager)
+            throw new Error(`package-manager-${selection.selectionSource}`);
           const result = validateVerificationAdapterCapability(root, {
             kind: "package-script",
             id: `doctor-${script}`,
-            packageManager: manager as "bun" | "pnpm" | "yarn" | "npm",
+            packageManager: manager,
             script,
             command: parsed.scripts[script],
             args: [],
             classification: "expected-green",
           });
-          if (!result.ok) throw new Error(result.diagnostic.code);
+          if (!result.ok)
+            throw new Error(`${manager}:${result.diagnostic.code}`);
           return "statically admitted; tests not executed";
         },
         "Check the runner, installed dependencies and execution configuration; this probe does not execute your tests.",
       );
     }
   }
-  return { root, ok: checks.every((entry) => entry.ok), checks };
+  return { root, ...selection, ok: checks.every((entry) => entry.ok), checks };
 }
 
 /** Bounded metadata traversal, no symlink following and no automatic deletion. */

@@ -570,3 +570,120 @@ it("derives named package-script command bytes before expanding verifier identit
     parseImplementPlan(Buffer.from(JSON.stringify(draft))),
   ).toThrow();
 });
+
+it("locates invalid surfaces, duplicate phase paths and missing related-test ownership", () => {
+  const { consumerRoot, plan } = fixture();
+  const task = plan.tasks[0]!;
+  task.phases.red.read.push("test/regression.mjs");
+  task.phases.green.read.push("test/health.mjs");
+  expect(diagnostics(plan, consumerRoot)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        taskId: "real-task",
+        phase: "red",
+        field: "phases.red.read.4",
+        category: "duplicate-path",
+        path: "test/regression.mjs",
+      }),
+      expect.objectContaining({
+        taskId: "real-task",
+        phase: "green",
+        field: "phases.green.read.4",
+        category: "duplicate-path",
+        path: "test/health.mjs",
+      }),
+    ]),
+  );
+  task.phases.red.read.pop();
+  task.phases.green.read.pop();
+  (task.impactClosure.changedSurfaces as string[]) = ["ui", "api"];
+  const surfaces = diagnostics(plan, consumerRoot);
+  expect(surfaces).toEqual(
+    expect.arrayContaining(
+      [0, 1].map((index) =>
+        expect.objectContaining({
+          field: `impactClosure.changedSurfaces.${index}`,
+          category: "enum",
+          allowedValues: [
+            "none",
+            "route-authorization",
+            "page-state",
+            "api-response",
+            "public-html",
+          ],
+        }),
+      ),
+    ),
+  );
+  expect(projectDesignDiagnostic(surfaces[0])).toMatchObject({
+    allowedValues: expect.arrayContaining(["api-response"]),
+    hint: expect.any(String),
+  });
+  task.impactClosure.changedSurfaces = ["api-response"];
+  task.impactClosure.searchEvidence = ["Reviewed API callers"];
+  task.impactClosure.relatedTests = [];
+  expect(diagnostics(plan, consumerRoot)).toContainEqual(
+    expect.objectContaining({
+      field: "impactClosure.affectedSuite.0",
+      category: "related-test-missing",
+      path: "test/regression.mjs",
+    }),
+  );
+});
+
+it("identifies the fixed change affected marker rather than treating it as a verifier reference", () => {
+  const { consumerRoot, plan } = fixture();
+  const draft = structuredClone(plan) as unknown as Record<string, any>;
+  draft.verification.change.affected = { use: "private-untrusted-definition" };
+  const found = diagnostics(draft, consumerRoot);
+  expect(found).toContainEqual({
+    code: "delivery-verification-plan-invalid",
+    field: "verification.change.affected",
+    category: "enum",
+    allowedValues: ["task-affected-contracts"],
+  });
+  expect(JSON.stringify(found)).not.toContain("private");
+});
+
+it("labels compilation as static checks, not approval or sealing", () => {
+  const { consumerRoot, plan } = fixture();
+  const result = compileImplementPlan(plan, { consumerRoot });
+  expect(result.checks).toEqual({
+    structure: "passed",
+    verificationCapability: "passed",
+    contractCoverage: "not-checked",
+    sealing: "not-performed",
+  });
+  expect(result.closure.executable).toBe(true);
+});
+
+it("does not echo submitted enum values or unsafe duplicate paths", () => {
+  const { consumerRoot, plan } = fixture();
+  (plan.tasks[0]!.impactClosure.changedSurfaces as string[]) = [
+    "private-secret\u001b",
+  ];
+  plan.tasks[0]!.phases.red.read.push("../private-secret", "../private-secret");
+  const projected = diagnostics(plan, consumerRoot).map(
+    projectDesignDiagnostic,
+  );
+  expect(JSON.stringify(projected)).not.toContain("private-secret");
+});
+
+it("retains unrelated task errors while refining rejected field diagnostics", () => {
+  const { consumerRoot, plan } = fixture();
+  const draft = structuredClone(plan) as unknown as Record<string, any>;
+  draft.tasks[0].changeId = "not-authorized";
+  draft.tasks[0].phases.red.read.push("test/regression.mjs");
+  expect(diagnostics(draft, consumerRoot)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        field: "changeId",
+        category: "unexpected-field",
+      }),
+      expect.objectContaining({
+        field: "phases.red.read.4",
+        category: "duplicate-path",
+      }),
+    ]),
+  );
+});

@@ -164,6 +164,29 @@ describe("package Prompt provenance activates abel_dispatch", () => {
     session.dispose();
   });
 
+  it("keeps Design tools visible across real Pi follow-ups without ending the stage", async () => {
+    const { session } = await promptSession([
+      fauxAssistantMessage("waiting for a correction"),
+      fauxAssistantMessage("still working"),
+      fauxAssistantMessage("same task"),
+    ]);
+    try {
+      await session.prompt("/abel-design verified input");
+      const restricted = session.getActiveToolNames();
+      expect(restricted).toContain(DISPATCH_TOOL);
+      await session.prompt("继续同一个设计任务");
+      expect(session.getActiveToolNames()).toEqual(restricted);
+      expect(session.systemPrompt).toContain(
+        "Abel stage abel-design is active",
+      );
+      await session.prompt("继续");
+      expect(session.systemPrompt).toContain("- abel_dispatch:");
+      expect(session.getActiveToolNames()).not.toContain("write");
+    } finally {
+      session.dispose();
+    }
+  });
+
   it("restores ordinary tools when Init follows an unfinished Design", async () => {
     const { session } = await promptSession([
       fauxAssistantMessage("waiting"),

@@ -31,6 +31,9 @@ node /absolute/path/to/cadence/src/operator-cli.mjs runs /path/to/consumer
 ```
 
 `doctor` 检查 Git、Node、OpenSpec 入口、实际 Bubblewrap 启动、请求预算和常用脚本静态能力；不调用模型、不执行产品测试、不保证所有集成服务均可用。
+包管理器优先采用 `package.json.packageManager`，其次推断唯一锁文件所属的管理器；没有声明和锁文件时明确标为 npm 默认值。
+输出包含 `selectedPackageManager`、`selectionSource`、`lockfiles` 和 `ambiguousLockfiles`；多个管理器锁文件且无明确声明时阻塞脚本探测，不静默选择 Bun。
+Doctor 不读取私有计划，计划中的显式 runner 仍由正式预检检查；请让项目声明与计划保持一致。
 `runs` 只读列出该项目最多 1,000 个 run 和有界存储占用；不会创建、迁移或删除数据库，不自动清理暂停任务。
 
 ### 可信本地项目：显式复用宿主环境
@@ -87,6 +90,7 @@ Gate、交付校验和执行状态转换由控制面代码保证。
 当前任务的 Gate 回答与续轮保持阶段有效；用户结束工作流或转向无关任务时，父模型先调用 `{"action":"finish"}`，扩展等待活动操作停止并恢复原工具，保留可恢复进度。
 此退出同样适用于 Implement，不表示完成或丢弃。
 显式调用 Init 也会先退出已有阶段。
+Design 同任务续轮重新收紧允许的工具集合，预检失败或暂停不自动退出；会话重载/恢复不继承阶段激活权限，需重新显式调用对应命令，已保存的 run 不会因此完成或丢弃。
 
 Implement 只暴露 `start`、`status`、`resume`、`rebind`、`cancel` 和 `discard` 控制命令。
 `status` 完全本地可用；相同 operation id 幂等重放，进程、会话或 Worker 更换后仍从 durable checkpoint 继续。
@@ -99,6 +103,12 @@ Design 从第一步起统一使用 `action: "design"`：新需求通过 `start(r
 内联原子验证也可省略 `id` / `classification`；任务公共 `read` 与阶段读取合并，固定 baseline/repair 保护字段由编译器补齐，恢复次数和 AGENTS 影响仍需作者明确选择。
 [多任务示例](config/plan-draft.multiple-tasks.example.json) 保留显式依赖和产物 producer；ordered steps 仍使用完整内联合同。
 `validate-plan-draft` 返回有界的最终权限、验证用途、恢复次数和实际派生来源摘要；摘要不充当批准或封存证明。
+编译结果的 `checks` 分开报告 `structure`、`verificationCapability`、`contractCoverage` 和 `sealing`；静态 `closure.executable: true` 不代表产品测试已运行或 `READY_TO_IMPLEMENT`。
+独立 `compileImplementPlan` 未传合同则 `contractCoverage: "not-checked"`；传入合同也不证明该合同已获批准。
+正式预检从私有 journal 注入当前 Gate A 合同并报告 `gateA: "current"`，但仍是 `sealing: "not-performed"`；只有正式控制面可以批准和封存交付。
+验收缺失诊断列出 acceptance ID；仅当验证 ID 唯一对应一个不同义务时返回字段差异，不猜测最接近的验证器，也不回显命令或参数。
+`changedSurfaces` 仅接受 `none`、`route-authorization`、`page-state`、`api-response`、`public-html`；公共影响不得改标为 `none` 来绕过闭包。
+`verification.change.affected` 是固定标记 `"task-affected-contracts"`，不能使用 `{ "use": "..." }`；`affectedSuite` 中公共影响测试必须在 `relatedTests` 声明证据和实际 owner。
 推导有歧义时拒绝编译，显式错误仍会报错；代码不会据此扩大路径、依赖或产物权限，封存计划保持完整、严格的结构。
 预检集中返回不同任务的独立结构错误，并提供字段位置、期望/实际路径和修正提示；工具反馈与 TUI 共用有界脱敏投影。
 Design status 将可调用的 `legalOperations` 与顶层 `packetActions` 分开；显式退出只能发送 `{"action":"finish"}`，不能伪装成 `operation: "finish"`。
