@@ -1574,12 +1574,23 @@ function taskFieldDiagnostics(
             allowedValues: [...IMPACT_SURFACES],
           });
       }
+      const publicImpact = closure.changedSurfaces.some(
+        (surface) =>
+          surface !== "none" &&
+          (IMPACT_SURFACES as readonly unknown[]).includes(surface),
+      );
+      if (publicImpact) {
+        for (const [field, category] of [
+          ["searchEvidence", "search-evidence-required"],
+          ["relatedTests", "related-tests-required"],
+          ["affectedSuite", "affected-suite-required"],
+        ] as const) {
+          if (Array.isArray(closure[field]) && closure[field].length === 0)
+            add({ field: `impactClosure.${field}`, category });
+        }
+      }
       if (
-        closure.changedSurfaces.some(
-          (surface) =>
-            surface !== "none" &&
-            (IMPACT_SURFACES as readonly unknown[]).includes(surface),
-        ) &&
+        publicImpact &&
         Array.isArray(closure.affectedSuite) &&
         Array.isArray(closure.relatedTests)
       ) {

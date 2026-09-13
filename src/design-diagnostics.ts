@@ -26,6 +26,14 @@ const HINTS = new Map<string, string>(
     "duplicate-path":
       "Remove the repeated path at the indicated index; keep the existing declaration and do not widen phase permissions.",
     enum: "Use one of allowedValues at the indicated field. For public impact, choose the actual changed surface; do not substitute none to bypass closure checks.",
+    "public-impact-incomplete":
+      "Public impact requires non-empty searchEvidence, relatedTests and affectedSuite; every affectedSuite path must have a relatedTests entry. Keep the actual changedSurfaces; do not substitute none.",
+    "search-evidence-required":
+      "Add non-empty searchEvidence strings describing actual searches of changed public surfaces, callers and existing tests. Do not invent evidence or substitute none for changedSurfaces.",
+    "related-tests-required":
+      "Add relatedTests entries with path and non-empty evidence for actual tests under test/ or tests/, within the task's declared read/write scope. In PlanDraft omit disposition to derive ownership from task writes; do not widen writes or substitute none.",
+    "affected-suite-required":
+      "Add actual affected test paths under test/ or tests/ to affectedSuite and declare each in relatedTests. Bind their execution in affectedVerification; retained snapshot validation requires at least one existing test. Do not invent paths or substitute none.",
     "related-test-missing":
       "Add this affected-suite test to relatedTests with evidence and its actual owner. Do not remove public impact or widen writes to satisfy ownership.",
     "change-contract-acceptance-missing":

@@ -687,3 +687,81 @@ it("retains unrelated task errors while refining rejected field diagnostics", ()
     ]),
   );
 });
+
+it.each([
+  ["searchEvidence", "search-evidence-required"],
+  ["relatedTests", "related-tests-required"],
+  ["affectedSuite", "affected-suite-required"],
+] as const)(
+  "locates empty public UI %s with actionable feedback",
+  (field, category) => {
+    const { consumerRoot, plan } = fixture();
+    const closure = plan.tasks[0]!.impactClosure;
+    closure.changedSurfaces = ["page-state", "public-html"];
+    closure.searchEvidence = ["Reviewed page state and public HTML callers"];
+    // A complete closure with these surfaces already compiles; the enum is valid.
+    expect(() => compileImplementPlan(plan, { consumerRoot })).not.toThrow();
+    closure[field] = [];
+    const found = diagnostics(plan, consumerRoot).map(projectDesignDiagnostic);
+    expect(found).toContainEqual(
+      expect.objectContaining({
+        code: "invalid-implement-graph",
+        taskId: "real-task",
+        field: `impactClosure.${field}`,
+        category,
+        hint: expect.any(String),
+      }),
+    );
+  },
+);
+
+it("reports all empty public UI closure obligations without inventing paths", () => {
+  const { consumerRoot, plan } = fixture();
+  plan.tasks[0]!.impactClosure = {
+    changedSurfaces: ["page-state", "public-html"],
+    searchEvidence: [],
+    relatedTests: [],
+    affectedSuite: [],
+  };
+  const found = diagnostics(plan, consumerRoot).map(projectDesignDiagnostic);
+  expect(found).toHaveLength(3);
+  expect(found.map((item) => item?.field).sort()).toEqual([
+    "impactClosure.affectedSuite",
+    "impactClosure.relatedTests",
+    "impactClosure.searchEvidence",
+  ]);
+  for (const item of found) {
+    expect(item?.hint).toEqual(expect.any(String));
+    expect(item).not.toHaveProperty("expectedPaths");
+  }
+  plan.tasks[0]!.impactClosure.changedSurfaces = ["none"];
+  expect(() => compileImplementPlan(plan, { consumerRoot })).not.toThrow();
+});
+
+it("compiles the shipped public UI author fragment and derives actual test ownership", () => {
+  const { consumerRoot, plan } = fixture();
+  const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+  const section = readme.split("### 公共 UI 的 impactClosure 作者格式")[1]!;
+  const fragment = JSON.parse(section.match(/```json\n([\s\S]*?)\n```/u)![1]!);
+  const draft: PlanDraft = JSON.parse(
+    JSON.stringify(plan)
+      .replaceAll("test/regression.mjs", "test/page-state.mjs")
+      .replaceAll("test/health.mjs", "test/public-html.mjs"),
+  );
+  for (const file of fragment.read)
+    writeFileSync(path.join(consumerRoot, file), "export {};");
+  Object.assign(draft.tasks[0]!, fragment);
+  const compiled = compileImplementPlan(draft, { consumerRoot });
+  expect(compiled.plan.tasks[0]!.impactClosure).toMatchObject({
+    changedSurfaces: ["page-state", "public-html"],
+    relatedTests: [
+      { path: "test/page-state.mjs", disposition: "current-task" },
+      { path: "test/public-html.mjs", disposition: "unaffected" },
+    ],
+    affectedSuite: ["test/page-state.mjs", "test/public-html.mjs"],
+  });
+  expect(fragment.impactClosure.relatedTests[0]).not.toHaveProperty(
+    "disposition",
+  );
+  expect(parseImplementPlan(compiled.bytes)).toEqual(compiled.plan);
+});

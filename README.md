@@ -150,6 +150,58 @@ Gate 等待和可恢复暂停保持激活以接收直接后续操作。
 暂停会保留最小结构化恢复事实；完成或显式 discard 后安全清理。
 不会持久化凭据、环境值、原始 prompt、隐藏推理、完整子会话或原始模型输出。
 
+### 公共 UI 的 impactClosure 作者格式
+
+`page-state` 与 `public-html` 可以同时声明。
+以下是 **PlanDraft 任务片段**，合并到现有 `tasks[i]`，不是完整计划；其余 Gate A、阶段、产物和验证合同仍按单任务示例填写。
+路径和证据仅用于说明，必须替换为仓库真实调查结果。
+假设 Red 修改 `test/page-state.mjs`，已有 `test/public-html.mjs` 只读保留：
+
+```json
+{
+  "read": ["test/page-state.mjs", "test/public-html.mjs"],
+  "impactClosure": {
+    "changedSurfaces": ["page-state", "public-html"],
+    "searchEvidence": [
+      "检索页面状态的调用点及 test/、tests/ 中的覆盖：test/page-state.mjs 需更新状态切换断言，test/public-html.mjs 覆盖现有公开 HTML。"
+    ],
+    "relatedTests": [
+      {
+        "path": "test/page-state.mjs",
+        "evidence": "本任务 Red 更新页面状态切换回归；由阶段 write 推导为 current-task。"
+      },
+      {
+        "path": "test/public-html.mjs",
+        "evidence": "保留已有 HTML 断言并执行受影响验证；无任务写入，推导为 unaffected。"
+      }
+    ],
+    "affectedSuite": ["test/page-state.mjs", "test/public-html.mjs"]
+  }
+}
+```
+
+完整规则：
+
+- `impactClosure` 恰好包含 `changedSurfaces`、`searchEvidence`、`relatedTests`、`affectedSuite` 四个字段，不接受任意扩展字段。
+- `changedSurfaces` 是非空、无重复的合法枚举数组；`none` 不能与其他值混用。
+  不得为了通过校验将公共影响改为 `none`。
+- 存在公共影响时，后三个数组均不得为空；`searchEvidence` 每项为非空字符串，记录实际检索及结论，不是路径对象，也不是可省略的推导字段。
+- `relatedTests` 每项包含 `path` 和非空字符串 `evidence`；路径无重复，必须是 `test/` 或 `tests/` 下的仓库相对文件路径，并位于本任务各阶段合并后的 read/write 范围。
+  `src/foo.test.ts` 不满足当前测试路径规则。
+- PlanDraft 可省略 `disposition`：本任务写入则推导为 `current-task`，只有另一任务写入则为 `regression-task` 并推导 `regressionTaskId`，没有任务写入则为 `unaffected`；多个其他写入者时必须消除歧义。
+  `unaffected` 表示不修改该测试，不表示不运行该测试。
+- 显式作者格式为 `{ "path": "test/page-state.mjs", "disposition": "current-task", "evidence": "实际证据" }`；只读保留用 `unaffected`。
+  跨任务格式为 `{ "path": "test/page-state.mjs", "disposition": "regression-task", "evidence": "实际证据", "regressionTaskId": "ui-regression" }`。
+  只有 `regression-task` 携带 `regressionTaskId`；依赖、产物和阶段权限仍需按实际计划声明，不会由闭包新增。
+- `affectedSuite` 是无重复的测试路径数组，每项必须有对应的 `relatedTests` 条目；具备快照的运行时校验还要求其中至少一个是已有普通测试文件，不能全靠未来新增测试充当已有证据。
+- `affectedSuite` 是影响清单，不是验证器。
+  显式 `affectedVerification` 应实际运行这些测试，例如 Vitest 的 `testFiles` 列出二者，或使用仓库真实的测试脚本。
+  仍需声明验证输入并遵守 Gate A，不能只补清单就宣称测试已运行。
+
+`validate-plan-draft` 对三个空数组分别返回字段级 category：`search-evidence-required`、`related-tests-required`、`affected-suite-required`，并提供代码维护的 `hint`。
+测试漏列仍返回 `impactClosure.affectedSuite.<index>` / `related-test-missing` 和具体 `path`。
+空数组不足以确定应选哪些测试，因此不会虚构 `expectedPaths`；按实际证据补齐后，在同一个 Design run 重试预检。
+
 ## 内部边界与运行验证
 
 扩展入口负责宿主生命周期与服务装配，交付加载和验证适配器分别由独立模块负责。

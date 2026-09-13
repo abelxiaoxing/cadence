@@ -1370,6 +1370,81 @@ describe("safe private Design artifact mutation", () => {
     }
   });
 
+  it("projects public UI closure obligations through validate-plan-draft and accepts real test evidence", async () => {
+    const item = fixture("public-impact-feedback");
+    await approveGateAOnly(item);
+    const draft: PlanDraft = planDraft(item.change);
+    const task = draft.tasks[0]!;
+    task.impactClosure.changedSurfaces = ["page-state", "public-html"];
+    const writeDraft = () =>
+      writeFileSync(
+        path.join(item.changeRoot, "plan-draft.json"),
+        JSON.stringify(draft),
+      );
+    writeDraft();
+    const harness = extensionJourneyHarness(
+      item.consumerRoot,
+      {
+        execute: async () => ({}),
+        executeDesign: (request) => item.controller.execute(request),
+        close: async () => item.controller.close(),
+      },
+      "abel-design",
+    );
+    const input = {
+      action: "design",
+      request: { operation: "validate-plan-draft", runId: item.runId },
+    };
+    try {
+      await expect(
+        harness.execute("public-impact-error", input),
+      ).rejects.toThrow("design-plan-validation-invalid");
+      const feedback = harness.handlers.get("tool_result")?.({
+        toolName: DISPATCH_TOOL,
+        toolCallId: "public-impact-error",
+        isError: true,
+        input,
+        content: [{ type: "text", text: "design-plan-validation-invalid" }],
+      }) as {
+        details: { designFailure: { diagnostics: Record<string, unknown>[] } };
+      };
+      const found = feedback.details.designFailure.diagnostics;
+      expect(found).toHaveLength(3);
+      for (const field of ["searchEvidence", "relatedTests", "affectedSuite"])
+        expect(found).toContainEqual(
+          expect.objectContaining({
+            taskId: "delivery-task",
+            field: `impactClosure.${field}`,
+            hint: expect.any(String),
+          }),
+        );
+      mkdirSync(path.join(item.consumerRoot, "test"), { recursive: true });
+      writeFileSync(
+        path.join(item.consumerRoot, "test/public.mjs"),
+        "export {};",
+      );
+      task.phases.green.read!.push("test/public.mjs");
+      task.impactClosure.searchEvidence = [
+        "Inspected the public UI fixture test",
+      ];
+      task.impactClosure.relatedTests = [
+        { path: "test/public.mjs", evidence: "Existing fixture coverage" },
+      ];
+      task.impactClosure.affectedSuite = ["test/public.mjs"];
+      writeDraft();
+      expect(
+        await harness.execute("public-impact-corrected", input),
+      ).toMatchObject({ valid: true });
+      expect(item.controller.status(item.runId).plan).toBeNull();
+      expect(
+        existsSync(path.join(item.changeRoot, "implement-plan.json")),
+      ).toBe(false);
+    } finally {
+      await harness.handlers.get("session_shutdown")?.();
+      item.controller.close();
+    }
+  });
+
   it("reports the exact task, phase, field, and category for an invalid draft", async () => {
     const item = fixture("plan-preflight-diagnostic");
     await approveGateAOnly(item);
