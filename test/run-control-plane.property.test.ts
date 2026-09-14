@@ -1004,59 +1004,73 @@ describe("durable run journal", () => {
     database.close();
   });
 
-  it("serializes concurrent Design starts without losing a run or receipt", async () => {
-    const resolved = testStateRoot("concurrent-design-start");
-    openTestRunStore(resolved).close();
-    const workerUrl = new URL(
-      "./fixtures/run-store-start-worker.mjs",
-      import.meta.url,
-    );
-    const workers = [
-      new Worker(workerUrl, {
-        execArgv: ["--experimental-strip-types"],
-        workerData: {
-          stateRoot: resolved,
-          provisionalKey: "d".repeat(64),
-          operationId: "concurrent-design-start-one",
-        },
-      }),
-      new Worker(workerUrl, {
-        execArgv: ["--experimental-strip-types"],
-        workerData: {
-          stateRoot: resolved,
-          provisionalKey: "e".repeat(64),
-          operationId: "concurrent-design-start-two",
-        },
-      }),
-    ];
-    const nextMessage = (worker: Worker) =>
-      new Promise<any>((resolveMessage, reject) => {
-        worker.once("message", resolveMessage);
-        worker.once("error", reject);
-      });
-    try {
-      expect(await Promise.all(workers.map(nextMessage))).toEqual([
-        "ready",
-        "ready",
-      ]);
-      for (const worker of workers) worker.postMessage("start");
-      const outcomes = await Promise.all(workers.map(nextMessage));
-      expect(outcomes).toEqual([
-        expect.objectContaining({ ok: true, runId: expect.any(String) }),
-        expect.objectContaining({ ok: true, runId: expect.any(String) }),
-      ]);
-      expect(outcomes[0].runId).not.toBe(outcomes[1].runId);
-    } finally {
-      await Promise.all(workers.map((worker) => worker.terminate()));
-    }
+  it.each([false, true])(
+    "serializes concurrent Design starts without losing a run or receipt (v2 migration: %s)",
+    async (legacyV2) => {
+      const resolved = testStateRoot("concurrent-design-start");
+      openTestRunStore(resolved).close();
+      if (legacyV2) {
+        const legacy = new DatabaseSync(String(resolved.databasePath));
+        legacy.exec(`
+        ALTER TABLE delivery_bindings DROP COLUMN approval_revision;
+        ALTER TABLE delivery_bindings DROP COLUMN contract_hash;
+        ALTER TABLE delivery_bindings DROP COLUMN record_hash;
+        CREATE TABLE schema_meta(version INTEGER PRIMARY KEY CHECK (version = 2)) STRICT;
+        INSERT INTO schema_meta VALUES (2);
+      `);
+        legacy.close();
+      }
+      const workerUrl = new URL(
+        "./fixtures/run-store-start-worker.mjs",
+        import.meta.url,
+      );
+      const workers = [
+        new Worker(workerUrl, {
+          execArgv: ["--experimental-strip-types"],
+          workerData: {
+            stateRoot: resolved,
+            provisionalKey: "d".repeat(64),
+            operationId: "concurrent-design-start-one",
+          },
+        }),
+        new Worker(workerUrl, {
+          execArgv: ["--experimental-strip-types"],
+          workerData: {
+            stateRoot: resolved,
+            provisionalKey: "e".repeat(64),
+            operationId: "concurrent-design-start-two",
+          },
+        }),
+      ];
+      const nextMessage = (worker: Worker) =>
+        new Promise<any>((resolveMessage, reject) => {
+          worker.once("message", resolveMessage);
+          worker.once("error", reject);
+        });
+      try {
+        expect(await Promise.all(workers.map(nextMessage))).toEqual([
+          "ready",
+          "ready",
+        ]);
+        for (const worker of workers) worker.postMessage("start");
+        const outcomes = await Promise.all(workers.map(nextMessage));
+        expect(outcomes).toEqual([
+          expect.objectContaining({ ok: true, runId: expect.any(String) }),
+          expect.objectContaining({ ok: true, runId: expect.any(String) }),
+        ]);
+        expect(outcomes[0].runId).not.toBe(outcomes[1].runId);
+      } finally {
+        await Promise.all(workers.map((worker) => worker.terminate()));
+      }
 
-    const database = new DatabaseSync(String(resolved.databasePath), {
-      readOnly: true,
-    });
-    expect(rowCount(database, "runs")).toBe(2);
-    expect(rowCount(database, "operations WHERE kind = 'start'")).toBe(2);
-    database.close();
-  });
+      const database = new DatabaseSync(String(resolved.databasePath), {
+        readOnly: true,
+      });
+      expect(rowCount(database, "runs")).toBe(2);
+      expect(rowCount(database, "operations WHERE kind = 'start'")).toBe(2);
+      database.close();
+    },
+  );
 
   it.each([
     [

@@ -7,8 +7,14 @@ export const ROUTE_HEALTH_SCHEMA = `
   ) STRICT;
 `;
 
-/** Owner-private storage contracts. Migrations run atomically before use. */
-export const RUN_SCHEMA = `
+/** v2 predates proof-bound delivery receipts; migration must not invent proof. */
+const DELIVERY_PROOF_COLUMNS = `
+    approval_revision INTEGER,
+    contract_hash TEXT,
+    record_hash TEXT,`;
+
+function runSchema(withDeliveryProof: boolean): string {
+  return `
   CREATE TABLE IF NOT EXISTS runs (
     run_id TEXT PRIMARY KEY,
     root_hash TEXT NOT NULL,
@@ -29,10 +35,7 @@ export const RUN_SCHEMA = `
     run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
     gate TEXT NOT NULL,
     revision INTEGER NOT NULL,
-    receipt_hash TEXT NOT NULL,
-    approval_revision INTEGER,
-    contract_hash TEXT,
-    record_hash TEXT,
+    receipt_hash TEXT NOT NULL,${withDeliveryProof ? DELIVERY_PROOF_COLUMNS : ""}
     operation_id TEXT NOT NULL,
     PRIMARY KEY (run_id, gate, revision),
     UNIQUE (run_id, operation_id)
@@ -102,6 +105,11 @@ ${ROUTE_HEALTH_SCHEMA}
     facts_json TEXT NOT NULL
   ) STRICT;
 `;
+}
+
+/** Owner-private storage contracts. Migrations run atomically before use. */
+export const RUN_SCHEMA = runSchema(true);
+export const LEGACY_RUN_SCHEMA_V2 = runSchema(false);
 
 export const DESIGN_SCHEMA = `
   CREATE TABLE IF NOT EXISTS design_facts (

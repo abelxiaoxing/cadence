@@ -96,6 +96,8 @@ Implement 只暴露 `start`、`status`、`resume`、`rebind`、`cancel` 和 `dis
 `status` 完全本地可用；相同 operation id 幂等重放，进程、会话或 Worker 更换后仍从 durable checkpoint 继续。
 Design 从第一步起统一使用 `action: "design"`：新需求通过 `start(requirement)` 进入，已有 change 通过 `start(change)` 进入，后续只携带返回的 `runId`。
 
+底层 `RunStore` 仍保留经结构校验的旧 `schema_meta` v2/v4 原子迁移，供原版本恢复和独立存储调用使用。
+v2 迁移只补齐可空凭证字段且保持 `NULL`，不伪造审批；损坏或部分升级仍拒绝打开，迁移失败整体回滚。
 需求、决策合同与 Gate A 合同由控制面规范化并计算哈希，调用方无需 SHA-256 工具；Gate B 自动绑定当前已编译 canonical plan，原始瞬时文本不会写入 durable journal。
 `validate-plan-draft` 可在 `compile-plan` 前只读运行同一套编译检查，并以结构化 `taskId` / phase / field / verification 诊断定位问题；Design finalization 的安全诊断码也会进入错误详情与可展开 TUI，而不再只显示统一失败标题。
 随包提供的 [单任务计划示例](config/plan-draft.example.json) 展示精简 PlanDraft 和结构化 Gate A 合同；按实际仓库替换示例中的路径、证据与验证命令。

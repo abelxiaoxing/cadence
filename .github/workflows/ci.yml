@@ -53,7 +53,7 @@ jobs:
       - run: bun run check
       # Explicit Node invocation prevents Bun from masking Node spawn behavior.
       # These cover Design receipt/retry/admission, not native Implement isolation.
-      - run: node node_modules/vitest/vitest.mjs run test/openspec-cli.test.ts test/design-delivery.integration.test.ts test/stage-activation.integration.test.ts test/subagent-activity.property.test.ts
+      - run: node node_modules/vitest/vitest.mjs run test/openspec-cli.test.ts test/design-delivery.integration.test.ts test/sqlite-schema.test.ts test/stage-activation.integration.test.ts test/subagent-activity.property.test.ts
 
   storage-platform-contract:
     name: Storage recovery / ${{ matrix.os }} / Node 24.13.0

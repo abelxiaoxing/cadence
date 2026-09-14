@@ -17,7 +17,10 @@ import {
   type ResolvedStateRoot,
   StateRootError,
 } from "./state-root.ts";
-import { RUN_SCHEMA as SCHEMA } from "./storage-schema.ts";
+import {
+  LEGACY_RUN_SCHEMA_V2,
+  RUN_SCHEMA as SCHEMA,
+} from "./storage-schema.ts";
 
 export class RunStoreFormatError extends Error {
   readonly code = "run-store-reset-required" as const;
@@ -115,7 +118,10 @@ function requireIdentifier(value: string, label: string): void {
   if (!IDENTIFIER.test(value)) throw new Error(`invalid-${label}`);
 }
 
-const LEGACY_SCHEMA_VERSION = 4;
+const LEGACY_SCHEMA_VERSIONS = new Map([
+  [2, LEGACY_RUN_SCHEMA_V2],
+  [4, SCHEMA],
+]);
 
 function applicationTables(database: DatabaseSync): string[] {
   return (
@@ -153,25 +159,35 @@ function hasCurrentSchema(
   );
 }
 
-function isSupportedLegacySchema(
+function supportedLegacyVersion(
   database: DatabaseSync,
   tables: readonly string[],
-): boolean {
+): number | undefined {
   if (
     !tables.includes("schema_meta") ||
-    !hasRequiredCoreSchema(database, tables) ||
     tableColumns(database, "schema_meta").join("\0") !== "version"
   ) {
-    return false;
+    return undefined;
   }
   const rows = database
     .prepare("SELECT version FROM schema_meta")
     .all() as unknown as Array<{
     version: number;
   }>;
-  return (
-    rows.length === 1 && Number(rows[0]?.version) === LEGACY_SCHEMA_VERSION
-  );
+  if (rows.length !== 1) return undefined;
+  const version = rows[0]?.version;
+  const schema = LEGACY_SCHEMA_VERSIONS.get(version);
+  if (!schema || !matchesSqliteSchema(database, schema)) return undefined;
+  // A v2 database cannot already contain any proof fields. Do not repair a
+  // partial/ambiguous upgrade or reinterpret malformed fields as authority.
+  if (
+    version === 2 &&
+    tableColumns(database, "delivery_bindings").some((column) =>
+      ["approval_revision", "contract_hash", "record_hash"].includes(column),
+    )
+  )
+    return undefined;
+  return version;
 }
 
 function isSqliteLocked(error: unknown): boolean {
@@ -210,7 +226,7 @@ function ensureCurrentSchema(
   const initialTables = applicationTables(database);
   if (hasCurrentSchema(database, initialTables)) return;
   let transactionStarted = false;
-  let migrating = false;
+  let migrating: number | undefined;
   try {
     database.exec("BEGIN IMMEDIATE");
     transactionStarted = true;
@@ -219,11 +235,19 @@ function ensureCurrentSchema(
       database.exec(SCHEMA);
     } else if (hasCurrentSchema(database, tables)) {
       // Another opener may already have completed the same migration.
-    } else if (isSupportedLegacySchema(database, tables)) {
-      migrating = true;
-      database.exec("DROP TABLE schema_meta");
     } else {
-      throw new RunStoreFormatError(databasePath);
+      migrating = supportedLegacyVersion(database, tables);
+      if (migrating === undefined) throw new RunStoreFormatError(databasePath);
+      if (migrating === 2) {
+        database.exec(`
+          ALTER TABLE delivery_bindings ADD COLUMN approval_revision INTEGER;
+          ALTER TABLE delivery_bindings ADD COLUMN contract_hash TEXT;
+          ALTER TABLE delivery_bindings ADD COLUMN record_hash TEXT;
+        `);
+      }
+      if (!hasRequiredCoreSchema(database, tables))
+        throw new RunStoreFormatError(databasePath);
+      database.exec("DROP TABLE schema_meta");
     }
     database.exec("COMMIT");
   } catch (error) {
@@ -242,7 +266,7 @@ function ensureCurrentSchema(
       throw error;
     }
     if (migrating) {
-      throw new RunStoreMigrationError(LEGACY_SCHEMA_VERSION, error);
+      throw new RunStoreMigrationError(migrating, error);
     }
     throw error;
   }

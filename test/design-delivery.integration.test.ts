@@ -825,12 +825,17 @@ describe("safe private Design artifact mutation", () => {
   });
 
   it.each([
-    ["minimal", "x", false],
-    ["English", "Design a durable run without changing the repository.", false],
-    ["Chinese", "设计修复文档批次的 UNSUPPORTED_DOCUMENT_TYPE 误报。", true],
+    ["minimal", "x", undefined],
+    [
+      "English",
+      "Design a durable run without changing the repository.",
+      undefined,
+    ],
+    ["Chinese v4", "设计修复文档批次的 UNSUPPORTED_DOCUMENT_TYPE 误报。", 4],
+    ["Chinese v2", "为可信宿主执行创建设计身份。", 2],
   ])(
     "starts, replays, and restores a %s requirement",
-    async (_label, requirement, legacyV4) => {
+    async (_label, requirement, legacyVersion) => {
       const consumerRoot = mkdtempSync(
         path.join(realpathSync(tmpdir()), "abel-design-start-input-consumer-"),
       );
@@ -842,15 +847,21 @@ describe("safe private Design artifact mutation", () => {
         consumerRoot,
         xdgStateHome: stateHome,
       });
-      if (legacyV4) {
+      if (legacyVersion) {
         RunStore.open(stateRoot).close();
         const legacy = new DatabaseSync(stateRoot.databasePath);
         legacy.exec(`
           CREATE TABLE schema_meta (
-            version INTEGER PRIMARY KEY CHECK (version = 4)
+            version INTEGER PRIMARY KEY CHECK (version = ${legacyVersion})
           ) STRICT;
-          INSERT INTO schema_meta(version) VALUES (4);
+          INSERT INTO schema_meta(version) VALUES (${legacyVersion});
         `);
+        if (legacyVersion === 2)
+          legacy.exec(`
+            ALTER TABLE delivery_bindings DROP COLUMN approval_revision;
+            ALTER TABLE delivery_bindings DROP COLUMN contract_hash;
+            ALTER TABLE delivery_bindings DROP COLUMN record_hash;
+          `);
         legacy.close();
       }
       const controller = DesignController.open({
@@ -894,7 +905,7 @@ describe("safe private Design artifact mutation", () => {
             )
             .all(),
         );
-        if (legacyV4) {
+        if (legacyVersion) {
           expect(
             database
               .prepare(
