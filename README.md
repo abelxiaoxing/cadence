@@ -126,9 +126,6 @@ Design 从第一步起统一使用 `action: "design"`：新需求通过 `start(r
 
 底层 `RunStore` 仍保留经结构校验的旧 `schema_meta` v2/v4 原子迁移，供原版本恢复和独立存储调用使用；包服务的上述重置策略优先执行。
 v2 迁移只补齐可空凭证字段且保持 `NULL`，不伪造审批；损坏或部分升级仍拒绝打开，迁移失败整体回滚。
-
-以下是底层同版本恢复语义，不是跨包版本保留运行的承诺；跨版本以“升级后的私有状态重置”策略为准，旧运行会被放弃而非恢复。
-
 需求、决策合同与 Gate A 合同由控制面规范化并计算哈希，调用方无需 SHA-256 工具；Gate B 自动绑定当前已编译 canonical plan，原始瞬时文本不会写入 durable journal。
 `validate-plan-draft` 可在 `compile-plan` 前只读运行同一套编译检查，并以结构化 `taskId` / phase / field / verification 诊断定位问题；Design finalization 的安全诊断码也会进入错误详情与可展开 TUI，而不再只显示统一失败标题。
 随包提供的 [单任务计划示例](config/plan-draft.example.json) 展示精简 PlanDraft 和结构化 Gate A 合同；按实际仓库替换示例中的路径、证据与验证命令。
@@ -332,6 +329,13 @@ CLI 的其他版本必须满足相同 JSON 协议；新增支持版本应加入�
 目录持久化在 Windows 上单独处理：仅当已打开的目录句柄执行 `fsync` 返回 `EPERM` 时，标记为不支持目录刷新屏障。
 普通文件仍须在发布前成功 `fsync`；目录打开/关闭、权限、其他 I/O 及 POSIX 目录刷新错误不会被忽略。
 内容哈希校验、原子发布、SQLite 事务意图、CAS 与回滚记录继续生效；Windows 的进程中断恢复不等于 POSIX 目录屏障提供的断电持久性保证。
+
+以下是底层同版本恢复语义，不是跨包版本保留运行的承诺；跨版本以“升级后的私有状态重置”策略为准，旧运行会被放弃而非恢复。
+若同版本运行在存储异常后停留于 `running / phase-running`，请先停止旧宿主，完整备份 owner-private state root（含 SQLite、WAL 及 artifacts/workspaces），再加载同版本修复。
+用原工作区和原 state root 查询同一 change；重新打开时会在确认无有效执行租约后将遗留运行转为 `paused / operation-interrupted`，apply 中断则进入 `recovering`。
+按本地 `status` 提供的 `resume` 继续原运行，不需要重新 Design、重新 start、discard 或手动修改数据库。
+恢复保留交付绑定、阶段检查点、验证证据和已消耗预算，不返还预算、不伪造 Red/Green 结果；下一次执行仍须满足原有环境和隔离要求。
+不要为绕过 Windows 隔离限制而直接移动状态目录或更改工作区身份。
 
 可信 Linux 项目可以显式选择上面的 `local-trusted` 候选目录执行模式。
 

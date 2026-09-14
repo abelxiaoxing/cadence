@@ -406,6 +406,117 @@ function openEngine(input: {
 }
 
 describe("WorkflowEngine command authority", () => {
+
+  it.each([false, true])("recovers thrown storage errors without losing facts (legacy interrupted journal: %s)", async (legacy) => {
+    const change = `engine-storage-error-${legacy}`;
+    const consumerRoot = makeConsumer(change);
+    const xdgStateHome = temporaryRoot(change);
+    const delivery = new DeliverySource();
+    delivery.set(change, plan(change, [task("paper-download"), ...Array.from({ length: 5 }, (_, i) => task(`remaining-${i}`, { dependsOn: ["paper-download"] }))]));
+    class FailingWorker extends ScriptedWorker {
+      override async runAttempt(): Promise<AttemptOutcome> {
+        throw Object.assign(new Error("EPERM: operation not permitted, fsync"), { code: "EPERM", syscall: "fsync" });
+      }
+    }
+    let engine = openEngine({ consumerRoot, xdgStateHome, delivery, worker: new FailingWorker() });
+    await expect(engine.execute(command("start", change, { operationId: "storage-failed-start" }))).rejects.toThrow("EPERM: operation not permitted, fsync");
+    const initial = await engine.execute(command("status", change));
+    const { DatabaseSync } = await import("node:sqlite");
+    const databasePath = resolveStateRoot({ consumerRoot, xdgStateHome }).databasePath;
+    const snapshot = () => {
+      const db = new DatabaseSync(databasePath);
+      try { return Object.fromEntries(["workflow_engine_deliveries", "delivery_bindings", "workflow_work_budget", "workflow_engine_runs", "workflow_recovery_incidents", "workflow_recovery_events", "workflow_recovery_grants"].map(name => [name, db.prepare(`SELECT * FROM ${name}`).all()])); }
+      finally { db.close(); }
+    };
+    const retained = snapshot();
+    if (!legacy) {
+      expect(initial).toMatchObject({ state: "paused", pause: { code: "operation-interrupted" }, tasks: expect.arrayContaining([expect.objectContaining({ taskId: "paper-download", state: "paused", phase: "red" })]) });
+      expect(initial.legalCommands).toContain("resume");
+    }
+    await engine.close();
+    if (legacy) {
+      // Reconstruct exactly the old failure: interrupted operation, active projection/task.
+      const { RunStore } = await import("../src/run-store.ts");
+      const store = RunStore.open(resolveStateRoot({ consumerRoot, xdgStateHome }));
+      if (store.status(String(initial.runId)).state !== "running") store.transition({ runId: String(initial.runId), to: "running", operationId: "legacy-running" });
+      store.close();
+      const db = new DatabaseSync(databasePath);
+      db.prepare("UPDATE workflow_engine_tasks SET state = 'phase-running', pause_code = NULL WHERE task_id = 'paper-download'").run();
+      expect(db.prepare("SELECT state FROM workflow_engine_operations WHERE operation_id = 'storage-failed-start'").get()).toMatchObject({ state: "interrupted" });
+      db.close();
+    }
+    const worker = new ScriptedWorker();
+    engine = openEngine({ consumerRoot, xdgStateHome, delivery, worker });
+    try {
+      const recovered = await engine.execute(command("status", change));
+      expect(recovered).toMatchObject({ runId: initial.runId, state: "paused", pause: { code: "operation-interrupted" }, tasks: expect.arrayContaining([expect.objectContaining({ taskId: "paper-download", state: "paused", phase: "red" })]) });
+      expect(recovered.legalCommands).toContain("resume");
+      expect(snapshot()).toEqual(retained);
+      expect(retained.workflow_work_budget).toEqual([expect.objectContaining({ used: 1 })]);
+      await engine.execute(command("resume", change, { operationId: "storage-recovered-resume" }));
+      expect(worker.calls[0]).toMatch(/^paper-download:red:/u);
+      expect(worker.calls).toHaveLength(12);
+      expect(snapshot().workflow_work_budget).toEqual([expect.objectContaining({ used: 13 })]);
+      expect((await engine.execute(command("status", change))).runId).toBe(initial.runId);
+    } finally { await engine.close(); }
+  });
+
+  it("retains verified tasks and Green checkpoints after a later storage exception", async () => {
+    const change = "engine-storage-after-red";
+    const consumerRoot = makeConsumer(change);
+    const xdgStateHome = temporaryRoot(change);
+    const delivery = new DeliverySource();
+    delivery.set(change, plan(change, [task("completed-task"), task("interrupted-task", { dependsOn: ["completed-task"] })]));
+    class FailingGreen extends ScriptedWorker {
+      override async runAttempt(input: Record<string, unknown>): Promise<AttemptOutcome> {
+        if (input.taskId === "interrupted-task" && input.phase === "green") throw new Error("EIO: fsync");
+        return super.runAttempt(input);
+      }
+    }
+    let engine = openEngine({ consumerRoot, xdgStateHome, delivery, worker: new FailingGreen() });
+    try {
+      await expect(engine.execute(command("start", change))).rejects.toThrow("EIO");
+      expect(await engine.execute(command("status", change))).toMatchObject({
+        state: "paused", tasks: [{ taskId: "completed-task", state: "verified" }, { taskId: "interrupted-task", state: "paused", phase: "green" }],
+      });
+    } finally { await engine.close(); }
+    const worker = new ScriptedWorker();
+    engine = openEngine({ consumerRoot, xdgStateHome, delivery, worker });
+    try {
+      await engine.execute(command("resume", change));
+      expect(worker.calls).toEqual(["interrupted-task:green:r1:policy"]);
+    } finally { await engine.close(); }
+  });
+
+  it("recovers an interrupted change verifier even with no phase-running task", async () => {
+    const change = "engine-storage-change-verifier";
+    const consumerRoot = makeConsumer(change);
+    const xdgStateHome = temporaryRoot(change);
+    const delivery = new DeliverySource();
+    delivery.set(change, plan(change, [task("verified-task")]));
+    class FailingVerifier extends PausingVerifier {
+      override async verify(): Promise<{ kind: string; code: string }> { throw new Error("EIO: verification evidence"); }
+    }
+    let engine = openEngine({ consumerRoot, xdgStateHome, delivery, worker: new ScriptedWorker(), verifier: new FailingVerifier() });
+    await expect(engine.execute(command("start", change))).rejects.toThrow("EIO");
+    const status = await engine.execute(command("status", change));
+    expect(status).toMatchObject({ state: "paused", tasks: [{ taskId: "verified-task", state: "verified" }] });
+    await engine.close();
+    // Legacy exceptions could also strand change verification with all tasks verified.
+    const { RunStore } = await import("../src/run-store.ts");
+    const store = RunStore.open(resolveStateRoot({ consumerRoot, xdgStateHome }));
+    store.transition({ runId: String(status.runId), to: "running", operationId: "legacy-verifier-running" });
+    store.transition({ runId: String(status.runId), to: "change-verifying", operationId: "legacy-verifying" });
+    store.close();
+    const worker = new ScriptedWorker();
+    engine = openEngine({ consumerRoot, xdgStateHome, delivery, worker });
+    try {
+      expect(await engine.execute(command("status", change))).toMatchObject({ state: "paused", pause: { code: "operation-interrupted" } });
+      await engine.execute(command("resume", change));
+      expect(worker.calls).toEqual([]);
+    } finally { await engine.close(); }
+  });
+
   it("repairs failed admission before any Worker launch and discovers the revised receipt automatically", async () => {
     const { DeliveryValidationError } = await import("../src/delivery-compiler.ts");
     class InvalidDelivery extends DeliverySource {

@@ -635,6 +635,8 @@ export class WorkflowEngine {
     let lease: OperationLease;
     try {
       lease = this.#operationLease(runId, operationId);
+      if (this.#operation(runId, operationId)?.command !== "amend")
+        this.#pauseInterruptedRun(runId, operationId, lease);
       this.#runStore.interruptLease(lease);
       this.#database
         .prepare(
@@ -678,6 +680,64 @@ export class WorkflowEngine {
     });
   }
 
+  #pauseInterruptedRun(
+    runId: string,
+    operationId: string,
+    lease: OperationLease,
+  ): void {
+    const projection = this.#runStore.status(runId);
+    if (["completed", "discarded", "rejected"].includes(projection.state))
+      return;
+    const write = (database: DatabaseSync) => {
+      database
+        .prepare(`UPDATE workflow_engine_tasks
+        SET state = 'paused',
+            pause_code = CASE WHEN pause_code = 'red-artifact-constraint'
+              THEN pause_code ELSE 'operation-interrupted' END,
+            context_request_json = CASE WHEN pause_code = 'red-artifact-constraint'
+              THEN context_request_json ELSE NULL END,
+            queue_position = NULL
+        WHERE run_id = ? AND state IN ('phase-running', 'validating')`)
+        .run(runId);
+    };
+    const active = [
+      "created",
+      "validating-delivery",
+      "ready",
+      "queued",
+      "connecting",
+      "running",
+      "validating",
+      "verifying",
+      "retryable",
+      "approval-needed",
+      "change-verifying",
+      "ready-to-apply",
+    ];
+    const to =
+      projection.state === "applying"
+        ? "recovering"
+        : active.includes(projection.state)
+          ? "paused"
+          : undefined;
+    if (to) {
+      // Keep task and run projections atomic; retained evidence and budgets are
+      // deliberately untouched. The original exception still reaches the caller.
+      this.#runStore.transitionAtomically(
+        {
+          runId,
+          to,
+          lease,
+          code: "operation-interrupted",
+          operationId: `eng-${hash(runId, operationId, String(projection.sequence), "interrupted").slice(0, 40)}`,
+        },
+        write,
+      );
+    } else {
+      this.#leasedTransaction(lease, () => write(this.#database));
+    }
+  }
+
   #recoverInterruptedOperations(): void {
     if (this.#orphanRecoveryTimer) {
       clearTimeout(this.#orphanRecoveryTimer);
@@ -687,7 +747,11 @@ export class WorkflowEngine {
     const interrupted = this.#database
       .prepare(
         `SELECT run_id, operation_id FROM workflow_engine_operations
-         WHERE state = 'running'`,
+         WHERE state = 'running' OR (state = 'interrupted' AND command <> 'amend'
+           AND (run_id IN (SELECT run_id FROM workflow_engine_tasks
+             WHERE state IN ('phase-running', 'validating'))
+             OR run_id IN (SELECT run_id FROM runs WHERE state IN
+               ('running', 'validating', 'verifying', 'change-verifying', 'applying'))))`,
       )
       .all() as unknown as Array<{ run_id: string; operation_id: string }>;
     for (const row of interrupted) {
@@ -724,57 +788,28 @@ export class WorkflowEngine {
            WHERE run_id = ? AND operation_id = ? AND state = 'running'`,
         )
         .run(row.run_id, row.operation_id);
-      const projection = this.#runStore.status(row.run_id);
-      if (["completed", "discarded", "rejected"].includes(projection.state)) {
-        continue;
-      }
-      this.#database
-        .prepare(
-          `UPDATE workflow_engine_tasks
-           SET state = 'paused',
-               pause_code = CASE
-                 WHEN pause_code = 'red-artifact-constraint'
-                   THEN pause_code
-                 ELSE 'operation-interrupted'
-               END,
-               context_request_json = CASE
-                 WHEN pause_code = 'red-artifact-constraint'
-                   THEN context_request_json
-                 ELSE NULL
-               END,
-               queue_position = NULL
-           WHERE run_id = ? AND state IN ('phase-running', 'validating')`,
+      // Claim the same run-exclusive lease before repairing projections. A live
+      // owner (including a different host) must never be mistaken for an orphan.
+      let recoveryLease: OperationLease;
+      try {
+        recoveryLease = this.#runStore.acquireLease({
+          runId: row.run_id,
+          operationId: this.#leaseOperationId(row.run_id, row.operation_id),
+          ttlMs: this.#leaseTtlMs,
+          exclusive: true,
+        });
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message === "operation-already-running"
         )
-        .run(row.run_id);
-      if (projection.state === "applying") {
-        this.#transition(
-          row.run_id,
-          "recovering",
-          "restart-apply-recovery",
-          "operation-interrupted",
-        );
-      } else if (
-        [
-          "created",
-          "validating-delivery",
-          "ready",
-          "queued",
-          "connecting",
-          "running",
-          "validating",
-          "verifying",
-          "retryable",
-          "approval-needed",
-          "change-verifying",
-          "ready-to-apply",
-        ].includes(projection.state)
-      ) {
-        this.#transition(
-          row.run_id,
-          "paused",
-          "restart-operation-interrupted",
-          "operation-interrupted",
-        );
+          continue;
+        throw error;
+      }
+      try {
+        this.#pauseInterruptedRun(row.run_id, row.operation_id, recoveryLease);
+      } finally {
+        this.#runStore.interruptLease(recoveryLease);
       }
     }
     if (nextExpiry !== undefined && !this.#closed) {
