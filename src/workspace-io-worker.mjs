@@ -7,19 +7,41 @@ import { parentPort, workerData } from "node:worker_threads";
 import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
-  closeSync,
-  constants,
+  closeSync as closeSync2,
+  constants as constants2,
   copyFileSync,
-  fsyncSync,
+  fsyncSync as fsyncSync2,
   lstatSync,
   mkdirSync,
-  openSync,
+  openSync as openSync2,
   readFileSync,
   renameSync,
   unlinkSync,
   writeFileSync
 } from "node:fs";
 import path from "node:path";
+
+// src/directory-sync.ts
+import { closeSync, constants, fstatSync, fsyncSync, openSync } from "node:fs";
+function syncDirectory(directory) {
+  const descriptor = openSync(directory, constants.O_RDONLY);
+  try {
+    try {
+      fsyncSync(descriptor);
+      return "synced";
+    } catch (error) {
+      const failure = error;
+      if (process.platform === "win32" && failure?.code === "EPERM" && failure.syscall === "fsync" && fstatSync(descriptor).isDirectory()) {
+        return "unsupported-directory-barrier";
+      }
+      throw error;
+    }
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+// src/artifact-store.ts
 var SHA256 = /^[a-f0-9]{64}$/u;
 function digest(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -55,24 +77,16 @@ function ensureDirectory(directory) {
   }
   chmodSync(directory, 448);
 }
-function syncDirectory(directory) {
-  const descriptor = openSync(directory, constants.O_RDONLY);
-  try {
-    fsyncSync(descriptor);
-  } finally {
-    closeSync(descriptor);
-  }
-}
 function writeAtomic(target, bytes) {
   const directory = path.dirname(target);
   ensureDirectory(directory);
   const temporary = path.join(directory, `.${path.basename(target)}.${process.pid}.${randomUUID()}.tmp`);
-  const descriptor = openSync(temporary, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 384);
+  const descriptor = openSync2(temporary, constants2.O_CREAT | constants2.O_EXCL | constants2.O_WRONLY, 384);
   try {
     writeFileSync(descriptor, bytes);
-    fsyncSync(descriptor);
+    fsyncSync2(descriptor);
   } finally {
-    closeSync(descriptor);
+    closeSync2(descriptor);
   }
   try {
     renameSync(temporary, target);
@@ -148,7 +162,7 @@ class ArtifactStore {
     const stat = lstatSync(source, { throwIfNoEntry: false });
     if (!stat?.isFile() || stat.isSymbolicLink())
       throw new Error("artifact-unavailable");
-    copyFileSync(source, destination, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
+    copyFileSync(source, destination, constants2.COPYFILE_EXCL | constants2.COPYFILE_FICLONE);
     const bytes = readFileSync(destination);
     if (digest(bytes) !== hash)
       throw new Error("artifact-integrity-invalid");
@@ -199,7 +213,7 @@ class ArtifactStore {
 
 // src/verification-environment-io.ts
 import {
-  constants as constants2,
+  constants as constants3,
   cpSync,
   lstatSync as lstatSync2,
   mkdirSync as mkdirSync2,
@@ -329,7 +343,7 @@ function prepareVerificationEnvironmentIo(root, dependencyOwner, runnerBindings,
               checkCancelled();
               return true;
             },
-            mode: constants2.COPYFILE_FICLONE,
+            mode: constants3.COPYFILE_FICLONE,
             verbatimSymlinks: true
           });
       };
@@ -410,11 +424,11 @@ function removeEntry(file, checkCancelled) {
 // src/verification-identity.ts
 import { createHash as createHash2 } from "node:crypto";
 import {
-  closeSync as closeSync2,
-  constants as constants3,
-  fstatSync,
+  closeSync as closeSync3,
+  constants as constants4,
+  fstatSync as fstatSync2,
   lstatSync as lstatSync3,
-  openSync as openSync2,
+  openSync as openSync3,
   readdirSync as readdirSync2,
   readlinkSync,
   readSync
@@ -451,9 +465,9 @@ function verificationEnvironmentDigest(roots, checkCancelled = () => {}) {
     }
     if (!stat.isFile())
       throw new Error("verification-environment-unsafe");
-    const fd = openSync2(file, constants3.O_RDONLY | constants3.O_NOFOLLOW);
+    const fd = openSync3(file, constants4.O_RDONLY | constants4.O_NOFOLLOW);
     try {
-      const before = fstatSync(fd);
+      const before = fstatSync2(fd);
       if (before.ino !== stat.ino || before.dev !== stat.dev)
         throw new Error("verification-environment-changed");
       const content = createHash2("sha256");
@@ -467,12 +481,12 @@ function verificationEnvironmentDigest(roots, checkCancelled = () => {}) {
           throw new Error("verification-environment-limit");
         content.update(buffer.subarray(0, count));
       }
-      const after = fstatSync(fd);
+      const after = fstatSync2(fd);
       if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs)
         throw new Error("verification-environment-changed");
       digest2.update(JSON.stringify(["file", content.digest("hex")]));
     } finally {
-      closeSync2(fd);
+      closeSync3(fd);
     }
   };
   for (const root of [...new Set(roots)].sort())
@@ -485,12 +499,12 @@ import { execFile, execFileSync } from "node:child_process";
 import { createHash as createHash3, randomUUID as randomUUID2 } from "node:crypto";
 import {
   chmodSync as chmodSync2,
-  closeSync as closeSync3,
-  constants as constants4,
-  fsyncSync as fsyncSync2,
+  closeSync as closeSync4,
+  constants as constants5,
+  fsyncSync as fsyncSync3,
   lstatSync as lstatSync5,
   mkdirSync as mkdirSync3,
-  openSync as openSync3,
+  openSync as openSync4,
   readFileSync as readFileSync2,
   renameSync as renameSync2,
   unlinkSync as unlinkSync2,
@@ -765,29 +779,21 @@ function ensureDirectory2(directory) {
   }
   chmodSync2(directory, 448);
 }
-function syncDirectory2(directory) {
-  const descriptor = openSync3(directory, constants4.O_RDONLY);
-  try {
-    fsyncSync2(descriptor);
-  } finally {
-    closeSync3(descriptor);
-  }
-}
 function writeAtomic2(target, bytes) {
   const directory = path5.dirname(target);
   ensureDirectory2(directory);
   const temporary = path5.join(directory, `.${path5.basename(target)}.${process.pid}.${randomUUID2()}.tmp`);
-  const descriptor = openSync3(temporary, constants4.O_CREAT | constants4.O_EXCL | constants4.O_WRONLY, 384);
+  const descriptor = openSync4(temporary, constants5.O_CREAT | constants5.O_EXCL | constants5.O_WRONLY, 384);
   try {
     writeFileSync3(descriptor, bytes);
-    fsyncSync2(descriptor);
+    fsyncSync3(descriptor);
   } finally {
-    closeSync3(descriptor);
+    closeSync4(descriptor);
   }
   try {
     renameSync2(temporary, target);
     chmodSync2(target, 384);
-    syncDirectory2(directory);
+    syncDirectory(directory);
   } catch (error) {
     try {
       unlinkSync2(temporary);

@@ -18,6 +18,7 @@ import { promisify } from "node:util";
 import type { ArtifactStore } from "./artifact-store.ts";
 import { compareCanonicalStrings } from "./canonical.ts";
 import { isValidRelativePath } from "./contracts.ts";
+import { syncDirectory } from "./directory-sync.ts";
 import { observeSafePath } from "./safe-path.ts";
 import { runWorkspaceIo, type WorkspaceIoMetrics } from "./workspace-io.ts";
 
@@ -125,15 +126,6 @@ function ensureDirectory(directory: string): void {
     throw new Error("unsafe-workspace-path");
   }
   chmodSync(directory, 0o700);
-}
-
-function syncDirectory(directory: string): void {
-  const descriptor = openSync(directory, constants.O_RDONLY);
-  try {
-    fsyncSync(descriptor);
-  } finally {
-    closeSync(descriptor);
-  }
 }
 
 function writeAtomic(target: string, bytes: Uint8Array): void {

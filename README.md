@@ -95,6 +95,7 @@ Design 同任务续轮重新收紧允许的工具集合，预检失败或暂停�
 Implement 只暴露 `start`、`status`、`resume`、`rebind`、`cancel` 和 `discard` 控制命令。
 `status` 完全本地可用；相同 operation id 幂等重放，进程、会话或 Worker 更换后仍从 durable checkpoint 继续。
 Design 从第一步起统一使用 `action: "design"`：新需求通过 `start(requirement)` 进入，已有 change 通过 `start(change)` 进入，后续只携带返回的 `runId`。
+
 需求、决策合同与 Gate A 合同由控制面规范化并计算哈希，调用方无需 SHA-256 工具；Gate B 自动绑定当前已编译 canonical plan，原始瞬时文本不会写入 durable journal。
 `validate-plan-draft` 可在 `compile-plan` 前只读运行同一套编译检查，并以结构化 `taskId` / phase / field / verification 诊断定位问题；Design finalization 的安全诊断码也会进入错误详情与可展开 TUI，而不再只显示统一失败标题。
 随包提供的 [单任务计划示例](config/plan-draft.example.json) 展示精简 PlanDraft 和结构化 Gate A 合同；按实际仓库替换示例中的路径、证据与验证命令。
@@ -294,6 +295,11 @@ CLI 的其他版本必须满足相同 JSON 协议；新增支持版本应加入�
 
 **此矩阵不代表原生 Implement 隔离已全平台可用。**
 默认隔离后端仍为 Linux Bubblewrap；Windows/macOS 的原生隔离、ACL 与完整文件应用语义需要单独实现和验收，缺少隔离能力时保持暂停，不降级为主工作区直接执行。
+
+目录持久化在 Windows 上单独处理：仅当已打开的目录句柄执行 `fsync` 返回 `EPERM` 时，标记为不支持目录刷新屏障。
+普通文件仍须在发布前成功 `fsync`；目录打开/关闭、权限、其他 I/O 及 POSIX 目录刷新错误不会被忽略。
+内容哈希校验、原子发布、SQLite 事务意图、CAS 与回滚记录继续生效；Windows 的进程中断恢复不等于 POSIX 目录屏障提供的断电持久性保证。
+
 可信 Linux 项目可以显式选择上面的 `local-trusted` 候选目录执行模式。
 
 本地可用 `CADENCE_REAL_OPENSPEC=1` 启用真实 CLI 测试（Windows 可用 PowerShell 设置 `$env:CADENCE_REAL_OPENSPEC = "1"`），然后运行：

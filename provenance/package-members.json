@@ -46,6 +46,7 @@
   "package/src/design-control.ts",
   "package/src/design-diagnostics.ts",
   "package/src/design-journal.ts",
+  "package/src/directory-sync.ts",
   "package/src/durable-contracts.ts",
   "package/src/durable-workflow.ts",
   "package/src/evidence-draft.ts",

@@ -14,6 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { syncDirectory } from "./directory-sync.ts";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 
@@ -56,15 +57,6 @@ function ensureDirectory(directory: string): void {
     throw new Error("artifact-store-path-unsafe");
   }
   chmodSync(directory, 0o700);
-}
-
-function syncDirectory(directory: string): void {
-  const descriptor = openSync(directory, constants.O_RDONLY);
-  try {
-    fsyncSync(descriptor);
-  } finally {
-    closeSync(descriptor);
-  }
 }
 
 function writeAtomic(target: string, bytes: Uint8Array): void {

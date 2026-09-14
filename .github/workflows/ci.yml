@@ -55,6 +55,26 @@ jobs:
       # These cover Design receipt/retry/admission, not native Implement isolation.
       - run: node node_modules/vitest/vitest.mjs run test/openspec-cli.test.ts test/design-delivery.integration.test.ts test/stage-activation.integration.test.ts test/subagent-activity.property.test.ts
 
+  storage-platform-contract:
+    name: Storage recovery / ${{ matrix.os }} / Node 24.13.0
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.13.0'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - run: bun install --frozen-lockfile
+      # Native file publication plus injected directory/file faults and durable
+      # engine reopen. Scripted Workers do not imply native Implement isolation.
+      - run: node node_modules/vitest/vitest.mjs run test/directory-sync.test.ts test/workflow-engine.integration.test.ts
+
   implement-isolation-contract:
     name: Implement / Bubblewrap / Node ${{ matrix.node }}
     runs-on: ubuntu-22.04

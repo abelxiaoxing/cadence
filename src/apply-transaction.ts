@@ -23,6 +23,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { ArtifactStore } from "./artifact-store.ts";
 import { compareCanonicalStrings } from "./canonical.ts";
 import { isValidRelativePath } from "./contracts.ts";
+import { syncDirectory } from "./directory-sync.ts";
 import { observeSafePath } from "./safe-path.ts";
 import { configureSqlite, ensureSqliteSchema } from "./sqlite-schema.ts";
 import { APPLY_SCHEMA } from "./storage-schema.ts";
@@ -245,15 +246,6 @@ function ensurePrivateDirectory(directory: string): void {
     chmodSync(target, 0o700);
   }
   chmodSync(directory, 0o700);
-}
-
-function syncDirectory(directory: string): void {
-  const descriptor = openSync(directory, constants.O_RDONLY);
-  try {
-    fsyncSync(descriptor);
-  } finally {
-    closeSync(descriptor);
-  }
 }
 
 function entryEqual(left: WorkspaceEntry, right: WorkspaceEntry): boolean {
