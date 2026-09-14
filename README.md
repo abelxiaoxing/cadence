@@ -96,8 +96,39 @@ Implement 只暴露 `start`、`status`、`resume`、`rebind`、`cancel` 和 `dis
 `status` 完全本地可用；相同 operation id 幂等重放，进程、会话或 Worker 更换后仍从 durable checkpoint 继续。
 Design 从第一步起统一使用 `action: "design"`：新需求通过 `start(requirement)` 进入，已有 change 通过 `start(change)` 进入，后续只携带返回的 `runId`。
 
-底层 `RunStore` 仍保留经结构校验的旧 `schema_meta` v2/v4 原子迁移，供原版本恢复和独立存储调用使用。
+### 升级后的私有状态重置
+
+包服务首次打开当前工作区时，比较数据库记录的包版本与当前 `package.json.version`。
+升级或旧库没有包版本标记时，自动将该工作区整个私有状态目录（SQLite/WAL、`run-data/` 下的候选工作区、产物和事务记录）移入同工作区专属备份目录，然后创建新库。
+控制库损坏导致版本不可读、版本标记无效，或控制库缺失但仍有旧资源时，也整体备份并重新初始化，不尝试修复或解释旧运行。
+可读有效版本标记与当前版本一致时保留状态；同版本号下替换代码不会触发重置，也不自动诊断其他表的损坏。
+能读取有效旧版本时，降级拒绝打开，不自动清库；旧版本不可读时不声称能够判断升降级。
+当前包版本仅接受当前发布使用的 `major.minor.patch` 格式。
+安装包时不扫描用户目录，其他工作区各自在首次打开时处理；只读 `doctor` / `runs` 不触发重置。
+
+**升级意味着旧运行不再可续用：运行、审批证明、进度、检查点和预算不继承到新库。**
+仓库代码、未提交改动及 OpenSpec 文件不变，但旧交付缺少原私有证明，不能直接视为有效交付；需要重新建立可信交付。
+备份不自动恢复或删除。
+服务响应的 `packageStateReset` 显示原因、前后版本及备份路径（不可读旧版本为 `null`），并明确 `oldRunsAbandoned: true`、`workspaceRestored: false` 和风险提示，不输出数据库内容、环境变量值或凭据。
+备份位于 `<roots>/<workspace-hash>.package-state/backup-<uuid>`，该目录中的 `lock.sqlite3` 和 `reset.json` 是协调与中断恢复记录，不应手工修改。
+
+**重置前必须退出所有旧宿主及其执行进程；数据库记录为 running 或租约未过期，不等于进程仍存活，也不再作为结算门槛。**
+新包使用工作区专属 SQLite 写锁，在整个服务生命周期内互斥；并发宿主或版本读取实际遇到 SQLite 锁时返回 `package-state-in-use`。
+该锁不能约束不认识它的旧版本或自行脱离的后代进程，重置不代表已经终止这些进程。
+旧任务、操作、租约以及缺失／损坏／未结算的事务记录一律随旧目录备份，不再要求先恢复或结算，也不由新库管理。
+**重置不会回滚主工作区：此前 apply 中断可能留下部分改动，请先检查 Git diff，再开始新工作。**
+真实权限、I/O 或备份发布失败仍报错；不能因想清库就绕过文件系统安全边界。
+状态根、控制库路径及协调路径的符号链接仍拒绝；嵌套资源链接随目录重命名保留，不跟随其目标或删除目标内容。
+备份不依赖读取旧的每运行事务数据库，包括 `run-data/<runId>/transactions/apply.sqlite3`。
+可识别的降级返回 `package-state-downgrade-blocked`。
+中断后同版本重试按持久化意图继续，不重复备份；未完成重置时不允许换另一个目标版本。
+目录刷新沿用下文 Windows 能力边界，不声称 Windows 断电场景具备 POSIX 目录持久化保证。
+
+底层 `RunStore` 仍保留经结构校验的旧 `schema_meta` v2/v4 原子迁移，供原版本恢复和独立存储调用使用；包服务的上述重置策略优先执行。
 v2 迁移只补齐可空凭证字段且保持 `NULL`，不伪造审批；损坏或部分升级仍拒绝打开，迁移失败整体回滚。
+
+以下是底层同版本恢复语义，不是跨包版本保留运行的承诺；跨版本以“升级后的私有状态重置”策略为准，旧运行会被放弃而非恢复。
+
 需求、决策合同与 Gate A 合同由控制面规范化并计算哈希，调用方无需 SHA-256 工具；Gate B 自动绑定当前已编译 canonical plan，原始瞬时文本不会写入 durable journal。
 `validate-plan-draft` 可在 `compile-plan` 前只读运行同一套编译检查，并以结构化 `taskId` / phase / field / verification 诊断定位问题；Design finalization 的安全诊断码也会进入错误详情与可展开 TUI，而不再只显示统一失败标题。
 随包提供的 [单任务计划示例](config/plan-draft.example.json) 展示精简 PlanDraft 和结构化 Gate A 合同；按实际仓库替换示例中的路径、证据与验证命令。

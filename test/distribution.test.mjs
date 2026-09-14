@@ -116,6 +116,49 @@ describe("real npm tarball", () => {
       expect(readFileSync(path.join(root, lock), "utf8")).toBe("retained");
   });
 
+  it("initializes and resets versioned storage using the real tarball's package version", () => {
+    const script = `
+      import assert from 'node:assert/strict';
+      import { pathToFileURL } from 'node:url';
+      import { mkdirSync, readFileSync } from 'node:fs';
+      import path from 'node:path';
+      import { DatabaseSync } from 'node:sqlite';
+      const pkg = ${JSON.stringify(packedPackageDir)};
+      const load = file => import(pathToFileURL(path.join(pkg, 'src', file)).href);
+      const { acquirePackageState } = await load('package-state.ts');
+      const { resolveStateRoot } = await load('state-root.ts');
+      const { RunStore } = await load('run-store.ts');
+      const consumerRoot = ${JSON.stringify(path.join(tempRoot, "packed-reset-consumer"))};
+      mkdirSync(consumerRoot);
+      const state = resolveStateRoot({consumerRoot, xdgStateHome: ${JSON.stringify(path.join(tempRoot, "packed-reset-state"))}});
+      acquirePackageState(state, '0.0.0').close();
+      const store = RunStore.open(state);
+      store.startRun({stage:'abel-design', operationId:'seed', provisionalKey:'a'.repeat(64)});
+      store.close();
+      const owner = acquirePackageState(state);
+      assert.equal(owner.notice.currentVersion, JSON.parse(readFileSync(path.join(pkg,'package.json'),'utf8')).version);
+      assert.equal(owner.notice.reason, 'package-upgrade');
+      assert.equal(owner.notice.oldRunsAbandoned, true);
+      assert.equal(owner.notice.workspaceRestored, false);
+      assert.match(owner.notice.warning, /Git diff/);
+      const backup = new DatabaseSync(path.join(owner.notice.backupPath,'control.sqlite3'),{readOnly:true});
+      assert.equal(backup.prepare('SELECT count(*) AS n FROM runs').get().n,1); backup.close();
+      owner.close();
+      const db = new DatabaseSync(state.databasePath,{readOnly:true});
+      assert.equal(db.prepare('SELECT count(*) AS n FROM runs').get().n,0); db.close();
+      const reopened = acquirePackageState(state); assert.equal(reopened.notice,undefined); reopened.close();
+      console.log('packed-version-reset-ok');
+    `;
+    expect(
+      exec(process.execPath, [
+        "--experimental-strip-types",
+        "--input-type=module",
+        "-e",
+        script,
+      ]),
+    ).toContain("packed-version-reset-ok");
+  });
+
   it("contains exactly the approved runtime and user-documentation files", () => {
     const members = exec("tar", ["tzf", archivePath])
       .split("\n")

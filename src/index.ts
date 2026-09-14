@@ -4,6 +4,7 @@ import {
   projectDesignDiagnostic,
   type SafeDesignDiagnostic,
 } from "./design-diagnostics.ts";
+import { PackageStateError } from "./package-state.ts";
 import { openPackageWorkflowService } from "./package-workflow.ts";
 import { packageContext } from "./pi-adapter.ts";
 
@@ -457,6 +458,14 @@ function classifyDesignFailure(
   field?: string;
 } {
   const message = error instanceof Error ? error.message : "";
+  if (error instanceof PackageStateError) {
+    return {
+      code: error.code,
+      category: "storage",
+      retryable: false,
+      field: "packageVersion",
+    };
+  }
   if (error instanceof DesignControlValidationError) {
     return {
       code: "invalid-design-control-request",
@@ -1229,6 +1238,25 @@ export function registerWorkflowControl(
           if (exitingStage || !activation.isActive())
             throw new Error("stage-control-mismatch");
         } catch (error) {
+          if (error instanceof PackageStateError) {
+            const payload = {
+              stage: "abel-implement",
+              change: validation.value.change,
+              state: "paused",
+              durable: false,
+              completed: false,
+              pause: { code: error.code },
+              legalCommands: ["status", "start"],
+              tasks: [],
+              queue: [],
+            };
+            return {
+              content: [
+                { type: "text" as const, text: JSON.stringify(payload) },
+              ],
+              details: payload,
+            };
+          }
           if (!(error instanceof RunStoreFormatError)) throw error;
           const payload = runStoreUnavailableStatus(error, validation.value);
           return {

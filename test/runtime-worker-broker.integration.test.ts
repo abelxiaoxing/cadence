@@ -32,6 +32,7 @@ import {
   parseReadyReceipt,
 } from "../src/delivery-compiler.ts";
 import { DesignJournal } from "../src/design-journal.ts";
+import { acquirePackageState } from "../src/package-state.ts";
 import { runtimeForWorkerRoute } from "../src/parent-provider.ts";
 import { parseRoutePolicy } from "../src/route-policy.ts";
 import { RunStore } from "../src/run-store.ts";
@@ -1123,6 +1124,10 @@ describe("durable WorkflowEngine service composition", () => {
     );
     roots.push(consumerRoot, stateBase, commandRoot);
     const change = "package-inherited-setup-failover";
+    // This is a current-version delivery, not an unversioned upgrade fixture.
+    acquirePackageState(
+      resolveStateRoot({ consumerRoot, xdgStateHome: stateBase }),
+    ).close();
     mkdirSync(path.join(consumerRoot, "test"), { recursive: true });
     mkdirSync(path.join(consumerRoot, "node_modules/.bin"), {
       recursive: true,

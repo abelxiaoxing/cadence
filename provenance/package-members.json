@@ -63,6 +63,7 @@
   "package/src/operator-tools.ts",
   "package/src/package-candidate.ts",
   "package/src/package-delivery.ts",
+  "package/src/package-state.ts",
   "package/src/package-verification.ts",
   "package/src/package-workflow.ts",
   "package/src/packet-runtime.ts",

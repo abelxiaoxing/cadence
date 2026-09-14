@@ -111,3 +111,80 @@ it("delivers a failure summary to the next candidate and clears it for a later s
     await service.close();
   }
 });
+
+it("projects a reset notice on real Design start and retains the versioned run on reopen", async () => {
+  const { RunStore } = await import("../src/run-store.ts");
+  const { resolveStateRoot } = await import("../src/state-root.ts");
+  const root = mkdtempSync(path.join(tmpdir(), "cadence-reset-wiring-"));
+  roots.push(root);
+  const stateHome = mkdtempSync(path.join(tmpdir(), "cadence-reset-state-"));
+  roots.push(stateHome);
+  vi.stubEnv("XDG_STATE_HOME", stateHome);
+  const state = resolveStateRoot({
+    consumerRoot: root,
+    xdgStateHome: stateHome,
+  });
+  RunStore.open(state).close();
+  const context = {
+    cwd: root,
+    modelRegistry: {
+      getProvider: () => undefined,
+      getApiKeyAndHeaders: async () => ({ ok: false as const }),
+    },
+  };
+  let service = openPackageWorkflowService(context);
+  const request = {
+    operation: "start",
+    operationId: "reset-start",
+    requirement: "Verify version reset without touching repository files",
+  };
+  let runId: unknown;
+  try {
+    const result = await service.executeDesign(request);
+    runId = result.runId;
+    expect(result).toMatchObject({
+      state: "paused",
+      packageStateReset: {
+        reason: "unversioned-store",
+        previousVersion: null,
+        backupPath: expect.any(String),
+      },
+    });
+    expect(() => openPackageWorkflowService(context)).toThrow(
+      "package-state-in-use",
+    );
+  } finally {
+    await service.close();
+  }
+  service = openPackageWorkflowService(context);
+  try {
+    const result = await service.executeDesign(request);
+    expect(result.runId).toBe(runId);
+    expect(result.packageStateReset).toBeUndefined();
+  } finally {
+    await service.close();
+  }
+});
+
+it("releases package ownership and the Design connection when service initialization fails", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "cadence-reset-open-failure-"));
+  roots.push(root);
+  const stateHome = mkdtempSync(
+    path.join(tmpdir(), "cadence-reset-open-failure-state-"),
+  );
+  roots.push(stateHome);
+  vi.stubEnv("XDG_STATE_HOME", stateHome);
+  vi.stubEnv("ABEL_WORK_MAX_UNITS", "invalid");
+  const context = {
+    cwd: root,
+    modelRegistry: {
+      getProvider: () => undefined,
+      getApiKeyAndHeaders: async () => ({ ok: false as const }),
+    },
+  };
+  expect(() => openPackageWorkflowService(context)).toThrow(
+    "verification-host-limit-invalid",
+  );
+  vi.stubEnv("ABEL_WORK_MAX_UNITS", "512");
+  await openPackageWorkflowService(context).close();
+});
