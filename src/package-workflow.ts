@@ -171,6 +171,9 @@ function openPreparedPackageWorkflowService(
                   (phase) => phase.verification,
                 ),
                 task.affectedVerification,
+                ...(task.baselineVerification
+                  ? [task.baselineVerification]
+                  : []),
                 task.repairVerification,
               ]),
               plan.verification.baseline.fullSuite,

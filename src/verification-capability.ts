@@ -11,6 +11,7 @@ import {
   type StructuredVerificationContract,
   VERIFICATION_CONFIGURATION_PATHS,
   type VerificationAdapterCode,
+  type VerificationInputObservation,
   validateVerificationContract,
   verificationBoundInputPaths,
   verificationInputPaths,
@@ -23,7 +24,7 @@ import {
   snapshotFile,
   snapshotFiles,
 } from "./file-snapshot.ts";
-import { isSafeRegularFile, observeSafePath } from "./safe-path.ts";
+import { observeSafePath } from "./safe-path.ts";
 import { verificationEnvironmentDigest } from "./verification-identity.ts";
 
 export type VerificationCapabilityDiagnostic =
@@ -38,6 +39,7 @@ export type VerificationCapabilityDiagnostic =
       code: VerificationAdapterCode;
       verificationId: string;
       message: string;
+      inputObservation?: VerificationInputObservation;
     };
 
 export type VerificationCapabilityResult =
@@ -118,10 +120,17 @@ function adapterFailure(
   verificationId: string,
   code: VerificationAdapterCode,
   message: string,
+  inputObservation?: VerificationInputObservation,
 ): VerificationCapabilityResult {
   return {
     ok: false,
-    diagnostic: { kind: "verification-adapter", code, verificationId, message },
+    diagnostic: {
+      kind: "verification-adapter",
+      code,
+      verificationId,
+      message,
+      ...(inputObservation ? { inputObservation } : {}),
+    },
   };
 }
 
@@ -1154,11 +1163,14 @@ function validateAcceptedVerificationCapability(
 ): VerificationCapabilityResult {
   if (requireInputAvailability) {
     for (const input of verificationInputPaths(verification)) {
-      if (!isSafeRegularFile(root, input)) {
+      const status = fileStatus(root, input);
+      if (status !== "regular") {
+        const inputObservation = { path: input, kind: status } as const;
         return adapterFailure(
           verification.id,
-          "input-missing",
-          `verification input ${input} is missing or unsafe`,
+          status === "absent" ? "input-missing" : "input-unsafe",
+          `verification input ${input} is ${status}`,
+          inputObservation,
         );
       }
     }

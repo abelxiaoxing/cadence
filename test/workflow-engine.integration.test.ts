@@ -517,7 +517,7 @@ describe("WorkflowEngine command authority", () => {
     } finally { await engine.close(); }
   });
 
-  it("repairs failed admission before any Worker launch and discovers the revised receipt automatically", async () => {
+  it("waits for restored integrity before admission and discovers the valid revised receipt on resume", async () => {
     const { DeliveryValidationError } = await import("../src/delivery-compiler.ts");
     class InvalidDelivery extends DeliverySource {
       broken = true;
@@ -536,22 +536,20 @@ describe("WorkflowEngine command authority", () => {
     let engine = openEngine({ consumerRoot, xdgStateHome, delivery, worker });
     try {
       const invalid = await engine.execute(command("start", change));
-      expect(invalid).toMatchObject({ state: "paused", tasks: [], continuation: { automatic: true, action: "amend" } });
+      expect(invalid).toMatchObject({ state: "paused", tasks: [] });
+      expect(invalid).not.toHaveProperty("continuation");
+      expect(invalid).not.toHaveProperty("decisionBatch");
       expect(worker.calls).toEqual([]);
       expect(invalid.resourceBudget).toBeUndefined();
       await engine.close();
       engine = openEngine({ consumerRoot, xdgStateHome, delivery, worker });
-      expect(await engine.execute(command("status", change))).toMatchObject({
-        continuation: { action: "amend" },
-      });
-      await engine.amend(change, (invalid.decisionBatch as { id: string }).id,
-        { operation: "finalize-delivery", operationId: "fixed" }, async assertAuthority => {
-          assertAuthority(); delivery.broken = false;
-          delivery.available = { deliveryRevision: 2, receiptHash: HASH_B };
-          return { revised: true };
-        });
+      expect(await engine.execute(command("status", change))).not.toHaveProperty("continuation");
+      await expect(engine.amend(change, "unproven", { operation: "finalize-delivery" },
+        async () => { throw new Error("integrity failure must not authorize mutation"); })).rejects.toThrow("amendment-batch-stale");
+      delivery.broken = false;
+      delivery.available = { deliveryRevision: 2, receiptHash: HASH_B };
       const ready = await engine.execute(command("status", change));
-      expect(ready).toMatchObject({ continuation: { owner: "parent", automatic: true, command: "resume" } });
+      expect(ready).not.toHaveProperty("continuation");
       await engine.execute(command("resume", change));
       expect(worker.calls).toEqual(["T1:red:r2:policy", "T1:green:r2:policy"]);
     } finally { await engine.close(); }
@@ -577,7 +575,6 @@ describe("WorkflowEngine command authority", () => {
   it.each([
     ["approval-needed", "unapproved-dependency-change"],
     ["paused", "needs-task-split"],
-    ["paused", "delivery-invalid"],
   ] as const)("delegates %s/%s to the parent recommendation and permits an in-stage amendment", async (kind, code) => {
     const change = `autonomous-${code}`;
     const consumerRoot = makeConsumer(change);
@@ -609,6 +606,260 @@ describe("WorkflowEngine command authority", () => {
       await expect(engine.amend(change, "stale", request, revise)).rejects.toThrow("amendment-batch-stale");
       expect(mutations).toBe(1);
     } finally { await engine.close(); }
+  });
+
+  it.each(["delivery-invalid", "input-unsafe", "input-missing", "unclassified-failure"])("does not grant amendment authority from an unproven Worker code: %s", async code => {
+    const change = `unproven-${code}`;
+    const consumerRoot = makeConsumer(change);
+    const delivery = new DeliverySource();
+    delivery.set(change, plan(change, [task("T1")]));
+    const worker = new ScriptedWorker();
+    worker.script("T1:red", [{ kind: "paused", code }]);
+    const engine = openEngine({ consumerRoot, delivery, worker });
+    try {
+      const outcome = await engine.execute(command("start", change));
+      expect(outcome).toMatchObject({ state: "paused", completed: false });
+      expect(outcome).not.toHaveProperty("continuation");
+      expect(outcome).not.toHaveProperty("decisionBatch");
+    } finally { await engine.close(); }
+  });
+
+  it("retains committed phases and work budget across a baseline-only revision and reopen", async () => {
+    const change = "baseline-only-revision";
+    const consumerRoot = makeConsumer(change);
+    const xdgStateHome = temporaryRoot(change);
+    const delivery = new DeliverySource();
+    const original = { ...task("T1"), baselineVerification: verification("baseline-old", "expected-green") };
+    delivery.set(change, plan(change, [original]));
+    const firstWorker = new ScriptedWorker();
+    firstWorker.script("T1:green", [{ kind: "paused", code: "external-unavailable" }]);
+    let engine = openEngine({ consumerRoot, xdgStateHome, delivery, worker: firstWorker });
+    const first = await engine.execute(command("start", change));
+    expect(first).toMatchObject({ tasks: [{ taskId: "T1", state: "paused", phase: "green" }] });
+    await engine.close();
+    const revised = { ...original, baselineVerification: verification("baseline-revised", "expected-green") };
+    delivery.set(change, plan(change, [revised]));
+    delivery.available = { deliveryRevision: 2, receiptHash: HASH_B };
+    const secondWorker = new ScriptedWorker();
+    engine = openEngine({ consumerRoot, xdgStateHome, delivery, worker: secondWorker });
+    try {
+      const resumed = await engine.execute(command("resume", change, { deliveryRevision: 2, receiptHash: HASH_B }));
+      expect(secondWorker.calls).toEqual(["T1:green:r1:policy"]);
+      expect(resumed.runId).toBe(first.runId);
+      expect(resumed.deliveryRevision).toBe(2);
+      expect((resumed.resourceBudget as { used: number }).used).toBe((first.resourceBudget as { used: number }).used + 1);
+      expect(resumed).toMatchObject({ tasks: [{ taskId: "T1", state: "verified" }] });
+    } finally { await engine.close(); }
+  });
+
+  it("keeps baseline recovery consumption stable across task renaming and revised deliveries", async () => {
+    const change = "baseline-rename-recovery";
+    const consumerRoot = makeConsumer(change);
+    const xdgStateHome = temporaryRoot(change);
+    const delivery = new DeliverySource();
+    const original = { ...task("T1"), baselineVerification: verification("baseline", "expected-green") };
+    delivery.set(change, plan(change, [original]));
+    let environment = HASH_A;
+    let available = false;
+    class PrerequisiteWorker extends ScriptedWorker {
+      async prepareTask(input: Record<string, any>) {
+        return available ? { kind: "prepared" as const } : {
+          kind: "paused" as const, code: "runner-missing", prerequisite: {
+            kind: "verification-prerequisite" as const, scope: "baseline-task-affected" as const, cause: "capability" as const,
+            taskId: String(input.taskId), verificationId: input.task.baselineVerification.id,
+            contractIdentity: HASH_C, originalRevisionId: HASH_B, environmentIdentity: environment,
+          },
+        };
+      }
+    }
+    const worker = new PrerequisiteWorker();
+    let engine = openEngine({ consumerRoot, xdgStateHome, delivery, worker });
+    try {
+      const first = await engine.execute(command("start", change));
+      expect(first).toMatchObject({ pause: { diagnostic: { recovery: { failures: 1 } } }, resourceBudget: { used: 0 } });
+      await engine.close();
+      const renamed = structuredClone(original);
+      renamed.taskId = "renamed";
+      renamed.baselineVerification.id = "renamed-baseline";
+      delivery.set(change, plan(change, [renamed]));
+      delivery.available = { deliveryRevision: 2, receiptHash: HASH_B };
+      engine = openEngine({ consumerRoot, xdgStateHome, delivery, worker });
+      const revised = await engine.execute(command("resume", change, { operationId: "renamed-revision", deliveryRevision: 2, receiptHash: HASH_B }));
+      expect(revised).toMatchObject({ runId: first.runId, deliveryRevision: 2, tasks: [{ taskId: "renamed" }], pause: { diagnostic: { recovery: { failures: 1 } } }, resourceBudget: { used: 0 } });
+      environment = HASH_C;
+      const changed = await engine.execute(command("resume", change, { operationId: "changed-prerequisite" }));
+      expect(changed).toMatchObject({ recovery: { attempts: 2, exhausted: true }, resourceBudget: { used: 0 } });
+      available = true;
+      const exhausted = await engine.execute(command("resume", change, { operationId: "capability-after-exhaustion" }));
+      expect(exhausted).toMatchObject({ recovery: { attempts: 2, exhausted: true }, resourceBudget: { used: 0 } });
+      expect(worker.calls).toEqual([]);
+      available = false;
+      const grant = (exhausted.recovery as { additionalAttempt: Record<string, unknown> }).additionalAttempt;
+      const probed = await engine.execute(command("resume", change, { operationId: "baseline-grant", recovery: grant }));
+      const nextGrant = (probed.recovery as { additionalAttempt: Record<string, unknown> }).additionalAttempt;
+      expect(nextGrant.failureSequence).not.toBe(grant.failureSequence);
+      expect(worker.calls).toEqual([]);
+      await expect(engine.execute(command("resume", change, { operationId: "replayed-baseline-grant", recovery: grant }))).rejects.toThrow("recovery-request-stale");
+      available = true;
+      const recovered = await engine.execute(command("resume", change, { operationId: "restored-baseline-grant", recovery: nextGrant }));
+      expect(recovered).toMatchObject({ resourceBudget: { used: 2 }, tasks: [{ taskId: "renamed", state: "verified" }] });
+    } finally { await engine.close(); }
+  });
+
+  it("does not let one baseline owner exhaust a separate task with the same verifier", async () => {
+    const change = "separate-baseline-owners";
+    const consumerRoot = makeConsumer(change);
+    const delivery = new DeliverySource();
+    const firstTask = { ...task("T1"), baselineVerification: verification("baseline", "expected-green") };
+    const secondTask = structuredClone(firstTask);
+    secondTask.taskId = "T2";
+    secondTask.phases.red.write = ["T2.txt"];
+    secondTask.phases.green.write = ["T2.txt"];
+    delivery.set(change, plan(change, [firstTask, secondTask]));
+    let changed = false;
+    class OwnerWorker extends ScriptedWorker {
+      async prepareTask(input: Record<string, any>) {
+        if (changed && input.taskId === "T2") return { kind: "prepared" as const };
+        return { kind: "paused" as const, code: "runner-missing", prerequisite: {
+          kind: "verification-prerequisite" as const, scope: "baseline-task-affected" as const, cause: "capability" as const,
+          taskId: String(input.taskId), verificationId: input.task.baselineVerification.id,
+          contractIdentity: HASH_C, originalRevisionId: HASH_B, environmentIdentity: changed ? HASH_C : HASH_A,
+        } };
+      }
+    }
+    const worker = new OwnerWorker();
+    const engine = openEngine({ consumerRoot, delivery, worker });
+    try {
+      await engine.execute(command("start", change));
+      expect(worker.calls).toEqual([]);
+      changed = true;
+      const resumed = await engine.execute(command("resume", change));
+      expect(worker.calls).toEqual(["T2:red:r1:policy", "T2:green:r1:policy"]);
+      expect(resumed).toMatchObject({ state: "paused", completed: false, recovery: { exhausted: true, attempts: 2 }, resourceBudget: { used: 2 }, tasks: [{ taskId: "T1", state: "paused" }, { taskId: "T2", state: "verified" }] });
+    } finally { await engine.close(); }
+  });
+
+  it("keeps independent work active and does not reserve Worker budget for an unavailable task baseline", async () => {
+    const change = "local-baseline-admission";
+    const consumerRoot = makeConsumer(change);
+    const delivery = new DeliverySource();
+    delivery.set(change, plan(change, [
+      task("T1", { verificationLock: "one" }),
+      task("T2", { verificationLock: "two" }),
+      task("T3", { dependsOn: ["T1"], verificationLock: "three" }),
+    ]));
+    let started!: () => void;
+    const active = new Promise<void>(resolve => { started = resolve; });
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    class BaselineWorker extends ScriptedWorker {
+      async prepareTask(input: Record<string, unknown>) {
+        return input.taskId === "T1"
+          ? { kind: "paused" as const, code: "runner-missing" }
+          : { kind: "prepared" as const };
+      }
+      override async runAttempt(input: Record<string, unknown>): Promise<AttemptOutcome> {
+        if (input.taskId === "T2" && input.phase === "red") { started(); await held; }
+        return super.runAttempt(input);
+      }
+    }
+    const worker = new BaselineWorker();
+    const engine = openEngine({ consumerRoot, delivery, worker });
+    const running = engine.execute(command("start", change));
+    try {
+      await active;
+      const live = await engine.execute(command("status", change));
+      expect(live).toMatchObject({ state: "running", completed: false });
+      release();
+      const paused = await running;
+      expect(paused).toMatchObject({ state: "paused", completed: false, resourceBudget: { used: 2 } });
+      expect(worker.calls).toEqual(["T2:red:r1:policy", "T2:green:r1:policy"]);
+      const resumed = await engine.execute(command("resume", change));
+      expect(resumed).toMatchObject({ state: "paused", completed: false, resourceBudget: { used: 2 } });
+      expect(worker.calls).toEqual(["T2:red:r1:policy", "T2:green:r1:policy"]);
+    } finally { release(); await running; await engine.close(); }
+  });
+
+  it("keeps preparing task conflicts reserved when an earlier dependent becomes runnable", async () => {
+    const change = "preparing-conflict-refill";
+    const consumerRoot = makeConsumer(change);
+    const delivery = new DeliverySource();
+    delivery.set(change, plan(change, [
+      task("A", { dependsOn: ["C"], write: "shared.txt", verificationLock: "a" }),
+      task("C", { write: "producer.txt", verificationLock: "c" }),
+      task("B", { write: "shared.txt", verificationLock: "b" }),
+    ]));
+    let prepared!: () => void;
+    const preparing = new Promise<void>(resolve => { prepared = resolve; });
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const preparingTasks: string[] = [];
+    class PreparingWorker extends ScriptedWorker {
+      async prepareTask(input: Record<string, unknown>) {
+        preparingTasks.push(String(input.taskId));
+        if (input.taskId === "B" && input.phase === "red") { prepared(); await held; }
+        return { kind: "prepared" as const };
+      }
+    }
+    const worker = new PreparingWorker();
+    const engine = openEngine({ consumerRoot, delivery, worker });
+    const running = engine.execute(command("start", change));
+    try {
+      await preparing;
+      await expect.poll(async () => {
+        const status = await engine.execute(command("status", change));
+        return (status.tasks as { taskId: string; state: string }[]).find(row => row.taskId === "C")?.state;
+      }).toBe("verified");
+      expect(preparingTasks).not.toContain("A");
+      expect(worker.calls).toEqual(["C:red:r1:policy", "C:green:r1:policy"]);
+      release();
+      await running;
+      expect(worker.calls).toEqual(["C:red:r1:policy", "C:green:r1:policy", "B:red:r1:policy", "B:green:r1:policy", "A:red:r1:policy", "A:green:r1:policy"]);
+    } finally { release(); await running; await engine.close(); }
+  });
+
+  it.each(["cancel", "close"] as const)("settles parallel preparation before %s without launching or reserving Worker work", async control => {
+    const change = `preparation-${control}`;
+    const consumerRoot = makeConsumer(change);
+    const delivery = new DeliverySource();
+    delivery.set(change, plan(change, [task("T1", { verificationLock: "one" }), task("T2", { verificationLock: "two" })]));
+    let started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let aborted!: () => void;
+    const cancellation = new Promise<void>(resolve => { aborted = resolve; });
+    let preparations = 0;
+    let settledPreparations = 0;
+    class PreparingWorker extends ScriptedWorker {
+      async prepareTask(input: Record<string, unknown>) {
+        (input.signal as AbortSignal).addEventListener("abort", () => aborted(), { once: true });
+        preparations++;
+        if (preparations === 2) started();
+        await held;
+        settledPreparations++;
+        return { kind: "prepared" as const };
+      }
+    }
+    const worker = new PreparingWorker();
+    const engine = openEngine({ consumerRoot, delivery, worker });
+    const running = engine.execute(command("start", change));
+    let stopping: Promise<unknown> | undefined;
+    try {
+      await ready;
+      let stopped = false;
+      stopping = Promise.resolve(control === "close" ? engine.close() : engine.execute(command("cancel", change))).then(value => { stopped = true; return value; });
+      await cancellation;
+      expect(stopped).toBe(false);
+      expect(settledPreparations).toBe(0);
+      release();
+      const stoppedResult = await stopping;
+      const result = await running;
+      if (control === "cancel") expect(stoppedResult).toMatchObject({ tasks: [{ state: "paused" }, { state: "paused" }], resourceBudget: { used: 0 } });
+      expect(settledPreparations).toBe(2);
+      expect(worker.calls).toEqual([]);
+      expect(result).toMatchObject({ state: "paused", completed: false, resourceBudget: { used: 0 } });
+    } finally { release(); await stopping; await running; await engine.close(); }
   });
 
   it("bounds failed automatic amendment work across restart without spending Worker work", async () => {
@@ -1819,6 +2070,73 @@ describe("WorkflowEngine command authority", () => {
     } finally { await engine.close(); }
   });
 
+  it("refills a settled task slot while its original siblings remain active", async () => {
+    const change = "continuous-refill";
+    const consumerRoot = makeConsumer(change);
+    const delivery = new DeliverySource();
+    delivery.set(change, plan(change, Array.from({ length: 6 }, (_, i) => task(`T${i}`, { verificationLock: `lock-${i}` }))));
+    const barrier = () => {
+      let release!: () => void;
+      const promise = new Promise<void>(resolve => { release = resolve; });
+      return { promise, release };
+    };
+    const saturated = barrier();
+    const fast = barrier();
+    const slow = barrier();
+    const refilled = barrier();
+    const events: string[] = [];
+    let active = 0;
+    let peak = 0;
+    class RefillWorker extends ScriptedWorker {
+      override async runAttempt(input: Record<string, unknown>): Promise<AttemptOutcome> {
+        const id = String(input.taskId);
+        const phase = String(input.phase);
+        events.push(`start:${id}:${phase}`);
+        active++;
+        peak = Math.max(peak, active);
+        try {
+          if (phase === "red") {
+            if (id === "T3") { saturated.release(); await fast.promise; }
+            else if (["T0", "T1", "T2"].includes(id)) await slow.promise;
+            else if (id === "T4") refilled.release();
+          }
+          return committed(phase);
+        } finally { active--; events.push(`settled:${id}:${phase}`); }
+      }
+    }
+    const engine = openEngine({ consumerRoot, delivery, worker: new RefillWorker() });
+    const running = engine.execute(command("start", change));
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await saturated.promise;
+      const queued = await engine.execute(command("status", change));
+      expect(queued.queue).toEqual([
+        { taskId: "T4", position: 1, reason: "capacity" },
+        { taskId: "T5", position: 2, reason: "capacity" },
+      ]);
+      fast.release();
+      // The deadline only bounds a deadlock; ordering is proven by held barriers.
+      await Promise.race([
+        refilled.promise,
+        new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error("released slot did not refill while siblings were held")), 1500); }),
+      ]);
+      expect(events).toContain("settled:T3:green");
+      expect(events).not.toContain("settled:T0:red");
+      expect(events).not.toContain("settled:T1:red");
+      expect(events).not.toContain("settled:T2:red");
+      expect(peak).toBe(4);
+      slow.release();
+      const result = await running;
+      expect((result.tasks as { state: string }[]).every(row => row.state === "verified")).toBe(true);
+      expect(peak).toBe(4);
+    } finally {
+      if (deadline) clearTimeout(deadline);
+      fast.release(); slow.release();
+      await running;
+      await engine.close();
+    }
+  });
+
   it("shares execution capacity across concurrent runs without starving queued work", async () => {
     const consumerRoot = makeConsumer("multi-run-capacity");
     const delivery = new DeliverySource();
@@ -1838,6 +2156,50 @@ describe("WorkflowEngine command authority", () => {
       expect(peak).toBe(4);
       for (const result of results) expect((result.tasks as { state: string }[]).every(row => row.state === "verified")).toBe(true);
     } finally { await engine.close(); }
+  });
+
+  it("wakes a run with active siblings when another run releases shared capacity", async () => {
+    const consumerRoot = makeConsumer("capacity-events");
+    const delivery = new DeliverySource();
+    delivery.set("foreign", plan("foreign", ["F0", "F1", "F2"].map(id => task(id, { verificationLock: id }))));
+    delivery.set("local", plan("local", ["A0", "A1"].map(id => task(id, { verificationLock: id }))));
+    const barrier = () => { let release!: () => void; const promise = new Promise<void>(resolve => { release = resolve; }); return { promise, release }; };
+    const foreignStarted = barrier(); const localStarted = barrier(); const refilled = barrier();
+    const fast = barrier(); const slow = barrier();
+    const events: string[] = [];
+    class CapacityWorker extends ScriptedWorker {
+      override async runAttempt(input: Record<string, unknown>): Promise<AttemptOutcome> {
+        const id = String(input.taskId);
+        if (input.phase === "red") {
+          events.push(`start:${id}`);
+          if (id === "F2") foreignStarted.release();
+          if (id === "A0") localStarted.release();
+          if (id === "A1") refilled.release();
+          await (id === "F0" ? fast.promise : slow.promise);
+          events.push(`settled:${id}`);
+        }
+        return committed(String(input.phase));
+      }
+    }
+    const engine = openEngine({ consumerRoot, delivery, worker: new CapacityWorker() });
+    const foreign = engine.execute(command("start", "foreign", { operationId: "start-foreign" }));
+    let local: Promise<EngineOutcome> | undefined;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await foreignStarted.promise;
+      local = engine.execute(command("start", "local", { operationId: "start-local" }));
+      await localStarted.promise;
+      fast.release();
+      await Promise.race([refilled.promise, new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error("shared release did not wake the active run")), 1500); })]);
+      expect(events).not.toContain("settled:A0");
+      expect(events).not.toContain("settled:F1");
+      expect(events).not.toContain("settled:F2");
+    } finally {
+      if (deadline) clearTimeout(deadline);
+      fast.release(); slow.release();
+      await Promise.all([foreign, local]);
+      await engine.close();
+    }
   });
 
   it("persists FIFO conflicts and committed sibling work across restart", async () => {

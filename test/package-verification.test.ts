@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { BubblewrapIsolationBackend } from "../src/isolation-backend.ts";
-import { executePackageVerification } from "../src/package-verification.ts";
+import {
+  changeVerificationResult,
+  executePackageVerification,
+  phaseVerificationResult,
+} from "../src/package-verification.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -11,6 +15,60 @@ afterEach(() => {
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
 });
+
+it.each([
+  ["absent", "input-missing"],
+  ["unsafe", "input-unsafe"],
+] as const)(
+  "preserves a structured %s input observation through verification adapters",
+  async (kind, code) => {
+    const root = mkdtempSync(path.join(tmpdir(), "cadence-input-test-"));
+    roots.push(root);
+    if (kind === "unsafe") {
+      const outsideRoot = mkdtempSync(
+        path.join(tmpdir(), "cadence-outside-input-test-"),
+      );
+      roots.push(outsideRoot);
+      const outside = path.join(outsideRoot, "future.test.js");
+      writeFileSync(outside, "export {};\n");
+      symlinkSync(outside, path.join(root, "future.test.js"));
+    }
+    const result = await executePackageVerification({
+      root,
+      dependencyOwner: path.resolve(import.meta.dirname, ".."),
+      verification: {
+        kind: "vitest",
+        id: "input-observation",
+        runner: { kind: "local-binary", executable: "vitest" },
+        testFiles: ["future.test.js"],
+        args: [],
+        minTests: 1,
+        classification: "expected-green",
+      },
+      signal: new AbortController().signal,
+    });
+    const expected = {
+      ok: false,
+      code,
+      inputObservation: { path: "future.test.js", kind },
+    };
+    expect(result).toMatchObject({
+      kind: "unavailable",
+      category: "adapter",
+      verificationId: "input-observation",
+      code,
+      inputObservation: expected.inputObservation,
+    });
+    expect(phaseVerificationResult(result)).toMatchObject({
+      ...expected,
+      kind: "paused",
+    });
+    expect(changeVerificationResult(result)).toMatchObject({
+      ...expected,
+      kind: "verification-adapter",
+    });
+  },
+);
 
 it.each([
   "missing",

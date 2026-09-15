@@ -4115,7 +4115,7 @@ describe("durable verification lifecycle", () => {
     },
   });
 
-  it("rebases revised tracking bytes and migrates retained verification baselines", async () => {
+  it("rebases revised tracking bytes while retaining the original verification baseline", async () => {
     const module = await import("../src/workflow-engine.ts");
     const fixture = lifecycleFixture("approved-revision-rebase");
     const plan1 = fixture.plan as unknown as ImplementPlan;
@@ -4242,16 +4242,19 @@ describe("durable verification lifecycle", () => {
       ),
       { readOnly: true },
     );
-    const baselineRow = ledgerDatabase
+    const baselineRows = ledgerDatabase
       .prepare(
-        "SELECT fact_json FROM durable_facts WHERE fact_key = 'verification-baseline'",
+        "SELECT fact_json FROM durable_facts WHERE fact_key LIKE 'verification-baseline%-o-%'",
       )
-      .get() as { fact_json: string };
+      .all() as Array<{ fact_json: string }>;
     ledgerDatabase.close();
-    expect(JSON.parse(baselineRow.fact_json)).toMatchObject({
-      revisionId: (resumed.privateData as { baselineRevisionId: string })
-        .baselineRevisionId,
-    });
+    expect(baselineRows).toHaveLength(2);
+    for (const row of baselineRows) {
+      expect(JSON.parse(row.fact_json)).toMatchObject({
+        revisionId: (first.privateData as { baselineRevisionId: string })
+          .baselineRevisionId,
+      });
+    }
     await engine.close();
   });
 
@@ -5274,6 +5277,8 @@ describe("durable verification lifecycle", () => {
         }),
       },
       routePolicy: policy(),
+      verificationEnvironment: async () =>
+        (environmentReady ? "b" : "a").repeat(64),
       proposeCandidate: async (input: Record<string, unknown>) => {
         workerCalls += 1;
         (input.onHeaders as () => void)();
@@ -5331,6 +5336,144 @@ describe("durable verification lifecycle", () => {
     ).resolves.toMatchObject({ state: "completed", completed: true });
     expect(workerCalls).toBe(2);
     await engine.close();
+  });
+
+  it("offers a proof-bound baseline amendment and suppresses unchanged failures across reopen", async () => {
+    const module = await import("../src/workflow-engine.ts");
+    const fixture = lifecycleFixture("future-baseline-recovery");
+    const initial = fixture.plan as unknown as ImplementPlan;
+    const task = initial.tasks[0]!;
+    task.baselineVerification = {
+      kind: "static-check",
+      id: "future-baseline",
+      runner: { kind: "node", script: "future.mjs" },
+      args: [],
+      classification: "expected-green",
+    };
+    task.phases.red.write.push("future.mjs");
+    initial.outputs.push({
+      id: "future-script",
+      path: "future.mjs",
+      producer: { taskId: task.taskId, phase: "red" },
+      postcondition: "regular-file",
+    });
+    const revised = structuredClone(initial);
+    revised.tasks[0]!.baselineVerification = structuredClone(
+      initial.verification.baseline.fullSuite,
+    );
+    let revision = 1;
+    let failedChecks = 0;
+    let workerCalls = 0;
+    const options = {
+      consumerRoot: fixture.consumerRoot,
+      stateRoot: fixture.stateRoot,
+      deliverySource: {
+        discoverLatest: async () => ({
+          deliveryRevision: revision,
+          receiptHash: String(revision).repeat(64),
+        }),
+        load: async () => ({
+          gate: "gate-b" as const,
+          revision,
+          receiptHash: String(revision).repeat(64),
+          plan: revision === 1 ? initial : revised,
+        }),
+      },
+      routePolicy: policy(),
+      verificationEnvironment: async () => "e".repeat(64),
+      proposeCandidate: async () => {
+        workerCalls++;
+        return { kind: "paused" as const, code: "prepared-worker-reached" };
+      },
+      verifyPhase: async (input: { phase: string }) =>
+        verifiedPhase(input.phase),
+      verifyChange: async (input: {
+        scope?: string;
+        verification?: { id: string };
+      }) => {
+        if (
+          input.scope === "baseline-task-affected" &&
+          input.verification?.id === "future-baseline"
+        ) {
+          failedChecks++;
+          return {
+            ok: false as const,
+            kind: "verification-adapter" as const,
+            code: "input-missing",
+          };
+        }
+        return {
+          ok: true as const,
+          exitCode: 0 as const,
+          classification: "expected-green",
+        };
+      },
+    };
+    let engine = module.openDurableWorkflowEngine(options);
+    const command = (
+      name: "start" | "resume" | "status",
+      operationId: string,
+    ) => ({
+      command: name,
+      stage: "abel-implement",
+      change: fixture.change,
+      ...(name === "status" ? {} : { operationId }),
+    });
+    try {
+      const first = await engine.execute(command("start", "future-start"));
+      expect(first).toMatchObject({
+        state: "paused",
+        completed: false,
+        resourceBudget: { used: 0 },
+        blockers: [
+          {
+            prerequisite: {
+              cause: "future-output",
+              input: { path: "future.mjs", kind: "absent" },
+            },
+          },
+        ],
+        continuation: { action: "amend", automatic: true },
+        decisionBatch: { requiredGates: ["gate-b"] },
+      });
+      expect(failedChecks).toBe(1);
+      expect(workerCalls).toBe(0);
+      await engine.close();
+      engine = module.openDurableWorkflowEngine(options);
+      const unchanged = await engine.execute(command("resume", "same-future"));
+      expect(unchanged.runId).toBe(first.runId);
+      expect(unchanged.decisionBatch).toEqual(first.decisionBatch);
+      expect(failedChecks).toBe(1);
+      expect(workerCalls).toBe(0);
+      await engine.amend(
+        fixture.change,
+        (unchanged.decisionBatch as { id: string }).id,
+        { operation: "compile-plan", operationId: "baseline-repaired" },
+        async (assertAuthority) => {
+          assertAuthority();
+          revision = 2;
+          return { revised: true };
+        },
+      );
+      const available = await engine.execute(command("status", "available"));
+      expect(available).toMatchObject({
+        continuation: { automatic: true, command: "resume" },
+      });
+      const resumed = await engine.execute(
+        command("resume", "resume-repaired"),
+      );
+      expect(resumed).toMatchObject({
+        runId: first.runId,
+        deliveryRevision: 2,
+        state: "paused",
+        completed: false,
+        pause: { code: "prepared-worker-reached" },
+      });
+      expect(workerCalls).toBe(1);
+      expect(failedChecks).toBe(1);
+    } finally {
+      await engine.close();
+    }
   });
 
   it("reopens the owning task and repairs a cumulative affected failure without returning to Design", async () => {

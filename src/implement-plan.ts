@@ -14,6 +14,8 @@ export interface PlanTaskDraft extends Omit<ImplementTaskBoundary, "phases"> {
     green: PhaseBoundary;
     refactor?: PhaseBoundary;
   };
+  /** Explicit original-revision check. Absent only in retained legacy plans. */
+  baselineVerification?: StructuredVerificationContract;
   affectedVerification: StructuredVerificationContract;
   repairVerification: StructuredVerificationContract;
 }

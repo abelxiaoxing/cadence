@@ -68,6 +68,37 @@ it("projects repeatable complete batches without mutating facts or exposing raw 
   expect(JSON.stringify(first)).not.toMatch(/private-plan|untrusted-stored/);
 });
 
+it.each([
+  "delivery-gate-a-hash-mismatch",
+  "delivery-plan-binding-invalid",
+  "delivery-finalization-proof-invalid",
+  "delivery-verification-closure-invalid",
+])(
+  "does not turn an unproven or integrity-invalid delivery into amendment authority: %s",
+  (diagnostic) => {
+    const input = facts();
+    const status = projectWorkflowStatus({
+      ...input,
+      projection: { ...input.projection, pauseCode: "delivery-invalid" },
+      rows: [],
+      engineRun: {
+        current_revision: 1,
+        baseline_workspace_revision: null,
+        current_workspace_revision: null,
+        cleanup_state: "retained",
+        route_id: null,
+        route_fingerprint: null,
+        transaction_id: null,
+        verification_json: null,
+        delivery_diagnostics_json: JSON.stringify([diagnostic]),
+        next_queue_position: 1,
+      },
+    });
+    expect(status).not.toHaveProperty("continuation");
+    expect(status).not.toHaveProperty("decisionBatch");
+  },
+);
+
 it("preserves the decision identity while exhausted budgets remove automatic continuation", () => {
   const input = facts();
   const before = projectWorkflowStatus(input);

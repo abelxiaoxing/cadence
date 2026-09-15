@@ -93,6 +93,9 @@
           }
         }
       },
+      "baselineVerification": {
+        "use": "add-test"
+      },
       "affectedVerification": {
         "use": "add-test"
       },
@@ -195,6 +198,33 @@
             ]
           }
         }
+      },
+      "baselineVerification": {
+        "kind": "steps",
+        "id": "double-affectedVerification",
+        "classification": "expected-green",
+        "steps": [
+          {
+            "kind": "static-check",
+            "id": "double-green-add-affectedVerification",
+            "runner": {
+              "kind": "node",
+              "script": "test/add.test.mjs"
+            },
+            "args": [],
+            "classification": "expected-green"
+          },
+          {
+            "kind": "static-check",
+            "id": "double-green-own-affectedVerification",
+            "runner": {
+              "kind": "node",
+              "script": "test/double.test.mjs"
+            },
+            "args": [],
+            "classification": "expected-green"
+          }
+        ]
       },
       "affectedVerification": {
         "kind": "steps",

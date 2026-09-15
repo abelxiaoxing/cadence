@@ -79,8 +79,12 @@ Discovery never admits the delivery: `resume` still performs the full artifact, 
 
 ## Execution and verification
 
-Before any candidate, the engine records target-contract, task-affected, and full-suite baselines with normalized failure identities.
+Before a task's candidate, the engine records that task's explicit original-baseline contract and the global full-suite baseline with normalized failure identities.
+Task baselines are collected on demand and cached by contract, original revision, owner and environment; a local unavailable baseline does not require unrelated tasks to stop.
+The immutable original snapshot remains the source after amendments.
+Later main-workspace additions cannot repair its missing inputs.
 A pre-existing failure remains separate and never satisfies Red or becomes evidence that this change caused it.
+Only comparable verification obligations can reuse failure attribution; new tests remain part of affected, cumulative and final acceptance.
 
 For each ready behavior task the engine runs:
 
@@ -90,6 +94,9 @@ For each ready behavior task the engine runs:
 4. Parent-owned task completion and exactly one `tasks.md` checkbox update in the private cumulative revision.
 
 Independent tasks may merge only after currentness and declared conflict checks.
+The engine shares four execution slots across runs and refills them after individual task settlement, including capacity released by another run.
+Dependencies consume only completed producer tasks and valid outputs.
+Cancellation and close wait for every launched operation to settle before resources are released.
 Conflicting tasks remain durably queued without spending a Worker attempt.
 Workers make one atomic structured-patch submission whose operations stay within their approved write/delete sets; unused authorized paths need not be touched.
 The trusted submit tool validates exact replacements and file operations, generates the unified diff, and owns internal chunking, hashes, byte limits, and sealing; Workers never hand-author hunk ranges or write the workspace, AGENTS, task state, or the main repository.
@@ -111,10 +118,13 @@ Ordinary failures stay inside this Implement run:
   A run shares one cumulative work budget: 24 plus three units per largest admitted phase count, bounded by the host limit captured at run start (default 512).
   Recompiling, renaming or returning to a previous plan size never adds credit; a genuinely larger admitted decomposition may increase capacity without refunding consumption.
   Execution reserves work durably before launch, including nested repair proposals; restart and post-launch cancellation do not refund consumed work.
-- `environment` or `verification-adapter`: the executor pauses without speculative edits.
+- `environment` or `verification-adapter`: the affected task pauses while safe independent work continues; required global verification remains a completion barrier.
   The parent inspects local diagnostics and restores available prerequisites using existing authorized capabilities, then resumes; baseline facts and completed phases are reused.
   Do not request user input for a prerequisite the parent can restore.
   Missing external credentials or unavailable services are reported only after local alternatives have been checked.
+  A retained baseline prerequisite identifies its owner, original revision, input/producer or capability, and minimum recovery condition.
+  Repeating resume with the same failure prerequisites does not repeat the failed verification or launch a Worker.
+  A changed observable environment or valid revised contract permits bounded recovery within the retained budgets.
 - `pre-existing`: keep as baseline evidence.
   It does not authorize a code change and does not fail completion unless the change worsens it.
 - `introduced` in a task-affected contract: reopen the owning task as `repairable`, perform the minimum bounded repair inside its approved paths, record `repair-verified`, and re-run attribution automatically.
@@ -166,7 +176,10 @@ Retain the Implement stage and original run.
 `decisionBatch.continuation` supplies the exact `action: "amend"`, change, and batchId for the narrow private artifact revision channel.
 After selecting the recommended solution, use that envelope with a `request` containing the existing closed Design artifact operations: start the same change, retain inherited decisions, record the parent-selected changes, write the required change artifacts, compile, and finalize.
 This is implementation delegation from the accepted Design, not a fabricated new user answer.
-The same channel is available for the allowlisted `delivery-invalid`, `needs-task-split`, and `task-split-needed` technical pauses; these do not need a user decision or a fabricated approval-needed classification.
+The same channel is available for `needs-task-split`, `task-split-needed`, and original-baseline defects proven by parent-owned prerequisite evidence and included in the current batch.
+A bare `delivery-invalid` or `input-missing` code supplies no amendment authority.
+Unsafe paths, unknown errors, receipt/hash and currentness failures require restoration of trusted prerequisites.
+Baseline-only amendments retain compatible committed phases and task evidence, and invalidate only incompatible baseline/attribution evidence; they preserve the run and budgets.
 Each run permits 64 mutating amendment attempts in a dedicated persistent budget.
 Failed writes/compilations consume that budget, successful operation replay is free, and restart or a new batch does not replenish it.
 Read-only status/preflight does not consume it.

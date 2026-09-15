@@ -53,6 +53,7 @@ export interface PlanTaskInput
     PlanTaskDraft,
     | "phases"
     | "impactClosure"
+    | "baselineVerification"
     | "affectedVerification"
     | "repairVerification"
     | "agents"
@@ -64,6 +65,7 @@ export interface PlanTaskInput
     refactor?: PlanPhaseDraft;
   };
   affectedVerification: DraftVerification;
+  baselineVerification?: DraftVerification;
   repairVerification: DraftVerification;
   agents: Omit<PlanTaskDraft["agents"], "managedOnly"> & { managedOnly?: true };
   impactClosure: Omit<PlanTaskDraft["impactClosure"], "relatedTests"> & {
@@ -324,6 +326,13 @@ export function expandPlanDraft(value: unknown): unknown {
       }
     for (const field of ["affectedVerification", "repairVerification"])
       task[field] = expand(task[field], field, "expected-green", taskId);
+    if (task.baselineVerification !== undefined)
+      task.baselineVerification = expand(
+        task.baselineVerification,
+        "baselineVerification",
+        "expected-green",
+        taskId,
+      );
   }
   if (isRecord(draft.verification)) {
     const verification = draft.verification;

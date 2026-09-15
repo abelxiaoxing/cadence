@@ -1,9 +1,4 @@
-import {
-  ChangeVerification,
-  parseVerificationBaseline,
-  sha256Bytes,
-  verificationBaselineFact,
-} from "./change-verification.ts";
+import { ChangeVerification, sha256Bytes } from "./change-verification.ts";
 import type {
   DurableExecutionResources,
   DurablePhaseFact,
@@ -358,7 +353,16 @@ class DurableWorkflowComposition
     const currentRevisionId = input.currentWorkspaceRevisionId;
     if (!baselineRevisionId || !currentRevisionId)
       throw new Error("workflow-workspace-revision-unavailable");
-    workspaces.getRevision(baselineRevisionId);
+    let originalBaseline = workspaces.getRevision(baselineRevisionId);
+    const ancestors = new Set<string>();
+    while (originalBaseline.parentRevisionId !== null) {
+      if (ancestors.has(originalBaseline.revisionId))
+        throw new Error("workflow-baseline-revision-conflict");
+      ancestors.add(originalBaseline.revisionId);
+      originalBaseline = workspaces.getRevision(
+        originalBaseline.parentRevisionId,
+      );
+    }
     workspaces.getRevision(currentRevisionId);
     let resources!: DurableRunResources;
     const transactions = new ApplyTransaction({
@@ -385,11 +389,13 @@ class DurableWorkflowComposition
       ledgers: new Map(),
       transactions,
       baselineRevisionId,
+      originalBaselineRevisionId: originalBaseline.revisionId,
       currentRevisionId,
       mergeTail: Promise.resolve(),
       baselinePromises: new Map(),
       closed: false,
     };
+    resources.baselineLedger = this.#ledger(resources, 1);
     this.#runs.set(input.runId, resources);
     return resources;
   }
@@ -729,37 +735,10 @@ class DurableWorkflowComposition
       }
       if (!grew) break;
     }
-    if (hasVerificationLifecycle(input.plan)) {
-      const retainedRevisions = new Set(
-        input.tasks
-          .filter((task) => !invalidated.has(task.taskId))
-          .map((task) => task.deliveryRevision),
-      );
-      for (const deliveryRevision of retainedRevisions) {
-        const ledger = this.#ledger(resources, deliveryRevision);
-        const stored = ledger.durableFact(
-          this.#verification.baselineFactKey(resources),
-        );
-        resources.baselinePromises.delete(deliveryRevision);
-        if (stored === undefined) continue;
-        const baseline = parseVerificationBaseline(stored, resources.artifacts);
-        if (baseline.revisionId === expandedBaseline.revisionId) continue;
-        if (baseline.revisionId !== input.baselineRevisionId) {
-          throw new Error("workflow-verification-baseline-conflict");
-        }
-        ledger.replaceDurableFact(
-          this.#verification.baselineFactKey(resources),
-          stored,
-          verificationBaselineFact(
-            {
-              ...baseline,
-              revisionId: expandedBaseline.revisionId,
-            },
-            resources.artifacts,
-          ),
-        );
-      }
-    }
+    // Boundary expansion changes candidate/apply inputs, never the root capture
+    // or its verification observations. Their contract-bound caches revalidate
+    // only the obligations changed by this delivery.
+    resources.baselinePromises.clear();
     resources.baselineRevisionId = expandedBaseline.revisionId;
     resources.currentRevisionId = rebuilt.revisionId;
     if (hasVerificationLifecycle(input.plan)) {
@@ -931,6 +910,36 @@ class DurableWorkflowComposition
   }
   runAttempt(input: Parameters<WorkflowWorker["runAttempt"]>[0]) {
     return this.#phase.runAttempt(input);
+  }
+
+  async prepareTask(input: Parameters<WorkflowWorker["runAttempt"]>[0]) {
+    const resources = await this.#prepareResources(input, input.signal);
+    const workspace = {
+      baselineRevisionId: resources.baselineRevisionId,
+      currentWorkspaceRevisionId: resources.currentRevisionId,
+    };
+    if (hasVerificationLifecycle(input.plan)) {
+      const captured = await this.#verification.ensureVerificationBaseline({
+        resources,
+        ledger: this.#ledger(resources, input.deliveryRevision),
+        taskId: input.taskId,
+        signal: input.signal,
+      });
+      if (!captured.ok)
+        return {
+          ...captured.outcome,
+          ...workspace,
+          ...(captured.outcome.kind === "paused"
+            ? {
+                verification: {
+                  scope: "baseline" as const,
+                  attribution: "environment" as const,
+                },
+              }
+            : {}),
+        };
+    }
+    return { kind: "prepared" as const, ...workspace };
   }
   hasPendingVerification(input: Parameters<WorkflowWorker["runAttempt"]>[0]) {
     return this.#phase.hasPendingVerification(input);

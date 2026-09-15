@@ -232,8 +232,118 @@ export type WorkflowApprovalCode = ApprovalBoundaryCode | InternalApprovalCode;
 // These pauses need a new executable plan, not a new user decision. Environment,
 // integrity and cancellation codes deliberately do not grant this continuation.
 export function permitsPlanAmendment(code: string): boolean {
-  return ["delivery-invalid", "needs-task-split", "task-split-needed"].includes(
-    code,
+  return ["needs-task-split", "task-split-needed"].includes(code);
+}
+
+/** Parent-verifier facts about an original-revision obligation. */
+export interface WorkflowVerificationPrerequisite {
+  kind: "verification-prerequisite";
+  scope: "baseline-task-affected" | "baseline-full-suite";
+  cause:
+    | "future-output"
+    | "missing-input"
+    | "unsafe-input"
+    | "capability"
+    | "unknown";
+  verificationId: string;
+  contractIdentity: string;
+  originalRevisionId: string;
+  environmentIdentity: string;
+  taskId?: string;
+  input?: { path: string; kind: "absent" | "unsafe" };
+  producer?: { taskId: string; phase: "red" | "green" | "refactor" };
+}
+
+export function normalizeVerificationPrerequisite(
+  value: unknown,
+): WorkflowVerificationPrerequisite | undefined {
+  if (
+    !isRecord(value) ||
+    value.kind !== "verification-prerequisite" ||
+    !["baseline-task-affected", "baseline-full-suite"].includes(
+      String(value.scope),
+    ) ||
+    ![
+      "future-output",
+      "missing-input",
+      "unsafe-input",
+      "capability",
+      "unknown",
+    ].includes(String(value.cause)) ||
+    typeof value.verificationId !== "string" ||
+    !IDENTIFIER.test(value.verificationId) ||
+    typeof value.contractIdentity !== "string" ||
+    !SHA256.test(value.contractIdentity) ||
+    typeof value.originalRevisionId !== "string" ||
+    !SHA256.test(value.originalRevisionId) ||
+    typeof value.environmentIdentity !== "string" ||
+    !(
+      SHA256.test(value.environmentIdentity) ||
+      value.environmentIdentity === "unobserved"
+    ) ||
+    (value.taskId !== undefined &&
+      (typeof value.taskId !== "string" || !IDENTIFIER.test(value.taskId)))
+  )
+    return undefined;
+  if (
+    value.input !== undefined &&
+    (!isRecord(value.input) ||
+      !isValidRelativePath(value.input.path) ||
+      !["absent", "unsafe"].includes(String(value.input.kind)))
+  )
+    return undefined;
+  if (
+    value.producer !== undefined &&
+    (!isRecord(value.producer) ||
+      typeof value.producer.taskId !== "string" ||
+      !IDENTIFIER.test(value.producer.taskId) ||
+      !["red", "green", "refactor"].includes(String(value.producer.phase)))
+  )
+    return undefined;
+  if (
+    (value.cause === "future-output" &&
+      (!value.producer ||
+        !isRecord(value.input) ||
+        value.input.kind !== "absent")) ||
+    (value.cause === "missing-input" &&
+      (!isRecord(value.input) || value.input.kind !== "absent")) ||
+    (value.cause === "unsafe-input" &&
+      (!isRecord(value.input) || value.input.kind !== "unsafe"))
+  )
+    return undefined;
+  return {
+    kind: "verification-prerequisite",
+    scope: value.scope as WorkflowVerificationPrerequisite["scope"],
+    cause: value.cause as WorkflowVerificationPrerequisite["cause"],
+    verificationId: value.verificationId,
+    contractIdentity: value.contractIdentity,
+    originalRevisionId: value.originalRevisionId,
+    environmentIdentity: value.environmentIdentity,
+    ...(typeof value.taskId === "string" ? { taskId: value.taskId } : {}),
+    ...(isRecord(value.input)
+      ? {
+          input: {
+            path: value.input.path as string,
+            kind: value.input.kind as "absent" | "unsafe",
+          },
+        }
+      : {}),
+    ...(isRecord(value.producer)
+      ? {
+          producer: {
+            taskId: value.producer.taskId as string,
+            phase: value.producer.phase as "red" | "green" | "refactor",
+          },
+        }
+      : {}),
+  };
+}
+
+export function permitsPrerequisiteAmendment(value: unknown): boolean {
+  const fact = normalizeVerificationPrerequisite(value);
+  return (
+    fact !== undefined &&
+    ["future-output", "missing-input"].includes(fact.cause)
   );
 }
 
@@ -309,6 +419,7 @@ export type WorkflowAttemptOutcome = (
       code: string;
       untrustedCandidate?: Uint8Array;
       verification?: WorkflowVerificationStatus;
+      prerequisite?: WorkflowVerificationPrerequisite;
       contextRequest?: WorkflowContextRequest;
       retryPolicy?: WorkflowRetryPolicy;
     }
@@ -320,6 +431,12 @@ export type WorkflowAttemptOutcome = (
   };
 
 export interface WorkflowWorker {
+  /** Baseline admission before reserving Worker work; never launches a child. */
+  prepareTask?(
+    input: Parameters<WorkflowWorker["runAttempt"]>[0],
+  ): Promise<
+    ({ kind: "prepared" } & WorkflowWorkspaceFacts) | WorkflowAttemptOutcome
+  >;
   hasPendingVerification?(
     input: Parameters<WorkflowWorker["runAttempt"]>[0],
   ): Promise<boolean>;
@@ -565,13 +682,14 @@ export interface SafeAttemptDiagnostic {
   sameFailureCount?: number;
   action?: "rebind-or-revise-delivery";
   recovery?: WorkflowRecoveryFact;
+  prerequisite?: WorkflowVerificationPrerequisite;
 }
 
 export function recoveryKey(
   task: PlanTaskDraft,
   phase: string,
-  _row: EngineTaskRow,
-  _run: EngineRunRow,
+  _row?: EngineTaskRow,
+  _run?: EngineRunRow,
 ): string {
   // Keep the Red witness and the active phase's obligation across replanning.
   // Execution identities, verifier names, and wording are not progress.
@@ -595,6 +713,30 @@ export function recoveryKey(
       phase: obligation(boundary),
     }),
     phase,
+  );
+}
+
+/** Original-baseline recovery belongs to a stable execution boundary, not its label. */
+export function baselineRecoveryKey(
+  task: PlanTaskDraft,
+  phase: string,
+): string {
+  return hash(
+    "baseline-recovery-owner-v1",
+    recoveryKey(task, phase),
+    canonicalJson(
+      Object.fromEntries(
+        Object.entries(task.phases).map(([name, boundary]) => [
+          name,
+          Object.fromEntries(
+            (["read", "write", "delete"] as const).map((access) => [
+              access,
+              [...new Set(boundary[access])].sort(compareCanonicalStrings),
+            ]),
+          ),
+        ]),
+      ),
+    ),
   );
 }
 
@@ -1245,6 +1387,12 @@ export function taskConflicts(
   };
 }
 
+/** Original-baseline obligations do not change a committed candidate contract. */
+export function taskExecutionContract(task: PlanTaskDraft) {
+  const { baselineVerification: _baselineVerification, ...execution } = task;
+  return execution;
+}
+
 export function taskApprovalBoundary(
   plan: ImplementPlan,
   task: PlanTaskDraft,
@@ -1260,13 +1408,14 @@ export function taskApprovalBoundary(
   }
   // Retry limits and presentation do not invalidate verified product facts.
   if (isRecord(planBoundary.verification)) {
+    delete planBoundary.verification.baseline;
     delete planBoundary.verification.artifactCorrection;
     if (isRecord(planBoundary.verification.repair))
       delete planBoundary.verification.repair.maxAttempts;
   }
   return canonicalJson({
     plan: planBoundary,
-    task,
+    task: taskExecutionContract(task),
     outputs: plan.outputs.filter(
       (output) => output.producer.taskId === task.taskId,
     ),
@@ -1350,6 +1499,8 @@ export function deliveryBoundPaths(plan: ImplementPlan): string[] {
       bindVerification(phase.verification);
     }
     if (hasVerificationLifecycle(plan)) {
+      if (task.baselineVerification)
+        bindVerification(task.baselineVerification);
       bindVerification(task.affectedVerification);
       bindVerification(task.repairVerification);
     }

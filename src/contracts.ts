@@ -148,6 +148,7 @@ export const APPROVAL_BOUNDARY_CODES = [
 ] as const;
 export const VERIFICATION_ADAPTER_CODES = [
   "input-missing",
+  "input-unsafe",
   "local-executable-missing",
   "runner-missing",
   "script-command-mismatch",
@@ -298,8 +299,15 @@ export type VerificationObservation =
       code: string;
       verificationId: string;
       diagnostic?: VerificationFailureSummary;
+      inputObservation?: VerificationInputObservation;
     }
   | { kind: "cancelled" };
+
+/** Parent adapter observation, never a Worker assertion or an error-text guess. */
+export interface VerificationInputObservation {
+  path: string;
+  kind: "absent" | "unsafe";
+}
 
 interface VerificationBase {
   id: string;

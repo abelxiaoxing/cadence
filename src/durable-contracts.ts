@@ -1,5 +1,8 @@
 import type { ArtifactStore } from "./artifact-store.ts";
-import type { StructuredVerificationContract } from "./contracts.ts";
+import type {
+  StructuredVerificationContract,
+  VerificationInputObservation,
+} from "./contracts.ts";
 import type { ImplementPlan, PlanTaskDraft } from "./delivery-compiler.ts";
 import type { RoutePolicy, WorkerRoutePolicy } from "./route-policy.ts";
 
@@ -15,6 +18,7 @@ import type {
   WorkflowContextRequest,
   WorkflowDeliverySource,
   WorkflowRecoveryFeedback,
+  WorkflowVerificationPrerequisite,
 } from "./workflow-policy.ts";
 
 import type { WorkspaceStore } from "./workspace-store.ts";
@@ -38,6 +42,7 @@ export type DurablePhaseVerificationResult =
       ok: false;
       kind: "paused" | "retryable" | "approval-needed";
       code: string;
+      inputObservation?: VerificationInputObservation;
     };
 
 export type DurableChangeVerificationResult =
@@ -60,6 +65,7 @@ export type DurableChangeVerificationResult =
       code: string;
       failureIdentities?: string[];
       attributionReliable?: boolean;
+      inputObservation?: VerificationInputObservation;
     };
 
 export interface DurableVerificationObservation {
@@ -68,6 +74,8 @@ export interface DurableVerificationObservation {
   failureIdentities: string[];
   code?: string;
   attributionReliable?: boolean;
+  /** Code-owned comparable verification obligation, excluding display identity. */
+  contractIdentity?: string;
 }
 
 export interface DurableVerificationBaseline {
@@ -89,7 +97,11 @@ export type DurableObservedVerification =
   | {
       ok: false;
       outcome:
-        | { kind: "paused"; code: string }
+        | {
+            kind: "paused";
+            code: string;
+            prerequisite?: WorkflowVerificationPrerequisite;
+          }
         | { kind: "approval-needed"; code: string }
         | { kind: "operation-cancelled"; code: "cancelled" };
     };
@@ -175,11 +187,15 @@ export interface DurableExecutionResources {
   artifacts: ArtifactStore;
   workspaces: WorkspaceStore;
   ledgers: Map<number, TaskLedger>;
+  /** Run-shared original-baseline observations, independent of delivery revision. */
+  baselineLedger?: TaskLedger;
   baselineRevisionId: string;
+  /** Root capture before any authorized boundary expansion; immutable evidence source. */
+  originalBaselineRevisionId?: string;
   currentRevisionId: string;
   mergeTail: Promise<void>;
   verificationFact?: object;
-  baselinePromises: Map<number, Promise<DurableBaselineResult>>;
+  baselinePromises: Map<string | number, Promise<DurableBaselineResult>>;
   environmentIdentity?: string;
 }
 

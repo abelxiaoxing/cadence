@@ -57,6 +57,9 @@
           }
         }
       },
+      "baselineVerification": {
+        "use": "add-test"
+      },
       "affectedVerification": {
         "use": "add-test"
       },

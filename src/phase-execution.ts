@@ -43,6 +43,7 @@ import {
   LOCKFILES,
   SHA256,
   semanticRouteFailure,
+  taskExecutionContract,
   type WorkflowAttemptOutcome,
   type WorkflowRouteFacts,
   type WorkflowWorker,
@@ -60,6 +61,7 @@ export interface PhaseExecutionServices {
     resources: PhaseResources;
     ledger: TaskLedger;
     signal: AbortSignal;
+    taskId?: string;
   }): Promise<DurableBaselineResult>;
   verifyTaskAffected(input: {
     resources: PhaseResources;
@@ -197,7 +199,10 @@ export class PhaseExecution {
       runId: input.runId,
       deliveryRevision: input.deliveryRevision,
       taskId: input.taskId,
-      boundaryHash: hash("durable-task-boundary", JSON.stringify(input.task)),
+      boundaryHash: hash(
+        "durable-task-boundary",
+        JSON.stringify(taskExecutionContract(input.task)),
+      ),
       objective: input.task.objective,
       contextRefs,
       initialPhase:
@@ -1562,6 +1567,7 @@ export class PhaseExecution {
         resources,
         ledger,
         signal: input.signal,
+        taskId: input.taskId,
       });
       if (!captured.ok) {
         const outcome = captured.outcome;

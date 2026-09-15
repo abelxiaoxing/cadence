@@ -120,6 +120,67 @@ function dependencyAncestors(
   return ancestors;
 }
 
+type PathOperation = {
+  taskId: string;
+  phase: ImplementationPhase;
+  kind: "write" | "delete";
+};
+
+function operationsBeforePhase(
+  tasks: ReadonlyMap<string, ImplementTaskBoundary>,
+  ancestors: ReadonlySet<string>,
+  consumerTaskId: string,
+  consumerPhase: ImplementationPhase,
+  candidatePath: string,
+): PathOperation[] {
+  return [...tasks.values()].flatMap((task) => {
+    if (task.taskId !== consumerTaskId && !ancestors.has(task.taskId)) {
+      return [];
+    }
+    return taskPhases(task).flatMap(([phase, boundary]) => {
+      if (
+        task.taskId === consumerTaskId &&
+        IMPLEMENT_PHASE_INDEX[phase] > IMPLEMENT_PHASE_INDEX[consumerPhase]
+      ) {
+        return [];
+      }
+      return [
+        ...(boundary.write.includes(candidatePath)
+          ? [{ taskId: task.taskId, phase, kind: "write" as const }]
+          : []),
+        ...(boundary.delete.includes(candidatePath)
+          ? [{ taskId: task.taskId, phase, kind: "delete" as const }]
+          : []),
+      ];
+    });
+  });
+}
+
+function operationBefore(
+  left: PathOperation,
+  right: PathOperation,
+  tasks: ReadonlyMap<string, ImplementTaskBoundary>,
+): boolean {
+  return left.taskId === right.taskId
+    ? IMPLEMENT_PHASE_INDEX[left.phase] < IMPLEMENT_PHASE_INDEX[right.phase]
+    : dependencyAncestors(right.taskId, tasks).has(left.taskId);
+}
+
+function survivesDeclaredOperations(
+  operations: readonly PathOperation[],
+  tasks: ReadonlyMap<string, ImplementTaskBoundary>,
+): boolean {
+  return operations
+    .filter((operation) => operation.kind === "delete")
+    .every((deletion) =>
+      operations.some(
+        (operation) =>
+          operation.kind === "write" &&
+          operationBefore(deletion, operation, tasks),
+      ),
+    );
+}
+
 function bindingPath(
   binding: VerificationInputBinding,
   outputs: ReadonlyMap<string, ImplementGraphOutput>,
@@ -293,6 +354,28 @@ export function assessImplementGraphReadiness(
               }),
             );
           }
+          if (
+            !survivesDeclaredOperations(
+              operationsBeforePhase(
+                tasks,
+                ancestors,
+                task.taskId,
+                phase,
+                binding.path,
+              ),
+              tasks,
+            )
+          ) {
+            appendDistinct(
+              current,
+              graphDiagnostic("workspace-input-unavailable", {
+                taskId: task.taskId,
+                phase,
+                verificationId,
+                path: binding.path,
+              }),
+            );
+          }
           continue;
         }
 
@@ -334,6 +417,37 @@ export function assessImplementGraphReadiness(
               phase,
               verificationId,
               outputId: output.id,
+              producerTaskId: output.producer.taskId,
+              producerPhase: output.producer.phase,
+            }),
+          );
+        }
+        if (
+          (output.producer.taskId === task.taskId ||
+            ancestors.has(output.producer.taskId)) &&
+          IMPLEMENT_PHASE_INDEX[output.producer.phase] <=
+            (output.producer.taskId === task.taskId
+              ? IMPLEMENT_PHASE_INDEX[phase]
+              : IMPLEMENT_PHASE_INDEX.refactor) &&
+          !survivesDeclaredOperations(
+            operationsBeforePhase(
+              tasks,
+              ancestors,
+              task.taskId,
+              phase,
+              output.path,
+            ),
+            tasks,
+          )
+        ) {
+          appendDistinct(
+            current,
+            graphDiagnostic("producer-output-unavailable", {
+              taskId: task.taskId,
+              phase,
+              verificationId,
+              outputId: output.id,
+              path: output.path,
               producerTaskId: output.producer.taskId,
               producerPhase: output.producer.phase,
             }),

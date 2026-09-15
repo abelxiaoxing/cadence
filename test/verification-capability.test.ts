@@ -619,7 +619,32 @@ describe("cross-project verification capability", () => {
 
     expect(validateVerificationCapability(root, npmVitest)).toMatchObject({
       ok: false,
-      diagnostic: { kind: "verification-adapter", code: "input-missing" },
+      diagnostic: {
+        kind: "verification-adapter",
+        code: "input-missing",
+        inputObservation: {
+          path: "tests/utils/upstreamFetch.test.js",
+          kind: "absent",
+        },
+      },
+    });
+  });
+
+  it("rejects an unsafe verification input distinctly from an absent input", () => {
+    const root = consumer("npm");
+    rmSync(path.join(root, "tests"), { recursive: true });
+    symlinkSync(path.join(fixtures, "npm/tests"), path.join(root, "tests"));
+
+    expect(validateVerificationCapability(root, npmVitest)).toMatchObject({
+      ok: false,
+      diagnostic: {
+        kind: "verification-adapter",
+        code: "input-unsafe",
+        inputObservation: {
+          path: "tests/utils/upstreamFetch.test.js",
+          kind: "unsafe",
+        },
+      },
     });
   });
 
@@ -706,7 +731,7 @@ describe("cross-project verification capability", () => {
     );
     expect(validateVerificationCapability(root, npmVitest)).toMatchObject({
       ok: false,
-      diagnostic: { kind: "verification-adapter", code: "input-missing" },
+      diagnostic: { kind: "verification-adapter", code: "input-unsafe" },
     });
 
     const outside = path.join(root, "outside-vitest");

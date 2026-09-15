@@ -7,7 +7,7 @@ import {
   normalizeChangeContract,
   retainedChangeContract,
 } from "./change-contract.ts";
-import { LIMITS } from "./contracts.ts";
+import { LIMITS, verificationInputPaths } from "./contracts.ts";
 import {
   assertControlCommand,
   type ControlCommand,
@@ -45,6 +45,7 @@ import {
   type ActiveOperation,
   assertDelivery,
   type BootstrapRow,
+  baselineRecoveryKey,
   bootstrapAcceptanceHash,
   CHANGE_NAME,
   cancellableRead,
@@ -62,6 +63,7 @@ import {
   isRecord,
   isWorkflowApprovalCode,
   normalizeBootstrapAcceptanceFacts,
+  normalizeVerificationPrerequisite,
   normalizeWorkflowContextRequest,
   normalizeWorkflowVerificationStatus,
   parseJsonRecord,
@@ -1153,12 +1155,7 @@ export class WorkflowEngine {
           serializedPlan,
         );
 
-      if (
-        database
-          .prepare("SELECT 1 FROM workflow_work_budget WHERE run_id = ?")
-          .get(runId)
-      )
-        this.#growWorkBudget(database, runId, delivery.plan);
+      this.#growWorkBudget(database, runId, delivery.plan);
       const admitted = new Set<string>();
       delivery.plan.tasks.forEach((task, taskOrder) => {
         admitted.add(task.taskId);
@@ -1595,8 +1592,12 @@ export class WorkflowEngine {
         : undefined;
       const priorDiagnostic = this.#safeAttemptDiagnostic(runId, row);
       const priorRecovery = priorDiagnostic?.recovery;
+      const preparationKey = baselineRecoveryKey(task, phase);
       const activeRecovery =
-        priorRecovery?.key === recoveryKey(task, phase, row, current)
+        priorRecovery &&
+        [recoveryKey(task, phase, row, current), preparationKey].includes(
+          priorRecovery.key,
+        )
           ? priorRecovery
           : undefined;
       const maxRecoveryAttempts = Math.min(
@@ -1619,9 +1620,10 @@ export class WorkflowEngine {
       const granted = this.#hasRecoveryGrant(
         runId,
         operationId,
-        recoveryKey(task, phase, row, current),
+        activeRecovery?.key ?? recoveryKey(task, phase, row, current),
       );
       const verificationOnly =
+        activeRecovery?.key !== preparationKey &&
         recoveryExhausted(activeRecovery, maxRecoveryAttempts, granted) &&
         (await this.#worker.hasPendingVerification?.({
           runId,
@@ -1658,7 +1660,7 @@ export class WorkflowEngine {
         );
         return;
       }
-      if (activeRecovery)
+      if (activeRecovery && activeRecovery.key !== preparationKey)
         artifactAttempts = Math.max(artifactAttempts, activeRecovery.failures);
       const repair =
         verificationStatus?.scope === "change-task-affected" &&
@@ -1684,6 +1686,187 @@ export class WorkflowEngine {
                 : {}),
             }
           : undefined;
+      if (this.#worker.prepareTask) {
+        // Reserve this selected task's conflicts while asynchronous baseline
+        // preparation runs, without reserving a Worker attempt.
+        this.#setTask(
+          runId,
+          row.task_id,
+          { state: "phase-ready", phase, queuePosition: null },
+          lease,
+        );
+        if (granted && activeRecovery?.key === preparationKey) {
+          this.#leasedTransaction(lease, () => {
+            const consumed = this.#database
+              .prepare(
+                "UPDATE workflow_recovery_grants SET consumed = 1 WHERE run_id = ? AND operation_id = ? AND incident_key = ? AND consumed = 0",
+              )
+              .run(runId, operationId, preparationKey);
+            if (consumed.changes !== 1)
+              throw new Error("recovery-request-stale");
+            this.#database
+              .prepare(`INSERT INTO workflow_recovery_events(run_id, sequence, incident_key, kind)
+                SELECT ?, COALESCE(MAX(sequence), 0) + 1, ?, 'launch' FROM workflow_recovery_events WHERE run_id = ?`)
+              .run(runId, preparationKey, runId);
+          });
+        }
+        const prepared = await this.#worker.prepareTask({
+          runId,
+          operationId,
+          deliveryRevision: row.delivery_revision,
+          taskId: row.task_id,
+          phase,
+          task: structuredClone(task),
+          plan: structuredClone(plan),
+          ...(current.baseline_workspace_revision
+            ? { baselineRevisionId: current.baseline_workspace_revision }
+            : {}),
+          ...(current.current_workspace_revision
+            ? { currentWorkspaceRevisionId: current.current_workspace_revision }
+            : {}),
+          signal,
+        });
+        this.#runStore.assertLease(lease);
+        if (prepared.kind === "phase-committed")
+          throw new Error("workflow-preparation-outcome-invalid");
+        this.#recordWorkspaceFacts(
+          runId,
+          {
+            ...prepared,
+            kind: "paused",
+            code: "task-prepared",
+            // Preparation has no merge authority over a sibling's newer commit.
+            ...(prepared.currentWorkspaceRevisionId
+              ? {
+                  currentWorkspaceRevisionId:
+                    this.#engineRun(runId).current_workspace_revision ??
+                    prepared.currentWorkspaceRevisionId,
+                }
+              : {}),
+          },
+          lease,
+        );
+        // Preparation may finish successfully while close is settling it.
+        // Re-enter the cancellation guard before granting any Worker work.
+        if (signal.aborted) continue;
+        if (prepared.kind !== "prepared") {
+          const prerequisite =
+            prepared.kind !== "operation-cancelled"
+              ? normalizeVerificationPrerequisite(prepared.prerequisite)
+              : undefined;
+          if (prerequisite) {
+            const verification =
+              prerequisite.scope === "baseline-full-suite"
+                ? plan.verification.baseline?.fullSuite
+                : (task.baselineVerification ?? task.affectedVerification);
+            if (
+              !verification ||
+              verification.id !== prerequisite.verificationId ||
+              (prerequisite.scope === "baseline-task-affected" &&
+                prerequisite.taskId !== row.task_id) ||
+              (prerequisite.input &&
+                !verificationInputPaths(verification).includes(
+                  prerequisite.input.path,
+                )) ||
+              (prerequisite.producer &&
+                !plan.outputs.some(
+                  (output) =>
+                    output.path === prerequisite.input?.path &&
+                    output.producer.taskId === prerequisite.producer?.taskId &&
+                    output.producer.phase === prerequisite.producer?.phase,
+                ))
+            )
+              throw new Error("workflow-prerequisite-evidence-invalid");
+          }
+          if (prerequisite && prepared.kind === "paused") {
+            const identity = hash(
+              canonicalJson({
+                ...prerequisite,
+                verificationId: undefined,
+                taskId: undefined,
+                producer: prerequisite.producer
+                  ? { phase: prerequisite.producer.phase }
+                  : undefined,
+              }),
+            );
+            const priorPreparation = this.#recovery(runId, preparationKey);
+            if (priorPreparation?.feedback.prerequisiteIdentity !== identity) {
+              const failures = (priorPreparation?.failures ?? 0) + 1;
+              this.#recordRecovery(
+                runId,
+                {
+                  key: preparationKey,
+                  failures,
+                  feedback: {
+                    code: prepared.code,
+                    attempt: failures + 1,
+                    maxAttempts: maxRecoveryAttempts,
+                    strategy: "repair-verification",
+                    prerequisiteIdentity: identity,
+                  },
+                },
+                lease,
+              );
+            }
+          }
+          if (prepared.kind !== "operation-cancelled" && prepared.verification)
+            this.#setVerificationStatus(runId, prepared.verification, lease);
+          this.#setTask(
+            runId,
+            row.task_id,
+            {
+              state:
+                prepared.kind === "approval-needed"
+                  ? "approval-needed"
+                  : "paused",
+              phase,
+              pauseCode:
+                prepared.kind === "operation-cancelled"
+                  ? "operation-cancelled"
+                  : prepared.code,
+              attemptDiagnostic: {
+                ...priorDiagnostic,
+                prerequisite,
+              },
+              queuePosition: null,
+            },
+            lease,
+          );
+          return;
+        }
+        if (priorDiagnostic) delete priorDiagnostic.prerequisite;
+        if (activeRecovery?.key === preparationKey) {
+          // A successful original-baseline observation resolves this incident.
+          // Keep its events and immutable failure evidence, then re-enter the
+          // ordinary phase recovery checks before reserving Worker work.
+          this.#leasedTransaction(lease, () => {
+            this.#database
+              .prepare(`INSERT INTO workflow_recovery_events(run_id, sequence, incident_key, kind)
+              SELECT ?, COALESCE(MAX(sequence), 0) + 1, ?, 'resolved' FROM workflow_recovery_events WHERE run_id = ?`)
+              .run(runId, preparationKey, runId);
+            this.#database
+              .prepare(
+                "DELETE FROM workflow_recovery_incidents WHERE run_id = ? AND incident_key = ?",
+              )
+              .run(runId, preparationKey);
+          });
+          if (priorDiagnostic) delete priorDiagnostic.recovery;
+          const retainedDiagnostic =
+            priorDiagnostic && Object.keys(priorDiagnostic).length
+              ? priorDiagnostic
+              : null;
+          this.#setTask(
+            runId,
+            row.task_id,
+            { attemptDiagnostic: retainedDiagnostic },
+            lease,
+          );
+          row.attempt_diagnostic_json = retainedDiagnostic
+            ? JSON.stringify(retainedDiagnostic)
+            : null;
+          continue;
+        }
+      }
       this.#setTask(
         runId,
         row.task_id,
@@ -1857,6 +2040,8 @@ export class WorkflowEngine {
             ? { action: "rebind-or-revise-delivery" as const }
             : {}),
         };
+        // Only parent preparation can contribute original-baseline authority.
+        delete attemptDiagnostic.prerequisite;
         this.#setTask(runId, row.task_id, { attemptDiagnostic }, lease);
         row.attempt_diagnostic_json = JSON.stringify(attemptDiagnostic);
       }
@@ -2741,73 +2926,90 @@ export class WorkflowEngine {
       this.#setVerificationStatus(runId, null, lease);
     }
     const attempted = new Set<string>();
-    let madeProgress = true;
-    while (madeProgress && !signal.aborted) {
-      madeProgress = false;
-      const rows = this.#tasks(runId);
-      const selected = selectRunnableTasks({
-        rows,
-        attempted,
-        activeTasks: this.#activeTasks,
-        capacity: LIMITS.maxActiveChildSessions,
-        nextQueuePosition: this.#engineRun(runId).next_queue_position,
-      });
-      const runnable = selected.runnable.map((taskId) => {
-        const row = rows.find((candidate) => candidate.task_id === taskId);
-        if (!row) throw new Error("scheduler-task-unavailable");
-        attempted.add(taskId);
-        return { row, before: `${row.state}:${row.phase}` };
-      });
-      for (const update of selected.updates) {
-        const row = rows.find(
-          (candidate) => candidate.task_id === update.taskId,
-        );
-        if (!row) throw new Error("scheduler-task-unavailable");
-        if (update.kind === "pending")
-          this.#setTask(
-            runId,
-            row.task_id,
-            { state: "pending", pauseCode: null, queuePosition: null },
-            lease,
+    // Keep every launched operation owned until it settles, including failures.
+    // A fulfilled envelope avoids unhandled rejections while another task wins
+    // the race; the finally barrier also protects cancellation and storage close.
+    type Settlement =
+      | { taskId: string; status: "fulfilled" }
+      | { taskId: string; status: "rejected"; reason: unknown };
+    const pending = new Map<string, Promise<Settlement>>();
+    let firstFailure: { reason: unknown } | undefined;
+    try {
+      while (!signal.aborted) {
+        if (firstFailure) throw firstFailure.reason;
+        const rows = this.#tasks(runId);
+        const selected = selectRunnableTasks({
+          rows,
+          attempted,
+          activeTasks: this.#activeTasks,
+          capacity: LIMITS.maxActiveChildSessions,
+          nextQueuePosition: this.#engineRun(runId).next_queue_position,
+        });
+        const runnable = selected.runnable.map((taskId) => {
+          const row = rows.find((candidate) => candidate.task_id === taskId);
+          if (!row) throw new Error("scheduler-task-unavailable");
+          attempted.add(taskId);
+          return row;
+        });
+        for (const update of selected.updates) {
+          const row = rows.find(
+            (candidate) => candidate.task_id === update.taskId,
           );
-        else this.#queueTask(runId, row, lease, update.reason);
-      }
-      const capacityBlocked = selected.capacityBlocked;
-      if (runnable.length === 0 && capacityBlocked) {
-        await this.#waitForCapacity(signal);
-        madeProgress = true;
-        continue;
-      }
-      this.#activeTasks += runnable.length;
-      const settled = await Promise.allSettled(
-        runnable.map(({ row }) =>
-          this.#runTask(
+          if (!row) throw new Error("scheduler-task-unavailable");
+          if (update.kind === "pending")
+            this.#setTask(
+              runId,
+              row.task_id,
+              { state: "pending", pauseCode: null, queuePosition: null },
+              lease,
+            );
+          else this.#queueTask(runId, row, lease, update.reason);
+        }
+        this.#activeTasks += runnable.length;
+        for (const row of runnable) {
+          const operation = this.#runTask(
             runId,
             row,
             operationId,
             signal,
             lease,
             onActivity,
-          ).finally(() => {
-            this.#activeTasks--;
-            for (const wake of this.#capacityWaiters) wake();
-          }),
-        ),
-      );
-      const rejected = settled.find(
-        (outcome): outcome is PromiseRejectedResult =>
-          outcome.status === "rejected",
-      );
-      if (rejected) throw rejected.reason;
-      for (const { row, before } of runnable) {
-        const after = this.#tasks(runId).find(
-          (candidate) => candidate.task_id === row.task_id,
-        );
-        if (after && `${after.state}:${after.phase}` !== before) {
-          madeProgress = true;
+          )
+            .then<Settlement, Settlement>(
+              () => ({ taskId: row.task_id, status: "fulfilled" }),
+              (reason: unknown) => {
+                firstFailure ??= { reason };
+                return { taskId: row.task_id, status: "rejected", reason };
+              },
+            )
+            .finally(() => {
+              this.#activeTasks--;
+              for (const wake of this.#capacityWaiters) wake();
+            });
+          pending.set(row.task_id, operation);
         }
+        if (pending.size > 0) {
+          const settled = await Promise.race([
+            ...pending.values(),
+            ...(selected.capacityBlocked
+              ? [this.#waitForCapacity(signal).then(() => null)]
+              : []),
+          ]);
+          if (settled === null) continue;
+          pending.delete(settled.taskId);
+          if (settled.status === "rejected") throw settled.reason;
+          continue;
+        }
+        if (selected.capacityBlocked) {
+          await this.#waitForCapacity(signal);
+          continue;
+        }
+        break;
       }
+    } finally {
+      await Promise.all(pending.values());
     }
+    if (firstFailure) throw firstFailure.reason;
 
     if (signal.aborted) {
       const current = this.#runStore.status(runId);
@@ -2898,8 +3100,11 @@ export class WorkflowEngine {
 
   #recoveryConditions(runId: string, key: string) {
     const run = this.#engineRun(runId);
-    const task = this.#tasks(runId).find(
-      (row) => recoveryKey(this.#taskPlan(row), row.phase, row, run) === key,
+    const task = this.#tasks(runId).find((row) =>
+      [
+        recoveryKey(this.#taskPlan(row), row.phase, row, run),
+        baselineRecoveryKey(this.#taskPlan(row), row.phase),
+      ].includes(key),
     );
     return {
       route: task?.route_fingerprint ?? run.route_fingerprint,
@@ -2939,12 +3144,15 @@ export class WorkflowEngine {
       const current = this.#tasks(runId).some(
         (row) =>
           ["paused", "retryable"].includes(row.state) &&
-          recoveryKey(
-            this.#taskPlan(row),
-            row.phase,
-            row,
-            this.#engineRun(runId),
-          ) === request.incidentKey,
+          [
+            recoveryKey(
+              this.#taskPlan(row),
+              row.phase,
+              row,
+              this.#engineRun(runId),
+            ),
+            baselineRecoveryKey(this.#taskPlan(row), row.phase),
+          ].includes(request.incidentKey),
       );
       if (
         !current ||
@@ -3080,10 +3288,20 @@ export class WorkflowEngine {
       ? (JSON.parse(row.attempt_diagnostic_json) as SafeAttemptDiagnostic)
       : {};
     delete diagnostic.recovery;
-    const recovery = this.#recovery(
-      runId,
-      recoveryKey(this.#taskPlan(row), row.phase, row, this.#engineRun(runId)),
-    );
+    const recovery =
+      this.#recovery(
+        runId,
+        baselineRecoveryKey(this.#taskPlan(row), row.phase),
+      ) ??
+      this.#recovery(
+        runId,
+        recoveryKey(
+          this.#taskPlan(row),
+          row.phase,
+          row,
+          this.#engineRun(runId),
+        ),
+      );
     if (recovery) diagnostic.recovery = recovery;
     return Object.keys(diagnostic).length ? diagnostic : undefined;
   }
@@ -3794,8 +4012,24 @@ export class WorkflowEngine {
           lease,
         );
       }
-      outcome = this.#statusByRun(runId);
       await activeSettlement;
+      for (const task of this.#tasks(runId)) {
+        if (
+          ["phase-ready", "phase-running", "validating"].includes(task.state)
+        ) {
+          this.#setTask(
+            runId,
+            task.task_id,
+            {
+              state: "paused",
+              pauseCode: "operation-cancelled",
+              queuePosition: null,
+            },
+            lease,
+          );
+        }
+      }
+      outcome = this.#statusByRun(runId);
     }
     outcome = {
       ...outcome,

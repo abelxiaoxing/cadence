@@ -46,6 +46,8 @@ export interface WorkflowRecoveryFeedback {
     | "repair-verification"
     | "compact-patch";
   failureIdentities?: string[];
+  /** Last observed baseline condition; execution/display renaming cannot refund failures. */
+  prerequisiteIdentity?: string;
 }
 
 export interface WorkflowRecoveryFact {

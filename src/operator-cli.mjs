@@ -652,9 +652,6 @@ function observeSafePath(root, relative) {
   }
   return { kind: "unsafe", reason: "invalid-path" };
 }
-function isSafeRegularFile(root, relative) {
-  return observeSafePath(root, relative).kind === "file";
-}
 
 // src/file-snapshot.ts
 function sha256(bytes) {
@@ -697,10 +694,16 @@ function capabilitySuccess(verificationId, runnerBindings = []) {
     }))
   };
 }
-function adapterFailure(verificationId, code, message) {
+function adapterFailure(verificationId, code, message, inputObservation) {
   return {
     ok: false,
-    diagnostic: { kind: "verification-adapter", code, verificationId, message }
+    diagnostic: {
+      kind: "verification-adapter",
+      code,
+      verificationId,
+      message,
+      ...inputObservation ? { inputObservation } : {}
+    }
   };
 }
 function fileStatus(root, relative) {
@@ -1223,8 +1226,10 @@ function validateCapability(root, value, options, requireInputAvailability) {
 function validateAcceptedVerificationCapability(root, verification, dependencyOwner, runnerEnvironment, requireInputAvailability, executionWritePaths) {
   if (requireInputAvailability) {
     for (const input of verificationInputPaths(verification)) {
-      if (!isSafeRegularFile(root, input)) {
-        return adapterFailure(verification.id, "input-missing", `verification input ${input} is missing or unsafe`);
+      const status = fileStatus(root, input);
+      if (status !== "regular") {
+        const inputObservation = { path: input, kind: status };
+        return adapterFailure(verification.id, status === "absent" ? "input-missing" : "input-unsafe", `verification input ${input} is ${status}`, inputObservation);
       }
     }
   }

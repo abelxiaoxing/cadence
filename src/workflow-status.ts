@@ -8,10 +8,12 @@ import {
   type EngineRunRow,
   type EngineTaskRow,
   hash,
+  normalizeVerificationPrerequisite,
   normalizeWorkflowContextRequest,
   normalizeWorkflowVerificationStatus,
   parseDeliveryDiagnostics,
   permitsPlanAmendment,
+  permitsPrerequisiteAmendment,
   type SafeAttemptDiagnostic,
 } from "./workflow-policy.ts";
 
@@ -94,6 +96,9 @@ export function projectWorkflowStatus({
         ? normalizeWorkflowContextRequest(JSON.parse(row.context_request_json))
         : undefined;
       const code = row.pause_code ?? "task-paused";
+      const prerequisite = normalizeVerificationPrerequisite(
+        attemptDiagnostics.get(row.task_id)?.prerequisite,
+      );
       const requirement =
         row.state === "approval-needed"
           ? approvalRequirement(code, context)
@@ -106,6 +111,20 @@ export function projectWorkflowStatus({
         kind: requirement ? "decision" : "execution",
         ...(requirement ?? {}),
         ...(context ? { contextRequest: context } : {}),
+        ...(prerequisite
+          ? {
+              prerequisite,
+              scope:
+                prerequisite.scope === "baseline-full-suite"
+                  ? "change"
+                  : "task",
+              minimumRecovery: permitsPrerequisiteAmendment(prerequisite)
+                ? "Revise the baseline contract to read safe inputs from the retained original revision, then recompile within the existing authority."
+                : prerequisite.cause === "capability"
+                  ? "Restore the required runner or external capability; a changed environment identity permits a bounded check."
+                  : "Restore trusted verification prerequisites; the retained failure does not authorize plan changes.",
+            }
+          : {}),
       };
     });
   if (
@@ -124,7 +143,11 @@ export function projectWorkflowStatus({
   }
   const decisions = blockers.filter((item) => item.kind === "decision");
   const amendments = blockers.filter(
-    (item) => item.kind === "decision" || permitsPlanAmendment(item.code),
+    (item) =>
+      item.kind === "decision" ||
+      permitsPlanAmendment(item.code) ||
+      ("prerequisite" in item &&
+        permitsPrerequisiteAmendment(item.prerequisite)),
   );
   if (
     projection.state === "paused" &&

@@ -14,6 +14,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { normalizeChangeContract } from "../src/change-contract.ts";
+import type { StructuredVerificationContract } from "../src/contracts.ts";
 import {
   DesignPlanValidationError,
   type PlanDraft,
@@ -36,6 +37,7 @@ import { canonicalJson } from "../src/run-state.ts";
 import { RunStore } from "../src/run-store.ts";
 import { resolveStateRoot } from "../src/state-root.ts";
 import { WorkflowEngine } from "../src/workflow-engine.ts";
+import { hash } from "../src/workflow-policy.ts";
 
 const roots: string[] = [];
 const BEHAVIOR_DECISION = "Closed delivery observable behavior";
@@ -145,6 +147,48 @@ function planDraft(change: string) {
       completionOwner: "parent" as const,
     },
   };
+}
+
+function missingBaselineVerification(): StructuredVerificationContract {
+  return {
+    kind: "static-check",
+    id: "delivery-original-baseline",
+    runner: { kind: "node", script: "missing-baseline.mjs" },
+    args: [],
+    classification: "expected-green",
+  };
+}
+
+function baselineBlockedPlanDraft(change: string): PlanDraft {
+  const draft: PlanDraft = planDraft(change);
+  draft.tasks[0]!.baselineVerification = missingBaselineVerification();
+  return draft;
+}
+
+function verificationContractIdentity(
+  verification: StructuredVerificationContract,
+): string {
+  const executionSemantics = (
+    contract: StructuredVerificationContract,
+  ): unknown => {
+    if (contract.kind === "steps") {
+      return {
+        kind: contract.kind,
+        steps: contract.steps.map((step) => executionSemantics(step)),
+      };
+    }
+    const {
+      id: _id,
+      classification: _classification,
+      expectedFailure: _expectedFailure,
+      ...semantics
+    } = contract;
+    return semantics;
+  };
+  return hash(
+    "verification-contract-v1",
+    canonicalJson(executionSemantics(verification)),
+  );
 }
 
 function fixture(label: string) {
@@ -531,22 +575,66 @@ it.each([
 function journeyControlEngine(
   item: ReturnType<typeof fixture>,
   phases: string[],
-  blocker: "authority" | "plan" = "authority",
+  blocker: "authority" | "plan" | "baseline" = "authority",
 ): { control: WorkflowControlEngine; designCalls: () => number } {
+  const baselineVerification = missingBaselineVerification();
   const design = DesignController.open({
     consumerRoot: item.consumerRoot,
     stateRoot: item.stateRoot,
     inspectOpenSpec: item.inspectOpenSpec,
   });
+  const sealedDelivery = packageDeliverySource(item.consumerRoot, {
+    inspectOpenSpec: item.inspectOpenSpec,
+    verifyGateProof: (input) => design.verifyGateProof(input),
+    verifyFinalizedDelivery: (input) => design.verifyFinalizedDelivery(input),
+  });
   const workflow = WorkflowEngine.open({
     consumerRoot: item.consumerRoot,
     stateRoot: item.stateRoot,
-    deliverySource: packageDeliverySource(item.consumerRoot, {
-      inspectOpenSpec: item.inspectOpenSpec,
-      verifyGateProof: (input) => design.verifyGateProof(input),
-      verifyFinalizedDelivery: (input) => design.verifyFinalizedDelivery(input),
-    }),
+    deliverySource: {
+      discoverLatest: (input) => sealedDelivery.discoverLatest(input),
+      async load(input) {
+        const delivery = await sealedDelivery.load(input);
+        const missingBaseline = path.join(
+          item.consumerRoot,
+          "missing-baseline.mjs",
+        );
+        if (
+          blocker === "baseline" &&
+          delivery.revision === 1 &&
+          existsSync(missingBaseline)
+        )
+          rmSync(missingBaseline);
+        return delivery;
+      },
+    },
     worker: {
+      prepareTask: async (input) => {
+        if (
+          blocker !== "baseline" ||
+          input.task.baselineVerification?.id !== baselineVerification.id ||
+          input.phase === "red"
+        )
+          return { kind: "prepared" as const };
+        if (!input.baselineRevisionId)
+          throw new Error("baseline-revision-missing");
+        return {
+          kind: "paused" as const,
+          code: "input-missing",
+          prerequisite: {
+            kind: "verification-prerequisite" as const,
+            scope: "baseline-task-affected" as const,
+            cause: "missing-input" as const,
+            verificationId: baselineVerification.id,
+            contractIdentity:
+              verificationContractIdentity(baselineVerification),
+            originalRevisionId: input.baselineRevisionId,
+            environmentIdentity: "unobserved",
+            taskId: input.taskId,
+            input: { path: "missing-baseline.mjs", kind: "absent" as const },
+          },
+        };
+      },
       runAttempt: async (input) => {
         phases.push(input.phase);
         if (phases.length === 1) {
@@ -554,11 +642,16 @@ function journeyControlEngine(
             kind: "phase-committed" as const,
             artifactHash: "d".repeat(64),
             isolatedRevisionId: "e".repeat(64),
+            ...(blocker === "baseline"
+              ? { baselineRevisionId: "b".repeat(64) }
+              : {}),
             exitCode: 1,
             classification: "expected-red" as const,
           };
         }
         if (phases.length === 2) {
+          if (blocker === "baseline")
+            return { kind: "paused" as const, code: "endpoint-unavailable" };
           if (blocker === "plan")
             return { kind: "paused" as const, code: "needs-task-split" };
           return {
@@ -1354,7 +1447,7 @@ describe("safe private Design artifact mutation", () => {
           field: `phases.${diagnostic.phase}.verificationInputs`,
           expectedPaths: ["verify.mjs"],
           actualPaths: ["src/value.ts", "verify.mjs"],
-          hint: expect.stringContaining("Omit verificationInputs"),
+          hint: expect.stringContaining("omit verificationInputs"),
         });
       expect(item.controller.status(item.runId).plan).toBeNull();
       expect(
@@ -1517,16 +1610,31 @@ describe("safe private Design artifact mutation", () => {
 });
 
 describe("explicit four-entrypoint approval round trip", () => {
-  it.each(["authority", "plan"] as const)(
+  it.each(["authority", "plan", "baseline"] as const)(
     "uses a parent recommendation to amend %s inside Implement and discovers continuation after a fresh extension context",
     async (blocker) => {
       const item = fixture("extension-approval-round-trip");
+      if (blocker === "baseline") {
+        writeFileSync(
+          path.join(item.consumerRoot, "missing-baseline.mjs"),
+          "export {};\n",
+        );
+        writeFileSync(
+          path.join(item.changeRoot, "plan-draft.json"),
+          `${JSON.stringify(baselineBlockedPlanDraft(item.change), null, 2)}\n`,
+        );
+      }
       await approveAndCompile(item);
       await item.controller.execute({
         operation: "finalize-delivery",
         runId: item.runId,
         operationId: "finalize-v1",
       });
+      const originalGateABytes = readFileSync(
+        path.join(item.changeRoot, "gate-a.yaml"),
+      );
+      const originalGateAApproval =
+        parseGateAReceipt(originalGateABytes).approval;
       item.controller.close();
 
       const phases: string[] = [];
@@ -1566,6 +1674,28 @@ describe("explicit four-entrypoint approval round trip", () => {
           },
         },
       });
+      if (blocker === "baseline") {
+        expect(approval).toMatchObject({
+          resourceBudget: { used: 1 },
+          tasks: [
+            {
+              taskId: "delivery-task",
+              state: "paused",
+              phase: "green",
+            },
+          ],
+          blockers: [
+            {
+              prerequisite: {
+                cause: "missing-input",
+                verificationId: "delivery-original-baseline",
+                taskId: "delivery-task",
+                input: { path: "missing-baseline.mjs", kind: "absent" },
+              },
+            },
+          ],
+        });
+      }
       expect(firstEngine.designCalls()).toBe(0);
       expect(first.active()).toEqual(["read", "bash", "edit", DISPATCH_TOOL]);
 
@@ -1701,10 +1831,30 @@ describe("explicit four-entrypoint approval round trip", () => {
         deliveryRevision: 2,
         receiptHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
       });
+      if (blocker === "baseline") {
+        const revisedGateABytes = readFileSync(
+          path.join(item.changeRoot, "gate-a.yaml"),
+        );
+        const revisedGateA = parseGateAReceipt(revisedGateABytes);
+        const revisedReady = parseReadyReceipt(
+          readFileSync(path.join(item.changeRoot, "ready.yaml")),
+        );
+        expect(revisedGateA.approval).toMatchObject({
+          revision: originalGateAApproval.revision,
+          contractHash: originalGateAApproval.contractHash,
+          recordHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        });
+        expect(revisedReady.approvals.gateA).toEqual({
+          path: "gate-a.yaml",
+          rawSha256: createHash("sha256")
+            .update(revisedGateABytes)
+            .digest("hex"),
+        });
+      }
       expect(first.active()).toEqual(["read", "bash", "edit", DISPATCH_TOOL]);
       await first.handlers.get("session_shutdown")?.();
 
-      const freshEngine = journeyControlEngine(item, phases);
+      const freshEngine = journeyControlEngine(item, phases, blocker);
       const fresh = extensionJourneyHarness(
         item.consumerRoot,
         freshEngine.control,
@@ -1724,6 +1874,18 @@ describe("explicit four-entrypoint approval round trip", () => {
           receiptHash: revised.receiptHash,
         },
       });
+      if (blocker === "baseline") {
+        expect(status).toMatchObject({
+          resourceBudget: { used: 1 },
+          tasks: [
+            {
+              taskId: "delivery-task",
+              state: "paused",
+              phase: "green",
+            },
+          ],
+        });
+      }
 
       const resumed = await fresh.execute("implement-v2", {
         command: "resume",
@@ -1737,7 +1899,11 @@ describe("explicit four-entrypoint approval round trip", () => {
         state: "paused",
         pause: { code: "endpoint-unavailable" },
       });
-      expect(phases).toEqual(["red", "green", "green"]);
+      if (blocker === "baseline")
+        expect(resumed).toMatchObject({ resourceBudget: { used: 2 } });
+      expect(phases).toEqual(
+        blocker === "baseline" ? ["red", "green"] : ["red", "green", "green"],
+      );
       await fresh.handlers.get("session_shutdown")?.();
     },
   );

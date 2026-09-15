@@ -225,7 +225,7 @@ it("bounds path feedback and only supplies code-owned correction hints", () => {
   expect(diagnostic).toMatchObject({
     expectedPaths: ["test/expected.mjs"],
     pathsTruncated: true,
-    hint: expect.stringContaining("Omit verificationInputs"),
+    hint: expect.stringContaining("omit verificationInputs"),
   });
   expect(diagnostic!.actualPaths).toHaveLength(32);
   expect(JSON.stringify(diagnostic)).not.toMatch(

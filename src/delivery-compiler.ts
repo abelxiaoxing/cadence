@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { compareCanonicalStrings } from "./canonical.ts";
 import {
   assertPlanWithinChangeContract,
@@ -14,6 +16,8 @@ import {
   type StructuredVerificationContract,
   validateImplementGraphBoundary,
   validateVerificationContract,
+  verificationInputPaths,
+  verificationSteps,
 } from "./contracts.ts";
 import {
   type DesignPlanDiagnostic,
@@ -33,6 +37,7 @@ import type {
   PlanVerification,
 } from "./implement-plan.ts";
 import { expandPlanDraft, preparePlanDraft } from "./plan-draft.ts";
+import { isSafeRegularFile, observeSafePath } from "./safe-path.ts";
 import { expandSingleTaskDraft } from "./single-task-draft.ts";
 import {
   bindDraftVerificationInputs,
@@ -682,7 +687,13 @@ function normalizePhase(value: unknown, readOnly = false): PhaseBoundary {
   };
 }
 
-function normalizeTask(value: unknown): PlanTaskDraft {
+function normalizeTask(
+  value: unknown,
+  options: {
+    consumerRoot?: string;
+    preserveMissingBaseline?: boolean;
+  } = {},
+): PlanTaskDraft {
   const taskId =
     isRecord(value) && typeof value.taskId === "string"
       ? value.taskId
@@ -720,7 +731,41 @@ function normalizeTask(value: unknown): PlanTaskDraft {
         field: "repairVerification",
       });
     }
+    let baselineVerification: StructuredVerificationContract | undefined;
+    if (value.baselineVerification !== undefined) {
+      try {
+        baselineVerification = normalizeVerification(
+          value.baselineVerification,
+        );
+      } catch (error) {
+        throw asPlanValidationError(error, {
+          ...context,
+          field: "baselineVerification",
+        });
+      }
+    } else if (!options.preserveMissingBaseline) {
+      const unavailable = verificationInputPaths(affectedVerification).filter(
+        (input) =>
+          !options.consumerRoot ||
+          !isSafeRegularFile(options.consumerRoot, input),
+      );
+      if (unavailable.length > 0) {
+        throw new DesignPlanValidationError(
+          "delivery-task-baseline-unavailable",
+          unavailable.map((input) => ({
+            code: "workspace-input-unavailable",
+            ...context,
+            field: "baselineVerification",
+            verificationId: affectedVerification.id,
+            path: input,
+          })),
+        );
+      }
+      baselineVerification = structuredClone(affectedVerification);
+    }
     if (
+      (baselineVerification &&
+        baselineVerification.classification !== "expected-green") ||
       affectedVerification.classification !== "expected-green" ||
       repairVerification.classification !== "expected-green"
     ) {
@@ -761,6 +806,7 @@ function normalizeTask(value: unknown): PlanTaskDraft {
         resources: sortStrings(cloned.scheduling.resources),
       },
       approvedDependencies: sortStrings(cloned.approvedDependencies),
+      ...(baselineVerification ? { baselineVerification } : {}),
       affectedVerification,
       repairVerification,
       impactClosure: {
@@ -796,6 +842,7 @@ function graphFromPlan(plan: ImplementPlan): ImplementGraphBoundary {
     changeId: plan.changeId,
     tasks: plan.tasks.map((task) => {
       const {
+        baselineVerification: _baselineVerification,
         affectedVerification: _affectedVerification,
         repairVerification: _repairVerification,
         ...boundary
@@ -815,6 +862,375 @@ function graphFromPlan(plan: ImplementPlan): ImplementGraphBoundary {
   };
 }
 
+type PathOperation = {
+  taskId: string;
+  phase: "red" | "green" | "refactor";
+  kind: "write" | "delete";
+};
+
+const PLAN_PHASE_INDEX = { red: 0, green: 1, refactor: 2 } as const;
+
+function taskAncestors(
+  taskId: string,
+  tasks: ReadonlyMap<string, PlanTaskDraft>,
+): Set<string> {
+  const ancestors = new Set<string>();
+  const pending = [...(tasks.get(taskId)?.dependsOn ?? [])];
+  while (pending.length > 0) {
+    const dependency = pending.pop() as string;
+    if (ancestors.has(dependency)) continue;
+    ancestors.add(dependency);
+    pending.push(...(tasks.get(dependency)?.dependsOn ?? []));
+  }
+  return ancestors;
+}
+
+function pathOperations(plan: ImplementPlan, input: string): PathOperation[] {
+  return plan.tasks.flatMap((task) =>
+    (["red", "green", "refactor"] as const).flatMap((phase) => {
+      const boundary = task.phases[phase];
+      if (!boundary) return [];
+      return [
+        ...(boundary.write.includes(input)
+          ? [{ taskId: task.taskId, phase, kind: "write" as const }]
+          : []),
+        ...(boundary.delete.includes(input)
+          ? [{ taskId: task.taskId, phase, kind: "delete" as const }]
+          : []),
+      ];
+    }),
+  );
+}
+
+function operationBefore(
+  left: PathOperation,
+  right: PathOperation,
+  ancestors: ReadonlyMap<string, ReadonlySet<string>>,
+): boolean {
+  return left.taskId === right.taskId
+    ? PLAN_PHASE_INDEX[left.phase] < PLAN_PHASE_INDEX[right.phase]
+    : (ancestors.get(right.taskId)?.has(left.taskId) ?? false);
+}
+
+function pathSurvives(
+  operations: readonly PathOperation[],
+  ancestors: ReadonlyMap<string, ReadonlySet<string>>,
+): boolean {
+  return operations
+    .filter((operation) => operation.kind === "delete")
+    .every((deletion) =>
+      operations.some(
+        (operation) =>
+          operation.kind === "write" &&
+          operationBefore(deletion, operation, ancestors),
+      ),
+    );
+}
+
+/**
+ * File-level acceptance entrypoints named directly by a verification contract.
+ * Vitest identifies its test files and a Node static check identifies its
+ * executable script. Package scripts do not expose selected files, and an
+ * unrelated helper or data output is not promoted merely because of its path.
+ */
+function verificationAcceptanceEntrypoints(
+  verification: StructuredVerificationContract,
+): string[] {
+  return verificationSteps(verification).flatMap((step) => {
+    if (step.kind === "vitest") return step.testFiles;
+    if (step.kind === "static-check" && step.runner.kind === "node") {
+      return [step.runner.script];
+    }
+    return [];
+  });
+}
+
+function agentsTargetAvailable(
+  root: string,
+  operation: PlanAgentsCheckpointOperation,
+): boolean {
+  if (operation.impact === "create-index") {
+    return ["absent", "file"].includes(
+      observeSafePath(root, operation.target).kind,
+    );
+  }
+  if (!isSafeRegularFile(root, operation.target)) return false;
+  if (operation.impact === "update-existing") return true;
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(
+      readFileSync(path.join(root, operation.target)),
+    );
+    const start = text.indexOf(AGENTS_START);
+    const end = text.indexOf(AGENTS_END);
+    if (
+      start < 0 ||
+      end <= start ||
+      text.indexOf(AGENTS_START, start + AGENTS_START.length) >= 0 ||
+      text.indexOf(AGENTS_END, end + AGENTS_END.length) >= 0
+    ) {
+      return false;
+    }
+    return (
+      `${text.slice(0, start)}${text.slice(end + AGENTS_END.length)}`.trim()
+        .length > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+function inputTimingDiagnostics(
+  plan: ImplementPlan,
+  consumerRoot: string,
+): DesignPlanDiagnostic[] {
+  const diagnostics: DesignPlanDiagnostic[] = [];
+  const tasks = new Map(plan.tasks.map((task) => [task.taskId, task]));
+  const ancestors = new Map(
+    plan.tasks.map((task) => [task.taskId, taskAncestors(task.taskId, tasks)]),
+  );
+  const outputByPath = new Map(
+    plan.outputs.map((output) => [output.path, output]),
+  );
+  const agentsOperations = new Map(
+    plan.verification.agentsCheckpoint.operations.map((operation) => [
+      operation.target,
+      operation,
+    ]),
+  );
+  const unavailable = (input: {
+    field: string;
+    verification: StructuredVerificationContract;
+    path: string;
+    task?: PlanTaskDraft;
+    code: "workspace-input-unavailable" | "producer-output-unavailable";
+  }) => {
+    const output = outputByPath.get(input.path);
+    diagnostics.push({
+      code: input.code,
+      ...(input.task ? { taskId: input.task.taskId } : {}),
+      field: input.field,
+      verificationId: input.verification.id,
+      path: input.path,
+      ...(output
+        ? {
+            outputId: output.id,
+            producerTaskId: output.producer.taskId,
+            producerPhase: output.producer.phase,
+          }
+        : {}),
+    });
+  };
+
+  const requireOriginalInputs = (
+    field: string,
+    verification: StructuredVerificationContract,
+    task?: PlanTaskDraft,
+  ) => {
+    for (const input of verificationInputPaths(verification)) {
+      if (!isSafeRegularFile(consumerRoot, input)) {
+        unavailable({
+          field,
+          verification,
+          path: input,
+          task,
+          code: "workspace-input-unavailable",
+        });
+      }
+    }
+  };
+  const requireInput = (
+    field: string,
+    verification: StructuredVerificationContract,
+    input: string,
+    task?: PlanTaskDraft,
+  ) => {
+    const actualPaths = verificationInputPaths(verification).sort(
+      compareCanonicalStrings,
+    );
+    if (actualPaths.includes(input)) return;
+    diagnostics.push({
+      code: "verification-input-binding-mismatch",
+      ...(task ? { taskId: task.taskId } : {}),
+      field,
+      verificationId: verification.id,
+      path: input,
+      expectedPaths: [...new Set([...actualPaths, input])].sort(
+        compareCanonicalStrings,
+      ),
+      actualPaths,
+    });
+  };
+
+  for (const task of plan.tasks) {
+    if (task.baselineVerification) {
+      requireOriginalInputs(
+        "baselineVerification",
+        task.baselineVerification,
+        task,
+      );
+    }
+    const permittedTasks = new Set([
+      task.taskId,
+      ...(ancestors.get(task.taskId) ?? []),
+    ]);
+    for (const [field, verification] of [
+      ["affectedVerification", task.affectedVerification],
+      ["repairVerification", task.repairVerification],
+    ] as const) {
+      for (const input of verificationInputPaths(verification)) {
+        const output = outputByPath.get(input);
+        if (output && !permittedTasks.has(output.producer.taskId)) {
+          diagnostics.push({
+            code: "producer-not-dependency",
+            taskId: task.taskId,
+            field,
+            verificationId: verification.id,
+            path: input,
+            outputId: output.id,
+            producerTaskId: output.producer.taskId,
+            producerPhase: output.producer.phase,
+          });
+          continue;
+        }
+        const operations = pathOperations(plan, input).filter((operation) =>
+          permittedTasks.has(operation.taskId),
+        );
+        if (
+          (!output && !isSafeRegularFile(consumerRoot, input)) ||
+          !pathSurvives(operations, ancestors)
+        ) {
+          unavailable({
+            field,
+            verification,
+            path: input,
+            task,
+            code: output
+              ? "producer-output-unavailable"
+              : "workspace-input-unavailable",
+          });
+        }
+      }
+    }
+  }
+
+  requireOriginalInputs(
+    "verification.baseline.fullSuite",
+    plan.verification.baseline.fullSuite,
+  );
+  const deliveryAcceptanceEntrypoints = new Set([
+    ...verificationAcceptanceEntrypoints(plan.verification.change.fullSuite),
+    ...verificationAcceptanceEntrypoints(plan.verification.change.postApply),
+    ...(plan.verification.agentsCheckpoint.verification
+      ? verificationAcceptanceEntrypoints(
+          plan.verification.agentsCheckpoint.verification,
+        )
+      : []),
+  ]);
+  for (const output of plan.outputs) {
+    const producer = tasks.get(output.producer.taskId);
+    const target = producer?.phases[output.producer.phase];
+    if (
+      !producer ||
+      !target ||
+      observeSafePath(consumerRoot, output.path).kind !== "absent"
+    ) {
+      continue;
+    }
+    const declaredTests = new Set([
+      ...producer.impactClosure.relatedTests.map((test) => test.path),
+      ...producer.impactClosure.affectedSuite,
+      ...(["red", "green", "refactor"] as const).flatMap((phase) => {
+        const boundary = producer.phases[phase];
+        return boundary
+          ? verificationAcceptanceEntrypoints(boundary.verification)
+          : [];
+      }),
+      ...verificationAcceptanceEntrypoints(producer.affectedVerification),
+      ...verificationAcceptanceEntrypoints(producer.repairVerification),
+      ...deliveryAcceptanceEntrypoints,
+    ]);
+    if (!declaredTests.has(output.path)) continue;
+    for (const phase of ["red", "green", "refactor"] as const) {
+      const boundary = producer.phases[phase];
+      if (
+        !boundary ||
+        PLAN_PHASE_INDEX[phase] < PLAN_PHASE_INDEX[output.producer.phase]
+      ) {
+        continue;
+      }
+      requireInput(
+        `phases.${phase}.verification`,
+        boundary.verification,
+        output.path,
+        producer,
+      );
+    }
+    requireInput(
+      "affectedVerification",
+      producer.affectedVerification,
+      output.path,
+      producer,
+    );
+    requireInput(
+      "repairVerification",
+      producer.repairVerification,
+      output.path,
+      producer,
+    );
+    requireInput(
+      "verification.change.fullSuite",
+      plan.verification.change.fullSuite,
+      output.path,
+    );
+    requireInput(
+      "verification.change.postApply",
+      plan.verification.change.postApply,
+      output.path,
+    );
+  }
+  for (const [field, verification, afterAgents] of [
+    [
+      "verification.change.fullSuite",
+      plan.verification.change.fullSuite,
+      false,
+    ],
+    ["verification.change.postApply", plan.verification.change.postApply, true],
+    ...(plan.verification.agentsCheckpoint.verification
+      ? ([
+          [
+            "verification.agentsCheckpoint.verification",
+            plan.verification.agentsCheckpoint.verification,
+            true,
+          ],
+        ] as const)
+      : []),
+  ] as const) {
+    for (const input of verificationInputPaths(verification)) {
+      const output = outputByPath.get(input);
+      const operations = pathOperations(plan, input);
+      const agentsOperation = afterAgents
+        ? agentsOperations.get(input)
+        : undefined;
+      if (
+        agentsOperation
+          ? !agentsTargetAvailable(consumerRoot, agentsOperation)
+          : (!output && !isSafeRegularFile(consumerRoot, input)) ||
+            !pathSurvives(operations, ancestors)
+      ) {
+        unavailable({
+          field,
+          verification,
+          path: input,
+          code: output
+            ? "producer-output-unavailable"
+            : "workspace-input-unavailable",
+        });
+      }
+    }
+  }
+  return diagnostics;
+}
+
 function deliveryVerificationDiagnostics(
   plan: ImplementPlan,
   consumerRoot: string,
@@ -823,6 +1239,14 @@ function deliveryVerificationDiagnostics(
     owner: string;
     verification: StructuredVerificationContract;
   }> = plan.tasks.flatMap((task) => [
+    ...(task.baselineVerification
+      ? [
+          {
+            owner: `task:${task.taskId}:baseline`,
+            verification: task.baselineVerification,
+          },
+        ]
+      : []),
     {
       owner: `task:${task.taskId}:affected`,
       verification: task.affectedVerification,
@@ -1084,7 +1508,13 @@ function normalizeTracking(value: unknown): PlanTracking {
   };
 }
 
-function normalizeDraft(value: unknown): ImplementPlan {
+function normalizeDraft(
+  value: unknown,
+  options: {
+    consumerRoot?: string;
+    preserveMissingTaskBaselines?: boolean;
+  } = {},
+): ImplementPlan {
   value = structuredClone(value);
   if (
     !isRecord(value) ||
@@ -1125,6 +1555,7 @@ function normalizeDraft(value: unknown): ImplementPlan {
     tasks: taskDrafts.map((candidate) => {
       if (!isRecord(candidate)) return candidate;
       const {
+        baselineVerification: _baselineVerification,
         affectedVerification: _affectedVerification,
         repairVerification: _repairVerification,
         ...boundary
@@ -1145,7 +1576,12 @@ function normalizeDraft(value: unknown): ImplementPlan {
       : { changeContract: normalizeChangeContract(value.changeContract) }),
     changeId: value.changeId,
     tasks: taskDrafts
-      .map(normalizeTask)
+      .map((task) =>
+        normalizeTask(task, {
+          consumerRoot: options.consumerRoot,
+          preserveMissingBaseline: options.preserveMissingTaskBaselines,
+        }),
+      )
       .sort((left, right) =>
         compareCanonicalStrings(left.taskId, right.taskId),
       ),
@@ -1279,11 +1715,15 @@ export function compileImplementPlan(
     if (options.bindExecutionInputs)
       draft = bindDraftVerificationInputs(options.consumerRoot, draft);
     draft = preparePlanDraft(draft);
-    const normalized = normalizeDraft(draft);
-    const plan =
-      isRecord(draft) && legacyPlans.get(draft) === JSON.stringify(draft)
-        ? (draft as unknown as ImplementPlan)
-        : normalized;
+    const retainedLegacy =
+      isRecord(draft) && legacyPlans.get(draft) === JSON.stringify(draft);
+    const normalized = normalizeDraft(draft, {
+      consumerRoot: options.consumerRoot,
+      preserveMissingTaskBaselines: retainedLegacy,
+    });
+    const plan = retainedLegacy
+      ? (draft as unknown as ImplementPlan)
+      : normalized;
     const graph = graphFromPlan(plan);
     const readiness = assessImplementGraphReadiness(
       options.consumerRoot,
@@ -1296,6 +1736,7 @@ export function compileImplementPlan(
     );
     const diagnostics = [
       ...readiness.closure.diagnostics,
+      ...inputTimingDiagnostics(plan, options.consumerRoot),
       ...deliveryVerificationDiagnostics(plan, options.consumerRoot),
     ] as DesignPlanDiagnostic[];
     if (diagnostics.length > 0) {
@@ -1347,7 +1788,9 @@ export function parseImplementPlan(
   } catch {
     throw new Error("delivery-plan-json-invalid");
   }
-  const normalized = normalizeDraft(parsed);
+  const normalized = normalizeDraft(parsed, {
+    preserveMissingTaskBaselines: true,
+  });
   if (`${canonicalJson(normalized)}\n` === text) return normalized;
   if (
     !options.allowLegacyOrder ||

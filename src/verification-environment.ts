@@ -23,6 +23,9 @@ export async function captureVerificationEnvironmentIdentity(
   signal?: AbortSignal,
 ): Promise<string> {
   const roots = [path.join(dependencyOwner, "node_modules")];
+  const unavailable: string[] = [];
+  const profile = executionProfile();
+  roots.push(path.resolve(profile.bwrapPath));
   const node = resolveVerificationRunner("node");
   if (node) roots.push(realpathSync(node.executablePath));
   for (const verification of verifications) {
@@ -32,7 +35,22 @@ export async function captureVerificationEnvironmentIdentity(
       verification,
       { executionWritePaths: VERIFICATION_CONFIGURATION_PATHS },
     );
-    if (!capability.ok) throw new Error("verification-environment-unavailable");
+    if (!capability.ok) {
+      if (
+        ![
+          "runner-missing",
+          "local-executable-missing",
+          "script-missing",
+          "script-command-mismatch",
+          "verification-config-mismatch",
+        ].includes(capability.diagnostic.code)
+      )
+        throw new Error("verification-environment-unavailable");
+      // Missing task capabilities are observable identities. The exact adapter
+      // still rejects that task; independent tasks may use their own runners.
+      unavailable.push(capability.diagnostic.code);
+      continue;
+    }
     roots.push(
       ...verificationRunnerFiles(
         dependencyOwner,
@@ -50,9 +68,9 @@ export async function captureVerificationEnvironmentIdentity(
     args: [roots],
     signal,
   });
-  const profile = executionProfile();
   return createHash("sha256")
     .update(installed)
+    .update(JSON.stringify(unavailable.sort()))
     .update(JSON.stringify(profile))
     .update(
       JSON.stringify(

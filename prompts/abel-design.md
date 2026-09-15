@@ -235,7 +235,7 @@ Each task must seal:
 - stable id, objective, exact dependencies and edge reasons;
 - exact phase-local read/write/delete paths and output producers;
 - Red, Green, optional Refactor structured verification and exact verification inputs;
-- task-affected and repair verification contracts;
+- an original-revision `baselineVerification`, task-affected and repair verification contracts;
 - conflicts, resources, verification locks, dependency changes, impact closure, and existing-test evidence;
 - AGENTS impact/target and managed-only ownership;
 - precise context sufficient for a fresh Worker without a conversation transcript.
@@ -244,6 +244,16 @@ Seal the supporting repository files needed by the whole task, including callers
 Writes and deletes remain phase-local.
 This task-wide read authority is part of the proposal, not an ad hoc escalation during Implement.
 Keep tasks small enough for one complete patch using compact exact replacements, and separate independent outputs during planning.
+Give each dependency its reason in task context: a consumed producer output, an unresolved shared interface, or a concrete resource constraint.
+Use `summary.parallelism.initiallyRunnableGroup` to inspect the bounded, conflict-free initial group, assuming shared slots are available.
+The labelled static pairs describe eventual compatibility; inspect producer waits, all serialization causes, and global verification barriers before claiming concurrency.
+Runtime capacity and capabilities still require Implement admission.
+Keep reads precise so unrelated module tasks can run concurrently; shared interface or manifest changes need one explicit owner and dependent consumers.
+
+Task `baselineVerification` may be omitted only when every affected input is a safe regular file in the original snapshot; the compiler then projects that exact affected contract.
+For a new Red test, declare its output and keep it in the phase, affected, repair, cumulative and post-apply contracts.
+Bind the original baseline to executable existing regression coverage or an existing full suite, without creating that future test in the baseline or dropping acceptance.
+An existing file which is also a future modification output remains readable at its original bytes for baseline verification.
 
 Impact closure must name affected existing tests and fixtures; a suite made only from newly added tests is insufficient.
 In `impactClosure.relatedTests`, `current-task` means this task edits that test: its path must appear in a phase's `write` set.
@@ -277,7 +287,7 @@ Do not hand-assemble canonical plan bytes, hashes, generated task Markdown, or r
 The canonical `ImplementPlan` contains:
 
 - tasks and regular-file outputs;
-- target/affected/full-suite baselines and normalized failure identity policy;
+- target-contract identities, task original-baseline contracts, full-suite baseline and normalized failure identity policy;
 - change-level affected, full-suite, and post-apply verification;
 - an explicit `artifactCorrection.maxAttempts` of 2-3 attempts for a verification obligation and phase, including the initial attempt; operation ids, rollback lineage, route changes, task renaming, and rewording do not replenish it;
 - bounded in-boundary repair policy and attribution classes `pre-existing | introduced | unresolved | environment`;
@@ -286,7 +296,10 @@ The canonical `ImplementPlan` contains:
 
 Use the code-owned readiness proof to require an executable static closure with no diagnostics.
 A write set grants authority but never proves that an output exists.
-Every absent future input must be a unique declared output from a transitive dependency.
+Every absent future input must be a unique declared output available at its consumer's phase: the same task's current/prior phase, or a completed transitive dependency.
+Affected/repair consume final task outputs; cumulative and post-apply consume outputs at their global barriers.
+A deletion must have a causally later rewrite before consumption.
+Original baseline contracts cannot consume future outputs.
 
 ## Gate B and trusted delivery
 

@@ -61,13 +61,17 @@ const HINTS = new Map<string, string>(
     "verification-reference-invalid":
       "A verification reference contains only use and optional Red expectedFailure. Put executable fields in its definition.",
     "verification-definition-invalid":
-      "Define one existing atomic verifier without id, classification, executionBindings or references.",
+      "Define one supported atomic verifier without id, classification, executionBindings or references.",
     "current-task-outside-write-set":
       "Omit disposition to derive the test owner from task writes. Keep path and evidence; do not widen writes to satisfy this label.",
     "related-test-owner-ambiguous":
       "Several other tasks edit this test. Choose the intended regression-task owner explicitly, or resolve overlapping task ownership.",
     "verification-input-binding-mismatch":
-      "Omit verificationInputs to derive exact bindings from the verification contract and declared outputs. Keep supporting source files in read, not in verificationInputs.",
+      "For a phase binding, omit verificationInputs to derive exact bindings from the contract and outputs. For affected, repair or full-suite fields, retain declared new tests as executable inputs. Keep supporting source files in read.",
+    "workspace-input-unavailable":
+      "Bind original baselineVerification and baseline.fullSuite to safe files in the original snapshot. For later consumers, declare an available producer and preserve its output through consumption. Do not create future tests in the original baseline.",
+    "producer-output-unavailable":
+      "Keep the declared producer output available at this consumer, including after intermediate deletes and AGENTS checkpoints. Preserve the accepted verification coverage.",
     "workspace-input-has-producer":
       "Omit verificationInputs or bind this path to its declared outputId instead of workspace.",
     "multiple-output-producers":
@@ -78,8 +82,6 @@ const HINTS = new Map<string, string>(
       "This verification needs an output from a later phase. Correct the producer or phase order; input inference cannot make that output available earlier.",
     "verification-input-not-declared":
       "The verification contract requires a path outside this phase's read/write declarations. Correct the contract or explicitly declare the approved input path.",
-    "workspace-input-unavailable":
-      "The required workspace input is missing or not a safe regular file. Correct its path or declare its planned producer.",
   }),
 );
 function safePath(value: unknown): value is string {

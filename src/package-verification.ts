@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   type AtomicVerificationContract,
   type StructuredVerificationContract,
+  type VerificationInputObservation,
   type VerificationObservation,
   verificationSteps,
 } from "./contracts.ts";
@@ -321,11 +322,13 @@ export async function executePackageVerification(input: {
   const unavailable = (
     code: string,
     category: "environment" | "adapter" | "resource" = "adapter",
+    inputObservation?: VerificationInputObservation,
   ): VerificationObservation => ({
     kind: "unavailable",
     category,
     code,
     verificationId: input.verification.id,
+    ...(inputObservation ? { inputObservation } : {}),
     ...(executionDiagnostic
       ? {
           diagnostic: {
@@ -349,7 +352,14 @@ export async function executePackageVerification(input: {
       executionWritePaths: input.executionWritePaths,
     },
   );
-  if (!capability.ok) return unavailable(capability.diagnostic.code);
+  if (!capability.ok)
+    return unavailable(
+      capability.diagnostic.code,
+      "adapter",
+      capability.diagnostic.kind === "verification-adapter"
+        ? capability.diagnostic.inputObservation
+        : undefined,
+    );
   let environment: Awaited<ReturnType<typeof prepareVerificationEnvironment>>;
   try {
     environment = await prepareVerificationEnvironment(
@@ -552,6 +562,9 @@ export function phaseVerificationResult(result: VerificationObservation) {
     kind: "paused" as const,
     code: result.code,
     category: result.category,
+    ...(result.inputObservation
+      ? { inputObservation: result.inputObservation }
+      : {}),
   };
 }
 
@@ -583,5 +596,8 @@ export function changeVerificationResult(result: VerificationObservation) {
         ? ("verification-adapter" as const)
         : ("environment" as const),
     code: result.code,
+    ...(result.inputObservation
+      ? { inputObservation: result.inputObservation }
+      : {}),
   };
 }
