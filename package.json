@@ -1,6 +1,6 @@
 {
   "name": "@abelxiaoxing/cadence",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Four explicit Abel workflow prompts with stage-isolated design and diagnosis, durable resumable implementation, and three package-owned professional Agents.",
   "license": "MIT",
   "type": "module",
