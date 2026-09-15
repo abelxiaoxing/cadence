@@ -52,6 +52,7 @@
   "package/src/evidence-draft.ts",
   "package/src/execution-profile.ts",
   "package/src/file-snapshot.ts",
+  "package/src/implement-continuation.ts",
   "package/src/implement-graph.ts",
   "package/src/implement-plan.ts",
   "package/src/index.ts",

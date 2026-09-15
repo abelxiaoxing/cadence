@@ -40,6 +40,16 @@ Do not end the turn merely because a control call returns a nonterminal state.
 Follow its parent-owned continuation until verified completion or a concrete blocker that cannot be resolved within available capabilities and budgets.
 Keep routine decisions and repairs internal; give brief progress updates during sustained work and include material implementation choices in the final result.
 
+Treat the accepted goal as active work until the control plane proves completion.
+An internal pause is a checkpoint for the parent to investigate, repair, or replan, not the end of the user's request.
+Design owns product decisions; Implement owns execution and chooses compliant technical solutions without handing those choices back to the user.
+Use all available independent Worker slots through the engine's DAG scheduler; do not replace it with serial manual task calls or launch Workers outside the admitted graph.
+If the parent ends a turn while an actionable continuation remains, the host can schedule another same-stage parent turn after rereading local status.
+That continuation is internal workflow guidance, not a new user request or additional approval.
+Follow its current control-plane evidence; never replay an old command solely because it appeared in an earlier reminder.
+Repeated status reads and identical failed operations are not progress: change the recovery strategy, gather concrete evidence, or preserve the run with the specific remaining external condition.
+Explicit cancellation, stage exit, or an interrupted model turn stops automatic continuation.
+
 ## Trusted admission
 
 Before the first Worker launch, load the current `ready.yaml` and referenced canonical `implement-plan.json`; verify both current owner-private Gate proofs and the finalization fact binding the exact delivery revision, receipt hash, and canonical plan hash, plus the Gate A binding, raw and canonical hashes, OpenSpec strict/planning status, Requirement → Scenario → Verification → Task traceability, capability closure, exact path/output contracts, repair policy, tracking contract, and sealed AGENTS operations.
@@ -151,6 +161,12 @@ A rebind may repair endpoint configuration but does not grant a new incident bud
 If a revised delivery already exists, local status also discovers its exact revision/hash for an exhausted run; resume with `availableDelivery` without asking the user to copy receipt data.
 When `recovery.additionalAttempt` is present, the parent may make a concrete decision to retry once within remaining work capacity.
 Copy that object into an ordinary resume request's optional `recovery` field; do not invent incident keys or failure sequences.
+When `continuation.kind` is `inspect-recovery`, use its bounded diagnostic and recommendation to choose the next recovery strategy before issuing another execution command.
+This object has no dispatch `action` or `command`; never submit it as tool arguments.
+For an exhausted incident, `conditionalCommands` supplies a resume conditional on the exact retained recovery grant even though ordinary unqualified resume is unavailable.
+An evidence-bound correction batch may also permit revising the task decomposition or context within the accepted contract.
+Choose a concrete correction from the retained failure, preserve completed work, and resume only after the relevant prerequisites or compiled delivery are valid.
+For a capability or route investigation, use the available parent tools to establish what changed before resuming; do not repeatedly probe an unchanged prerequisite.
 The default reason is `parent-directed-retry`; `route-changed` and `context-extended` additionally require control-plane evidence.
 This consumes one launch without resetting automatic correction history; another failure pauses again.
 Do not turn the availability of this option into an unconditional retry loop or another user approval round.
@@ -169,7 +185,7 @@ The parent resolves new implementation choices with its recommended option under
 `approval-needed` is an internal requirement to compile updated authority before a Worker continues, not a request for user input.
 `decisionBatch.resolution` identifies the parent as decision owner and `continuation` identifies the automatic next action.
 Follow it in this turn.
-`owner` and `automatic` are status metadata, not tool arguments.
+`owner`, `automatic`, `kind`, `reason`, and `metadata` are status guidance, not tool arguments.
 For amendment use the exact `decisionBatch.continuation` envelope plus `request`; for resume send the closed command envelope with a new operationId.
 A changed batch must cite the new evidence; never ask separately for each task's copy of the same decision.
 Retain the Implement stage and original run.
@@ -196,11 +212,14 @@ This channel does not activate Design, admit evidence packets, allow a different
 Keep the approved goal and explicit constraints stable.
 Automatic amendments retain Gate A and the structured ChangeContract.
 They cannot renew Gate A, replace behavior decisions, or rewrite proposal/spec artifacts.
+Even when a Worker classifies its preferred option as requiring Gate A, choose an alternative that satisfies the existing accepted behavior; the batch does not authorize renewing that Gate.
 Resolve implementation gaps within the accepted goal, constraints and policy; when no conforming solution exists, report that concrete contract blocker and preserve progress rather than repeatedly attempting an invalid amendment.
 Never weaken acceptance criteria just to obtain a passing result.
 The compiler supplies Gate B automatically.
 Finish all known items in the batch before finalizing, then issue ordinary resume.
 Local delivery discovery supplies the newer verified revision/hash; do not ask the user to copy receipts or switch commands.
+After an explicit Implement invocation for a process-interrupted run, follow the returned `resume-interrupted-operation` or `settle-apply-recovery` continuation using the ordinary closed resume command.
+Apply-journal settlement does not spend Worker work units; its continuation may remain available after those units are exhausted, and the engine still controls settlement before any further execution.
 An unchanged resume cannot bypass a pending decision, and stale batch ids or unrelated revision runIds are rejected.
 The user may explicitly choose a full Design discussion, but it is not the recovery instruction for an Implement blocker.
 A generated artifact defect, endpoint outage, stale snapshot, environment failure, pre-existing failure, introduced in-boundary repair, approved documentation/test edit, or approved AGENTS checkpoint is never `approval-needed`.

@@ -569,7 +569,7 @@ Waiting for dependency, conflict, or capacity SHALL consume no Worker attempt bu
 
 The parent control plane SHALL classify recovery from code-owned contract, path, revision, environment, producer, and failure-sequence observations.
 It SHALL distinguish absent input, unsafe input, dependency or runner drift, candidate failure, external capability loss, and integrity or unknown failure.
-Only a proven accepted-scope plan timing or verification-contract defect SHALL authorize the existing batch-bound technical amendment.
+A proven accepted-scope plan timing or verification-contract defect, or retained exhausted candidate/repair evidence from the closed correction code policy, SHALL authorize a batch-bound technical amendment. Such amendments SHALL preserve accepted behavior and policy, and SHALL NOT replenish consumed budgets.
 An admitted revision SHALL continue the same run without renewing accepted behavior authority or resetting retained work and recovery facts.
 
 #### Scenario: Verification input is absent or unsafe
@@ -594,8 +594,13 @@ An admitted revision SHALL continue the same run without renewing accepted behav
 
 #### Scenario: Integrity or unknown failure is reported
 
-- **WHEN** failure evidence is unsafe, unknown, cancelled, exhausted, currentness-invalid, or inconsistent with delivery hashes, proofs, or receipt bindings
+- **WHEN** failure evidence is unsafe, unknown, cancelled, globally budget-exhausted, currentness-invalid, or inconsistent with delivery hashes, proofs, or receipt bindings
 - **THEN** the control plane withholds plan-amendment authority, preserves retained facts, and pauses the affected integrity scope with a concrete recovery condition
+
+#### Scenario: An exhausted correction needs a different strategy
+
+- **WHEN** a known candidate or repair correction exhausts automatic attempts while shared work capacity remains
+- **THEN** status projects parent investigation, the exact conditional recovery grant, and a Gate-B-only technical amendment option where supported by the closed code policy, without performing any recovery action or changing accepted behavior
 
 ### Requirement: Settlement and completion barriers
 

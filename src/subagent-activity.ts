@@ -501,7 +501,9 @@ function hasAutomaticContinuation(result: Record<string, unknown>): boolean {
     asRecord(result.pause)?.code !== "operation-cancelled" &&
     continuation?.owner === "parent" &&
     continuation.automatic === true &&
-    (continuation.action === "amend" || continuation.command === "resume")
+    (continuation.action === "amend" ||
+      continuation.command === "resume" ||
+      continuation.kind === "inspect-recovery")
   );
 }
 

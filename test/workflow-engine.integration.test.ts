@@ -430,7 +430,20 @@ describe("WorkflowEngine command authority", () => {
     };
     const retained = snapshot();
     if (!legacy) {
-      expect(initial).toMatchObject({ state: "paused", pause: { code: "operation-interrupted" }, tasks: expect.arrayContaining([expect.objectContaining({ taskId: "paper-download", state: "paused", phase: "red" })]) });
+      expect(initial).toMatchObject({
+        state: "paused",
+        pause: { code: "operation-interrupted" },
+        continuation: {
+          owner: "parent",
+          automatic: true,
+          command: "resume",
+          kind: "resume-interrupted-operation",
+          reason: "operation-interrupted",
+          stage: "abel-implement",
+          change,
+        },
+        tasks: expect.arrayContaining([expect.objectContaining({ taskId: "paper-download", state: "paused", phase: "red" })]),
+      });
       expect(initial.legalCommands).toContain("resume");
     }
     await engine.close();
@@ -449,7 +462,21 @@ describe("WorkflowEngine command authority", () => {
     engine = openEngine({ consumerRoot, xdgStateHome, delivery, worker });
     try {
       const recovered = await engine.execute(command("status", change));
-      expect(recovered).toMatchObject({ runId: initial.runId, state: "paused", pause: { code: "operation-interrupted" }, tasks: expect.arrayContaining([expect.objectContaining({ taskId: "paper-download", state: "paused", phase: "red" })]) });
+      expect(recovered).toMatchObject({
+        runId: initial.runId,
+        state: "paused",
+        pause: { code: "operation-interrupted" },
+        continuation: {
+          owner: "parent",
+          automatic: true,
+          command: "resume",
+          kind: "resume-interrupted-operation",
+          reason: "operation-interrupted",
+          stage: "abel-implement",
+          change,
+        },
+        tasks: expect.arrayContaining([expect.objectContaining({ taskId: "paper-download", state: "paused", phase: "red" })]),
+      });
       expect(recovered.legalCommands).toContain("resume");
       expect(snapshot()).toEqual(retained);
       expect(retained.workflow_work_budget).toEqual([expect.objectContaining({ used: 1 })]);
@@ -511,7 +538,19 @@ describe("WorkflowEngine command authority", () => {
     const worker = new ScriptedWorker();
     engine = openEngine({ consumerRoot, xdgStateHome, delivery, worker });
     try {
-      expect(await engine.execute(command("status", change))).toMatchObject({ state: "paused", pause: { code: "operation-interrupted" } });
+      expect(await engine.execute(command("status", change))).toMatchObject({
+        state: "paused",
+        pause: { code: "operation-interrupted" },
+        continuation: {
+          owner: "parent",
+          automatic: true,
+          command: "resume",
+          kind: "resume-interrupted-operation",
+          reason: "operation-interrupted",
+          stage: "abel-implement",
+          change,
+        },
+      });
       await engine.execute(command("resume", change));
       expect(worker.calls).toEqual([]);
     } finally { await engine.close(); }
@@ -904,7 +943,26 @@ describe("WorkflowEngine command authority", () => {
     try {
       const outcome = await engine.execute(command("start", change));
       expect(outcome.decisionBatch).toBeUndefined();
-      expect(outcome.continuation).toBeUndefined();
+      if (code === "endpoint-unavailable") {
+        expect(outcome).toMatchObject({
+          continuation: {
+            owner: "parent",
+            automatic: true,
+            kind: "inspect-recovery",
+            reason: code,
+            metadata: {
+              diagnostic: {
+                code,
+                strategy: "inspect-route-availability",
+              },
+            },
+          },
+        });
+        expect(outcome.continuation).not.toHaveProperty("action");
+        expect(outcome.continuation).not.toHaveProperty("command");
+      } else {
+        expect(outcome.continuation).toBeUndefined();
+      }
     } finally { await engine.close(); }
   });
 
@@ -978,6 +1036,44 @@ describe("WorkflowEngine command authority", () => {
     expect(worker.calls).toHaveLength(2);
     const recovery = paused.recovery as { additionalAttempt: Record<string, unknown> };
     expect(recovery.additionalAttempt).toMatchObject({reason: "parent-directed-retry"});
+    expect(paused).toMatchObject({
+      continuation: {
+        owner: "parent",
+        automatic: true,
+        kind: "inspect-recovery",
+        reason: "candidate-diff-invalid",
+        metadata: {
+          taskId: "T1",
+          diagnostic: {
+            code: "candidate-diff-invalid",
+            strategy: "revise-candidate",
+            attempts: 2,
+          },
+          recommendation: {
+            kind: "bounded-additional-attempt",
+            resume: { recovery: recovery.additionalAttempt },
+          },
+        },
+      },
+      conditionalCommands: [
+        {
+          command: "resume",
+          stage: "abel-implement",
+          change,
+          requires: { recovery: recovery.additionalAttempt },
+        },
+      ],
+      decisionBatch: {
+        requiredGates: ["gate-b"],
+        resolution: {
+          owner: "parent",
+          strategy: "recommended",
+          requiresUserInput: false,
+        },
+      },
+    });
+    expect(paused.continuation).not.toHaveProperty("action");
+    expect(paused.continuation).not.toHaveProperty("command");
     const retry = command("resume", change, {operationId: "explicit-once", recovery: recovery.additionalAttempt});
     const next = await engine.execute(retry);
     expect(next).toMatchObject({state: "paused", recovery: {exhausted: true, attempts: 3}, resourceBudget: {used: 3}});

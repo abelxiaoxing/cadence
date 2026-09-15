@@ -341,6 +341,34 @@ describe("four-workflow user experience", () => {
     },
   );
 
+  it("presents parent recovery investigation without a user resume prompt", () => {
+    const payload = {
+      stage: "abel-implement",
+      state: "paused",
+      completed: false,
+      continuation: {
+        owner: "parent",
+        automatic: true,
+        kind: "inspect-recovery",
+        reason: "environment",
+        stage: "abel-implement",
+        change: "fixture",
+      },
+      legalCommands: ["status", "resume", "discard"],
+    };
+    const display = projectWorkflowActivity({}, payload, 0);
+    expect(display.state).toBe("recovering");
+    expect(display.tone).not.toBe("success");
+    expect(display.nextAction).toBeUndefined();
+    expect(
+      projectWorkflowActivity(
+        {},
+        { ...payload, pause: { code: "operation-cancelled" } },
+        0,
+      ).state,
+    ).toBe("operation-cancelled");
+  });
+
   it("maps every semantic state truthfully and reserves success for completed", () => {
     for (const state of WORKFLOW_ACTIVITY_STATES) {
       const payload = {

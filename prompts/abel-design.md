@@ -144,6 +144,14 @@ Design settles the goal, main decisions, explicit constraints, and non-goals.
 Make the implementation delegation clear in the accepted proposal: the parent will choose its recommended solution for later implementation choices within those constraints, record material decisions, and continue to verified results without another selection or confirmation round.
 Do not ask the user to approve this delegation separately or attempt to enumerate every future implementation detail.
 
+Design owns the user decision boundary for this change.
+Discuss the outcome and real constraints here, including likely repair scope, dependency choices, environment prerequisites that require the operator, and any irreversible operation.
+Treat the task DAG as the initial execution strategy: the parent may revise its technical decomposition, supply context, repair failures, and recompile within the accepted contract during Implement.
+Do not make incidental file lists or a guessed decomposition into product constraints.
+Choose `policy.writeRoots` to cover the affected modules, their regression tests, and necessary integration repairs justified by repository evidence; keep initial phase writes precise.
+An explicit user authorization for repository-wide work may be represented by `"."`; never infer it from convenience, and still name any authorized AGENTS target exactly.
+Set dependency and verification-mode policy from the accepted choices, so known requirements do not become authorization requests during execution.
+
 ## Structured authority for new work
 
 Use a structured `ChangeContract` as the Gate A `contract` for new designs: `goal`, `acceptance` (stable `id`, accepted `statement`, complete structured `verification`), `constraints` (stable `id` and `statement`), and `policy` (`writeRoots`, allowed dependency names in `dependencies`, and `verificationModes`).
@@ -249,6 +257,15 @@ Use `summary.parallelism.initiallyRunnableGroup` to inspect the bounded, conflic
 The labelled static pairs describe eventual compatibility; inspect producer waits, all serialization causes, and global verification barriers before claiming concurrency.
 Runtime capacity and capabilities still require Implement admission.
 Keep reads precise so unrelated module tasks can run concurrently; shared interface or manifest changes need one explicit owner and dependent consumers.
+
+For work spanning independent modules, plan independent tasks that can fill the four shared Worker slots, followed by dependent integration where necessary.
+Do not chain tasks merely to prescribe an order or put every task behind the same resource label.
+Do not split a small task solely to increase Worker count.
+Use `summary.implementation` to inspect the accepted amendment policy and stable acceptance/constraint IDs alongside the initial phase permissions.
+Its `review-only` authority and `runtimePrerequisites: "not-assessed"` are explicit: it neither grants broader scope nor certifies a working environment.
+Before finalizing, resolve known missing runners, supported execution profile, required services, and credentials with the user in Design when repository evidence cannot resolve them.
+Record the observed prerequisites and recovery approach in `design.md`; retain the existing prohibition on executing product tests during Design.
+Do not describe a known unavailable prerequisite as ready for unattended execution.
 
 Task `baselineVerification` may be omitted only when every affected input is a safe regular file in the original snapshot; the compiler then projects that exact affected contract.
 For a new Red test, declare its output and keep it in the phase, affected, repair, cumulative and post-apply contracts.

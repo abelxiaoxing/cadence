@@ -688,7 +688,7 @@ export class DesignController {
           ? {
               operation: "approve-gate",
               instruction:
-                "Read applicable instructions, the affected source and existing tests, and the verification manifest together. Resolve only remaining substantive choices; use existing same-task approval. Submit the accepted structured ChangeContract, not a prose placeholder.",
+                "Read applicable instructions, the affected source and existing tests, and the verification manifest together. Resolve remaining substantive choices in Design; use existing same-task approval. Include the goal, acceptance, constraints, and scope for likely implementation repairs in the accepted structured ChangeContract. The parent owns later technical choices within that policy; do not defer user decisions to Implement.",
             }
           : !design.change
             ? {
@@ -699,7 +699,7 @@ export class DesignController {
               ? {
                   operation: "write-artifact",
                   instruction:
-                    "Write proposal, design, specs, author task checkboxes with exact Scenario references, and plan-draft.json. Use the installed example named in the tool description; omit derived identities. Preflight then compile; compilation supplies verification bindings and Gate B.",
+                    "Write proposal, design, specs, author task checkboxes with exact Scenario references, and plan-draft.json. Use the installed example named in the tool description; omit derived identities. Preflight and inspect summary.implementation for the accepted recovery policy and summary.parallelism for independent tasks and serialization causes. Resolve known execution prerequisites in Design. Compile to supply verification bindings and Gate B.",
                 }
               : {
                   operation: "finalize-delivery",

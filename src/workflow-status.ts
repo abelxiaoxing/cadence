@@ -11,9 +11,11 @@ import {
   normalizeVerificationPrerequisite,
   normalizeWorkflowContextRequest,
   normalizeWorkflowVerificationStatus,
+  parentRecoveryStrategy,
   parseDeliveryDiagnostics,
   permitsPlanAmendment,
   permitsPrerequisiteAmendment,
+  permitsRecoveryAmendment,
   type SafeAttemptDiagnostic,
 } from "./workflow-policy.ts";
 
@@ -62,6 +64,9 @@ export function projectWorkflowStatus({
           (right.queue_position ?? Number.MAX_SAFE_INTEGER) ||
         left.task_order - right.task_order,
     );
+  const activeRows = rows.filter((row) =>
+    ["approval-needed", "paused", "retryable"].includes(row.state),
+  );
   const firstPaused = firstPausedTask(rows);
   const contextRequest = firstPaused?.context_request_json
     ? normalizeWorkflowContextRequest(
@@ -73,6 +78,10 @@ export function projectWorkflowStatus({
     firstPaused?.state === "approval-needed"
       ? (firstPaused.pause_code ?? projection.pauseCode ?? "task-paused")
       : (projection.pauseCode ?? firstPaused?.pause_code ?? "task-paused");
+  const taskPauseSuperseded =
+    projection.state === "paused" &&
+    projection.pauseCode !== undefined &&
+    !activeRows.some((row) => row.pause_code === projection.pauseCode);
   const approval =
     projection.state === "approval-needed"
       ? approvalRequirement(pauseCode, contextRequest)
@@ -80,53 +89,75 @@ export function projectWorkflowStatus({
   const attemptDiagnostic = firstPaused
     ? attemptDiagnostics.get(firstPaused.task_id)
     : undefined;
-  const recovery =
-    rows
-      .map((row) => attemptDiagnostics.get(row.task_id)?.recovery)
-      .find((fact) => fact && fact.failures >= fact.feedback.maxAttempts) ??
-    attemptDiagnostic?.recovery;
+  const recovery = taskPauseSuperseded
+    ? undefined
+    : attemptDiagnostic?.recovery;
   const recoveryExhausted =
     recovery && recovery.failures >= recovery.feedback.maxAttempts;
-  const blockers = rows
-    .filter((row) =>
-      ["approval-needed", "paused", "retryable"].includes(row.state),
-    )
-    .map((row) => {
-      const context = row.context_request_json
-        ? normalizeWorkflowContextRequest(JSON.parse(row.context_request_json))
+  const selectedPrerequisite = normalizeVerificationPrerequisite(
+    taskPauseSuperseded ? undefined : attemptDiagnostic?.prerequisite,
+  );
+  const selectedRecoveryStrategy = parentRecoveryStrategy(
+    pauseCode,
+    taskPauseSuperseded ? undefined : attemptDiagnostic,
+  );
+  const selectedPauseActionable =
+    (projection.state === "approval-needed" && approval !== undefined) ||
+    (projection.state === "paused" &&
+      (permitsPlanAmendment(pauseCode) ||
+        selectedRecoveryStrategy !== undefined ||
+        permitsPrerequisiteAmendment(selectedPrerequisite)));
+  const blockers = activeRows.map((row) => {
+    const context = row.context_request_json
+      ? normalizeWorkflowContextRequest(JSON.parse(row.context_request_json))
+      : undefined;
+    const code = row.pause_code ?? "task-paused";
+    const diagnostic = attemptDiagnostics.get(row.task_id);
+    const prerequisite = normalizeVerificationPrerequisite(
+      diagnostic?.prerequisite,
+    );
+    const requirement =
+      row.state === "approval-needed"
+        ? approvalRequirement(code, context)
         : undefined;
-      const code = row.pause_code ?? "task-paused";
-      const prerequisite = normalizeVerificationPrerequisite(
-        attemptDiagnostics.get(row.task_id)?.prerequisite,
-      );
-      const requirement =
-        row.state === "approval-needed"
-          ? approvalRequirement(code, context)
-          : undefined;
-      return {
-        id: hash(runId, row.task_id, code, canonicalJson(context ?? {})),
-        taskId: row.task_id,
-        phase: row.phase,
-        code,
-        kind: requirement ? "decision" : "execution",
-        ...(requirement ?? {}),
-        ...(context ? { contextRequest: context } : {}),
-        ...(prerequisite
-          ? {
-              prerequisite,
-              scope:
-                prerequisite.scope === "baseline-full-suite"
-                  ? "change"
-                  : "task",
-              minimumRecovery: permitsPrerequisiteAmendment(prerequisite)
-                ? "Revise the baseline contract to read safe inputs from the retained original revision, then recompile within the existing authority."
-                : prerequisite.cause === "capability"
-                  ? "Restore the required runner or external capability; a changed environment identity permits a bounded check."
-                  : "Restore trusted verification prerequisites; the retained failure does not authorize plan changes.",
-            }
-          : {}),
-      };
-    });
+    return {
+      id: hash(runId, row.task_id, code, canonicalJson(context ?? {})),
+      taskId: row.task_id,
+      phase: row.phase,
+      code,
+      kind: requirement ? "decision" : "execution",
+      ...(requirement ?? {}),
+      ...(context ? { contextRequest: context } : {}),
+      ...(prerequisite
+        ? {
+            prerequisite,
+            scope:
+              prerequisite.scope === "baseline-full-suite" ? "change" : "task",
+            minimumRecovery: permitsPrerequisiteAmendment(prerequisite)
+              ? "Revise the baseline contract to read safe inputs from the retained original revision, then recompile within the existing authority."
+              : prerequisite.cause === "capability"
+                ? "Restore the required runner or external capability; a changed environment identity permits a bounded check."
+                : "Restore trusted verification prerequisites; the retained failure does not authorize plan changes.",
+          }
+        : {}),
+      ...(diagnostic?.recovery
+        ? {
+            recovery: {
+              code: diagnostic.recovery.feedback.code,
+              attempts: diagnostic.recovery.failures,
+              maxAttempts: diagnostic.recovery.feedback.maxAttempts,
+              strategy: diagnostic.recovery.feedback.strategy,
+              ...(diagnostic.recovery.feedback.failureIdentities
+                ? {
+                    failureIdentities:
+                      diagnostic.recovery.feedback.failureIdentities,
+                  }
+                : {}),
+            },
+          }
+        : {}),
+    };
+  });
   if (
     projection.state === "approval-needed" &&
     !blockers.some((item) => item.kind === "decision") &&
@@ -142,13 +173,19 @@ export function projectWorkflowStatus({
     });
   }
   const decisions = blockers.filter((item) => item.kind === "decision");
-  const amendments = blockers.filter(
-    (item) =>
-      item.kind === "decision" ||
-      permitsPlanAmendment(item.code) ||
-      ("prerequisite" in item &&
-        permitsPrerequisiteAmendment(item.prerequisite)),
-  );
+  const amendments = !selectedPauseActionable
+    ? []
+    : blockers.filter(
+        (item) =>
+          item.kind === "decision" ||
+          permitsPlanAmendment(item.code) ||
+          permitsRecoveryAmendment(
+            item.code,
+            attemptDiagnostics.get(item.taskId),
+          ) ||
+          ("prerequisite" in item &&
+            permitsPrerequisiteAmendment(item.prerequisite)),
+      );
   if (
     projection.state === "paused" &&
     permitsPlanAmendment(pauseCode) &&
@@ -170,6 +207,16 @@ export function projectWorkflowStatus({
     remaining: 64 - amendmentUsed,
     exhausted: amendmentUsed >= 64,
   };
+  const budgetCode = [
+    "change-work-budget-exhausted",
+    "change-recovery-budget-exhausted",
+  ].includes(pauseCode)
+    ? pauseCode
+    : undefined;
+  const budgetExhausted = budgetCode !== undefined;
+  const hasWorkCapacity =
+    !budgetExhausted &&
+    (!resourceBudget || resourceBudget.used < resourceBudget.maximum);
   const decisionBatch =
     amendments.length &&
     pauseCode !== "operation-cancelled" &&
@@ -202,12 +249,139 @@ export function projectWorkflowStatus({
           ].sort(),
         }
       : undefined;
-  const budgetCode = rows.find(
-    (row) =>
-      row.pause_code === "change-work-budget-exhausted" ||
-      row.pause_code === "change-recovery-budget-exhausted",
-  )?.pause_code;
-  const budgetExhausted = budgetCode !== undefined;
+  const guidanceRow = taskPauseSuperseded ? undefined : firstPaused;
+  const guidanceDiagnostic = taskPauseSuperseded
+    ? undefined
+    : attemptDiagnostic;
+  const guidanceCode = pauseCode;
+  const guidanceStrategy = selectedRecoveryStrategy;
+  const failureSequence = recovery
+    ? failureSequences.get(recovery.key)
+    : undefined;
+  const recoveryGrant =
+    recoveryExhausted &&
+    guidanceStrategy !== undefined &&
+    projection.state === "paused" &&
+    hasWorkCapacity &&
+    resourceBudget &&
+    failureSequence !== undefined &&
+    Number.isSafeInteger(failureSequence) &&
+    failureSequence > 0
+      ? {
+          incidentKey: recovery.key,
+          failureSequence,
+          reason: "parent-directed-retry" as const,
+        }
+      : undefined;
+  const recoveryContinuation =
+    projection.state === "paused" &&
+    hasWorkCapacity &&
+    guidanceStrategy &&
+    (!recoveryExhausted || recoveryGrant)
+      ? {
+          owner: "parent" as const,
+          automatic: true,
+          kind: "inspect-recovery" as const,
+          reason: guidanceCode,
+          stage: projection.stage,
+          change: projection.change,
+          metadata: {
+            ...(guidanceRow
+              ? { taskId: guidanceRow.task_id, phase: guidanceRow.phase }
+              : {}),
+            diagnostic: {
+              code: guidanceCode,
+              strategy:
+                guidanceDiagnostic?.recovery?.feedback.strategy ??
+                guidanceStrategy,
+              ...(guidanceDiagnostic?.recovery
+                ? {
+                    inspection: guidanceStrategy,
+                    attempts: guidanceDiagnostic.recovery.failures,
+                    maxAttempts:
+                      guidanceDiagnostic.recovery.feedback.maxAttempts,
+                    ...(guidanceDiagnostic.recovery.feedback.failureIdentities
+                      ? {
+                          failureIdentities:
+                            guidanceDiagnostic.recovery.feedback
+                              .failureIdentities,
+                        }
+                      : {}),
+                  }
+                : {}),
+              ...(guidanceDiagnostic?.prerequisite
+                ? {
+                    prerequisite: normalizeVerificationPrerequisite(
+                      guidanceDiagnostic.prerequisite,
+                    ),
+                  }
+                : {}),
+              ...(guidanceRow?.route_id || engineRun?.route_id
+                ? {
+                    route: {
+                      routeId:
+                        guidanceRow?.route_id ?? engineRun?.route_id ?? "",
+                      ...((guidanceRow?.route_fingerprint ??
+                      engineRun?.route_fingerprint)
+                        ? {
+                            routeFingerprint:
+                              guidanceRow?.route_fingerprint ??
+                              engineRun?.route_fingerprint,
+                          }
+                        : {}),
+                    },
+                  }
+                : {}),
+            },
+            ...(recoveryGrant
+              ? {
+                  recommendation: {
+                    kind: "bounded-additional-attempt" as const,
+                    resume: { recovery: recoveryGrant },
+                  },
+                }
+              : {}),
+          },
+        }
+      : undefined;
+  const amendmentContinuation =
+    decisionBatch && !amendmentBudget.exhausted && hasWorkCapacity
+      ? {
+          owner: "parent" as const,
+          automatic: true,
+          ...decisionBatch.continuation,
+        }
+      : undefined;
+  const interruptedContinuation =
+    projection.stage === "abel-implement" &&
+    projection.change &&
+    projection.pauseCode === "operation-interrupted" &&
+    legalControlCommands(projection.state).includes("resume") &&
+    (projection.state === "recovering" ||
+      (projection.state === "paused" && hasWorkCapacity))
+      ? {
+          owner: "parent" as const,
+          automatic: true,
+          command: "resume" as const,
+          kind:
+            projection.state === "recovering"
+              ? ("settle-apply-recovery" as const)
+              : ("resume-interrupted-operation" as const),
+          reason: "operation-interrupted" as const,
+          stage: projection.stage,
+          change: projection.change,
+          ...(guidanceRow?.pause_code === "operation-interrupted"
+            ? {
+                metadata: {
+                  taskId: guidanceRow.task_id,
+                  phase: guidanceRow.phase,
+                },
+              }
+            : {}),
+        }
+      : undefined;
+  const continuation =
+    interruptedContinuation ?? recoveryContinuation ?? amendmentContinuation;
   const currentRevision = projection.deliveryRevision ?? 0;
   return {
     runId: projection.runId,
@@ -243,17 +417,6 @@ export function projectWorkflowStatus({
       ? {
           decisionBatch,
           amendmentBudget,
-          ...(!amendmentBudget.exhausted &&
-          !budgetExhausted &&
-          (!resourceBudget || resourceBudget.used < resourceBudget.maximum)
-            ? {
-                continuation: {
-                  owner: "parent",
-                  automatic: true,
-                  ...decisionBatch.continuation,
-                },
-              }
-            : {}),
         }
       : {}),
     ...(recoveryExhausted
@@ -265,20 +428,11 @@ export function projectWorkflowStatus({
             attempts: recovery.failures,
             maxAttempts: recovery.feedback.maxAttempts,
             automaticRetryExhausted: true,
-            ...(!budgetExhausted &&
-            resourceBudget &&
-            resourceBudget.used < resourceBudget.maximum
-              ? {
-                  additionalAttempt: {
-                    incidentKey: recovery.key,
-                    failureSequence: failureSequences.get(recovery.key) ?? 0,
-                    reason: "parent-directed-retry",
-                  },
-                }
-              : {}),
+            ...(recoveryGrant ? { additionalAttempt: recoveryGrant } : {}),
           },
         }
       : {}),
+    ...(continuation ? { continuation } : {}),
     ...(projection.terminal ? { terminal: projection.terminal } : {}),
     ...(projection.pauseCode || firstPaused?.pause_code
       ? {
@@ -321,6 +475,10 @@ export function projectWorkflowStatus({
               receiptHash: "matching-ready-receipt",
             },
           },
+        }
+      : {}),
+    ...(approval && projection.change
+      ? {
           conditionalCommands: [
             {
               command: "resume",
@@ -333,7 +491,18 @@ export function projectWorkflowStatus({
             },
           ],
         }
-      : {}),
+      : recoveryGrant && projection.change
+        ? {
+            conditionalCommands: [
+              {
+                command: "resume",
+                stage: "abel-implement",
+                change: projection.change,
+                requires: { recovery: recoveryGrant },
+              },
+            ],
+          }
+        : {}),
     tasks: rows.map((row) => ({
       taskId: row.task_id,
       state: row.state,

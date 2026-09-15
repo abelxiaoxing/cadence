@@ -48,6 +48,11 @@ import {
   DesignFinalizationError,
   validateDesignControlRequest,
 } from "./design-control.ts";
+import {
+  ImplementContinuationDriver,
+  implementChangeFromInvocation,
+  implementPromptBindsChange,
+} from "./implement-continuation.ts";
 import { canonicalJson } from "./implement-graph.ts";
 import { PACKET_ACTIONS, PacketRuntime } from "./packet-runtime.ts";
 
@@ -707,7 +712,9 @@ export function registerWorkflowControl(
   const engines = new Map<string, Promise<WorkflowControlEngine>>();
   const designOperations = new Set<Promise<void>>();
   const designFailures = new Map<string, SafeDesignFailure>();
+  const implementContinuation = new ImplementContinuationDriver();
   let pendingPrompt: EligiblePrompt | undefined;
+  let pendingImplementChange: string | undefined;
   let pendingInit = false;
   let exitingStage = false;
   let activePrompt: EligiblePrompt | undefined;
@@ -797,6 +804,7 @@ export function registerWorkflowControl(
   };
   const deactivateStage = async () => {
     activePrompt = undefined;
+    implementContinuation.deactivate();
     await packetRuntime.drain();
     deactivate();
   };
@@ -1349,6 +1357,13 @@ export function registerWorkflowControl(
   registerDispatchTool("packet");
 
   pi.on("tool_result", (event) => {
+    implementContinuation.noteToolResult({
+      toolName: event.toolName,
+      input: event.input,
+      content: event.content,
+      details: event.details,
+      isError: event.isError,
+    });
     if (
       event.toolName !== DISPATCH_TOOL ||
       !event.isError ||
@@ -1385,7 +1400,9 @@ export function registerWorkflowControl(
     };
   });
   pi.on("input", (event) => {
+    implementContinuation.noteInput();
     pendingPrompt = undefined;
+    pendingImplementChange = undefined;
     pendingInit = false;
     const prompt = invokedPrompt(event.text);
     const init = /^\/abel-init(?:\s|$)/u.test(event.text);
@@ -1395,6 +1412,10 @@ export function registerWorkflowControl(
       return { action: prompt || init ? "handled" : "continue" };
     }
     pendingPrompt = prompt;
+    pendingImplementChange =
+      prompt === "abel-implement"
+        ? implementChangeFromInvocation(event.text)
+        : undefined;
     pendingInit = init && hasPackageProvenance(pi, "abel-init");
     if (
       activePrompt &&
@@ -1408,11 +1429,13 @@ export function registerWorkflowControl(
     }
     return { action: "continue" };
   });
-  pi.on("before_agent_start", (event) => {
+  pi.on("before_agent_start", (event, ctx) => {
     const prompt = pendingPrompt;
+    const implementChange = pendingImplementChange;
     const init =
       pendingInit && hasExpandedPromptMarker(event.prompt, "abel-init");
     pendingPrompt = undefined;
+    pendingImplementChange = undefined;
     pendingInit = false;
     const verified =
       prompt && isVerifiedStageInvocation(pi, activation, prompt, event.prompt);
@@ -1422,10 +1445,30 @@ export function registerWorkflowControl(
       }
       registerDispatchTool(prompt === "abel-implement" ? "command" : "packet");
       activePrompt = prompt;
+      if (prompt === "abel-implement") {
+        if (
+          implementChange &&
+          implementPromptBindsChange(event.prompt, implementChange) &&
+          typeof ctx.cwd === "string"
+        )
+          implementContinuation.activate({
+            cwd: ctx.cwd,
+            change: implementChange,
+          });
+        else implementContinuation.deactivate();
+      } else {
+        implementContinuation.deactivate();
+      }
     }
     if (prompt) activateDispatcher(pi, activation, prompt, event.prompt);
     if (activation.isActive() && activePrompt === "abel-design")
       enforceDesignTools();
+    if (
+      activation.isActive() &&
+      activePrompt === "abel-implement" &&
+      typeof ctx.cwd === "string"
+    )
+      implementContinuation.beginParentTurn(ctx.cwd);
     const boundary = activePrompt
       ? `Abel stage ${activePrompt} is active only for the invoked task and its direct follow-ups. If the user ends it or requests an unrelated task, first call abel_dispatch with {"action":"finish"}, then handle that task normally with the restored tools. A successful finish ends stage authority immediately, including within this turn. Do not extend Gates or workflow rules to that task. A direct Gate answer or same-task continuation stays in this stage. Never invoke another Abel stage automatically.`
       : init
@@ -1445,10 +1488,113 @@ export function registerWorkflowControl(
     }
     return { ...event.payload, parallel_tool_calls: true };
   });
+  pi.on("agent_end", async (event, ctx) => {
+    // The host may replace its current signal after abort/settlement. Retain
+    // this run's signal so a late status result cannot revive an aborted turn.
+    const runSignal = ctx.signal;
+    const aborted = () => runSignal?.aborted || ctx.signal?.aborted;
+    if (
+      aborted() ||
+      exitingStage ||
+      !activation.isActive() ||
+      activePrompt !== "abel-implement"
+    ) {
+      return;
+    }
+    if (
+      typeof ctx.hasPendingMessages === "function" &&
+      ctx.hasPendingMessages()
+    ) {
+      return;
+    }
+    const probe = implementContinuation.prepareSettlement({
+      cwd: ctx.cwd,
+      messages: event.messages,
+    });
+    if (!probe) return;
+
+    let status: Record<string, unknown>;
+    try {
+      const engine = await engineFor(ctx);
+      if (
+        aborted() ||
+        exitingStage ||
+        !activation.isActive() ||
+        activePrompt !== "abel-implement"
+      ) {
+        return;
+      }
+      status = await engine.execute(
+        {
+          command: "status",
+          stage: "abel-implement",
+          change: probe.change,
+        },
+        ctx,
+        runSignal,
+      );
+      if (
+        aborted() ||
+        (typeof ctx.hasPendingMessages === "function" &&
+          ctx.hasPendingMessages())
+      ) {
+        return;
+      }
+    } catch {
+      // A host reminder cannot replace a trustworthy local status read.
+      return;
+    }
+
+    const decision = implementContinuation.finishSettlement(probe, status);
+    if (decision?.kind === "terminal") {
+      await deactivateStage();
+      return;
+    }
+    if (!decision) return;
+    if (
+      aborted() ||
+      (typeof ctx.hasPendingMessages === "function" && ctx.hasPendingMessages())
+    ) {
+      return;
+    }
+
+    if (decision.kind === "stalled") {
+      pi.sendMessage(
+        {
+          customType: "abel-implement-continuation-stalled",
+          content: [{ type: "text", text: decision.message }],
+          display: true,
+          details: {
+            code: decision.code,
+            change: decision.change,
+            state: decision.state,
+            statusFingerprint: decision.statusFingerprint,
+          },
+        },
+        { triggerTurn: false },
+      );
+      return;
+    }
+
+    pi.sendMessage(
+      {
+        customType: "abel-implement-continuation",
+        content: [{ type: "text", text: decision.message }],
+        display: false,
+        details: {
+          change: decision.change,
+          statusFingerprint: decision.statusFingerprint,
+        },
+      },
+      { triggerTurn: true, deliverAs: "followUp" },
+    );
+  });
   pi.on("session_start", async (_event, ctx) => {
     pendingPrompt = undefined;
+    pendingImplementChange = undefined;
     pendingInit = false;
     activePrompt = undefined;
+    implementContinuation.deactivate();
     designFailures.clear();
     activity.detach();
     await packetRuntime.drain();
@@ -1457,7 +1603,11 @@ export function registerWorkflowControl(
     if (ctx.mode === "tui") activity.attach(ctx.ui);
   });
   pi.on("session_shutdown", async () => {
+    pendingPrompt = undefined;
+    pendingImplementChange = undefined;
+    pendingInit = false;
     activePrompt = undefined;
+    implementContinuation.deactivate();
     designFailures.clear();
     activity.detach();
     await packetRuntime.drain();

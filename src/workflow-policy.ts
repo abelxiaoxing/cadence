@@ -5,6 +5,7 @@ import type { WorkflowActivityUpdate } from "./activity-contracts.ts";
 import { compareCanonicalStrings } from "./canonical.ts";
 import {
   type ApprovalBoundaryCode,
+  CHILD_TRANSPORT_CODES,
   isValidRelativePath,
   type StructuredVerificationContract,
   verificationBoundInputPaths,
@@ -233,6 +234,145 @@ export type WorkflowApprovalCode = ApprovalBoundaryCode | InternalApprovalCode;
 // integrity and cancellation codes deliberately do not grant this continuation.
 export function permitsPlanAmendment(code: string): boolean {
   return ["needs-task-split", "task-split-needed"].includes(code);
+}
+
+export type ParentRecoveryStrategy =
+  | "inspect-exhausted-correction"
+  | "inspect-route-availability"
+  | "restore-runtime-environment"
+  | "restore-verification-capability";
+
+const ROUTE_RECOVERY_CODES = new Set([
+  "endpoint-unavailable",
+  "route-capability-insufficient",
+  "route-not-declared",
+  "route-rebind-required",
+  ...CHILD_TRANSPORT_CODES,
+]);
+
+const ENVIRONMENT_RECOVERY_CODES = new Set([
+  "bubblewrap-launch-failed",
+  "bubblewrap-or-dependency-unavailable",
+  "bun-executable-unavailable",
+  "checkpoint-unavailable",
+  "checkout-cleanup-failed",
+  "checkout-failed",
+  "child-provider-authentication-failed",
+  "clone-failed",
+  "git-apply-check-unavailable",
+  "git-apply-unavailable",
+  "git-index-unavailable",
+  "isolation-backend-launch-failed",
+  "isolation-backend-unavailable",
+  "local-executable-missing",
+  "root-unavailable",
+  "runner-missing",
+  "sandbox-runtime-unavailable",
+  "script-missing",
+  "verification-environment-changed",
+  "verification-environment-requires-trusted-mode",
+  "verification-environment-unavailable",
+  "verification-runner-launch-failed",
+  "workspace-dependency-missing",
+]);
+
+const CORRECTION_RECOVERY_CODES = new Set([
+  ...CHILD_TRANSPORT_CODES,
+  "artifact-attempts-exhausted",
+  "baseline-deletion-drift",
+  "baseline-directory-drift",
+  "baseline-file-drift",
+  "candidate-check-failed",
+  "candidate-diff-invalid",
+  "child-no-structural-submit",
+  "git-apply-check-failed",
+  "invalid-diff",
+  "invalid-diff-bytes",
+  "invalid-structural-result",
+  "needs-task-split",
+  "parent-review-rejected",
+  "red-artifact-constraint",
+  "red-not-witnessed",
+  "repair-attempts-exhausted",
+  "stale-snapshot",
+  "structural-identity-mismatch",
+  "task-split-needed",
+  "verification-rejected",
+  "verification-report-invalid",
+  "verification-report-missing",
+  "write-set-mismatch",
+  "workspace-revision-stale",
+]);
+
+const RECOVERY_AMENDMENT_CODES = new Set([
+  "artifact-attempts-exhausted",
+  "candidate-check-failed",
+  "candidate-diff-invalid",
+  "child-no-structural-submit",
+  "invalid-diff",
+  "invalid-diff-bytes",
+  "invalid-structural-result",
+  "needs-task-split",
+  "red-artifact-constraint",
+  "red-not-witnessed",
+  "repair-attempts-exhausted",
+  "structural-identity-mismatch",
+  "task-split-needed",
+  "verification-rejected",
+  "write-set-mismatch",
+]);
+
+function hasCurrentExhaustedRecovery(
+  code: string,
+  diagnostic: SafeAttemptDiagnostic | undefined,
+): diagnostic is SafeAttemptDiagnostic & { recovery: WorkflowRecoveryFact } {
+  const recovery = diagnostic?.recovery;
+  return (
+    recovery !== undefined &&
+    recovery.failures >= recovery.feedback.maxAttempts &&
+    CORRECTION_RECOVERY_CODES.has(recovery.feedback.code) &&
+    (code === recovery.feedback.code ||
+      ["artifact-attempts-exhausted", "repair-attempts-exhausted"].includes(
+        code,
+      ))
+  );
+}
+
+/**
+ * Classify only code-owned, locally actionable recovery evidence. The result is
+ * parent guidance, never new command or acceptance authority.
+ */
+export function parentRecoveryStrategy(
+  code: string,
+  diagnostic: SafeAttemptDiagnostic | undefined,
+): ParentRecoveryStrategy | undefined {
+  const prerequisite = normalizeVerificationPrerequisite(
+    diagnostic?.prerequisite,
+  );
+  if (prerequisite) {
+    return prerequisite.cause === "capability" &&
+      ENVIRONMENT_RECOVERY_CODES.has(code)
+      ? "restore-verification-capability"
+      : undefined;
+  }
+  if (hasCurrentExhaustedRecovery(code, diagnostic))
+    return "inspect-exhausted-correction";
+  if (ROUTE_RECOVERY_CODES.has(code)) return "inspect-route-availability";
+  if (ENVIRONMENT_RECOVERY_CODES.has(code))
+    return "restore-runtime-environment";
+  return undefined;
+}
+
+/** A failed candidate/repair may be decomposed only from retained exhaustion evidence. */
+export function permitsRecoveryAmendment(
+  code: string,
+  diagnostic: SafeAttemptDiagnostic | undefined,
+): boolean {
+  return (
+    hasCurrentExhaustedRecovery(code, diagnostic) &&
+    diagnostic.recovery.feedback.strategy !== "refresh-candidate" &&
+    RECOVERY_AMENDMENT_CODES.has(diagnostic.recovery.feedback.code)
+  );
 }
 
 /** Parent-verifier facts about an original-revision obligation. */

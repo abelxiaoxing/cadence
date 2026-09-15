@@ -426,8 +426,41 @@ export function planAuthoringSummary(
     initiallyRunnableTasks.push(task);
   }
   const checkpoint = plan.verification.agentsCheckpoint;
+  const bounded = (values: readonly string[]) => {
+    if (values.length > 32) truncated = true;
+    return values.slice(0, 32);
+  };
+  const contract = plan.changeContract;
+  // Review the outer recovery envelope as well as the initial task paths.
+  // This projection never grants authority or certifies runtime readiness.
+  const implementation = {
+    authority: "review-only" as const,
+    decisionOwner: "parent" as const,
+    userDecisionStage: "abel-design" as const,
+    policySource: contract
+      ? ("structured-change-contract" as const)
+      : ("retained-legacy-boundaries" as const),
+    acceptanceIds: bounded(contract?.acceptance.map((entry) => entry.id) ?? []),
+    constraintIds: bounded(
+      contract?.constraints.map((entry) => entry.id) ?? [],
+    ),
+    amendmentPolicy: contract
+      ? {
+          writeRoots: bounded(contract.policy.writeRoots),
+          dependencies: bounded(contract.policy.dependencies),
+          verificationModes: [...contract.policy.verificationModes],
+        }
+      : null,
+    recovery: {
+      strategy: "repair-replan-resume" as const,
+      preservesAcceptance: true,
+      preservesConsumedBudget: true,
+    },
+    runtimePrerequisites: "not-assessed" as const,
+  };
   return {
     tasks,
+    implementation,
     parallelism: {
       assessment: "static-plan" as const,
       authority: "review-only" as const,

@@ -61,4 +61,7 @@ Low-level storage migration and read-only operator inspection do not reset.
 - Real pack route: from this package directory, run `bun pm pack --destination <tmp>`.
 - Distribution suite: `bun run verify` (check && lint && test && pack:check); traceability: `bun run traceability:check`.
 - Continuous parallel workflow: task `baselineVerification` binds immutable original-revision checks; `delivery-compiler.ts` and `implement-graph.ts` validate consumption timing and test retention. `change-verification.ts` retains owner/contract/environment-bound baseline observations and separate failed prerequisites. `workflow-state-machine.ts` admits baselines before Worker budget reservation, refills settled shared slots across runs, and projects evidence-bound baseline amendments through existing recovery and batch authority. `plan-draft-summary.ts` exposes bounded static parallel eligibility and serialization causes.
+- Sustained Implement execution: `src/implement-continuation.ts` owns session-local continuation and no-progress decisions; `src/index.ts` rereads the explicitly activated change's local status before scheduling parent follow-ups and fences cancellation, exit, interruption and pending input.
+  The driver never owns workflow transitions or replenishes budgets.
+  `src/workflow-status.ts` projects conditional parent recovery guidance; `src/plan-draft-summary.ts` presents the accepted technical-amendment policy during Design preflight.
 <!-- ABEL:AGENTS-INDEX:END -->
