@@ -99,3 +99,60 @@ jobs:
       - run: npm install --global pnpm@10.12.1 yarn@1.22.22
       # Opt-in means unavailable isolation fails the job; it never silently skips.
       - run: node node_modules/vitest/vitest.mjs run test/isolation-real.integration.test.ts test/workspace-io.test.ts test/review-regressions.test.ts test/evaluation-review.test.mjs test/usability-remediation.test.ts
+
+  host-prototype:
+    name: Prototype only / ${{ matrix.target.os }} / ${{ matrix.target.arch }} / Node ${{ matrix.node }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.13.0', '24.13.0']
+        target:
+          - { os: windows-2022, platform: win32, arch: x64 }
+          - { os: macos-15-intel, platform: darwin, arch: x64 }
+          - { os: macos-15, platform: darwin, arch: arm64 }
+    runs-on: ${{ matrix.target.os }}
+    env:
+      EXPECTED_PLATFORM: ${{ matrix.target.platform }}
+      EXPECTED_ARCH: ${{ matrix.target.arch }}
+      EXPECTED_NODE: ${{ matrix.node }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          architecture: ${{ matrix.target.arch }}
+      - name: Assert actual native runtime (no emulated architecture substitution)
+        run: node -e "if(process.platform!==process.env.EXPECTED_PLATFORM || process.arch!==process.env.EXPECTED_ARCH || process.version!=='v'+process.env.EXPECTED_NODE) process.exit(1)"
+      - name: Select installed Visual Studio 2022 x64 tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installation = & $vswhere -latest -version '[17.0,18.0)' -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$installation) { throw 'Installed VS 2022 x64 tools unavailable' }
+          $developer = Join-Path $installation 'Common7\Tools\VsDevCmd.bat'
+          $toolEnvironment = & cmd.exe /d /s /c "`"`"$developer`" -arch=x64 -host_arch=x64 >nul && set`""
+          if ($LASTEXITCODE -ne 0) { throw 'MSVC environment setup failed' }
+          foreach ($line in $toolEnvironment) {
+            if ($line -match '^(VCToolsInstallDir|WindowsSDKVersion|INCLUDE|LIB|LIBPATH|PATH)=(.*)$') {
+              "$($Matches[1])=$($Matches[2])" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            }
+          }
+      - name: Explicit Windows prototype build
+        if: runner.os == 'Windows'
+        run: node scripts/host-prototype/build.mjs --output "${{ runner.temp }}/host-prototype"
+      - name: Qualify actual Windows Job fixture cases
+        if: runner.os == 'Windows'
+        run: node scripts/host-prototype/qualify.mjs --require-native --output "${{ runner.temp }}/host-prototype" --helper "${{ runner.temp }}/host-prototype/windows-launcher.exe"
+      - name: Qualify actual macOS process-group fixture cases
+        if: runner.os == 'macOS'
+        run: node scripts/host-prototype/qualify.mjs --require-native --output "${{ runner.temp }}/host-prototype"
+      # Retaining diagnostics does not override the preceding failure status.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: host-prototype-${{ matrix.target.os }}-${{ matrix.target.arch }}-node-${{ matrix.node }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/host-prototype
+          retention-days: 7
+          if-no-files-found: warn
