@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -1269,7 +1270,7 @@ describe("durable WorkflowEngine service composition", () => {
       if (previousPath === undefined) delete process.env.PATH;
       else process.env.PATH = previousPath;
     }
-  });
+  }, 20_000);
 
   it("keeps package-local status available while route policy is invalid and reloads a correction", async () => {
     const module = (await import("../src/index.ts")) as Record<string, unknown>;
@@ -1695,10 +1696,8 @@ describe("durable WorkflowEngine service composition", () => {
     roots.push(root);
     const runnerDirectory = path.join(root, "private-runner");
     mkdirSync(runnerDirectory);
-    writeFileSync(
-      path.join(runnerDirectory, "node"),
-      '#!/bin/sh\nexec /usr/bin/node "$@"\n',
-    );
+    // Use the selected runtime; hosted runners need not have /usr/bin/node.
+    copyFileSync(process.execPath, path.join(runnerDirectory, "node"));
     chmodSync(path.join(runnerDirectory, "node"), 0o755);
     writeFileSync(
       path.join(root, "check.mjs"),

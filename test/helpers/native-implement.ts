@@ -263,7 +263,7 @@ export async function exerciseNativeImplement(
       change,
       operationId: "real-absent-resume",
     });
-    expect(finished).toMatchObject({
+    expect(finished, JSON.stringify(finished)).toMatchObject({
       runId: first.runId,
       state: "completed",
       completed: true,

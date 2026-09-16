@@ -410,6 +410,13 @@ it.each([
         "#!/usr/bin/env node\n",
         { mode: 0o755 },
       );
+      const vitestPackage = path.join(item.consumerRoot, "node_modules/vitest");
+      mkdirSync(vitestPackage);
+      writeFileSync(
+        path.join(vitestPackage, "package.json"),
+        JSON.stringify({ name: "vitest", bin: { vitest: "vitest.mjs" } }),
+      );
+      writeFileSync(path.join(vitestPackage, "vitest.mjs"), "export {};\n");
       writeFileSync(
         path.join(item.consumerRoot, "package.json"),
         JSON.stringify({ scripts: { test: "vitest run" } }),

@@ -221,10 +221,21 @@ describe("shell-free OpenSpec CLI", () => {
     const first = fixture();
     const second = fixture();
     rmSync(first.entry);
-    expect(() =>
+    const resolve = () =>
       resolveOpenSpecInvocation(first.consumerRoot, {
         ...first.environment,
         PATH: [first.prefix, second.prefix].join(path.delimiter),
+      });
+    let unexpected: unknown;
+    try {
+      unexpected = resolve();
+    } catch {}
+    expect(
+      () => resolve(),
+      JSON.stringify({
+        first: first.prefix,
+        second: second.prefix,
+        unexpected,
       }),
     ).toThrowError(
       expect.objectContaining({
