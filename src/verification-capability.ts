@@ -838,7 +838,7 @@ function validateAtomicCapability(
       continue;
     if (
       lstatSync(path.join(root, relative)).size > 64 * 1024 ||
-      (executionProfile().mode !== "local-trusted" &&
+      (executionProfile().mode === "isolated" &&
         unsupportedExecutionConfiguration(
           readFileSync(path.join(root, relative), "utf8"),
         ))

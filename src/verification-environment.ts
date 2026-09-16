@@ -25,7 +25,18 @@ export async function captureVerificationEnvironmentIdentity(
   const roots = [path.join(dependencyOwner, "node_modules")];
   const unavailable: string[] = [];
   const profile = executionProfile();
-  roots.push(path.resolve(profile.bwrapPath));
+  if (profile.mode === "host-trusted")
+    roots.push(
+      path.resolve(profile.windowsHelperPath ?? ""),
+      path.resolve(`${profile.windowsHelperPath}.json`),
+    );
+  else roots.push(path.resolve(profile.bwrapPath));
+  if (
+    profile.mode === "host-trusted" &&
+    process.env.ComSpec &&
+    path.isAbsolute(process.env.ComSpec)
+  )
+    roots.push(process.env.ComSpec);
   const node = resolveVerificationRunner("node");
   if (node) roots.push(realpathSync(node.executablePath));
   for (const verification of verifications) {
@@ -73,6 +84,18 @@ export async function captureVerificationEnvironmentIdentity(
     .update(JSON.stringify(unavailable.sort()))
     .update(JSON.stringify(profile))
     .update(
+      profile.mode === "host-trusted"
+        ? JSON.stringify([
+            process.platform,
+            process.arch,
+            process.versions.node,
+            ["PATH", "SystemRoot", "WINDIR", "ComSpec", "PATHEXT"].map(
+              (name) => [name, process.env[name] ?? null],
+            ),
+          ])
+        : "",
+    )
+    .update(
       JSON.stringify(
         profile.inheritEnvironment.map((name) => [
           name,
@@ -116,7 +139,13 @@ export async function prepareVerificationEnvironment(
         runnerBindings,
         profile,
         Object.fromEntries(
-          ["PATH", ...profile.inheritEnvironment].flatMap((name) =>
+          [
+            "PATH",
+            ...(profile.mode === "host-trusted"
+              ? ["SystemRoot", "WINDIR", "ComSpec", "PATHEXT"]
+              : []),
+            ...profile.inheritEnvironment,
+          ].flatMap((name) =>
             process.env[name] === undefined ? [] : [[name, process.env[name]]],
           ),
         ),

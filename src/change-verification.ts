@@ -21,6 +21,7 @@ import type {
   DurableVerificationObservation,
   DurableWorkflowEngineOptions,
 } from "./durable-contracts.ts";
+import { isExecutionRetained } from "./execution-retention.ts";
 
 import { observeSafePath } from "./safe-path.ts";
 
@@ -72,6 +73,7 @@ const BASELINE_CAPABILITY_CODES = new Set([
   "dependency-path-unsafe",
   "isolation-backend-launch-failed",
   "isolation-backend-unavailable",
+  "isolation-termination-unconfirmed",
   "local-executable-missing",
   "runner-missing",
   "sandbox-runtime-unavailable",
@@ -527,7 +529,8 @@ export class ChangeVerification {
         },
       };
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      if (!isExecutionRetained(root))
+        rmSync(root, { recursive: true, force: true });
     }
   }
 

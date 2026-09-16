@@ -5,6 +5,7 @@ import type {
   DurableResourceInput,
   DurableWorkflowEngineOptions,
 } from "./durable-contracts.ts";
+import { assertExecutionsSettled } from "./execution-retention.ts";
 import { PhaseExecution } from "./phase-execution.ts";
 
 export type {
@@ -276,6 +277,7 @@ class DurableWorkflowComposition
     signal: AbortSignal,
   ): Promise<DurableRunResources> {
     signal.throwIfAborted();
+    assertExecutionsSettled(this.#options.stateRoot.rootDir);
     const pending = this.#initializing.get(input.runId);
     if (pending) return pending;
     if (
@@ -325,6 +327,7 @@ class DurableWorkflowComposition
     baselineRevisionId?: string;
     currentWorkspaceRevisionId?: string;
   }): DurableRunResources {
+    assertExecutionsSettled(this.#options.stateRoot.rootDir);
     const existing = this.#runs.get(input.runId);
     if (existing) {
       if (
@@ -370,6 +373,7 @@ class DurableWorkflowComposition
       artifacts,
       workspaces,
       hooks: {
+        awaitPostApplySettlement: this.#options.awaitPostApplySettlement,
         postApply: ({ transactionId, root: verificationRoot, signal }) =>
           this.#verification.verifyPostApply(
             resources,
@@ -893,6 +897,7 @@ class DurableWorkflowComposition
   }
 
   cleanup(runId: string): void {
+    assertExecutionsSettled(this.#options.stateRoot.rootDir, true);
     const resources = this.#runs.get(runId);
     if (resources) {
       this.#closeResources(resources);

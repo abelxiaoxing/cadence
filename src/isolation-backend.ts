@@ -37,6 +37,7 @@ export type IsolationRunResult =
       code:
         | "isolation-backend-unavailable"
         | "isolation-backend-launch-failed"
+        | "isolation-termination-unconfirmed"
         | "isolation-execution-timeout";
     }
   | { ok: false; state: "cancelled"; code: "cancelled" };
@@ -72,7 +73,7 @@ function validEnvironmentName(name: string): boolean {
 }
 
 /** Retains independent head/tail copies; discarded chunks never stay referenced. */
-class BoundedLog {
+export class BoundedLog {
   bytes = 0;
   #head = Buffer.alloc(0);
   #tail = Buffer.alloc(0);

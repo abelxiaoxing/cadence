@@ -34,7 +34,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       # Exercise npm global custom-prefix shims and shell-sensitive paths.
-      npm_config_prefix: '${{ runner.temp }}/Cadence CLI 中文 & %PATH% ! (npm)'
+      npm_config_prefix: '${{ github.workspace }}/../Cadence CLI 中文 & %PATH% ! (npm)'
       CADENCE_REAL_OPENSPEC: '1'
       OPENSPEC_TELEMETRY: '0'
     steps:
@@ -154,5 +154,69 @@ jobs:
         with:
           name: host-prototype-${{ matrix.target.os }}-${{ matrix.target.arch }}-node-${{ matrix.node }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/host-prototype
+          retention-days: 7
+          if-no-files-found: warn
+
+  windows-implement-contract:
+    name: Implement / Windows x64 / Node ${{ matrix.node }}
+    needs: host-prototype
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.13.0', '24.13.0']
+    env:
+      CADENCE_REAL_WINDOWS_JOB: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          architecture: x64
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - run: bun install --frozen-lockfile
+      - name: Select installed Visual Studio 2022 x64 tools
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installation = & $vswhere -latest -version '[17.0,18.0)' -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$installation) { throw 'Installed VS 2022 x64 tools unavailable' }
+          $developer = Join-Path $installation 'Common7\Tools\VsDevCmd.bat'
+          $toolEnvironment = & cmd.exe /d /s /c "`"`"$developer`" -arch=x64 -host_arch=x64 >nul && set`""
+          if ($LASTEXITCODE -ne 0) { throw 'MSVC environment setup failed' }
+          foreach ($line in $toolEnvironment) {
+            if ($line -match '^(VCToolsInstallDir|WindowsSDKVersion|INCLUDE|LIB|LIBPATH|PATH)=(.*)$') {
+              "$($Matches[1])=$($Matches[2])" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            }
+          }
+      - name: Explicit production helper build
+        run: node src/build-windows-job.mjs --output "${{ runner.temp }}/windows-job"
+      - name: Native source lifecycle and Implement acceptance
+        env:
+          ABEL_WINDOWS_JOB_HELPER: '${{ runner.temp }}/windows-job/windows-job.exe'
+        run: node node_modules/vitest/vitest.mjs run test/windows-job-real.integration.test.ts test/windows-job.test.ts test/host-trusted-environment.test.ts
+      - name: Stage the actual Windows distribution
+        run: node scripts/pack-windows.mjs --helper "${{ runner.temp }}/windows-job/windows-job.exe" --output "${{ runner.temp }}/windows-package"
+      - name: Extract the package for native acceptance
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}/windows-installed" | Out-Null
+          $archive = Get-ChildItem "${{ runner.temp }}/windows-package/*.tgz" | Select-Object -ExpandProperty FullName
+          tar -xzf $archive -C "${{ runner.temp }}/windows-installed"
+          if ($LASTEXITCODE -ne 0) { throw 'Package extraction failed' }
+          New-Item -ItemType Junction -Path "${{ runner.temp }}/windows-installed/package/node_modules" -Target (Join-Path $PWD 'node_modules') | Out-Null
+          "CADENCE_NATIVE_PACKAGE_ROOT=${{ runner.temp }}/windows-installed/package" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ABEL_WINDOWS_JOB_HELPER=${{ runner.temp }}/windows-installed/package/src/windows-job.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Native packaged lifecycle and Implement acceptance
+        run: node node_modules/vitest/vitest.mjs run test/windows-job-real.integration.test.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-implement-node-${{ matrix.node }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/windows-job
+            ${{ runner.temp }}/windows-package
           retention-days: 7
           if-no-files-found: warn

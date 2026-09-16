@@ -10,7 +10,7 @@
 
 1. 安装 Node.js >=22.13、Git、Pi，以及 `@fission-ai/openspec@1.5.0`。
 2. 在 Pi 中安装：`pi install npm:@abelxiaoxing/cadence`。
-3. 默认 Implement 需要可用的 Linux Bubblewrap；Windows 请使用 WSL。
+3. 默认 Implement 使用 Linux Bubblewrap；Windows x64 可信项目可显式选择 `host-trusted`，构建与验收见 [Windows 原生执行](docs/windows-host-trusted.md)。
 4. 首次进入项目先运行 `/abel-init`，然后 `/abel-design <需求>`，确认集中呈现的目标与方案，设计完成后运行 `/abel-implement <change>`。
 5. 暂停时先查看原因和建议，不要靠反复 resume 或重启“碰运气”；未完成的工作会保留。
 
@@ -50,7 +50,8 @@ export ABEL_VERIFICATION_TIMEOUT_MS=900000
 可信模式仍在独立候选目录执行，并复制依赖以避免普通缓存写入修改 consumer 的依赖，但**不是沙箱**：测试可访问宿主文件、网络及显式继承的环境变量，产生的外部副作用不能回滚。
 HOME、临时目录和报告仍独立；PATH 复用宿主，仓库内 workspace 链接映射到候选代码。
 该模式仍要求 Linux Bubblewrap 的 PID namespace 管理后代进程（包括 detached 后代），但不隔离宿主文件和网络；缺少该能力时暂停，不回退到普通进程组。
-原生 macOS/Windows 不提供此执行模式，Windows 可使用 WSL。
+`local-trusted` 仅用于 Linux。
+Windows x64 使用独立的 `host-trusted` 后端，见 [配置、构建与验收说明](docs/windows-host-trusted.md)；macOS 暂不支持。
 依赖副本准备、替换与清理在 I/O Worker 中执行，复制支持取消并等待线程退出；大型依赖复制仍有额外成本；需要安装新依赖、宿主浏览器缓存或服务启动编排时仍需配置/准备，不会自动下载。
 
 可选宿主参数还包括 `ABEL_BWRAP_PATH`、`ABEL_FIRST_PROGRESS_MS` 和 `ABEL_STREAM_IDLE_MS`。
@@ -339,7 +340,9 @@ inspection 不可用时不再级联误报 traceability 输入缺失，且绝不�
 CLI 的其他版本必须满足相同 JSON 协议；新增支持版本应加入契约测试。
 
 **此矩阵不代表原生 Implement 隔离已全平台可用。**
-默认隔离后端仍为 Linux Bubblewrap；Windows/macOS 的原生隔离、ACL 与完整文件应用语义需要单独实现和验收，缺少隔离能力时保持暂停，不降级为主工作区直接执行。
+默认隔离后端仍为 Linux Bubblewrap。
+Windows x64 的显式 `host-trusted` 使用 Job Object 管理验证进程，不提供文件或网络安全隔离；真实原生支持以 Windows CI 验收结果为准。
+缺少所选后端时保持暂停。
 
 目录持久化在 Windows 上单独处理：仅当已打开的目录句柄执行 `fsync` 返回 `EPERM` 时，标记为不支持目录刷新屏障。
 普通文件仍须在发布前成功 `fsync`；目录打开/关闭、权限、其他 I/O 及 POSIX 目录刷新错误不会被忽略。

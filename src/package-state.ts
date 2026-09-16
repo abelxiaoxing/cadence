@@ -15,6 +15,7 @@ import {
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { syncDirectory } from "./directory-sync.ts";
+import { assertExecutionsSettled } from "./execution-retention.ts";
 import { RunStore } from "./run-store.ts";
 import { prepareStateRoot, type ResolvedStateRoot } from "./state-root.ts";
 
@@ -160,6 +161,16 @@ export function acquirePackageState(
 ): { notice?: PackageStateNotice; close(): void } {
   versionParts(version);
   const state = prepareStateRoot(unresolved);
+  try {
+    assertExecutionsSettled(state.rootDir);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "isolation-termination-unconfirmed"
+    )
+      fail(error.message);
+    throw error;
+  }
   for (const suffix of ["-wal", "-shm", "-journal"])
     regular(state.databasePath + suffix);
   const coordinator = path.join(

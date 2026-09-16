@@ -600,3 +600,39 @@ describe("parent-owned cumulative verification", () => {
     ).rejects.toThrow(/verification-fact-invalid/u);
   });
 });
+
+it("retains an unconfirmed host post-apply execution without rollback or another apply", async () => {
+  const { retainExecution } = await import("../src/execution-retention.ts");
+  const value = fixture("post-apply-unsettled");
+  let retainedRoot = "";
+  let lease: ReturnType<typeof retainExecution> | undefined;
+  const instance = transaction(value, {
+    awaitPostApplySettlement: true,
+    postApply: ({ root }: { root: string }) => {
+      retainedRoot = root;
+      lease = retainExecution(value.privateRoot, [root]);
+      lease.uncertain();
+      return { ok: false, code: "isolation-termination-unconfirmed" };
+    },
+  });
+  try {
+    await prepare(instance, value, "tx-unsettled");
+    expect(await instance.apply("tx-unsettled")).toMatchObject({
+      state: "paused",
+      code: "isolation-termination-unconfirmed",
+    });
+    expect(existsSync(retainedRoot)).toBe(true);
+    expect(readFileSync(path.join(value.consumerRoot, "a.txt"), "utf8")).toBe(
+      "a1\n",
+    );
+    expect(await instance.recover("tx-unsettled")).toMatchObject({
+      state: "paused",
+      code: "isolation-termination-unconfirmed",
+    });
+    expect(instance.status("tx-unsettled")).toMatchObject({
+      rollbackRetained: true,
+    });
+  } finally {
+    lease?.settled();
+  }
+});

@@ -24,6 +24,7 @@ import type { ArtifactStore } from "./artifact-store.ts";
 import { compareCanonicalStrings } from "./canonical.ts";
 import { isValidRelativePath } from "./contracts.ts";
 import { syncDirectory } from "./directory-sync.ts";
+import { isExecutionRetained } from "./execution-retention.ts";
 import { observeSafePath } from "./safe-path.ts";
 import { configureSqlite, ensureSqliteSchema } from "./sqlite-schema.ts";
 import { APPLY_SCHEMA } from "./storage-schema.ts";
@@ -161,6 +162,8 @@ export interface ApplyTransactionHooks {
     path: string;
     index: number;
   }) => void | Promise<void>;
+  /** Production executors settle their process scope before cancellation returns. */
+  awaitPostApplySettlement?: boolean;
   postApply?: (input: {
     transactionId: string;
     root: string;
@@ -587,7 +590,8 @@ export async function verifyCumulativeRevision(
       verificationId: input.verificationId,
     };
   } finally {
-    rmSync(temporary, { recursive: true, force: true });
+    if (!isExecutionRetained(temporary))
+      rmSync(temporary, { recursive: true, force: true });
   }
 }
 
@@ -1247,11 +1251,13 @@ export class ApplyTransaction {
             }),
           );
           void execution.catch(() => undefined);
-          postApply = signal
-            ? await raceWithAbort(execution, signal)
-            : await execution;
+          postApply =
+            signal && !this.#hooks.awaitPostApplySettlement
+              ? await raceWithAbort(execution, signal)
+              : await execution;
         } finally {
-          rmSync(isolatedRoot, { recursive: true, force: true });
+          if (!isExecutionRetained(isolatedRoot))
+            rmSync(isolatedRoot, { recursive: true, force: true });
         }
       }
     } catch (error) {
@@ -1259,6 +1265,13 @@ export class ApplyTransaction {
       const settled = this.#settledOutcome(journal);
       if (settled) return settled;
       if (!journal.pendingIntent && !signal?.aborted) throw error;
+    }
+    if (isExecutionRetained(this.root)) {
+      journal = this.#load(transactionId);
+      journal.state = "recovering";
+      journal.code = "isolation-termination-unconfirmed";
+      this.#save(journal);
+      return { ok: false, transactionId, state: "paused", code: journal.code };
     }
     journal = this.#load(transactionId);
     const settled = this.#settledOutcome(journal);
@@ -1350,6 +1363,13 @@ export class ApplyTransaction {
   ): Promise<ApplyTransactionOutcome> {
     const existing = this.#active.get(transactionId);
     if (existing) return existing.promise;
+    if (isExecutionRetained(this.root))
+      return Promise.resolve({
+        ok: false,
+        transactionId,
+        state: "paused",
+        code: "isolation-termination-unconfirmed",
+      });
     const controller = new AbortController();
     const forwardAbort = () => {
       if (!controller.signal.aborted) {

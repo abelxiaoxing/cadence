@@ -232,7 +232,8 @@ function within(root, candidate) {
 function prepareVerificationEnvironmentIo(root, dependencyOwner, runnerBindings, profile, environment, checkCancelled, privateRoot) {
   const cleanup = () => rmSync(privateRoot, { recursive: true, force: true });
   try {
-    const local = profile.mode === "local-trusted";
+    const local = profile.mode !== "isolated";
+    const native = profile.mode === "host-trusted";
     if (local && realpathSync(root) === realpathSync(dependencyOwner))
       throw new Error("trusted-candidate-required");
     const mounts = [
@@ -247,11 +248,19 @@ function prepareVerificationEnvironmentIo(root, dependencyOwner, runnerBindings,
     ]) {
       mkdirSync2(path2.join(privateRoot, directory), { mode: 448 });
     }
+    if (native) {
+      mkdirSync2(path2.join(privateRoot, "home/AppData/Roaming"), {
+        recursive: true
+      });
+      mkdirSync2(path2.join(privateRoot, "home/AppData/Local"), {
+        recursive: true
+      });
+    }
     writeFileSync2(path2.join(privateRoot, "home/user.npmrc"), "");
     writeFileSync2(path2.join(privateRoot, "home/global.npmrc"), "");
     const dependencies = path2.join(dependencyOwner, "node_modules");
     const stat = lstatSync2(dependencies, { throwIfNoEntry: false });
-    if (stat) {
+    if (stat && !native) {
       const target = path2.join(root, "node_modules");
       const targetStat = lstatSync2(target, { throwIfNoEntry: false });
       if (!stat.isDirectory() || stat.isSymbolicLink() || targetStat && (!targetStat.isDirectory() || targetStat.isSymbolicLink())) {
@@ -317,7 +326,7 @@ function prepareVerificationEnvironmentIo(root, dependencyOwner, runnerBindings,
         });
       }
     }
-    if (local && stat) {
+    if (local && stat && !native) {
       const copyEntry = (name) => {
         checkCancelled();
         const source = path2.join(dependencies, name);
@@ -350,8 +359,60 @@ function prepareVerificationEnvironmentIo(root, dependencyOwner, runnerBindings,
       for (const name of readdirSync(path2.join(privateRoot, "dependencies")))
         copyEntry(name);
     }
+    if (native && stat) {
+      const target = path2.join(root, "node_modules");
+      const targetStat = lstatSync2(target, { throwIfNoEntry: false });
+      if (!stat.isDirectory() || stat.isSymbolicLink() || targetStat && (!targetStat.isDirectory() || targetStat.isSymbolicLink()))
+        throw new Error("dependency-path-unsafe");
+      const owner = realpathSync(dependencyOwner);
+      let count = 0;
+      const copy = (source, destination) => {
+        checkCancelled();
+        if (++count > 500000)
+          throw new Error("dependency-view-too-large");
+        const entry = lstatSync2(source);
+        if (entry.isSymbolicLink()) {
+          const resolved = realpathSync(source);
+          if (!within(owner, resolved))
+            throw new Error("dependency-path-unsafe");
+          const candidate = path2.join(root, path2.relative(owner, resolved));
+          if (!within(realpathSync(dependencies), resolved) && !lstatSync2(candidate, { throwIfNoEntry: false }))
+            throw new Error("workspace-dependency-missing");
+          const linked = lstatSync2(resolved);
+          if (linked.isDirectory()) {
+            symlinkSync(candidate, destination, process.platform === "win32" ? "junction" : "dir");
+          } else if (linked.isFile()) {
+            const file = within(realpathSync(dependencies), resolved) ? resolved : candidate;
+            cpSync(file, destination, { mode: constants3.COPYFILE_FICLONE });
+          } else
+            throw new Error("dependency-path-unsafe");
+        } else if (entry.isDirectory()) {
+          mkdirSync2(destination, { recursive: true });
+          for (const name of readdirSync(source)) {
+            if (source === dependencies && CACHES.includes(name)) {
+              mkdirSync2(path2.join(destination, name));
+              continue;
+            }
+            copy(path2.join(source, name), path2.join(destination, name));
+          }
+        } else if (entry.isFile())
+          cpSync(source, destination, { mode: constants3.COPYFILE_FICLONE });
+        else
+          throw new Error("dependency-path-unsafe");
+      };
+      removeEntry(target, checkCancelled);
+      copy(dependencies, target);
+    }
     const sources = new Map;
     const bindings = runnerBindings.map((binding) => {
+      if (native) {
+        const translate2 = (value) => path2.isAbsolute(value) && within(dependencyOwner, value) ? path2.join(root, path2.relative(dependencyOwner, value)) : value;
+        return {
+          ...binding,
+          executablePath: translate2(binding.executablePath),
+          ...binding.fixedArgs ? { fixedArgs: binding.fixedArgs.map(translate2) } : {}
+        };
+      }
       if (local || !binding.mountSource)
         return { ...binding };
       const source = path2.resolve(binding.mountSource);
@@ -378,11 +439,19 @@ function prepareVerificationEnvironmentIo(root, dependencyOwner, runnerBindings,
     checkCancelled();
     return {
       privateRoot,
-      mounts,
+      mounts: native ? [] : mounts,
       bindings,
       reportRoot: local ? privateRoot : "/cadence",
       environment: {
         ...local ? Object.fromEntries(profile.inheritEnvironment.flatMap((name) => environment[name] === undefined ? [] : [[name, environment[name] ?? ""]])) : {},
+        ...native ? Object.fromEntries(Object.entries(environment).filter(([key]) => ["SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT"].includes(key.toUpperCase()))) : {},
+        ...native ? {
+          USERPROFILE: path2.join(privateRoot, "home"),
+          APPDATA: path2.join(privateRoot, "home", "AppData", "Roaming"),
+          LOCALAPPDATA: path2.join(privateRoot, "home", "AppData", "Local"),
+          TEMP: path2.join(privateRoot, "tmp"),
+          TMP: path2.join(privateRoot, "tmp")
+        } : {},
         CI: "1",
         HOME: local ? path2.join(privateRoot, "home") : "/cadence/home",
         XDG_CACHE_HOME: local ? path2.join(privateRoot, "cache") : "/cadence/cache",
@@ -394,12 +463,10 @@ function prepareVerificationEnvironmentIo(root, dependencyOwner, runnerBindings,
           ...new Set([
             ...bindings.filter((binding) => binding.mountSource),
             ...bindings.filter((binding) => !binding.mountSource)
-          ].map((binding) => path2.posix.dirname(binding.executablePath))),
+          ].map((binding) => (local ? path2 : path2.posix).dirname(binding.executablePath))),
           ...local ? (environment.PATH ?? "").split(path2.delimiter) : [],
-          "/usr/local/bin",
-          "/usr/bin",
-          "/bin"
-        ].join(":")
+          ...native ? [] : ["/usr/local/bin", "/usr/bin", "/bin"]
+        ].join(local ? path2.delimiter : ":")
       }
     };
   } catch (error) {
@@ -415,10 +482,13 @@ function removeEntry(file, checkCancelled) {
   const stat = lstatSync2(file, { throwIfNoEntry: false });
   if (!stat)
     return;
-  if (stat.isDirectory())
+  if (stat.isDirectory() && !stat.isSymbolicLink())
     for (const name of readdirSync(file))
       removeEntry(path2.join(file, name), checkCancelled);
-  rmSync(file, { recursive: stat.isDirectory(), force: true });
+  rmSync(file, {
+    recursive: stat.isDirectory() && !stat.isSymbolicLink(),
+    force: true
+  });
 }
 
 // src/verification-identity.ts

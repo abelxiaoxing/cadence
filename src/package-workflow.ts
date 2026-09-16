@@ -160,6 +160,7 @@ function openPreparedPackageWorkflowService(
     const workHardLimit = hostLimit("ABEL_WORK_MAX_UNITS", 512);
     const engine = openDurableWorkflowEngine({
       workHardLimit,
+      awaitPostApplySettlement: true,
       verificationPolicy: `report-file-v5:${JSON.stringify(executionProfile())}`,
       verificationEnvironment: coalesceVerificationScans(
         (plan: import("./implement-plan.ts").ImplementPlan, signal) =>
@@ -210,6 +211,7 @@ function openPreparedPackageWorkflowService(
             executionWritePaths: input.executionWritePaths,
             root: input.root,
             dependencyOwner: consumerRoot,
+            executionOwnerRoot: stateRoot.rootDir,
             verification: input.verification,
             signal: input.signal,
           }),
@@ -230,6 +232,7 @@ function openPreparedPackageWorkflowService(
             ),
             root: input.root,
             dependencyOwner: consumerRoot,
+            executionOwnerRoot: stateRoot.rootDir,
             verification,
             signal: input.signal,
           });

@@ -6,7 +6,6 @@ import {
   sealCandidateArtifact,
 } from "./candidate-artifact.ts";
 import { revisionChanges, runGitApply } from "./candidate-workspace.ts";
-
 import type { StructuredVerificationContract } from "./contracts.ts";
 import type { PlanTaskDraft } from "./delivery-compiler.ts";
 import type {
@@ -20,6 +19,7 @@ import type {
   DurableWorkflowEngineOptions,
   PhaseResources,
 } from "./durable-contracts.ts";
+import { isExecutionRetained } from "./execution-retention.ts";
 import type {
   BeginCandidateInput,
   TaskLedger,
@@ -308,7 +308,8 @@ export class PhaseExecution {
           policy: this.#options.verificationPolicy ?? "legacy",
         });
       } finally {
-        rmSync(root, { recursive: true, force: true });
+        if (!isExecutionRetained(root))
+          rmSync(root, { recursive: true, force: true });
       }
     }
     return undefined;
@@ -980,7 +981,8 @@ export class PhaseExecution {
         },
       };
     } finally {
-      rmSync(proposalRoot, { recursive: true, force: true });
+      if (!isExecutionRetained(proposalRoot))
+        rmSync(proposalRoot, { recursive: true, force: true });
     }
   }
 
@@ -1165,7 +1167,8 @@ export class PhaseExecution {
           signal: request.signal,
         });
       } finally {
-        rmSync(root, { recursive: true, force: true });
+        if (!isExecutionRetained(root))
+          rmSync(root, { recursive: true, force: true });
       }
     };
     emitWorkflowActivity(request.onActivity, { state: "verifying" });
@@ -2248,7 +2251,8 @@ export class PhaseExecution {
         baselineRevisionId: resources.baselineRevisionId,
       });
     } finally {
-      rmSync(proposalRoot, { recursive: true, force: true });
+      if (!isExecutionRetained(proposalRoot))
+        rmSync(proposalRoot, { recursive: true, force: true });
     }
   }
 }

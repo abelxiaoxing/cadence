@@ -173,6 +173,8 @@ export interface DurableWorkflowEngineOptions {
   leaseTtlMs?: number;
   workHardLimit?: number;
   verificationPolicy?: string;
+  /** Real process executors must settle cancellation before post-apply cleanup. */
+  awaitPostApplySettlement?: boolean;
   verificationEnvironment?(
     plan: ImplementPlan,
     signal: AbortSignal,

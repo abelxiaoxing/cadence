@@ -9,6 +9,7 @@ import {
   verificationSteps,
 } from "./contracts.ts";
 import { executionProfile } from "./execution-profile.ts";
+import { retainExecution } from "./execution-retention.ts";
 import { canonicalJson } from "./implement-graph.ts";
 import { BubblewrapIsolationBackend } from "./isolation-backend.ts";
 import { observeSafePath } from "./safe-path.ts";
@@ -19,6 +20,7 @@ import {
 } from "./verification-capability.ts";
 import { diagnosticText } from "./verification-diagnostics.ts";
 import { prepareVerificationEnvironment } from "./verification-environment.ts";
+import { WindowsJobBackend } from "./windows-job-backend.ts";
 
 function sha256(value: Uint8Array | string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -311,6 +313,7 @@ function readReport(root: string, relative: string, maximum: number): string {
 export async function executePackageVerification(input: {
   root: string;
   dependencyOwner: string;
+  executionOwnerRoot?: string;
   verification: StructuredVerificationContract;
   signal: AbortSignal;
   maxReportBytes?: number;
@@ -376,6 +379,7 @@ export async function executePackageVerification(input: {
         "workspace-dependency-missing",
         "dependency-path-unsafe",
         "execution-mode-invalid",
+        "windows-job-helper-path-invalid",
         "verification-timeout-invalid",
         "verification-environment-names-invalid",
         "verification-environment-requires-trusted-mode",
@@ -384,13 +388,20 @@ export async function executePackageVerification(input: {
         : "verification-environment-unavailable";
     return unavailable(code, "environment");
   }
+  let retained = false;
   try {
     const profile = executionProfile();
-    const isolation = new BubblewrapIsolationBackend({
-      bwrapPath: profile.bwrapPath,
-      timeoutMs: profile.timeoutMs,
-      localTrusted: profile.mode === "local-trusted",
-    });
+    const isolation =
+      profile.mode === "host-trusted"
+        ? new WindowsJobBackend({
+            helperPath: profile.windowsHelperPath ?? "",
+            timeoutMs: profile.timeoutMs,
+          })
+        : new BubblewrapIsolationBackend({
+            bwrapPath: profile.bwrapPath,
+            timeoutMs: profile.timeoutMs,
+            localTrusted: profile.mode === "local-trusted",
+          });
     let final: VerificationObservation | undefined;
     let sequence = 0;
     for (const step of verificationSteps(input.verification)) {
@@ -401,7 +412,7 @@ export async function executePackageVerification(input: {
         `${environment.reportRoot}/${relative}`,
       );
       if (!invocation) return unavailable("runner-missing");
-      if (profile.mode === "local-trusted") {
+      if (profile.mode !== "isolated") {
         const translate = (value: string) =>
           value.startsWith("/workspace/")
             ? path.join(input.root, value.slice(11))
@@ -409,16 +420,37 @@ export async function executePackageVerification(input: {
         invocation.executable = translate(invocation.executable);
         invocation.args = invocation.args.map(translate);
       }
-      const executed = await isolation.run({
-        root: input.root,
-        ...invocation,
-        mounts: environment.mounts,
-        environment: environment.environment,
-        ...(step.kind !== "vitest" && step.classification === "expected-red"
-          ? { outputWitness: step.expectedFailure }
-          : {}),
-        signal: input.signal,
-      });
+      const lease =
+        profile.mode === "host-trusted"
+          ? retainExecution(
+              input.executionOwnerRoot ?? path.dirname(input.root),
+              [input.root, environment.privateRoot],
+            )
+          : undefined;
+      let executed: Awaited<ReturnType<typeof isolation.run>>;
+      try {
+        executed = await isolation.run({
+          root: input.root,
+          ...invocation,
+          mounts: profile.mode === "host-trusted" ? [] : environment.mounts,
+          environment: environment.environment,
+          ...(step.kind !== "vitest" && step.classification === "expected-red"
+            ? { outputWitness: step.expectedFailure }
+            : {}),
+          signal: input.signal,
+        });
+        if (
+          !executed.ok &&
+          executed.code === "isolation-termination-unconfirmed"
+        ) {
+          retained = true;
+          lease?.uncertain();
+        } else lease?.settled();
+      } catch (error) {
+        retained = !!lease;
+        lease?.uncertain();
+        throw error;
+      }
       if (!executed.ok) {
         if (executed.state === "cancelled") return { kind: "cancelled" };
         return unavailable(
@@ -534,7 +566,7 @@ export async function executePackageVerification(input: {
     }
     return final ?? unavailable("verification-contract-unsupported");
   } finally {
-    await environment.cleanup();
+    if (!retained) await environment.cleanup();
   }
 }
 

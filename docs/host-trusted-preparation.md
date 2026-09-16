@@ -1,7 +1,8 @@
 # Host execution prototype preparation
 
 Stage-one prototype preparation is complete; native qualification pending.
-No production `host-trusted` mode is enabled.
+This document records the historical prototype-only preparation boundary.
+Later Windows backend integration and its separate native acceptance are described in [Windows host execution](windows-host-trusted.md).
 Existing `isolated` and `local-trusted` behavior, Linux Bubblewrap, storage, recovery, verification identity and apply remain unchanged.
 These scripts are not a security sandbox and are not included in the package tarball.
 No install hook, runtime compiler, download or new dependency is added.

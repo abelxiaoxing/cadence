@@ -48,7 +48,7 @@ it("[HOST-PREP:ci-contract] explicit native lanes and honest unshipped boundary"
     "preparation",
   ])
     expect(docs).toContain(text);
-  expect(readFileSync("src/execution-profile.ts", "utf8")).not.toContain(
-    '"host-trusted"',
+  expect(readFileSync("src/windows-job-backend.ts", "utf8")).not.toContain(
+    "host-prototype",
   );
 });

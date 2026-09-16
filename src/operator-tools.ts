@@ -7,6 +7,7 @@ import { resolveOpenSpecInvocation } from "./openspec-cli.ts";
 import { resolveStateRoot } from "./state-root.ts";
 import { requestBounds } from "./transport-budget.ts";
 import { validateVerificationAdapterCapability } from "./verification-capability.ts";
+import { probeWindowsJob } from "./windows-job-backend.ts";
 
 export interface DoctorCheck {
   name: string;
@@ -121,6 +122,11 @@ export function inspectConsumer(root: string) {
     "execution",
     () => {
       const profile = executionProfile();
+      if (profile.mode === "host-trusted") {
+        if (!probeWindowsJob(profile.windowsHelperPath ?? ""))
+          throw new Error("windows-job-backend-unavailable");
+        return "host-trusted: Windows x64 Job probe passed; host files/network accessible";
+      }
       if (process.platform !== "linux")
         throw new Error("linux-pid-isolation-required");
 
@@ -139,7 +145,7 @@ export function inspectConsumer(root: string) {
       if (result.status !== 0) throw new Error("bubblewrap-probe-failed");
       return `${profile.mode}: Bubblewrap PID namespace probe passed`;
     },
-    "On Linux install/enable Bubblewrap; set ABEL_BWRAP_PATH for a custom install. Trusted Linux projects may explicitly set ABEL_EXECUTION_MODE=local-trusted; Windows should use WSL.",
+    "On Linux install/enable Bubblewrap; set ABEL_BWRAP_PATH for a custom install. Trusted Linux projects may explicitly set ABEL_EXECUTION_MODE=local-trusted; Windows x64 trusted projects may explicitly select ABEL_EXECUTION_MODE=host-trusted and install the matching native Job helper (ABEL_WINDOWS_JOB_HELPER).",
   );
   check(
     "request-budgets",
