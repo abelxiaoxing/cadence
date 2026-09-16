@@ -9,16 +9,20 @@ permissions:
 
 jobs:
   verify-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '24.13.0'
+      - name: Canonical native temporary directory
+        run: node scripts/ci-temp.mjs
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.3.14'
       - run: bun install --frozen-lockfile
+      - run: sudo apt-get update
+      - run: sudo apt-get install --yes bubblewrap
       - run: bun run verify
       - run: bun run check:agents
       - run: bun run traceability:check
@@ -42,6 +46,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+      - name: Canonical native temporary directory
+        run: node scripts/ci-temp.mjs
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.3.14'
@@ -67,6 +73,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24.13.0'
+      - name: Canonical native temporary directory
+        run: node scripts/ci-temp.mjs
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.3.14'
@@ -90,6 +98,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+      - name: Canonical native temporary directory
+        run: node scripts/ci-temp.mjs
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.3.14'
@@ -127,18 +137,7 @@ jobs:
       - name: Select installed Visual Studio 2022 x64 tools
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $installation = & $vswhere -latest -version '[17.0,18.0)' -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if (!$installation) { throw 'Installed VS 2022 x64 tools unavailable' }
-          $developer = Join-Path $installation 'Common7\Tools\VsDevCmd.bat'
-          $toolEnvironment = & cmd.exe /d /s /c "`"`"$developer`" -arch=x64 -host_arch=x64 >nul && set`""
-          if ($LASTEXITCODE -ne 0) { throw 'MSVC environment setup failed' }
-          foreach ($line in $toolEnvironment) {
-            if ($line -match '^(VCToolsInstallDir|WindowsSDKVersion|INCLUDE|LIB|LIBPATH|PATH)=(.*)$') {
-              "$($Matches[1])=$($Matches[2])" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            }
-          }
+        run: ./scripts/ci-msvc.ps1
       - name: Explicit Windows prototype build
         if: runner.os == 'Windows'
         run: node scripts/host-prototype/build.mjs --output "${{ runner.temp }}/host-prototype"
@@ -159,7 +158,6 @@ jobs:
 
   windows-implement-contract:
     name: Implement / Windows x64 / Node ${{ matrix.node }}
-    needs: host-prototype
     runs-on: windows-2022
     strategy:
       fail-fast: false
@@ -173,24 +171,22 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           architecture: x64
+      - name: Canonical native temporary directory
+        run: node scripts/ci-temp.mjs
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.3.14'
       - run: bun install --frozen-lockfile
       - name: Select installed Visual Studio 2022 x64 tools
         shell: pwsh
+        run: ./scripts/ci-msvc.ps1
+      # Windows production admission requires its matching native prototype.
+      - name: Build and qualify the Windows prerequisite
         run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $installation = & $vswhere -latest -version '[17.0,18.0)' -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if (!$installation) { throw 'Installed VS 2022 x64 tools unavailable' }
-          $developer = Join-Path $installation 'Common7\Tools\VsDevCmd.bat'
-          $toolEnvironment = & cmd.exe /d /s /c "`"`"$developer`" -arch=x64 -host_arch=x64 >nul && set`""
-          if ($LASTEXITCODE -ne 0) { throw 'MSVC environment setup failed' }
-          foreach ($line in $toolEnvironment) {
-            if ($line -match '^(VCToolsInstallDir|WindowsSDKVersion|INCLUDE|LIB|LIBPATH|PATH)=(.*)$') {
-              "$($Matches[1])=$($Matches[2])" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            }
-          }
+          node scripts/host-prototype/build.mjs --output "${{ runner.temp }}/host-prototype"
+          if ($LASTEXITCODE -ne 0) { throw 'Prototype build failed' }
+          node scripts/host-prototype/qualify.mjs --require-native --output "${{ runner.temp }}/host-prototype" --helper "${{ runner.temp }}/host-prototype/windows-launcher.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Prototype qualification failed' }
       - name: Explicit production helper build
         run: node src/build-windows-job.mjs --output "${{ runner.temp }}/windows-job"
       - name: Native source lifecycle and Implement acceptance
@@ -216,6 +212,7 @@ jobs:
         with:
           name: windows-implement-node-${{ matrix.node }}-${{ github.run_attempt }}
           path: |
+            ${{ runner.temp }}/host-prototype
             ${{ runner.temp }}/windows-job
             ${{ runner.temp }}/windows-package
           retention-days: 7

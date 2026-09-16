@@ -1,0 +1,2 @@
+# Generated source and its inputs must retain identical bytes on native hosts.
+* text=auto eol=lf
