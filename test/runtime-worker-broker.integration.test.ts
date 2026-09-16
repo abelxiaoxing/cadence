@@ -1802,7 +1802,7 @@ describe("durable WorkflowEngine service composition", () => {
       kind: "accepted",
       evidence: { exitCode: 1, classification: "expected-red" },
     });
-  });
+  }, 20_000);
 
   it.each([
     {

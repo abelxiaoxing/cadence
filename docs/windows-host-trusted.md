@@ -1,7 +1,10 @@
 # Windows 原生可信执行
 
-实现状态：源码、显式 helper 构建、Windows 打包和原生验收入口已接入；本地 Linux 检查不代表 Windows 原生验收成功。
-发布支持声明以 `windows-implement-contract` 的真实运行结果为准。
+Windows x64 原生验收已通过：2026-09-16 的 [CI 运行 35104235413](https://github.com/abelxiaoxing/cadence/actions/runs/35104235413)，提交 `3dad869`。
+Node 22.13.0 和 24.13.0 均完成源码测试及实际 Windows tarball 解包后的测试。
+验收包括基线、Red、暂停重开、Green、累计验证、apply/post-apply、npm hooks/嵌套脚本/失败短路、中文路径依赖替换，以及取消、超时、根进程先退出和 helper 丢失时的后代清理。
+Windows tarball 保存在该运行的 `windows-implement-node-*` artifacts 中，保留期为 7 天；源码保留显式重建入口。
+这是 Windows Server 2022 x64 上的真实 CI 证据；不代表 macOS、Windows ARM64 或所有 Windows 版本均已验收。
 
 ## 选择执行模式
 
@@ -52,6 +55,7 @@ CI 在 Windows x64、Node 22.13.0/24.13.0 的每个任务中先要求对应 Wind
 ## 执行与恢复约定
 
 - 测试在独立候选目录执行，依赖使用副本，workspace 依赖指向候选代码。
+  候选补丁保持提交的原始换行字节，不受宿主 Git autocrlf 设置改写；Windows 清理使用支持 Unicode 的 unlink/rmdir。
   保留原测试命令、预期失败身份、报告校验、基线与 Red/Green 流程。
 - helper 使用 Windows 10 的 `PROC_THREAD_ATTRIBUTE_JOB_LIST` 原子建立 Job 成员关系，进程挂起创建，确认 Job 成员关系后恢复。
   禁止 breakaway，Job handle 不继承，最后一个 handle 关闭会终止受管进程。
