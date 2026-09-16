@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import path from "node:path";
 import { verifyCumulativeRevision } from "./apply-transaction.ts";
 import type { ArtifactStore } from "./artifact-store.ts";
@@ -22,6 +22,7 @@ import type {
   DurableWorkflowEngineOptions,
 } from "./durable-contracts.ts";
 import { isExecutionRetained } from "./execution-retention.ts";
+import { removePathSync } from "./remove-path.ts";
 
 import { observeSafePath } from "./safe-path.ts";
 
@@ -530,7 +531,7 @@ export class ChangeVerification {
       };
     } finally {
       if (!isExecutionRetained(root))
-        rmSync(root, { recursive: true, force: true });
+        removePathSync(root, { recursive: true, force: true });
     }
   }
 

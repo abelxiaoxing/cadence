@@ -75,6 +75,7 @@
   "package/src/pi-adapter.ts",
   "package/src/plan-draft-summary.ts",
   "package/src/plan-draft.ts",
+  "package/src/remove-path.ts",
   "package/src/route-policy.ts",
   "package/src/run-state.ts",
   "package/src/run-store.ts",

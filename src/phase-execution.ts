@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import path from "node:path";
 import {
   inspectCandidateArtifact,
@@ -20,6 +20,7 @@ import type {
   PhaseResources,
 } from "./durable-contracts.ts";
 import { isExecutionRetained } from "./execution-retention.ts";
+import { removePathSync } from "./remove-path.ts";
 import type {
   BeginCandidateInput,
   TaskLedger,
@@ -309,7 +310,7 @@ export class PhaseExecution {
         });
       } finally {
         if (!isExecutionRetained(root))
-          rmSync(root, { recursive: true, force: true });
+          removePathSync(root, { recursive: true, force: true });
       }
     }
     return undefined;
@@ -982,7 +983,7 @@ export class PhaseExecution {
       };
     } finally {
       if (!isExecutionRetained(proposalRoot))
-        rmSync(proposalRoot, { recursive: true, force: true });
+        removePathSync(proposalRoot, { recursive: true, force: true });
     }
   }
 
@@ -1168,7 +1169,7 @@ export class PhaseExecution {
         });
       } finally {
         if (!isExecutionRetained(root))
-          rmSync(root, { recursive: true, force: true });
+          removePathSync(root, { recursive: true, force: true });
       }
     };
     emitWorkflowActivity(request.onActivity, { state: "verifying" });
@@ -2252,7 +2253,7 @@ export class PhaseExecution {
       });
     } finally {
       if (!isExecutionRetained(proposalRoot))
-        rmSync(proposalRoot, { recursive: true, force: true });
+        removePathSync(proposalRoot, { recursive: true, force: true });
     }
   }
 }

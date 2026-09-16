@@ -81,7 +81,7 @@ jobs:
       - run: bun install --frozen-lockfile
       # Native file publication plus injected directory/file faults and durable
       # engine reopen. Scripted Workers do not imply native Implement isolation.
-      - run: node node_modules/vitest/vitest.mjs run test/directory-sync.test.ts test/workflow-engine.integration.test.ts
+      - run: node node_modules/vitest/vitest.mjs run test/directory-sync.test.ts test/remove-path.test.ts test/workflow-engine.integration.test.ts
 
   implement-isolation-contract:
     name: Implement / Bubblewrap / Node ${{ matrix.node }}

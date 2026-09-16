@@ -1,6 +1,6 @@
-import { rmSync } from "node:fs";
 import { parentPort, workerData } from "node:worker_threads";
 import { ArtifactStore } from "./artifact-store.ts";
+import { removePathSync } from "./remove-path.ts";
 import { prepareVerificationEnvironmentIo } from "./verification-environment-io.ts";
 import { verificationEnvironmentDigest } from "./verification-identity.ts";
 import { WorkspaceStore } from "./workspace-store.ts";
@@ -26,7 +26,7 @@ try {
     );
     parentPort.postMessage({ ok: true, result, files: 0, bytes: 0 });
   } else if (workerData.operation === "cleanupVerification") {
-    rmSync(workerData.args[0], { recursive: true, force: true });
+    removePathSync(workerData.args[0], { recursive: true, force: true });
     parentPort.postMessage({ ok: true, files: 0, bytes: 0 });
   } else if (workerData.operation === "verificationIdentity") {
     const result = verificationEnvironmentDigest(

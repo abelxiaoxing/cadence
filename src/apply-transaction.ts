@@ -13,7 +13,6 @@ import {
   realpathSync,
   renameSync,
   rmdirSync,
-  rmSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -25,6 +24,7 @@ import { compareCanonicalStrings } from "./canonical.ts";
 import { isValidRelativePath } from "./contracts.ts";
 import { syncDirectory } from "./directory-sync.ts";
 import { isExecutionRetained } from "./execution-retention.ts";
+import { removePathSync } from "./remove-path.ts";
 import { observeSafePath } from "./safe-path.ts";
 import { configureSqlite, ensureSqliteSchema } from "./sqlite-schema.ts";
 import { APPLY_SCHEMA } from "./storage-schema.ts";
@@ -415,10 +415,10 @@ function writeExclusiveFile(
     syncDirectory(directory);
     return true;
   } catch (error) {
-    rmSync(temporary, { force: true });
+    removePathSync(temporary, { force: true });
     throw error;
   } finally {
-    rmSync(temporary, { force: true });
+    removePathSync(temporary, { force: true });
   }
 }
 
@@ -591,7 +591,7 @@ export async function verifyCumulativeRevision(
     };
   } finally {
     if (!isExecutionRetained(temporary))
-      rmSync(temporary, { recursive: true, force: true });
+      removePathSync(temporary, { recursive: true, force: true });
   }
 }
 
@@ -1257,7 +1257,7 @@ export class ApplyTransaction {
               : await execution;
         } finally {
           if (!isExecutionRetained(isolatedRoot))
-            rmSync(isolatedRoot, { recursive: true, force: true });
+            removePathSync(isolatedRoot, { recursive: true, force: true });
         }
       }
     } catch (error) {

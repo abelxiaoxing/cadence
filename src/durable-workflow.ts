@@ -7,6 +7,7 @@ import type {
 } from "./durable-contracts.ts";
 import { assertExecutionsSettled } from "./execution-retention.ts";
 import { PhaseExecution } from "./phase-execution.ts";
+import { removePathSync } from "./remove-path.ts";
 
 export type {
   DurableChangeVerificationResult,
@@ -19,7 +20,7 @@ interface DurableRunResources extends DurableExecutionResources {
   closed: boolean;
 }
 
-import { lstatSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { ApplyTransaction } from "./apply-transaction.ts";
@@ -903,7 +904,7 @@ class DurableWorkflowComposition
       this.#closeResources(resources);
       this.#runs.delete(runId);
     }
-    rmSync(this.#runRoot(runId), { recursive: true, force: true });
+    removePathSync(this.#runRoot(runId), { recursive: true, force: true });
   }
 
   close(): void {

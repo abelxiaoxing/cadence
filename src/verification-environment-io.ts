@@ -6,13 +6,13 @@ import {
   readdirSync,
   readlinkSync,
   realpathSync,
-  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
 import type { ExecutionProfile } from "./execution-profile.ts";
 import type { IsolationMount } from "./isolation-backend.ts";
+import { removePathSync } from "./remove-path.ts";
 import type { VerificationRunnerBinding } from "./verification-capability.ts";
 
 const CACHES = [".vite", ".vite-temp"];
@@ -35,7 +35,8 @@ export function prepareVerificationEnvironmentIo(
   checkCancelled: () => void,
   privateRoot: string,
 ) {
-  const cleanup = () => rmSync(privateRoot, { recursive: true, force: true });
+  const cleanup = () =>
+    removePathSync(privateRoot, { recursive: true, force: true });
   try {
     const local = profile.mode !== "isolated";
     const native = profile.mode === "host-trusted";
@@ -381,7 +382,7 @@ function removeEntry(file: string, checkCancelled: () => void): void {
   if (stat.isDirectory() && !stat.isSymbolicLink())
     for (const name of readdirSync(file))
       removeEntry(path.join(file, name), checkCancelled);
-  rmSync(file, {
+  removePathSync(file, {
     recursive: stat.isDirectory() && !stat.isSymbolicLink(),
     force: true,
   });
