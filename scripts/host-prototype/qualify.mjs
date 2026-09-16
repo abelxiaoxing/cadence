@@ -185,6 +185,8 @@ async function executeCase(name, helper) {
     stdio: ["pipe", "pipe", "pipe"],
   });
   let closed = false;
+  let helperExit = null;
+  let helperSignal = null;
   let launchError = false;
   let invalid = false;
   let pending = "";
@@ -194,8 +196,10 @@ async function executeCase(name, helper) {
   child.on("error", () => {
     launchError = true;
   });
-  child.on("close", () => {
+  child.on("close", (code, signal) => {
     closed = true;
+    helperExit = code;
+    helperSignal = signal;
   });
   child.stdin.on("error", () => {});
   child.stdout.on("data", (chunk) => {
@@ -320,6 +324,8 @@ async function executeCase(name, helper) {
   } catch (error) {
     error.diagnostic = {
       closed,
+      helperExit,
+      helperSignal,
       launchError,
       invalid,
       pendingBytes: Buffer.byteLength(pending),
