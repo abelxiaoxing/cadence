@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -24,6 +25,17 @@ const { probeWindowsJob, WindowsJobBackend } = (await import(
 )) as typeof import("../src/windows-job-backend.ts");
 
 import { exerciseNativeImplement } from "./helpers/native-implement.ts";
+
+const { executePackageVerification } = (await import(
+  process.env.CADENCE_NATIVE_PACKAGE_ROOT
+    ? pathToFileURL(
+        path.join(
+          process.env.CADENCE_NATIVE_PACKAGE_ROOT,
+          "src/package-verification.ts",
+        ),
+      ).href
+    : new URL("../src/package-verification.ts", import.meta.url).href
+)) as typeof import("../src/package-verification.ts");
 
 const roots: string[] = [];
 const temporary = () => {
@@ -163,6 +175,72 @@ describe.skipIf(process.env.CADENCE_REAL_WINDOWS_JOB !== "1")(
       },
       20000,
     );
+    it("preserves native npm hooks, nested scripts, failure and private dependency copies", async () => {
+      vi.stubEnv("ABEL_EXECUTION_MODE", "host-trusted");
+      const root = temporary(),
+        dependencyOwner = temporary();
+      const sentinel = path.join(
+        dependencyOwner,
+        "node_modules/protected/value",
+      );
+      mkdirSync(path.dirname(sentinel), { recursive: true });
+      writeFileSync(sentinel, "original");
+      const scripts = {
+        preverify: "node audit.cjs pre",
+        verify: "node audit.cjs first && npm run nested && node audit.cjs last",
+        nested: "node audit.cjs nested",
+        postverify: "node audit.cjs post",
+        broken:
+          'node audit.cjs before && node -e "process.exit(1)" && node audit.cjs forbidden',
+      };
+      writeFileSync(
+        path.join(root, "package.json"),
+        JSON.stringify({ scripts }),
+      );
+      writeFileSync(
+        path.join(root, "audit.cjs"),
+        String.raw`
+        const fs = require('node:fs'), path = require('node:path');
+        const assert = require('node:assert/strict');
+        assert.ok(process.env.SystemRoot && process.env.ComSpec);
+        assert.equal(process.env.USERPROFILE, process.env.HOME);
+        assert.ok(fs.statSync(process.env.TEMP).isDirectory());
+        fs.writeFileSync('node_modules/protected/value', 'candidate');
+        fs.writeFileSync(path.join(process.env.HOME, 'private-write'), 'ok');
+        fs.appendFileSync('order.txt', process.argv[2] + '\n');
+      `,
+      );
+      const run = (script: "verify" | "broken") =>
+        executePackageVerification({
+          root,
+          dependencyOwner,
+          signal: new AbortController().signal,
+          verification: {
+            kind: "package-script",
+            id: script,
+            packageManager: "npm",
+            script,
+            command: scripts[script],
+            args: [],
+            classification: "expected-green",
+          },
+        });
+      const passed = await run("verify");
+      expect(passed, JSON.stringify(passed)).toMatchObject({
+        kind: "accepted",
+      });
+      expect(readFileSync(path.join(root, "order.txt"), "utf8")).toBe(
+        "pre\nfirst\nnested\nlast\npost\n",
+      );
+      const failed = await run("broken");
+      expect(failed, JSON.stringify(failed)).toMatchObject({
+        kind: "rejected",
+      });
+      expect(readFileSync(path.join(root, "order.txt"), "utf8")).toBe(
+        "pre\nfirst\nnested\nlast\npost\nbefore\n",
+      );
+      expect(readFileSync(sentinel, "utf8")).toBe("original");
+    }, 30000);
     it("executes baseline, Red, Green, reopen, cumulative, apply and post-apply with native verification", async () => {
       await exerciseNativeImplement("host-trusted", temporary);
     }, 60000);

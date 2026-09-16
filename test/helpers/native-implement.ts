@@ -111,6 +111,7 @@ export async function exerciseNativeImplement(
   });
   const proposals: string[] = [];
   const observations: Array<{ stage: string; script: string }> = [];
+  const failures: unknown[] = [];
   let pauseGreen = true;
   const scriptFor = (verification: StructuredVerificationContract) => {
     if (
@@ -187,6 +188,7 @@ export async function exerciseNativeImplement(
           dependencyOwner: consumerRoot,
           executionOwnerRoot: stateRoot.rootDir,
         });
+        if (result.kind !== "accepted") failures.push(result);
         if (result.kind === "accepted") {
           observations.push({
             stage: `phase:${input.phase}`,
@@ -263,7 +265,10 @@ export async function exerciseNativeImplement(
       change,
       operationId: "real-absent-resume",
     });
-    expect(finished, JSON.stringify(finished)).toMatchObject({
+    expect(
+      finished,
+      JSON.stringify({ pause: finished.pause, failures }),
+    ).toMatchObject({
       runId: first.runId,
       state: "completed",
       completed: true,

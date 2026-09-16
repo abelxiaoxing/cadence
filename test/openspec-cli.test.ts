@@ -221,6 +221,7 @@ describe("shell-free OpenSpec CLI", () => {
     const first = fixture();
     const second = fixture();
     rmSync(first.entry);
+    expect(existsSync(first.entry), "removed first CLI entry").toBe(false);
     const resolve = () =>
       resolveOpenSpecInvocation(first.consumerRoot, {
         ...first.environment,
