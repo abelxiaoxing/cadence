@@ -115,7 +115,9 @@ int wmain(int argc, wchar_t **argv) {
         printf("{\"outputHex\":\""); for (i = 0; i < count; i++) printf("%02x", (unsigned int)(unsigned char)buffer[i]); printf("\"}\n"); fflush(stdout);
       }
     }
-    if (!active && !available) { root = WaitForSingleObject(pi.hProcess, 0) == WAIT_OBJECT_0; settled = root; break; }
+    /* Job accounting can reach zero before the root process handle signals.
+     * Both observations are required; keep polling under the original deadline. */
+    if (!active && !available && root) { settled = 1; break; }
     if (!stopping) {
       if (WaitForSingleObject(controlEvent, 0) == WAIT_OBJECT_0) reason = "cancelled";
       else if (GetTickCount64() - start >= h[1]) reason = "timeout";
