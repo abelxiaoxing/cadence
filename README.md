@@ -52,6 +52,7 @@ HOME、临时目录和报告仍独立；PATH 复用宿主，仓库内 workspace 
 该模式仍要求 Linux Bubblewrap 的 PID namespace 管理后代进程（包括 detached 后代），但不隔离宿主文件和网络；缺少该能力时暂停，不回退到普通进程组。
 `local-trusted` 仅用于 Linux。
 Windows x64 使用独立的 `host-trusted` 后端，见 [配置、构建与验收说明](docs/windows-host-trusted.md)；macOS 暂不支持。
+包含原生 helper 的 Windows x64 安装包在 [GitHub Release](https://github.com/abelxiaoxing/cadence/releases/tag/v1.8.0) 下载；npm 通用包可显式构建 helper 后配置使用。
 依赖副本准备、替换与清理在 I/O Worker 中执行，复制支持取消并等待线程退出；大型依赖复制仍有额外成本；需要安装新依赖、宿主浏览器缓存或服务启动编排时仍需配置/准备，不会自动下载。
 
 可选宿主参数还包括 `ABEL_BWRAP_PATH`、`ABEL_FIRST_PROGRESS_MS` 和 `ABEL_STREAM_IDLE_MS`。

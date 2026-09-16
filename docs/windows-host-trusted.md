@@ -4,6 +4,7 @@ Windows x64 原生验收已通过：2026-09-16 的 [CI 运行 35104235413](https
 Node 22.13.0 和 24.13.0 均完成源码测试及实际 Windows tarball 解包后的测试。
 验收包括基线、Red、暂停重开、Green、累计验证、apply/post-apply、npm hooks/嵌套脚本/失败短路、中文路径依赖替换，以及取消、超时、根进程先退出和 helper 丢失时的后代清理。
 Windows tarball 保存在该运行的 `windows-implement-node-*` artifacts 中，保留期为 7 天；源码保留显式重建入口。
+`v1.8.0` 的正式 Windows x64 包通过 [GitHub Release](https://github.com/abelxiaoxing/cadence/releases/tag/v1.8.0) 提供，文件名为 `cadence-1.8.0-windows-x64.tgz`；npm 同版本通用包附带源码和显式构建工具。
 这是 Windows Server 2022 x64 上的真实 CI 证据；不代表 macOS、Windows ARM64 或所有 Windows 版本均已验收。
 
 ## 选择执行模式
