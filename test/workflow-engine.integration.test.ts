@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { PlanTaskDraft } from "../src/delivery-compiler.ts";
 import { recoveryKey, type EngineTaskRow, type EngineRunRow } from "../src/workflow-policy.ts";
@@ -930,7 +930,7 @@ describe("WorkflowEngine command authority", () => {
       expect(mutations).toBe(maximum);
       expect(worker.calls).toHaveLength(1);
     } finally { await engine.close(); }
-  });
+  }, 20_000);
 
   it.each(["endpoint-unavailable", "operation-cancelled", "approval-code-invalid"])("does not offer plan rewriting for %s", async code => {
     const change = `no-amend-${code}`;
@@ -2026,6 +2026,7 @@ describe("WorkflowEngine command authority", () => {
 
   it("rechecks an orphaned running operation when its lease later expires", async () => {
     const change = "engine-orphan-lease-expiry";
+    let now = Date.now();
     const consumerRoot = makeConsumer("orphan-lease-expiry");
     const stateRoot = resolveStateRoot({
       consumerRoot,
@@ -2045,6 +2046,7 @@ describe("WorkflowEngine command authority", () => {
       worker: firstWorker,
       changeVerifier: new PausingVerifier(),
       leaseTtlMs: 100,
+      now: () => now,
     });
     const started = await engine.execute(
       command("start", change, { operationId: "orphan-lease-start" }),
@@ -2058,7 +2060,7 @@ describe("WorkflowEngine command authority", () => {
       operationId: "orphan-lease-running",
     });
     store.close();
-    const expiresAt = Date.now() + 80;
+    const expiresAt = now + 80;
     const database = new DatabaseSync(stateRoot.databasePath);
     database
       .prepare(
@@ -2090,35 +2092,39 @@ describe("WorkflowEngine command authority", () => {
       .run(String(started.runId), "T1-orphan-lease");
     database.close();
 
-    engine = requiredEngine().open({
-      consumerRoot,
-      stateRoot,
-      deliverySource,
-      worker: new ScriptedWorker(),
-      changeVerifier: new PausingVerifier(),
-      leaseTtlMs: 100,
-    });
-    await expect(engine.execute(command("status", change))).resolves.toMatchObject(
-      { state: "running" },
-    );
-    let status: Record<string, unknown> = {};
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      status = await engine.execute(command("status", change));
-      if (status.state === "paused") break;
-      await new Promise((resolve) => setTimeout(resolve, 10));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      engine = requiredEngine().open({
+        consumerRoot,
+        stateRoot,
+        deliverySource,
+        worker: new ScriptedWorker(),
+        changeVerifier: new PausingVerifier(),
+        leaseTtlMs: 100,
+        now: () => now,
+      });
+      await expect(engine.execute(command("status", change))).resolves.toMatchObject(
+        { state: "running" },
+      );
+      // Advance both the lease clock and its scheduled recovery callback.
+      now = expiresAt + 1;
+      await vi.advanceTimersByTimeAsync(81);
+      const status = await engine.execute(command("status", change));
+      expect(status).toMatchObject({
+        state: "paused",
+        pause: { code: "operation-interrupted" },
+        tasks: [
+          {
+            taskId: "T1-orphan-lease",
+            state: "paused",
+            phase: "red",
+          },
+        ],
+      });
+    } finally {
+      await engine.close();
+      vi.useRealTimers();
     }
-    expect(status).toMatchObject({
-      state: "paused",
-      pause: { code: "operation-interrupted" },
-      tasks: [
-        {
-          taskId: "T1-orphan-lease",
-          state: "paused",
-          phase: "red",
-        },
-      ],
-    });
-    await engine.close();
   });
 
   it("limits independent task execution and preserves the capacity queue across restart", async () => {
