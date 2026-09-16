@@ -43,6 +43,13 @@ function signalGroup(pid, signal) {
     if (error.code !== "ESRCH") throw error;
   }
 }
+function finishObservation(observation, code) {
+  // Pipes are asynchronous on macOS. Exiting immediately after console.log
+  // can discard the only settlement receipt even though the group is gone.
+  process.stdout.write(`${JSON.stringify(observation)}\n`, () =>
+    process.exit(code),
+  );
+}
 // Separate EOF monitor survives supervisor death. Only the inherited process
 // group is in scope; deliberate setsid/daemonization is explicitly unsupported.
 function watch(pid, timeoutMs, shutdownMs) {
@@ -69,13 +76,12 @@ function watch(pid, timeoutMs, shutdownMs) {
       rootExited ||= !exists(pid);
       const groupExists = exists(-pid);
       if (rootExited && !groupExists) {
-        console.log(
-          JSON.stringify(
-            settlement({ rootExited, groupExists, expired: false, reason }),
-          ),
-        );
         clearInterval(timer);
-        process.exit(0);
+        finishObservation(
+          settlement({ rootExited, groupExists, expired: false, reason }),
+          0,
+        );
+        return;
       }
       if (!stopping && performance.now() - start >= timeoutMs) stop("timeout");
       if (
@@ -84,13 +90,11 @@ function watch(pid, timeoutMs, shutdownMs) {
       )
         signalGroup(pid, "SIGKILL");
       if (stopping && performance.now() - stopping >= shutdownMs) {
-        console.log(
-          JSON.stringify(
-            settlement({ rootExited, groupExists, expired: true, reason }),
-          ),
-        );
         clearInterval(timer);
-        process.exit(2);
+        finishObservation(
+          settlement({ rootExited, groupExists, expired: true, reason }),
+          2,
+        );
       }
     } catch {
       clearInterval(timer);

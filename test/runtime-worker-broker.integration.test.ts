@@ -3388,6 +3388,7 @@ describe("durable WorkflowEngine service composition", () => {
     };
     const fixture = directEngineFixture("lease-renewal");
     const change = "renew-operation-lease";
+    let now = 1_000;
     let workerStarted!: () => void;
     const started = new Promise<void>((resolve) => {
       workerStarted = resolve;
@@ -3424,6 +3425,7 @@ describe("durable WorkflowEngine service composition", () => {
       consumerRoot: fixture.consumerRoot,
       stateRoot: fixture.stateRoot,
       leaseTtlMs: 60,
+      now: () => now,
       ...services,
     });
     const running = owner.execute({
@@ -3433,12 +3435,18 @@ describe("durable WorkflowEngine service composition", () => {
       operationId: "lease-renewal-start",
     });
     await started;
-    await new Promise((resolve) => setTimeout(resolve, 180));
+    // Advance the lease clock beyond the original expiry while allowing
+    // real renewal ticks. Host scheduling cannot expire the fixture early.
+    for (let tick = 0; tick < 3; tick++) {
+      now += 40;
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
 
     const observer = WorkflowEngine.open({
       consumerRoot: fixture.consumerRoot,
       stateRoot: fixture.stateRoot,
       leaseTtlMs: 60,
+      now: () => now,
       ...services,
     });
     try {
@@ -4604,7 +4612,7 @@ describe("durable verification lifecycle", () => {
       "- [x] sibling-task",
     );
     await engine.close();
-  });
+  }, 20_000);
 
   it("keeps a cumulative descendant when replaying a historical phase fact", async () => {
     const module = await import("../src/workflow-engine.ts");

@@ -21,6 +21,12 @@ export function runGitApply(
     const child = spawn(
       "git",
       [
+        // Candidate patches bind exact bytes, independent of host checkout
+        // preferences. Git's Windows autocrlf default must not rewrite them.
+        "-c",
+        "core.autocrlf=false",
+        "-c",
+        "core.eol=lf",
         "apply",
         ...(checkOnly ? ["--check"] : []),
         "--recount",

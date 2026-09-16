@@ -44,6 +44,7 @@ const temporary = () => {
   return root;
 };
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   roots.splice(0).forEach((root) => {
     rmSync(root, { recursive: true, force: true });
@@ -177,6 +178,37 @@ describe.skipIf(process.env.CADENCE_REAL_WINDOWS_JOB !== "1")(
     );
     it("preserves native npm hooks, nested scripts, failure and private dependency copies", async () => {
       vi.stubEnv("ABEL_EXECUTION_MODE", "host-trusted");
+      const traces: Array<{
+        stdout: string;
+        stderr: string;
+        exit: number | null;
+      }> = [];
+      const runBackend = WindowsJobBackend.prototype.run;
+      vi.spyOn(WindowsJobBackend.prototype, "run").mockImplementation(
+        (input) => {
+          const trace = { stdout: "", stderr: "", exit: null as number | null };
+          traces.push(trace);
+          const spawnProcess: typeof spawn = ((
+            ...args: Parameters<typeof spawn>
+          ) => {
+            const child = spawn(...args);
+            child.stdout?.on("data", (bytes: Buffer) => {
+              trace.stdout = (trace.stdout + bytes.toString()).slice(-16000);
+            });
+            child.stderr?.on("data", (bytes: Buffer) => {
+              trace.stderr = (trace.stderr + bytes.toString()).slice(-4000);
+            });
+            child.on("close", (code) => {
+              trace.exit = code;
+            });
+            return child;
+          }) as typeof spawn;
+          return runBackend.call(
+            new WindowsJobBackend({ helperPath: helper, spawnProcess }),
+            input,
+          );
+        },
+      );
       const root = temporary(),
         dependencyOwner = temporary();
       const sentinel = path.join(
@@ -226,7 +258,7 @@ describe.skipIf(process.env.CADENCE_REAL_WINDOWS_JOB !== "1")(
           },
         });
       const passed = await run("verify");
-      expect(passed, JSON.stringify(passed)).toMatchObject({
+      expect(passed, JSON.stringify({ passed, traces })).toMatchObject({
         kind: "accepted",
       });
       expect(readFileSync(path.join(root, "order.txt"), "utf8")).toBe(

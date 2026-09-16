@@ -8,6 +8,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -220,7 +221,7 @@ describe("shell-free OpenSpec CLI", () => {
   it("does not switch to a second version when the first installation is broken", () => {
     const first = fixture();
     const second = fixture();
-    rmSync(first.entry);
+    unlinkSync(first.entry);
     expect(existsSync(first.entry), "removed first CLI entry").toBe(false);
     const resolve = () =>
       resolveOpenSpecInvocation(first.consumerRoot, {

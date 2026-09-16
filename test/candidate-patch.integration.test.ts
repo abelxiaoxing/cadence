@@ -11,14 +11,16 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { compileCandidatePatch } from "../src/candidate-patch.ts";
+import { runGitApply } from "../src/candidate-workspace.ts";
 import { diffWritePaths } from "../src/contracts.ts";
 
 const roots: string[] = [];
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
@@ -34,6 +36,33 @@ function workspace(label: string): string {
 }
 
 describe("trusted candidate patch compilation", () => {
+  it.each(["\n", "\r\n"])(
+    "preserves authored bytes with host autocrlf enabled: %j",
+    async (ending) => {
+      const root = workspace("line-endings");
+      vi.stubEnv("GIT_CONFIG_COUNT", "1");
+      vi.stubEnv("GIT_CONFIG_KEY_0", "core.autocrlf");
+      vi.stubEnv("GIT_CONFIG_VALUE_0", "true");
+      const content = `export const value = 2;${ending}`;
+      const diff = compileCandidatePatch({
+        root,
+        writePaths: ["src/value.ts"],
+        deletePaths: [],
+        maxBytes: 1024,
+        operations: [{ kind: "rewrite", path: "src/value.ts", content }],
+      });
+      const signal = new AbortController().signal;
+      expect(await runGitApply(root, Buffer.from(diff), true, signal)).toBe(
+        "ok",
+      );
+      expect(await runGitApply(root, Buffer.from(diff), false, signal)).toBe(
+        "ok",
+      );
+      expect(readFileSync(path.join(root, "src/value.ts"), "utf8")).toBe(
+        content,
+      );
+    },
+  );
   it.each([
     ["missing", "absent", "old-text-not-found"],
     ["ambiguous", "same", "old-text-ambiguous"],
