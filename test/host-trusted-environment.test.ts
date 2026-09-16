@@ -83,6 +83,38 @@ it("copies dependency bytes, redirects workspace junctions and runner scripts in
     readFileSync(path.join(owner, "node_modules/tool/cli.js"), "utf8"),
   ).toBe("original");
 });
+it("replaces a previous native dependency view in Unicode paths", () => {
+  const base = temp();
+  const owner = path.join(base, "owner 中文"),
+    candidate = path.join(base, "candidate 中文");
+  mkdirSync(path.join(owner, "node_modules/protected"), { recursive: true });
+  mkdirSync(candidate);
+  writeFileSync(path.join(owner, "node_modules/protected/value"), "original");
+  for (let iteration = 0; iteration < 2; iteration++) {
+    prepareVerificationEnvironmentIo(
+      candidate,
+      owner,
+      [],
+      executionProfile({ ABEL_EXECUTION_MODE: "host-trusted" }),
+      {
+        PATH: path.dirname(process.execPath),
+        SystemRoot: process.env.SystemRoot ?? "C:\\Windows",
+      },
+      () => {},
+      temp(),
+    );
+    expect(
+      readFileSync(
+        path.join(candidate, "node_modules/protected/value"),
+        "utf8",
+      ),
+    ).toBe("original");
+    writeFileSync(
+      path.join(candidate, "node_modules/protected/value"),
+      "candidate",
+    );
+  }
+});
 it("retains uncertain work and blocks re-admission without treating a persisted marker as a live PID", () => {
   const owner = temp(),
     candidate = temp();
