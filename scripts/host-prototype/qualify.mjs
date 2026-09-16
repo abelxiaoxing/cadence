@@ -318,6 +318,16 @@ async function executeCase(name, helper) {
       evidence,
     };
   } catch (error) {
+    error.diagnostic = {
+      closed,
+      launchError,
+      invalid,
+      pendingBytes: Buffer.byteLength(pending),
+      stderrBytes,
+      observationCount: observations.length,
+      outputBytes: Buffer.byteLength(output),
+      witness: evidence?.witness === true,
+    };
     error.observation = observations.at(-1);
     error.outcome = error.observation?.managedSettled ? "failed" : "uncertain";
     throw error;
@@ -410,6 +420,7 @@ async function main() {
         results.push({
           name,
           outcome: error.outcome || "uncertain",
+          ...(error.diagnostic ? { diagnostic: error.diagnostic } : {}),
           ...(error.observation ? { observation: error.observation } : {}),
         });
       }

@@ -43,7 +43,8 @@ node scripts/pack-windows.mjs --helper C:\CadenceNative\windows-job.exe --output
 构建使用静态 C runtime，并记录源码、helper、编译器哈希和 SDK 版本。
 Windows 专用打包校验普通包成员清单加上两个明确的原生文件；它不会发布包。
 
-CI 先要求原有 prototype 原生矩阵完成，再在 Windows x64、Node 22.13.0/24.13.0 上构建新协议 helper，运行源码验收，构建并解包 tarball，然后从解包后的源码和 helper 再运行验收。
+CI 在 Windows x64、Node 22.13.0/24.13.0 的每个任务中先要求对应 Windows prototype 原生测试通过，再构建新协议 helper，运行源码验收，构建并解包 tarball，然后从解包后的源码和 helper 再运行验收。
+原有 macOS prototype 矩阵继续独立运行；Windows 支持不代表 macOS 支持。
 原生任务缺少能力时失败，不静默跳过。
 原型的 v1 manifest 不能替代生产后端的 v2 helper。
 原型结果也不能替代新后端和发布包的实际验收。

@@ -4,6 +4,7 @@ import {
   lstatSync,
   mkdirSync,
   readdirSync,
+  readlinkSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -278,7 +279,15 @@ export function prepareVerificationEnvironmentIo(
         path.posix.join(target, ...path.relative(source, file).split(path.sep));
       return {
         ...binding,
-        executablePath: translate(executable),
+        // Preserve an installation's relative launcher link (e.g. bin/npm).
+        // Exposing lib/node_modules/npm/bin on PATH selects npm's Windows
+        // installer shell shim during a nested `npm run` on Linux.
+        executablePath: translate(
+          lstatSync(binding.executablePath).isSymbolicLink() &&
+            !path.isAbsolute(readlinkSync(binding.executablePath))
+            ? binding.executablePath
+            : executable,
+        ),
         ...(binding.fixedArgs
           ? {
               fixedArgs: binding.fixedArgs.map((arg) =>

@@ -218,6 +218,7 @@ import {
   lstatSync as lstatSync2,
   mkdirSync as mkdirSync2,
   readdirSync,
+  readlinkSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -430,7 +431,7 @@ function prepareVerificationEnvironmentIo(root, dependencyOwner, runnerBindings,
       const translate = (file) => path2.posix.join(target, ...path2.relative(source, file).split(path2.sep));
       return {
         ...binding,
-        executablePath: translate(executable),
+        executablePath: translate(lstatSync2(binding.executablePath).isSymbolicLink() && !path2.isAbsolute(readlinkSync(binding.executablePath)) ? binding.executablePath : executable),
         ...binding.fixedArgs ? {
           fixedArgs: binding.fixedArgs.map((arg) => path2.isAbsolute(arg) && within(source, arg) ? translate(arg) : arg)
         } : {}
@@ -500,7 +501,7 @@ import {
   lstatSync as lstatSync3,
   openSync as openSync3,
   readdirSync as readdirSync2,
-  readlinkSync,
+  readlinkSync as readlinkSync2,
   readSync
 } from "node:fs";
 import path3 from "node:path";
@@ -521,7 +522,7 @@ function verificationEnvironmentDigest(roots, checkCancelled = () => {}) {
       return;
     }
     if (stat.isSymbolicLink()) {
-      digest2.update(JSON.stringify(["link", readlinkSync(file)]));
+      digest2.update(JSON.stringify(["link", readlinkSync2(file)]));
       return;
     }
     if (stat.isDirectory()) {

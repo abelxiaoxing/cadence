@@ -24,7 +24,13 @@ function main() {
     const child = spawn(
       process.execPath,
       [fileURLToPath(import.meta.url), "descendant", root],
-      { env: process.env, stdio: "ignore" },
+      {
+        env: process.env,
+        stdio: "ignore",
+        // A shared Windows console can terminate the child with its parent.
+        // Keep macOS descendants in the inherited process group under test.
+        detached: process.platform === "win32",
+      },
     );
     child.on("error", () => process.exit(1));
     child.unref();
