@@ -687,6 +687,7 @@ describe("durable WorkflowEngine service composition", () => {
     let factoryContext: Record<string, unknown> | undefined;
     let executionContext: Record<string, unknown> | undefined;
     let executionSignal: AbortSignal | undefined;
+    let activeTools: string[] = [];
     const pi = {
       registerTool(tool: typeof registeredTool) {
         registeredTool = tool;
@@ -708,8 +709,10 @@ describe("durable WorkflowEngine service composition", () => {
           },
         },
       ],
-      getActiveTools: () => [],
-      setActiveTools() {},
+      getActiveTools: () => [...activeTools],
+      setActiveTools(names: string[]) {
+        activeTools = [...names];
+      },
     };
     registerWorkflowControl(pi, (context: Record<string, unknown>) => {
       factoryContext = context;

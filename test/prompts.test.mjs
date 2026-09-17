@@ -58,6 +58,19 @@ const loadPrompts = async () => {
 };
 
 describe("Abel prompt templates", () => {
+  it("reports a missing extension/tool before asking the model to execute a stage", async () => {
+    const { prompts } = await loadPrompts();
+    for (const prompt of prompts.filter((item) => item.name !== "abel-init")) {
+      expect(prompt.content).toContain("abel-stage-tools-unavailable");
+      expect(prompt.content).toContain(
+        "Do not substitute bash, subagent, or terminal tools",
+      );
+      expect(
+        prompt.content.indexOf("abel-stage-tools-unavailable"),
+      ).toBeLessThan(prompt.content.indexOf("This stage is scoped"));
+    }
+  });
+
   it("loads exactly the four approved prompt names with string argument hints", async () => {
     const missing = promptNames.filter(
       (name) => !existsSync(path.join(promptsDir, `${name}.md`)),

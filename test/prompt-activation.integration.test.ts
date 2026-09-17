@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type FauxResponseStep,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
@@ -27,9 +28,7 @@ afterEach(() => {
 });
 
 async function promptSession(
-  responses: Array<ReturnType<typeof fauxAssistantMessage>> = [
-    fauxAssistantMessage("done"),
-  ],
+  responses: FauxResponseStep[] = [fauxAssistantMessage("done")],
 ) {
   const cwd = mkdtempSync(join(tmpdir(), "abel-prompt-activation-"));
   roots.push(cwd);
@@ -61,7 +60,7 @@ async function promptSession(
     settingsManager,
   });
   await session.bindExtensions({ mode: "print" });
-  return { session };
+  return { session, faux };
 }
 
 function activePackageTool(
@@ -156,6 +155,226 @@ describe("package Prompt provenance activates abel_dispatch", () => {
       session.dispose();
     });
   }
+
+  it("exposes Design start in the first provider request and restores tools on exit", async () => {
+    const requirement = "将开始界面与社群与作者界面对齐 steam-dev 对应的 UI";
+    const seen: string[][] = [];
+    const { session } = await promptSession([
+      (context) => {
+        seen.push((context.tools ?? []).map((tool) => tool.name));
+        return fauxAssistantMessage(
+          fauxToolCall(DISPATCH_TOOL, {
+            action: "design",
+            request: {
+              operation: "start",
+              requirement,
+              operationId: "first-provider-start",
+            },
+          }),
+          { stopReason: "toolUse" },
+        );
+      },
+      fauxAssistantMessage(fauxToolCall(DISPATCH_TOOL, { action: "finish" }), {
+        stopReason: "toolUse",
+      }),
+      (context) => {
+        seen.push((context.tools ?? []).map((tool) => tool.name));
+        return fauxAssistantMessage("done");
+      },
+    ]);
+    try {
+      const initial = session.getActiveToolNames();
+      await session.prompt(`/abel-design ${requirement}`, { source: "rpc" });
+      expect(seen).toEqual([["read", DISPATCH_TOOL], initial]);
+      const results = session.state.messages.filter(
+        (message) =>
+          message.role === "toolResult" && message.toolName === DISPATCH_TOOL,
+      );
+      expect(results).toHaveLength(2);
+      for (const result of results)
+        expect(result).toMatchObject({ isError: false });
+      expect(session.getActiveToolNames()).toEqual(initial);
+    } finally {
+      session.dispose();
+    }
+  });
+
+  it.each(["steer", "followUp"] as const)(
+    "rejects a streaming %s invocation before template expansion",
+    async (streamingBehavior) => {
+      const { session, faux } = await promptSession();
+      faux.setResponses([
+        async () => {
+          await session.prompt("/abel-design queued requirement", {
+            source: "rpc",
+            streamingBehavior,
+          });
+          return fauxAssistantMessage("ordinary turn finished");
+        },
+      ]);
+      try {
+        await session.prompt("ordinary task");
+        expect(faux.state.callCount).toBe(1);
+        expect(JSON.stringify(session.state.messages)).toContain(
+          "abel-stage-requires-idle",
+        );
+        expect(JSON.stringify(session.state.messages)).not.toContain(
+          "<!-- ABEL:PROMPT:abel-design -->",
+        );
+        expect(session.getActiveToolNames()).not.toContain(DISPATCH_TOOL);
+      } finally {
+        session.dispose();
+      }
+    },
+  );
+
+  it.each(["preexpanded", "followUp", "steer"] as const)(
+    "neutralizes %s stage instructions that bypass input provenance",
+    async (mode) => {
+      const seen: string[] = [];
+      const { session, faux } = await promptSession();
+      const invocation = "/abel-design orphan requirement";
+      const capture: FauxResponseStep = (context) => {
+        seen.push(JSON.stringify(context.messages));
+        // Even an uncooperative model must not execute tools for the rejected request.
+        return fauxAssistantMessage(
+          fauxToolCall("bash", { command: "printf unsafe-orphan-execution" }),
+          { stopReason: "toolUse" },
+        );
+      };
+      faux.setResponses(
+        mode === "preexpanded"
+          ? [capture, fauxAssistantMessage("done")]
+          : [
+              async () => {
+                await session[mode](invocation);
+                return fauxAssistantMessage("ordinary turn finished");
+              },
+              capture,
+              fauxAssistantMessage("done"),
+            ],
+      );
+      try {
+        const text = session.promptTemplates
+          .find((item) => item.name === "abel-design")!
+          .content.replace("$ARGUMENTS", "orphan requirement");
+        await session.prompt(mode === "preexpanded" ? text : "ordinary task", {
+          source: "rpc",
+        });
+        expect(seen).toHaveLength(1);
+        expect(seen[0]).toContain("abel-stage-unverified-input");
+        expect(seen[0]).not.toContain("<!-- ABEL:PROMPT:abel-design -->");
+        const toolResult = session.state.messages.find(
+          (message) =>
+            message.role === "toolResult" && message.toolName === "bash",
+        );
+        expect(toolResult).toMatchObject({ isError: true });
+        expect(session.getActiveToolNames()).not.toContain(DISPATCH_TOOL);
+        faux.setResponses([fauxAssistantMessage("ordinary work")]);
+        await session.prompt("ordinary follow-up");
+        expect(session.systemPrompt).not.toContain(
+          "abel-stage-unverified-input",
+        );
+      } finally {
+        session.dispose();
+      }
+    },
+  );
+
+  it("reports rejected package provenance without sending the workflow to the model", async () => {
+    const { session, faux } = await promptSession();
+    try {
+      session.promptTemplates.find(
+        (item) => item.name === "abel-design",
+      )!.sourceInfo.baseDir = "/foreign-package";
+      await session.prompt("/abel-design requirement", { source: "rpc" });
+      expect(faux.state.callCount).toBe(0);
+      expect(JSON.stringify(session.state.messages)).toContain(
+        "abel-stage-provenance-invalid",
+      );
+      expect(JSON.stringify(session.state.messages)).not.toContain(
+        "<!-- ABEL:PROMPT:abel-design -->",
+      );
+    } finally {
+      session.dispose();
+    }
+  });
+
+  it("keeps a retained Design active when a streaming stage switch is rejected", async () => {
+    const { session, faux } = await promptSession();
+    try {
+      const initial = session.getActiveToolNames();
+      await session.prompt("/abel-design retained requirement");
+      const restricted = session.getActiveToolNames();
+      faux.setResponses([
+        async () => {
+          await session.prompt("/abel-diagnose queued switch", {
+            source: "rpc",
+            streamingBehavior: "followUp",
+          });
+          return fauxAssistantMessage("retained");
+        },
+      ]);
+      await session.prompt("continue same task");
+      expect(session.getActiveToolNames()).toEqual(restricted);
+      expect(session.systemPrompt).toContain(
+        "Abel stage abel-design is active",
+      );
+      expect(JSON.stringify(session.state.messages)).toContain(
+        "abel-stage-requires-idle",
+      );
+      faux.setResponses([
+        fauxAssistantMessage(
+          fauxToolCall(DISPATCH_TOOL, { action: "finish" }),
+          { stopReason: "toolUse" },
+        ),
+        fauxAssistantMessage("finished"),
+      ]);
+      await session.prompt("exit workflow");
+      expect(session.getActiveToolNames()).toEqual(initial);
+    } finally {
+      session.dispose();
+    }
+  });
+
+  it("does not grant authority to an identical replay of a previously admitted prompt", async () => {
+    const seen: string[] = [];
+    const { session, faux } = await promptSession();
+    try {
+      await session.prompt("/abel-design repeated requirement");
+      const user = session.state.messages.find(
+        (message) => message.role === "user",
+      );
+      if (user?.role !== "user") throw new Error("missing user prompt");
+      const text =
+        typeof user.content === "string"
+          ? user.content
+          : user.content
+              .filter((part) => part.type === "text")
+              .map((part) => part.text)
+              .join("\n");
+      faux.setResponses([
+        (context) => {
+          seen.push(JSON.stringify(context.messages));
+          return fauxAssistantMessage("rejected");
+        },
+      ]);
+      await session.prompt(text, { source: "rpc" });
+      expect(session.systemPrompt).toContain("abel-stage-unverified-input");
+      expect(seen[0]).toContain("abel-stage-unverified-input");
+      // The retained stage is not discarded; a fresh explicit invocation repairs admission.
+      faux.setResponses([fauxAssistantMessage("ready")]);
+      await session.prompt("/abel-design repeated requirement", {
+        source: "rpc",
+      });
+      expect(session.systemPrompt).toContain(
+        "Abel stage abel-design is active",
+      );
+      expect(session.systemPrompt).not.toContain("abel-stage-unverified-input");
+    } finally {
+      session.dispose();
+    }
+  });
 
   it("accepts an explicit RPC invocation", async () => {
     const { session } = await promptSession();

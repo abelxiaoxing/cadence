@@ -13,6 +13,12 @@ $ARGUMENTS
 
 <!-- ABEL:PROMPT:abel-diagnose -->
 
+Before following this procedure, check that `abel_dispatch` is actually callable in this model request.
+If it is missing, stop and report `Cadence configuration error: abel-stage-tools-unavailable`.
+Do not substitute bash, subagent, or terminal tools, and do not claim the stage started.
+Ask the operator to enable the Cadence extension together with its package prompts, inspect extension-load errors and tool filters, then resubmit the original slash command while the session is idle.
+A prompt marker or historical active/inactive message is not evidence that the tool is available.
+
 This stage is scoped to the invoked task.
 Direct answers and same-task continuations stay in this stage.
 If the user ends the workflow or requests an unrelated task, first send `{"action":"finish"}` to `abel_dispatch`, then handle the new task normally with the restored tools.

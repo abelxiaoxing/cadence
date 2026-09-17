@@ -14,6 +14,23 @@
 4. 首次进入项目先运行 `/abel-init`，然后 `/abel-design <需求>`，确认集中呈现的目标与方案，设计完成后运行 `/abel-implement <change>`。
 5. 暂停时先查看原因和建议，不要靠反复 resume 或重启“碰运气”；未完成的工作会保留。
 
+### Pi / Web UI 阶段启动约定
+
+阶段命令需要 Cadence 扩展与包内 prompts 同时加载；只有提示正文可见，不代表 `abel_dispatch` 已注册或已激活。
+Web UI / SDK 集成应在会话空闲时提交原始命令：`session.prompt("/abel-design <需求>", { source: "rpc" })`。
+不要在客户端预展开模板，也不要通过 `steer()`、`followUp()` 或运行中的排队请求启动阶段。
+运行中的显式阶段命令会被拒绝并报告 `abel-stage-requires-idle`，等待当前请求结束后重新提交即可；原有阶段不会因此被退出或丢弃。
+
+启动失败有明确错误码：`abel-stage-provenance-invalid`（包来源不匹配）、`abel-stage-unverified-input`（缺少可验证的原始调用）和 `abel-stage-tools-unavailable`（工具未暴露或 Design 工具边界设置失败）。
+扩展会阻止失败请求的工具执行；不能改用 bash、subagent 或 terminal 工具绕过。
+空闲时正常启动会在首次模型请求前启用 `abel_dispatch` 并限制 Design 工具集合，显式退出后恢复进入前的工具集合。
+恢复会话或重载不会从历史提示自动激活阶段。
+
+如果扩展根本没有加载，扩展自身无法执行检查；提示中的缺失工具说明只是模型侧兜底，不是宿主级拦截。
+Web UI 必须展示资源加载器的 `getExtensions().errors`，核实当前会话已绑定扩展，并在发送阶段提示前检查 `session.getAllTools()` 中的 `abel_dispatch`；不存在时直接报告配置错误，不发送阶段正文。
+请检查包资源过滤是否禁用了 extensions、实际运行的 Node / Pi 版本，以及是否恢复了旧的工具清单。
+诊断时只记录工具名、命令来源和脱敏错误，不记录密钥或完整需求。
+
 ### 先检查环境，不先花模型调用
 
 在 Cadence 开发仓库中可用：

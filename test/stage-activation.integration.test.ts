@@ -111,6 +111,134 @@ async function capturedDesignFailure(
 }
 
 describe("semantic stage activation teardown", () => {
+  it.each(["filter", "throw", "ignore-boundary"] as const)(
+    "fails closed when the host cannot apply Design tools (%s)",
+    (failure) => {
+      const handlers = new Map<string, (...args: any[]) => any>();
+      let tool: any;
+      let active = ["read", "bash", "write", "subagent"];
+      const initial = [...active];
+      registerWorkflowControl(
+        {
+          registerTool(value: any) {
+            tool = value;
+          },
+          on(name: string, handler: (...args: any[]) => any) {
+            handlers.set(name, handler);
+          },
+          getCommands: () => [
+            {
+              name: "abel-design",
+              source: "prompt",
+              sourceInfo: {
+                origin: "package",
+                baseDir: packageDir,
+                path: path.join(packageDir, "prompts", "abel-design.md"),
+              },
+            },
+          ],
+          getActiveTools: () => [...active],
+          setActiveTools(next: string[]) {
+            if (!next.includes(DISPATCH_TOOL)) {
+              active = [...next];
+              return;
+            }
+            if (failure === "throw") throw new Error("host-private-detail");
+            active =
+              failure === "filter"
+                ? next.filter((name) => name !== DISPATCH_TOOL)
+                : [...initial, DISPATCH_TOOL];
+          },
+        } as never,
+        () => {
+          throw new Error("must not open engine");
+        },
+      );
+      handlers.get("input")!({
+        source: "rpc",
+        text: "/abel-design requirement",
+      });
+      const result = handlers.get("before_agent_start")!(
+        {
+          prompt:
+            "<abel-request>requirement</abel-request> <!-- ABEL:PROMPT:abel-design -->",
+        },
+        {},
+      );
+      expect(result.systemPrompt).toContain("abel-stage-tools-unavailable");
+      expect(result.systemPrompt).not.toContain("host-private-detail");
+      expect(active).toEqual(initial);
+      expect(handlers.get("tool_call")!({ toolName: "bash" })).toMatchObject({
+        block: true,
+      });
+      return expect(
+        tool.execute(
+          "start",
+          {
+            action: "design",
+            request: {
+              operation: "start",
+              requirement: "requirement",
+              operationId: "rejected",
+            },
+          },
+          undefined,
+          undefined,
+          {},
+        ),
+      ).rejects.toThrow("stage-control-mismatch");
+    },
+  );
+
+  it("blocks late host tool filtering before the model request", async () => {
+    const item = harness("abel-design", baseEngine());
+    const message = {
+      role: "user",
+      timestamp: 1,
+      content: [
+        {
+          type: "text",
+          text: "<abel-request>verified</abel-request> <!-- ABEL:PROMPT:abel-design -->",
+        },
+      ],
+    };
+    item.setActive(["read", "bash"]);
+    const filtered = await item.handlers.get("context")!({
+      messages: [message],
+    });
+    expect(JSON.stringify(filtered)).toContain("abel-stage-tools-unavailable");
+    expect(item.handlers.get("tool_call")!({ toolName: "read" })).toMatchObject(
+      { block: true },
+    );
+    await item.handlers.get("session_start")!({}, item.context);
+    expect(item.active()).not.toContain(DISPATCH_TOOL);
+  });
+
+  it("neutralizes restored stage text without activating and leaves ordinary references alone", async () => {
+    const item = harness("abel-design", baseEngine());
+    await item.handlers.get("session_start")!({}, item.context);
+    const content =
+      "This procedure applies only when the user explicitly invokes `/abel-design`.\n<abel-request>old requirement</abel-request>\n<!-- ABEL:PROMPT:abel-design -->";
+    const restored = { role: "user", timestamp: 1, content };
+    const first = await item.handlers.get("context")!({ messages: [restored] });
+    expect(JSON.stringify(first)).toContain("abel-stage-unverified-input");
+    expect(item.active()).not.toContain(DISPATCH_TOOL);
+    const ordinary = {
+      role: "user",
+      timestamp: 2,
+      content:
+        "Explain the /abel-design marker <!-- ABEL:PROMPT:abel-design -->",
+    };
+    const next = (await item.handlers.get("context")!({
+      messages: [restored, ordinary],
+    })) as any;
+    expect(next.messages[1]).toEqual(ordinary);
+    expect(
+      item.handlers.get("tool_call")!({ toolName: "read" }),
+    ).toBeUndefined();
+    expect(item.active()).not.toContain(DISPATCH_TOOL);
+  });
+
   it("keeps failed Design preflight resumable and repairs same-stage tool drift without finishing", async () => {
     const close = vi.fn(async () => {});
     const executeDesign = vi.fn(async (request: { operation: string }) => {
