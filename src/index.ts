@@ -22,6 +22,7 @@ export { executePackageVerification } from "./package-verification.ts";
 // integration; abel-init and ordinary prompts never activate dispatch.
 
 import { createHash } from "node:crypto";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -58,7 +59,7 @@ import { canonicalJson } from "./implement-graph.ts";
 import { PACKET_ACTIONS, PacketRuntime } from "./packet-runtime.ts";
 
 import { RunStoreFormatError, RunStoreMigrationError } from "./run-store.ts";
-
+import { STARTUP_CARD_KEY, startupCardLines } from "./startup-card.ts";
 import { StateRootError } from "./state-root.ts";
 import {
   ACTIVITY_DETAILS_KEY,
@@ -1792,4 +1793,22 @@ export function registerWorkflowControl(
 
 export default function register(pi: ExtensionAPI): void {
   registerWorkflowControl(pi);
+  // Presentation only: never persist a dismissal or inject a model message.
+  pi.on("session_start", (_event, ctx) => {
+    if (!ctx.hasUI) return;
+    ctx.ui.setWidget(
+      STARTUP_CARD_KEY,
+      startupCardLines({
+        cwd: ctx.cwd,
+        home: homedir(),
+        projectTrusted: ctx.isProjectTrusted(),
+      }),
+    );
+  });
+  pi.on("agent_start", (_event, ctx) => {
+    if (ctx.hasUI) ctx.ui.setWidget(STARTUP_CARD_KEY, undefined);
+  });
+  pi.on("session_shutdown", (_event, ctx) => {
+    if (ctx.hasUI) ctx.ui.setWidget(STARTUP_CARD_KEY, undefined);
+  });
 }

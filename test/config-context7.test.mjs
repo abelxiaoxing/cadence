@@ -1,4 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -43,6 +49,88 @@ afterEach(() => {
 });
 
 describe("whole-file configuration", () => {
+  it("allows Context7 defaults without a file but keeps required Grok configuration strict", () => {
+    const root = makeRoot();
+    const options = {
+      cwd: path.join(root, "project"),
+      home: path.join(root, "home"),
+    };
+    expect(loadContext7Config(options)).toEqual({
+      path: null,
+      apiUrl: "https://context7.com/api/v2",
+      apiKey: "",
+    });
+    expect(() =>
+      loadConfig({
+        ...options,
+        required: ["GROK_API_KEY"],
+        allowMissing: true,
+      }),
+    ).toThrow("No cadence configuration file found");
+    writeEnv(
+      path.join(options.cwd, ".pi", "cadence", ".env"),
+      "invalid syntax",
+    );
+    expect(() => loadContext7Config(options)).toThrow(
+      "Invalid configuration syntax",
+    );
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "does not treat a dangling configuration symlink as missing",
+    () => {
+      const root = makeRoot();
+      const options = {
+        cwd: path.join(root, "project"),
+        home: path.join(root, "home"),
+      };
+      const file = path.join(options.cwd, ".pi", "cadence", ".env");
+      mkdirSync(path.dirname(file), { recursive: true });
+      symlinkSync(path.join(root, "missing.env"), file);
+      expect(() => loadContext7Config(options)).toThrow();
+    },
+  );
+
+  it("rejects oversized and non-regular configuration files", () => {
+    const root = makeRoot();
+    const options = {
+      cwd: path.join(root, "project"),
+      home: path.join(root, "home"),
+    };
+    const file = path.join(options.cwd, ".pi", "cadence", ".env");
+    writeEnv(file, `KEY=${"x".repeat(64 * 1024)}`);
+    expect(() => loadConfig(options)).toThrow("regular file of at most 64 KiB");
+    rmSync(file);
+    mkdirSync(file);
+    expect(() => loadConfig(options)).toThrow();
+  });
+
+  it("performs an anonymous Context7 lookup without creating configuration", async () => {
+    const root = makeRoot();
+    const options = {
+      cwd: path.join(root, "project"),
+      home: path.join(root, "home"),
+    };
+    let requests = 0;
+    const result = await runContext7({
+      ...options,
+      argv: ["search", "react", "hooks"],
+      fetchImpl: async (url, init) => {
+        requests += 1;
+        expect(String(url)).toContain(
+          "https://context7.com/api/v2/libs/search",
+        );
+        expect(init.headers.Authorization).toBeUndefined();
+        return Response.json({ results: [{ id: "/react/docs" }] });
+      },
+    });
+    expect(result).toEqual({ results: [{ id: "/react/docs" }] });
+    expect(requests).toBe(1);
+    expect(() => loadConfig(options)).toThrow(
+      "No cadence configuration file found",
+    );
+  });
+
   it("keeps project selection invariant under user-file mutations", () => {
     const root = makeRoot();
     const cwd = path.join(root, "project");

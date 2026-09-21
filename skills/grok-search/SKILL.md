@@ -36,4 +36,9 @@ Treat non-zero exits and invalid result shapes as failed research.
 
 The CLI selects the project `.pi/cadence/.env` as a whole file when present, otherwise `~/.pi/agent/cadence/.env`.
 `GROK_API_URL` and `GROK_API_KEY` are required.
+Cadence shows the selected configuration path and missing fields on every extension load in TUI/RPC, without network verification.
+If configuration is missing, direct the user to edit that local file (prefer the user file when no project file exists); never ask them to paste a key in chat.
+The CLI does not read shell API variables.
+Save one `NAME=value` per line; the next invocation reads the changes without restarting Pi.
+Configuration files must be regular files of at most 64 KiB.
 `GROK_MODEL` defaults to `grok-4.20-non-reasoning`, `TAVILY_API_URL` defaults to `https://api.tavily.com`, and Tavily is enabled by default once a non-empty `TAVILY_API_KEY` is configured; set `TAVILY_ENABLED=false` to opt out.

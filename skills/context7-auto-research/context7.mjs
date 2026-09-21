@@ -9,7 +9,7 @@ import { loadConfig } from "../_shared/load-config.mjs";
 const DEFAULT_API_URL = "https://context7.com/api/v2";
 
 export function loadContext7Config({ cwd, home }) {
-  const selected = loadConfig({ cwd, home });
+  const selected = loadConfig({ cwd, home, allowMissing: true });
   return {
     path: selected.path,
     apiUrl: selected.values.CONTEXT7_API_URL || DEFAULT_API_URL,
