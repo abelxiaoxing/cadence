@@ -73,13 +73,13 @@ describe("Cadence startup configuration card", () => {
     });
     vi.stubGlobal("fetch", fetch);
     const lines = startupCardLines(input);
-    expect(lines).toHaveLength(7);
+    expect(lines).toHaveLength(2);
     const text = lines.join("\n");
     expect(text).toContain("匿名模式，无需密钥");
     expect(text).toContain("待配置 GROK_API_URL、GROK_API_KEY");
     expect(text).toContain(displayedPath(input.userFile));
-    expect(text).toContain("不读取 shell API 变量");
-    expect(text).toContain("未联网验证");
+    expect(text).toContain("（未创建）");
+    expect(text).not.toContain("未联网验证");
     expect(() => readFileSync(input.userFile)).toThrow();
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -97,10 +97,16 @@ describe("Cadence startup configuration card", () => {
         "UNKNOWN=secret-unknown",
       ].join("\n"),
     );
-    const text = startupCardLines(input).join("\n");
+    const lines = startupCardLines(input);
+    const text = lines.join("\n");
     expect(text).toContain("Grok：已配置");
     expect(text).toContain("Context7：已配置密钥");
     expect(text).toContain("Tavily：已配置");
+    expect(lines).toHaveLength(2);
+    expect(lines).toEqual([
+      `Cadence配置文件：${displayedPath(input.userFile)}`,
+      "Context7：已配置密钥｜Grok：已配置｜Tavily：已配置",
+    ]);
     expect(text).not.toMatch(/secret|sensitive|private-token/);
   });
 
@@ -113,7 +119,7 @@ describe("Cadence startup configuration card", () => {
     write(input.projectFile, "CONTEXT7_API_KEY=\n");
     const text = startupCardLines(input).join("\n");
     expect(text).toContain(displayedPath(input.projectFile));
-    expect(text).toContain("项目整文件优先，不合并用户配置");
+    expect(text).not.toContain(displayedPath(input.userFile));
     expect(text).toContain("待配置 GROK_API_URL、GROK_API_KEY");
     expect(readFileSync(input.projectFile, "utf8")).toBe("CONTEXT7_API_KEY=\n");
   });
