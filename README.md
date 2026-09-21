@@ -43,6 +43,16 @@ Windows x64 的可信模式见 [Windows 执行说明](docs/windows-host-trusted.
 
 密钥只保存在本地，不要提交 Git。
 
+## 加载方式
+
+包可以从以下路径加载：
+
+- **npm 包（npm package）**：`pi install npm:@abelxiaoxing/cadence`
+- **本地包目录（local package directory）**：将 Pi 指向仓库的绝对或相对路径（例如 `./cadence`）
+- **已安装 tarball 目录（installed tarball directory）**：用 `bun pm pack --destination <tmp>` 生成 `.tgz`，安装或解压后指向该目录
+
+Pi 相关 peer 依赖使用 `*`，不限制宿主 Pi 的版本。
+
 ## 开发
 
 ```sh
@@ -62,6 +72,43 @@ bun run pack:check
 bun run traceability:check
 ```
 
+## 附录
+
+### 公共 UI 的 impactClosure 作者格式
+
+`page-state` 与 `public-html` 可以同时声明。
+以下是 **PlanDraft 任务片段**，合并到现有 `tasks[i]`；路径和证据必须替换为仓库真实调查结果。
+假设 Red 修改 `test/page-state.mjs`，已有 `test/public-html.mjs` 只读保留：
+
+```json
+{
+  "read": ["test/page-state.mjs", "test/public-html.mjs"],
+  "impactClosure": {
+    "changedSurfaces": ["page-state", "public-html"],
+    "searchEvidence": [
+      "检索页面状态的调用点及 test/、tests/ 中的覆盖：test/page-state.mjs 需更新状态切换断言，test/public-html.mjs 覆盖现有公开 HTML。"
+    ],
+    "relatedTests": [
+      {
+        "path": "test/page-state.mjs",
+        "evidence": "本任务 Red 更新页面状态切换回归；由阶段 write 推导为 current-task。"
+      },
+      {
+        "path": "test/public-html.mjs",
+        "evidence": "保留已有 HTML 断言并执行受影响验证；无任务写入，推导为 unaffected。"
+      }
+    ],
+    "affectedSuite": ["test/page-state.mjs", "test/public-html.mjs"]
+  }
+}
+```
+
+`impactClosure` 恰好包含 `changedSurfaces`、`searchEvidence`、`relatedTests` 和 `affectedSuite` 四个字段。
+`changedSurfaces` 是合法枚举数组，`none` 不能与其他值混用。
+`searchEvidence` 记录实际检索与结论。
+`relatedTests` 每项位于 `test/` 或 `tests/` 下，`disposition` 可省略由编译器推导。
+`affectedSuite` 是影响清单而非验证器，每项必须有对应的 `relatedTests` 条目。
+
 ## 项目结构
 
 - `src/`：扩展和工作流实现
@@ -70,6 +117,7 @@ bun run traceability:check
 - `config/`：示例配置
 - `openspec/specs/`：当前规范
 - `docs/`：仅保留必要的平台说明
+- `README.md` 附录：公共 UI 计划的 impactClosure 作者格式
 
 历史设计、评估报告和已完成变更不放在主仓库中。
 
