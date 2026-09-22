@@ -1,5 +1,13 @@
 [global]
-exclude = ["**/CHANGELOG.md", "openspec/**"]
+exclude = [
+  "**/CHANGELOG.md",
+  "openspec/**",
+  ".agents/**",
+  ".trellis/workflow.md",
+  ".trellis/agents/**",
+  ".trellis/workspace/**",
+  ".trellis/tasks/**",
+]
 disable = ["MD041"]
 extend-enable = ["MD060"]
 
@@ -22,3 +30,4 @@ style = "aligned"
 
 [per-file-ignores]
 "prompts/*.md" = ["MD033"]
+"AGENTS.md" = ["MD013", "MD032"]

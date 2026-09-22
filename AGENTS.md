@@ -1,75 +1,47 @@
-# AGENTS.md
+## Cadence
+
+`@abelxiaoxing/cadence` is a Pi extension that provides four explicit Abel workflow stages: `/abel-init`, `/abel-design`, `/abel-implement`, and `/abel-diagnose`.
+Ordinary engineering work never activates the workflow; only a user-issued idle raw slash invocation starts a stage.
+Implement is durable and resumable across sessions and hosts: owner-private SQLite state, sealed deliveries, bounded recovery, and platform-specific verification isolation (Linux Bubblewrap, Windows x64 native Job).
+The package ships three immutable professional Agents (`agents/`), research and commit skills (`skills/`), stage prompts (`prompts/`), and example configuration (`config/`) as pinned, compiler-checked content.
+
+Project-specific development guidelines live in `.trellis/spec/`.
+The `backend/` layer covers the package code: the `src/` modules, `scripts/`, owner-private storage, the workflow engine, delivery, verification, and operator tooling.
+The `frontend/` layer is repurposed as "Presentation & Content": the TUI projection in `src/subagent-activity.ts` and `src/startup-card.ts`, plus the package-shipped `prompts/`, `skills/`, `agents/`, and `config/` content.
+This repository has no web frontend.
+
+## Distribution routes
+
+- Target test: `bun run test -- test/distribution.test.mjs`.
+- Real pack route: from this package directory, run `bun pm pack --destination <tmp>`.
+- Distribution suite: `bun run verify` (check && lint && test && pack:check); traceability: `bun run traceability:check`.
 
 <!-- ABEL:AGENTS-INDEX:START -->
 ## Project index
 
-- `openspec/` contains the target root's OpenSpec core.
-- `openspec/config.yaml` selects the spec-driven schema.
-- The root is the standalone `@abelxiaoxing/cadence` package: manifest `package.json`, lockfile `bun.lock`, private extension `src/index.ts`, and immutable professional Agents under `agents/`.
-- Prompt entrypoints: `prompts/abel-init.md`, `prompts/abel-design.md`, `prompts/abel-implement.md`, and `prompts/abel-diagnose.md`.
-- `config/plan-draft.example.json` provides a compiler-checked single-task Design example with structured Gate A authority; `config/plan-draft.multiple-tasks.example.json` covers explicit dependent producers. `src/plan-draft.ts` owns finite author expansion and inference; draft package-script commands bind from the manifest before named expansion/identity generation, while explicit mismatches and full Gate authority stay strict; `src/implement-plan.ts` independently defines full execution types. `src/delivery-compiler.ts` retains strict sealed-plan validation and projects a managed tasks.md verifier-binding region independently of author task/Scenario evidence; `src/design-control.ts` installs it under the compilation lease before journaling and provides bounded current-step guidance; `src/plan-draft-summary.ts` projects bounded final permissions and actual derivation sources.
-- `src/change-contract-schema.ts` shares Gate A tool/runtime structure and field-only diagnostics without submitted dynamic keys.
-- `src/design-diagnostics.ts` projects bounded field/path, allowed-enum and acceptance-identity diagnostics with code-owned correction hints consistently for Design tool feedback and TUI; graph validation collects independent task/output and rejected-task field errors without admitting partial plans.
-  Compilation reports static checks and optional contract coverage separately from formal Gate A authority and sealing.
-- Activation: ordinary tasks use normal engineering behavior.
-  Only explicit user slash-command invocation activates an Abel stage; mentioning commands or reading project files does not.
-  Stage instructions live in their corresponding prompts; `src/index.ts` owns activation and exit, and the control-plane modules enforce delivery and execution contracts.
-  Stage startup requires an idle raw slash invocation with package provenance; `src/index.ts` rejects streaming starts, neutralizes unadmitted expanded stage messages without granting authority, verifies tool boundaries and blocks rejected-request tool execution.
-  Prompt entrypoints diagnose missing dispatch when the extension is absent; host integrations must surface loader errors and check registered tools.
-  `test/prompt-activation.integration.test.ts` covers first-provider start/exit, pre-expansion, queue rejection and retained-stage continuity; the platform matrix runs these host contracts.
-- Identity and storage infrastructure: `src/canonical.ts` owns locale-independent identity ordering; `src/storage-schema.ts` and `src/sqlite-schema.ts` own checked storage contracts and atomic additive migrations. `src/run-store.ts` admits checked legacy v2/v4 control stores atomically; v2 adds nullable delivery proof fields without inventing approval or resetting retained facts. `test/sqlite-schema.test.ts` covers preservation, rollback and malformed-schema rejection; Design startup and concurrent migration are covered by the delivery/control-plane suites.
-- Package upgrade state: `src/package-state.ts` gates package-service open by recorded package version, holds a per-workspace external SQLite lock for the service lifetime, backs up whole old/unversioned state before initializing a fresh store, and resumes interrupted reset intent.
-  Reset abandons old task/lease/apply facts without settlement; unreadable or missing control stores with retained resources are backed up too, including the runtime run-data layouts.
-Observable package ownership/SQLite locks and unsafe paths still block; old hosts and descendants must be stopped by the operator.
-No main-workspace rollback is performed; notices warn about partial apply and checking Git diff.
-Readable same-version markers retain state and readable downgrades fail closed.
-Low-level storage migration and read-only operator inspection do not reset.
-`test/package-state.test.ts` covers retention, opaque-state abandonment, real-layout apply journals, links, ownership and interrupted recovery; package responses expose bounded reset notices.
-- Durable control and delivery: `src/control-contracts.ts`, `src/run-state.ts`, `src/run-store.ts`, `src/design-journal.ts`, `src/design-control.ts`, `src/state-root.ts`, `src/delivery-compiler.ts`, and `src/implement-graph.ts` own the closed command surface, stable run/delivery identity, owner-private SQLite Design/Implement facts, expiring finalization ownership, safe private Design artifact mutation, read-only typed PlanDraft preflight, proof-bound delivery discovery, code-owned Gate/plan finalization, repository-external state-root safety, canonical `ImplementPlan`, and static/dynamic readiness proof.
-- OpenSpec CLI: `src/openspec-cli.ts` owns shell-free Node/bin resolution for npm global installations, operator-only ABEL_OPENSPEC_PACKAGE_ROOT / ABEL_OPENSPEC_NODE, bounded status/validate execution and allowlisted diagnostics; `.github/workflows/ci.yml` runs real OpenSpec 1.5.0 contracts on Linux/Windows/macOS with Node 22.13.0/24.13.0.
-  Status requires boolean isComplete; optional isPlanningComplete must also be boolean and true for planning completion when present.
-  `scripts/check-syntax.mjs` replaces Unix-only syntax traversal.
-  This does not imply native cross-platform Implement isolation.
-  A separate Linux Bubblewrap job requires real isolation and verifies Red/Green, storage reopen, cumulative verification, apply, host boundaries, and descendant cancellation.
-- Worker routing and HTTP boundary: `src/route-policy.ts`, `src/worker-broker.ts`, `src/parent-provider.ts`, `skills/_shared/load-config.mjs` with `skills/_shared/load-config.d.mts`, `skills/_shared/http-client.mjs`, `config/routes.example.json`, and `config/.env.example` own whole-file route policy, hard capacity minima with advisory task estimates, bounded health/failover/rebind, inherited/custom Provider composition, non-secret provenance, and research HTTP configuration.
-- Research skills: `skills/context7-auto-research/` and `skills/grok-search/`; commit skill: `skills/git-commit/`.
-  `src/startup-card.ts` displays a nonblocking, secret-free local research-configuration card on every UI session load/reload/resume, clears it when work starts, and never activates a workflow or persists dismissal.
-  RPC hosts render its string-array widget; print/JSON stay silent.
-  The shared loader preserves whole-file priority, bounds regular-file reads to 64 KiB, and permits absent-file anonymous Context7 defaults without hiding malformed explicit configuration.
-  `test/startup-card.test.ts` covers presentation, trust, repeated loads and activation isolation.
-- Child execution: `src/packet-runtime.ts` owns bounded Design/Diagnose packet admission, cancellation, single-launch route selection, and activity lifecycle; `src/child-session.ts` owns the explicit private child tool loop, stable submission identity, one bounded missing-submit reminder and structural correction under the original deadline, safe one-result classification, 64-turn / 4 MiB context bounds, and cancellation; `src/child-model.ts` adapts the public model stream to complete turns without Pi session hooks and owns per-request first-progress/idle timers from `src/transport-budget.ts`; headers are observation only and local tool gaps have no stream timer; `src/scoped-tools.ts` confines read/grep/find/ls to admitted workspace-relative paths and bounds search reads/output; `src/scoped-grep-worker.mjs` owns terminable regular-expression matching; `src/parent-provider.ts` snapshots effective Provider/model/auth without host callback capture or registry mutation.
-- Workspace I/O: `src/workspace-io.ts`, source `src/workspace-io-entry.mjs`, and generated `src/workspace-io-worker.mjs` run bounded cancellable Git capture and workspace materialization outside the parent event loop, report operation metrics, and settle worker exit before returning. `scripts/build-workspace-io.mjs` builds the pure-JavaScript worker and checks freshness for installed-package execution. `scripts/benchmark-workspace.mjs` measures capture/materialization and parent event-loop delay.
-- Native cleanup: `src/remove-path.ts` uses Unicode-safe unlink/rmdir on Windows, never traverses directory links, and propagates removal errors; `test/remove-path.test.ts` covers native removal and preservation of external link targets.
-- Directory persistence: `src/directory-sync.ts` centralizes the narrow Windows directory-handle fsync EPERM capability result; file flush/open/close and other I/O errors remain fatal, with no Windows power-loss directory-barrier claim.
-  `test/directory-sync.test.ts` covers native publication, syscall faults and apply recovery; the storage platform CI runs it with engine reopen contracts on Node 24.13.0.
-  The state machine atomically pauses settled exceptional work and repairs legacy interrupted-operation projections under the run-exclusive lease without resetting delivery, phase evidence or budgets.
-- Artifact and workspace execution: `src/artifact-store.ts`, `src/workspace-store.ts`, `src/isolation-backend.ts`, `src/task-ledger.ts`, `src/file-snapshot.ts`, and `src/safe-path.ts` own sealed candidate and complete verification baseline bytes, immutable revisions, Bubblewrap isolation, durable phase/repair facts, currentness, and component-wise no-symlink observation.
-- Workflow authority: `src/workflow-engine.ts` is the stable facade; `src/workflow-state-machine.ts` is the sole Implement transition authority for delivery admission, exhaustive approval classification, locally discovered continuation, parent-owned recommended implementation decisions and automatic continuations, bounded same-stage authority/technical amendments, durable readiness/queueing and shared four-task execution capacity, full command settlement before storage close, baselines, Red-Green-Refactor, cumulative attribution and bounded repair, parent-owned tracking/AGENTS operations, final apply, resume/rebind/cancel/discard, recovery, and truthful completion. `src/apply-transaction.ts` owns currentness-checked journaled main-workspace application; `src/workflow-policy.ts` owns typed service boundaries and policy decisions; `src/durable-workflow.ts` composes workspace execution and verification without owning run transitions. `src/index.ts` owns verified prompt activation, Design parent-tool snapshot/restriction/restoration and same-stage follow-up reconciliation (never automatic reload activation), the single tool registration, interaction and presentation; `src/pi-adapter.ts` projects only cwd/model capabilities from the host; `src/model-source.ts` defines that code-owned port; `src/package-workflow.ts` composes services and `src/package-candidate.ts` owns restricted candidate execution; `src/package-delivery.ts` loads proof-bound deliveries and `src/package-verification.ts` executes verification adapters with independent reports; `src/verification-environment.ts` owns disposable HOME, dependency views and tool caches; `src/verification-identity.ts` hashes installed bytes in the cancellable I/O worker and binds environment identity to retained evidence.
-- TUI presentation: `src/subagent-activity.ts` owns width-safe interactive activity projection, compact terminal metadata, and expandable allowlisted Design failure diagnostics; nonterminal queued/preparing/connecting/waiting-first-response/running/validating/retrying/verifying/paused/approval-needed/applying/recovering states never render as completed, operation-cancelled is not run success, discarded/rejected are non-success terminal states, and active display/timer state is not persisted.
-- Internal execution boundaries: `src/workflow-scheduling.ts`, `src/workflow-recovery-policy.ts`, and `src/delivery-revision.ts` calculate decisions from facts without transition authority.
-  Recovery grants are validated before readiness; rejected grants retain a truthful paused state.
-  Route restoration distinguishes cooldown from capability insufficiency without clearing health history.
-  `src/durable-workflow.ts` owns resource lifetime/replay and composition; `src/phase-execution.ts` handles ordinary/repair candidate phases and `src/change-verification.ts` handles baseline/affected/cumulative/post-apply verification through narrow ports in `src/durable-contracts.ts`.
-  Phase resources exclude main-workspace transactions.
-  `src/activity-contracts.ts` contains data-only lifecycle vocabulary; `src/candidate-workspace.ts` shares isolated Git patch operations.
-- Status projection: `src/workflow-status.ts` derives blockers, decision batches, continuations, budgets and queues from already-read facts without storage access or execution callbacks; the state machine owns collection and transitions.
-- Candidate artifacts: `src/candidate-artifact.ts` shares byte, hash, path and segment validation for ordinary and repair attempts; current task paths constrain retained candidates, while the executor owns recovery classification and commit timing.
-- Structured authority: `src/change-contract.ts` owns normalized Gate A acceptance, constraints and scope policy; the journal inherits it and compilation/amendments enforce it.
-  Authorized mechanical/refactor tasks use baseline/Green evidence without Red candidates.
-  `scripts/evaluate-workflow.mjs` and `scripts/workflow-evaluation.mjs` own disposable Pi RPC consumer evaluation, bounded operation/stage/usage traces frozen at deadline, optional progress snapshots and actual configuration/source fingerprints; preflight and live-model outcomes are distinct.
-- Structural delivery: `src/candidate-patch.ts` validates bounded structured file operations against a symlink-safe isolated workspace and generates canonical unified diffs; `src/submit-tool.ts` accepts one final typed result or structured candidate submission, types requested paths/source citations/contract diagnostics, derives context authority without trusting Worker approval strings, and owns internal chunking, hashes, limits, and sealing; `src/verification-capability.ts` validates shell-free Vitest, package-script, static, and ordered-step adapters; `src/evidence-draft.ts` completes omitted code-owned identity and advisory fields without inventing evidence; `src/contracts.ts` owns strict packet/result envelopes and closed safe failure codes.
-  Child code never imports parent apply or state authority.
-- Usability: `src/verification-diagnostics.ts` supplies bounded operation-local repair feedback; `src/child-budget.ts` separates model context admission and Provider classifications; `src/execution-profile.ts` selects explicit isolated/local-trusted Linux PID-namespaced verification or Windows x64 host-trusted verification with no implicit fallback; `src/windows-job-backend.ts`, `src/windows-job.c` and `src/build-windows-job.mjs` own the native Job protocol, lifecycle and explicit helper build; `src/execution-retention.ts` preserves unsettled host execution resources and blocks re-admission/reset; `scripts/pack-windows.mjs` stages a native tarball and `test/windows-job-real.integration.test.ts` owns required native source/package acceptance (local tests do not confer native qualification); workspace dependencies map to candidate bytes; `src/verification-environment-io.ts` prepares cancellable dependency copies and cleanup in the shipped I/O worker. `src/verification-scan.ts` coalesces only not-yet-started identity reads without sharing older observations with later currentness checks. `src/single-task-draft.ts` expands finite single-task author input through the strict compiler. `src/operator-tools.ts`, source `src/operator-cli-entry.mjs`, and generated `src/operator-cli.mjs` provide read-only doctor/run-storage inspection; doctor selects package managers from the project declaration or an unambiguous lockfile, reports selection provenance, and never silently resolves multi-manager ambiguity. `scripts/benchmark-verification.mjs` and `scripts/evaluate-matrix.mjs` measure dependency I/O and explicit live-model evaluation.
-- Standalone commands: `bun run check`, `bun run lint`, `bun run test`, `bun run test:target <files>`, `bun run check:agents`, `bun run pack:check`, `bun run traceability:check`, `bun run verify` (check && lint && test && pack:check), and fresh-process seed acceptance `bun scripts/seed-acceptance.mjs`.
-  Distribution: `provenance/adapted-modules.yaml` pins package-shipped Agent identity; `scripts/pack-check.mjs` verifies the real tarball against `provenance/package-members.json` and `scripts/traceability-check.mjs` dynamically verifies every active Requirement/Scenario entry resolves and is owned exactly once.
-- The relocated reference repository is read-only implementation, attribution, license, and provenance evidence; no standalone command or package resolution traverses it.
-- Run OpenSpec commands from this target root.
-- Approval continuity and autonomous recovery: `src/design-journal.ts` inherits finalized authority and preserves unchanged compilation; `src/workflow-policy.ts`, `src/workflow-state-machine.ts`, and `src/storage-schema.ts` own stable verification-obligation recovery facts, pre-reserved shared work budgets, admitted phase high-water capacity and explicit one-attempt recovery grants, cumulative repair history, and complete decision batches; `src/index.ts` admits batch-bound same-change amendments without a stage switch; compilation supplies Gate B and resume discovers revised delivery. `src/submit-tool.ts`, `src/index.ts`, and `src/durable-workflow.ts` bind root-scoped regular-file read discovery to exact child capabilities and merge/apply currentness while preserving phase-local writes.
-- Target test: `bun run test -- test/distribution.test.mjs`.
-- Real pack route: from this package directory, run `bun pm pack --destination <tmp>`.
-- Distribution suite: `bun run verify` (check && lint && test && pack:check); traceability: `bun run traceability:check`.
-- Continuous parallel workflow: task baselineVerification binds immutable original-revision checks; `src/delivery-compiler.ts` and `src/implement-graph.ts` validate consumption timing and test retention. `src/change-verification.ts` retains owner/contract/environment-bound baseline observations and separate failed prerequisites. `src/workflow-state-machine.ts` admits baselines before Worker budget reservation, refills settled shared slots across runs, and projects evidence-bound baseline amendments through existing recovery and batch authority. `src/plan-draft-summary.ts` exposes bounded static parallel eligibility and serialization causes.
-- Sustained Implement execution: `src/implement-continuation.ts` owns session-local continuation and no-progress decisions; `src/index.ts` rereads the explicitly activated change's local status before scheduling parent follow-ups and fences cancellation, exit, interruption and pending input.
-  The driver never owns workflow transitions or replenishes budgets.
-  `src/workflow-status.ts` projects conditional parent recovery guidance; `src/plan-draft-summary.ts` presents the accepted technical-amendment policy during Design preflight.
+- `openspec/` and `package.json` define the target package and OpenSpec root.
+- `src/index.ts` is the Pi extension entrypoint; package-shipped prompts, skills, Agents, and config are documented in `.trellis/spec/frontend/`.
+- Backend implementation conventions live in `.trellis/spec/backend/`.
 <!-- ABEL:AGENTS-INDEX:END -->
+
+<!-- TRELLIS:START -->
+# Trellis Instructions
+
+These instructions are for AI assistants working in this project.
+
+This project is managed by Trellis. The working knowledge you need lives under `.trellis/`:
+
+- `.trellis/workflow.md` — development phases, when to create tasks, skill routing
+- `.trellis/spec/` — package- and layer-scoped coding guidelines (read before writing code in a given layer)
+- `.trellis/workspace/` — per-developer journals and session traces
+- `.trellis/tasks/` — active and archived tasks (PRDs, research, jsonl context)
+
+If a Trellis command is available on your platform (e.g. `/trellis:finish-work`, `/trellis:continue`), prefer it over manual steps. Not every platform exposes every command.
+
+If you're using Codex or another agent-capable tool, additional project-scoped helpers may live in:
+- `.agents/skills/` — reusable Trellis skills
+- `.codex/agents/` — optional custom subagents
+
+Managed by Trellis. Edits outside this block are preserved; edits inside may be overwritten by a future `trellis update`.
+
+<!-- TRELLIS:END -->
