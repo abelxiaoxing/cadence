@@ -26,7 +26,6 @@ import type {
   TaskLedger,
   VerifiedTaskEvent,
 } from "./task-ledger.ts";
-import type { RunWorkerBroker } from "./worker-broker.ts";
 import {
   type DependencyContractEntry,
   DependencyManifestError,
@@ -39,11 +38,9 @@ import {
   hash,
   hasUnapprovedDependencyChange,
   hasVerificationLifecycle,
-  implementationRouteRequirements,
   isRecord,
   LOCKFILES,
   SHA256,
-  semanticRouteFailure,
   taskExecutionContract,
   type WorkflowAttemptOutcome,
   type WorkflowRouteFacts,
@@ -81,17 +78,14 @@ export class PhaseExecution {
     DurableWorkflowEngineOptions,
     "verificationPolicy" | "verificationEnvironment" | "proposeCandidate"
   >;
-  readonly #broker: RunWorkerBroker;
   constructor(
     options: Pick<
       DurableWorkflowEngineOptions,
       "verificationPolicy" | "verificationEnvironment" | "proposeCandidate"
     >,
-    broker: RunWorkerBroker,
     services: PhaseExecutionServices,
   ) {
     this.#options = options;
-    this.#broker = broker;
     this.#services = services;
   }
   #recordCorrection(
@@ -559,25 +553,6 @@ export class PhaseExecution {
         proposalRoot,
         request.signal,
       );
-      if (request.routeId && !pending) {
-        const rebound = this.#broker.resumeBinding({
-          runId: request.runId,
-          taskId: request.taskId,
-          role: "implementation-worker",
-          routeId: request.routeId,
-          ...(request.routeFingerprint
-            ? { expectedFingerprint: request.routeFingerprint }
-            : {}),
-          requirements: implementationRouteRequirements({
-            task: request.task,
-            ...(request.artifactCorrection
-              ? { artifactCorrection: request.artifactCorrection }
-              : {}),
-            repair: { failureIdentities: input.failureIdentities },
-          }),
-        });
-        if (!rebound.ok) return { kind: "paused", code: rebound.code };
-      }
       const ledgerProjection = ledger.projection({
         runId: request.runId,
         taskId: request.taskId,
@@ -588,99 +563,76 @@ export class PhaseExecution {
         attribution: "introduced" as const,
         failureIdentities: [...input.failureIdentities],
       };
-      let identity: BeginCandidateInput | undefined = pending?.identity;
-      const routed = pending
-        ? {
-            ok: true as const,
-            value: pending.proposal,
-            routeId: pending.identity.routeId,
-            routeFingerprint: pending.identity.routeFingerprint,
-          }
-        : await this.#broker.run({
-            runId: request.runId,
-            taskId: request.taskId,
-            operationId: `${request.operationId}:${request.taskId}:repair:${input.repairAttempt}`,
-            role: "implementation-worker",
-            requirements: implementationRouteRequirements({
-              task: request.task,
-              ...(request.artifactCorrection
-                ? { artifactCorrection: request.artifactCorrection }
-                : {}),
-              repair: { failureIdentities: input.failureIdentities },
-            }),
-            signal: request.signal,
-            ...(request.onActivity ? { onActivity: request.onActivity } : {}),
-            classifyResult: semanticRouteFailure,
-            execute: async (attempt) => {
-              identity = {
-                candidateId: `candidate-${randomUUID()}`,
-                runId: request.runId,
-                deliveryRevision: request.deliveryRevision,
-                taskId: request.taskId,
-                phase: request.phase,
-                attemptId: `repair-${hash(
-                  request.operationId,
-                  request.taskId,
-                  String(input.repairAttempt),
-                  attempt.route.fingerprint,
-                ).slice(0, 40)}`,
-                approvedPaths,
-                isolatedRevisionId: baseRevisionId,
-                verificationId: request.task.repairVerification.id,
-                routeId: attempt.route.id,
-                routeFingerprint: attempt.route.fingerprint,
-              };
-              if (request.reserveCandidate && !request.reserveCandidate())
-                return {
-                  kind: "paused" as const,
-                  code:
-                    request.additionalAttempt || request.verificationOnly
-                      ? "repair-attempts-exhausted"
-                      : "change-work-budget-exhausted",
-                };
-              return this.#options.proposeCandidate({
-                runId: request.runId,
-                operationId: request.operationId,
-                deliveryRevision: request.deliveryRevision,
-                taskId: request.taskId,
-                phase: request.phase,
-                task: structuredClone(request.task),
-                contextReadPaths: request.contextReadPaths,
-                workspaceRoot: proposalRoot,
-                ledgerProjection,
-                candidateArtifact: {
-                  ledger,
-                  identity,
-                  workspaceRoot: proposalRoot,
-                  writePaths: approvedWritePaths,
-                  deletePaths: approvedDeletePaths,
-                },
-                route: attempt.route,
-                repair,
-                ...(request.artifactCorrection
-                  ? { artifactCorrection: request.artifactCorrection }
-                  : {}),
-                ...(request.contextRequest
-                  ? { contextRequest: request.contextRequest }
-                  : {}),
-                ...(request.recoveryFeedback
-                  ? { recoveryFeedback: request.recoveryFeedback }
-                  : {}),
-                signal: attempt.signal,
-                onRequestStart: attempt.onRequestStart,
-                onHeaders: attempt.onHeaders,
-                onProgress: attempt.onProgress,
-              });
+      const launch = async () => {
+        const identity: BeginCandidateInput = {
+          candidateId: `candidate-${randomUUID()}`,
+          runId: request.runId,
+          deliveryRevision: request.deliveryRevision,
+          taskId: request.taskId,
+          phase: request.phase,
+          attemptId: `repair-${hash(
+            request.operationId,
+            request.taskId,
+            String(input.repairAttempt),
+            hash("pi-process"),
+          ).slice(0, 40)}`,
+          approvedPaths,
+          isolatedRevisionId: baseRevisionId,
+          verificationId: request.task.repairVerification.id,
+          routeId: "pi-process",
+          routeFingerprint: hash("pi-process"),
+        };
+        if (request.reserveCandidate && !request.reserveCandidate())
+          return {
+            identity,
+            proposal: {
+              kind: "paused" as const,
+              code:
+                request.additionalAttempt || request.verificationOnly
+                  ? "repair-attempts-exhausted"
+                  : "change-work-budget-exhausted",
             },
-          });
-      if (!routed.ok) {
-        return routed.state === "cancelled" || request.signal.aborted
-          ? { kind: "operation-cancelled", code: "cancelled" }
-          : { kind: "paused", code: routed.code };
-      }
-      if (!identity || identity.routeId !== routed.routeId) {
-        throw new Error("candidate-route-identity-invalid");
-      }
+          };
+        const proposal = await this.#options.proposeCandidate({
+          runId: request.runId,
+          operationId: request.operationId,
+          deliveryRevision: request.deliveryRevision,
+          taskId: request.taskId,
+          phase: request.phase,
+          task: structuredClone(request.task),
+          contextReadPaths: request.contextReadPaths,
+          workspaceRoot: proposalRoot,
+          ledgerProjection,
+          candidateArtifact: {
+            ledger,
+            identity,
+            workspaceRoot: proposalRoot,
+            writePaths: approvedWritePaths,
+            deletePaths: approvedDeletePaths,
+          },
+          repair,
+          ...(request.artifactCorrection
+            ? { artifactCorrection: request.artifactCorrection }
+            : {}),
+          ...(request.contextRequest
+            ? { contextRequest: request.contextRequest }
+            : {}),
+          ...(request.recoveryFeedback
+            ? { recoveryFeedback: request.recoveryFeedback }
+            : {}),
+          signal: request.signal,
+          onRequestStart: () =>
+            emitWorkflowActivity(request.onActivity, {
+              state: "waiting-first-response",
+            }),
+          onHeaders: () =>
+            emitWorkflowActivity(request.onActivity, { state: "running" }),
+          onProgress: () =>
+            emitWorkflowActivity(request.onActivity, { state: "running" }),
+        });
+        return { identity, proposal };
+      };
+      const { identity, proposal } = pending ?? (await launch());
       const correctionIdentity = identity;
       const withRoute = <T extends object>(outcome: T) => ({
         ...outcome,
@@ -708,7 +660,6 @@ export class PhaseExecution {
         this.#recordCorrection(ledger, request, correctionIdentity, correction);
         return withRoute({ ...outcome, retryPolicy: correction.category });
       };
-      const proposal = routed.value;
       if (
         proposal.kind !== "candidate" &&
         proposal.kind !== "sealed-candidate"
@@ -1651,123 +1602,77 @@ export class PhaseExecution {
         proposalRoot,
         input.signal,
       );
-      if (input.routeId && !pending) {
-        const rebound = this.#broker.resumeBinding({
-          runId: input.runId,
-          taskId: input.taskId,
-          role: "implementation-worker",
-          routeId: input.routeId,
-          ...(input.routeFingerprint
-            ? { expectedFingerprint: input.routeFingerprint }
-            : {}),
-          requirements: implementationRouteRequirements({
-            task: input.task,
-            ...(input.artifactCorrection
-              ? { artifactCorrection: input.artifactCorrection }
-              : {}),
-            ...(input.repair ? { repair: input.repair } : {}),
-          }),
-        });
-        if (!rebound.ok) {
-          return retained({ kind: "paused", code: rebound.code });
-        }
-      }
       const ledgerProjection = ledger.projection({
         runId: input.runId,
         taskId: input.taskId,
         nextPhase: input.phase,
       });
-      let identity: BeginCandidateInput | undefined = pending?.identity;
-      const routed = pending
-        ? {
-            ok: true as const,
-            value: pending.proposal,
-            routeId: pending.identity.routeId,
-            routeFingerprint: pending.identity.routeFingerprint,
-          }
-        : await this.#broker.run({
-            runId: input.runId,
-            taskId: input.taskId,
-            operationId: `${input.operationId}:${input.taskId}:${input.phase}`,
-            role: "implementation-worker",
-            requirements: implementationRouteRequirements({
-              task: input.task,
-              ...(input.artifactCorrection
-                ? { artifactCorrection: input.artifactCorrection }
-                : {}),
-              ...(input.repair ? { repair: input.repair } : {}),
-            }),
-            signal: input.signal,
-            ...(input.onActivity ? { onActivity: input.onActivity } : {}),
-            classifyResult: semanticRouteFailure,
-            execute: async (attempt) => {
-              identity = {
-                candidateId: `candidate-${randomUUID()}`,
-                runId: input.runId,
-                deliveryRevision: input.deliveryRevision,
-                taskId: input.taskId,
-                phase: input.phase,
-                attemptId: `attempt-${hash(
-                  input.operationId,
-                  input.taskId,
-                  input.phase,
-                  attempt.route.fingerprint,
-                ).slice(0, 40)}`,
-                approvedPaths,
-                isolatedRevisionId: baseRevisionId,
-                verificationId: phase.verification.id,
-                routeId: attempt.route.id,
-                routeFingerprint: attempt.route.fingerprint,
-              };
-              if (input.reserveCandidate && !input.reserveCandidate())
-                return {
-                  kind: "paused" as const,
-                  code:
-                    input.additionalAttempt || input.verificationOnly
-                      ? "repair-attempts-exhausted"
-                      : "change-work-budget-exhausted",
-                };
-              return this.#options.proposeCandidate({
-                runId: input.runId,
-                operationId: input.operationId,
-                deliveryRevision: input.deliveryRevision,
-                taskId: input.taskId,
-                phase: input.phase,
-                task: structuredClone(input.task),
-                contextReadPaths: input.contextReadPaths,
-                workspaceRoot: proposalRoot,
-                ledgerProjection,
-                candidateArtifact: {
-                  ledger,
-                  identity,
-                  workspaceRoot: proposalRoot,
-                  writePaths: phase.write,
-                  deletePaths: phase.delete,
-                },
-                route: attempt.route,
-                ...(input.contextRequest
-                  ? { contextRequest: input.contextRequest }
-                  : {}),
-                ...(input.recoveryFeedback
-                  ? { recoveryFeedback: input.recoveryFeedback }
-                  : {}),
-                signal: attempt.signal,
-                onRequestStart: attempt.onRequestStart,
-                onHeaders: attempt.onHeaders,
-                onProgress: attempt.onProgress,
-              });
+      const launch = async () => {
+        const identity: BeginCandidateInput = {
+          candidateId: `candidate-${randomUUID()}`,
+          runId: input.runId,
+          deliveryRevision: input.deliveryRevision,
+          taskId: input.taskId,
+          phase: input.phase,
+          attemptId: `attempt-${hash(
+            input.operationId,
+            input.taskId,
+            input.phase,
+            hash("pi-process"),
+          ).slice(0, 40)}`,
+          approvedPaths,
+          isolatedRevisionId: baseRevisionId,
+          verificationId: phase.verification.id,
+          routeId: "pi-process",
+          routeFingerprint: hash("pi-process"),
+        };
+        if (input.reserveCandidate && !input.reserveCandidate())
+          return {
+            identity,
+            proposal: {
+              kind: "paused" as const,
+              code:
+                input.additionalAttempt || input.verificationOnly
+                  ? "repair-attempts-exhausted"
+                  : "change-work-budget-exhausted",
             },
-          });
-      if (!routed.ok) {
-        return retained(
-          routed.state === "cancelled" || input.signal.aborted
-            ? { kind: "operation-cancelled", code: "cancelled" }
-            : { kind: "paused", code: routed.code },
-        );
-      }
-      if (!identity || identity.routeId !== routed.routeId) {
-        throw new Error("candidate-route-identity-invalid");
-      }
+          };
+        const proposal = await this.#options.proposeCandidate({
+          runId: input.runId,
+          operationId: input.operationId,
+          deliveryRevision: input.deliveryRevision,
+          taskId: input.taskId,
+          phase: input.phase,
+          task: structuredClone(input.task),
+          contextReadPaths: input.contextReadPaths,
+          workspaceRoot: proposalRoot,
+          ledgerProjection,
+          candidateArtifact: {
+            ledger,
+            identity,
+            workspaceRoot: proposalRoot,
+            writePaths: phase.write,
+            deletePaths: phase.delete,
+          },
+          ...(input.contextRequest
+            ? { contextRequest: input.contextRequest }
+            : {}),
+          ...(input.recoveryFeedback
+            ? { recoveryFeedback: input.recoveryFeedback }
+            : {}),
+          signal: input.signal,
+          onRequestStart: () =>
+            emitWorkflowActivity(input.onActivity, {
+              state: "waiting-first-response",
+            }),
+          onHeaders: () =>
+            emitWorkflowActivity(input.onActivity, { state: "running" }),
+          onProgress: () =>
+            emitWorkflowActivity(input.onActivity, { state: "running" }),
+        });
+        return { identity, proposal };
+      };
+      const { identity, proposal } = pending ?? (await launch());
       const correctionIdentity = identity;
       selectedRoute = {
         routeId: identity.routeId,
@@ -1794,7 +1699,6 @@ export class PhaseExecution {
         this.#recordCorrection(ledger, input, correctionIdentity, correction);
         return retained({ ...outcome, retryPolicy: correction.category });
       };
-      const proposal = routed.value;
       if (
         proposal.kind !== "candidate" &&
         proposal.kind !== "sealed-candidate"

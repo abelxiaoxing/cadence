@@ -5,13 +5,8 @@ const cwd = new URL("..", import.meta.url).pathname;
 const expectNotReady = process.argv.includes("--expect-not-ready");
 const files = [
   "test/workflow-ux.integration.test.ts",
-  "test/runtime-worker-broker.integration.test.ts",
-  "test/worker-broker.integration.test.ts",
   "test/task-ledger.integration.test.ts",
   "test/apply-transaction.integration.test.ts",
-  "test/child-session.integration.test.ts",
-  "test/packet-runtime.property.test.ts",
-  "test/usage.property.test.ts",
 ];
 
 try {

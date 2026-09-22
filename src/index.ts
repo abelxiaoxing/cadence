@@ -1792,6 +1792,9 @@ export function registerWorkflowControl(
 }
 
 export default function register(pi: ExtensionAPI): void {
+  // Process children are deliberately started without extensions as a second
+  // defense. Keep this guard for hosts that inject the extension explicitly.
+  if (process.env.CADENCE_SUBAGENT_CHILD === "1") return;
   registerWorkflowControl(pi);
   // Presentation only: never persist a dismissal or inject a model message.
   pi.on("session_start", (_event, ctx) => {

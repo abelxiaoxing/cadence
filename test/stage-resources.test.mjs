@@ -11,16 +11,15 @@ const initPromptPath = path.join(packageDir, "prompts", "abel-init.md");
 const read = (file) => readFileSync(file, "utf8");
 
 describe("self-contained stage resources", () => {
-  it("aligns every professional Agent with one accepted result and one correction", () => {
+  it("aligns every professional Agent with one bounded final result", () => {
     for (const role of [
       "design-explorer",
       "diagnosis-worker",
       "implementation-worker",
     ]) {
       const agent = read(path.join(packageDir, `agents/${role}.md`));
-      expect(agent).toMatch(/correct.*once/i);
-      expect(agent).toMatch(/Never submit again after acceptance/);
-      expect(agent).toMatch(/brief accompanying text is harmless/i);
+      expect(agent).toMatch(/final (answer|summary|output)/i);
+      expect(agent).not.toMatch(/abel_submit_result/);
       expect(agent).not.toMatch(
         /Call `abel_submit_result` exactly once|Do not emit a second submit/,
       );

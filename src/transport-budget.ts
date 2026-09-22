@@ -28,9 +28,7 @@ export function isTransportTimeoutCode(
 export function transportFailureError(code: string): Error {
   return isTransportTimeoutCode(code)
     ? new TransportTimeout(code)
-    : new Error(
-        code === "child-provider-rate-limited" ? code : "transport-failure",
-      );
+    : new Error("transport-failure");
 }
 
 /** Snapshot at the start of each request; Workers cannot override these values. */

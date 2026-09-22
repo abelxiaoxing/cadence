@@ -33,9 +33,15 @@ Windows x64 的可信模式见 [Windows 执行说明](docs/windows-host-trusted.
 
 ## 配置
 
-没有自定义路由时，Worker 默认继承当前父模型。
+Worker 使用独立的 `pi --mode json -p --no-session` 子进程，并继承当前父模型的 `provider/id` 引用与宿主 Pi 凭据配置。
+子进程按角色使用明确工具白名单；Implement 子进程只在 disposable proposal workspace 中编辑，父控制面仍负责 diff、写入边界、候选 sealing 和验证。
+取消会终止并等待子进程及其管道收束。
 
-需要自定义模型时，复制 [`config/routes.example.json`](config/routes.example.json) 到项目的 `.pi/cadence/routes.json` 或用户目录 `~/.pi/agent/cadence/routes.json`。
+工作目录和 `--tools` 不是操作系统沙箱；需要更强隔离时仍应使用 Bubblewrap、容器或平台原生 Job。
+父进程会拒绝超出 approved write/delete set 的变更，不会静默丢弃。
+
+Cadence 不再读取 `.pi/cadence/routes.json` 或 `~/.pi/agent/cadence/routes.json`，也不再维护 route health、custom subagent provider 或 endpoint 路由。
+请使用宿主 Pi 的模型、`models.json` 和认证配置；缺失认证或模型时会返回有界错误而不会静默切换。
 
 研究服务配置使用项目级 `.pi/cadence/.env` 或用户级 `~/.pi/agent/cadence/.env`。
 

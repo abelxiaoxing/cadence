@@ -108,7 +108,7 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     );
     const diagnosis = read(path.join(root, "agents", "diagnosis-worker.md"));
 
-    expect(implementation).toMatch(/complete structured patch/i);
+    expect(implementation).toMatch(/smallest complete change/i);
     expect(implementation).toMatch(/never write unified-diff headers/i);
     expect(implementation).toMatch(
       /expected parent-owned verification contract/i,
@@ -119,8 +119,8 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
       /design-required|return-to-design|\/abel-design|recommended next (workflow )?step|nextStep|dependent successors?|split condition/i,
     );
     expect(diagnosis).toMatch(/reported symptoms/i);
-    expect(diagnosis).toMatch(/complete structured patch/i);
-    expect(diagnosis).toMatch(/never write unified-diff headers/i);
+    expect(diagnosis).toMatch(/evidence-only/i);
+    expect(diagnosis).toMatch(/do not propose a structured diff/i);
     expect(diagnosis).toMatch(/falsif/i);
     expect(diagnosis).toMatch(/failing-regression[\s\S]{0,240}minimum-repair/i);
     expect(diagnosis).not.toMatch(

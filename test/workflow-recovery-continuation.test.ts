@@ -163,30 +163,6 @@ it("guides bounded parent inspection for trusted capability and route pauses", (
     },
   });
   expect(capability).not.toHaveProperty("decisionBatch");
-
-  const route = projectWorkflowStatus(
-    facts(
-      task("endpoint-unavailable", {
-        route_id: "worker-primary",
-        route_fingerprint: HASH_A,
-      }),
-    ),
-  );
-  expect(route).toMatchObject({
-    continuation: {
-      kind: "inspect-recovery",
-      reason: "endpoint-unavailable",
-      metadata: {
-        diagnostic: {
-          code: "endpoint-unavailable",
-          strategy: "inspect-route-availability",
-          route: { routeId: "worker-primary", routeFingerprint: HASH_A },
-        },
-      },
-    },
-  });
-  expect(route.continuation).not.toHaveProperty("action");
-  expect(route.continuation).not.toHaveProperty("command");
 });
 
 it("guides inspection of a change-level environment barrier after tasks verify", () => {
@@ -353,60 +329,6 @@ it.each(["delivery-invalid", "operation-cancelled", "unclassified-failure"])(
     expect(status).not.toHaveProperty("recovery.additionalAttempt");
   },
 );
-
-it("keeps multi-task recovery guidance bound to the first paused owner", () => {
-  const first = task("endpoint-unavailable", {
-    task_id: "T1-route",
-    task_order: 1,
-    route_id: "route-a",
-    route_fingerprint: HASH_A,
-  });
-  const exhausted = task("candidate-diff-invalid", {
-    task_id: "T2-candidate",
-    task_order: 2,
-  });
-  const recovery: SafeAttemptDiagnostic = {
-    recovery: {
-      key: HASH_C,
-      failures: 2,
-      feedback: {
-        code: "candidate-diff-invalid",
-        attempt: 3,
-        maxAttempts: 2,
-        strategy: "revise-candidate",
-      },
-    },
-  };
-  const input = facts(first);
-  const status = projectWorkflowStatus({
-    ...input,
-    projection: { ...input.projection, pauseCode: "endpoint-unavailable" },
-    rows: [first, exhausted],
-    attemptDiagnostics: new Map([[exhausted.task_id, recovery]]),
-    failureSequences: new Map([[HASH_C, 7]]),
-  });
-
-  expect(status).toMatchObject({
-    continuation: {
-      kind: "inspect-recovery",
-      reason: "endpoint-unavailable",
-      metadata: {
-        taskId: "T1-route",
-        diagnostic: {
-          code: "endpoint-unavailable",
-          strategy: "inspect-route-availability",
-          route: { routeId: "route-a", routeFingerprint: HASH_A },
-        },
-      },
-    },
-    decisionBatch: {
-      items: [{ taskId: "T2-candidate", code: "candidate-diff-invalid" }],
-    },
-  });
-  expect(status).not.toHaveProperty("continuation.metadata.recommendation");
-  expect(status).not.toHaveProperty("conditionalCommands");
-  expect(status).not.toHaveProperty("recovery.additionalAttempt");
-});
 
 it("resumes the selected interrupted task without inheriting sibling recovery", () => {
   const interrupted = task("operation-interrupted", {

@@ -21,7 +21,7 @@ export function evidenceDraftSchema(requestId: string, role: string) {
     id: Type.Optional(
       Type.Literal(requestId, {
         description:
-          "Omit: bound by the submit tool. If supplied, must match this request.",
+          "Omit: bound by the parent result adapter. If supplied, must match this request.",
       }),
     ),
     role: Type.Optional(Type.Literal(role)),

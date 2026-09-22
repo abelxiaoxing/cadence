@@ -37,8 +37,8 @@ Use bounded `abel_dispatch` packets with `action: "run"`, `stage: "abel-diagnose
 Each packet covers one defect or one falsification question.
 Do not send an Implement control command from Diagnose.
 
-The parent runs reproduction and verification commands and applies accepted diffs.
-A diagnosis Worker is read-only: it proposes cited evidence or one complete candidate diff and never claims that it executed a command or observed a passing result.
+The parent runs reproduction and verification commands and owns any later implementation.
+A diagnosis Worker is read-only and evidence-only: it returns cited evidence and minimum-repair guidance, never proposes or applies a diff, and never claims that it executed a command or observed a passing result.
 
 ## Evidence-first algorithm
 
@@ -51,8 +51,8 @@ For each defect, keep this order:
    Accept a root cause only when evidence rules out material alternatives.
 4. Add the smallest executable regression verification and run it.
    It must fail for the reproduced defect, not for syntax, setup, environment, or another reason.
-5. Apply the minimum repair within the existing behavior and architecture contract.
-   Run the regression after every edit and the affected suite after refactoring.
+5. Describe the minimum repair within the existing behavior and architecture contract, including its regression verification condition.
+   Do not edit files or claim that a repair was applied from Diagnose.
 6. Compare the full suite with baseline and require no introduced failure.
    Classify any AGENTS impact and apply only a verified managed-region update at a stable parent checkpoint.
    Preserve every byte outside `<!-- ABEL:AGENTS-INDEX:START -->` and `<!-- ABEL:AGENTS-INDEX:END -->`; never give a Worker an AGENTS write path or put runtime/session ids, credentials, or approval state in the index.
@@ -65,7 +65,7 @@ Do not silently widen Diagnose and do not transform an ordinary repair failure i
 
 When an approved browser E2E check cannot run, pause only that check and provide executable remediation; continue independent non-browser evidence when safe.
 
-Finish only when reproduction, falsification, failing regression, minimum repair, affected verification, and baseline comparison are all evidenced.
+Finish only when reproduction, falsification, failing-regression evidence, minimum-repair guidance, affected verification, and baseline comparison are all evidenced.
 After presenting the final structural diagnosis/repair result, send `{"action":"finish"}` so private dispatch is deactivated.
 A resumable evidence or capability pause remains active for direct follow-up and must not send finish.
 Never archive, publish, or commit implicitly.

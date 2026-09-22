@@ -10,10 +10,6 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import {
-  childContextBudget,
-  classifyProviderFailure,
-} from "../src/child-budget.ts";
 import { compileImplementPlan } from "../src/delivery-compiler.ts";
 import { executionProfile } from "../src/execution-profile.ts";
 import { BubblewrapIsolationBackend } from "../src/isolation-backend.ts";
@@ -195,23 +191,7 @@ it.skipIf(process.env.CADENCE_REAL_ISOLATION !== "1")(
   },
 );
 
-it("budgets model context and classifies non-retryable provider errors", () => {
-  expect(
-    childContextBudget({ contextWindow: 16000, maxTokens: 8000 }),
-  ).toBeLessThan(16000);
-  expect(
-    childContextBudget({ contextWindow: 256000, maxTokens: 8000 }),
-  ).toBeGreaterThan(16000);
-  expect(
-    classifyProviderFailure("maximum context length exceeded"),
-  ).toMatchObject({ kind: "execution-limit", code: "child-context-limit" });
-  expect(classifyProviderFailure("HTTP 401 invalid api key")).toMatchObject({
-    kind: "environment",
-  });
-  expect(classifyProviderFailure("HTTP 429 too many requests")).toMatchObject({
-    kind: "transport",
-    code: "child-provider-rate-limited",
-  });
+it("keeps transport limits strict", () => {
   expect(
     requestBounds({ ABEL_FIRST_PROGRESS_MS: "1234" }).firstProgressMs,
   ).toBe(1234);

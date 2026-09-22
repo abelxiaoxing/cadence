@@ -22,9 +22,6 @@ const {
 } = (await import(
   runtime("package-verification.ts")
 )) as typeof import("../../src/package-verification.ts");
-const { parseRoutePolicy } = (await import(
-  runtime("route-policy.ts")
-)) as typeof import("../../src/route-policy.ts");
 const { resolveStateRoot } = (await import(
   runtime("state-root.ts")
 )) as typeof import("../../src/state-root.ts");
@@ -85,26 +82,6 @@ export async function exerciseNativeImplement(
     "real-full-original-baseline",
     "test/health.mjs",
   );
-  const roles = [
-    "design-explorer",
-    "implementation-worker",
-    "diagnosis-worker",
-  ];
-  const routing = parseRoutePolicy({
-    routes: {
-      local: {
-        kind: "inherited",
-        capabilities: {
-          roles,
-          dialects: ["openai-responses"],
-          contextWindow: 256_000,
-          maxTokens: 128_000,
-        },
-      },
-    },
-    roles: Object.fromEntries(roles.map((role) => [role, ["local"]])),
-  });
-  if (!routing.ok) throw new Error("fixture-routing");
   const stateRoot = resolveStateRoot({
     consumerRoot,
     xdgStateHome: path.join(root, "state"),
@@ -125,7 +102,6 @@ export async function exerciseNativeImplement(
     openDurableWorkflowEngine({
       consumerRoot,
       stateRoot,
-      routePolicy: routing.policy,
       awaitPostApplySettlement: true,
       verificationPolicy: pauseGreen ? undefined : "report-file-v3",
       verificationEnvironment: (current, signal) =>

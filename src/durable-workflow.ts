@@ -22,24 +22,18 @@ interface DurableRunResources extends DurableExecutionResources {
 
 import { lstatSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { ApplyTransaction } from "./apply-transaction.ts";
 import { ArtifactStore } from "./artifact-store.ts";
 import { compareCanonicalStrings } from "./canonical.ts";
 import type { ImplementPlan, PlanTaskDraft } from "./delivery-compiler.ts";
-import type { RoutePolicy } from "./route-policy.ts";
 import { observeSafePath } from "./safe-path.ts";
-import { configureSqlite, ensureSqliteSchema } from "./sqlite-schema.ts";
-import { ROUTE_HEALTH_SCHEMA } from "./storage-schema.ts";
 import { TaskLedger } from "./task-ledger.ts";
-import { type RouteHealthStore, RunWorkerBroker } from "./worker-broker.ts";
 import {
   deliveryBoundPaths,
   deliveryTrackingPath,
   hash,
   hasVerificationLifecycle,
   IDENTIFIER,
-  implementationRouteRequirements,
   isRecord,
   SHA256,
   type WorkflowApplication,
@@ -51,125 +45,6 @@ import {
 } from "./workflow-policy.ts";
 import { WorkflowEngine } from "./workflow-state-machine.ts";
 import { type WorkspaceRevision, WorkspaceStore } from "./workspace-store.ts";
-
-type DurableRouteHealth = Parameters<RouteHealthStore["set"]>[1];
-
-class DurableRouteHealthStore implements RouteHealthStore {
-  readonly #databasePath: string;
-  #database?: DatabaseSync;
-  #closed = false;
-
-  constructor(databasePath: string) {
-    this.#databasePath = databasePath;
-  }
-
-  #open(): DatabaseSync {
-    if (this.#closed) throw new Error("route-health-store-closed");
-    if (this.#database) return this.#database;
-    const database = new DatabaseSync(this.#databasePath);
-    try {
-      configureSqlite(database);
-      ensureSqliteSchema(database, ROUTE_HEALTH_SCHEMA);
-    } catch (error) {
-      database.close();
-      throw error;
-    }
-
-    this.#database = database;
-    return database;
-  }
-
-  get(fingerprint: string): DurableRouteHealth | undefined {
-    if (!SHA256.test(fingerprint)) return undefined;
-    const row = this.#open()
-      .prepare(
-        `SELECT state, next_half_open_at, projection_json
-         FROM route_health WHERE route_fingerprint = ?`,
-      )
-      .get(fingerprint) as
-      | {
-          state: string;
-          next_half_open_at: number | null;
-          projection_json: string;
-        }
-      | undefined;
-    if (!row || !["healthy", "open", "half-open"].includes(row.state)) {
-      return undefined;
-    }
-    let projection: unknown;
-    try {
-      projection = JSON.parse(row.projection_json);
-    } catch {
-      return undefined;
-    }
-    if (!isRecord(projection) || projection.state !== row.state) {
-      return undefined;
-    }
-    const retryAt = row.next_half_open_at ?? undefined;
-    const lastCode =
-      typeof projection.lastCode === "string" &&
-      projection.lastCode.length > 0 &&
-      projection.lastCode.length <= 128
-        ? projection.lastCode
-        : undefined;
-    const probeExpiresAt =
-      Number.isSafeInteger(projection.probeExpiresAt) &&
-      (projection.probeExpiresAt as number) >= 0
-        ? (projection.probeExpiresAt as number)
-        : undefined;
-    return {
-      state: row.state as DurableRouteHealth["state"],
-      ...(retryAt === undefined ? {} : { retryAt }),
-      ...(projection.probeInFlight === true ? { probeInFlight: true } : {}),
-      ...(probeExpiresAt === undefined ? {} : { probeExpiresAt }),
-      ...(lastCode === undefined ? {} : { lastCode }),
-    };
-  }
-
-  set(fingerprint: string, health: DurableRouteHealth): void {
-    if (
-      !SHA256.test(fingerprint) ||
-      !["healthy", "open", "half-open"].includes(health.state) ||
-      (health.retryAt !== undefined &&
-        (!Number.isSafeInteger(health.retryAt) || health.retryAt < 0)) ||
-      (health.probeExpiresAt !== undefined &&
-        (!Number.isSafeInteger(health.probeExpiresAt) ||
-          health.probeExpiresAt < 0))
-    ) {
-      throw new Error("route-health-fact-invalid");
-    }
-    const projection = {
-      state: health.state,
-      ...(health.probeInFlight ? { probeInFlight: true } : {}),
-      ...(health.probeExpiresAt === undefined
-        ? {}
-        : { probeExpiresAt: health.probeExpiresAt }),
-      ...(health.lastCode ? { lastCode: health.lastCode.slice(0, 128) } : {}),
-    };
-    this.#open()
-      .prepare(
-        `INSERT INTO route_health(
-           route_fingerprint, state, next_half_open_at, projection_json
-         ) VALUES (?, ?, ?, ?)
-         ON CONFLICT(route_fingerprint) DO UPDATE SET
-           state = excluded.state,
-           next_half_open_at = excluded.next_half_open_at,
-           projection_json = excluded.projection_json`,
-      )
-      .run(
-        fingerprint,
-        health.state,
-        health.retryAt ?? null,
-        JSON.stringify(projection),
-      );
-  }
-
-  close(): void {
-    if (this.#closed) return;
-    this.#database?.close();
-    this.#closed = true;
-  }
-}
 
 function ensurePrivateRunDirectory(directory: string): void {
   const existing = lstatSync(directory, { throwIfNoEntry: false });
@@ -196,19 +71,10 @@ class DurableWorkflowComposition
   readonly #phase: PhaseExecution;
   readonly #verification: ChangeVerification;
   readonly #options: DurableWorkflowEngineOptions;
-  readonly #routeHealth: DurableRouteHealthStore;
-  #broker: RunWorkerBroker;
   readonly #runs = new Map<string, DurableRunResources>();
 
   constructor(options: DurableWorkflowEngineOptions) {
     this.#options = options;
-    this.#routeHealth = new DurableRouteHealthStore(
-      options.stateRoot.databasePath,
-    );
-    this.#broker = new RunWorkerBroker(options.routePolicy, {
-      ...(options.now ? { now: options.now } : {}),
-      healthStore: this.#routeHealth,
-    });
     this.#verification = new ChangeVerification(options, {
       prepareResources: (input, signal) =>
         this.#prepareResources(input, signal),
@@ -217,7 +83,7 @@ class DurableWorkflowComposition
       revalidatePhasePolicy: (...args) =>
         this.#phase.revalidatePhasePolicy(...args),
     });
-    this.#phase = new PhaseExecution(options, this.#broker, {
+    this.#phase = new PhaseExecution(options, {
       prepareResources: (input, signal) =>
         this.#prepareResources(input, signal),
       ledger: (resources, revision) => this.#ledger(resources, revision),
@@ -227,14 +93,6 @@ class DurableWorkflowComposition
         this.#verification.verifyTaskAffected(input),
       verifyPhase: (input) => this.#verification.verifyPhase(input),
     });
-  }
-
-  updateRoutePolicy(policy: RoutePolicy): void {
-    this.#broker.updatePolicy(policy);
-  }
-
-  routePolicyStatus(): Record<string, unknown> {
-    return this.#broker.status();
   }
 
   #runRoot(runId: string): string {
@@ -770,21 +628,8 @@ class DurableWorkflowComposition
     return revision.entries[input.path]?.kind === "file";
   }
 
-  rebind(input: Parameters<WorkflowWorker["rebind"]>[0]) {
-    const rebound = this.#broker.rebind({
-      runId: input.runId,
-      taskId: input.taskId,
-      role: input.role,
-      routeId: input.routeId,
-      requirements: implementationRouteRequirements({ task: input.task }),
-    });
-    return rebound.ok
-      ? {
-          ok: true as const,
-          routeId: rebound.route.id,
-          routeFingerprint: rebound.route.fingerprint,
-        }
-      : { ok: false as const, code: rebound.code };
+  rebind(_input: Parameters<WorkflowWorker["rebind"]>[0]) {
+    return { ok: false as const, code: "route-configuration-removed" };
   }
 
   async prepare(
@@ -912,7 +757,6 @@ class DurableWorkflowComposition
       this.#closeResources(resources);
     }
     this.#runs.clear();
-    this.#routeHealth.close();
   }
   runAttempt(input: Parameters<WorkflowWorker["runAttempt"]>[0]) {
     return this.#phase.runAttempt(input);

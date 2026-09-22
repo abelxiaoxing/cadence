@@ -108,7 +108,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: npm install --global pnpm@10.12.1 yarn@1.22.22
       # Opt-in means unavailable isolation fails the job; it never silently skips.
-      - run: node node_modules/vitest/vitest.mjs run test/isolation-real.integration.test.ts test/workspace-io.test.ts test/review-regressions.test.ts test/evaluation-review.test.mjs test/usability-remediation.test.ts
+      - run: node node_modules/vitest/vitest.mjs run test/workspace-io.test.ts test/isolation-backend.test.ts test/subagent-process.test.ts test/package-candidate-process.integration.test.ts test/review-regressions.test.ts test/evaluation-review.test.mjs test/usability-remediation.test.ts
 
   host-prototype:
     name: Prototype only / ${{ matrix.target.os }} / ${{ matrix.target.arch }} / Node ${{ matrix.node }}

@@ -932,7 +932,7 @@ describe("WorkflowEngine command authority", () => {
     } finally { await engine.close(); }
   }, 20_000);
 
-  it.each(["endpoint-unavailable", "operation-cancelled", "approval-code-invalid"])("does not offer plan rewriting for %s", async code => {
+  it.each(["operation-cancelled", "approval-code-invalid"])("does not offer plan rewriting for %s", async code => {
     const change = `no-amend-${code}`;
     const consumerRoot = makeConsumer(change);
     const delivery = new DeliverySource();
@@ -943,26 +943,7 @@ describe("WorkflowEngine command authority", () => {
     try {
       const outcome = await engine.execute(command("start", change));
       expect(outcome.decisionBatch).toBeUndefined();
-      if (code === "endpoint-unavailable") {
-        expect(outcome).toMatchObject({
-          continuation: {
-            owner: "parent",
-            automatic: true,
-            kind: "inspect-recovery",
-            reason: code,
-            metadata: {
-              diagnostic: {
-                code,
-                strategy: "inspect-route-availability",
-              },
-            },
-          },
-        });
-        expect(outcome.continuation).not.toHaveProperty("action");
-        expect(outcome.continuation).not.toHaveProperty("command");
-      } else {
-        expect(outcome.continuation).toBeUndefined();
-      }
+      expect(outcome.continuation).toBeUndefined();
     } finally { await engine.close(); }
   });
 

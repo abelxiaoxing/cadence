@@ -1,13 +1,11 @@
 import type { ArtifactStore } from "./artifact-store.ts";
+import type { CandidateArtifactSubmission } from "./candidate-context.ts";
 import type {
   StructuredVerificationContract,
   VerificationInputObservation,
 } from "./contracts.ts";
 import type { ImplementPlan, PlanTaskDraft } from "./delivery-compiler.ts";
-import type { RoutePolicy, WorkerRoutePolicy } from "./route-policy.ts";
-
 import type { ResolvedStateRoot } from "./state-root.ts";
-import type { CandidateArtifactSubmission } from "./submit-tool.ts";
 import type { TaskLedger } from "./task-ledger.ts";
 
 import type {
@@ -123,7 +121,6 @@ export interface DurableWorkflowEngineOptions {
   consumerRoot: string;
   stateRoot: ResolvedStateRoot;
   deliverySource: WorkflowDeliverySource;
-  routePolicy: RoutePolicy;
   proposeCandidate(input: {
     runId: string;
     operationId: string;
@@ -134,7 +131,6 @@ export interface DurableWorkflowEngineOptions {
     workspaceRoot: string;
     ledgerProjection: unknown;
     candidateArtifact: CandidateArtifactSubmission;
-    route: WorkerRoutePolicy;
     repair?: {
       attempt: number;
       attribution: "introduced";

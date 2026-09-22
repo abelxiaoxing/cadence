@@ -65,7 +65,7 @@ describe("strict packet envelope contracts", () => {
       id: "diagnose-001",
       phase: "red",
       objective: "Diagnose the bounded regression",
-      output: "diff",
+      output: "evidence",
     }) as Record<string, unknown>;
     delete diagnose.runId;
     expect(contracts.validatePacketEnvelope(diagnose).ok).toBe(true);
@@ -75,6 +75,29 @@ describe("strict packet envelope contracts", () => {
     if (!contracts) return notReady("contracts");
     const result = contracts.validatePacketEnvelope(validEnvelope());
     expect(result.ok).toBe(true);
+  });
+
+  it("rejects Diagnose diff and write requests because the worker is evidence-only", () => {
+    if (!contracts) return notReady("contracts");
+    const diagnose = validEnvelope({
+      stage: "abel-diagnose",
+      role: "diagnosis-worker",
+      id: "diagnose-002",
+      phase: "red",
+    }) as Record<string, unknown>;
+    delete diagnose.runId;
+    const diff = contracts.validatePacketEnvelope({
+      ...diagnose,
+      output: "diff",
+    });
+    if (diff.ok) throw new Error("diagnose-diff-was-accepted");
+    expect(diff.reason).toBe("invalid Diagnose evidence-only packet contract");
+    const write = contracts.validatePacketEnvelope({
+      ...diagnose,
+      declared: { ...(diagnose.declared as object), write: ["src/fix.ts"] },
+    });
+    if (write.ok) throw new Error("diagnose-write-was-accepted");
+    expect(write.reason).toBe("invalid Diagnose evidence-only packet contract");
   });
 
   it("rejects an empty envelope", () => {

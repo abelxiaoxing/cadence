@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { WorkflowActivityUpdate } from "./activity-contracts.ts";
+import { permitsContextRead } from "./candidate-context.ts";
 import {
   assertPlanWithinChangeContract,
   normalizeChangeContract,
@@ -21,7 +22,6 @@ import {
 } from "./delivery-compiler.ts";
 import { compareDeliveryRevision } from "./delivery-revision.ts";
 import { snapshotFiles } from "./file-snapshot.ts";
-import type { RoutePolicy } from "./route-policy.ts";
 import {
   canonicalJson,
   type RunProjection,
@@ -40,7 +40,6 @@ import {
   RECOVERY_SCHEMA,
   REJECTED_DELIVERY_SCHEMA,
 } from "./storage-schema.ts";
-import { permitsContextRead } from "./submit-tool.ts";
 import {
   type ActiveOperation,
   assertDelivery,
@@ -204,19 +203,6 @@ export class WorkflowEngine {
       throw new Error("workflow-engine-lease-invalid");
     }
     return new WorkflowEngine(options);
-  }
-
-  updateRoutePolicy(policy: RoutePolicy): void {
-    this.#assertOpen();
-    if (!this.#worker.updateRoutePolicy) {
-      throw new Error("route-policy-update-unavailable");
-    }
-    this.#worker.updateRoutePolicy(policy);
-  }
-
-  routePolicyStatus(): Record<string, unknown> | undefined {
-    this.#assertOpen();
-    return this.#worker.routePolicyStatus?.();
   }
 
   #assertOpen(): void {

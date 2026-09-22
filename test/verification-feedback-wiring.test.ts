@@ -12,8 +12,6 @@ vi.mock("../src/workflow-engine.ts", () => ({
   openDurableWorkflowEngine: (options: any) => {
     harness.options = options;
     return {
-      updateRoutePolicy() {},
-      routePolicyStatus: () => ({}),
       close() {},
       async execute() {
         await options.verifyPhase({

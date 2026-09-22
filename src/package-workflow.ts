@@ -1,5 +1,4 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { homedir } from "node:os";
 import path from "node:path";
 import type { WorkflowActivityUpdate } from "./activity-contracts.ts";
 import { loadAgentDefinitions } from "./agent-registry.ts";
@@ -20,12 +19,6 @@ import {
   executePackageVerification,
   phaseVerificationResult,
 } from "./package-verification.ts";
-import {
-  inspectRoutePolicy,
-  loadRoutePolicy,
-  type RoutePolicyResolution,
-  unavailableRoutePolicy,
-} from "./route-policy.ts";
 import { resolveStateRoot } from "./state-root.ts";
 import { VerificationFeedback } from "./verification-diagnostics.ts";
 import { captureVerificationEnvironmentIdentity } from "./verification-environment.ts";
@@ -118,11 +111,6 @@ function openPreparedPackageWorkflowService(
   initialContext: PackageContext,
 ): PackageWorkflowService {
   const consumerRoot = path.resolve(initialContext.cwd);
-  const routeResolution = loadRoutePolicy({
-    cwd: consumerRoot,
-    home: homedir(),
-    ...(initialContext.model ? { parentModel: initialContext.model } : {}),
-  });
   const stateRoot = resolveStateRoot({
     consumerRoot,
     xdgStateHome: process.env.XDG_STATE_HOME,
@@ -194,9 +182,6 @@ function openPreparedPackageWorkflowService(
         verifyFinalizedDelivery: (input) =>
           design.verifyFinalizedDelivery(input),
       }),
-      routePolicy: routeResolution.ok
-        ? routeResolution.policy
-        : unavailableRoutePolicy(),
       proposeCandidate: (input) =>
         proposePackageCandidate(
           input,
@@ -267,16 +252,6 @@ function openPreparedPackageWorkflowService(
         signal,
         onActivity,
       ) {
-        const operationRouteResolution = loadRoutePolicy({
-          cwd: consumerRoot,
-          home: homedir(),
-          ...(context.model ? { parentModel: context.model } : {}),
-        });
-        engine.updateRoutePolicy(
-          operationRouteResolution.ok
-            ? operationRouteResolution.policy
-            : unavailableRoutePolicy(),
-        );
         const validation = validateControlCommand(command);
         if (!validation.ok) {
           const error = new Error(validation.code);
@@ -290,13 +265,13 @@ function openPreparedPackageWorkflowService(
               signal,
               onActivity,
             );
-            const routePolicy = visibleRoutePolicyStatus(
-              operationRouteResolution,
-              engine.routePolicyStatus(),
-            );
             return {
               ...outcome,
-              routePolicy,
+              workerExecution: {
+                mode: "inherited-pi-model",
+                migration:
+                  "routes.json and endpoint routing were removed; configure the current model in Pi.",
+              },
               verificationDiagnostics: feedback.getStore()?.current() ?? [],
             };
           }),
@@ -327,16 +302,4 @@ function openPreparedPackageWorkflowService(
     design.close();
     throw error;
   }
-}
-
-function visibleRoutePolicyStatus(
-  resolution: RoutePolicyResolution,
-  brokerStatus: Record<string, unknown> | undefined,
-): Record<string, unknown> {
-  if (!resolution.ok) return inspectRoutePolicy(resolution);
-  const inspected = brokerStatus ?? inspectRoutePolicy(resolution);
-  return {
-    ...inspected,
-    source: { kind: resolution.source.kind },
-  };
 }

@@ -1,31 +1,21 @@
-import path from "node:path";
 import type { Usage } from "@earendil-works/pi-ai";
 import { Activation, type ActivationState } from "./activation.ts";
 import { loadAgentDefinitions } from "./agent-registry.ts";
 import {
-  type ChildFailureKind,
-  type ChildSessionResult,
-  runChildSession,
-  UsageAggregator,
-} from "./child-session.ts";
-import {
   type ChildFailure,
   LIMITS,
   type PacketEnvelope,
+  validateDiffResult,
+  validateEvidenceResult,
   validatePacketEnvelope,
 } from "./contracts.ts";
 import type { PackageContext } from "./model-source.ts";
-import { runtimeForWorkerRoute } from "./parent-provider.ts";
+import type { SubagentRole } from "./subagent-process.ts";
 import {
-  loadRoutePolicy,
-  type RoutePolicy,
-  type WorkerRole,
-} from "./route-policy.ts";
-import {
-  isTransportTimeoutCode,
-  transportFailureError,
-} from "./transport-budget.ts";
-import { type BrokerActivityUpdate, RunWorkerBroker } from "./worker-broker.ts";
+  buildSubagentPrompt,
+  runSubagentProcess,
+  type SubagentProcessResult,
+} from "./subagent-process.ts";
 
 export const PACKET_ACTIONS = ["run", "cancel", "finish"] as const;
 export type PacketAction = (typeof PACKET_ACTIONS)[number];
@@ -60,30 +50,21 @@ export type PacketDispatchResult =
 
 export interface PacketRuntimeOptions {
   activation?: Activation;
-  routePolicy?: RoutePolicy;
-  routePolicyHome?: string;
-  environment?: Readonly<Record<string, string | undefined>>;
   concurrency?: number;
   childRunner?: PacketChildRunner;
 }
 
 export type PacketContext = PackageContext;
 
+export type PacketChildResult =
+  | { ok: true; result: unknown; usage?: Usage }
+  | { ok: false; error: string; failure: ChildFailure; usage?: Usage };
+
 export type PacketChildRunner = (input: {
   packet: PacketEnvelope;
   context: PacketContext;
   signal: AbortSignal;
-}) => Promise<ChildSessionResult>;
-
-type PacketRouteResult =
-  | {
-      kind: "phase-failure";
-      phase: Extract<
-        Awaited<ReturnType<typeof runtimeForWorkerRoute>>,
-        { ok: false }
-      >;
-    }
-  | { kind: "child"; child: ChildSessionResult };
+}) => Promise<PacketChildResult>;
 
 interface WaitingPacket {
   controller: AbortController;
@@ -105,48 +86,52 @@ function cancelledResult(signal: AbortSignal): PacketDispatchResult {
   };
 }
 
-function failureState(kind: ChildFailureKind): PacketActivityState {
-  return kind === "cancelled"
+function failureState(failure: ChildFailure): PacketActivityState {
+  return failure.kind === "cancelled"
     ? "cancelled"
-    : kind === "timed-out"
+    : failure.kind === "transport" && failure.code === "child-timeout"
       ? "timed-out"
       : "failed";
 }
 
-function syntheticChildFailure(
-  error: string,
-  failure: ChildFailure,
-  failureKind: ChildFailureKind = failure.kind === "cancelled"
-    ? "cancelled"
-    : "failed",
-): ChildSessionResult {
-  return {
-    ok: false,
-    error,
-    failure,
-    failureKind,
-    transportFailure: failure.kind === "transport",
-    disposeCount: 0,
-    usage: new UsageAggregator().total(),
-    classification: {
-      finalCategory: "no-final-assistant",
-      attempts: 0,
-      schema: "invalid",
-      identity: { request: false, role: false, task: false, phase: false },
-    },
-  };
+type ParsedChildResult =
+  | { ok: true; result: unknown }
+  | { ok: false; reason: string };
+
+function parsePacketResult(
+  packet: PacketEnvelope,
+  text: string,
+): ParsedChildResult {
+  const fenced = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/giu)];
+  let value: unknown;
+  for (let index = fenced.length - 1; index >= 0; index -= 1) {
+    try {
+      value = JSON.parse(fenced[index]?.[1]?.trim() ?? "");
+      break;
+    } catch {
+      // Keep looking for an earlier valid block; model text is not authority.
+    }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return { ok: false, reason: "child-result-json-invalid" };
+  const candidate = value as Record<string, unknown>;
+  if (packet.output === "evidence") {
+    const checked = validateEvidenceResult(candidate);
+    return checked.ok
+      ? { ok: true, result: candidate }
+      : { ok: false, reason: checked.reason ?? "child-evidence-invalid" };
+  }
+  const checked = validateDiffResult(candidate);
+  return checked.ok
+    ? { ok: true, result: candidate }
+    : { ok: false, reason: checked.reason ?? "child-diff-invalid" };
 }
 
 export class PacketRuntime {
   readonly activation: Activation;
   readonly limits = LIMITS;
-  readonly #routePolicy?: RoutePolicy;
-  readonly #routePolicyHome?: string;
-  readonly #environment: Readonly<Record<string, string | undefined>>;
   readonly #concurrency: number;
   readonly #childRunner?: PacketChildRunner;
-  readonly #brokers = new Map<string, RunWorkerBroker>();
-  readonly #brokerPolicies = new Map<string, string>();
   readonly #controllers = new Set<AbortController>();
   readonly #operations = new Set<Promise<PacketDispatchResult>>();
   readonly #waiting: WaitingPacket[] = [];
@@ -155,9 +140,6 @@ export class PacketRuntime {
 
   constructor(options: PacketRuntimeOptions) {
     this.activation = options.activation ?? new Activation();
-    this.#routePolicy = options.routePolicy;
-    this.#routePolicyHome = options.routePolicyHome;
-    this.#environment = options.environment ?? process.env;
     this.#childRunner = options.childRunner;
     this.#concurrency = Math.max(
       1,
@@ -236,45 +218,24 @@ export class PacketRuntime {
       if (this.#childRunner) {
         this.#notify(packet, observer, sequence, "running");
       }
-      const usage = new UsageAggregator();
-      let child = await this.#dispatchChild(
+      const child = await this.#dispatchChild(
         packet,
         context,
         controller.signal,
         (activity) =>
-          this.#notifyBrokerActivity(packet, observer, sequence, activity),
+          this.#notify(packet, observer, sequence, activity.state, {
+            attempt: activity.attempt,
+            maxAttempts: activity.maxAttempts,
+          }),
       );
-      usage.add("launch:0", child.usage);
-      if (
-        this.#childRunner &&
-        !child.ok &&
-        child.failure.kind === "artifact" &&
-        !controller.signal.aborted
-      ) {
-        this.#notifyBrokerActivity(packet, observer, sequence, {
-          state: "retrying",
-          attempt: 1,
-          maxAttempts: 2,
-          code: child.failure.code,
-          wait: "bounded-policy",
-        });
-        child = await this.#dispatchChild(
-          packet,
-          context,
-          controller.signal,
-          (activity) =>
-            this.#notifyBrokerActivity(packet, observer, sequence, activity),
-        );
-        usage.add("launch:1", child.usage);
-      }
       if (!child.ok) {
-        const state = failureState(child.failureKind);
+        const state = failureState(child.failure);
         this.#notify(packet, observer, sequence, state);
         return {
           ok: false,
           error: child.error,
           failure: child.failure,
-          usage: usage.total(),
+          ...(child.usage ? { usage: child.usage } : {}),
         };
       }
       this.#notify(packet, observer, sequence, "completed");
@@ -282,7 +243,7 @@ export class PacketRuntime {
         ok: true,
         action: "run",
         result: child.result,
-        usage: usage.total(),
+        ...(child.usage ? { usage: child.usage } : {}),
       };
     } catch (error) {
       this.#notify(
@@ -303,184 +264,114 @@ export class PacketRuntime {
     packet: PacketEnvelope,
     context: PacketContext,
     signal: AbortSignal,
-    onActivity?: (event: BrokerActivityUpdate) => void,
-  ): Promise<ChildSessionResult> {
-    if (signal.aborted) {
-      const result = cancelledResult(signal);
-      return syntheticChildFailure(
-        result.ok ? "packet cancelled" : result.error,
-        { kind: "cancelled", code: "cancelled" },
-        "cancelled",
-      );
-    }
-    if (this.#childRunner) {
+    onActivity?: (event: {
+      state: PacketActivityState;
+      attempt: number;
+      maxAttempts: number;
+    }) => void,
+  ): Promise<PacketChildResult> {
+    if (signal.aborted)
+      return {
+        ok: false,
+        error: "packet cancelled",
+        failure: { kind: "cancelled", code: "cancelled" },
+      };
+    if (this.#childRunner)
       return this.#childRunner({
         packet: structuredClone(packet),
         context,
         signal,
       });
-    }
     const agent = loadAgentDefinitions().find(
       (candidate) => candidate.role === packet.role,
     );
-    if (!agent) {
-      throw new Error("packet agent definition is unavailable");
-    }
-    const broker = this.#brokerFor(context);
-    const brokerUsage = new UsageAggregator();
-    let childAttempt = 0;
-    const withBrokerUsage = (
-      child: ChildSessionResult,
-    ): ChildSessionResult => ({
-      ...child,
-      usage: brokerUsage.total(),
-    });
-    const routed = await broker.run<PacketRouteResult>({
-      runId: `${packet.stage}:${packet.id}`,
-      operationId: packet.id,
-      role: packet.role as WorkerRole,
+    if (!agent) throw new Error("packet-agent-unavailable");
+    const role = packet.role as SubagentRole;
+    const result = await runSubagentProcess({
+      role,
+      cwd: context.cwd,
+      model: context.model
+        ? { provider: context.model.provider, id: context.model.id }
+        : undefined,
+      prompt: buildSubagentPrompt({
+        role,
+        agentContent: agent.content,
+        objective: packet.objective,
+        context: [
+          packet.context.agents,
+          packet.context.contract,
+          JSON.stringify({
+            id: packet.id,
+            phase: packet.phase,
+            read: packet.declared.read,
+            write: packet.declared.write,
+            output: packet.output,
+          }),
+        ].join("\n\n"),
+      }),
       signal,
-      ...(onActivity ? { onActivity } : {}),
-      classifyResult: (value) =>
-        value.kind === "child" &&
-        !value.child.ok &&
-        value.child.failure.kind === "artifact"
-          ? value.child.failure.code
-          : undefined,
-      execute: async (attempt) => {
-        const phase = await runtimeForWorkerRoute(
-          attempt.route,
-          context,
-          attempt.signal,
-          this.#environment,
-        );
-        if (!phase.ok) {
-          if (phase.failure.kind === "cancelled") {
-            return { kind: "phase-failure" as const, phase };
-          }
-          throw new Error(phase.failure.code);
-        }
-        const child = await runChildSession({
-          cwd: context.cwd,
-          modelRuntime: phase.modelRuntime,
-          model: phase.model,
-          systemPrompt: [
-            agent.content,
-            packet.objective,
-            packet.context.agents,
-            packet.context.contract,
-            `<packet-contract>${JSON.stringify({
-              requestId: packet.id,
-              phase: packet.phase,
-              readSet: packet.declared.read,
-              writeSet: packet.declared.write,
-              output: packet.output,
-            })}</packet-contract>`,
-          ].join("\n\n"),
-          requestId: packet.id,
-          role: packet.role,
-          phase: packet.phase,
-          output: packet.output as "evidence" | "diff",
-          ...(packet.role === "diagnosis-worker" && packet.output === "diff"
-            ? {
-                structuredPatch: {
-                  workspaceRoot: context.cwd,
-                  writePaths: packet.declared.write,
-                  deletePaths: packet.declared.write,
-                },
-              }
-            : {}),
-          roots: packet.roots.map((root) => path.resolve(context.cwd, root)),
-          allowedPaths: [
-            ...new Set([...packet.declared.read, ...packet.declared.write]),
-          ],
-          timeoutMs: LIMITS.phaseTimeoutMs,
-          signal: attempt.signal,
-          onStreamStart: attempt.onRequestStart,
-          onStreamHeaders: attempt.onHeaders,
-          onStreamProgress: attempt.onProgress,
-        });
-        brokerUsage.add(`attempt:${childAttempt++}`, child.usage);
-        if (!child.ok && child.failure.kind === "transport") {
-          throw transportFailureError(child.failure.code);
-        }
-        return { kind: "child" as const, child };
+      onEvent: (event) => {
+        if (event.type === "agent_start")
+          onActivity?.({
+            state: "waiting-first-response",
+            attempt: 1,
+            maxAttempts: 1,
+          });
+        if (event.type === "tool_execution_start")
+          onActivity?.({ state: "running", attempt: 1, maxAttempts: 1 });
       },
     });
-    if (!routed.ok) {
-      const cancelled = routed.state === "cancelled" || signal.aborted;
-      const timedOut =
-        !cancelled &&
-        (isTransportTimeoutCode(routed.code) ||
-          routed.code === "phase-timeout");
-      return withBrokerUsage(
-        syntheticChildFailure(
-          cancelled ? "packet cancelled" : routed.code,
-          cancelled
-            ? { kind: "cancelled", code: "cancelled" }
-            : timedOut
+    return this.#processResult(packet, result);
+  }
+
+  #processResult(
+    packet: PacketEnvelope,
+    result: SubagentProcessResult,
+  ): PacketChildResult {
+    if (result.status !== "completed") {
+      const failure: ChildFailure =
+        result.status === "cancelled"
+          ? { kind: "cancelled", code: "cancelled" }
+          : result.status === "timed-out"
+            ? {
+                kind: "transport",
+                code: "child-timeout",
+                stage: "child-timeout",
+              }
+            : result.status === "output-limit"
               ? {
-                  kind: "transport",
-                  code: isTransportTimeoutCode(routed.code)
-                    ? routed.code
-                    : "timeout",
-                  stage: "child-timeout",
+                  kind: "result-limit",
+                  limitBytes: LIMITS.maxCompleteResultBytes,
                 }
               : {
                   kind: "transport",
                   code: "transport-failure",
                   stage: "child-provider-stream",
-                },
-          cancelled ? "cancelled" : timedOut ? "timed-out" : "failed",
-        ),
-      );
+                };
+      return {
+        ok: false,
+        error: result.error ?? result.status,
+        failure,
+        ...(result.usage ? { usage: result.usage } : {}),
+      };
     }
-    if (routed.value.kind === "phase-failure") {
-      const phase = routed.value.phase;
-      return withBrokerUsage(syntheticChildFailure(phase.error, phase.failure));
-    }
-    return withBrokerUsage(routed.value.child);
-  }
-
-  #brokerFor(context: PacketContext): RunWorkerBroker {
-    const root = path.resolve(context.cwd);
-    const existing = this.#brokers.get(root);
-    let policy = this.#routePolicy;
-    if (policy && existing) return existing;
-    if (!policy) {
-      const resolution = loadRoutePolicy({
-        cwd: root,
-        ...(this.#routePolicyHome ? { home: this.#routePolicyHome } : {}),
-        ...(context.model ? { parentModel: context.model } : {}),
-      });
-      if (!resolution.ok) {
-        const code = resolution.diagnostics[0]?.code ?? "policy-invalid";
-        throw new Error(`route-policy-unavailable:${code}`);
-      }
-      policy = resolution.policy;
-    }
-    const serializedPolicy = JSON.stringify(policy);
-    if (existing && this.#brokerPolicies.get(root) === serializedPolicy) {
-      return existing;
-    }
-    const broker = new RunWorkerBroker(policy);
-    this.#brokers.set(root, broker);
-    this.#brokerPolicies.set(root, serializedPolicy);
-    return broker;
-  }
-
-  #notifyBrokerActivity(
-    packet: PacketEnvelope,
-    observer: PacketActivityObserver | undefined,
-    sequence: number,
-    activity: BrokerActivityUpdate,
-  ): void {
-    this.#notify(packet, observer, sequence, activity.state, {
-      attempt: activity.attempt,
-      maxAttempts: activity.maxAttempts,
-      ...(activity.code ? { code: activity.code } : {}),
-      ...(activity.wait ? { wait: activity.wait } : {}),
-    });
+    const parsed = parsePacketResult(packet, result.finalText);
+    if (!parsed.ok)
+      return {
+        ok: false,
+        error: parsed.reason,
+        failure: {
+          kind: "artifact",
+          code: "invalid-structural-result",
+          stage: "child-provider-stream",
+        },
+        ...(result.usage ? { usage: result.usage } : {}),
+      };
+    return {
+      ok: true,
+      result: parsed.result,
+      ...(result.usage ? { usage: result.usage } : {}),
+    };
   }
 
   #notify(
@@ -560,8 +451,6 @@ export class PacketRuntime {
   async drain(): Promise<void> {
     this.activation.drain();
     await this.cancel();
-    this.#brokers.clear();
-    this.#brokerPolicies.clear();
   }
 
   get state(): ActivationState {

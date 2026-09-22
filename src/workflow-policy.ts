@@ -2,10 +2,15 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { WorkflowActivityUpdate } from "./activity-contracts.ts";
+import {
+  type CandidateContextBoundary,
+  type CandidateContextRef,
+  classifyCandidateContextRequest,
+  normalizeCandidateContextRefs,
+} from "./candidate-context.ts";
 import { compareCanonicalStrings } from "./canonical.ts";
 import {
   type ApprovalBoundaryCode,
-  CHILD_TRANSPORT_CODES,
   isValidRelativePath,
   type StructuredVerificationContract,
   verificationBoundInputPaths,
@@ -16,16 +21,9 @@ import type {
   ImplementPlan,
   PlanTaskDraft,
 } from "./delivery-compiler.ts";
-import type { RoutePolicy } from "./route-policy.ts";
 import { canonicalJson } from "./run-state.ts";
 import type { OperationLease } from "./run-store.ts";
 import type { ResolvedStateRoot } from "./state-root.ts";
-import {
-  type CandidateContextBoundary,
-  type CandidateContextRef,
-  classifyCandidateContextRequest,
-  normalizeCandidateContextRefs,
-} from "./submit-tool.ts";
 import type { WorkspaceEntry } from "./workspace-store.ts";
 
 export const SHA256 = /^[a-f0-9]{64}$/u;
@@ -242,13 +240,7 @@ export type ParentRecoveryStrategy =
   | "restore-runtime-environment"
   | "restore-verification-capability";
 
-const ROUTE_RECOVERY_CODES = new Set([
-  "endpoint-unavailable",
-  "route-capability-insufficient",
-  "route-not-declared",
-  "route-rebind-required",
-  ...CHILD_TRANSPORT_CODES,
-]);
+const ROUTE_RECOVERY_CODES = new Set(["child-timeout", "transport-failure"]);
 
 const ENVIRONMENT_RECOVERY_CODES = new Set([
   "bubblewrap-launch-failed",
@@ -277,7 +269,8 @@ const ENVIRONMENT_RECOVERY_CODES = new Set([
 ]);
 
 const CORRECTION_RECOVERY_CODES = new Set([
-  ...CHILD_TRANSPORT_CODES,
+  "child-timeout",
+  "transport-failure",
   "artifact-attempts-exhausted",
   "baseline-deletion-drift",
   "baseline-directory-drift",
@@ -655,8 +648,6 @@ export interface WorkflowWorker {
     baselineRevisionId: string;
     currentWorkspaceRevisionId: string;
   };
-  updateRoutePolicy?(policy: RoutePolicy): void;
-  routePolicyStatus?(): Record<string, unknown>;
 }
 
 export interface WorkflowDelivery {

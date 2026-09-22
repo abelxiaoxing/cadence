@@ -159,38 +159,18 @@ export const VERIFICATION_ADAPTER_CODES = [
   "verification-config-unsafe",
 ] as const;
 export const CHILD_TRANSPORT_CODES = [
-  "child-provider-rate-limited",
-  "first-progress-timeout",
-  "stream-idle-timeout",
-  "attempt-timeout",
-  "child-no-final-assistant",
-  "child-provider-stream-aborted",
-  "child-provider-stream-error",
   "child-timeout",
-  "timeout",
   "transport-failure",
 ] as const;
 export const FAILURE_STAGES = [
-  "child-session-create",
-  "child-provider-stream",
   "child-timeout",
-  "child-finalization",
-  "structural-submit",
-  "candidate-retention",
+  "child-provider-stream",
   "candidate-diff",
-  "parent-review",
   "candidate-apply",
-  "agents-checkpoint",
   "phase-runtime",
 ] as const;
 
-export const SUBMIT_FINAL_CATEGORIES = [
-  "no-final-assistant",
-  "text-only",
-  "mixed",
-  "multiple-submit",
-  "single-submit-only",
-] as const;
+export const SUBMIT_FINAL_CATEGORIES = ["text-only"] as const;
 export const SUBMIT_SCHEMA_STATES = [
   "not-submitted",
   "valid",
@@ -1891,6 +1871,16 @@ export function validatePacketEnvelope(
       (packet.declared.write as unknown[]).length !== 0)
   ) {
     return { ok: false, reason: "invalid Design packet contract" };
+  }
+  if (
+    packet.stage === "abel-diagnose" &&
+    (packet.output !== "evidence" ||
+      (packet.declared.write as unknown[]).length !== 0)
+  ) {
+    return {
+      ok: false,
+      reason: "invalid Diagnose evidence-only packet contract",
+    };
   }
 
   return {
