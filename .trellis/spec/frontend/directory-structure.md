@@ -40,7 +40,7 @@ config/
 └── .env.example                               # research HTTP configuration template
 ```
 
-The TUI side of the layer lives in `src/`: `src/subagent-activity.ts` owns the activity widget, and `src/startup-card.ts` owns the configuration card (both documented in `component-guidelines.md`).
+The TUI side of the layer lives in `src/`: `src/subagent-activity.ts` owns the activity widget, and `src/startup-card.ts` owns the configuration summary used by the transient notification (both documented in `component-guidelines.md`).
 
 ---
 

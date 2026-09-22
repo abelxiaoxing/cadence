@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import register from "../src/index.ts";
-import { STARTUP_CARD_KEY, startupCardLines } from "../src/startup-card.ts";
+import { startupCardLines } from "../src/startup-card.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -163,17 +163,18 @@ describe("Cadence startup configuration card", () => {
   });
 
   it.each(["tui", "rpc"])(
-    "shows on every load/reload/resume in %s, clears only its own widget",
+    "shows a subdued notification on every session start in %s",
     async (mode) => {
       const input = fixture();
       const h = harness();
       const setWidget = vi.fn();
+      const notify = vi.fn();
       const ctx = {
         cwd: input.cwd,
         hasUI: true,
         mode,
         isProjectTrusted: () => true,
-        ui: { setWidget },
+        ui: { setWidget, notify },
       };
       for (const reason of [
         "startup",
@@ -185,16 +186,14 @@ describe("Cadence startup configuration card", () => {
       ]) {
         await h.emit("session_start", ctx, reason);
       }
-      expect(setWidget).toHaveBeenCalledTimes(6);
-      expect(
-        setWidget.mock.calls.every(
-          ([key, lines]) => key === STARTUP_CARD_KEY && Array.isArray(lines),
-        ),
-      ).toBe(true);
+      expect(notify).toHaveBeenCalledTimes(6);
+      expect(notify).toHaveBeenCalledWith(
+        "Context7：匿名模式，无需密钥｜Grok：待配置 GROK_API_URL、GROK_API_KEY｜Tavily：未配置（可选）",
+        "info",
+      );
+      expect(setWidget).not.toHaveBeenCalled();
       await h.emit("agent_start", ctx);
-      expect(setWidget).toHaveBeenLastCalledWith(STARTUP_CARD_KEY, undefined);
       await h.emit("session_shutdown", ctx);
-      expect(setWidget).toHaveBeenLastCalledWith(STARTUP_CARD_KEY, undefined);
       expect(h.pi.sendMessage).not.toHaveBeenCalled();
       expect(h.pi.sendUserMessage).not.toHaveBeenCalled();
       expect(h.pi.appendEntry).not.toHaveBeenCalled();
@@ -208,7 +207,13 @@ describe("Cadence startup configuration card", () => {
       const h = harness();
       const isProjectTrusted = vi.fn();
       const setWidget = vi.fn();
-      const ctx = { hasUI: false, mode, isProjectTrusted, ui: { setWidget } };
+      const notify = vi.fn();
+      const ctx = {
+        hasUI: false,
+        mode,
+        isProjectTrusted,
+        ui: { setWidget, notify },
+      };
       await h.emit("session_start", ctx);
       await h.emit("agent_start", ctx);
       await h.emit("session_shutdown", ctx);
@@ -217,19 +222,24 @@ describe("Cadence startup configuration card", () => {
     },
   );
 
-  it("the shipped entrypoint registers the card without activating a stage or adding commands", async () => {
+  it("the shipped entrypoint registers a notification without activating a stage or adding commands", async () => {
     const input = fixture();
     const h = harness(register);
     const setWidget = vi.fn();
+    const notify = vi.fn();
     const ctx = {
       cwd: input.cwd,
       hasUI: true,
       mode: "rpc",
       isProjectTrusted: () => true,
-      ui: { setWidget },
+      ui: { setWidget, notify },
     };
     await h.emit("session_start", ctx);
-    expect(setWidget).toHaveBeenCalledWith(STARTUP_CARD_KEY, expect.any(Array));
+    expect(notify).toHaveBeenCalledWith(
+      "Context7：匿名模式，无需密钥｜Grok：待配置 GROK_API_URL、GROK_API_KEY｜Tavily：未配置（可选）",
+      "info",
+    );
+    expect(setWidget).not.toHaveBeenCalled();
     expect(h.active()).toEqual(["read", "bash"]);
     expect(h.pi.registerCommand).not.toHaveBeenCalled();
     await h.emit("session_shutdown", ctx);

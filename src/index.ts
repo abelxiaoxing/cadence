@@ -59,7 +59,7 @@ import { canonicalJson } from "./implement-graph.ts";
 import { PACKET_ACTIONS, PacketRuntime } from "./packet-runtime.ts";
 
 import { RunStoreFormatError, RunStoreMigrationError } from "./run-store.ts";
-import { STARTUP_CARD_KEY, startupCardLines } from "./startup-card.ts";
+import { startupCardLines } from "./startup-card.ts";
 import { StateRootError } from "./state-root.ts";
 import {
   ACTIVITY_DETAILS_KEY,
@@ -1796,22 +1796,15 @@ export default function register(pi: ExtensionAPI): void {
   // defense. Keep this guard for hosts that inject the extension explicitly.
   if (process.env.CADENCE_SUBAGENT_CHILD === "1") return;
   registerWorkflowControl(pi);
-  // Presentation only: never persist a dismissal or inject a model message.
+  // Presentation only: use the host's subdued one-shot notification rather
+  // than a persistent widget; never persist a dismissal or inject a model message.
   pi.on("session_start", (_event, ctx) => {
     if (!ctx.hasUI) return;
-    ctx.ui.setWidget(
-      STARTUP_CARD_KEY,
-      startupCardLines({
-        cwd: ctx.cwd,
-        home: homedir(),
-        projectTrusted: ctx.isProjectTrusted(),
-      }),
-    );
-  });
-  pi.on("agent_start", (_event, ctx) => {
-    if (ctx.hasUI) ctx.ui.setWidget(STARTUP_CARD_KEY, undefined);
-  });
-  pi.on("session_shutdown", (_event, ctx) => {
-    if (ctx.hasUI) ctx.ui.setWidget(STARTUP_CARD_KEY, undefined);
+    const lines = startupCardLines({
+      cwd: ctx.cwd,
+      home: homedir(),
+      projectTrusted: ctx.isProjectTrusted(),
+    });
+    ctx.ui.notify(lines.at(-1) ?? "Cadence研究配置已加载。", "info");
   });
 }

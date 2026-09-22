@@ -47,7 +47,7 @@ The named contracts (each an explicit `it` in the file):
 ## Skill and Configuration Verification
 
 - `test/config-context7.test.mjs`, `test/grok-search.test.mjs`, and `test/git-commit.test.mjs` cover the skill assets; the `.mjs` scripts are Biome-checked (`biome check .` includes `skills/`) and syntax-checked by `scripts/check-syntax.mjs` (`node --check`, shell-free, no directory-symlink traversal).
-- `test/startup-card.test.ts` covers the card's presentation, the untrusted-project form, repeated loads, and activation isolation (the card never starts a workflow).
+- `test/startup-card.test.ts` covers the configuration summary, the untrusted-project form, repeated session notifications, and activation isolation (the notification never starts a workflow).
 - `test/install-config.test.ts` covers the postinstall template writer (`src/install-config.mjs`): it creates `~/.pi/agent/cadence/.env` only when absent, so a user-edited file is never clobbered.
 - The shared loader contract is tested through the skills: whole-file priority (project before user), the 64 KiB regular-file bound, the nonblocking open, and the rule that an absent file yields anonymous Context7 defaults while a malformed explicit file fails instead of being hidden by the default.
 

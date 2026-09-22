@@ -6,9 +6,9 @@
 
 ## Overview
 
-The package has exactly two always-available UI components: the subagent-activity widget (placed above the editor, `placement: "aboveEditor"`) and the startup configuration card.
+The package has one persistent UI component and one transient presentation surface: the subagent-activity widget (placed above the editor, `placement: "aboveEditor"`) and the startup configuration notification.
 Both are pure projections: they render from in-memory state that the control plane pushes to them, and neither can alter a run.
-The implementation is `src/subagent-activity.ts` (activity widget, inline component, state mapping, sanitizers) and `src/startup-card.ts` (card lines).
+The implementation is `src/subagent-activity.ts` (activity widget, inline component, state mapping, sanitizers) and `src/startup-card.ts` (configuration summary lines).
 
 ---
 
@@ -17,7 +17,7 @@ The implementation is `src/subagent-activity.ts` (activity widget, inline compon
 - The widget is created by `ensureWidget()` in the activity controller: `this.ui.setWidget(ACTIVITY_WIDGET_KEY, (tui, theme) => new ActivityWidget(...), { placement: "aboveEditor" })`, guarded by a `widgetInstalled` flag and a try/catch ("TUI failures are deliberately isolated from the run.").
 - `ActivityWidget` implements the `pi-tui` `Component` interface: `render(width: number): string[]` maps entry lines through `line(value, width)` and applies the theme accent to the first line only; `invalidate()` is a no-op because the controller requests renders on a timer (`ACTIVITY_REFRESH_MS = 100`) and on state updates.
 - `ActivityInlineComponent` renders one activity entry inline in a tool result, with an `expanded` flag that gates the bounded failure detail block.
-- The startup card is not a `pi-tui` component at all: `startupCardLines()` returns a plain `string[]` that the extension sets with `ctx.ui.setWidget(STARTUP_CARD_KEY, lines)` — the same widget API, string-array form, which RPC hosts render directly.
+- The startup configuration notification is not a `pi-tui` component: `startupCardLines()` returns bounded plain strings, and the extension sends the final summary line through `ctx.ui.notify(..., "info")`, matching the subdued one-shot presentation used by the Trellis extension.
 
 ---
 
@@ -46,12 +46,12 @@ Concrete example: a Design evidence packet that is cancelled mid-flight renders 
 
 ---
 
-## Startup Card Widget Rules
+## Startup Configuration Notification Rules
 
-- The card is a string-array widget under `STARTUP_CARD_KEY` (`cadence-configuration`), set on `session_start` when `ctx.hasUI`, and cleared (set to `undefined`) on `agent_start` — when work starts — and on `session_shutdown`.
-- RPC hosts render the string-array widget as plain lines; print and JSON hosts are silent because a widget is a UI-only surface.
-- The card is never persisted: it is rebuilt from live configuration on every session start, it never activates a workflow, and it never records a dismissal (the `src/index.ts` registration comment says "Presentation only: never persist a dismissal or inject a model message").
-- Content is code-owned labels and paths only (see `logging-guidelines.md` for the exact rules and the untrusted-project single-line form).
+- The notification is sent on `session_start` when `ctx.hasUI`, using `ctx.ui.notify(summary, "info")`; it is not installed as a persistent widget and therefore needs no clear operation on `agent_start` or `session_shutdown`.
+- Print and JSON hosts are silent because the notification is a UI-only surface.
+- The notification is never persisted: it is rebuilt from live configuration on every session start, it never activates a workflow, and it never records a dismissal.
+- Content is code-owned labels only (see `logging-guidelines.md` for the exact rules and the untrusted-project single-line form); configuration paths remain available to the pure `startupCardLines()` projection and are not emitted in the notification.
 
 ---
 
@@ -69,15 +69,15 @@ The widget must not persist event streams or infer workflow authority from progr
 ## Forbidden Patterns
 
 - Never render a nonterminal display state with the completed glyph or wording, and never render `operation-cancelled`, `discarded`, or `rejected` as success.
-- Never persist active display or timer state; the widget, spinner frame, and card are all in-memory and rebuilt per session.
+- Never persist active display or timer state; the widget, spinner frame, and notification are all in-memory and rebuilt per session.
 - Never let a TUI callback failure propagate into orchestration: widget installation and `onUpdate` emission are wrapped, "A renderer callback is not part of orchestration."
 - Never render raw configuration values, credentials, or unbounded error text in any widget; sanitize first (`sanitizeDisplayText`, `sanitizeWorkflowCode`, `sanitizeFailureReason`) and bound the detail to the allowlisted diagnostics.
-- Never add a third persistent widget; new presentation belongs to the two existing surfaces or to a tool result rendered by the host.
+- Never add another persistent widget; new presentation belongs to the existing activity widget, the transient notification, or a tool result rendered by the host.
 
 ---
 
 ## Common Mistakes
 
 - Assuming the widget re-renders on its own; the controller drives renders (`requestRender`) on a 100 ms clock and on each state update, so a missed notification means a stale line until the next tick.
-- Treating the startup card as configuration input; it is display-only and the user edits the `.env` file directly, with the next session start showing the new state.
+- Treating the startup configuration notification as configuration input; it is display-only and the user edits the `.env` file directly, with the next session start showing the new state.
 - Letting a long task title wrap; the fix is to shrink the sanitized length cap in `activityMetadata`, not to change the terminal width handling.

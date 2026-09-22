@@ -7,7 +7,7 @@
 ## Overview
 
 The package keeps two strictly separated state layers.
-Display state — activity entries, spinner frames, the startup card — lives only in process memory and is rebuilt on every session.
+Display state — activity entries, spinner frames, and the startup configuration notification — lives only in process memory and is rebuilt on every session.
 Durable state — runs, design facts, deliveries, budgets, phase facts — lives in owner-private SQLite (see `.trellis/spec/backend/database-guidelines.md`) and is mutated only by the owning services.
 Everything in between is a projection: `src/workflow-status.ts` derives status from facts the state machine already read, without storage access or execution callbacks.
 
@@ -17,7 +17,7 @@ Everything in between is a projection: `src/workflow-status.ts` derives status f
 
 | Layer          | Where it lives                                                                                                              | Who mutates it                                                            | Lifetime                             |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------ |
-| Display        | `src/subagent-activity.ts` in-memory entries; `src/startup-card.ts` widget lines                                            | the activity controller on state updates; the extension on session events | one process/session; never persisted |
+| Display        | `src/subagent-activity.ts` in-memory entries; `src/startup-card.ts` notification summary lines                              | the activity controller on state updates; the extension on session events | one process/session; never persisted |
 | Timers         | `src/transport-budget.ts` first-progress/idle timers in `src/child-model.ts`; widget refresh clock                          | the child model stream consumer; the widget clock                         | one request / one session            |
 | Derived status | `src/workflow-status.ts` projections (blockers, decision batches, continuations, budgets, queues)                           | nobody — pure function of inputs                                          | recomputed on demand                 |
 | Durable        | owner-private SQLite via `src/run-store.ts`, `src/design-journal.ts`, `src/task-ledger.ts`, `src/apply-transaction.ts`, ... | the owning service under its lease/transaction                            | across sessions and hosts            |
@@ -28,7 +28,7 @@ Everything in between is a projection: `src/workflow-status.ts` derives status f
 
 - `src/subagent-activity.ts` keeps its activity entries in memory; the module's contract is that "active display/timer state is not persisted."
   The widget is installed per session (`ensureWidget`), refreshed on a 100 ms clock, and detached on stage exit.
-- The startup card is rebuilt from live configuration at every `session_start` and cleared when work starts; there is no dismissal record anywhere.
+- The startup configuration notification is rebuilt from live configuration at every `session_start`; it is transient and has no dismissal record anywhere.
 - Child-session transport state (first-progress timer, stream-idle timer, cancellation drain) is created per request in `src/child-model.ts` from `src/transport-budget.ts#REQUEST_BOUNDS` and discarded with the request; headers trigger an observation callback only and are never stored.
 
 ---
