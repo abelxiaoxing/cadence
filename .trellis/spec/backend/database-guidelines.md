@@ -8,7 +8,8 @@
 
 All durable state is owner-private SQLite accessed synchronously through Node's built-in `node:sqlite` (`DatabaseSync`).
 There is no database server and no ORM: schema contracts are checked-in string constants in `src/storage-schema.ts`, enforced at open time by `src/sqlite-schema.ts`.
-Stores live in the repository-external state root prepared by `src/state-root.ts`, never inside the consumer project, so a crash or reset can never corrupt the working tree.
+Trusted stores live in the repository-external state root prepared by `src/state-root.ts`, never inside the consumer project.
+The disconnected G1 task foundation additionally supports bounded portable narrative files in `.cadence/`; those are context, never trusted execution state.
 The owner (the user's machine and Pi account) is the only client; per-workspace external locks and version gating in `src/package-state.ts` keep concurrent hosts safe.
 
 ---
@@ -120,7 +121,8 @@ Callers (`src/artifact-store.ts`, `src/workspace-store.ts`, `src/package-state.t
 - Never modify or recreate an existing table; migrations add columns or tables only (additive-only, per the `storage-schema.ts` contract comments).
 - Never invent approval, delivery proof, or recovery facts during migration or reset; the v2 columns are added as schema only, and reset abandons facts rather than reinterpreting them.
 - Never skip the `BEGIN IMMEDIATE` migration transaction or the `matchesSqliteSchema` check; an unmatchable schema is an error, not an upgrade path.
-- Never persist state inside the consumer repository; `src/state-root.ts` owns repository-external root safety and its `StateRootError` codes are the only failure surface.
+- Never persist trusted runtime state inside the consumer repository; `src/state-root.ts` owns repository-external root safety.
+  Only explicit `TaskPublisher` requests may publish portable contextual records in its closed `.cadence/` path grammar; they carry no execution authority.
 - Never treat the Windows directory `EPERM` as "fsync works here" or "fsync is irrelevant"; it is exactly one capability result with the semantics documented in `syncDirectory`.
 
 ---
@@ -130,3 +132,89 @@ Callers (`src/artifact-store.ts`, `src/workspace-store.ts`, `src/package-state.t
 - Writing a one-off `CREATE TABLE` in a service module instead of extending the `src/storage-schema.ts` constants; the schema check at open time then rejects the store.
 - Assuming a recycled PID or a missing settlement receipt means an execution is gone; `src/execution-retention.ts` writes a settlement receipt before launching host processes precisely so reopening does not infer ownership from live PIDs.
 - Backing up only the SQLite file while the workspace still has retained execution roots; the notice/backup flow in `src/package-state.ts` covers the runtime run-data layouts too.
+
+## Scenario: Disconnected G1 Task Foundation
+
+### 1. Scope / Trigger
+
+`src/task-*.ts` supplies infrastructure only; production `src/index.ts` does not import it.
+No task command, approval issuance, execution launch, knowledge promotion policy, or old-protocol retirement is implemented by these modules.
+
+### 2. Signatures
+
+- `TaskStore.open(resolvedStateRoot)` / `close()` hold the shared checkout fence.
+- `create(title, kind, depth)`, `get(id)`, and `revise(record)` manage planning context only.
+- `freezeReview(id, suppliedBytes)` stores immutable whole-file snapshots; `review(id, revision)` checks their hashes.
+- `TaskPublisher.prepare(id, path, expectedBytesOrNull, desiredBytes, operationId?)` commits a publication intent.
+- `TaskPublisher.reconcile(operationId)` explicitly reconciles that exact operation; no background loop exists.
+- `importTask(root, id)` / `discoverTasks(roots)` return `authority: "context-only"` without opening private storage.
+- `TASK_FOUNDATION_SCHEMA` in `src/storage-schema.ts` owns five STRICT domain tables: protocol, records, reviews, review bytes, and publications; SQLite separately owns its internal sequence table.
+
+### 3. Contracts
+
+Private storage is `<productRoot>/task-v1/<canonicalRootHash>/control.sqlite3`, a sibling of legacy `roots/`, so package reset cannot move it.
+It uses WAL/FULL, private directory/file modes on POSIX, symlink/hardlink rejection, canonical hashes, exact version/root binding, and exact schema SQL plus structural checks before opening an existing store for mutation.
+Initial schema/root insertion is transactional; a partial or empty retained database is rejected, not silently recreated.
+`acquireCheckoutOwnership` in `src/package-state.ts` is the shared SQLite lifetime fence, extracted without changing legacy reset behavior.
+`requireLegacyQuiescence` in `src/task-legacy.ts` provides a narrow read-only proof: exact current `RUN_SCHEMA`, optional checked package-version marker, empty resource/authority tables, and either no runs or terminal event-only history with checked root/projection/hash-chain and committed lease-free operations.
+Only run-created/state-transitioned history is supported; historical execution stores with engine namespaces, applied transactions, delivery bindings or retained resources are not interpreted as settled.
+The database must have the supported WAL header and be closed/checkpointed (no WAL/journal/shared-memory sidecars), at most 64 MiB, with bounded JSON rows; empty artifacts/workspaces/transactions scaffolds are allowed.
+An immutable read-only SQLite URI prevents creation of legacy WAL sidecars during inspection; no `RunStore.open`, migration, reset, deletion or moving history occurs.
+Rollback-journal headers are not admitted: immutable inspection bypasses SQLite locks, including exclusive locks that may have no journal file yet.
+Unknown/malformed/live/partial layouts and coordinator reset/backup evidence remain blocked without guessed PID settlement.
+
+Portable records have closed version-1 fields, code-generated UUIDv4 IDs, bounded title/narratives, informational lifecycle, monotonic revisions, and a separate all-artifact inventory.
+Only local planning-context revisions are writable; imported approved/archived text cannot change local lifecycle or mint approval.
+Records are at most 64 KiB; artifacts and aggregate imported/reviewed content are at most 16 MiB; inventories are at most 64 entries; discovery visits at most 256 entries across at most 16 roots.
+Review publication preflights the declared aggregate before any read and passes the smaller of the declared size and remaining budget to each bounded read.
+Research/knowledge basenames reject Windows devices (`con`, `prn`, `aux`, `nul`, `com1`–`com9`, `lpt1`–`lpt9`) on every platform, even with `.md` extensions.
+Review snapshots bind whole compact `brief.md` bytes or the expanded requirements/design/plan set (readonly tasks omit plan).
+Results, research and progress summaries are outside the review manifest.
+`reviewCurrent` checks current repository bytes; changed brief bytes make the old review stale without altering its private snapshot.
+
+Publication persists expected and desired bytes in the same transaction as its identity and sequence, before creating repository paths.
+The path grammar permits only the task's own documented artifacts/index and single-level bounded knowledge filenames.
+Existing targets are renamed to `<target>.<operationId>.task-claim`, then **rechecked**; desired bytes are flushed at `<target>.<operationId>.task-install` before exclusive hard-link installation, never an unconditional replacing rename.
+These names derive from the committed operation identity, not a PID/random temp or glob search.
+After a link-before-unlink crash, only that exact target/install or target/restored-claim pair may have `nlink === 2`; both must be regular files with identical device/inode and no third link.
+Install bytes must exactly match the durable desired bytes before install-alias cleanup; wrong inodes, unrelated links and edited recovery bytes are never cleaned up automatically.
+An edit racing the claim is restored with an exclusive link where possible; the claim name is retained even after restoration.
+**The original claimed inode is never unlinked by G1**, including after delivery: an editor can save through its original descriptor after any last content check.
+The deterministic claim is identifiable recovery material for such late saves; a later cleanup policy must establish its own justified retention boundary, not merely reread it or glob-delete it.
+Delivered operations are terminal acknowledgments of publication, not assertions that retained claims stayed unchanged; reopening/delivered retry does not delete or automatically restore recovery material.
+Partial pre-link install bytes or divergent claims remain explicit conflicts with private desired bytes retained.
+This deliberately differs from legacy apply cleanup without changing that owner's semantics; neither protocol is filesystem-wide atomicity or a sandbox against a hostile same-user process racing every path syscall.
+Windows directory persistence retains `syncDirectory`'s process-crash-only qualification; POSIX mode checks do not prove Windows ACL privacy.
+
+### 4. Validation & Error Matrix
+
+| Condition                                                         | Result                                             |
+| ----------------------------------------------------------------- | -------------------------------------------------- |
+| Unknown fields, malformed identities, oversized records           | `task-record-invalid`                              |
+| Unsafe artifact grammar, symlink/special/hardlinked file          | `task-path-unsafe`                                 |
+| Wrong schema/version/root or damaged stored hashes                | `task-storage-invalid`, no reset                   |
+| Live owner, unproved legacy layout/resources/reset evidence       | `task-ownership-unresolved`, old bytes retained    |
+| Changed expected bytes, competing target, retry identity mismatch | `task-conflict` or retained publication `conflict` |
+| Snapshot does not match supplied/current bytes                    | `task-review-stale` or `reviewCurrent === false`   |
+| Filesystem failure                                                | `task-io-failed`, desired intent bytes retained    |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a reopened publisher reconciles a claimed prior file after process death and delivers the same desired bytes once.
+- Base: a foreign archived record restores context with no session file and no local checkpoint; a closed, exact core-only legacy history remains byte-for-byte unchanged beside new task storage.
+- Bad: invoking `acquirePackageState` to reset old state before opening the task store, or treating a portable approved lifecycle as a grant.
+
+### 6. Tests Required
+
+`test/task-foundation.test.ts` covers strict records, imported authority rejection, schema tamper/no-mutation, process reopen, shared ownership, conservative legacy coexistence, intent/claim/write/result interruption, real child exit with ownership held, syscall-level link-before-unlink exits, retained-descriptor saves after the final read, unrelated/edited recovery links, closed legacy positives and malformed/partial negatives with byte preservation, aggregate review preflight/read limits, direct record/review/publication corruption, device basenames, manual edits, unsafe entries, exact retry identities, immutable review bytes, and divergent discovery.
+Keep `test/package-state.test.ts`, `test/sqlite-schema.test.ts`, `test/directory-sync.test.ts`, `test/remove-path.test.ts`, and `test/apply-transaction.integration.test.ts` passing after changing shared primitives.
+Native Windows ACL/power-loss and hostile directory-swap guarantees are not established by these Linux tests.
+
+### 7. Wrong vs Correct
+
+Wrong: read a target, then `renameSync(desiredTemp, target)` and call it compare-and-swap.
+Correct: commit intent/bytes, claim and recheck the old target, install with operation-owned exclusive linking, retain the original claimed inode and conflicts, then commit delivered.
+Wrong: another last-minute read makes unlinking an editor's original inode safe.
+Correct: preserve its deterministic claim name through delivery; only remove an exact desired-byte install alias whose target still names the same inode.
+Wrong: use portable `lifecycle: "approved"` as execution admission.
+Correct: return context only; G1 contains no approval issuer or execution-admission implementation.

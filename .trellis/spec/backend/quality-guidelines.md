@@ -66,6 +66,9 @@ Two rules fall out of the matrix:
 
 - Naming: `*.test.ts` unit tests, `*.integration.test.ts` integration tests (real Git, real SQLite, real workers), `*.property.test.ts` property-based tests, `*.test.mjs` for plain-JS assets (skill scripts, the distribution test, configuration parsing).
 - Target-test discipline: verify a change with `bun run test:target <the files that cover it>` during development, and finish with the full `bun run test` before publishing; `scripts/seed-acceptance.mjs` is the fresh-process acceptance for the durable workflow, child-session and apply paths.
+- Keep raw validation output outside the checkout in owner-private development-evidence storage; task records retain bounded command/result summaries and provenance (revision, local locator, byte length and SHA-256), clearly distinguishing historical runs from current verification.
+  `test/independence.test.ts` walks the working tree, including task research artifacts: do not broaden its ignores or rename raw logs inside the repository merely to evade assertions.
+  Relocating existing evidence requires approval, safe non-overwriting copy/flush and byte/hash verification before removing unchanged originals; this is development evidence, not product authority or consumer-state migration.
 - Opt-in environment flags make coverage real rather than skipped: `CADENCE_REAL_ISOLATION`, `CADENCE_REAL_WINDOWS_JOB`, `CADENCE_REAL_OPENSPEC`, `CADENCE_ALL_PACKAGE_MANAGERS`.
 - `biome.json` keeps test files pragmatic (`noExplicitAny` and `noNonNullAssertion` off for `*.test.ts`) while source stays strict; `test/workflow-engine.integration.test.ts` and `openspec/changes/**/implement-plan.json` are formatter/linter-exempt fixtures.
 

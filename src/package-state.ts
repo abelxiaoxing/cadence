@@ -147,32 +147,13 @@ function persistIntent(file: string, intent: ResetIntent): void {
   syncDirectory(path.dirname(file));
 }
 
-/** Package boundary only: low-level storage and read-only operator inspection never reset state.
- * The external SQLite write lock is held until every service connection has closed.
- * SQLite releases it on process death; no PID guessing or stale-lock deletion is used.
+/** Shared checkout fence only. Never inspects, upgrades, or resets legacy facts.
+ * Caller must first prepare the external roots directory.
  */
-export function acquirePackageState(
-  unresolved: ResolvedStateRoot,
-  version = String(
-    JSON.parse(
-      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
-    ).version,
-  ),
-): { notice?: PackageStateNotice; close(): void } {
-  versionParts(version);
-  const state = prepareStateRoot(unresolved);
-  try {
-    assertExecutionsSettled(state.rootDir);
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message === "isolation-termination-unconfirmed"
-    )
-      fail(error.message);
-    throw error;
-  }
-  for (const suffix of ["-wal", "-shm", "-journal"])
-    regular(state.databasePath + suffix);
+export function acquireCheckoutOwnership(state: ResolvedStateRoot): {
+  coordinator: string;
+  close(): void;
+} {
   const coordinator = path.join(
     state.rootsDir,
     `${state.consumerRootHash}.package-state`,
@@ -205,6 +186,36 @@ export function acquirePackageState(
     close();
     fail("package-state-in-use");
   }
+  return { coordinator, close };
+}
+
+/** Package boundary only: low-level storage and read-only operator inspection never reset state.
+ * The external SQLite write lock is held until every service connection has closed.
+ * SQLite releases it on process death; no PID guessing or stale-lock deletion is used.
+ */
+export function acquirePackageState(
+  unresolved: ResolvedStateRoot,
+  version = String(
+    JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    ).version,
+  ),
+): { notice?: PackageStateNotice; close(): void } {
+  versionParts(version);
+  const state = prepareStateRoot(unresolved);
+  try {
+    assertExecutionsSettled(state.rootDir);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "isolation-termination-unconfirmed"
+    )
+      fail(error.message);
+    throw error;
+  }
+  for (const suffix of ["-wal", "-shm", "-journal"])
+    regular(state.databasePath + suffix);
+  const { coordinator, close } = acquireCheckoutOwnership(state);
   try {
     const intentFile = path.join(coordinator, "reset.json");
     let intent: ResetIntent | undefined;

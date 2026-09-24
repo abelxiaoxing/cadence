@@ -90,3 +90,13 @@ So "logging" means bounded diagnostic projection — fixed field sets, code-owne
 - Logging a provider error `message` directly into a tool result; the provider text must pass `classifyProviderFailure` (`src/child-budget.ts`) into a bounded failure kind first, and any excerpt must pass `diagnosticText`.
 - Reading an unbounded configuration file; the shared loader (`skills/_shared/load-config.mjs`) enforces a 64 KiB regular-file bound with a nonblocking open, and the startup card reuses it so startup can never hang on a FIFO or a huge file.
 - Persisting "the user dismissed the card" or "the spinner was at frame 4"; both are ephemeral by design and would mislead the next session.
+
+## G1 Portable Narrative Boundary
+
+`src/task-records.ts` accepts only explicit bounded summaries with a closed source kind and portable source ID.
+There is no transcript, environment, raw output, credential, session-path, approval, or checkpoint field; unknown fields are rejected rather than spread into serialized records.
+`src/task-import.ts` returns contextual records only and never reads Pi session files or private storage.
+Markdown publication is an explicit controller request, not an automatic dump of tool/chat state; callers must supply minimized, reviewed narrative.
+Schema/path/size checks cannot recognize every business secret in deliberate prose, and G1 does not claim automatic prose redaction.
+`TaskFoundationError` exposes fixed codes; low-level file/parser errors must not be returned as diagnostic text.
+The repository may contain these portable task summaries, but trusted runtime facts and desired publication recovery bytes remain private.

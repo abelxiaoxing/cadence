@@ -358,3 +358,40 @@ export const RECOVERY_GRANT_SCHEMA = `
     UNIQUE (run_id, incident_key, failure_sequence)
   ) STRICT;
 `;
+
+/** G1 task foundation: independent namespace; no execution or approval tables. */
+export const TASK_FOUNDATION_SCHEMA = `
+CREATE TABLE IF NOT EXISTS task_protocol (
+  version INTEGER PRIMARY KEY CHECK(version = 1),
+  root_hash TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS task_records (
+  task_id TEXT PRIMARY KEY,
+  revision INTEGER NOT NULL CHECK(revision > 0),
+  payload_json TEXT NOT NULL,
+  payload_hash TEXT NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS task_reviews (
+  task_id TEXT NOT NULL REFERENCES task_records(task_id),
+  revision INTEGER NOT NULL CHECK(revision > 0),
+  manifest_json TEXT NOT NULL,
+  digest TEXT NOT NULL,
+  PRIMARY KEY(task_id, revision)
+) STRICT;
+CREATE TABLE IF NOT EXISTS task_review_bytes (
+  digest TEXT NOT NULL,
+  path TEXT NOT NULL,
+  bytes BLOB NOT NULL,
+  PRIMARY KEY(digest, path)
+) STRICT;
+CREATE TABLE IF NOT EXISTS task_publications (
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  operation_id TEXT NOT NULL UNIQUE,
+  task_id TEXT NOT NULL REFERENCES task_records(task_id),
+  path TEXT NOT NULL,
+  expected BLOB,
+  desired BLOB NOT NULL,
+  identity_hash TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('pending', 'delivered', 'conflict'))
+) STRICT;
+`;

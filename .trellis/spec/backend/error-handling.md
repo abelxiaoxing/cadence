@@ -163,3 +163,11 @@ const child = await runSubagentProcess({
 - Catching an admission error and retrying the same request with a different route before checking whether the failure is a cooldown versus an exhaustion; `worker-broker.ts` encodes the distinction so callers do not re-invent it.
 - Treating a `paused` result as failed; paused states (`paused`, `approval-needed`, `operation-interrupted`) are truthful workflow states that continuation and status projection act on, not errors to clear.
 - Writing a new error class with a string code that duplicates an existing closed array; search `src/contracts.ts` for the failure family before adding a code.
+
+## G1 Task Foundation Failures
+
+`src/task-records.ts` owns `TASK_FAILURE_CODES`, `TaskFoundationError`, and bounded unexpected-I/O projection via `taskError`.
+Strict task decoding, storage schema/root/hash checks and readonly import fail closed without embedding submitted fields, source text or low-level parser messages in errors.
+`TaskPublisher.reconcile` distinguishes a durable `conflict` outcome (external bytes and private desired bytes retained) from a bounded thrown I/O/path failure (intent remains retryable).
+Neither outcome grants execution or clears old ownership; no publisher failure invokes legacy reset or workspace rollback.
+See [Database Guidelines](./database-guidelines.md#scenario-disconnected-g1-task-foundation) for the complete error matrix and regression suite.

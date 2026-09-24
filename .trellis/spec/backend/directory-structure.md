@@ -103,7 +103,8 @@ Example: the `context7-auto-research` and `grok-search` skills both call `loadCo
 - Never edit a generated bundle (`src/workspace-io-worker.mjs`, `src/operator-cli.mjs`) by hand; `bun run check` fails a stale bundle, and hand edits are overwritten on the next build.
 - Never add a web/HTTP server layer to the package; operator entry points are the read-only `doctor`/`runs` CLIs, and host integration is through the Pi extension API only.
 - Never discover the three professional Agents from user or project Agent directories; `src/agent-registry.ts` loads `agents/design-explorer.md`, `agents/implementation-worker.md`, and `agents/diagnosis-worker.md` relative to the package and exposes no override or search-path API.
-- Never place durable state inside the consumer repository; storage roots come from `src/state-root.ts` and live outside the project.
+- Never place trusted runtime state inside the consumer repository; private storage roots come from `src/state-root.ts`.
+  Explicit bounded portable task narratives and operation-owned publication recovery siblings may live only in the checked `.cadence/` namespace; they grant no execution authority.
 - Never let child (candidate/packet) code import parent apply or state authority; `test/architecture-boundaries.test.ts` enforces the import boundary, and the narrow ports in `src/durable-contracts.ts` are the only sanctioned seam.
 - Never add a runtime fallback that traverses the relocated reference repository; it is read-only provenance evidence only, as stated in `provenance/adapted-modules.yaml`.
 
@@ -113,3 +114,19 @@ Example: the `context7-auto-research` and `grok-search` skills both call `loadCo
 
 - A clean owner module is `src/canonical.ts`: 20 lines, no dependencies, one purpose (locale-independent identity ordering and canonical JSON), consumed across storage, delivery and agents.
 - A clean bounded I/O module is `src/directory-sync.ts`: one exported function returning a capability result (`"synced" | "unsupported-directory-barrier"`), with the Windows EPERM case explicitly documented as a missing barrier, not a permission to ignore file errors.
+
+## Disconnected Task Foundation Owners (G1)
+
+- `src/task-records.ts`: closed bounded portable record decoding, UUID/path/hash grammar and diagnostic vocabulary.
+- `src/task-store.ts`: new private `task-v1` SQLite namespace, immutable snapshots and publication intents; no execution/approval API.
+- `src/task-legacy.ts`: readonly quiescence proof under shared ownership for known core-only legacy stores; preserves history and rejects unknown/resource-bearing layouts.
+- `src/task-publication.ts`: explicit intent-first publication/reconciliation and repository review-currentness checks.
+- `src/task-files.ts`: bounded regular-file reads and managed parent creation.
+- `src/task-import.ts`: readonly contextual discovery/import with divergent-ID detection; no local session/storage dependency.
+
+Existing apply exclusive-install/claim-restore helpers remain local to `src/apply-transaction.ts`, unchanged.
+Task publication uses its own deterministic-link/retained-claim protocol and must not reuse apply's claim-unlink policy.
+
+These modules are packaged but disconnected from `src/index.ts`; the four existing production stages remain enabled unchanged.
+`provenance/package-members.json` must list each new shipped source file exactly.
+See [Database Guidelines](./database-guidelines.md#scenario-disconnected-g1-task-foundation) for signatures, limits, failure cases and qualification gaps.

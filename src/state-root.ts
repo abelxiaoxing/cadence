@@ -147,14 +147,14 @@ export function resolveStateRoot(options: StateRootOptions): ResolvedStateRoot {
   };
 }
 
-function ensureDirectory(directory: string): void {
+export function ensureStateDirectory(directory: string): void {
   let stat: ReturnType<typeof lstatSync>;
   try {
     stat = lstatSync(directory);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     const parent = path.dirname(directory);
-    if (parent !== directory) ensureDirectory(parent);
+    if (parent !== directory) ensureStateDirectory(parent);
     mkdirSync(directory, { mode: 0o700 });
     chmodSync(directory, 0o700);
     return;
@@ -182,7 +182,7 @@ export function prepareStateRoot(
     throw new StateRootError("invalid-state-base");
   }
 
-  ensureDirectory(resolved.stateBase);
+  ensureStateDirectory(resolved.stateBase);
   for (const directory of [
     resolved.productRoot,
     resolved.rootsDir,
@@ -191,7 +191,7 @@ export function prepareStateRoot(
     resolved.workspacesDir,
     resolved.transactionsDir,
   ]) {
-    ensureDirectory(directory);
+    ensureStateDirectory(directory);
     chmodSync(directory, 0o700);
   }
 
