@@ -19,6 +19,12 @@ A count/listing alone cannot replace this audit.
 `src/sdk-worker.mjs` is maintained ordinary JavaScript and runs against installed peers, with no TypeScript/source-tree fallback or CLI startup.
 Pi itself loads the extension TypeScript.
 Extracted fixtures use actual package bodies in node_modules layout and trusted existing peer links, not package-manager installation or automatic downloads.
+Archive validation alone does not prove that tar extraction or later copying produced a usable installed tree.
+`test/distribution.test.mjs` audits each extracted/copied/post-peer tree with `auditPackage(archive, treeRoot, expected, provenanceRepoRoot)` and refuses linked roots/ancestors before inspecting members.
+Its filtered `cpSync` traversal copies only extracted archive bytes while avoiding documented Unicode-sensitive native-copy paths; the first Windows missing-file cause remains unproven until native evidence identifies it.
+Never fill an installed gap from repository source, simplify the hostile Unicode/space/percent/bang path, or let a missing entrypoint satisfy the corrupt-config refusal test.
+That negative requires the actual fixed `operator-refused` JSON stderr as well as unchanged bytes and exit 1.
+Bounded failure-safe distribution diagnostics record stage/body hashes/first gap under the fresh owned fixture, not raw environment or credential material.
 
 Operator interface:
 

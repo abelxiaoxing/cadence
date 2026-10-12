@@ -2,24 +2,169 @@ import { spawn, spawnSync } from "node:child_process";
 import {
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { auditPackage } from "../scripts/package-audit.mjs";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
+import { auditPackage, sha256 } from "../scripts/package-audit.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const expected = JSON.parse(
   readFileSync(path.join(root, "provenance/package-members.json"), "utf8"),
 );
-let fixture, archive, installed;
+let fixture, archive, installed, extracted, referenceAudit, diagnostics;
+// Only fixed identity metadata and explicit owned fixture paths/hashes are
+// recorded. No environment, auth, request bodies or arbitrary error messages.
+const failureCode = (error) =>
+  /^(?:package-audit-[a-z-]+|distribution-tree-(?:outside-fixture|unsafe))$/u.test(
+    error?.message ?? "",
+  )
+    ? error.message
+    : String(error?.code ?? "stage-failed").slice(0, 64);
+function saveDiagnostics() {
+  try {
+    const json = `${JSON.stringify(diagnostics, null, 2)}\n`;
+    if (Buffer.byteLength(json) > 256 * 1024)
+      throw new Error("Diagnostic bound");
+    writeFileSync(path.join(fixture, "distribution-diagnostics.json"), json, {
+      mode: 0o600,
+    });
+  } catch {
+    // Do not replace the original failed stage/assertion with a receipt error.
+    console.error("distribution diagnostics unavailable");
+  }
+}
+function bodyChecks(treeRoot) {
+  if (!treeRoot || !referenceAudit) return [];
+  let bytes = 0;
+  return expected.slice(0, 64).map((member) => {
+    const check = {
+      member,
+      expectedSha256: referenceAudit.bodyHashes[member],
+    };
+    try {
+      // Walk only explicit members below this newly owned fixture. Never read
+      // through a link, even when the strict audit has already refused it.
+      const relative = path.relative(fixture, treeRoot);
+      if (relative.startsWith("..") || path.isAbsolute(relative))
+        return { ...check, status: "outside-fixture" };
+      const parts = [
+        ...relative.split(path.sep),
+        ...member.slice(8).split("/"),
+      ];
+      let file = fixture;
+      let stat = lstatSync(file);
+      for (const part of parts) {
+        if (stat.isSymbolicLink() || !stat.isDirectory())
+          return { ...check, status: "unsafe-ancestor" };
+        file = path.join(file, part);
+        stat = lstatSync(file);
+      }
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1)
+        return { ...check, status: "nonregular" };
+      bytes += stat.size;
+      if (stat.size > 1024 * 1024 || bytes > 8 * 1024 * 1024)
+        return { ...check, status: "diagnostic-bound" };
+      const actualSha256 = sha256(readFileSync(file));
+      return {
+        ...check,
+        actualSha256,
+        status:
+          actualSha256 === check.expectedSha256 ? "matched" : "mismatched",
+      };
+    } catch (error) {
+      return { ...check, status: failureCode(error) };
+    }
+  });
+}
+function recordStage(stage, work, treeRoot) {
+  if (diagnostics.stages.length >= 32)
+    throw new Error("Distribution stage bound");
+  const entry = {
+    stage,
+    treeRoot,
+    status: "running",
+    firstGap: null,
+    bodyChecks: [],
+  };
+  diagnostics.stages.push(entry);
+  saveDiagnostics();
+  try {
+    const result = work();
+    entry.status = "passed";
+    return result;
+  } catch (error) {
+    entry.status = "failed";
+    entry.error = failureCode(error);
+    throw error;
+  } finally {
+    entry.bodyChecks = bodyChecks(treeRoot);
+    const gap = entry.bodyChecks.find((check) => check.status !== "matched");
+    entry.firstGap =
+      gap ?? (entry.status === "failed" ? { status: entry.error } : null);
+    if (entry.firstGap && !diagnostics.firstGap)
+      diagnostics.firstGap = { stage, ...entry.firstGap };
+    // Immediate children only: useful for a Unicode copy-path gap, never a tmp
+    // or peer node_modules scan. Failure leaves the original stage intact.
+    try {
+      assertFixtureTree(fixture);
+      entry.fixtureChildren = readdirSync(fixture).slice(0, 64);
+      if (treeRoot) assertFixtureTree(treeRoot);
+      entry.actualRoot = treeRoot ? realpathSync(treeRoot) : null;
+    } catch (error) {
+      entry.rootError = failureCode(error);
+    }
+    saveDiagnostics();
+    console.log(
+      JSON.stringify({
+        distributionStage: stage,
+        status: entry.status,
+        firstGap: entry.firstGap,
+      }),
+    );
+  }
+}
+function assertFixtureTree(treeRoot) {
+  const relative = path.relative(fixture, treeRoot);
+  if (
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  )
+    throw new Error("distribution-tree-outside-fixture");
+  // auditPackage checks member components, not the supplied root/ancestors.
+  // Refuse those links too, before any body audit or realpath observation.
+  let directory = fixture;
+  for (const part of ["", ...relative.split(path.sep).filter(Boolean)]) {
+    directory = path.join(directory, part);
+    const stat = lstatSync(directory);
+    if (stat.isSymbolicLink() || !stat.isDirectory())
+      throw new Error("distribution-tree-unsafe");
+  }
+}
+function auditFixtureTree(treeRoot) {
+  assertFixtureTree(treeRoot);
+  return auditPackage(archive, treeRoot, expected, root);
+}
+const auditTree = (stage, treeRoot = installed) =>
+  recordStage(stage, () => auditFixtureTree(treeRoot), treeRoot);
 const run = (command, args, options = {}) => {
   const result = spawnSync(command, args, {
     encoding: "utf8",
@@ -32,35 +177,120 @@ const run = (command, args, options = {}) => {
 };
 beforeAll(() => {
   fixture = mkdtempSync(path.join(tmpdir(), "cadence-distribution-"));
-  const pack = path.join(fixture, "pack");
-  mkdirSync(pack);
-  if (process.env.CADENCE_TEST_ARCHIVE) {
-    archive = path.resolve(process.env.CADENCE_TEST_ARCHIVE);
-  } else {
-    run("bun", ["pm", "pack", "--destination", pack], { cwd: root });
-    const archives = readdirSync(pack);
-    expect(archives).toHaveLength(1);
-    archive = path.join(pack, archives[0]);
-  }
-  // Audit before extraction; unsafe/link/duplicate archive entries refuse.
-  auditPackage(archive, root, expected);
-  run("tar", ["xzf", archive, "-C", fixture]);
+  extracted = path.join(fixture, "package");
   installed = path.join(
     fixture,
     "consumer 空格 & %PATH% ! (pkg)/node_modules/@abelxiaoxing/cadence",
   );
-  mkdirSync(path.dirname(installed), { recursive: true });
-  cpSync(path.join(fixture, "package"), installed, { recursive: true });
-  for (const name of ["@earendil-works", "typebox"]) {
-    symlinkSync(
-      path.join(root, "node_modules", name),
-      path.join(fixture, "consumer 空格 & %PATH% ! (pkg)/node_modules", name),
-      process.platform === "win32" ? "junction" : "dir",
-    );
-  }
+  diagnostics = {
+    schema: "cadence-distribution-diagnostics/1",
+    identity: {
+      node: process.execPath,
+      version: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      libuv: process.versions.uv,
+    },
+    rootPaths: { fixture, extracted, installed, provenanceRepoRoot: root },
+    firstGap: null,
+    stages: [],
+  };
+  recordStage("identity", () => {
+    for (const tool of ["bun", "tar"]) {
+      try {
+        diagnostics.identity[tool] = run(tool, ["--version"], {
+          timeout: 3000,
+          maxBuffer: 4096,
+        })
+          .slice(0, 256)
+          .trim();
+      } catch (error) {
+        diagnostics.identity[tool] = { error: failureCode(error) };
+      }
+    }
+    // One known peer metadata file, not discovery of user state.
+    diagnostics.identity.pi = JSON.parse(
+      readFileSync(
+        path.join(
+          root,
+          "node_modules/@earendil-works/pi-coding-agent/package.json",
+        ),
+        "utf8",
+      ),
+    ).version;
+  });
+  recordStage("archive-source-audit", () => {
+    const pack = path.join(fixture, "pack");
+    mkdirSync(pack);
+    if (process.env.CADENCE_TEST_ARCHIVE) {
+      archive = path.resolve(process.env.CADENCE_TEST_ARCHIVE);
+    } else {
+      run("bun", ["pm", "pack", "--destination", pack], { cwd: root });
+      const archives = readdirSync(pack);
+      expect(archives).toHaveLength(1);
+      archive = path.join(pack, archives[0]);
+    }
+    diagnostics.rootPaths.archive = archive;
+    diagnostics.archiveSha256 = sha256(readFileSync(archive));
+    // Audit before extraction; unsafe/link/duplicate archive entries refuse.
+    referenceAudit = auditPackage(archive, root, expected);
+  });
+  recordStage(
+    "after-extract",
+    () => {
+      run("tar", ["xzf", archive, "-C", fixture]);
+      return auditFixtureTree(extracted);
+    },
+    extracted,
+  );
+  recordStage(
+    "after-copy",
+    () => {
+      mkdirSync(path.dirname(installed), { recursive: true });
+      // Documented filter selects JS directory traversal, avoiding known upstream
+      // Unicode native-copy risks. Prior CI's actual copy root cause is unproven.
+      // Copy archive-extracted bytes only: no source refill, retry or fallback.
+      cpSync(extracted, installed, { recursive: true, filter: () => true });
+      return auditFixtureTree(installed);
+    },
+    installed,
+  );
+  recordStage(
+    "after-peer-links",
+    () => {
+      for (const name of ["@earendil-works", "typebox"]) {
+        symlinkSync(
+          path.join(root, "node_modules", name),
+          path.join(
+            fixture,
+            "consumer 空格 & %PATH% ! (pkg)/node_modules",
+            name,
+          ),
+          process.platform === "win32" ? "junction" : "dir",
+        );
+      }
+      return auditFixtureTree(installed);
+    },
+    installed,
+  );
 }, 60000);
-// Retain bounded fixture receipts for review, including any failed execution.
-afterAll(() => console.log(`distribution fixture retained: ${fixture}`));
+// Audit before/after each consumer, without repairing a missing or changed body.
+beforeEach(() => auditTree("before-installed-consumer"));
+afterEach(() => {
+  if (
+    referenceAudit &&
+    diagnostics.stages.some(
+      (entry) =>
+        entry.stage === "after-peer-links" && entry.status === "passed",
+    )
+  )
+    auditTree("after-installed-consumer");
+});
+// Retain bounded fixture receipts even when setup or a consumer assertion fails.
+afterAll(() => {
+  if (diagnostics) saveDiagnostics();
+  console.log(`distribution fixture retained: ${fixture}`);
+});
 
 describe("real lightweight package", () => {
   it("audits exactly 34 unique regular members, every source body and all Agent pins", () => {
@@ -68,12 +298,37 @@ describe("real lightweight package", () => {
     const audit = auditPackage(archive, root, expected);
     expect(audit.members).toEqual(expected);
     expect(Object.keys(audit.bodyHashes)).toHaveLength(34);
+    const receipt = JSON.parse(
+      readFileSync(path.join(fixture, "distribution-diagnostics.json"), "utf8"),
+    );
+    expect(receipt.firstGap).toBeNull();
+    expect(receipt.rootPaths).toMatchObject({ fixture, extracted, installed });
+    for (const stage of ["after-extract", "after-copy", "after-peer-links"]) {
+      const entry = receipt.stages.find((entry) => entry.stage === stage);
+      expect(entry.status).toBe("passed");
+      expect(entry.bodyChecks).toHaveLength(34);
+      expect(
+        entry.bodyChecks.every((check) => check.status === "matched"),
+      ).toBe(true);
+    }
     expect(expected.filter((p) => p.startsWith("package/src/"))).toHaveLength(
       16,
     );
     expect(expected.join("\n")).not.toMatch(
       /sqlite|workspace-io|windows-job|apply-transaction|compiler|scheduler/,
     );
+  });
+
+  it("refuses linked fixture tree roots and ancestors before installed body audits", () => {
+    const rootLink = path.join(fixture, "linked-package");
+    const ancestorLink = path.join(fixture, "linked-parent");
+    const type = process.platform === "win32" ? "junction" : "dir";
+    symlinkSync(installed, rootLink, type);
+    symlinkSync(path.dirname(installed), ancestorLink, type);
+    for (const linked of [rootLink, path.join(ancestorLink, "cadence")])
+      expect(() => auditFixtureTree(linked)).toThrow(
+        "distribution-tree-unsafe",
+      );
   });
 
   it("source and extracted readonly operators preserve old bytes and absent state, refusing all task control", () => {
@@ -139,6 +394,13 @@ describe("real lightweight package", () => {
       { encoding: "utf8", timeout: 10000 },
     );
     expect(result.status).toBe(1);
+    expect(result.error).toBeUndefined();
+    expect(result.stdout).toBe("");
+    expect(JSON.parse(result.stderr)).toEqual({
+      ok: false,
+      error: "operator-refused",
+      usage: "node <cadence>/src/operator-cli.mjs doctor|runs [workspace]",
+    });
     expect(result.stderr).not.toContain("do-not-display");
     expect(readFileSync(file, "utf8")).toBe("{unknown secret=do-not-display");
   });

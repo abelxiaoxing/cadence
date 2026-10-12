@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
       # Use the runner's available Node; record actual capabilities and identity.
       # Dependency metadata remains separate from release qualification.
-      - name: Canonical native temporary directory
+      - name: Fresh owned canonical native temporary directory
         run: node scripts/ci-temp.mjs
       - uses: oven-sh/setup-bun@v2
         with:
@@ -43,7 +43,9 @@ jobs:
         with:
           name: lightweight-${{ matrix.os }}-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/cadence-terminal-*/pty-receipt.json
-            ${{ runner.temp }}/cadence-terminal-*/terminal.bin
+            ${{ env.TMPDIR }}/cadence-terminal-*/pty-receipt.json
+            ${{ env.TMPDIR }}/cadence-terminal-*/terminal.bin
+            ${{ env.TMPDIR }}/cadence-terminal-*/identity.json
+            ${{ env.TMPDIR }}/cadence-distribution-*/distribution-diagnostics.json
           if-no-files-found: warn
           retention-days: 7

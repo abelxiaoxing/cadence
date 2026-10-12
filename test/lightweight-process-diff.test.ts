@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
@@ -20,6 +20,12 @@ import { TaskController } from "../src/task-controller.ts";
 import { captureChanges } from "../src/task-diff.ts";
 import { resolveWorkspace, TaskStore } from "../src/task-store.ts";
 import { diagnosticText } from "../src/verification-diagnostics.ts";
+
+// Observe actual launch arguments without replacing native execution.
+vi.mock("node:child_process", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:child_process")>();
+  return { ...original, spawn: vi.fn(original.spawn) };
+});
 
 const temporary = () => mkdtempSync(join(tmpdir(), "cadence-lw-native-"));
 function node(
@@ -45,26 +51,88 @@ describe("bounded real process owner", () => {
     );
     vi.stubEnv("CADENCE_PROJECT_SETTING", "project-value");
     try {
+      const command = `"${process.execPath}" check.cjs`;
       const check = await runCheck(
-        {
-          name: "environment",
-          command: `"${process.execPath}" check.cjs`,
-          timeoutMs: 5000,
-        },
+        { name: "environment", command, timeoutMs: 5000 },
         cwd,
         new AbortController().signal,
       );
-      expect(check.outcome).toBe("completed");
-      expect(check.exitCode).toBe(0);
-      expect(check.output).toContain("environment-ok");
+      const shell =
+        process.platform === "win32"
+          ? (process.env.COMSPEC ?? "cmd.exe")
+          : "/bin/sh";
+      // Synthetic command/result only: never dump the inherited environment.
+      const diagnostics = JSON.stringify({
+        node: process.execPath,
+        version: process.version,
+        platform: process.platform,
+        command,
+        cwd,
+        shell,
+        windowsVerbatimArguments: process.platform === "win32",
+        result: check,
+      });
+      expect(check.outcome, diagnostics).toBe("completed");
+      expect(check.exitCode, diagnostics).toBe(0);
+      expect(check.output, diagnostics).toContain("environment-ok");
+      expect(check.closed, diagnostics).toBe(true);
+      expect(check.truncated, diagnostics).toBe(false);
+      const launch = vi.mocked(spawn).mock.lastCall;
+      // Project before asserting, so a failing diff cannot print ambient auth.
+      expect({
+        command: launch?.[0],
+        args: launch?.[1],
+        cwd: launch?.[2]?.cwd,
+        windowsVerbatimArguments: launch?.[2]?.windowsVerbatimArguments,
+        projectSetting: launch?.[2]?.env?.CADENCE_PROJECT_SETTING,
+        childGuard: launch?.[2]?.env?.CADENCE_SUBAGENT_CHILD,
+      }).toEqual({
+        command: shell,
+        args:
+          process.platform === "win32"
+            ? ["/d", "/s", "/c", `"${command}"`]
+            : ["-c", command],
+        cwd,
+        windowsVerbatimArguments:
+          process.platform === "win32" ? true : undefined,
+        projectSetting: "project-value",
+        childGuard: "1",
+      });
       const workerEnvironment = await node(
         "process.stdout.write(process.env.CADENCE_PROJECT_SETTING ?? 'absent')",
       );
       expect(workerEnvironment.output).toBe("absent");
+      expect(
+        vi.mocked(spawn).mock.lastCall?.[2]?.windowsVerbatimArguments,
+      ).toBeUndefined();
       expect(safeChildEnv()).not.toHaveProperty("CADENCE_PROJECT_SETTING");
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+  it("quoted executable, Unicode/space paths and arguments retain native shell redirection and chaining", async () => {
+    const cwd = join(temporary(), "working 空格");
+    mkdirSync(cwd);
+    writeFileSync(
+      join(cwd, "check 空格.cjs"),
+      "process.stdout.write(JSON.stringify(process.argv.slice(2)))",
+    );
+    const quotedArgument =
+      process.platform === "win32" ? '"say \\"hello\\""' : "'say \"hello\"'";
+    const command = `"${process.execPath}" "check 空格.cjs" "argument 空格" ${quotedArgument} > "result 空格.txt" && echo chain-ok`;
+    const result = await runCheck(
+      { name: "quoted control", command, timeoutMs: 5000 },
+      cwd,
+      new AbortController().signal,
+    );
+    const diagnostics = JSON.stringify({ command, cwd, result });
+    expect(result.outcome, diagnostics).toBe("completed");
+    expect(result.closed, diagnostics).toBe(true);
+    expect(result.exitCode, diagnostics).toBe(0);
+    expect(result.output, diagnostics).toContain("chain-ok");
+    expect(
+      JSON.parse(readFileSync(join(cwd, "result 空格.txt"), "utf8")),
+    ).toEqual(["argument 空格", 'say "hello"']);
   });
   it("even tool-name progress redacts known request secrets", async () => {
     const progress: string[] = [];

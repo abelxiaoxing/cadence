@@ -46,6 +46,8 @@ recover(expected: CheckoutLock, acknowledgeEscapedProcesses: boolean): void;
 runWorker(request: WorkerRequest, signal: AbortSignal,
   onProgress?: (text: string) => void, timeoutMs = 1_200_000): Promise<RunResult>;
 runCheck(check: CheckDefinition, cwd: string, signal: AbortSignal): Promise<RunResult>;
+runProcess(spec: ProcessSpec): Promise<RunResult>;
+// ProcessSpec.windowsVerbatimArguments?: boolean; Windows parent-check use only.
 captureChanges(root: string): ChangeView;
 ```
 
@@ -119,6 +121,9 @@ Unknown stop or uncertain release retains the new lock/blocking state; direct-ch
 
 `CheckDefinition = { name, command, timeoutMs }`; optional config is `cadence-assistant-checks/1` with at most 32 definitions.
 Each command/cwd/timeout is confirmed in the terminal, then executed by the parent (`/bin/sh -c` or Windows `COMSPEC /d /s /c`).
+Windows `runCheck` wraps the whole approved command in one outer quote pair and sets `windowsVerbatimArguments: true`, matching Node's CMD-shell construction rather than CRT argument escaping.
+Keep `/d` to disable AutoRun; CMD removes the outer pair while preserving quoted executables/arguments and the intended shell syntax.
+SDK/direct Node launches leave this optional flag unset; never enable verbatim globally or change their script paths into shell commands.
 Manual checks use name `Manual` and 120000 ms; the menu label `Manual command` is reserved in config.
 Checks inherit the **ordinary project environment**, including any ambient credentials, plus the child guard.
 Resolved SDK auth is never inserted into the parent/check environment.
@@ -192,3 +197,10 @@ Wrong: `gitRoot.trim()` or canonicalizing away real filename characters.
 Correct: `resolveWorkspace()` removes only Git's output terminator and canonicalizes the actual filesystem path; escape paths for display separately.
 Wrong: reuse a historical approval, SQL checkpoint, process disappearance or old failed suite as current consent/success.
 Correct: keep old material untouched, retain explicit uncertainty and ask for a fresh native action.
+Wrong: let Node's generic CRT quoting transform an approved quoted Windows CMD command, or apply verbatim to every worker.
+Correct: retain the approved command's inner quotes and ordinary environment, then use the check-only outer quoting and verbatim flag:
+
+```ts
+const args = ["/d", "/s", "/c", `"${check.command}"`];
+const options = { windowsVerbatimArguments: true }; // Windows runCheck only.
+```

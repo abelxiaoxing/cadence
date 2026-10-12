@@ -17,8 +17,12 @@ import time
 
 config = json.load(open(sys.argv[1], encoding="utf-8"))
 root = config["root"]
+control = config["controlFd"]
+expected_event = {"event": "cancellation-http-pending", "requestOrdinal": 4, "editingOrdinal": 3}
 pid, descriptor = pty.fork()
 if pid == 0:
+    # This is fixture-only coordination, never a capability of the actual CLI.
+    os.close(control)
     os.chdir(config["cwd"])
     os.execve(config["argv"][0], config["argv"], config["env"])
 fcntl.ioctl(descriptor, termios.TIOCSWINSZ, struct.pack("HHHH", 48, 120, 0, 0))
@@ -29,9 +33,47 @@ escape_keys = []
 status = None
 failure = None
 started = time.monotonic()
+event_buffer = bytearray()
+event_bytes = 0
+barrier = {"event": None, "receivedBeforeWait": None, "waitStep": None, "consumed": False, "escapeAfterReady": False, "bytes": 0}
+
+
+def read_event():
+    global event_bytes
+    chunk = os.read(control, 513)
+    if not chunk:
+        raise RuntimeError("control-event-eof")
+    event_bytes += len(chunk)
+    barrier["bytes"] = event_bytes
+    if event_bytes > 512:
+        raise RuntimeError("control-event-overflow")
+    event_buffer.extend(chunk)
+    while b"\n" in event_buffer:
+        line, _, rest = event_buffer.partition(b"\n")
+        event_buffer[:] = rest
+        if barrier["event"] is not None:
+            raise RuntimeError("control-event-duplicate")
+        try:
+            event = json.loads(line.decode("utf-8"))
+        except (ValueError, UnicodeError):
+            raise RuntimeError("control-event-invalid") from None
+        # Fixed bytes/types, not permissive Python bool/int or extra-field equality.
+        if (not isinstance(event, dict) or event != expected_event or
+                type(event.get("requestOrdinal")) is not int or
+                type(event.get("editingOrdinal")) is not int):
+            raise RuntimeError("control-event-unexpected")
+        barrier["event"] = event
+        barrier["receivedBeforeWait"] = barrier["waitStep"] is None
+    if barrier["event"] is not None and event_buffer:
+        raise RuntimeError("control-event-trailing-bytes")
+
 
 def drain(timeout=0.1):
-    if select.select([descriptor], [], [], timeout)[0]:
+    ready = select.select([descriptor, control], [], [], timeout)[0]
+    # Consume/validate control first, including events buffered before the wait.
+    if control in ready:
+        read_event()
+    if descriptor in ready:
         try:
             chunk = os.read(descriptor, 65536)
             raw.extend(chunk)
@@ -41,30 +83,47 @@ def drain(timeout=0.1):
                 raise
     return False
 
-def wait_text(pattern, start):
+
+def child_exited():
     global status
-    deadline = time.monotonic() + 15
-    while time.monotonic() < deadline:
-        drain()
-        text = ansi.sub("", raw[start:].decode("utf-8", errors="replace"))
-        if re.search(pattern, text):
-            observations.append({"pattern": pattern, "matched": True, "rawStart": start, "rawEnd": len(raw)})
-            return
+    if status is None:
         got, receipt = os.waitpid(pid, os.WNOHANG)
         if got:
             status = receipt
-            raise RuntimeError("child-exited-before-expected-terminal-bytes: " + pattern + ": " + str(receipt))
-    raise RuntimeError("terminal-step-deadline: " + pattern)
+    return status is not None
+
+
+def wait_step(step, start, index):
+    # ONE interaction deadline, shared by terminal matching and the HTTP event.
+    deadline = time.monotonic() + 15
+    pattern = step.get("expect")
+    needs_event = "event" in step
+    if needs_event:
+        if step["event"] != expected_event["event"] or barrier["waitStep"] is not None:
+            raise RuntimeError("control-event-invalid-wait")
+        barrier["waitStep"] = index
+    matched = pattern is None
+    while time.monotonic() < deadline:
+        drain(max(0, min(0.1, deadline - time.monotonic())))
+        if child_exited():
+            raise RuntimeError("child-exited-before-expected-terminal-or-event")
+        if not matched:
+            text = ansi.sub("", raw[start:].decode("utf-8", errors="replace"))
+            if re.search(pattern, text):
+                observations.append({"pattern": pattern, "matched": True, "rawStart": start, "rawEnd": len(raw)})
+                matched = True
+        if matched and (not needs_event or barrier["event"] is not None):
+            if needs_event:
+                barrier["consumed"] = True
+            return
+    raise RuntimeError("terminal-event-step-deadline" if needs_event else "terminal-step-deadline: " + pattern)
+
 
 try:
     cursor = 0
-    for step in config["steps"]:
-        if "expect" in step:
-            wait_text(step["expect"], cursor)
-        if "pause" in step:
-            end = time.monotonic() + step["pause"]
-            while time.monotonic() < end:
-                drain(0.05)
+    for index, step in enumerate(config["steps"]):
+        if "expect" in step or "event" in step:
+            wait_step(step, cursor, index)
         if "resize" in step:
             rows, cols = step["resize"]
             fcntl.ioctl(descriptor, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
@@ -76,6 +135,8 @@ try:
             for key in step["send"]:
                 sent = time.monotonic()
                 os.write(descriptor, key.encode("utf-8"))
+                if key == "\x1b" and "event" in step:
+                    barrier["escapeAfterReady"] = barrier["consumed"]
                 # select/read can return immediately on already-buffered output.
                 # Pump for a MINIMUM interval, not one opportunistic drain, so a
                 # lone ESC is delivered before the next text becomes Alt+text.
@@ -86,31 +147,33 @@ try:
                     drain(max(0, min(0.04, until - time.monotonic())))
                 if key == "\x1b":
                     escape_keys.append({"inputHex":"1b","minimumDelayMs":100,"elapsedMs":(time.monotonic()-sent)*1000})
+    if not barrier["consumed"]:
+        raise RuntimeError("control-event-not-consumed")
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
-        drain()
-        got, receipt = os.waitpid(pid, os.WNOHANG)
-        if got:
-            status = receipt
+        drain(max(0, min(0.1, deadline - time.monotonic())))
+        if child_exited():
             break
     if status is None:
         raise RuntimeError("child-did-not-exit-after-quit")
 except BaseException as error:
     failure = str(error)
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    # Always wait actual child, not timeout/EOF-derived closure. If graceful
-    # exit is unavailable retain the driver too rather than kill/reset it.
-    try:
-        _, status = os.waitpid(pid, 0)
-    except ChildProcessError:
-        pass
+    if status is None:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        # Always wait actual child, not timeout/EOF-derived closure. If graceful
+        # exit is unavailable retain the driver too rather than kill/reset it.
+        try:
+            _, status = os.waitpid(pid, 0)
+        except ChildProcessError:
+            pass
 finally:
     open(os.path.join(root, "terminal.bin"), "wb").write(raw)
-    receipt = {"pid":pid,"waitpidReturned":status is not None,"waitStatus":status,"exitCode":os.waitstatus_to_exitcode(status) if status is not None else None,"failure":failure,"observations":observations,"seconds":time.monotonic()-started,"physicalHuman":False,"nativeExecutor":False,"escapeKeys":escape_keys}
+    receipt = {"pid":pid,"waitpidReturned":status is not None,"waitStatus":status,"exitCode":os.waitstatus_to_exitcode(status) if status is not None else None,"failure":failure,"observations":observations,"seconds":time.monotonic()-started,"physicalHuman":False,"nativeExecutor":False,"escapeKeys":escape_keys,"barrier":barrier}
     json.dump(receipt, open(os.path.join(root,"pty-receipt.json"),"w",encoding="utf-8"), indent=2)
+    os.close(control)
     os.close(descriptor)
 if failure or receipt["exitCode"] != 0:
     sys.exit(1)

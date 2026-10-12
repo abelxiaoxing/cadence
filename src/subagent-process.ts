@@ -54,6 +54,7 @@ export interface ProcessSpec {
   signal: AbortSignal;
   input?: string;
   env?: NodeJS.ProcessEnv;
+  windowsVerbatimArguments?: boolean;
   protocol?: boolean;
   secrets?: string[];
   onProgress?: (text: string) => void;
@@ -81,6 +82,7 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       env: spec.env ?? safeChildEnv(),
       detached: process.platform !== "win32",
       windowsHide: true,
+      windowsVerbatimArguments: spec.windowsVerbatimArguments,
       stdio: ["pipe", "pipe", "pipe"],
     });
     let settled = false;
@@ -298,8 +300,11 @@ export function runCheck(
         : "/bin/sh",
     args:
       process.platform === "win32"
-        ? ["/d", "/s", "/c", check.command]
+        ? // Match Node's CMD shell construction: CMD strips the outer quotes;
+          // CRT argument escaping would otherwise corrupt quoted executables.
+          ["/d", "/s", "/c", `"${check.command}"`]
         : ["-c", check.command],
+    windowsVerbatimArguments: process.platform === "win32" ? true : undefined,
     cwd,
     timeoutMs: check.timeoutMs,
     // Checks are explicitly approved host commands, not SDK workers. Preserve

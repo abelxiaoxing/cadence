@@ -55,3 +55,57 @@ Preserve ordinary check environment and literal filesystem path bytes.
 Review member closure and regenerated bundle after store/types/operator edits.
 Require regression assertions at affected boundaries, not `true` placeholders or a larger proof/cache framework.
 [Distribution](./task-distribution-guidelines.md) owns old assertion dispositions: historical 5547/5/9 remains failed/superseded.
+
+## Scenario: native CI fixture coordination and diagnostics
+
+### 1. Scope / Trigger
+
+Native SDK, shell, extraction and terminal tests must establish their actual prerequisites rather than inherit Linux-only path or elapsed-time assumptions.
+Run `38223395036` on `7db986a` had real Windows/macOS failures; keep it failed even after later repairs.
+
+### 2. Signatures
+
+- Node `--import` receives the existing guard URL's `.href`; the worker program argument remains a filesystem path.
+- `scripts/ci-temp.mjs` exports one newly allocated canonical `cadence-ci-*` directory as `TMPDIR`, `TEMP` and `TMP` via `GITHUB_ENV`.
+- The PTY fixture config gives Python a fixture-only control fd; the actual CLI closes that fd before exec.
+- The sole readiness payload is `{event:"cancellation-http-pending",requestOrdinal:4,editingOrdinal:3}` from the actual parsed pending HTTP request.
+
+### 3. Contracts
+
+The terminal case matches its foreground view and readiness event within one shared 15-second interaction deadline, preserving the 90-second production-case budget and exact four requests.
+A progress heading, worker-ready frame, timer or model prose is not HTTP readiness.
+The driver buffers split/early events, caps event input at 512 bytes and preserves original waited quit/exit facts.
+Readiness is a fixture prerequisite, never user consent or descendant settlement.
+
+CI uploads only explicitly named diagnostics beneath the exported owned temp directory: terminal `pty-receipt.json`, `terminal.bin`, sanitized `identity.json`, and distribution `distribution-diagnostics.json`.
+Do not use unrelated `runner.temp`, upload whole trees/configuration/auth/peer data, or scan/reset old temp directories.
+Identity/request-order diagnostics are failure-safe, bounded and omit auth headers/keys, raw bodies, prompts and environment dumps.
+
+### 4. Validation & Error Matrix
+
+| Condition                                                           | Required outcome                                           |
+| ------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Guard preload is a Windows drive path                               | ESM refusal; fix the specifier, never remove the guard     |
+| Malformed, duplicate, unexpected, overflowing, missing or EOF event | Failed driver receipt, not skip or fabricated readiness    |
+| CLI exits before view/event match                                   | Failed interaction with actual waitpid facts               |
+| Extracted/copied tree has missing, linked or altered body           | Failed exact audit; retain first gap without source refill |
+| Diagnostic write fails during another failure                       | Preserve the original failure, not diagnostic success      |
+| Windows has no existing POSIX PTY producer                          | Remains outside that lane; no ConPTY evidence inferred     |
+
+### 5. Good/Base/Bad Cases
+
+Good: wait for actual parsed HTTP request four before Escape, then independently require the interrupted view and original waited quit.
+Base: product cancellation before any HTTP request remains valid and separately tested.
+Bad: increase the 1.5-second sleep, accept three-or-four requests, remove hostile path characters, or silently skip a failing native lane.
+
+### 6. Tests Required
+
+`test/lightweight-sdk.test.ts` keeps all guarded wire lanes; `test/lightweight-process-diff.test.ts` verifies native quoted-command behavior and check-only CMD options without weakening SDK environment isolation.
+`test/distribution.test.mjs` audits extracted/copied trees, root/ancestor link refusal and fixed application-error JSON.
+`test/terminal-integration.test.mjs` keeps all four production scenarios and real barrier/error/exec-fd controls in their existing POSIX responsibility domain.
+A repaired Linux pass is not repaired native Windows/macOS qualification; rerun the new reviewed commit on those actual runners.
+
+### 7. Wrong vs Correct
+
+Wrong: `fileURLToPath(guardUrl)` as an ESM preload, or an unrelated upload directory.
+Correct: `guardUrl.href` for `--import` and `${{ env.TMPDIR }}` for the owned fixture producer/uploader contract.

@@ -259,9 +259,7 @@ for (const lane of [
         command: process.execPath,
         args: [
           "--import",
-          fileURLToPath(
-            new URL("./helpers/lightweight-sdk-guard.mjs", import.meta.url),
-          ),
+          new URL("./helpers/lightweight-sdk-guard.mjs", import.meta.url).href,
           fileURLToPath(new URL("../src/sdk-worker.mjs", import.meta.url)),
         ],
         cwd,
