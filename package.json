@@ -1,7 +1,7 @@
 {
   "name": "@abelxiaoxing/cadence",
   "version": "1.8.4",
-  "description": "Four explicit Abel workflow prompts with stage-isolated design and diagnosis, durable resumable implementation, and three package-owned professional Agents.",
+  "description": "Explicit terminal-only Pi workflow assistant: plan, edit, check and human review.",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -11,11 +11,9 @@
     "pi-package",
     "abel",
     "workflow",
-    "cadence",
-    "openspec"
+    "cadence"
   ],
   "files": [
-    "prompts",
     "skills",
     "config",
     "src",
@@ -29,9 +27,6 @@
     "extensions": [
       "./src/index.ts"
     ],
-    "prompts": [
-      "./prompts/*.md"
-    ],
     "skills": [
       "./skills"
     ]
@@ -41,17 +36,14 @@
     "pack:check": "node scripts/pack-check.mjs",
     "traceability:check": "node scripts/traceability-check.mjs",
     "verify": "bun run check && bun run lint && bun run test && bun run pack:check",
-    "check": "node scripts/check-syntax.mjs && bun scripts/build-workspace-io.mjs --check && tsc --noEmit",
+    "check": "node scripts/check-syntax.mjs && bun scripts/build-operator.mjs --check && tsc --noEmit",
     "lint": "biome check . && rumdl check .",
-    "test": "vitest run",
+    "test": "vitest run --no-file-parallelism",
     "test:target": "vitest run",
     "check:agents": "node scripts/check-agents.mjs",
-    "build:workspace-io": "bun scripts/build-workspace-io.mjs",
-    "eval:workflow": "node --experimental-strip-types scripts/evaluate-workflow.mjs",
-    "doctor": "node --experimental-strip-types src/operator-cli.mjs doctor",
-    "runs": "node --experimental-strip-types src/operator-cli.mjs runs",
-    "benchmark:verification": "node --experimental-strip-types scripts/benchmark-verification.mjs",
-    "eval:matrix": "node --experimental-strip-types scripts/evaluate-matrix.mjs"
+    "doctor": "node src/operator-cli.mjs doctor",
+    "runs": "node src/operator-cli.mjs runs",
+    "build:operator": "bun scripts/build-operator.mjs"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

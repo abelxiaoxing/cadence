@@ -5,7 +5,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
-/** Host SDK fixture only. Production child execution never creates ModelRuntime. */
+/** Host SDK fixture only. Tests may use this in-memory provider fixture; production owns its own SDK child. */
 export async function runtimeForProvider(
   provider: Provider,
   signal?: AbortSignal,

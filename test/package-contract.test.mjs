@@ -37,16 +37,16 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     expect(all).not.toMatch(/pi-subagents/);
   });
 
-  it("registers the private extension and the four prompts and skills", () => {
+  it("registers the sole task extension and independent skills without prompt aliases", () => {
     const pkg = JSON.parse(read(path.join(root, "package.json")));
     expect(pkg.pi?.extensions).toEqual(["./src/index.ts"]);
-    expect(pkg.pi?.prompts).toEqual(["./prompts/*.md"]);
+    expect(pkg.pi?.prompts).toBeUndefined();
+    expect(pkg.files).not.toContain("prompts");
     expect(pkg.pi?.skills).toEqual(["./skills"]);
     expect(pkg.files).toEqual(
       expect.arrayContaining([
         "src",
         "agents",
-        "prompts",
         "skills",
         "config",
         "licenses",
@@ -70,7 +70,7 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     const readme = read(path.join(root, "README.md"));
     expect(readme).toMatch(/local package|tarball|\.tgz|installed/i);
     expect(readme).toMatch(/\.\/|absolute|relative/i);
-    expect(readme).toContain("不限制宿主 Pi 的版本");
+    expect(readme).toContain("does not impose a Pi version range");
     // published as @abelxiaoxing/cadence only; no other @abel/ scope or bare scope installs
     expect(readme).not.toMatch(/npm install @abel(?![a-z]+\/)/i);
     expect(readme).not.toMatch(/@abel\/(?!xiaoxing)/i);
@@ -87,9 +87,7 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
         /from ["'][^"']*compatib|checkHostVersion|supportedHostVersions|supportedPiVersions/i,
       );
     }
-    expect(read(path.join(root, "src", "control-contracts.ts"))).not.toMatch(
-      /CONTROL_PROTOCOL_VERSION|unsupported-control-version/,
-    );
+    expect(existsSync(path.join(root, "src/control-contracts.ts"))).toBe(false);
   });
 
   it("provides the standalone Bun commands and lockfile", () => {
@@ -102,29 +100,21 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     expect(lock).not.toMatch(/@gotgenes/);
   });
 
-  it("[SLICE-5:pi-tool-error] ships fact-only worker contracts", () => {
+  it("pins plain direct-edit and readonly roles without certified application promises", () => {
     const implementation = read(
-      path.join(root, "agents", "implementation-worker.md"),
+      path.join(root, "agents/implementation-worker.md"),
     );
-    const diagnosis = read(path.join(root, "agents", "diagnosis-worker.md"));
-
     expect(implementation).toMatch(/smallest complete change/i);
-    expect(implementation).toMatch(/never write unified-diff headers/i);
-    expect(implementation).toMatch(
-      /expected parent-owned verification contract/i,
-    );
-    expect(implementation).toMatch(/without claiming a result/i);
-    expect(implementation).toMatch(/result-limit/i);
+    expect(implementation).toMatch(/chosen working copy/i);
+    expect(implementation).toMatch(/not passing parent checks/i);
     expect(implementation).not.toMatch(
-      /design-required|return-to-design|\/abel-design|recommended next (workflow )?step|nextStep|dependent successors?|split condition/i,
+      /parent.*seals the candidate|supplied disposable proposal root/i,
     );
-    expect(diagnosis).toMatch(/reported symptoms/i);
-    expect(diagnosis).toMatch(/evidence-only/i);
-    expect(diagnosis).toMatch(/do not propose a structured diff/i);
-    expect(diagnosis).toMatch(/falsif/i);
-    expect(diagnosis).toMatch(/failing-regression[\s\S]{0,240}minimum-repair/i);
-    expect(diagnosis).not.toMatch(
-      /recommended next (workflow )?step|nextStep/i,
-    );
+    for (const role of ["design-explorer", "diagnosis-worker"]) {
+      const body = read(path.join(root, `agents/${role}.md`));
+      expect(body).toMatch(/readonly/i);
+      expect(body).toMatch(/Do not/i);
+      expect(body).toMatch(/human review/i);
+    }
   });
 });

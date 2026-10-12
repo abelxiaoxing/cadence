@@ -34,9 +34,9 @@ describe("standalone independence", () => {
   });
 
   it("leaves no private state files in the package tree", () => {
-    const files = walk(root)
-      .map((f) => path.relative(root, f))
-      .filter((f) => !f.startsWith("node_modules/"));
+    const files: string[] = JSON.parse(
+      read(path.join(root, "provenance/package-members.json")),
+    ).map((f: string) => f.slice(8));
     for (const f of files) {
       const base = path.basename(f);
       expect(
@@ -51,7 +51,9 @@ describe("standalone independence", () => {
   });
 
   it("ships no forbidden workflow checkout or reference dependency", () => {
-    const files = walk(root).map((f) => path.relative(root, f));
+    const files: string[] = JSON.parse(
+      read(path.join(root, "provenance/package-members.json")),
+    ).map((f: string) => f.slice(8));
     for (const f of files) {
       if (f.startsWith("licenses/") || f === "THIRD_PARTY_NOTICES.md") continue;
       expect(f).not.toMatch(/pi-subagents/);

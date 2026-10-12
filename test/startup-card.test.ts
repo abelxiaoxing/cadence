@@ -174,7 +174,7 @@ describe("Cadence startup configuration card", () => {
         hasUI: true,
         mode,
         isProjectTrusted: () => true,
-        ui: { setWidget, notify },
+        ui: { onTerminalInput: () => () => {}, setWidget, notify },
       };
       for (const reason of [
         "startup",
@@ -197,7 +197,15 @@ describe("Cadence startup configuration card", () => {
       expect(h.pi.sendMessage).not.toHaveBeenCalled();
       expect(h.pi.sendUserMessage).not.toHaveBeenCalled();
       expect(h.pi.appendEntry).not.toHaveBeenCalled();
-      expect(h.pi.registerCommand).not.toHaveBeenCalled();
+      expect(h.pi.registerCommand).toHaveBeenCalledTimes(1);
+      expect(h.pi.registerCommand).toHaveBeenCalledWith(
+        "cadence",
+        expect.objectContaining({
+          description:
+            "Plan, run one agent, check and review (explicit terminal workflow)",
+        }),
+      );
+      expect(h.active()).toEqual(["read", "bash"]);
     },
   );
 
@@ -212,7 +220,7 @@ describe("Cadence startup configuration card", () => {
         hasUI: false,
         mode,
         isProjectTrusted,
-        ui: { setWidget, notify },
+        ui: { onTerminalInput: () => () => {}, setWidget, notify },
       };
       await h.emit("session_start", ctx);
       await h.emit("agent_start", ctx);
@@ -222,7 +230,7 @@ describe("Cadence startup configuration card", () => {
     },
   );
 
-  it("the shipped entrypoint registers a notification without activating a stage or adding commands", async () => {
+  it("the shipped entrypoint registers a notification and one inert task command without task activation", async () => {
     const input = fixture();
     const h = harness(register);
     const setWidget = vi.fn();
@@ -232,7 +240,7 @@ describe("Cadence startup configuration card", () => {
       hasUI: true,
       mode: "rpc",
       isProjectTrusted: () => true,
-      ui: { setWidget, notify },
+      ui: { onTerminalInput: () => () => {}, setWidget, notify },
     };
     await h.emit("session_start", ctx);
     expect(notify).toHaveBeenCalledWith(
@@ -241,7 +249,15 @@ describe("Cadence startup configuration card", () => {
     );
     expect(setWidget).not.toHaveBeenCalled();
     expect(h.active()).toEqual(["read", "bash"]);
-    expect(h.pi.registerCommand).not.toHaveBeenCalled();
+    expect(h.pi.registerCommand).toHaveBeenCalledTimes(1);
+    expect(h.pi.registerCommand).toHaveBeenCalledWith(
+      "cadence",
+      expect.objectContaining({
+        description:
+          "Plan, run one agent, check and review (explicit terminal workflow)",
+      }),
+    );
+    expect(h.active()).toEqual(["read", "bash"]);
     await h.emit("session_shutdown", ctx);
   });
 });

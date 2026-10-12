@@ -1,7 +1,6 @@
 [global]
 exclude = [
   "**/CHANGELOG.md",
-  "openspec/**",
   ".agents/**",
   ".trellis/workflow.md",
   ".trellis/agents/**",
@@ -29,5 +28,4 @@ allowed_elements = ["p", "img"]
 style = "aligned"
 
 [per-file-ignores]
-"prompts/*.md" = ["MD033"]
 "AGENTS.md" = ["MD013", "MD032"]

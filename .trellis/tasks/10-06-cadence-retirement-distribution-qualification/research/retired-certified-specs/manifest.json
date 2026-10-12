@@ -1,0 +1,168 @@
+{
+  "schema": "cadence-retired-spec-preimages/1",
+  "note": "Exact pre-refresh bytes, including latest supersession headers; historical only, not current implementation instructions.",
+  "files": [
+    {
+      "source": ".trellis/spec/backend/database-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/backend/database-guidelines.md",
+      "bytes": 35296,
+      "sha256": "b1a45525104021835191f8a4e2126e27f9ca26d7010aed4a9fa067f5a4a6c395"
+    },
+    {
+      "source": ".trellis/spec/backend/directory-structure.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/backend/directory-structure.md",
+      "bytes": 37554,
+      "sha256": "fbb3690eaf65e37170b5f6cbd43e670cf604406087496bdcd6563185bbb338a9"
+    },
+    {
+      "source": ".trellis/spec/backend/error-handling.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/backend/error-handling.md",
+      "bytes": 15640,
+      "sha256": "81cce39d318581c2b1692f1bda50fb29864d8234d1812f2470b204de53c85c0f"
+    },
+    {
+      "source": ".trellis/spec/backend/index.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/backend/index.md",
+      "bytes": 5314,
+      "sha256": "abb1fdc468adf6d24e1b15a1006538406c0ee793d1a17512cf318993d282e356"
+    },
+    {
+      "source": ".trellis/spec/backend/lightweight-workflow-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/backend/lightweight-workflow-guidelines.md",
+      "bytes": 7482,
+      "sha256": "d30a67d492376510fcb58eb11356eb3b3ba11187f08df009baaa88060e72123e"
+    },
+    {
+      "source": ".trellis/spec/backend/logging-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/backend/logging-guidelines.md",
+      "bytes": 9218,
+      "sha256": "01d832de2c55a2be386b935c8ccb34ec889b7758e004dcd98b51bce457cd3ffe"
+    },
+    {
+      "source": ".trellis/spec/backend/quality-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/backend/quality-guidelines.md",
+      "bytes": 51423,
+      "sha256": "6d50a876df0a046f36003be5ae7d60f4533bf9aff6ddd07b49396ce2eb1fc201"
+    },
+    {
+      "source": ".trellis/spec/backend/task-application-readiness-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/backend/task-application-readiness-guidelines.md",
+      "bytes": 11358,
+      "sha256": "307c310aadd43ecbf8cb2f773e5bf027731d79fa634ae902679d96376b93d95a"
+    },
+    {
+      "source": ".trellis/spec/backend/task-authoring-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/backend/task-authoring-guidelines.md",
+      "bytes": 47885,
+      "sha256": "46796f00b70255033f6d232caffa2f1b35ad034372f859a286e771973a0f6565"
+    },
+    {
+      "source": ".trellis/spec/backend/task-distribution-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/backend/task-distribution-guidelines.md",
+      "bytes": 32532,
+      "sha256": "9d1b8eab285b36cd645de8eb240e1aa49b1b1141eb9e12ea5389c450b79c4879"
+    },
+    {
+      "source": ".trellis/spec/backend/task-execution-admission-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/backend/task-execution-admission-guidelines.md",
+      "bytes": 14239,
+      "sha256": "83d3384235319dc2a9f9a1d0ecba54a2cde1f869f7b1bc27d2ba83c59eec1755"
+    },
+    {
+      "source": ".trellis/spec/backend/task-execution-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/backend/task-execution-guidelines.md",
+      "bytes": 67700,
+      "sha256": "f65360ace7cbf648c1b4b421613f0c0033362adf1cecde3039d773477cbe5687"
+    },
+    {
+      "source": ".trellis/spec/backend/task-observation-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/backend/task-observation-guidelines.md",
+      "bytes": 32632,
+      "sha256": "9c8f2e4b39d2976f10d421d0e9cc9c445c25d230452d1b8c6afbe2330561b90f"
+    },
+    {
+      "source": ".trellis/spec/backend/task-plan-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/backend/task-plan-guidelines.md",
+      "bytes": 15328,
+      "sha256": "f992e9cd2fa510ac4f8fe3ed0511dbc507eac4dea4881482a61fbedbc7bd65ab"
+    },
+    {
+      "source": ".trellis/spec/backend/task-publication-admission-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/backend/task-publication-admission-guidelines.md",
+      "bytes": 9381,
+      "sha256": "d949b76f10cbc055d76a4d86ea0585c486350edd20718c6e76d475c5196e3c84"
+    },
+    {
+      "source": ".trellis/spec/backend/task-read-snapshot-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/backend/task-read-snapshot-guidelines.md",
+      "bytes": 12370,
+      "sha256": "675f7a47bf09ed5e674d517b40fe4db096231a852635e16b46e6688f7417db91"
+    },
+    {
+      "source": ".trellis/spec/backend/task-storage-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/backend/task-storage-guidelines.md",
+      "bytes": 79233,
+      "sha256": "1a30820e86261db469f6fcdff86e02219a7ce67e6d402e666e82589d760a8c38"
+    },
+    {
+      "source": ".trellis/spec/frontend/component-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/frontend/component-guidelines.md",
+      "bytes": 7918,
+      "sha256": "08c36a81685598f98e359ef97492509de036029e1a2dfd02db33a0a7d4e35bb9"
+    },
+    {
+      "source": ".trellis/spec/frontend/directory-structure.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/frontend/directory-structure.md",
+      "bytes": 2693,
+      "sha256": "cd88f82df5011c24bae956cb46282bb99ad6cd9f9707f398f0fc54ddc5b8b23d"
+    },
+    {
+      "source": ".trellis/spec/frontend/hook-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/frontend/hook-guidelines.md",
+      "bytes": 15569,
+      "sha256": "f43cd1b6c69ad87536523fc58403d7cd8b3be992406d0038caae96448f6e35f9"
+    },
+    {
+      "source": ".trellis/spec/frontend/index.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/frontend/index.md",
+      "bytes": 4569,
+      "sha256": "a15c1f8318996678862b6df9f33cca30ac3ad42000a712a5c9a5d9d35b5d42f4"
+    },
+    {
+      "source": ".trellis/spec/frontend/quality-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/frontend/quality-guidelines.md",
+      "bytes": 3436,
+      "sha256": "cc2f4fa32290126eef31e88c07013f27ec03b6ae185e663bc3c2532143b833d6"
+    },
+    {
+      "source": ".trellis/spec/frontend/state-management.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/frontend/state-management.md",
+      "bytes": 10749,
+      "sha256": "bd9fb7b76e29dea9c4a4c6eb8bf0060c1e36df91d09a0aa9b0ba98652d52985e"
+    },
+    {
+      "source": ".trellis/spec/frontend/task-planning-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/frontend/task-planning-guidelines.md",
+      "bytes": 70744,
+      "sha256": "062a4ff1ad6426df3d459ad217bfa8edc560f1cdab96de0917ff637c9c6693a4"
+    },
+    {
+      "source": ".trellis/spec/frontend/task-session-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/frontend/task-session-guidelines.md",
+      "bytes": 69251,
+      "sha256": "2272df15f145106c7cda25b7c9cfa6bd8c1a05742a42ed1e0df756efd11e4ebe"
+    },
+    {
+      "source": ".trellis/spec/frontend/task-source-guidelines.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/frontend/task-source-guidelines.md",
+      "bytes": 27370,
+      "sha256": "363630413602119ff8e004d4b42cb9e0c9de9d34a188e602888e87a31f577151"
+    },
+    {
+      "source": ".trellis/spec/frontend/type-safety.md",
+      "archive": ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/frontend/type-safety.md",
+      "bytes": 8268,
+      "sha256": "a8efdd8c40804f6cef65fbe6a8dc2dbb831f1c74c71d68c419cc9a812ce87c7c"
+    }
+  ]
+}

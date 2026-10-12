@@ -1,23 +1,23 @@
 import path from "node:path";
 import { inspectConsumer, inspectRuns } from "./operator-tools.ts";
 
-const [command = "doctor", root = process.cwd()] = process.argv.slice(2);
 try {
-  if (!["doctor", "runs"].includes(command))
-    throw new Error(
-      "Usage: node --experimental-strip-types <cadence>/src/operator-cli.mjs doctor|runs [consumer-root]",
-    );
+  const [command = "doctor", root = process.cwd(), ...extra] =
+    process.argv.slice(2);
+  if (!["doctor", "runs"].includes(command) || extra.length)
+    throw new Error("usage");
   const result =
     command === "doctor"
       ? inspectConsumer(path.resolve(root))
       : inspectRuns(path.resolve(root));
   console.log(JSON.stringify(result, null, 2));
-  if (command === "doctor" && !result.ok) process.exitCode = 1;
-} catch (error) {
+} catch {
+  // Do not print arbitrary filesystem/configuration text or credentials.
   console.error(
     JSON.stringify({
       ok: false,
-      error: error instanceof Error ? error.message : "operator-command-failed",
+      error: "operator-refused",
+      usage: "node <cadence>/src/operator-cli.mjs doctor|runs [workspace]",
     }),
   );
   process.exitCode = 1;

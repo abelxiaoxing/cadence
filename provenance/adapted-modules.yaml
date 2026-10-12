@@ -4,14 +4,17 @@
 agents:
   - path: agents/design-explorer.md
     role: design-explorer
-    sha256: 1fa17e65a72e262d783467d3032173622fb590ae42982e2beb10d2a3eabdeed1
+    sha256: 26256f9e7c56e2be93dac05bf3c2b3f33a06c63f20367e74853564a59974ece2
   - path: agents/diagnosis-worker.md
     role: diagnosis-worker
-    sha256: 23e4a05baa80a4dd37fd0240171f9eddf968f23058e29eca16f1a58bc1d8ce97
+    sha256: 0fe5c88b92f66e0fb32e4d0b1dbcab46e4e16b14ab657cca007309669853abae
   - path: agents/implementation-worker.md
     role: implementation-worker
-    sha256: eccd0eadcfb7b6b24a9170f72c761acc0f0aa62a5edea4fe01ba3e33638fadd3
+    sha256: abd7d796ac998729c2b901c2da45d92ee9c62a9caa4c6a170ac673cef6c4143b
 reference:
   attribution: THIRD_PARTY_NOTICES.md
   license: licenses/pi-subagents-MIT.txt
   relocated-repo: read-only provenance evidence; no package resolution traverses it
+
+# Lightweight adaptation: readonly planning/diagnosis and direct host editing; human review is separate.
+# Original upstream MIT attribution and license texts remain unchanged.

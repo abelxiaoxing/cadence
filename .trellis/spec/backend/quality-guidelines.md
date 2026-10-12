@@ -1,91 +1,57 @@
-# Quality Guidelines
+# Backend Quality Guidelines
 
-> Code quality standards for the Cadence package: the standalone verification commands, the CI platform matrix, distribution rules, and testing discipline.
+## Gates and scope
 
----
+Run from this standalone package directory:
 
-## Overview
+```sh
+bun run check
+bun run lint
+bun run test
+bun run check:agents
+bun run pack:check
+bun run test -- test/distribution.test.mjs
+bun pm pack --destination <private-temp>
+bun run traceability:check --map <repository-relative-map.json>
+```
 
-Quality is enforced by a small set of standalone commands that run identically on a developer machine and in CI, plus a CI matrix that distinguishes *platform contracts* (what must hold on each OS) from *native qualification* (what only a real native run can prove).
-The package is published after `bun run verify` and the distribution checks pass; nothing is skipped by default.
+`bun run verify` is check + lint + test + pack:check; check:agents is also a separately named gate.
+`check` runs JS syntax validation, canonical operator byte comparison and TypeScript no-emit.
+A targeted test or temporary partial typecheck is not whole-package verification.
+For documentation-only changes, run scoped `node_modules/.bin/rumdl check <paths>`; historical task copies use the existing tasks exclusion, not a new broad ignore.
+Biome formats/checks JavaScript/TypeScript/JSON; do not hand-edit the generated operator.
 
----
+## Match the test to the boundary
 
-## Standalone Commands
+- Fast controller/state tests inject services to test choice, phases, obligations and freshness without expensive host construction.
+- `lightweight-store-controller` also contains real filesystem and second-process lock cases; do not call the entire file pure unit coverage.
+- `lightweight-process-diff` executes actual children/checks and temporary Git/non-Git observations, preserves index bytes and tests incomplete coverage.
+- `lightweight-sdk` uses actual SDK/native adapters and local HTTP fixtures with fabricated auth, including one write/tool-result cycle and readonly tool lists.
+- `lightweight-shell` loads production registration with a fake host; it owns the broad stale/busy/replay/mode/navigation negative matrix.
+- `distribution`, `package-audit`, `package-contract`, `independence` cover actual package boundaries and independent contracts.
+- `terminal-integration` executes source/extracted × regular/fullscreen production CLI PTYs; Python waits for original quit and retains receipts/transcripts.
 
-| Command                                                                          | What it does                                                                                                                                                                                                                                                                                                                                                                           |
-| -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bun run check`                                                                  | `node scripts/check-syntax.mjs` (shell-free `node --check` over `src/`, `scripts/`, `test/`, `skills/`, following no directory symlinks) + `bun scripts/build-workspace-io.mjs --check` (generated-bundle freshness) + `tsc --noEmit`                                                                                                                                                  |
-| `bun run lint`                                                                   | `biome check .` + `rumdl check .`                                                                                                                                                                                                                                                                                                                                                      |
-| `bun run test`                                                                   | `vitest run` over the whole suite                                                                                                                                                                                                                                                                                                                                                      |
-| `bun run test:target <files>`                                                    | `vitest run <files>` — the target-test discipline for focused verification                                                                                                                                                                                                                                                                                                             |
-| `bun run check:agents`                                                           | `node scripts/check-agents.mjs` — validates the managed AGENTS index block                                                                                                                                                                                                                                                                                                             |
-| `bun run pack:check`                                                             | `node scripts/pack-check.mjs` — builds the real tarball and verifies its member set                                                                                                                                                                                                                                                                                                    |
-| `bun run traceability:check`                                                     | `node scripts/traceability-check.mjs` — verifies active OpenSpec Requirement/Scenario ownership                                                                                                                                                                                                                                                                                        |
-| `bun run verify`                                                                 | `bun run check && bun run lint && bun run test && bun run pack:check` — the pre-publish gate                                                                                                                                                                                                                                                                                           |
-| `bun run doctor <root>` / `bun run runs <root>`                                  | read-only operator inspection via the generated `src/operator-cli.mjs` (doctor reports package-manager selection provenance, OpenSpec resolution, and storage state; runs lists run records)                                                                                                                                                                                           |
-| `bun scripts/seed-acceptance.mjs`                                                | fresh-process seed acceptance: runs a named set of durable-workflow/child/apply integration tests then `bun run check`; `--expect-not-ready` asserts the not-ready path                                                                                                                                                                                                                |
-| `bun pm pack --destination <tmp>`                                                | the real pack route, run from the package directory, for distribution work                                                                                                                                                                                                                                                                                                             |
-| `bun run eval:workflow`, `bun run benchmark:verification`, `bun run eval:matrix` | `scripts/evaluate-workflow.mjs` (disposable Pi RPC consumer evaluation with bounded operation/stage/usage traces frozen at deadline, optional progress snapshots, and actual configuration/source fingerprints; preflight and live-model outcomes are distinct), `scripts/benchmark-verification.mjs` (dependency I/O), `scripts/evaluate-matrix.mjs` (explicit live-model evaluation) |
-| `bun scripts/benchmark-workspace.mjs`                                            | measures workspace capture/materialization throughput and the parent event-loop delay of the `workspace-io` worker                                                                                                                                                                                                                                                                     |
+Use explicit responsibility-appropriate budgets: SDK tests currently allow 20 seconds with a 15-second child timeout; new PTYs allow 90 seconds with 15-second interaction waits.
+These are new integration scenarios, not retimed old 5000/1500/60000-ms certified-engine bodies.
+An escaped fixture's eventual exit does not repair its earlier unknown-stop result.
+No model prose/process exit is a passing parent check; no static reference count is execution evidence.
 
----
+## Evidence and platform policy
 
-## CI Matrix
+The [independent review](../../tasks/10-06-cadence-retirement-distribution-qualification/research/lightweight-independent-review.md) records 15 files, 205 passed / 0 failed / 0 skipped, exact 34-member audit and four actual production PTYs on its frozen inputs.
+This is prior local evidence, not an assertion that later edits were tested or that release is approved.
+Keep failed diagnostic receipts and distinguish overlapping separate distribution runs from additional test totals.
 
-`.github/workflows/ci.yml` defines the platform contracts:
+Record actual Node executable/version, Pi identity, OS/architecture and capability results.
+CI uses the runner's available Node, not setup-node version/channel selection; package engine metadata, wildcard peers, development pins and lockfile remain separate policies.
+Version-neutral does not mean every Node/Pi/platform combination was executed or is known supported.
+Windows/macOS native lanes, ConPTY, manager installs, physical-human and paid-provider lanes remain unqualified unless their own receipts exist.
+Loopback adapters do not qualify paid services or every allowlisted adapter.
 
-| Job                            | Platform / runtime                                                          | Contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ------------------------------ | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `verify-linux`                 | ubuntu-22.04, Node 24.13.0, Bun 1.3.14, bubblewrap                          | `bun run verify` + `check:agents` + `traceability:check` + `eval:workflow`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `openspec-platform-contract`   | ubuntu/windows/macos × Node 22.13.0 and 24.13.0                             | real OpenSpec 1.5.0 installed from npm global under a hostile `npm_config_prefix` (`Cadence CLI 中文 & %PATH% ! (npm)`) to exercise custom-prefix shims and shell-sensitive paths; runs `bun run check` and, via explicit `node node_modules/vitest/vitest.mjs` (so Bun cannot mask Node spawn behavior), `test/openspec-cli.test.ts`, `test/design-delivery.integration.test.ts`, `test/sqlite-schema.test.ts`, `test/package-state.test.ts`, `test/stage-activation.integration.test.ts`, `test/prompt-activation.integration.test.ts`, `test/prompts.test.mjs`, `test/subagent-activity.property.test.ts` |
-| `storage-platform-contract`    | ubuntu/windows/macos × Node 24.13.0                                         | `test/directory-sync.test.ts`, `test/remove-path.test.ts`, `test/workflow-engine.integration.test.ts` — native file publication, injected directory/file faults, and durable engine reopen                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `implement-isolation-contract` | ubuntu-22.04, Node 22.13.0/24.13.0, bubblewrap, pnpm 10.12.1 + yarn 1.22.22 | `CADENCE_REAL_ISOLATION=1` (unavailable isolation fails the job; it never silently skips) and `CADENCE_ALL_PACKAGE_MANAGERS=1`; runs `test/isolation-real.integration.test.ts`, `test/workspace-io.test.ts`, `test/review-regressions.test.ts`, `test/evaluation-review.test.mjs`, `test/usability-remediation.test.ts` — real isolation, Red/Green, storage reopen, cumulative verification, apply, host boundaries, descendant cancellation                                                                                                                                                                |
-| `host-prototype`               | windows-2022 x64, macos-15-intel x64, macos-15 arm64 × Node 22.13.0/24.13.0 | asserts the actual native runtime (no emulated-architecture substitution), builds and qualifies prototype fixture cases with `--require-native`, uploads diagnostics (retention does not override the failure status)                                                                                                                                                                                                                                                                                                                                                                                        |
-| `windows-implement-contract`   | windows-2022 x64, Node 22.13.0/24.13.0                                      | `CADENCE_REAL_WINDOWS_JOB=1`; the matching native prototype must build and qualify first, then `src/build-windows-job.mjs` builds the production helper, `test/windows-job-real.integration.test.ts` + `test/windows-job.test.ts` + `test/host-trusted-environment.test.ts` run against the source tree, `scripts/pack-windows.mjs` stages the native tarball, and the packaged acceptance re-runs the native test against the extracted package                                                                                                                                                             |
+## Review checklist
 
-Two rules fall out of the matrix:
-
-- Windows x64 native-job acceptance is proved only by `test/windows-job-real.integration.test.ts` on a real Windows runner; local tests do not confer native qualification, as stated in `docs/windows-host-trusted.md` (the CI evidence record).
-- OpenSpec contracts run against the real pinned `@fission-ai/openspec@1.5.0` with `CADENCE_REAL_OPENSPEC=1` and `OPENSPEC_TELEMETRY=0`; `src/openspec-cli.ts` keeps the invocation shell-free (explicit Node executable, no shell shim parsing, operator-only `ABEL_OPENSPEC_PACKAGE_ROOT` / `ABEL_OPENSPEC_NODE` overrides), and `scripts/ci-openspec-path.mjs` puts the actual npm global command directory on PATH.
-- The status protocol is strict: `src/openspec-cli.ts` requires a boolean `isComplete`, and an optional `isPlanningComplete` must also be boolean (and is true for planning completion when present); OpenSpec commands run from the target root, never from a nested directory.
-
----
-
-## Distribution Rules
-
-- `provenance/adapted-modules.yaml` pins the three package-shipped Agent files by path, role, and SHA-256 (`agents/design-explorer.md`, `agents/diagnosis-worker.md`, `agents/implementation-worker.md`); it also records the reference provenance: attribution in `THIRD_PARTY_NOTICES.md`, license `licenses/pi-subagents-MIT.txt`, and the relocated reference repo as read-only evidence that no package resolution traverses.
-- `scripts/pack-check.mjs` (P-007) builds the real tarball and verifies the exact member set against `provenance/package-members.json`, no symlinks, and the four prompt/skill/agent families.
-- `scripts/traceability-check.mjs` dynamically verifies that every active Requirement/Scenario entry under `openspec/changes/` resolves and is owned exactly once by the change's `tasks.md`, and that every task reference resolves to the exact delta-spec heading it names; incomplete traceability inputs (a change with `tasks.md` but no `specs/`, or vice versa) fail the check.
-- `scripts/check-agents.mjs` validates the managed `<!-- ABEL:AGENTS-INDEX:START/END -->` block in `AGENTS.md`: exactly one marker pair; no timestamps, version-policy wording, Gate/approval state, runtime IDs, or reference-package product dependencies; every backticked path must exist inside the repository and not be a symlink; command phrases must resolve on PATH.
-- The target test for this package is `bun run test -- test/distribution.test.mjs`; the full distribution suite is `bun run verify` plus `bun run traceability:check`.
-
----
-
-## Testing Conventions
-
-- Naming: `*.test.ts` unit tests, `*.integration.test.ts` integration tests (real Git, real SQLite, real workers), `*.property.test.ts` property-based tests, `*.test.mjs` for plain-JS assets (skill scripts, the distribution test, configuration parsing).
-- Target-test discipline: verify a change with `bun run test:target <the files that cover it>` during development, and finish with the full `bun run test` before publishing; `scripts/seed-acceptance.mjs` is the fresh-process acceptance for the durable workflow, child-session and apply paths.
-- Keep raw validation output outside the checkout in owner-private development-evidence storage; task records retain bounded command/result summaries and provenance (revision, local locator, byte length and SHA-256), clearly distinguishing historical runs from current verification.
-  `test/independence.test.ts` walks the working tree, including task research artifacts: do not broaden its ignores or rename raw logs inside the repository merely to evade assertions.
-  Relocating existing evidence requires approval, safe non-overwriting copy/flush and byte/hash verification before removing unchanged originals; this is development evidence, not product authority or consumer-state migration.
-- Opt-in environment flags make coverage real rather than skipped: `CADENCE_REAL_ISOLATION`, `CADENCE_REAL_WINDOWS_JOB`, `CADENCE_REAL_OPENSPEC`, `CADENCE_ALL_PACKAGE_MANAGERS`.
-- `biome.json` keeps test files pragmatic (`noExplicitAny` and `noNonNullAssertion` off for `*.test.ts`) while source stays strict; `test/workflow-engine.integration.test.ts` and `openspec/changes/**/implement-plan.json` are formatter/linter-exempt fixtures.
-
----
-
-## Forbidden Patterns
-
-- Never use a Unix `find | xargs` traversal for syntax checks or file walking; `scripts/check-syntax.mjs` is the shell-free replacement and follows no directory symlinks.
-- Never let Bun mask Node spawn behavior in the platform-contract jobs; they invoke `node node_modules/vitest/vitest.mjs` explicitly.
-- Never silently skip unavailable isolation or native prerequisites; the opt-in flags turn absence into a job failure.
-- Never add a tarball member without updating `provenance/package-members.json`, and never ship a changed Agent file without updating its SHA-256 pin in `provenance/adapted-modules.yaml`.
-- Never put timestamps, version-policy claims, or Gate/approval state into the managed AGENTS index block; `bun run check:agents` rejects them.
-
----
-
-## Common Mistakes
-
-- Running `bun run test` as the only verification for a storage or isolation change; those paths are covered by the platform-contract jobs and the opt-in flags, not the default suite.
-- Claiming "Windows works" from a local `vitest` run; only the `windows-implement-contract` and `host-prototype` jobs establish native qualification, and their artifact retention (7 days) is the evidence window.
-- Editing `biome.json` to silence a source issue instead of fixing the module; overrides exist only for generated bundles, fixtures, and test pragmatism.
+Check current native consent, no late auth spawn, exact transport, no resolved-secret persistence, selected-state refusal/noncreation, unknown-lock retention, configured obligations, honest diff coverage and human issues acknowledgment.
+Preserve ordinary check environment and literal filesystem path bytes.
+Review member closure and regenerated bundle after store/types/operator edits.
+Require regression assertions at affected boundaries, not `true` placeholders or a larger proof/cache framework.
+[Distribution](./task-distribution-guidelines.md) owns old assertion dispositions: historical 5547/5/9 remains failed/superseded.

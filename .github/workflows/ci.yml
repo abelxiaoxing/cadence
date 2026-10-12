@@ -8,212 +8,42 @@ permissions:
   contents: read
 
 jobs:
-  verify-linux:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24.13.0'
-      - name: Canonical native temporary directory
-        run: node scripts/ci-temp.mjs
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: '1.3.14'
-      - run: bun install --frozen-lockfile
-      - run: sudo apt-get update
-      - run: sudo apt-get install --yes bubblewrap
-      - run: bun run verify
-      - run: bun run check:agents
-      - run: bun run traceability:check
-      - run: bun run eval:workflow
-
-  openspec-platform-contract:
-    name: OpenSpec / ${{ matrix.os }} / Node ${{ matrix.node }}
+  lightweight-platform:
+    name: Lightweight workflow / ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        node: ['22.13.0', '24.13.0']
     runs-on: ${{ matrix.os }}
-    env:
-      # Exercise npm global custom-prefix shims and shell-sensitive paths.
-      npm_config_prefix: '${{ github.workspace }}/../Cadence CLI 中文 & %PATH% ! (npm)'
-      CADENCE_REAL_OPENSPEC: '1'
-      OPENSPEC_TELEMETRY: '0'
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node }}
+      # Use the runner's available Node; record actual capabilities and identity.
+      # Dependency metadata remains separate from release qualification.
       - name: Canonical native temporary directory
         run: node scripts/ci-temp.mjs
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.3.14'
       - run: bun install --frozen-lockfile
-      # Installation is explicit CI setup, never a runtime fallback/download.
-      - run: npm install --global @fission-ai/openspec@1.5.0
-      - name: Add actual npm global command directory to PATH
-        run: node scripts/ci-openspec-path.mjs
+      - name: Record actual Node and Pi identities
+        run: node --input-type=module -e "import fs from 'node:fs'; console.log(JSON.stringify({node:process.version,executable:process.execPath,pi:JSON.parse(fs.readFileSync('node_modules/@earendil-works/pi-coding-agent/package.json','utf8')).version,platform:process.platform,arch:process.arch}))"
       - run: bun run check
-      # Explicit Node invocation prevents Bun from masking Node spawn behavior.
-      # These cover Design receipt/retry/admission, not native Implement isolation.
-      - run: node node_modules/vitest/vitest.mjs run test/openspec-cli.test.ts test/design-delivery.integration.test.ts test/sqlite-schema.test.ts test/package-state.test.ts test/stage-activation.integration.test.ts test/prompt-activation.integration.test.ts test/prompts.test.mjs test/subagent-activity.property.test.ts --testTimeout=20000
-
-  storage-platform-contract:
-    name: Storage recovery / ${{ matrix.os }} / Node 24.13.0
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24.13.0'
-      - name: Canonical native temporary directory
-        run: node scripts/ci-temp.mjs
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: '1.3.14'
-      - run: bun install --frozen-lockfile
-      # Native file publication plus injected directory/file faults and durable
-      # engine reopen. Scripted Workers do not imply native Implement isolation.
-      - run: node node_modules/vitest/vitest.mjs run test/directory-sync.test.ts test/remove-path.test.ts test/workflow-engine.integration.test.ts
-
-  implement-isolation-contract:
-    name: Implement / Bubblewrap / Node ${{ matrix.node }}
-    runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ['22.13.0', '24.13.0']
-    env:
-      CADENCE_REAL_ISOLATION: '1'
-      CADENCE_ALL_PACKAGE_MANAGERS: '1'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node }}
-      - name: Canonical native temporary directory
-        run: node scripts/ci-temp.mjs
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: '1.3.14'
-      - run: sudo apt-get update
-      - run: sudo apt-get install --yes bubblewrap
-      - run: bun install --frozen-lockfile
-      - run: npm install --global pnpm@10.12.1 yarn@1.22.22
-      # Opt-in means unavailable isolation fails the job; it never silently skips.
-      - run: node node_modules/vitest/vitest.mjs run test/workspace-io.test.ts test/isolation-backend.test.ts test/subagent-process.test.ts test/package-candidate-process.integration.test.ts test/review-regressions.test.ts test/evaluation-review.test.mjs test/usability-remediation.test.ts
-
-  host-prototype:
-    name: Prototype only / ${{ matrix.target.os }} / ${{ matrix.target.arch }} / Node ${{ matrix.node }}
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ['22.13.0', '24.13.0']
-        target:
-          - { os: windows-2022, platform: win32, arch: x64 }
-          - { os: macos-15-intel, platform: darwin, arch: x64 }
-          - { os: macos-15, platform: darwin, arch: arm64 }
-    runs-on: ${{ matrix.target.os }}
-    env:
-      EXPECTED_PLATFORM: ${{ matrix.target.platform }}
-      EXPECTED_ARCH: ${{ matrix.target.arch }}
-      EXPECTED_NODE: ${{ matrix.node }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node }}
-          architecture: ${{ matrix.target.arch }}
-      - name: Assert actual native runtime (no emulated architecture substitution)
-        run: node -e "if(process.platform!==process.env.EXPECTED_PLATFORM || process.arch!==process.env.EXPECTED_ARCH || process.version!=='v'+process.env.EXPECTED_NODE) process.exit(1)"
-      - name: Select installed Visual Studio 2022 x64 tools
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/ci-msvc.ps1
-      - name: Explicit Windows prototype build
-        if: runner.os == 'Windows'
-        run: node scripts/host-prototype/build.mjs --output "${{ runner.temp }}/host-prototype"
-      - name: Qualify actual Windows Job fixture cases
-        if: runner.os == 'Windows'
-        run: node scripts/host-prototype/qualify.mjs --require-native --output "${{ runner.temp }}/host-prototype" --helper "${{ runner.temp }}/host-prototype/windows-launcher.exe"
-      - name: Qualify actual macOS process-group fixture cases
-        if: runner.os == 'macOS'
-        run: node scripts/host-prototype/qualify.mjs --require-native --output "${{ runner.temp }}/host-prototype"
-      # Retaining diagnostics does not override the preceding failure status.
-      - uses: actions/upload-artifact@v4
+      - run: bun run lint
+      # Serial new controller/storage/process/SDK tests and exact archive/body/pins.
+      # Real source/extracted regular/fullscreen PTYs execute on POSIX only.
+      # Windows direct-child cancellation is weaker; this is not ConPTY evidence.
+      - run: bun run test
+      - run: bun run check:agents
+      - run: bun run pack:check
+      - run: bun run traceability:check --map .trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/acceptance-map-ci.json
+      - name: Preserve new diagnostic fixtures without overriding failures
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: host-prototype-${{ matrix.target.os }}-${{ matrix.target.arch }}-node-${{ matrix.node }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/host-prototype
-          retention-days: 7
-          if-no-files-found: warn
-
-  windows-implement-contract:
-    name: Implement / Windows x64 / Node ${{ matrix.node }}
-    runs-on: windows-2022
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ['22.13.0', '24.13.0']
-    env:
-      CADENCE_REAL_WINDOWS_JOB: '1'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node }}
-          architecture: x64
-      - name: Canonical native temporary directory
-        run: node scripts/ci-temp.mjs
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: '1.3.14'
-      - run: bun install --frozen-lockfile
-      - name: Select installed Visual Studio 2022 x64 tools
-        shell: pwsh
-        run: ./scripts/ci-msvc.ps1
-      # Windows production admission requires its matching native prototype.
-      - name: Build and qualify the Windows prerequisite
-        run: |
-          node scripts/host-prototype/build.mjs --output "${{ runner.temp }}/host-prototype"
-          if ($LASTEXITCODE -ne 0) { throw 'Prototype build failed' }
-          node scripts/host-prototype/qualify.mjs --require-native --output "${{ runner.temp }}/host-prototype" --helper "${{ runner.temp }}/host-prototype/windows-launcher.exe"
-          if ($LASTEXITCODE -ne 0) { throw 'Prototype qualification failed' }
-      - name: Explicit production helper build
-        run: node src/build-windows-job.mjs --output "${{ runner.temp }}/windows-job"
-      - name: Native source lifecycle and Implement acceptance
-        env:
-          ABEL_WINDOWS_JOB_HELPER: '${{ runner.temp }}/windows-job/windows-job.exe'
-        run: node node_modules/vitest/vitest.mjs run test/windows-job-real.integration.test.ts test/windows-job.test.ts test/host-trusted-environment.test.ts
-      - name: Stage the actual Windows distribution
-        run: node scripts/pack-windows.mjs --helper "${{ runner.temp }}/windows-job/windows-job.exe" --output "${{ runner.temp }}/windows-package"
-      - name: Extract the package for native acceptance
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}/windows-installed" | Out-Null
-          $archive = Get-ChildItem "${{ runner.temp }}/windows-package/*.tgz" | Select-Object -ExpandProperty FullName
-          tar -xzf $archive -C "${{ runner.temp }}/windows-installed"
-          if ($LASTEXITCODE -ne 0) { throw 'Package extraction failed' }
-          New-Item -ItemType Junction -Path "${{ runner.temp }}/windows-installed/package/node_modules" -Target (Join-Path $PWD 'node_modules') | Out-Null
-          "CADENCE_NATIVE_PACKAGE_ROOT=${{ runner.temp }}/windows-installed/package" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "ABEL_WINDOWS_JOB_HELPER=${{ runner.temp }}/windows-installed/package/src/windows-job.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Native packaged lifecycle and Implement acceptance
-        run: node node_modules/vitest/vitest.mjs run test/windows-job-real.integration.test.ts
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: windows-implement-node-${{ matrix.node }}-${{ github.run_attempt }}
+          name: lightweight-${{ matrix.os }}-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/host-prototype
-            ${{ runner.temp }}/windows-job
-            ${{ runner.temp }}/windows-package
-          retention-days: 7
+            ${{ runner.temp }}/cadence-terminal-*/pty-receipt.json
+            ${{ runner.temp }}/cadence-terminal-*/terminal.bin
           if-no-files-found: warn
+          retention-days: 7

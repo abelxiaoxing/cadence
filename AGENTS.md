@@ -1,27 +1,32 @@
 ## Cadence
 
-`@abelxiaoxing/cadence` is a Pi extension that provides four explicit Abel workflow stages: `/abel-init`, `/abel-design`, `/abel-implement`, and `/abel-diagnose`.
-Ordinary engineering work never activates the workflow; only a user-issued idle raw slash invocation starts a stage.
-Implement is durable and resumable across sessions and hosts: owner-private SQLite state, sealed deliveries, bounded recovery, and platform-specific verification isolation (Linux Bubblewrap, Windows x64 native Job).
-The package ships three immutable professional Agents (`agents/`), research and commit skills (`skills/`), stage prompts (`prompts/`), and example configuration (`config/`) as pinned, compiler-checked content.
+`@abelxiaoxing/cadence` is a Pi extension with one explicit terminal-only `/cadence` task workflow.
+Ordinary engineering and resource discovery never activate it.
+Code tasks require a readable plan and fresh native terminal Start consent, then direct host-tool edits, real parent checks and human review.
+This is not a sandbox, certified executor or transactional application system.
+Research/diagnosis are readonly; ordinary conversations remain independent.
+New human-readable records live under `.cadence/assistant/tasks`; private diagnostics and coordination use `cadence-assistant-v1`.
+Old history and uncertain resources are never imported, reset or cleaned.
+The package ships three pinned professional Agents (`agents/`), independent research and commit skills (`skills/`), and optional check configuration (`config/`).
 
 Project-specific development guidelines live in `.trellis/spec/`.
-The `backend/` layer covers the package code: the `src/` modules, `scripts/`, owner-private storage, the workflow engine, delivery, verification, and operator tooling.
-The `frontend/` layer is repurposed as "Presentation & Content": the TUI projection in `src/subagent-activity.ts` and `src/startup-card.ts`, plus the package-shipped `prompts/`, `skills/`, `agents/`, and `config/` content.
+The backend layer covers `src/`, `scripts/`, record storage, foreground execution, checks and operator tooling.
+The frontend layer is Presentation & Content: native TUI projection plus shipped Agents/skills/config.
 This repository has no web frontend.
 
 ## Distribution routes
 
 - Target test: `bun run test -- test/distribution.test.mjs`.
 - Real pack route: from this package directory, run `bun pm pack --destination <tmp>`.
-- Distribution suite: `bun run verify` (check && lint && test && pack:check); traceability: `bun run traceability:check`.
+- Distribution suite: `bun run verify` (check && lint && test && pack:check).
+- Traceability: `bun run traceability:check --map <repository-relative-map.json>`; valid references are not executed evidence.
 
 <!-- ABEL:AGENTS-INDEX:START -->
 ## Project index
 
-- `openspec/` and `package.json` define the target package and OpenSpec root.
-- `src/index.ts` is the Pi extension entrypoint; package-shipped prompts, skills, Agents, and config are documented in `.trellis/spec/frontend/`.
-- Backend implementation conventions live in `.trellis/spec/backend/`.
+- `package.json` defines the standalone package; maintained safety contracts live in `.trellis/spec/`.
+- `src/index.ts` is the sole Pi extension entrypoint; shipped skills, Agents and configuration are documented in `.trellis/spec/frontend/`.
+- Backend implementation and distribution conventions live in `.trellis/spec/backend/`.
 <!-- ABEL:AGENTS-INDEX:END -->
 
 <!-- TRELLIS:START -->

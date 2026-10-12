@@ -1,53 +1,45 @@
-// Immutable package-owned professional Agent registry. Files are loaded
-// relative to this module and are never discovered from user or project Agent
-// directories. The registry exposes no override or search-path API.
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readBounded } from "./task-store.ts";
 
 export const AGENT_FILES = [
   "design-explorer.md",
   "implementation-worker.md",
   "diagnosis-worker.md",
 ] as const;
-
-export interface AgentDefinition {
-  role: string;
-  fileName: string;
-  path: string;
-  sha256: string;
-  bytes: number;
-  content: string;
-}
-
-export function loadAgentDefinitions(): AgentDefinition[] {
-  const agentsDir = resolve(
-    dirname(fileURLToPath(import.meta.url)),
-    "..",
-    "agents",
-  );
+export function loadAgentDefinitions() {
   return AGENT_FILES.map((fileName) => {
-    const path = join(agentsDir, fileName);
-    const st = statSync(path);
-    if (!st.isFile()) {
-      throw new Error(`agent definition is not a regular file: ${path}`);
-    }
-    const content = readFileSync(path, "utf8");
+    const path = fileURLToPath(
+      new URL(`../agents/${fileName}`, import.meta.url),
+    );
+    const data = readBounded(path, 32768);
+    if (!data) throw new Error("Missing package Agent");
     return {
       role: fileName.replace(/\.md$/, ""),
       fileName,
       path,
-      sha256: createHash("sha256").update(content).digest("hex"),
-      bytes: Buffer.byteLength(content, "utf8"),
-      content,
+      sha256: createHash("sha256").update(data).digest("hex"),
+      bytes: data.length,
+      content: data.toString("utf8"),
     };
   });
 }
-
-/** Deterministic role -> content hash map for identity verification. */
 export function agentHashes(): Record<string, string> {
   return Object.fromEntries(
-    loadAgentDefinitions().map((a) => [a.role, a.sha256]),
+    loadAgentDefinitions().map((agent) => [agent.role, agent.sha256]),
   );
+}
+export function roleInstructions(
+  kind: "code" | "research" | "diagnosis",
+): string {
+  const role =
+    kind === "code"
+      ? "implementation-worker"
+      : kind === "research"
+        ? "design-explorer"
+        : "diagnosis-worker";
+  const agent = loadAgentDefinitions().find((entry) => entry.role === role);
+  if (!agent) throw new Error("Missing fixed role");
+  return `${agent.content}\n\nCurrent Cadence workflow: ${kind === "code" ? "Edit the chosen working copy using ordinary host tools under the approved plan." : "Read-only investigation; do not modify files or delegate editing."}
+Do not run Git mutations, install software, delete consumer data, or publish. No autonomous retry, nested worker, candidate sealing, transaction application, or certification is available. Report uncertainty and useful results honestly. Worker completion is NOT a passing check. Host tools are trusted tools, not a sandbox.`;
 }

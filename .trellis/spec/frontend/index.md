@@ -1,37 +1,38 @@
 # Presentation & Content Guidelines
 
-> This repository has no web frontend.
-> This layer covers the Cadence TUI presentation (the subagent-activity widget and the startup card in `src/subagent-activity.ts` / `src/startup-card.ts`) plus the package-shipped content: the stage prompts in `prompts/`, the skills in `skills/`, the three professional Agents in `agents/`, and the example configuration in `config/`.
+## Scope
 
----
+This repository has no web frontend.
+This layer owns native Pi terminal presentation plus shipped Agents, independent skills and configuration examples.
+`src/index.ts` registers one `/cadence` workflow through `src/task-shell.ts`; ordinary engineering and resource discovery never activate it.
+The lightweight replacement is implemented and independently reviewed locally, not certified or release-qualified across all platforms.
 
-## Overview
+## Pre-Development Checklist
 
-The "frontend" of this package is a terminal presentation surface and a set of versioned, pinned content assets — there is no browser code, no component library, and no server-rendered page.
-The package renders through `pi-tui` widgets inside the Pi session, and everything the user can read that is not a tool result (activity lines, the configuration card, the stage prompts, the skill documentation) is owned by this layer.
-The package code itself (storage, workflow engine, delivery, verification, operators) is documented in `.trellis/spec/backend/`.
+1. Read the active task artifacts and the [implemented workflow contract](../backend/lightweight-workflow-guidelines.md), which owns cross-layer APIs, fields, bounds and refusal behavior.
+2. Read [directory ownership](./directory-structure.md) and the relevant native UI/content guide below.
+3. Inspect adjacent source/tests and the installed Pi public declarations; global documentation may describe a different host identity.
+4. Keep presentation separate from controller/store authority: history, model prose and a rendered plan never grant Start consent.
+5. Preserve independent skills, Agent licenses/pins and consumer data; do not add a web UI, model-callable workflow tool or second executor.
+6. Use [quality checks](./quality-guidelines.md) appropriate to the change and label unexecuted qualification honestly.
 
----
+## Maintained guides
 
-## Guidelines Index
+| Guide                                           | Responsibility                                                       |
+| ----------------------------------------------- | -------------------------------------------------------------------- |
+| [Directory structure](./directory-structure.md) | Source/content ownership, role mapping and independent config        |
+| [Components](./component-guidelines.md)         | Native dialogs, pager, cancellable progress and startup summary      |
+| [Hooks](./hook-guidelines.md)                   | Raw terminal entry, stale context and waited departure               |
+| [State](./state-management.md)                  | Transient display versus durable context, checks and human review    |
+| [Types](./type-safety.md)                       | Shared decoders, host signatures and literal auth/config boundaries  |
+| [Quality](./quality-guidelines.md)              | Fake-host versus production PTY evidence, content and package audits |
 
-| Guide                                             | Description                                                                                         | Status |
-| ------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------ |
-| [Directory Structure](./directory-structure.md)   | Layout and ownership of `prompts/`, `skills/`, `agents/`, `config/`                                 | Done   |
-| [Component Guidelines](./component-guidelines.md) | TUI projection rules: width-safe rendering, display-state vocabulary, startup card widget           | Done   |
-| [Hook Guidelines](./hook-guidelines.md)           | How the package hooks into the Pi host: activation, exit, tool registration, loader-error surfacing | Done   |
-| [State Management](./state-management.md)         | Display state vs durable state: what is never persisted, what is derived from already-read facts    | Done   |
-| [Quality Guidelines](./quality-guidelines.md)     | Content verification: agent pins, prompt-activation contracts, lint coverage, loader bounds         | Done   |
-| [Type Safety](./type-safety.md)                   | TypeBox schemas, strict JSON configuration, strict packet/result envelopes, canonical identity      | Done   |
+[Backend storage](../backend/database-guidelines.md), [diagnostics](../backend/logging-guidelines.md) and [distribution](../backend/task-distribution-guidelines.md) own their respective operational contracts.
+Shared [reuse](../guides/code-reuse-thinking-guide.md) and [cross-layer](../guides/cross-layer-thinking-guide.md) guides supplement these specs.
+Write maintained documentation in English and keep each injected file below 32768 bytes.
 
----
+## Historical routes
 
-## How to Use These Guidelines
-
-Each file documents the actual conventions of this package, with real file paths and concrete examples taken from the code.
-Treat a change to a prompt, skill, agent, or config example as a content change: it is linted, hash-pinned, and covered by the prompt-activation and distribution tests, so run those checks before publishing.
-The Presentation & Content layer never owns durable state; when a displayed value must survive a session, it belongs to the backend storage layer, not to a widget.
-
----
-
-**Language**: All documentation should be written in **English**.
+[Session](./task-session-guidelines.md), [source](./task-source-guidelines.md) and [planning](./task-planning-guidelines.md) are tombstones linking exact archived bodies, not additional live requirements.
+The removed activity widget, stage prompts, Gate/compiler/approval lineage and certified Completion are not hidden current surfaces.
+Historical failures remain failed/superseded; archived requirements do not authorize consumer migration, cleanup, Git mutation or publication.

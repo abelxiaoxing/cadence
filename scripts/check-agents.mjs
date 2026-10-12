@@ -2,8 +2,9 @@
 // AGENTS index validation: every indexed path and command must exist and the
 // managed block must not index runtime IDs, timestamps, approval state,
 // version policy, or a reference-repository product dependency.
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -69,7 +70,7 @@ for (const route of routes) {
     // command phrase: the first token must be on PATH
     const token = route.split(/\s+/)[0];
     const onPath = (process.env.PATH ?? "")
-      .split(":")
+      .split(delimiter)
       .some((dir) => dir && existsSync(join(dir, token)));
     if (!onPath) throw new Error(`indexed command not on PATH: ${token}`);
     continue;
@@ -78,9 +79,40 @@ for (const route of routes) {
   if (!existsSync(candidate)) {
     throw new Error(`indexed path does not exist: ${route}`);
   }
-  if (statSync(candidate).isSymbolicLink()) {
+  if (lstatSync(candidate).isSymbolicLink()) {
     throw new Error(`indexed path must not be a symlink: ${route}`);
   }
 }
 
+for (const route of [
+  "package.json",
+  "src/index.ts",
+  ".trellis/spec/backend/",
+  ".trellis/spec/frontend/",
+]) {
+  if (!block.includes(`\`${route}\``))
+    throw new Error("AGENTS index missing task ownership route");
+}
+if (/openspec|prompts\//iu.test(block))
+  throw new Error("AGENTS index retains retired ownership");
+const provenance = readFileSync(
+  join(ROOT, "provenance/adapted-modules.yaml"),
+  "utf8",
+);
+for (const role of [
+  "design-explorer",
+  "diagnosis-worker",
+  "implementation-worker",
+]) {
+  const hash = createHash("sha256")
+    .update(readFileSync(join(ROOT, "agents", `${role}.md`)))
+    .digest("hex");
+  const binding = provenance.match(
+    new RegExp(
+      `path: agents/${role}\\.md[\\s\\S]{0,160}?role: ${role}[\\s\\S]{0,160}?sha256: ([0-9a-f]{64})`,
+      "u",
+    ),
+  );
+  if (binding?.[1] !== hash) throw new Error("Agent provenance drift");
+}
 console.log("check:agents: AGENTS index valid");

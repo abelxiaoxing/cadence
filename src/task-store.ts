@@ -1,485 +1,445 @@
-import { randomUUID } from "node:crypto";
-import { closeSync, lstatSync, openSync } from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { canonicalJson } from "./canonical.ts";
-import { syncDirectory } from "./directory-sync.ts";
-import { acquireCheckoutOwnership } from "./package-state.ts";
-import { configureSqlite, matchesSqliteSchema } from "./sqlite-schema.ts";
+import { spawnSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import {
-  ensureStateDirectory,
-  type ResolvedStateRoot,
-  resolveStateRoot,
-} from "./state-root.ts";
-import { TASK_FOUNDATION_SCHEMA } from "./storage-schema.ts";
-import { requireLegacyQuiescence } from "./task-legacy.ts";
+  closeSync,
+  constants,
+  fstatSync,
+  fsyncSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readSync,
+  realpathSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir, hostname } from "node:os";
 import {
-  closedTaskObject,
-  decodePortableTask,
-  decodeTaskArtifact,
-  newPortableTask,
-  type PortableTask,
-  TASK_LIMITS,
-  type TaskArtifact,
-  taskDigest,
-  taskError,
-  taskFail,
-  taskHash,
-  taskId,
-  taskInteger,
-  taskPublicationPath,
-} from "./task-records.ts";
+  dirname,
+  isAbsolute,
+  join,
+  parse,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
+import {
+  decodeCheck,
+  decodeTask,
+  MAX_RECORD_BYTES,
+  object,
+  type TaskRecord,
+  validId,
+} from "./task-types.ts";
+import { diagnosticText } from "./verification-diagnostics.ts";
 
-export interface TaskReview {
-  taskId: string;
-  revision: number;
-  artifacts: TaskArtifact[];
-  digest: string;
-}
-export interface TaskPublication {
-  sequence: number;
-  operationId: string;
-  taskId: string;
-  path: string;
-  expected: Uint8Array | null;
-  desired: Uint8Array;
-  state: "pending" | "delivered" | "conflict";
-}
-function safeDatabase(file: string): void {
-  for (const suffix of ["", "-wal", "-shm", "-journal"]) {
-    const stat = lstatSync(file + suffix, { throwIfNoEntry: false });
-    if (
-      stat &&
-      (!stat.isFile() ||
-        stat.isSymbolicLink() ||
-        stat.nlink !== 1 ||
-        (process.platform !== "win32" &&
-          ((stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.())))
-    )
-      taskFail("task-path-unsafe");
+function parseRecord(data: Buffer): unknown {
+  try {
+    return JSON.parse(data.toString("utf8"));
+  } catch {
+    throw new Error("Corrupt JSON state; preserved without reset");
   }
 }
-const schemaQuery =
-  "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
-let expectedSchema: string | undefined;
-function exactSchema(db: DatabaseSync): boolean {
-  if (!expectedSchema) {
-    const reference = new DatabaseSync(":memory:");
+function absent(error: unknown): boolean {
+  return object(error) && error.code === "ENOENT";
+}
+/** Reject links in every existing ancestor. Missing observation never creates paths. */
+export function safeDirectory(path: string, create = false): boolean {
+  const full = resolve(path);
+  const root = parse(full).root;
+  let at = root;
+  for (const part of full.slice(root.length).split(sep).filter(Boolean)) {
+    at = join(at, part);
     try {
-      reference.exec(TASK_FOUNDATION_SCHEMA);
-      expectedSchema = canonicalJson(reference.prepare(schemaQuery).all());
-    } finally {
-      reference.close();
+      if (!lstatSync(at).isDirectory() || lstatSync(at).isSymbolicLink())
+        throw new Error("Unsafe directory");
+    } catch (error) {
+      if (!absent(error)) throw error;
+      if (!create) return false;
+      try {
+        mkdirSync(at, { mode: 0o700 });
+      } catch (mkdirError) {
+        if (!object(mkdirError) || mkdirError.code !== "EEXIST")
+          throw mkdirError;
+      }
+      if (!lstatSync(at).isDirectory() || lstatSync(at).isSymbolicLink())
+        throw new Error("Unsafe directory");
     }
   }
-  return canonicalJson(db.prepare(schemaQuery).all()) === expectedSchema;
+  return true;
 }
-function validateDatabase(db: DatabaseSync, rootHash: string): void {
-  if (
-    !matchesSqliteSchema(db, TASK_FOUNDATION_SCHEMA) ||
-    !exactSchema(db) ||
-    db
-      .prepare("SELECT 1 FROM sqlite_master WHERE type IN ('trigger','view')")
-      .get()
-  )
-    taskFail("task-storage-invalid");
-  const rows = db.prepare("SELECT version, root_hash FROM task_protocol").all();
-  if (
-    rows.length !== 1 ||
-    rows[0].version !== 1 ||
-    rows[0].root_hash !== rootHash
-  )
-    taskFail("task-storage-invalid");
+export function readBounded(path: string, max: number): Buffer | undefined {
+  if (!safeDirectory(dirname(path))) return undefined;
+  let fd: number;
+  try {
+    const st = lstatSync(path);
+    if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size > max)
+      throw new Error("Unsafe or oversized file");
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  } catch (error) {
+    if (absent(error)) return undefined;
+    throw error;
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.nlink !== 1 || st.size > max)
+      throw new Error("Unsafe or oversized file");
+    // Read at most max+1 even if another editor grows the file after stat.
+    const buffer = Buffer.alloc(max + 1);
+    let size = 0;
+    while (size < buffer.length) {
+      const n = readSync(fd, buffer, size, buffer.length - size, null);
+      if (!n) break;
+      size += n;
+    }
+    if (size > max) throw new Error("Oversized file");
+    return buffer.subarray(0, size);
+  } finally {
+    closeSync(fd);
+  }
 }
-function bytes(value: unknown): Uint8Array {
-  if (
-    !(value instanceof Uint8Array) ||
-    value.byteLength > TASK_LIMITS.artifactBytes
-  )
-    taskFail("task-storage-invalid");
-  return value;
+
+/** Git observations must describe the physical cwd, not inherited alternate index/worktree overrides. */
+export function gitEnvironment(): NodeJS.ProcessEnv {
+  return {
+    ...Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")),
+    ),
+    GIT_OPTIONAL_LOCKS: "0",
+    LC_ALL: "C",
+  };
 }
-function publicationIdentity(
-  id: string,
-  relative: string,
-  expected: Uint8Array | null,
-  desired: Uint8Array,
-): string {
-  return taskHash(
-    canonicalJson({
-      taskId: id,
-      path: relative,
-      expected: expected === null ? null : taskHash(expected),
-      desired: taskHash(desired),
-    }),
+export function resolveWorkspace(cwd: string): { root: string; cwd: string } {
+  const actual = realpathSync(cwd);
+  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+    cwd: actual,
+    env: gitEnvironment(),
+    encoding: "utf8",
+    timeout: 3000,
+    maxBuffer: 8192,
+    windowsHide: true,
+  });
+  // Remove only Git's record terminator, not valid whitespace in a path.
+  const topLevel = result.stdout?.replace(
+    process.platform === "win32" ? /\r?\n$/ : /\n$/,
+    "",
+  );
+  if (result.status === 0 && topLevel)
+    return { root: realpathSync(topLevel), cwd: actual };
+  if (result.error && !object(result.error))
+    throw new Error("Cannot resolve workspace");
+  if (result.error && object(result.error) && result.error.code !== "ENOENT")
+    throw new Error("Workspace lookup failed");
+  // A missing Git executable or a confirmed non-repository is an honest non-Git workspace.
+  if (!result.error && !result.stderr.includes("not a git repository"))
+    throw new Error("Git workspace lookup refused");
+  return { root: actual, cwd: actual };
+}
+export function defaultStateHome(): string {
+  const candidate =
+    process.platform === "win32"
+      ? process.env.LOCALAPPDATA
+      : process.env.XDG_STATE_HOME;
+  if (candidate && !isAbsolute(candidate))
+    throw new Error("State home must be absolute");
+  return (
+    candidate ??
+    join(
+      homedir(),
+      process.platform === "win32" ? "AppData/Local" : ".local/state",
+    )
   );
 }
-/** Internal infrastructure only, deliberately absent from the Pi tool surface. */
-export class TaskStore {
-  readonly databasePath: string;
-  readonly consumerRoot: string;
-  #db: DatabaseSync;
-  #release: () => void;
-  #closed = false;
-  private constructor(
-    db: DatabaseSync,
-    file: string,
-    root: string,
-    release: () => void,
-  ) {
-    this.#db = db;
-    this.databasePath = file;
-    this.consumerRoot = root;
-    this.#release = release;
-  }
-  static open(unresolved: ResolvedStateRoot): TaskStore {
-    const state = resolveStateRoot({
-      consumerRoot: unresolved.consumerRoot,
-      xdgStateHome: unresolved.stateBase,
-    });
-    if (
-      state.rootDir !== unresolved.rootDir ||
-      state.consumerRootHash !== unresolved.consumerRootHash
-    )
-      taskFail("task-storage-invalid");
-    ensureStateDirectory(state.rootsDir);
-    let ownership: ReturnType<typeof acquireCheckoutOwnership>;
+/** Canonical bytes written by save; identity is optimistic record concurrency, not consent. */
+function recordText(record: TaskRecord): string {
+  return `${JSON.stringify(record, null, 2)}\n`;
+}
+function contentIdentity(text: string | Buffer): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+export function savedRecordIdentity(record: TaskRecord): string {
+  return contentIdentity(recordText(record));
+}
+/** Resolve ambient aliases, including a missing tail, without creating anything. */
+function canonicalAmbientRoot(path: string): string {
+  const full = resolve(path);
+  try {
+    return realpathSync(full);
+  } catch (error) {
+    if (!absent(error)) throw error;
+    // A dangling alias is not a missing ambient directory.
     try {
-      ownership = acquireCheckoutOwnership(state);
-    } catch {
-      return taskFail("task-ownership-unresolved");
+      lstatSync(full);
+      throw new Error("Dangling ambient root");
+    } catch (statError) {
+      if (!absent(statError)) throw statError;
     }
-    let db: DatabaseSync | undefined;
-    try {
-      requireLegacyQuiescence(state, ownership.coordinator);
-      // Sibling protocol area: an old package reset cannot move this namespace.
-      const directory = path.join(
-        state.productRoot,
-        "task-v1",
-        state.consumerRootHash,
-      );
-      ensureStateDirectory(path.dirname(directory));
-      ensureStateDirectory(directory);
-      for (const privateDirectory of [path.dirname(directory), directory]) {
-        const stat = lstatSync(privateDirectory);
-        if (
-          process.platform !== "win32" &&
-          ((stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.())
-        )
-          taskFail("task-path-unsafe");
-      }
-      const file = path.join(directory, "control.sqlite3");
-      safeDatabase(file);
-      const exists = !!lstatSync(file, { throwIfNoEntry: false });
-      if (exists) {
-        const probe = new DatabaseSync(file, { readOnly: true });
-        try {
-          validateDatabase(probe, state.consumerRootHash);
-        } finally {
-          probe.close();
-        }
-      } else closeSync(openSync(file, "wx", 0o600));
-      db = new DatabaseSync(file);
-      if (exists) validateDatabase(db, state.consumerRootHash);
-      configureSqlite(db);
-      if (!exists) {
-        db.exec("BEGIN IMMEDIATE");
-        db.exec(TASK_FOUNDATION_SCHEMA);
-        db.prepare("INSERT INTO task_protocol VALUES (1, ?)").run(
-          state.consumerRootHash,
-        );
-        db.exec("COMMIT");
-        syncDirectory(directory);
-      }
-      return new TaskStore(db, file, state.consumerRoot, ownership.close);
-    } catch (error) {
-      db?.close();
-      ownership.close();
-      return taskError(error, "task-storage-invalid");
-    }
-  }
-  close(): void {
-    if (!this.#closed) {
-      this.#closed = true;
-      try {
-        this.#db.close();
-      } finally {
-        this.#release();
-      }
-    }
-  }
-  #ready(): void {
-    if (this.#closed) taskFail("task-ownership-unresolved");
-  }
-  #transaction<T>(action: () => T): T {
-    this.#ready();
-    this.#db.exec("BEGIN IMMEDIATE");
-    try {
-      const result = action();
-      this.#db.exec("COMMIT");
-      return result;
-    } catch (error) {
-      this.#db.exec("ROLLBACK");
-      return taskError(error, "task-storage-invalid");
-    }
-  }
-  create(
-    title: string,
-    kind: PortableTask["kind"] = "code",
-    depth: PortableTask["depth"] = "compact",
-  ): PortableTask {
-    const record = newPortableTask(title, kind, depth);
-    this.#transaction(() =>
-      this.#db
-        .prepare("INSERT INTO task_records VALUES (?, ?, ?, ?)")
-        .run(
-          record.id,
-          record.revision,
-          canonicalJson(record),
-          taskHash(canonicalJson(record)),
-        ),
-    );
-    return record;
-  }
-  get(id: string): PortableTask {
-    this.#ready();
-    taskId(id);
-    const row = this.#db
-      .prepare("SELECT * FROM task_records WHERE task_id = ?")
-      .get(id);
-    if (!row) taskFail("task-not-found");
-    if (
-      typeof row.payload_json !== "string" ||
-      taskHash(row.payload_json) !== row.payload_hash
-    )
-      taskFail("task-storage-invalid");
-    let record: PortableTask;
-    try {
-      record = decodePortableTask(JSON.parse(row.payload_json));
-    } catch {
-      return taskFail("task-storage-invalid");
-    }
-    if (record.id !== id || record.revision !== row.revision)
-      taskFail("task-storage-invalid");
-    return record;
-  }
-  /** Revises context, not executable state; imported lifecycle is never admitted here. */
-  revise(value: unknown): PortableTask {
-    const record = decodePortableTask(value);
-    return this.#transaction(() => {
-      const old = this.get(record.id);
-      if (
-        record.revision !== old.revision + 1 ||
-        record.lifecycle !== "planning" ||
-        old.lifecycle !== "planning"
-      )
-        taskFail("task-conflict");
-      this.#db
-        .prepare(
-          "UPDATE task_records SET revision = ?, payload_json = ?, payload_hash = ? WHERE task_id = ?",
-        )
-        .run(
-          record.revision,
-          canonicalJson(record),
-          taskHash(canonicalJson(record)),
-          record.id,
-        );
-      return record;
-    });
-  }
-  freezeReview(
-    id: string,
-    supplied: ReadonlyMap<string, Uint8Array>,
-  ): TaskReview {
-    return this.#transaction(() => {
-      const record = this.get(id);
-      const artifacts = record.artifacts.filter((a) =>
-        ["brief", "requirements", "design", "plan"].includes(a.role),
-      );
-      const required =
-        record.depth === "compact"
-          ? ["brief"]
-          : record.kind === "code"
-            ? ["requirements", "design", "plan"]
-            : ["requirements", "design"];
-      if (
-        required.some((role) => !artifacts.some((a) => a.role === role)) ||
-        supplied.size !== artifacts.length
-      )
-        taskFail("task-record-invalid");
-      let total = 0;
-      for (const artifact of artifacts) {
-        const content = supplied.get(artifact.path);
-        total += content?.byteLength ?? 0;
-        if (
-          !content ||
-          content.byteLength !== artifact.bytes ||
-          taskHash(content) !== artifact.sha256 ||
-          total > TASK_LIMITS.artifactBytes
-        )
-          taskFail("task-review-stale");
-      }
-      const manifest = canonicalJson({
-        taskId: id,
-        revision: record.revision,
-        artifacts,
-      });
-      const digest = taskHash(manifest);
-      const old = this.#db
-        .prepare(
-          "SELECT digest FROM task_reviews WHERE task_id = ? AND revision = ?",
-        )
-        .get(id, record.revision);
-      if (old) {
-        if (old.digest !== digest) taskFail("task-conflict");
-        return this.review(id, record.revision);
-      }
-      this.#db
-        .prepare("INSERT INTO task_reviews VALUES (?, ?, ?, ?)")
-        .run(id, record.revision, manifest, digest);
-      for (const artifact of artifacts)
-        this.#db
-          .prepare("INSERT INTO task_review_bytes VALUES (?, ?, ?)")
-          .run(
-            digest,
-            artifact.path,
-            supplied.get(artifact.path) ?? taskFail("task-record-invalid"),
-          );
-      return { taskId: id, revision: record.revision, artifacts, digest };
-    });
-  }
-  review(id: string, revision: number): TaskReview {
-    this.get(id);
-    taskInteger(revision);
-    const row = this.#db
-      .prepare("SELECT * FROM task_reviews WHERE task_id = ? AND revision = ?")
-      .get(id, revision);
-    if (!row) taskFail("task-not-found");
-    if (
-      typeof row.manifest_json !== "string" ||
-      taskHash(row.manifest_json) !== row.digest
-    )
-      taskFail("task-storage-invalid");
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(row.manifest_json);
-    } catch {
-      return taskFail("task-storage-invalid");
-    }
-    const r = closedTaskObject(parsed, ["taskId", "revision", "artifacts"]);
-    if (
-      r.taskId !== id ||
-      r.revision !== revision ||
-      !Array.isArray(r.artifacts) ||
-      r.artifacts.length > TASK_LIMITS.artifacts
-    )
-      taskFail("task-storage-invalid");
-    const artifacts = r.artifacts.map(decodeTaskArtifact);
-    const digest = taskDigest(row.digest);
-    for (const a of artifacts) this.reviewBytes(digest, a);
-    return { taskId: id, revision, artifacts, digest };
-  }
-  reviewBytes(digest: string, artifact: TaskArtifact): Uint8Array {
-    this.#ready();
-    taskDigest(digest);
-    decodeTaskArtifact(artifact);
-    const row = this.#db
-      .prepare(
-        "SELECT bytes FROM task_review_bytes WHERE digest = ? AND path = ?",
-      )
-      .get(digest, artifact.path);
-    const content = bytes(row?.bytes);
-    if (
-      content.byteLength !== artifact.bytes ||
-      taskHash(content) !== artifact.sha256
-    )
-      taskFail("task-storage-invalid");
-    return content;
-  }
-  /** Desired bytes and exact retry identity commit together before repository mutation. */
-  intent(
-    id: string,
-    relative: string,
-    expected: Uint8Array | null,
-    desired: Uint8Array,
-    operationId: string = randomUUID(),
-  ): TaskPublication {
-    this.get(id);
-    taskPublicationPath(id, relative);
-    taskId(operationId);
-    bytes(desired);
-    if (expected !== null) bytes(expected);
-    const identity = publicationIdentity(id, relative, expected, desired);
-    return this.#transaction(() => {
-      const old = this.#db
-        .prepare(
-          "SELECT operation_id FROM task_publications WHERE operation_id = ?",
-        )
-        .get(operationId);
-      if (old) {
-        const op = this.publication(operationId);
-        if (
-          publicationIdentity(op.taskId, op.path, op.expected, op.desired) !==
-          identity
-        )
-          taskFail("task-conflict");
-        return op;
-      }
-      if (
-        this.#db
-          .prepare(
-            "SELECT 1 FROM task_publications WHERE path = ? AND state != 'delivered'",
-          )
-          .get(relative)
-      )
-        taskFail("task-conflict");
-      this.#db
-        .prepare(
-          "INSERT INTO task_publications(operation_id, task_id, path, expected, desired, identity_hash, state) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
-        )
-        .run(operationId, id, relative, expected, desired, identity);
-      return this.publication(operationId);
-    });
-  }
-  publication(operationId: string): TaskPublication {
-    this.#ready();
-    taskId(operationId);
-    const r = this.#db
-      .prepare("SELECT * FROM task_publications WHERE operation_id = ?")
-      .get(operationId);
-    if (!r) taskFail("task-not-found");
-    const id = taskId(r.task_id),
-      relative = taskPublicationPath(id, r.path),
-      expected = r.expected === null ? null : bytes(r.expected),
-      desired = bytes(r.desired);
-    if (
-      publicationIdentity(id, relative, expected, desired) !==
-        r.identity_hash ||
-      (r.state !== "pending" &&
-        r.state !== "delivered" &&
-        r.state !== "conflict")
-    )
-      taskFail("task-storage-invalid");
-    return {
-      sequence: taskInteger(r.sequence),
-      operationId,
-      taskId: id,
-      path: relative,
-      expected,
-      desired,
-      state: r.state,
-    };
-  }
-  settle(operationId: string, state: "delivered" | "conflict"): void {
-    this.#transaction(() => {
-      const old = this.publication(operationId);
-      if (old.state === "delivered" && state !== "delivered")
-        taskFail("task-conflict");
-      this.#db
-        .prepare(
-          "UPDATE task_publications SET state = ? WHERE operation_id = ?",
-        )
-        .run(state, operationId);
-    });
+    const parent = dirname(full);
+    if (parent === full) throw error;
+    return join(canonicalAmbientRoot(parent), full.slice(parent.length));
   }
 }
+export interface CheckoutLock {
+  schema: "cadence-assistant-lock/1";
+  token: string;
+  pid: number;
+  host: string;
+  runId: string;
+  root: string;
+}
+export class TaskStore {
+  readonly root: string;
+  readonly tasks: string;
+  readonly privateRoot: string;
+  constructor(root: string, stateHome = defaultStateHome()) {
+    this.root = realpathSync(root);
+    this.tasks = join(this.root, ".cadence", "assistant", "tasks");
+    this.privateRoot = join(
+      canonicalAmbientRoot(stateHome),
+      "cadence-assistant-v1",
+      createHash("sha256").update(this.root).digest("hex"),
+    );
+    const within = relative(this.root, resolve(this.privateRoot));
+    if (
+      !within ||
+      (!within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within))
+    )
+      throw new Error("Private state home must be outside the working copy");
+  }
+  get lockPath(): string {
+    return join(this.privateRoot, "checkout.lock");
+  }
+  private inspectPrivate(): void {
+    const namespace = dirname(this.privateRoot);
+    for (const path of [namespace, this.privateRoot]) {
+      if (!safeDirectory(path)) continue;
+      const st = lstatSync(path);
+      if (
+        process.platform !== "win32" &&
+        ((st.mode & 0o077) !== 0 ||
+          (process.getuid && st.uid !== process.getuid()))
+      )
+        throw new Error("Private state permissions refused");
+    }
+  }
+  private inspectPrivateFile(path: string, max: number): void {
+    this.inspectPrivate();
+    if (!safeDirectory(this.privateRoot)) return;
+    try {
+      const st = lstatSync(path);
+      if (
+        !st.isFile() ||
+        st.isSymbolicLink() ||
+        st.nlink !== 1 ||
+        st.size > max ||
+        (process.platform !== "win32" &&
+          ((st.mode & 0o077) !== 0 ||
+            (process.getuid && st.uid !== process.getuid())))
+      )
+        throw new Error("Unsafe private state file");
+    } catch (error) {
+      if (!absent(error)) throw error;
+    }
+  }
+  inspectLock(): CheckoutLock | undefined {
+    this.inspectPrivateFile(this.lockPath, 8192);
+    const data = readBounded(this.lockPath, 8192);
+    if (!data) return undefined;
+    const lock: unknown = parseRecord(data);
+    if (
+      !object(lock) ||
+      lock.schema !== "cadence-assistant-lock/1" ||
+      lock.root !== this.root ||
+      typeof lock.token !== "string" ||
+      !validId(lock.token) ||
+      typeof lock.runId !== "string" ||
+      !validId(lock.runId) ||
+      typeof lock.host !== "string" ||
+      !Number.isInteger(lock.pid) ||
+      Number(lock.pid) < 1
+    )
+      throw new Error("Unknown or corrupt coordination lock");
+    return lock as unknown as CheckoutLock;
+  }
+  acquire(): CheckoutLock {
+    this.inspectPrivate();
+    safeDirectory(this.privateRoot, true);
+    const lock: CheckoutLock = {
+      schema: "cadence-assistant-lock/1",
+      token: randomUUID(),
+      runId: randomUUID(),
+      pid: process.pid,
+      host: hostname(),
+      root: this.root,
+    };
+    let fd: number;
+    try {
+      fd = openSync(this.lockPath, "wx", 0o600);
+    } catch {
+      throw new Error(
+        "Checkout busy or unresolved lock; inspect and explicitly recover only a dead owner",
+      );
+    }
+    try {
+      writeFileSync(fd, JSON.stringify(lock));
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    return lock;
+  }
+  assertOwner(lock: CheckoutLock): void {
+    if (JSON.stringify(this.inspectLock()) !== JSON.stringify(lock))
+      throw new Error("Coordination lock changed");
+  }
+  release(lock: CheckoutLock): void {
+    if (lock.pid !== process.pid || lock.host !== hostname())
+      throw new Error("Only the owning process may release a lock");
+    this.assertOwner(lock);
+    unlinkSync(this.lockPath);
+  }
+  recover(expected: CheckoutLock, acknowledgeEscapedProcesses: boolean): void {
+    if (!acknowledgeEscapedProcesses || expected.host !== hostname())
+      throw new Error("Recovery requires informed local-owner confirmation");
+    this.assertOwner(expected);
+    try {
+      process.kill(expected.pid, 0);
+    } catch (error) {
+      if (!object(error) || error.code !== "ESRCH")
+        throw new Error("Owner status unknown");
+      this.assertOwner(expected);
+      unlinkSync(this.lockPath);
+      return;
+    }
+    throw new Error("Owner is live; stop it first");
+  }
+  load(id: string): TaskRecord | undefined {
+    return this.loadSnapshot(id)?.record;
+  }
+  loadSnapshot(
+    id: string,
+  ): { record: TaskRecord; identity: string } | undefined {
+    if (!validId(id)) throw new Error("Invalid task id");
+    const directory = join(this.tasks, id);
+    if (
+      safeDirectory(directory) &&
+      readdirSync(directory).some((name) => name !== "task.json")
+    )
+      throw new Error(
+        "Unknown task directory content; preserved without reset",
+      );
+    const data = readBounded(
+      join(this.tasks, id, "task.json"),
+      MAX_RECORD_BYTES,
+    );
+    if (!data) return undefined;
+    const record = decodeTask(parseRecord(data));
+    if (record.id !== id) throw new Error("Task identity mismatch");
+    return { record, identity: contentIdentity(data) };
+  }
+  list(): TaskRecord[] {
+    if (!safeDirectory(this.tasks)) return [];
+    const entries = readdirSync(this.tasks);
+    if (entries.length > 1000) throw new Error("Task listing limit exceeded");
+    return entries.map((id) => {
+      const task = this.load(id);
+      if (!task) throw new Error("Unknown task directory");
+      return task;
+    });
+  }
+  save(
+    record: TaskRecord,
+    expectedRevision: number,
+    held?: CheckoutLock,
+    expectedIdentity?: string,
+  ): TaskRecord {
+    const next = decodeTask(record);
+    if (next.revision !== expectedRevision + 1)
+      throw new Error("Revision conflict");
+    const text = recordText(next);
+    if (Buffer.byteLength(text) > MAX_RECORD_BYTES)
+      throw new Error("Task record limit");
+    const lock = held ?? this.acquire();
+    if (lock.pid !== process.pid || lock.host !== hostname())
+      throw new Error("Not the lock owner");
+    try {
+      this.assertOwner(lock);
+      const current = this.loadSnapshot(next.id);
+      if ((current?.record.revision ?? 0) !== expectedRevision)
+        throw new Error("Revision conflict");
+      if (current?.identity !== expectedIdentity)
+        throw new Error("Task content changed; reopen it");
+      const dir = join(this.tasks, next.id);
+      safeDirectory(dir, true);
+      // Unknown sibling state is not overwritten or cleaned.
+      if (!current && readdirSync(dir).length)
+        throw new Error("Unknown task directory");
+      const temporary = join(dir, `task.${randomUUID()}.tmp`);
+      const fd = openSync(temporary, "wx", 0o600);
+      try {
+        writeFileSync(fd, text);
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      this.assertOwner(lock);
+      // Check again after preparing the replacement. External editors do not share our lock;
+      // this detects observed conflicts, not an atomic filesystem CAS against hostile writers.
+      const latest = readBounded(join(dir, "task.json"), MAX_RECORD_BYTES);
+      if ((latest ? contentIdentity(latest) : undefined) !== expectedIdentity)
+        throw new Error(
+          "Task content changed; replacement preserved without overwrite",
+        );
+      renameSync(temporary, join(dir, "task.json"));
+      return next;
+    } finally {
+      if (!held) this.release(lock);
+    }
+  }
+  checks() {
+    const data = readBounded(
+      join(this.root, ".cadence", "assistant", "config.json"),
+      32768,
+    );
+    if (!data) return [];
+    const value: unknown = parseRecord(data);
+    if (
+      !object(value) ||
+      value.schema !== TASK_CONFIG_SCHEMA ||
+      !Array.isArray(value.checks) ||
+      value.checks.length > 32 ||
+      Object.keys(value).some((key) => !["schema", "checks"].includes(key))
+    )
+      throw new Error("Unknown check configuration");
+    const checks = value.checks.map(decodeCheck);
+    if (
+      new Set(checks.map((check) => check.name)).size !== checks.length ||
+      checks.some((check) => check.name === "Manual command")
+    )
+      throw new Error("Duplicate or reserved check name");
+    return checks;
+  }
+  readLog(name: string): string {
+    if (!/^[a-f0-9-]{36}\.log$/.test(name))
+      throw new Error("Invalid diagnostic name");
+    this.inspectPrivateFile(join(this.privateRoot, name), 65536);
+    const data = readBounded(join(this.privateRoot, name), 65536);
+    return data
+      ? diagnosticText(data.toString("utf8"), 65536)
+      : "Private diagnostic unavailable";
+  }
+  writeLog(lock: CheckoutLock, output: string): string {
+    if (lock.pid !== process.pid || lock.host !== hostname())
+      throw new Error("Not the lock owner");
+    this.assertOwner(lock);
+    const name = `${randomUUID()}.log`;
+    writeFileSync(join(this.privateRoot, name), diagnosticText(output, 65536), {
+      flag: "wx",
+      mode: 0o600,
+    });
+    return name;
+  }
+}
+export const TASK_CONFIG_SCHEMA = "cadence-assistant-checks/1";

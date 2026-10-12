@@ -1,0 +1,364 @@
+// Actual production CLI + OS PTY + synthetic loopback SDK. No physical-human/provider claim.
+import { spawn, spawnSync } from "node:child_process";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { expect, it } from "vitest";
+import { auditPackage } from "../scripts/package-audit.mjs";
+
+const repo = path.resolve(import.meta.dirname, "..");
+const cli = path.join(
+  repo,
+  "node_modules/@earendil-works/pi-coding-agent/dist/cli.js",
+);
+const down = "\x1b[B",
+  enter = "\r",
+  esc = "\x1b";
+for (const source of ["source", "extracted"])
+  for (const mode of ["regular", "fullscreen"]) {
+    it.skipIf(process.platform === "win32")(
+      `${source} ${mode} production PTY plan, SDK edit, real checks, issues review, reopen and waited cancel/quit`,
+      async () => {
+        const root = mkdtempSync(path.join(tmpdir(), "cadence-terminal-"));
+        console.log(`terminal fixture retained: ${root}`);
+        for (const dir of ["home", "agent", "state", "project"])
+          mkdirSync(path.join(root, dir));
+        let packageRoot = repo;
+        if (source === "extracted") {
+          const pack = path.join(root, "pack");
+          mkdirSync(pack);
+          const packed = spawnSync(
+            "bun",
+            ["pm", "pack", "--destination", pack],
+            { cwd: repo, encoding: "utf8", timeout: 30000 },
+          );
+          expect(packed.status, packed.stderr).toBe(0);
+          const archive = path.join(pack, readdirSync(pack)[0]);
+          auditPackage(
+            archive,
+            repo,
+            JSON.parse(
+              readFileSync(
+                path.join(repo, "provenance/package-members.json"),
+                "utf8",
+              ),
+            ),
+          );
+          expect(
+            spawnSync("tar", ["xzf", archive, "-C", root], { timeout: 10000 })
+              .status,
+          ).toBe(0);
+          packageRoot = path.join(
+            root,
+            "install/node_modules/@abelxiaoxing/cadence",
+          );
+          mkdirSync(path.dirname(packageRoot), { recursive: true });
+          cpSync(path.join(root, "package"), packageRoot, { recursive: true });
+          for (const name of ["@earendil-works", "typebox"])
+            symlinkSync(
+              path.join(repo, "node_modules", name),
+              path.join(root, "install/node_modules", name),
+              "dir",
+            );
+        }
+        const requests = [];
+        let codeRequests = 0;
+        const server = createServer(async (req, res) => {
+          let raw = "";
+          for await (const part of req) raw += part;
+          const body = JSON.parse(raw);
+          requests.push({
+            model: body.model,
+            auth: req.headers.authorization,
+            tools: body.tools.map((t) => t.function.name),
+          });
+          const editing = body.tools.some((t) => t.function.name === "write");
+          if (editing && ++codeRequests > 2) return; // Explicit cancellation lane: no hidden retry.
+          res.writeHead(200, {
+            "content-type": "text/event-stream",
+            connection: "close",
+          });
+          const emit = (delta, finish_reason = null) =>
+            res.write(
+              `data: ${JSON.stringify({ id: "terminal", object: "chat.completion.chunk", created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`,
+            );
+          if (editing && codeRequests === 1) {
+            emit({
+              role: "assistant",
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "terminal_write",
+                  type: "function",
+                  function: {
+                    name: "write",
+                    arguments: JSON.stringify({
+                      path: "fixture.txt",
+                      content: "terminal-sdk-edit\n",
+                    }),
+                  },
+                },
+              ],
+            });
+            emit({}, "tool_calls");
+          } else {
+            emit({
+              role: "assistant",
+              content: editing
+                ? "EDIT_COMPLETE"
+                : Array.from(
+                    { length: 40 },
+                    (_, i) =>
+                      `Plan ${i + 1}: inspect 中文 🧪 and write fixture.txt only; preserve existing dirt.`,
+                  ).join("\n"),
+            });
+            emit({}, "stop");
+          }
+          res.end("data: [DONE]\n\n");
+        });
+        await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+        try {
+          writeFileSync(
+            path.join(root, "agent/settings.json"),
+            JSON.stringify({
+              quietStartup: true,
+              cacheWarming: "off",
+              compaction: { enabled: false },
+              retry: { enabled: false },
+              packages: [],
+              extensions: [],
+              skills: [],
+              prompts: [],
+              themes: [],
+              enableInstallTelemetry: false,
+              defaultProjectTrust: "always",
+            }),
+          );
+          writeFileSync(
+            path.join(root, "agent/models.json"),
+            JSON.stringify({
+              providers: {
+                "terminal-fixture": {
+                  baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
+                  api: "openai-completions",
+                  apiKey: "fabricated-terminal-key",
+                  models: [
+                    {
+                      id: "exact-model",
+                      name: "Terminal fixture",
+                      reasoning: false,
+                      input: ["text"],
+                      cost: {
+                        input: 0,
+                        output: 0,
+                        cacheRead: 0,
+                        cacheWrite: 0,
+                      },
+                      contextWindow: 8192,
+                      maxTokens: 2048,
+                      compat: { supportsDeveloperRole: false },
+                    },
+                  ],
+                },
+              },
+            }),
+          );
+          const cwd = path.join(root, "project");
+          mkdirSync(path.join(cwd, ".cadence/assistant"), { recursive: true });
+          writeFileSync(
+            path.join(cwd, ".cadence/assistant/config.json"),
+            JSON.stringify({
+              schema: "cadence-assistant-checks/1",
+              checks: [
+                { name: "Pass fixture", command: "true", timeoutMs: 1000 },
+                { name: "Fail fixture", command: "false", timeoutMs: 1000 },
+              ],
+            }),
+          );
+          writeFileSync(
+            path.join(cwd, "existing.txt"),
+            "pre-existing user bytes",
+          );
+          const env = {
+            PATH: process.env.PATH,
+            HOME: path.join(root, "home"),
+            XDG_STATE_HOME: path.join(root, "state"),
+            PI_CODING_AGENT_DIR: path.join(root, "agent"),
+            PI_OFFLINE: "1",
+            PI_SKIP_VERSION_CHECK: "1",
+            PI_TELEMETRY: "0",
+            JITI_FS_CACHE: "0",
+            NODE_DISABLE_COMPILE_CACHE: "1",
+            TERM: "xterm-256color",
+          };
+          const argv = [
+            process.execPath,
+            cli,
+            "--offline",
+            "--approve",
+            "--no-context-files",
+            "--no-extensions",
+            "--no-skills",
+            "--no-prompt-templates",
+            "--no-themes",
+            "--no-session",
+            "--provider",
+            "terminal-fixture",
+            "--model",
+            "exact-model",
+            "--tui-mode",
+            mode,
+            "--extension",
+            path.join(packageRoot, "src/index.ts"),
+          ];
+          const steps = [
+            { expect: "Context7", send: ["/cadence PTY 中文 🧪", enter] },
+            { expect: "legacy history is not imported", send: [enter] },
+            { expect: "Task kind", send: [enter] },
+            { expect: "Goal \\(saving does not start work\\)", send: [enter] },
+            { expect: "planning", send: [enter] },
+            {
+              expect: "Readable plan",
+              send: ["Inspect and write fixture.txt only.", enter],
+            },
+            { expect: "planning", send: [down, enter] },
+            { expect: "Cadence review", send: [enter] },
+            { expect: "Generate an advisory plan", send: [enter] },
+            { expect: "planning", send: [down, down, enter] },
+            {
+              expect: "Cadence review",
+              resize: [28, 72],
+              send: ["\x1b[6~", "\x1b[F", "\x1b[H", enter],
+            },
+            { expect: "Start one agent now", send: [enter] },
+            { expect: "PTY 中文 🧪.*review", send: [down, down, down, enter] },
+            { expect: "Parent checks", send: [enter] },
+            { expect: "Run this parent check", send: [enter] },
+            { expect: "PTY 中文 🧪.*review", send: [down, down, down, enter] },
+            { expect: "Parent checks", send: [down, enter] },
+            { expect: "Run this parent check", send: [enter] },
+            {
+              expect: "PTY 中文 🧪.*failed",
+              send: [down, down, down, down, enter],
+            },
+            {
+              expect: "Cadence review",
+              resize: [40, 100],
+              send: ["\x1b[6~", "\x1b[F", enter],
+            },
+            { expect: "Record human review and close", send: [enter] },
+            { expect: "PTY 中文 🧪.*done", send: [esc] },
+            { send: ["/cadence", enter] },
+            { expect: "legacy history is not imported", send: [down, enter] },
+            { expect: "Open context only", send: [enter] },
+            { expect: "PTY 中文 🧪.*done", send: [down, down, enter] },
+            { expect: "Cadence review", send: [enter] },
+            { expect: "Start one agent now", send: [enter] },
+            { expect: "Cadence foreground work", pause: 1.5, send: [esc] },
+            { expect: "PTY 中文 🧪.*interrupted", send: [esc] },
+            { send: ["/quit", enter] },
+          ];
+          const config = path.join(root, "pty.json");
+          writeFileSync(
+            config,
+            JSON.stringify({ root, cwd, argv, env, steps }),
+          );
+          const driver = spawn(
+            "python3",
+            [path.join(repo, "test/helpers/task-shell-pty.py"), config],
+            { stdio: ["ignore", "pipe", "pipe"] },
+          );
+          let errors = "";
+          driver.stderr.on("data", (b) => {
+            errors += b;
+          });
+          const status = await new Promise((resolve, reject) => {
+            driver.on("error", reject);
+            driver.on("close", resolve);
+          });
+          const receipt = JSON.parse(
+            readFileSync(path.join(root, "pty-receipt.json"), "utf8"),
+          );
+          expect({ status, failure: receipt.failure, errors }).toEqual({
+            status: 0,
+            failure: null,
+            errors: "",
+          });
+          expect(receipt.waitpidReturned).toBe(true);
+          expect(receipt.exitCode).toBe(0);
+          expect(requests).toHaveLength(4);
+          expect(requests[0].tools).toEqual(["read", "grep", "find", "ls"]);
+          for (const request of requests) {
+            expect(request.auth).toBe("Bearer fabricated-terminal-key");
+            expect(request.model).toBe("exact-model");
+          }
+          expect(readFileSync(path.join(cwd, "fixture.txt"), "utf8")).toBe(
+            "terminal-sdk-edit\n",
+          );
+          expect(readFileSync(path.join(cwd, "existing.txt"), "utf8")).toBe(
+            "pre-existing user bytes",
+          );
+          const tasks = path.join(cwd, ".cadence/assistant/tasks");
+          const task = JSON.parse(
+            readFileSync(
+              path.join(tasks, readdirSync(tasks)[0], "task.json"),
+              "utf8",
+            ),
+          );
+          expect(task.phase).toBe("interrupted");
+          expect(task.checks.map((c) => c.exitCode)).toEqual([0, 1]);
+          expect(
+            task.activity.some(
+              (a) => a.text === "Human reviewed-with-issues; not certified",
+            ),
+          ).toBe(true);
+          writeFileSync(
+            path.join(root, "identity.json"),
+            JSON.stringify(
+              {
+                source,
+                mode,
+                node: process.version,
+                executable: process.execPath,
+                pi: JSON.parse(
+                  readFileSync(
+                    path.join(
+                      repo,
+                      "node_modules/@earendil-works/pi-coding-agent/package.json",
+                    ),
+                    "utf8",
+                  ),
+                ).version,
+                platform: process.platform,
+                arch: process.arch,
+                packageRoot,
+                requests,
+                physicalHuman: false,
+                paidProvider: false,
+                managerInstall: false,
+              },
+              null,
+              2,
+            ),
+          );
+          expect(existsSync(path.join(root, "home/.pi/agent/auth.json"))).toBe(
+            false,
+          );
+        } finally {
+          server.closeAllConnections();
+          await new Promise((resolve) => server.close(resolve));
+        }
+      },
+      90000,
+    );
+  }

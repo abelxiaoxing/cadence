@@ -53,31 +53,7 @@
       }
     },
     {
-      "includes": ["test/workflow-engine.integration.test.ts"],
-      "formatter": {
-        "enabled": false
-      },
-      "linter": {
-        "enabled": false
-      },
-      "assist": {
-        "enabled": false
-      }
-    },
-    {
-      "includes": ["openspec/changes/**/implement-plan.json"],
-      "formatter": {
-        "enabled": false
-      },
-      "linter": {
-        "enabled": false
-      },
-      "assist": {
-        "enabled": false
-      }
-    },
-    {
-      "includes": ["src/workspace-io-worker.mjs", "src/operator-cli.mjs"],
+      "includes": ["src/operator-cli.mjs"],
       "formatter": {
         "enabled": false
       },

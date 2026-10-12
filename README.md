@@ -1,132 +1,105 @@
-# @abelxiaoxing/cadence
+# Cadence
 
-面向 Pi 的 Abel 工作流扩展：提供 Design、Implement、Diagnose 和 Init 四个显式命令。
-普通任务无需启用工作流；只有用户主动输入斜杠命令时才会激活。
+An MIT-licensed, Pi-only terminal workflow assistant: **plan → one agent → checks → changes → human review**.
+Ordinary engineering conversations and independent research skills do not activate the workflow.
+The lightweight replacement is unreleased pending independent qualification; local tests are not release or human/provider evidence.
 
-## 安装
+Load the local package by absolute path or a relative path such as `./cadence`, or use an extracted tarball with existing trusted Pi peers.
+Cadence does not impose a Pi version range; missing capabilities refuse explicitly.
 
-要求：Node.js >= 22.13、Git、Pi，以及 `@fission-ai/openspec@1.5.0`。
+## Explicit workflow
+
+Open `/cadence` in a trusted, idle interactive Pi terminal.
+`/cadence <request>` only prefills a new goal; it never starts work.
+Choose New or Open/history, then code, research or diagnosis.
+Opening a task restores context, not execution or approval.
+Quoted, replayed, model-generated, nonterminal and child invocations cannot start tasks.
+
+For code, write/edit a readable plan or explicitly request a readonly advisory plan.
+Review the plan and working-copy changes, then confirm **Start** in the current terminal.
+One agent uses the current Pi model/provider and publicly resolved request authentication to edit the chosen working copy.
+Unsupported model transport/auth capabilities refuse rather than silently falling back.
+Research and diagnosis use readonly tools and human review of conclusions; they cannot escalate into editing or shell checks.
+
+Edits are ordinary trusted host-tool operations, **not a sandbox, certified future-code approval or transactional application**.
+There is no automatic rollback, retry, Git mutation, software installation, cleanup or publication.
+Stop older Cadence sessions first; external editors and older runtimes are outside the new checkout coordination guarantee.
+
+Progress is foreground and cancellable with Escape.
+Navigation/shutdown requests bounded cancellation and waits; an unconfirmed stop remains interrupted/unknown and keeps the new lock.
+POSIX group signaling is operational cancellation, not proof that escaped descendants stopped.
+Windows direct-child cancellation is weaker; no Job or ConPTY guarantee is claimed.
+Continue after interruption/failure requires a new explicit terminal choice and current plan review.
+Only explicit informed recovery of an unchanged stale **new** lock can permit another supported writer; old runtime resources are never reset.
+
+## Checks and review
+
+Optionally copy `config/workflow-task.example.json` to `.cadence/assistant/config.json` and edit its named command/timeout definitions (`cadence-assistant-checks/1`).
+Missing configuration means no configured checks, never a pass.
+Code tasks can also use a manually entered check.
+Each parent-run command requires terminal confirmation of the actual command, cwd and timeout.
+The parent records exit status, duration and bounded sanitized output; agent prose or exit zero is not a passing check.
+Commands are user-approved shell input, not automatically executed model suggestions.
+They inherit the parent project environment (including any ambient credentials); resolved SDK request credentials are never added.
+The child guard prevents nested Cadence activation.
+Configured checks that have not run remain visibly not-run, even when another check passes.
+
+Review includes staged/unstaged changes, untracked/binary/deleted files and baseline dirt, without claiming all changes belong to Cadence.
+Non-Git inventory and any unreadable, ignored or truncated coverage are explicitly limited.
+Later edits invalidate check/review freshness.
+Human Done may record **reviewed-with-issues** when checks are failed, stale, unrun or coverage incomplete; it never converts those outcomes into passed or certified.
+
+## Storage and privacy
+
+- Human-readable bounded records: `.cadence/assistant/tasks/<uuid>/task.json`.
+- Private bounded sanitized diagnostics and coordination: `<state-home>/cadence-assistant-v1/<checkout-hash>/`, outside the checkout.
+- Authentication is resolved by the parent and sent through anonymous stdin, not argv, project records or credential files.
+- Unknown, corrupt, linked or oversized state refuses without reset.
+- Missing state stays absent on list/open/doctor.
+- Old SQLite/history/checkpoints/candidates, sessions, OpenSpec and uncertain resources are not read as approval, migrated or cleaned.
+
+The SDK child has in-memory settings/session/model/auth stores and explicit resources; it is not Pi CLI startup.
+Redaction is bounded best effort for known secrets, not universal secret discovery.
+Do not put credentials into goals/plans or approved check commands.
+
+## Independent skills and configuration
+
+The shipped `context7-auto-research`, `grok-search` and `git-commit` skills remain independent of `/cadence`.
+The commit skill requires an explicit user commit request; Cadence itself never commits.
+Three package-owned Agents provide planning/research, implementation and diagnosis instructions; they are not extra Pi-discovered workflows.
+
+The missing-only installer offers the user configuration template at `~/.pi/agent/cadence/.env`; it never overwrites an existing file.
+See `config/.env.example` for Context7/Grok/Tavily settings.
+Trusted project overrides may use `.pi/cadence/.env`.
+Startup displays configuration status without showing secrets or activating a task.
+MIT and pi-subagents attribution are in `LICENSE`, `THIRD_PARTY_NOTICES.md` and `licenses/`.
+No Trellis runtime dependency or AGPL source/templates are included.
+
+## Readonly operators
 
 ```sh
-pi install npm:@abelxiaoxing/cadence
+node /path/to/cadence/src/operator-cli.mjs doctor /path/to/workspace
+node /path/to/cadence/src/operator-cli.mjs runs /path/to/workspace
 ```
 
-## 使用
+These observe only the new records/configuration/lock; they never create missing state, launch work, recover locks or execute checks.
+History outcomes are historical, not fresh verification of current files.
 
-```text
-/abel-init
-/abel-design <需求>
-/abel-implement <change>
-/abel-diagnose <问题描述>
-```
-
-- `abel-init`：初始化或修复项目的 OpenSpec 与 AGENTS 基础结构。
-- `abel-design`：调查需求并生成可执行交付计划。
-- `abel-implement`：执行已批准的计划，支持暂停、恢复和取消。
-- `abel-diagnose`：复现问题并执行最小修复。
-
-Implement 默认使用 Linux Bubblewrap 隔离。
-
-可信 Linux 项目可显式设置 `ABEL_EXECUTION_MODE=local-trusted`。
-
-Windows x64 的可信模式见 [Windows 执行说明](docs/windows-host-trusted.md)。
-
-## 配置
-
-Worker 使用独立的 `pi --mode json -p --no-session` 子进程，并继承当前父模型的 `provider/id` 引用与宿主 Pi 凭据配置。
-子进程按角色使用明确工具白名单；Implement 子进程只在 disposable proposal workspace 中编辑，父控制面仍负责 diff、写入边界、候选 sealing 和验证。
-取消会终止并等待子进程及其管道收束。
-
-工作目录和 `--tools` 不是操作系统沙箱；需要更强隔离时仍应使用 Bubblewrap、容器或平台原生 Job。
-父进程会拒绝超出 approved write/delete set 的变更，不会静默丢弃。
-
-Cadence 不再读取 `.pi/cadence/routes.json` 或 `~/.pi/agent/cadence/routes.json`，也不再维护 route health、custom subagent provider 或 endpoint 路由。
-请使用宿主 Pi 的模型、`models.json` 和认证配置；缺失认证或模型时会返回有界错误而不会静默切换。
-
-研究服务配置使用项目级 `.pi/cadence/.env` 或用户级 `~/.pi/agent/cadence/.env`。
-
-可参考 [`config/.env.example`](config/.env.example)。
-
-密钥只保存在本地，不要提交 Git。
-
-## 加载方式
-
-包可以从以下路径加载：
-
-- **npm 包（npm package）**：`pi install npm:@abelxiaoxing/cadence`
-- **本地包目录（local package directory）**：将 Pi 指向仓库的绝对或相对路径（例如 `./cadence`）
-- **已安装 tarball 目录（installed tarball directory）**：用 `bun pm pack --destination <tmp>` 生成 `.tgz`，安装或解压后指向该目录
-
-Pi 相关 peer 依赖使用 `*`，不限制宿主 Pi 的版本。
-
-## 开发
+## Development and qualification
 
 ```sh
-bun install
-bun run check       # 语法、构建产物和类型检查
-bun run lint        # 格式与 Markdown 检查
-bun run test        # 测试
-bun run verify      # 发布前完整检查
-```
-
-其他只读检查：
-
-```sh
-bun run doctor /path/to/project
-bun run runs /path/to/project
+bun run build:operator
+bun run check
+bun run lint
+bun run test
+bun run check:agents
 bun run pack:check
-bun run traceability:check
+bun pm pack --destination /private/temporary/directory
 ```
 
-## 附录
-
-### 公共 UI 的 impactClosure 作者格式
-
-`page-state` 与 `public-html` 可以同时声明。
-以下是 **PlanDraft 任务片段**，合并到现有 `tasks[i]`；路径和证据必须替换为仓库真实调查结果。
-假设 Red 修改 `test/page-state.mjs`，已有 `test/public-html.mjs` 只读保留：
-
-```json
-{
-  "read": ["test/page-state.mjs", "test/public-html.mjs"],
-  "impactClosure": {
-    "changedSurfaces": ["page-state", "public-html"],
-    "searchEvidence": [
-      "检索页面状态的调用点及 test/、tests/ 中的覆盖：test/page-state.mjs 需更新状态切换断言，test/public-html.mjs 覆盖现有公开 HTML。"
-    ],
-    "relatedTests": [
-      {
-        "path": "test/page-state.mjs",
-        "evidence": "本任务 Red 更新页面状态切换回归；由阶段 write 推导为 current-task。"
-      },
-      {
-        "path": "test/public-html.mjs",
-        "evidence": "保留已有 HTML 断言并执行受影响验证；无任务写入，推导为 unaffected。"
-      }
-    ],
-    "affectedSuite": ["test/page-state.mjs", "test/public-html.mjs"]
-  }
-}
-```
-
-`impactClosure` 恰好包含 `changedSurfaces`、`searchEvidence`、`relatedTests` 和 `affectedSuite` 四个字段。
-`changedSurfaces` 是合法枚举数组，`none` 不能与其他值混用。
-`searchEvidence` 记录实际检索与结论。
-`relatedTests` 每项位于 `test/` 或 `tests/` 下，`disposition` 可省略由编译器推导。
-`affectedSuite` 是影响清单而非验证器，每项必须有对应的 `relatedTests` 条目。
-
-## 项目结构
-
-- `src/`：扩展和工作流实现
-- `prompts/`：四个用户入口
-- `agents/`、`skills/`：随包资源
-- `config/`：示例配置
-- `openspec/specs/`：当前规范
-- `docs/`：仅保留必要的平台说明
-- `README.md` 附录：公共 UI 计划的 impactClosure 作者格式
-
-历史设计、评估报告和已完成变更不放在主仓库中。
-
-## 许可
-
-MIT，详见 [LICENSE](LICENSE) 和 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+`test/distribution.test.mjs` exercises real archive members/bodies/pins and extracted consumers.
+The reviewed manifest is `provenance/package-members.json`, not derived from the archive under test.
+Tests distinguish controller logic from real filesystem/process/SDK/package/terminal integration and use explicit integration budgets.
+Synthetic loopback models and trusted existing peer links do not prove paid-provider, manager-install or physical-human qualification.
+Record actual Node/Pi/platform identities without release version predicates; unexecuted Windows/macOS/human lanes remain missing.
+Historical certified-runtime failures are preserved as failed/superseded evidence, not relabeled passes.

@@ -1,83 +1,55 @@
-# Component Guidelines
+# Native Terminal Components
 
-> How TUI components are built in this project: the subagent-activity widget and the startup card, both projections of bounded state through `pi-tui`.
+## Owners and integration
 
----
+`src/task-shell.ts#registerTaskShell(pi: ExtensionAPI): void` owns the native facade.
+Prefer Pi `select`, `input`, `editor` and `confirm`; only the review pager and foreground progress need `ctx.ui.custom<void>()`.
+Do not create a second renderer or restore the retired activity widget.
+[Workflow](../backend/lightweight-workflow-guidelines.md) owns action contracts; [hooks](./hook-guidelines.md) owns admission and currentness.
 
-## Overview
+## Review pager
 
-The package has one persistent UI component and one transient presentation surface: the subagent-activity widget (placed above the editor, `placement: "aboveEditor"`) and the startup configuration notification.
-Both are pure projections: they render from in-memory state that the control plane pushes to them, and neither can alter a run.
-The implementation is `src/subagent-activity.ts` (activity widget, inline component, state mapping, sanitizers) and `src/startup-card.ts` (configuration summary lines).
+The shell-local `pager(ctx, text)` renders sanitized text using `diagnosticText(text, 256 * 1024)` and `wrapTextWithAnsi(line, Math.max(1, width))`.
+Header/progress lines use `truncateToWidth`, never string length as terminal columns.
+At each render, recompute wrapping and clamp scroll offset to the viewport: at least one row, at most 24 rows, bounded by terminal rows minus four.
+`invalidate()` is currently empty because layout is rebuilt during render; do not add cached themed/width-specific output without invalidation.
 
----
+Keys: Up/Down move one row; PageUp/PageDown move 12; Home/End select the bounds; Escape or Enter returns.
+Use `matchesKey`/`Key` and `tui.requestRender()` after input.
+Resize must preserve access to all available rows, including wide Unicode and long plans/results.
+Truncation remains visibly marked; paging a bounded display does not make an incomplete observation complete.
+Fingerprints use observed raw bytes, not redacted rendered text.
 
-## Component Structure
+The Start review shows goal, plan, prior result and current changes.
+The result review shows parent command/cwd/timeout/exit/duration/output, configured not-run obligations, pre-existing dirt, current changes and stale review labels.
+Do not attribute every dirty file to Cadence or hide submodule/ignored/unreadable/truncated coverage limits.
+[Diagnostics](../backend/logging-guidelines.md) owns secret/control stripping and its limits.
 
-- The widget is created by `ensureWidget()` in the activity controller: `this.ui.setWidget(ACTIVITY_WIDGET_KEY, (tui, theme) => new ActivityWidget(...), { placement: "aboveEditor" })`, guarded by a `widgetInstalled` flag and a try/catch ("TUI failures are deliberately isolated from the run.").
-- `ActivityWidget` implements the `pi-tui` `Component` interface: `render(width: number): string[]` maps entry lines through `line(value, width)` and applies the theme accent to the first line only; `invalidate()` is a no-op because the controller requests renders on a timer (`ACTIVITY_REFRESH_MS = 100`) and on state updates.
-- `ActivityInlineComponent` renders one activity entry inline in a tool result, with an `expanded` flag that gates the bounded failure detail block.
-- The startup configuration notification is not a `pi-tui` component: `startupCardLines()` returns bounded plain strings, and the extension sends the final summary line through `ctx.ui.notify(..., "info")`, matching the subdued one-shot presentation used by the Trellis extension.
+## Foreground progress
 
----
+The shell-local `progress(ctx, action)` defers launch through a microtask and tracks cancellation before that launch.
+Escape first sets the local canceled flag, displays stopping/waiting, and requests `controller.cancel()`; it must not merely dismiss the screen while work continues.
+The action promise settles before normal `done()`; disposal also requests cancellation and prevents a later UI completion callback.
+Departure separately awaits the controller's cancellation path.
 
-## Width-Safe Rendering
+Show bounded ready/tool-name notices, not raw tool arguments/results, thinking, auth or provider errors.
+A progress failure emits fixed inspection guidance, not a success message.
+Canceled/timeout/unknown is not completed; direct-child close is not proof that all escaped descendants stopped.
+Keep the new lock when stop/release is unknown; do not add UI cleanup that clears it.
 
-Every emitted line passes `line(value, width)`, which truncates to the terminal width twice (once naively, once against `visibleWidth`) so wide Unicode and CJK text cannot wrap or overrun:
+## Startup notification
 
-- The overflow summary degrades stepwise as width shrinks, in the exact order coded in `subagent-activity.ts`: `+12 more (3 running, 9 queued)` → `+12 (3r, 9q)` → `+12 3r 9q` → `+12 3/9` → `12:3/9` → `3/9`.
-- State glyphs are fixed per display state: `queued` renders `…`; the in-progress states render spinner frames (`⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏`); `completed` renders `✓`; `failed`/`rejected` render `✗`; `cancelled`/`operation-cancelled` render `⊘`; `discarded` renders `◇`; `paused`/`approval-needed` render `!`; `timed-out` renders `⌛`.
-- Elapsed time is compact: under a second renders `123ms`, under a minute `42s`, otherwise `3m07s` (`formatElapsed`).
-- Metadata is bounded: `activityMetadata` emits at most `task <id>` (sanitized to 80 characters), `code <code>` (sanitized workflow code), `attempt n/m` (only when both are safe integers and `m >= n`), `wait <reason>` (80 characters), and `next <action>` (sanitized control action).
+`startupCardLines({cwd, home, projectTrusted}): string[]` only observes independent research configuration.
+Untrusted projects do not read it; malformed explicit config produces fixed non-fallback text.
+The pure projection includes an escaped path, but `src/index.ts` notifies only summary lines when a path line exists.
+It uses nonpersistent `notify` in TUI/RPC with `hasUI`; print/JSON are silent.
+No keys, endpoint/model values or parser payloads enter the notification.
+Repeated session starts rebuild it without a saved dismissal, persistent widget or workflow activation.
 
----
+## Tests and mistakes
 
-## Display-State Vocabulary
-
-`subagent-activity.ts` maps control-plane results to display states, and the mapping is the contract:
-
-- Nonterminal states — `queued`, `preparing`, `connecting`, `waiting-first-response`, `running`, `validating`, `retrying`, `verifying`, `paused`, `approval-needed`, `applying`, `recovering` — never render as completed.
-  They carry spinner or `…`/`!` glyphs, and a result in one of them must not be summarized with `✓`.
-- `operation-cancelled` is not run success: a paused result whose `pause.code` is `operation-cancelled`, an operation of kind `operation-cancelled`, or a result state `operation-cancelled` all map to the `⊘` display state, distinct from `completed`.
-- `discarded` and `rejected` are non-success terminal states (`◇` and `✗`), distinct from the success terminal state `completed` (`✓`).
-- The expandable failure detail renders only allowlisted bounded diagnostics: the inline component shows a `reason:` line (sanitized to 240 characters) and, when expanded, the bounded `designFailure` diagnostics from `src/design-diagnostics.ts` — never raw error text.
-
-Concrete example: a Design evidence packet that is cancelled mid-flight renders as `⊘` with reason `cancelled`, and the same packet later resumed renders as a spinner state again; neither ever renders `✓`, and no persisted flag is involved — the mapping is computed from the result each time.
-
----
-
-## Startup Configuration Notification Rules
-
-- The notification is sent on `session_start` when `ctx.hasUI`, using `ctx.ui.notify(summary, "info")`; it is not installed as a persistent widget and therefore needs no clear operation on `agent_start` or `session_shutdown`.
-- Print and JSON hosts are silent because the notification is a UI-only surface.
-- The notification is never persisted: it is rebuilt from live configuration on every session start, it never activates a workflow, and it never records a dismissal.
-- Content is code-owned labels only (see `logging-guidelines.md` for the exact rules and the untrusted-project single-line form); configuration paths remain available to the pure `startupCardLines()` projection and are not emitted in the notification.
-
----
-
-## Process Activity Projection
-
-The process-backed runner emits transient JSONL events, but the TUI consumes only a bounded projection.
-Tool names, elapsed time, attempt metadata, and terminal state may be displayed.
-Raw child stdout, prompts, credentials, and full provider diagnostics must not be displayed.
-A child process ending with `cancelled`, `timed-out`, or `failed` remains distinct from `completed`, even when it emitted an assistant message before exit.
-
-The runner may invoke callbacks while the child is active.
-Those callbacks are presentation-only: callback exceptions are swallowed at the boundary, and orchestration continues to the actual child result.
-The widget must not persist event streams or infer workflow authority from progress metadata.
-
-## Forbidden Patterns
-
-- Never render a nonterminal display state with the completed glyph or wording, and never render `operation-cancelled`, `discarded`, or `rejected` as success.
-- Never persist active display or timer state; the widget, spinner frame, and notification are all in-memory and rebuilt per session.
-- Never let a TUI callback failure propagate into orchestration: widget installation and `onUpdate` emission are wrapped, "A renderer callback is not part of orchestration."
-- Never render raw configuration values, credentials, or unbounded error text in any widget; sanitize first (`sanitizeDisplayText`, `sanitizeWorkflowCode`, `sanitizeFailureReason`) and bound the detail to the allowlisted diagnostics.
-- Never add another persistent widget; new presentation belongs to the existing activity widget, the transient notification, or a tool result rendered by the host.
-
----
-
-## Common Mistakes
-
-- Assuming the widget re-renders on its own; the controller drives renders (`requestRender`) on a 100 ms clock and on each state update, so a missed notification means a stale line until the next tick.
-- Treating the startup configuration notification as configuration input; it is display-only and the user edits the `.env` file directly, with the next session start showing the new state.
-- Letting a long task title wrap; the fix is to shrink the sanitized length cap in `activityMetadata`, not to change the terminal width handling.
+`test/lightweight-shell.test.ts` covers pager/progress wiring and cancellation before the progress microtask with a fake host.
+`test/terminal-integration.test.mjs` exercises actual source/extracted regular/fullscreen paging, Unicode, resize, Start/check/review/cancel and waited quit.
+`test/startup-card.test.ts` covers trust, secret-free summaries and inert repeated notification.
+Wrong: Escape closes the view and reports success while a child still runs.
+Correct: show stopping, await bounded settlement, and preserve interruption/unknown ownership honestly.
