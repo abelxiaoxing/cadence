@@ -28,11 +28,19 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Record actual Node and Pi identities
         run: node --input-type=module -e "import fs from 'node:fs'; console.log(JSON.stringify({node:process.version,executable:process.execPath,pi:JSON.parse(fs.readFileSync('node_modules/@earendil-works/pi-coding-agent/package.json','utf8')).version,platform:process.platform,arch:process.arch}))"
+      - name: Record existing Windows ConPTY fixture compiler identity
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Output ('pwsh=' + $PSVersionTable.PSVersion.ToString())
+          Write-Output ('dotnet=' + [System.Environment]::Version.ToString())
       - run: bun run check
       - run: bun run lint
       # Serial new controller/storage/process/SDK tests and exact archive/body/pins.
-      # Real source/extracted regular/fullscreen PTYs execute on POSIX only.
-      # Windows direct-child cancellation is weaker; this is not ConPTY evidence.
+      # Four shared production terminals: POSIX PTY or actual Windows ConPTY.
+      # Existing pwsh compiles the excluded fixture in memory; no SDK installation.
+      # Windows quit needs original native wait/exit0 BEFORE ClosePseudoConsole.
+      # Direct-child cancellation remains weaker; no human/provider/tree proof.
       - run: bun run test
       - run: bun run check:agents
       - run: bun run pack:check

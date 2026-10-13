@@ -2246,7 +2246,7 @@
           "id": "LW-CHECK-pty",
           "path": "test/terminal-integration.test.mjs",
           "assertions": [
-            "production PTY plan, SDK edit, real checks, issues review, reopen and waited cancel/quit"
+            "plan, SDK edit, real checks, issues review, reopen and waited cancel/quit"
           ],
           "inputPaths": [
             ".agents/skills/trellis-check/SKILL.md",
@@ -2364,7 +2364,53 @@
             "test/terminal-integration.test.mjs",
             "test/traceability-check.test.mjs",
             "tsconfig.json",
-            "vitest.config.ts"
+            "vitest.config.ts",
+            "test/helpers/task-shell-conpty.ps1",
+            "test/helpers/task-shell-conpty.cs"
+          ],
+          "required": true,
+          "status": "planned",
+          "evidence": []
+        },
+        {
+          "id": "LW-CHECK-conpty",
+          "path": "test/terminal-integration.test.mjs",
+          "assertions": [
+            "nativeWaitReturned",
+            "quitObservedBeforeTeardown",
+            "control-event-duplicate",
+            "CONSOLE_INPUT_ISOLATED"
+          ],
+          "inputPaths": [
+            ".github/workflows/ci.yml",
+            ".trellis/spec/backend/quality-guidelines.md",
+            "test/helpers/task-shell-conpty.ps1",
+            "test/helpers/task-shell-conpty.cs",
+            "test/helpers/task-shell-pty.py",
+            "test/terminal-integration.test.mjs",
+            "package.json",
+            "provenance/package-members.json",
+            "provenance/adapted-modules.yaml",
+            "src/agent-registry.ts",
+            "src/index.ts",
+            "src/install-config.d.mts",
+            "src/install-config.mjs",
+            "src/operator-cli-entry.mjs",
+            "src/operator-cli.mjs",
+            "src/operator-tools.ts",
+            "src/sdk-worker.mjs",
+            "src/startup-card.ts",
+            "src/subagent-process.ts",
+            "src/task-controller.ts",
+            "src/task-diff.ts",
+            "src/task-shell.ts",
+            "src/task-store.ts",
+            "src/task-types.ts",
+            "src/verification-diagnostics.ts",
+            "agents/design-explorer.md",
+            "agents/implementation-worker.md",
+            "agents/diagnosis-worker.md",
+            ".trellis/tasks/10-06-cadence-retirement-distribution-qualification/prd.md"
           ],
           "required": true,
           "status": "planned",
@@ -2422,6 +2468,21 @@
         "LW-CHECK-roles",
         "LW-CHECK-pack",
         "LW-CHECK-negative"
+      ],
+      "platform": "win32"
+    },
+    {
+      "id": "windows-conpty",
+      "required": true,
+      "status": "planned",
+      "checks": [
+        "LW-CHECK-entry",
+        "LW-CHECK-consent",
+        "LW-CHECK-auth",
+        "LW-CHECK-stop",
+        "LW-CHECK-check",
+        "LW-CHECK-pack",
+        "LW-CHECK-conpty"
       ],
       "platform": "win32"
     },

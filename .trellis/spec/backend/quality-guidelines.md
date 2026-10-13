@@ -29,7 +29,8 @@ Biome formats/checks JavaScript/TypeScript/JSON; do not hand-edit the generated 
 - `lightweight-sdk` uses actual SDK/native adapters and local HTTP fixtures with fabricated auth, including one write/tool-result cycle and readonly tool lists.
 - `lightweight-shell` loads production registration with a fake host; it owns the broad stale/busy/replay/mode/navigation negative matrix.
 - `distribution`, `package-audit`, `package-contract`, `independence` cover actual package boundaries and independent contracts.
-- `terminal-integration` executes source/extracted × regular/fullscreen production CLI PTYs; Python waits for original quit and retains receipts/transcripts.
+- `terminal-integration` shares source/extracted × regular/fullscreen production CLI scenarios across POSIX Python PTY and an excluded Windows ConPTY fixture; each producer must wait the original process and retain receipts/transcripts.
+- Windows-only console/parser/startup controls are a separate producer domain, not native passes on Linux; static source review or ordinary Windows CI cannot qualify unexecuted ConPTY.
 
 Use explicit responsibility-appropriate budgets: SDK tests currently allow 20 seconds with a 15-second child timeout; new PTYs allow 90 seconds with 15-second interaction waits.
 These are new integration scenarios, not retimed old 5000/1500/60000-ms certified-engine bodies.
@@ -110,7 +111,8 @@ Bad: increase the 1.5-second sleep, accept three-or-four requests, remove hostil
 Its stdin regressions distinguish absent, explicit empty and payload demands; cover EOF/fast zero/nonzero/controller states, and retain payload-error-after-valid-final/zero, abort/unknown and real-close obligations.
 No-input uses ignored EOF; required payload remains pipe-based and fail-closed.
 `test/distribution.test.mjs` audits extracted/copied trees, root/ancestor link refusal and fixed application-error JSON.
-`test/terminal-integration.test.mjs` keeps all four production scenarios and real barrier/error/exec-fd controls in their existing POSIX responsibility domain.
+`test/terminal-integration.test.mjs` keeps all four shared production scenarios, POSIX real barrier/error/exec-fd controls, and distinct Windows-native console/control/startup fixtures.
+The excluded ConPTY helper is not an SDK worker, production executor or member of the 34-file package.
 A repaired Linux pass is not repaired native Windows/macOS qualification; rerun the new reviewed commit on those actual runners.
 
 ### 7. Wrong vs Correct
@@ -119,3 +121,86 @@ Wrong: `fileURLToPath(guardUrl)` as an ESM preload, or an unrelated upload direc
 Correct: `guardUrl.href` for `--import` and `${{ env.TMPDIR }}` for the owned fixture producer/uploader contract.
 Wrong: assert only echo output/exit zero, or claim Windows reader closure from `fs.closeSync(0)`.
 Correct: also require completed/closed, distinguish demand before launching stdin transport, and label the actual regression precondition/evidence type.
+
+## Scenario: excluded Windows ConPTY qualification
+
+### 1. Scope / Trigger
+
+Use only for actual Windows terminal qualification of the shared production CLI scenarios.
+`test/helpers/task-shell-conpty.ps1` loads the independently implemented `.cs` helper through existing pwsh/.NET in-memory `Add-Type`; no installation, MSVC/SDK/Job, runtime dependency or source fallback.
+Static/local POSIX results do not prove C# compilation, native attach, Unicode/raw/resize or original Windows quit.
+Keep a distinct required `windows-conpty` lane planned until its own native evidence exists.
+
+### 2. Signatures
+
+```text
+pwsh -NoLogo -NoProfile -NonInteractive -File <task-shell-conpty.ps1> <config>
+Fixture.Run(configPath, compilationElapsedMs, pwshVersion) -> exit status
+config: {root,cwd,argv,env,steps}; step: {expect?,event?,resize?,send?}
+```
+
+Helper stdin is the separate readiness pipe; Pi is created with an actual pseudoconsole, never redirected ordinary stdin/stdout or a forced isTTY/UI.
+The control payload is the same fixed HTTP4/editing3 JSON event, at most 512 aggregate bytes.
+Smoke-only scheduling/read-size fields and fixed helper signals are fixture prerequisites, not product RPC or authorization.
+Receipt names remain `pty-receipt.json`, `terminal.bin`, `identity.json` under owned temporary roots.
+Windows receipt uses `nativeWaitReturned`, `nativeWaitResult`, `exitCode`, `waitBeforeClose`, `quitObservedBeforeTeardown`, `cleanQuit`, `forced`, teardown/drain/resource facts and bounded first-fault projections; never fabricate `waitpidReturned`.
+
+### 3. Contracts
+
+Create synchronous noninheritable input/output pipes, HPCON flags0, pointer-sized STARTUPINFOEXW and its documented HPCON **value** attribute.
+CreateProcessW receives real available Node/Pi, CRT-quoted Unicode argv and a sorted double-NUL Unicode environment, inherit=false and no STARTF_USESTDHANDLES.
+Windows HOME/USERPROFILE, LOCALAPPDATA, APPDATA and temp are isolated; preserve only ordinary startup system variables, not auth, NODE_OPTIONS or control/session state.
+Output/input/control pumps run independently; ResizePseudoConsole receives columns/rows and must be corroborated by actual child output where asserted.
+No native call return, helper exit, stdout EOF or process absence substitutes for the original Pi process handle signaled and obtained exit0 **before** force-stop or ClosePseudoConsole.
+ClosePseudoConsole may return before EOF or block on older systems: keep draining on a different thread; unknown close/drain/join cannot pass.
+Use the correct delete/free/close operation for attribute list, allocated env, HPCON and ordinary handles.
+
+Strict parsing covers successfully read in-flight and already-queued bytes, split/early payload, unique exact keys, integer ordinals, malformed UTF-8, trailing/duplicate/overflow and EOF.
+After cutoff request, validate remaining available input before the first successful native zero-available snapshot establishes cutoff; thread Join is not protocol drain.
+`futureInputValidated:false` means later writes/closure are outside this bounded snapshot, not permanently certified absent.
+Negative controls establish actual console/raw/argv/home/input-isolation prerequisites before publishing faults; a PID or forced wait is insufficient.
+Late-fault controls park the reader, prove queued data or broken-pipe, then permit original unforced quit.
+Startup scheduling injections are labelled injections, not reproduced OS Thread.Start failures.
+
+Pumps distinguish attempted/started/entered/ready/joined; unstarted threads are never joined, and independent teardown attempts continue after individual failures.
+Diagnostic mutations/snapshots share one lock; unjoined-worker snapshots explicitly retain uncertainty.
+Keep first native wait/exit/I/O fault separate from final wait/stop facts; do not overwrite it during teardown or collect unbounded polling logs.
+Complete identity projection, including helper hash reads, belongs inside the nonthrowing diagnostic boundary; fixed unavailable/null data must not replace the original failure.
+
+Retain original 90s production budget including Add-Type, shared 15s view/event and 15s quit waits, 1000ms checks, pack30s/extract10s, key40ms/Escape100ms pacing and 15-minute CI job.
+Windows checks are CMD builtins `exit /b 0` and `exit /b 1`; exact four HTTP requests and original consent/review/cancel steps remain unchanged.
+The new helper transcript bound is 4MiB and receipt bound64KiB; overflow fails while draining, never truncates into success or changes product/POSIX limits.
+Automated workflow records remain physicalHuman=false/paidProvider=false, without universal descendant closure.
+
+### 4. Validation & Error Matrix
+
+| Condition                                                                      | Required outcome                                                                  |
+| ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| pwsh compilation/API/layout/launch missing or fails                            | Failed diagnostic, not skip/install/fallback                                      |
+| Terminal/event prerequisite absent or child exits early                        | Failed within original shared interaction budget                                  |
+| Malformed, duplicate, trailing, overflowing or EOF control input before cutoff | Preserve strict failure and first native facts                                    |
+| Late queued protocol fault after original exit0                                | Preserve original quit and protocol failure separately; never cleanQuit           |
+| Native wait/error followed by later successful stop                            | Retain first fault and later final facts separately                               |
+| Worker startup/Ready/Join/close/drain unconfirmed                              | Independent bounded teardown; retained uncertainty, not success                   |
+| Identity projection/hash/write fails                                           | Fixed unavailable metadata; original assertion/setup error preserved              |
+| ConPTY differential output lacks fresh view match                              | Preserve raw transcript/failure; no stale-heading, fake screen or larger deadline |
+
+### 5. Good/Base/Bad Cases
+
+Good: real shared code workflow, exact HTTP4 barrier, original process wait/zero quit, then HPCON close and actual output drain.
+Base: malformed helper input after genuinely observed native console/input prerequisites produces the expected failed receipt; it is not a product failure or extra suite pass.
+Bad: mark ordinary Windows green, Linux producer skips or static review as ConPTY passed; close the pseudoconsole first and call the resulting process exit a clean quit.
+
+### 6. Tests Required
+
+`test/terminal-integration.test.mjs`: four unchanged production scenarios on each actual producer; Windows Unicode CRT argv/actual isTTY/raw/isolated home/input/no-inherit/resize/quit controls, strict event faults, gated late faults and explicit startup injections.
+Keep original POSIX driver controls and native outcome/exit assertions; do not sum internal controls or overlapping separate distribution checks into whole-suite totals.
+Diagnostic regression must throw during projection/helper read, not only fail target I/O; portable Windows-env assertions remain configuration coverage only.
+Require actual native compilation/API/control/quit receipts before binding a Windows lane passed; available Node/Pi/pwsh/.NET/OS identity is evidence, not a new version predicate.
+
+### 7. Wrong vs Correct
+
+Wrong: cancel the control reader and call successful Join proof that queued tail was validated, or preserve only the final wait result.
+Correct: record bounded native validation cutoff independently of Join, retain queued/in-flight faults and first native error alongside final stop facts.
+Wrong: build identity hashes as arguments outside a protected writer.
+Correct: evaluate the entire projection callback inside the failure-safe boundary and preserve the original error.
