@@ -113,6 +113,13 @@ The worker protocol is JSONL: first `{type:"ready"}`, optional `{type:"tool",nam
 Prompt settlement, a valid final assistant stop and normal zero close are all required; prose or exit zero alone is insufficient.
 No raw tool arguments/results/thinking are forwarded as progress.
 
+`ProcessSpec.input === undefined` means no payload: spawn stdin as ignored EOF, never inherit the terminal or write a synthetic empty chunk.
+Explicit empty strings and nonempty payloads instead request a pipe with strict delivery/error handling; do not merge absence with empty through truthiness or nullish defaults.
+`runWorker` always supplies its JSON envelope through that pipe; a stdin transport failure still fails even after a valid final and native zero exit.
+No-input protocol fixtures still require complete valid frames and zero close; protocol describes stdout obligations, not an implicit stdin payload.
+Nullable stdin cleanup must preserve unknown-stop behavior, and settlement remains on original `close`, not `exit`.
+A command's native exit code and runner outcome are separate facts: an unrequested empty write must not turn a genuine successful stdin-less check into failed work.
+
 Current bounds: **128 KiB** input; **256 KiB** aggregate process output; **64 KiB** pending protocol buffer; **4096** frames; **16 KiB** final text; **20 minutes** default worker timeout.
 Child emission also caps each line at 64 KiB, SDK events at 4096 and streamed model text/thinking at 256 KiB.
 Cancellation/timeout sends TERM, escalates after **1000 ms**, and reports unknown if close is unconfirmed after **3000 ms** from stop.
@@ -159,6 +166,7 @@ Raw observed bytes feed fingerprints; sanitized displays are not literal complet
 | Auth/custom transport unsupported or late after abort                 | No fallback and no late spawn                                |
 | Malformed UTF-8/frames, missing final, output overflow, nonzero close | Failed/incomplete, not completed                             |
 | Canceled/timeout then exit zero                                       | Retain cancellation/timeout outcome                          |
+| Required payload stdin error despite valid final/native exit zero     | Failed delivery; never erase the transport failure           |
 | Unconfirmed close or release                                          | Interrupted/unknown; supported new writers blocked           |
 | Review fingerprint changed                                            | Refuse Done; review again                                    |
 | Unrun/failed/stale check or incomplete coverage                       | Explicit issues acknowledgment; never manufacture check PASS |
@@ -197,6 +205,8 @@ Wrong: `gitRoot.trim()` or canonicalizing away real filename characters.
 Correct: `resolveWorkspace()` removes only Git's output terminator and canonicalizes the actual filesystem path; escape paths for display separately.
 Wrong: reuse a historical approval, SQL checkpoint, process disappearance or old failed suite as current consent/success.
 Correct: keep old material untouched, retain explicit uncertainty and ask for a fresh native action.
+Wrong: always create stdin pipe and call `stdin.end(input ?? "")`, then treat its empty-write EPIPE as a command failure.
+Correct: use ignored EOF when input is absent; pipe supplied strings, preserve strict errors and wait for native close.
 Wrong: let Node's generic CRT quoting transform an approved quoted Windows CMD command, or apply verbatim to every worker.
 Correct: retain the approved command's inner quotes and ordinary environment, then use the check-only outer quoting and verbatim flag:
 

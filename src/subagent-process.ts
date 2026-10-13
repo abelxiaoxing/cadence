@@ -1,4 +1,5 @@
-import { spawn } from "node:child_process";
+import { type ChildProcessByStdio, spawn } from "node:child_process";
+import type { Readable, Writable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import type { CheckDefinition, RunResult, TaskKind } from "./task-types.ts";
@@ -74,7 +75,7 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
   });
   if (spec.signal.aborted)
     return Promise.resolve(early("canceled", "Canceled before launch"));
-  if (spec.input && Buffer.byteLength(spec.input) > 128 * 1024)
+  if (spec.input !== undefined && Buffer.byteLength(spec.input) > 128 * 1024)
     return Promise.resolve(early("failed", "Worker input exceeds bound"));
   return new Promise((resolve) => {
     const child = spawn(spec.command, spec.args, {
@@ -83,8 +84,10 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       detached: process.platform !== "win32",
       windowsHide: true,
       windowsVerbatimArguments: spec.windowsVerbatimArguments,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+      // No payload means EOF, not an empty write to an unused transport.
+      // Explicit empty input still requests strict pipe delivery.
+      stdio: [spec.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+    }) as ChildProcessByStdio<Writable | null, Readable, Readable>;
     let settled = false;
     let stopping: RunResult["outcome"] | undefined;
     let byteCount = 0;
@@ -140,7 +143,7 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         child.unref();
         child.stdout.destroy();
         child.stderr.destroy();
-        child.stdin.destroy();
+        child.stdin?.destroy();
       }
     };
     const signalChild = (signal: NodeJS.Signals) => {
@@ -244,8 +247,10 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       output += stderrDecoder.end();
       finish(true, code, signal);
     });
-    child.stdin.on("error", () => stop("failed"));
-    child.stdin.end(spec.input ?? "");
+    if (child.stdin) {
+      child.stdin.on("error", () => stop("failed"));
+      child.stdin.end(spec.input);
+    }
   });
 }
 export function runWorker(

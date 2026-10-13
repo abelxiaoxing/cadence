@@ -77,6 +77,12 @@ A progress heading, worker-ready frame, timer or model prose is not HTTP readine
 The driver buffers split/early events, caps event input at 512 bytes and preserves original waited quit/exit facts.
 Readiness is a fixture prerequisite, never user consent or descendant settlement.
 
+The round-2 Ubuntu transcript reached a failed menu after the confirmed `true` check, before the HTTP barrier; do not misdiagnose every PTY deadline as a readiness or elapsed-time defect.
+Native probes demonstrated an absent-input empty-write EPIPE can override genuine exit zero, but the original CI did not upload that check's precise child exit/error.
+Regression assertions must check outcome, closed state and native exit facts together; fixed random samples cannot prove a reached race absent.
+Windows libuv protects stdio fd 0–2 from `fs.closeSync`, so its successful return is not proof of native reader closure.
+Use genuinely established portable prerequisites or honestly labelled public parent-write-side fault injection; keep mocked lifecycle ordering separate from native/CI evidence.
+
 CI uploads only explicitly named diagnostics beneath the exported owned temp directory: terminal `pty-receipt.json`, `terminal.bin`, sanitized `identity.json`, and distribution `distribution-diagnostics.json`.
 Do not use unrelated `runner.temp`, upload whole trees/configuration/auth/peer data, or scan/reset old temp directories.
 Identity/request-order diagnostics are failure-safe, bounded and omit auth headers/keys, raw bodies, prompts and environment dumps.
@@ -101,6 +107,8 @@ Bad: increase the 1.5-second sleep, accept three-or-four requests, remove hostil
 ### 6. Tests Required
 
 `test/lightweight-sdk.test.ts` keeps all guarded wire lanes; `test/lightweight-process-diff.test.ts` verifies native quoted-command behavior and check-only CMD options without weakening SDK environment isolation.
+Its stdin regressions distinguish absent, explicit empty and payload demands; cover EOF/fast zero/nonzero/controller states, and retain payload-error-after-valid-final/zero, abort/unknown and real-close obligations.
+No-input uses ignored EOF; required payload remains pipe-based and fail-closed.
 `test/distribution.test.mjs` audits extracted/copied trees, root/ancestor link refusal and fixed application-error JSON.
 `test/terminal-integration.test.mjs` keeps all four production scenarios and real barrier/error/exec-fd controls in their existing POSIX responsibility domain.
 A repaired Linux pass is not repaired native Windows/macOS qualification; rerun the new reviewed commit on those actual runners.
@@ -109,3 +117,5 @@ A repaired Linux pass is not repaired native Windows/macOS qualification; rerun 
 
 Wrong: `fileURLToPath(guardUrl)` as an ESM preload, or an unrelated upload directory.
 Correct: `guardUrl.href` for `--import` and `${{ env.TMPDIR }}` for the owned fixture producer/uploader contract.
+Wrong: assert only echo output/exit zero, or claim Windows reader closure from `fs.closeSync(0)`.
+Correct: also require completed/closed, distinguish demand before launching stdin transport, and label the actual regression precondition/evidence type.

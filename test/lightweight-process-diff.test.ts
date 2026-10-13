@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import {
   mkdirSync,
   mkdtempSync,
@@ -27,6 +28,7 @@ vi.mock("node:child_process", async (importOriginal) => {
   return { ...original, spawn: vi.fn(original.spawn) };
 });
 
+const nativeSpawn = vi.mocked(spawn).getMockImplementation() as typeof spawn;
 const temporary = () => mkdtempSync(join(tmpdir(), "cadence-lw-native-"));
 function node(
   code: string,
@@ -41,6 +43,379 @@ function node(
     ...options,
   });
 }
+// Exact lifecycle controls are not native exit evidence. The native cases below
+// separately verify spawn options, real EOF/exit and injected parent-side
+// Writable faults on actual child pipes (not native reader-close evidence).
+function lifecycleChild(input?: string) {
+  const stream = () =>
+    Object.assign(new EventEmitter(), {
+      end: vi.fn(),
+      destroy: vi.fn(),
+    });
+  const child = Object.assign(new EventEmitter(), {
+    stdin: input === undefined ? null : stream(),
+    stdout: stream(),
+    stderr: stream(),
+    kill: vi.fn(() => true),
+    unref: vi.fn(),
+  });
+  vi.mocked(spawn).mockReturnValueOnce(
+    child as unknown as ReturnType<typeof spawn>,
+  );
+  return child;
+}
+
+const validFrames = Buffer.from(
+  '{"type":"ready"}\n{"type":"final","text":"transport-final","stopReason":"stop"}\n',
+);
+
+describe("demand-based stdin transport", () => {
+  it.each([
+    { name: "absent", input: undefined, stdin: "ignore" },
+    { name: "explicit empty", input: "", stdin: "pipe" },
+    { name: "payload", input: "bounded 中文 payload", stdin: "pipe" },
+  ])("actual spawn and EOF delivery: $name", async ({ input, stdin }) => {
+    const result = await node(
+      `let text='';process.stdin.setEncoding('utf8');process.stdin.on('data',part=>text+=part);process.stdin.on('end',()=>{process.stdout.write(JSON.stringify(text));process.stderr.write('stderr-pipe')});process.stdin.resume();`,
+      { input },
+    );
+    const launch = vi.mocked(spawn).mock.lastCall;
+    const child = vi.mocked(spawn).mock.results.at(-1)?.value;
+    expect(launch?.[2]?.stdio).toEqual([stdin, "pipe", "pipe"]);
+    expect(launch?.[2]?.detached).toBe(process.platform !== "win32");
+    expect(launch?.[2]?.windowsHide).toBe(true);
+    expect(launch?.[2]?.windowsVerbatimArguments).toBeUndefined();
+    expect(child.stdin === null).toBe(input === undefined);
+    expect(result).toMatchObject({
+      outcome: "completed",
+      closed: true,
+      exitCode: 0,
+      signal: null,
+      truncated: false,
+    });
+    expect(result.output).toContain(JSON.stringify(input ?? ""));
+    expect(result.output).toContain("stderr-pipe");
+  });
+
+  it("native fast shell and Node zero/nonzero retain their actual close facts", async () => {
+    for (const [command, exitCode] of [
+      [process.platform === "win32" ? "exit 0" : "true", 0],
+      [process.platform === "win32" ? "exit 1" : "false", 1],
+      ["exit 7", 7],
+    ] as const) {
+      const result = await runCheck(
+        { name: "fast-close", command, timeoutMs: 1000 },
+        temporary(),
+        new AbortController().signal,
+      );
+      expect(vi.mocked(spawn).mock.lastCall?.[2]?.stdio).toEqual([
+        "ignore",
+        "pipe",
+        "pipe",
+      ]);
+      expect(result).toMatchObject({
+        outcome: exitCode === 0 ? "completed" : "failed",
+        closed: true,
+        exitCode,
+        signal: null,
+        truncated: false,
+        output: "",
+      });
+    }
+    for (const exitCode of [0, 7]) {
+      const result = await node(`process.exit(${exitCode});`);
+      expect(result).toMatchObject({
+        outcome: exitCode === 0 ? "completed" : "failed",
+        closed: true,
+        exitCode,
+        signal: null,
+        truncated: false,
+      });
+    }
+  });
+
+  it.each([
+    { name: "absent", input: undefined },
+    { name: "explicit empty", input: "" },
+    { name: "payload", input: "bounded 中文 payload" },
+  ])(
+    "real child with injected parent-side Writable fault: $name",
+    async ({ input }) => {
+      const cwd = temporary();
+      const gate = join(cwd, "continue");
+      const abort = new AbortController();
+      const fault = new Error("Injected parent-side Writable transport fault");
+      let childReady = false;
+      let nativeEOF = false;
+      let nativeEndAttempted = false;
+      let stdinError: Error | undefined;
+      const lifecycle: {
+        event: "exit" | "close";
+        exitCode: number | null;
+        signal: NodeJS.Signals | null;
+      }[] = [];
+      vi.mocked(spawn).mockImplementationOnce((command, args, options) => {
+        const child = nativeSpawn(command, args, options);
+        const stdin = child.stdin;
+        // Defer delivery only until the real child has installed its watcher.
+        // Writable.destroy(error) publicly injects a parent-side pipe fault;
+        // bare destroy() + end() need not emit an error. This is neither an OS
+        // EPIPE nor proof that a Windows child's original fd0 was closed.
+        const end = stdin?.end.bind(stdin);
+        if (stdin && end) stdin.end = vi.fn(() => stdin);
+        stdin?.on("error", (error: Error) => {
+          stdinError = error;
+        });
+        child.on("exit", (exitCode, signal) => {
+          lifecycle.push({ event: "exit", exitCode, signal });
+        });
+        child.on("close", (exitCode, signal) => {
+          lifecycle.push({ event: "close", exitCode, signal });
+        });
+        let observed = "";
+        child.stdout?.on("data", (bytes: Buffer) => {
+          observed += bytes.toString();
+          if (!childReady && observed.includes("NATIVE_READY\n")) {
+            childReady = true;
+            if (stdin && end) {
+              stdin.destroy(fault);
+              end(input);
+              nativeEndAttempted = true;
+            }
+          }
+          if (!nativeEOF && observed.includes("NATIVE_EOF\n")) {
+            nativeEOF = true;
+            if (input === undefined) writeFileSync(gate, "continue");
+          }
+        });
+        return child;
+      });
+      try {
+        const result = await node(
+          `const fs=require('node:fs');const gate=${JSON.stringify(gate)};const watcher=fs.watch(${JSON.stringify(cwd)},()=>{if(fs.existsSync(gate)){watcher.close();console.log('WORK_AFTER_EOF')}});process.stdin.on('end',()=>console.log('NATIVE_EOF'));process.stdin.resume();console.log('NATIVE_READY');`,
+          { cwd, input, signal: abort.signal },
+        );
+        const child = vi.mocked(spawn).mock.results.at(-1)?.value;
+        expect(vi.mocked(spawn).mock.lastCall?.[2]?.stdio).toEqual([
+          input === undefined ? "ignore" : "pipe",
+          "pipe",
+          "pipe",
+        ]);
+        expect(childReady).toBe(true);
+        expect(result.closed).toBe(true);
+        expect(lifecycle).toEqual([
+          { event: "exit", exitCode: result.exitCode, signal: result.signal },
+          { event: "close", exitCode: result.exitCode, signal: result.signal },
+        ]); // Only actual native exit/close events supply these facts.
+        if (input === undefined) {
+          expect(child.stdin).toBeNull();
+          expect(nativeEndAttempted).toBe(false);
+          expect(stdinError).toBeUndefined();
+          expect(nativeEOF).toBe(true);
+          expect(result).toMatchObject({
+            outcome: "completed",
+            exitCode: 0,
+            signal: null,
+            truncated: false,
+          });
+          expect(result.output).toContain("WORK_AFTER_EOF");
+        } else {
+          // Empty is supplied input, not a truthiness-based absence. The real
+          // Writable emits our injected fault; production must fail closed.
+          expect(child.stdin.end).toHaveBeenCalledExactlyOnceWith(input);
+          expect(nativeEndAttempted).toBe(true);
+          expect(child.stdin.destroyed).toBe(true);
+          expect(stdinError).toBe(fault);
+          expect(result.outcome).toBe("failed");
+          expect(result.truncated).toBe(false);
+          expect(result.output).not.toContain("WORK_AFTER_EOF");
+        }
+      } finally {
+        abort.abort();
+      }
+    },
+  );
+
+  it("real controller stores passed/review and failed statuses with stable inputs", async () => {
+    const root = temporary();
+    writeFileSync(join(root, "existing.txt"), "stable user bytes");
+    const store = new TaskStore(root, join(temporary(), "state"));
+    const controller = new TaskController(store, root);
+    controller.create("code", "Native check status");
+    const before = controller.observe().fingerprint;
+    for (const [name, command, exitCode, status, phase] of [
+      [
+        "pass",
+        process.platform === "win32" ? "exit 0" : "true",
+        0,
+        "passed",
+        "review",
+      ],
+      [
+        "fail",
+        process.platform === "win32" ? "exit 1" : "false",
+        1,
+        "failed",
+        "failed",
+      ],
+    ] as const) {
+      const result = await controller.check(
+        controller.choice(),
+        { name, command, timeoutMs: 1000 },
+        () => true,
+      );
+      expect(result).toMatchObject({
+        outcome: exitCode === 0 ? "completed" : "failed",
+        closed: true,
+        exitCode,
+        signal: null,
+      });
+      expect(controller.observe().fingerprint).toBe(before);
+      const task = controller.current;
+      expect(task?.phase).toBe(phase);
+      expect(task?.checks.find((check) => check.name === name)).toMatchObject({
+        status,
+        exitCode,
+        fingerprint: before,
+      });
+      expect(store.loadSnapshot(controller.choice().id)?.record).toEqual(task);
+      expect(controller.busy).toBe(false);
+      expect(controller.blocked).toBe(false);
+    }
+    expect(controller.current?.checks.map((check) => check.status)).toEqual([
+      "passed",
+      "failed",
+    ]);
+  });
+
+  it.each(["before-exit", "after-exit", "after-close", "none"] as const)(
+    "SDK payload + already parsed valid final: stdin error %s",
+    async (order) => {
+      const request = {
+        cwd: temporary(),
+        model: {},
+        auth: { ok: true as const },
+        kind: "code" as const,
+        prompt: "synthetic payload",
+        instructions: "fixture only",
+      };
+      const input = JSON.stringify(request);
+      const child = lifecycleChild(input);
+      const run = runWorker(request, new AbortController().signal);
+      expect(vi.mocked(spawn).mock.lastCall?.[2]?.stdio).toEqual([
+        "pipe",
+        "pipe",
+        "pipe",
+      ]);
+      expect(child.stdin?.end).toHaveBeenCalledExactlyOnceWith(input);
+      expect(Buffer.byteLength(input)).toBeLessThanOrEqual(128 * 1024);
+      let settled = false;
+      void run.then(() => {
+        settled = true;
+      });
+      // The production data handler synchronously parses both valid frames.
+      // The no-error twin below proves the same frames yield the final text.
+      child.stdout.emit("data", validFrames);
+      const error = () =>
+        child.stdin?.emit(
+          "error",
+          Object.assign(new Error("synthetic transport failure"), {
+            code: "EPIPE",
+          }),
+        );
+      if (order === "before-exit") error();
+      child.emit("exit", 0, null);
+      await Promise.resolve();
+      expect(settled).toBe(false); // Native exit is not stream settlement.
+      if (order === "after-exit") error();
+      child.emit("close", 0, null);
+      if (order === "after-close") error();
+      const failed = order === "before-exit" || order === "after-exit";
+      expect(await run).toMatchObject({
+        outcome: failed ? "failed" : "completed",
+        closed: true,
+        exitCode: 0,
+        signal: null,
+        truncated: false,
+        ...(failed ? {} : { text: "transport-final" }),
+      });
+      expect(child.kill.mock.calls).toEqual(failed ? [["SIGTERM"]] : []);
+    },
+  );
+
+  it("explicit empty input errors stay strict; cancellation still wins over late zero", async () => {
+    for (const canceled of [false, true]) {
+      const child = lifecycleChild("");
+      const abort = new AbortController();
+      const run = node("synthetic lifecycle only", {
+        input: "",
+        protocol: true,
+        signal: abort.signal,
+      });
+      expect(child.stdin?.end).toHaveBeenCalledExactlyOnceWith("");
+      child.stdout.emit("data", validFrames);
+      if (canceled) abort.abort();
+      child.emit("exit", 0, null);
+      child.stdin?.emit(
+        "error",
+        Object.assign(new Error("fixture EPIPE"), { code: "EPIPE" }),
+      );
+      child.emit("close", 0, null);
+      expect(await run).toMatchObject({
+        outcome: canceled ? "canceled" : "failed",
+        closed: true,
+        exitCode: 0,
+        signal: null,
+      });
+    }
+  });
+
+  it("absent stdin is safe on unknown-close cleanup without inventing close", async () => {
+    vi.useFakeTimers();
+    try {
+      const child = lifecycleChild();
+      const abort = new AbortController();
+      const run = node("synthetic no-close only", { signal: abort.signal });
+      expect(child.stdin).toBeNull();
+      expect(vi.mocked(spawn).mock.lastCall?.[2]?.stdio).toEqual([
+        "ignore",
+        "pipe",
+        "pipe",
+      ]);
+      abort.abort();
+      await vi.advanceTimersByTimeAsync(3000);
+      const result = await run;
+      expect(result).toMatchObject({
+        outcome: "unknown",
+        closed: false,
+        exitCode: null,
+        signal: null,
+      });
+      expect(child.kill.mock.calls).toEqual([["SIGTERM"], ["SIGKILL"]]);
+      expect(child.unref).toHaveBeenCalledOnce();
+      expect(child.stdout.destroy).toHaveBeenCalledOnce();
+      expect(child.stderr.destroy).toHaveBeenCalledOnce();
+      child.emit("close", 0, null);
+      expect(await run).toBe(result); // A later event cannot repair the receipt.
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("oversized supplied input refuses before any spawn", async () => {
+    const calls = vi.mocked(spawn).mock.calls.length;
+    const result = await node("not launched", {
+      input: "x".repeat(128 * 1024 + 1),
+    });
+    expect(result).toMatchObject({
+      outcome: "failed",
+      closed: true,
+      exitCode: null,
+    });
+    expect(vi.mocked(spawn).mock.calls).toHaveLength(calls);
+  });
+});
+
 describe("bounded real process owner", () => {
   it("parent checks inherit project environment without weakening SDK environment isolation", async () => {
     const cwd = temporary();
@@ -178,7 +553,16 @@ describe("bounded real process owner", () => {
 
   it("requires valid protocol final AND native zero close", async () => {
     const frames = `console.log(JSON.stringify({type:'ready'}));console.log(JSON.stringify({type:'final',text:'Done',stopReason:'stop'}));`;
-    expect((await node(frames, { protocol: true })).outcome).toBe("completed");
+    // Protocol-only fixtures may omit input: ignored EOF does not waive any
+    // framing/final/close obligation. runWorker always supplies its JSON input.
+    const complete = await node(frames, { protocol: true });
+    expect(complete.outcome).toBe("completed");
+    expect(complete).toMatchObject({ closed: true, exitCode: 0, text: "Done" });
+    expect(vi.mocked(spawn).mock.lastCall?.[2]?.stdio).toEqual([
+      "ignore",
+      "pipe",
+      "pipe",
+    ]);
     for (const code of [
       "",
       "console.log('broken')",
@@ -204,6 +588,8 @@ describe("bounded real process owner", () => {
       temporary(),
       new AbortController().signal,
     );
+    expect(pass.outcome).toBe("completed");
+    expect(pass.closed).toBe(true);
     expect(pass.exitCode).toBe(0);
     expect(pass.output).toContain("check-output");
   });
