@@ -148,7 +148,9 @@ Windows receipt uses `nativeWaitReturned`, `nativeWaitResult`, `exitCode`, `wait
 ### 3. Contracts
 
 Create synchronous noninheritable input/output pipes, HPCON flags0, pointer-sized STARTUPINFOEXW and its documented HPCON **value** attribute.
-CreateProcessW receives real available Node/Pi, CRT-quoted Unicode argv and a sorted double-NUL Unicode environment, inherit=false and no STARTF_USESTDHANDLES.
+CreateProcessW receives real available Node/Pi, CRT-quoted Unicode argv and a sorted double-NUL Unicode environment, inherit=false and STARTF_USESTDHANDLES with all three standard handles NULL, matching Microsoft's inspected ConptyConnection launcher.
+Never pass helper/control pipe handles as child stdio or enable general handle inheritance.
+The NULL-stdio policy is a native repair candidate: prior flag-free creation succeeded but had no screen text; only new child diagnostics/native console observations can establish whether this startup change actually repaired the failure.
 Windows HOME/USERPROFILE, LOCALAPPDATA, APPDATA and temp are isolated; preserve only ordinary startup system variables, not auth, NODE_OPTIONS or control/session state.
 Output/input/control pumps run independently; ResizePseudoConsole receives columns/rows and must be corroborated by actual child output where asserted.
 No native call return, helper exit, stdout EOF or process absence substitutes for the original Pi process handle signaled and obtained exit0 **before** force-stop or ClosePseudoConsole.
@@ -166,6 +168,9 @@ Pumps distinguish attempted/started/entered/ready/joined; unstarted threads are 
 Diagnostic mutations/snapshots share one lock; unjoined-worker snapshots explicitly retain uncertainty.
 Keep first native wait/exit/I/O fault separate from final wait/stop facts; do not overwrite it during teardown or collect unbounded polling logs.
 Complete identity projection, including helper hash reads, belongs inside the nonthrowing diagnostic boundary; fixed unavailable/null data must not replace the original failure.
+Smoke-only prerequisite `identity.json` uses a distinct schema and synchronous <=8KiB writes before lazy stdio access, then fixed first-check/type/error-code/TTY/dimension/equality/raw/write facts.
+It never exports actual argv/env/path, arbitrary messages/stacks or auth; missing bootstrap remains unavailable rather than inferred TTY failure.
+Recorded diagnostic facts cannot satisfy CONSOLE_READY/CONSOLE_INPUT_ISOLATED output gates or replace any original prerequisite assertion.
 
 Retain original 90s production budget including Add-Type, shared 15s view/event and 15s quit waits, 1000ms checks, pack30s/extract10s, key40ms/Escape100ms pacing and 15-minute CI job.
 Windows checks are CMD builtins `exit /b 0` and `exit /b 1`; exact four HTTP requests and original consent/review/cancel steps remain unchanged.
@@ -204,3 +209,5 @@ Wrong: cancel the control reader and call successful Join proof that queued tail
 Correct: record bounded native validation cutoff independently of Join, retain queued/in-flight faults and first native error alongside final stop facts.
 Wrong: build identity hashes as arguments outside a protected writer.
 Correct: evaluate the entire projection callback inside the failure-safe boundary and preserve the original error.
+Wrong: infer a precise child TTY/argv/size assertion from a title-only ConPTY transcript or force-stop exit1.
+Correct: retain the original failed native run, write independent bounded prerequisite facts, and distinguish a startup-policy candidate from an actually executed repair.

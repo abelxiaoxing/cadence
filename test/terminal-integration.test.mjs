@@ -1,4 +1,5 @@
 // Actual production CLI + OS PTY + synthetic loopback SDK. No physical-human/provider claim.
+import nodeAssert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -14,6 +15,7 @@ import {
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { runInNewContext } from "node:vm";
 import { expect, it, vi } from "vitest";
 import { auditPackage } from "../scripts/package-audit.mjs";
 import { diagnosticText } from "../src/verification-diagnostics.ts";
@@ -843,6 +845,414 @@ it("Windows terminal environment is an isolated whitelist, not inherited user st
   expect(env).not.toHaveProperty("PI_SESSION_ID");
 });
 
+// Serialized only into the excluded console smoke child. No preload or
+// production identity writer: exclusive creation refuses any existing identity.
+function runConptySmoke(control) {
+  const assert = require("node:assert/strict");
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const tty = require("node:tty");
+  const diagnostic = {
+    schema: "conpty-prerequisite-diagnostic/1",
+    stage: "bootstrap",
+    sequence: 0,
+    firstFailedCheck: null,
+    errorClass: null,
+    checks: {},
+    fdTTY: [0, 1, 2].map((fd) => ({ fd, isTTY: null, errorClass: null })),
+    streamTTY: { stdin: null, stdout: null, stderr: null },
+    stderrInitErrorClass: null,
+    columns: null,
+    rows: null,
+    rawBefore: null,
+    rawAfter: null,
+    sentinel: {
+      called: false,
+      returned: null,
+      callbackCalled: false,
+      callbackSucceeded: null,
+      errorClass: null,
+    },
+  };
+  const errorClass = (error) => {
+    // No arbitrary name/code/message/stack or body values enter the record.
+    if (error instanceof assert.AssertionError) return "AssertionError";
+    if (error instanceof TypeError) return "TypeError";
+    if (error instanceof RangeError) return "RangeError";
+    if (error instanceof SyntaxError) return "SyntaxError";
+    if (error instanceof Error) return "Error";
+    return "unknown";
+  };
+  let diagnosticFd = null;
+  const save = () => {
+    if (diagnosticFd === null) return;
+    try {
+      diagnostic.sequence++;
+      const json = JSON.stringify(diagnostic);
+      if (Buffer.byteLength(json) > 8 * 1024) return;
+      fs.ftruncateSync(diagnosticFd, 0);
+      fs.writeSync(diagnosticFd, json, 0, "utf8");
+    } catch {
+      // Independent diagnostic failure never replaces the actual child error.
+    }
+  };
+  try {
+    diagnosticFd = fs.openSync(
+      path.join(process.cwd(), "identity.json"),
+      "wx",
+      0o600,
+    );
+  } catch {
+    // Unavailable is not evidence of a TTY failure or a passing prerequisite.
+  }
+  save(); // Synchronous bootstrap BEFORE any lazy process stdio access.
+  const begin = (id) => {
+    diagnostic.stage = id;
+    save();
+  };
+  const check = (id, actual, expected) => {
+    diagnostic.checks[id] = actual === expected;
+    save();
+    assert.equal(actual, expected); // Keep strict failures and default nonzero.
+  };
+  const fail = (id, error) => {
+    if (diagnostic.firstFailedCheck === null) {
+      diagnostic.firstFailedCheck = id;
+      diagnostic.errorClass = errorClass(error);
+    }
+    save();
+  };
+  const boolean = (value) => (typeof value === "boolean" ? value : null);
+  for (const fact of diagnostic.fdTTY) {
+    try {
+      fact.isTTY = tty.isatty(fact.fd);
+    } catch (error) {
+      fact.errorClass = errorClass(error);
+    }
+  }
+  save();
+  try {
+    begin("stdin-tty");
+    diagnostic.streamTTY.stdin = boolean(process.stdin.isTTY);
+    check("stdin-tty", process.stdin.isTTY, true);
+    begin("stdout-tty");
+    diagnostic.streamTTY.stdout = boolean(process.stdout.isTTY);
+    check("stdout-tty", process.stdout.isTTY, true);
+    // stderr is diagnostic-only, not a new prerequisite assertion.
+    try {
+      diagnostic.streamTTY.stderr = boolean(process.stderr.isTTY);
+    } catch (error) {
+      diagnostic.stderrInitErrorClass = errorClass(error);
+    }
+    begin("homedir-equality");
+    check("homedir-equality", os.homedir(), process.env.USERPROFILE);
+    begin("argv-equality");
+    check("argv-equality", process.argv[1], process.env.FIXTURE_UNICODE);
+    for (const [key, dir] of Object.entries({
+      HOME: "home",
+      USERPROFILE: "home",
+      LOCALAPPDATA: "state",
+      APPDATA: "appdata",
+      PI_CODING_AGENT_DIR: "agent",
+      TMP: "temp",
+      TEMP: "temp",
+      TMPDIR: "temp",
+    })) {
+      const id = `env-${key}-equality`;
+      begin(id);
+      check(id, process.env[key], path.join(process.cwd(), dir));
+    }
+    begin("columns-equality");
+    diagnostic.columns = Number.isFinite(process.stdout.columns)
+      ? process.stdout.columns
+      : null;
+    diagnostic.rows = Number.isFinite(process.stdout.rows)
+      ? process.stdout.rows
+      : null;
+    check("columns-equality", process.stdout.columns, 120);
+    begin("rows-equality");
+    check("rows-equality", process.stdout.rows, 48);
+    begin("raw-mode");
+    diagnostic.rawBefore = boolean(process.stdin.isRaw);
+    save();
+    process.stdin.setRawMode(true);
+    diagnostic.rawAfter = boolean(process.stdin.isRaw);
+    begin("encoding");
+    process.stdin.setEncoding("utf8");
+    begin("sentinel-write");
+    diagnostic.sentinel.called = true;
+    save();
+    const returned = process.stdout.write(
+      "CONSOLE_READY 中文 🧪\n",
+      (error) => {
+        diagnostic.sentinel.callbackCalled = true;
+        diagnostic.sentinel.callbackSucceeded = !error;
+        if (error) {
+          diagnostic.sentinel.errorClass = errorClass(error);
+          fail("sentinel-write-callback", error);
+        } else save();
+        // No error listener: normal stream error/default crash remains in force.
+      },
+    );
+    diagnostic.sentinel.returned = boolean(returned); // false is backpressure.
+    save();
+  } catch (error) {
+    if (diagnostic.stage === "sentinel-write")
+      diagnostic.sentinel.errorClass = errorClass(error);
+    fail(diagnostic.stage, error);
+    throw error; // Diagnostic I/O cannot suppress or substitute the original.
+  }
+  let phase = 0,
+    pending = "";
+  const keys = ["CONSOLE_PROBE 中文 🧪\r", "\r", "\x1b", "\r"];
+  process.stdout.on("resize", () => {
+    if (process.stdout.columns === 72 && process.stdout.rows === 28)
+      process.stdout.write("RESIZE_OBSERVED 72 28\n");
+  });
+  process.stdin.on("data", (bytes) => {
+    // Actual console input stays the prerequisite; identity is never readiness.
+    pending += bytes;
+    while (pending.length) {
+      const key = keys[phase];
+      assert.ok(key, "unexpected-console-input-after-quit");
+      assert.ok(
+        key.startsWith(pending) || pending.startsWith(key),
+        "fixture-control-payload-leaked-to-console",
+      );
+      if (pending.length < key.length) return;
+      pending = pending.slice(key.length);
+      phase++;
+      if (phase === 1) process.stdout.write("CONSOLE_INPUT_ISOLATED\n");
+      else if (phase === 2) {
+        if (control.childExit) process.exit(0);
+        process.stdout.write("FOREGROUND\n");
+      } else if (phase === 3) process.stdout.write("ESC_SEEN\n");
+      else {
+        assert.equal(pending, "", "trailing-console-input-at-quit");
+        process.exit(control.quitCode);
+      }
+    }
+  });
+  begin("input-handlers-installed");
+}
+
+function conptySmokeProgram(control = {}) {
+  return `(${runConptySmoke.toString()})(${JSON.stringify({
+    childExit: Boolean(control.childExit),
+    quitCode: control.quitCode ?? 0,
+  })});`;
+}
+
+it("portable ConPTY diagnostic records an actual non-TTY failure without replacing assertions or existing identity", () => {
+  const program = conptySmokeProgram();
+  for (const existing of [false, true]) {
+    const root = mkdtempSync(path.join(tmpdir(), "cadence-conpty-diagnostic-"));
+    const identity = path.join(root, "identity.json");
+    const original = '{"productionIdentity":"must-remain-unchanged"}';
+    if (existing) writeFileSync(identity, original, { mode: 0o600 });
+    const child = spawnSync(process.execPath, ["-e", program], {
+      cwd: root,
+      env: terminalEnvironment(root, windows),
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    expect(child.error).toBeUndefined();
+    expect(child.status).toBe(1);
+    expect(child.stdout).toBe("");
+    const bytes = readFileSync(identity, "utf8");
+    if (existing) expect(bytes).toBe(original);
+    else {
+      expect(Buffer.byteLength(bytes)).toBeLessThanOrEqual(8192);
+      expect(JSON.parse(bytes)).toMatchObject({
+        schema: "conpty-prerequisite-diagnostic/1",
+        stage: "stdin-tty",
+        firstFailedCheck: "stdin-tty",
+        errorClass: "AssertionError",
+        fdTTY: [0, 1, 2].map((fd) => ({ fd, isTTY: false, errorClass: null })),
+        streamTTY: { stdin: null, stdout: null, stderr: null },
+        checks: { "stdin-tty": false },
+        sentinel: { called: false, returned: null, callbackCalled: false },
+      });
+    }
+  }
+});
+
+// VM streams/fd results below are explicitly synthetic. They test only the
+// serialized smoke diagnostic's ordering/privacy/failure boundary, NOT ConPTY.
+it("portable ConPTY diagnostic bootstrap, fixed projection, strict stages and write faults preserve the first error", () => {
+  const marker = "private-env-argv-path-message-stack-must-not-be-recorded";
+  const simulate = (fault = null, diagnosticFault = null) => {
+    const snapshots = [];
+    let callback,
+      writeCalls = 0;
+    const original = new TypeError(marker);
+    const root = path.join(tmpdir(), marker);
+    const env = Object.fromEntries(
+      Object.entries({
+        HOME: "home",
+        USERPROFILE: "home",
+        LOCALAPPDATA: "state",
+        APPDATA: "appdata",
+        PI_CODING_AGENT_DIR: "agent",
+        TMP: "temp",
+        TEMP: "temp",
+        TMPDIR: "temp",
+      }).map(([key, dir]) => [key, path.join(root, dir)]),
+    );
+    env.FIXTURE_UNICODE = marker;
+    if (fault === "env-TMP-equality") env.TMP = "different-private-value";
+    const stdin = {
+      isTTY: true,
+      isRaw: false,
+      setRawMode(value) {
+        if (fault === "raw-mode") throw original;
+        this.isRaw = value;
+      },
+      setEncoding() {},
+      on() {},
+    };
+    const stdout = {
+      isTTY: true,
+      columns: fault === "columns-equality" ? Infinity : 120,
+      rows: 48,
+      write(text, done) {
+        expect(text).toBe("CONSOLE_READY 中文 🧪\n");
+        if (fault === "sentinel-write") throw original;
+        callback = done;
+        return false; // Backpressure is a recorded fact, never a new failure.
+      },
+      on(event) {
+        expect(event).toBe("resize");
+      },
+    };
+    const childProcess = {
+      cwd: () => root,
+      argv: ["node", marker],
+      env,
+      get stdin() {
+        // File bootstrap and fd queries must precede the FIRST lazy getter.
+        if (diagnosticFault === null) {
+          expect(snapshots[0]).toMatchObject({ stage: "bootstrap" });
+          expect(snapshots.at(-1).fdTTY.every((f) => f.isTTY)).toBe(true);
+        }
+        if (fault === "stdin-tty") throw original;
+        return stdin;
+      },
+      get stdout() {
+        if (fault === "stdout-tty") throw original;
+        return stdout;
+      },
+      stderr: { isTTY: true },
+    };
+    const modules = {
+      "node:assert/strict": nodeAssert,
+      "node:fs": {
+        openSync(file, flags, mode) {
+          expect(file).toBe(path.join(root, "identity.json"));
+          expect(flags).toBe("wx");
+          expect(mode).toBe(0o600);
+          if (diagnosticFault === "open") throw original;
+          return 99;
+        },
+        ftruncateSync() {},
+        writeSync(fd, json, position, encoding) {
+          writeCalls++;
+          if (diagnosticFault === "write") throw original;
+          expect([fd, position, encoding]).toEqual([99, 0, "utf8"]);
+          expect(Buffer.byteLength(json)).toBeLessThanOrEqual(8192);
+          expect(json).not.toContain(marker);
+          expect(json).not.toContain("different-private-value");
+          snapshots.push(JSON.parse(json));
+        },
+      },
+      "node:os": { homedir: () => env.USERPROFILE },
+      "node:path": path,
+      "node:tty": { isatty: () => true },
+    };
+    let observed;
+    try {
+      runInNewContext(conptySmokeProgram(), {
+        require: (name) => modules[name],
+        process: childProcess,
+        Buffer,
+        Error,
+        TypeError,
+        RangeError,
+        SyntaxError,
+        ...(diagnosticFault === "bound"
+          ? { JSON: { stringify: () => "x".repeat(8193) } }
+          : {}),
+      });
+    } catch (error) {
+      observed = error;
+    }
+    return { snapshots, callback, original, observed, writeCalls };
+  };
+  for (const fault of [
+    "stdin-tty",
+    "stdout-tty",
+    "raw-mode",
+    "sentinel-write",
+  ]) {
+    const result = simulate(fault);
+    expect(result.observed).toBe(result.original);
+    expect(result.snapshots.at(-1)).toMatchObject({
+      firstFailedCheck: fault,
+      errorClass: "TypeError",
+    });
+  }
+  for (const fault of ["env-TMP-equality", "columns-equality"]) {
+    const result = simulate(fault);
+    expect(result.observed).toBeInstanceOf(nodeAssert.AssertionError);
+    expect(result.snapshots.at(-1)).toMatchObject({
+      firstFailedCheck: fault,
+      errorClass: "AssertionError",
+    });
+    if (fault === "columns-equality")
+      expect(result.snapshots.at(-1).columns).toBeNull();
+  }
+  const success = simulate();
+  expect(success.observed).toBeUndefined();
+  expect(success.snapshots.at(-1)).toMatchObject({
+    stage: "input-handlers-installed",
+    firstFailedCheck: null,
+    columns: 120,
+    rows: 48,
+    rawBefore: false,
+    rawAfter: true,
+    streamTTY: { stdin: true, stdout: true, stderr: true },
+    sentinel: { called: true, returned: false, callbackCalled: false },
+  });
+  expect(
+    Object.values(success.snapshots.at(-1).checks).every((v) => v === true),
+  ).toBe(true);
+  success.callback(null);
+  expect(success.snapshots.at(-1).sentinel).toMatchObject({
+    callbackCalled: true,
+    callbackSucceeded: true,
+    errorClass: null,
+  });
+  const callbackFault = simulate();
+  callbackFault.callback(callbackFault.original);
+  expect(callbackFault.snapshots.at(-1)).toMatchObject({
+    firstFailedCheck: "sentinel-write-callback",
+    errorClass: "TypeError",
+    sentinel: { callbackSucceeded: false, errorClass: "TypeError" },
+  });
+  callbackFault.callback(new RangeError(marker));
+  expect(callbackFault.snapshots.at(-1)).toMatchObject({
+    firstFailedCheck: "sentinel-write-callback",
+    errorClass: "TypeError",
+  });
+  for (const fault of ["open", "write", "bound"]) {
+    const result = simulate("stdin-tty", fault);
+    expect(result.observed).toBe(result.original);
+    expect(result.snapshots).toEqual([]);
+    if (fault !== "write") expect(result.writeCalls).toBe(0);
+  }
+});
+
 // Actual Windows console smoke + redirected HELPER stdin faults, not Pi/human
 // evidence. The production lanes above alone publish from parsed HTTP #4.
 const conptyControls = [
@@ -975,47 +1385,7 @@ it.runIf(windows).each(conptyControls)(
     for (const dir of ["home", "agent", "state", "appdata", "temp"])
       mkdirSync(path.join(root, dir));
     const env = { ...terminalEnvironment(root), FIXTURE_UNICODE: arg };
-    const program = `
-const assert = require("node:assert/strict");
-const os = require("node:os");
-const path = require("node:path");
-assert.equal(process.stdin.isTTY, true);
-assert.equal(process.stdout.isTTY, true);
-assert.equal(os.homedir(), process.env.USERPROFILE);
-assert.equal(process.argv[1], process.env.FIXTURE_UNICODE);
-for (const [key, dir] of Object.entries({ HOME:"home", USERPROFILE:"home", LOCALAPPDATA:"state", APPDATA:"appdata", PI_CODING_AGENT_DIR:"agent", TMP:"temp", TEMP:"temp", TMPDIR:"temp" }))
-  assert.equal(process.env[key], path.join(process.cwd(), dir));
-assert.equal(process.stdout.columns, 120);
-assert.equal(process.stdout.rows, 48);
-process.stdin.setRawMode(true);
-process.stdin.setEncoding("utf8");
-process.stdout.write("CONSOLE_READY 中文 🧪\\n");
-let phase = 0, pending = "";
-const keys = ["CONSOLE_PROBE 中文 🧪\\r", "\\r", "\\x1b", "\\r"];
-process.stdout.on("resize", () => {
-  if (process.stdout.columns === 72 && process.stdout.rows === 28)
-    process.stdout.write("RESIZE_OBSERVED 72 28\\n");
-});
-process.stdin.on("data", (bytes) => {
-  // Inspect actual console input, not fd-close return or private Node APIs.
-  // Any leaked JSON/control bytes (early or later) violate the exact key stream.
-  pending += bytes;
-  while (pending.length) {
-    const key = keys[phase];
-    assert.ok(key, "unexpected-console-input-after-quit");
-    assert.ok(key.startsWith(pending) || pending.startsWith(key), "fixture-control-payload-leaked-to-console");
-    if (pending.length < key.length) return;
-    pending = pending.slice(key.length);
-    phase++;
-    if (phase === 1) process.stdout.write("CONSOLE_INPUT_ISOLATED\\n");
-    else if (phase === 2) {
-      if (${Boolean(control.childExit)}) process.exit(0);
-      process.stdout.write("FOREGROUND\\n");
-    } else if (phase === 3) process.stdout.write("ESC_SEEN\\n");
-    else { assert.equal(pending, "", "trailing-console-input-at-quit"); process.exit(${control.quitCode ?? 0}); }
-  }
-});
-`;
+    const program = conptySmokeProgram(control);
     const config = path.join(root, "conpty.json");
     writeFileSync(
       config,

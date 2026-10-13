@@ -151,6 +151,7 @@ namespace Cadence.TerminalFixture
         // A NEW fixture transcript bound, not the product's protocol cap.
         // Overflow fails and continues draining; never truncated into a pass.
         private const int TranscriptBound = 4 * 1024 * 1024;
+        private const uint StartfUseStdHandles = 0x00000100;
         private readonly object gate = new object();
         private readonly Stopwatch clock = Stopwatch.StartNew();
         private readonly double setupMs;
@@ -324,7 +325,11 @@ namespace Cadence.TerminalFixture
             var startup = new Native.StartupInfoEx();
             startup.StartupInfo.cb = (uint)Marshal.SizeOf<Native.StartupInfoEx>();
             startup.attributes = attributes;
-            // No STARTF_USESTDHANDLES; fd0/1 are actual console handles.
+            // Candidate policy from Microsoft's actual ConptyConnection launcher:
+            // flag set, three zero-initialized NULL std handles, inherit=false.
+            // Never redirect helper/control pipes into the client's stdio. Native
+            // creation alone does NOT prove the child's CRT fd/TTY mapping.
+            startup.StartupInfo.flags = StartfUseStdHandles;
             Native.ProcessInfo process;
             lock (gate) createProcessInheritHandles = false;
             bool launched = Native.CreateProcessW(config.Argv[0], command, IntPtr.Zero, IntPtr.Zero, false,
@@ -860,6 +865,8 @@ namespace Cadence.TerminalFixture
                         teardownFailure = fixture.teardownFailure, failure = fixture.failure, failureStage = fixture.failureStage,
                         outputEof = fixture.outputEof, nativeCalls = fixture.nativeCalls.ToArray(), resourceCloses = fixture.resourceCloses.ToArray(),
                         handleInheritance = fixture.inheritance.ToArray(), createProcessInheritHandles = fixture.createProcessInheritHandles,
+                        configuredStartupPolicy = new { strategy = "startf-usestdhandles-null-conpty",
+                            flags = StartfUseStdHandles, stdinNull = true, stdoutNull = true, stderrNull = true },
                         smokePrerequisiteReached = fixture.smokePrerequisiteReached,
                         smokePumpInjection = fixture.smokePumpInjection,
                         closeWorkerStarted = fixture.closeWorkerStarted, closeWorkerJoined = fixture.closeWorkerJoined,
