@@ -437,6 +437,168 @@ const diagnostic = (stderr: string) => {
   ).toBe(true);
   return value;
 };
+// Public Undici 6.x emits this fixed code/message through Node's normal warning
+// formatter. Node runtimes without that startup warning leave stderr unchanged.
+// Only the VALIDATED_PROXY native failure case opts in, using its original PID.
+const proxyWarningHeader = (pid: number) =>
+  `(node:${pid}) [UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental, expect them to change at any time.\n`;
+const proxyWarningGuidance =
+  "(Use `node --trace-warnings ...` to show where the warning was created)\n";
+const proxyStartupStderr = (stderr: string, nativePID: number) => {
+  expect(Number.isSafeInteger(nativePID) && nativePID > 0).toBe(true);
+  const header = proxyWarningHeader(nativePID);
+  let prefix = "";
+  if (stderr.startsWith(header)) {
+    prefix = header;
+    if (stderr.slice(header.length).startsWith(proxyWarningGuidance))
+      prefix += proxyWarningGuidance;
+  }
+  // Recognize at most one ordered prefix. All other bytes still reach the
+  // unchanged strict snapshot parser; no arbitrary warning/stack/secret filter.
+  return {
+    workerStderr: stderr.slice(prefix.length),
+    runtimeWarning: prefix
+      ? {
+          domain: "native-node-startup-warning",
+          pid: nativePID,
+          type: "Warning",
+          code: "UNDICI-EHPA",
+          label: "EnvHttpProxyAgent",
+          bytes: Buffer.byteLength(prefix),
+          lines: prefix === header ? 1 : 2,
+        }
+      : null,
+  };
+};
+
+// MEMORY codec controls only: fixed public warning text plus synthetic snapshots.
+// These do not execute Node22, an SDK/provider, or certify CI's original stderr.
+const memoryDiagnostic = {
+  stage: "assistant-final",
+  class: "terminal-incomplete",
+  outcome: "failed",
+  sdkEvents: 3,
+  inputBytes: 900,
+  modelOutputBytes: 0,
+  protocolBytes: 17,
+  terminalStopReason: "error",
+  preflight: "accepted",
+  requestPrepared: true,
+  actualResponseStatus: "UNKNOWN",
+  cleanupFailures: 0,
+  cleanupSettled: false,
+};
+const memoryFirstSnapshot = `${JSON.stringify(memoryDiagnostic)}\n`;
+const memoryFinalSnapshot = `${JSON.stringify({ ...memoryDiagnostic, cleanupSettled: true })}\n`;
+const memoryWorkerStderr =
+  memoryFirstSnapshot + memoryFinalSnapshot + genericFailure;
+const memoryPID = 12345;
+const memoryWarning = proxyWarningHeader(memoryPID);
+for (const prefix of [
+  "",
+  memoryWarning,
+  memoryWarning + proxyWarningGuidance,
+]) {
+  it(`MEMORY proxy startup warning codec accepts exact prefix lines=${prefix.split("\n").length - 1}`, () => {
+    const raw = prefix + memoryWorkerStderr;
+    const parsed = proxyStartupStderr(raw, memoryPID);
+    expect(parsed.workerStderr).toBe(memoryWorkerStderr);
+    expect(diagnostic(parsed.workerStderr)).toEqual({
+      ...memoryDiagnostic,
+      cleanupSettled: true,
+    });
+    expect(parsed.runtimeWarning).toEqual(
+      prefix
+        ? {
+            domain: "native-node-startup-warning",
+            pid: memoryPID,
+            type: "Warning",
+            code: "UNDICI-EHPA",
+            label: "EnvHttpProxyAgent",
+            bytes: Buffer.byteLength(prefix),
+            lines: prefix === memoryWarning ? 1 : 2,
+          }
+        : null,
+    );
+    expect(Buffer.byteLength(raw)).toBe(
+      Buffer.byteLength(parsed.workerStderr) +
+        (parsed.runtimeWarning?.bytes ?? 0),
+    );
+    if (prefix) expect(() => diagnostic(raw)).toThrow(); // No general opt-in.
+  });
+}
+it.each([
+  ["wrong-pid", proxyWarningHeader(memoryPID + 1) + memoryWorkerStderr],
+  [
+    "wrong-code",
+    memoryWarning.replace("UNDICI-EHPA", "UNKNOWN") + memoryWorkerStderr,
+  ],
+  [
+    "wrong-type",
+    memoryWarning.replace("Warning:", "ExperimentalWarning:") +
+      memoryWorkerStderr,
+  ],
+  [
+    "altered-message",
+    memoryWarning.replace("at any time.", "later.") + memoryWorkerStderr,
+  ],
+  ["duplicate-warning", memoryWarning + memoryWarning + memoryWorkerStderr],
+  ["guidance-alone", proxyWarningGuidance + memoryWorkerStderr],
+  ["guidance-first", proxyWarningGuidance + memoryWarning + memoryWorkerStderr],
+  [
+    "duplicate-guidance",
+    memoryWarning +
+      proxyWarningGuidance +
+      proxyWarningGuidance +
+      memoryWorkerStderr,
+  ],
+  [
+    "altered-guidance",
+    memoryWarning +
+      proxyWarningGuidance.replace("node --trace", "node.exe --trace") +
+      memoryWorkerStderr,
+  ],
+  [
+    "warning-after-snapshot",
+    memoryFirstSnapshot + memoryWarning + memoryFinalSnapshot + genericFailure,
+  ],
+  ["unterminated-warning", memoryWarning.trimEnd() + memoryWorkerStderr],
+  ["crlf-warning", memoryWarning.replace("\n", "\r\n") + memoryWorkerStderr],
+  [
+    "unknown-warning",
+    `(node:${memoryPID}) [UNKNOWN] Warning: unknown\n${memoryWorkerStderr}`,
+  ],
+  [
+    "extra-line",
+    `${memoryWarning}unexpected runtime output\n${memoryWorkerStderr}`,
+  ],
+  [
+    "trailing-line",
+    `${memoryWarning}${memoryWorkerStderr}unexpected trailing output\n`,
+  ],
+  [
+    "context-secret",
+    `${memoryWarning}Authorization: Bearer FABRICATED_CONTEXT_SECRET\n${memoryWorkerStderr}`,
+  ],
+  [
+    "auth-url",
+    `${memoryWarning}http://user:FABRICATED_SECRET@127.0.0.1:1/\n${memoryWorkerStderr}`,
+  ],
+  [
+    "fabricated-stack",
+    `${memoryWarning}    at fake (file:///FABRICATED_STACK:1:1)\n${memoryWorkerStderr}`,
+  ],
+  ["third-snapshot", memoryWarning + memoryFirstSnapshot + memoryWorkerStderr],
+  [
+    "missing-generic",
+    memoryWarning + memoryFirstSnapshot + memoryFinalSnapshot,
+  ],
+])("MEMORY proxy startup warning codec refuses %s", (_name, raw) => {
+  expect(() =>
+    diagnostic(proxyStartupStderr(raw, memoryPID).workerStderr),
+  ).toThrow();
+});
+
 const fixtureModel = (baseUrl = "http://127.0.0.1:1/unused") => ({
   id: "fixture-model",
   provider: "fabricated-local",
@@ -2061,8 +2223,14 @@ for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
         undefined,
         15000,
       );
+      const startup =
+        mode === "VALIDATED_PROXY" && feature
+          ? proxyStartupStderr(stderr, pid!)
+          : { workerStderr: stderr, runtimeWarning: null };
       const receipt = {
         boundary: "production-runWorker-stock-public-Codex-loopback",
+        nativeAggregateBytes: bytes, // Includes the original runtime warning bytes.
+        nodeRuntimeWarning: startup.runtimeWarning,
         mode,
         nativeProxyFeature: feature,
         node: process.versions.node,
@@ -2157,7 +2325,15 @@ for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
       });
       expect(result.durationMs).toBeLessThan(15000);
       expect(stdout).toBe('{"type":"ready"}\n');
-      expect(diagnostic(stderr)).toMatchObject({
+      for (const canary of [
+        key,
+        literal,
+        route,
+        target,
+        "FABRICATED_PROXY_BODY_CANARY",
+      ])
+        expect(stdout + stderr).not.toContain(canary); // Original raw bytes, not the parsed or parent-redacted projection.
+      expect(diagnostic(startup.workerStderr)).toMatchObject({
         stage: "assistant-final",
         class: "terminal-incomplete",
         preflight: "accepted",
@@ -2166,14 +2342,6 @@ for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
         cleanupFailures: 0,
         cleanupSettled: true,
       });
-      for (const canary of [
-        key,
-        literal,
-        route,
-        target,
-        "FABRICATED_PROXY_BODY_CANARY",
-      ])
-        expect(stdout + stderr).not.toContain(canary); // Before parent redaction, not just safe result text.
       expect(unexpected).toBe(false);
       if (mode === "DIRECT") {
         expect(sinkContacts).toBeGreaterThan(0);

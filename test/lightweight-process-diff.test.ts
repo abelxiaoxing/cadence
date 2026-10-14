@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -59,7 +59,11 @@ afterEach(() => {
 });
 
 const nativeSpawn = vi.mocked(spawn).getMockImplementation() as typeof spawn;
-const temporary = () => mkdtempSync(join(tmpdir(), "cadence-lw-native-"));
+// Bind the native fixture parent before finite process.env mocks. Windows
+// tmpdir() otherwise falls back to `undefined\\temp` without TEMP/SystemRoot.
+const nativeTemporaryParent = realpathSync(tmpdir());
+const temporary = () =>
+  mkdtempSync(join(nativeTemporaryParent, "cadence-lw-native-"));
 function node(
   code: string,
   options: Partial<Parameters<typeof runProcess>[0]> = {},
@@ -448,6 +452,20 @@ describe("demand-based stdin transport", () => {
 
 describe("SDK-only validated egress (labelled lifecycle mocks, not native waits)", () => {
   const proxy = "http://127.0.0.1:2048/";
+  it("test-owned fixture parent is independent of finite fake process.env", () => {
+    const ambient = Object.getOwnPropertyDescriptor(process, "env")!;
+    const synthetic = { HTTP_PROXY: proxy, HTTPS_PROXY: proxy };
+    try {
+      Object.defineProperty(process, "env", { value: synthetic });
+      const cwd = temporary();
+      expect(dirname(cwd)).toBe(nativeTemporaryParent);
+      expect(realpathSync(cwd)).toBe(cwd);
+      expect(process.env === synthetic).toBe(true);
+      expect(synthetic).toEqual({ HTTP_PROXY: proxy, HTTPS_PROXY: proxy });
+    } finally {
+      Object.defineProperty(process, "env", ambient);
+    }
+  });
   const unsupported = {
     outcome: "failed",
     closed: true,
