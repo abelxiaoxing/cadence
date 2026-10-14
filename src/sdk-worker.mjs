@@ -43,9 +43,20 @@ let actualResponseStatus = "UNKNOWN";
 let preflight = "UNKNOWN";
 let cleanupFailures = 0; // Bit flags: unsubscribe=1, abort=2, dispose=4.
 let pendingAbort;
+let cleanupSettled = false;
 const fail = (where, category) => {
+  const first = failure === undefined;
   failure ??= { stage: where, class: category };
   process.exitCode = 1;
+  if (first) {
+    // A cleanup promise can remain unsettled after all native handles close.
+    // Preserve the observed failure before awaiting it, without claiming cleanup.
+    try {
+      emitFailure();
+    } catch {
+      // Diagnostic I/O must not expose an exception or repair failed work.
+    }
+  }
 };
 const refuse = (where, category) => {
   fail(where, category);
@@ -85,6 +96,7 @@ const emitFailure = () => {
     requestPrepared,
     actualResponseStatus,
     cleanupFailures,
+    cleanupSettled,
   })}\n`;
   // Diagnostic output shares the existing aggregate cap, not a new allowance.
   const write = (text) => {
@@ -95,7 +107,8 @@ const emitFailure = () => {
     }
   };
   if (Buffer.byteLength(line) <= 512) write(line);
-  write("SDK worker failed or returned an incomplete result.\n");
+  if (cleanupSettled)
+    write("SDK worker failed or returned an incomplete result.\n");
 };
 try {
   if (
@@ -355,6 +368,8 @@ try {
       fail("cleanup", "cleanup-failure");
     }
   }
+  // A final snapshot exists only after the actual cleanup attempts settle.
+  cleanupSettled = true;
   // Cleanup failures cannot become success, nor replace the first run failure.
   try {
     if (failure) emitFailure();

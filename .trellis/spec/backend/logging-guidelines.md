@@ -63,8 +63,8 @@ This is diagnostic visibility and fail-closed cleanup, not an auth/model/provide
 ### 2. Signatures
 
 `src/sdk-worker.mjs` keeps stdout frames `ready`, `tool{name}`, `final{text,stopReason:"stop"}` unchanged.
-On failure only, stderr contains at most one <=512-byte JSON line with fixed fields: `stage`, `class`, `outcome`, `sdkEvents`, `inputBytes`, `modelOutputBytes`, `protocolBytes`, `terminalStopReason`, `preflight`, `requestPrepared`, `actualResponseStatus`, `cleanupFailures`.
-The compatible generic failure line follows when aggregate capacity permits; success stderr remains empty.
+On failure only, stderr contains at most two <=512-byte JSON snapshots: the first observed fault before cleanup awaits, then an optional cleanup-settled snapshot with fixed fields: `stage`, `class`, `outcome`, `sdkEvents`, `inputBytes`, `modelOutputBytes`, `protocolBytes`, `terminalStopReason`, `preflight`, `requestPrepared`, `actualResponseStatus`, `cleanupFailures`, `cleanupSettled`.
+The compatible generic failure line follows only a cleanup-settled attempt when aggregate capacity permits; success stderr remains empty.
 
 ### 3. Contracts
 
@@ -87,6 +87,9 @@ Cleanup after an already emitted final is different: preserve that final as a re
 Cleanup independently catches unsubscribe, abort and dispose, including returned promises; bitmask1/2/4 records caught failures separately from the first fault.
 Bound-triggered abort rejection is handled immediately and awaited; final abort/dispose still run independently.
 The diagnostic writer cannot replace the failed outcome by throwing; no raw unhandled finally error may escape the worker.
+Persist the first fixed fault before awaiting abort/cleanup: an unsettled top-level cleanup promise with no remaining native handles can end the process before finally emits anything.
+`cleanupSettled:false` preserves uncertainty; do not fabricate cleanup bits or a settled snapshot from child exit.
+A later snapshot is emitted only after independent cleanup attempts actually settle; both share the unchanged aggregate cap.
 Original parent `RunResult.closed/exitCode/signal/outcome` remains the settlement authority, never a host/driver exit or intended process.exitCode.
 
 ### 4. Validation & Error Matrix

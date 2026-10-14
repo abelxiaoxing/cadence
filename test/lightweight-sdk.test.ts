@@ -348,14 +348,31 @@ const diagnosticKeys = [
   "requestPrepared",
   "actualResponseStatus",
   "cleanupFailures",
+  "cleanupSettled",
 ];
 const diagnostic = (stderr: string) => {
   const lines = stderr.split("\n");
-  expect(lines).toHaveLength(3);
-  expect(`${lines[1]}\n`).toBe(genericFailure);
-  expect(Buffer.byteLength(`${lines[0]}\n`)).toBeLessThanOrEqual(512);
-  const value = JSON.parse(lines[0]);
-  expect(Object.keys(value)).toEqual(diagnosticKeys);
+  expect(lines.at(-1)).toBe("");
+  lines.pop();
+  const hasGeneric = lines.at(-1) === genericFailure.trimEnd();
+  if (hasGeneric) lines.pop();
+  expect(lines.length).toBeGreaterThanOrEqual(1);
+  expect(lines.length).toBeLessThanOrEqual(2);
+  const values = lines.map((line) => {
+    expect(Buffer.byteLength(`${line}\n`)).toBeLessThanOrEqual(512);
+    const snapshot = JSON.parse(line);
+    expect(Object.keys(snapshot)).toEqual(diagnosticKeys);
+    expect(typeof snapshot.cleanupSettled).toBe("boolean");
+    return snapshot;
+  });
+  expect(values[0].cleanupSettled).toBe(false);
+  if (values.length === 2) {
+    expect(values[1].cleanupSettled).toBe(true);
+    expect(values[1].stage).toBe(values[0].stage);
+    expect(values[1].class).toBe(values[0].class);
+  }
+  const value = values.at(-1)!;
+  expect(hasGeneric).toBe(value.cleanupSettled);
   expect(value.outcome).toBe("failed");
   for (const key of [
     "sdkEvents",
@@ -1582,6 +1599,7 @@ const mockBootstrap = (lane: string, delivery = "awaited") => {
       },
       abort() {
         aborts++;
+        if (lane === "cleanup-unsettled") return new Promise(() => {});
         if (lane === "abort-opaque") throw opaqueFault;
         if (lane === "abort-reject-opaque" || lane === "event-abort-reject") return Promise.reject(opaqueFault);
         return Promise.resolve();
@@ -1598,7 +1616,7 @@ const mockBootstrap = (lane: string, delivery = "awaited") => {
           return; // Negative peer: reject callback, but valid stop and resolve.
         }
         options.preflightResult(true);
-        if (lane === "prompt-opaque") throw opaqueFault;
+        if (lane === "prompt-opaque" || lane === "cleanup-unsettled") throw opaqueFault;
         if (lane === "event-abort-reject" || lane.startsWith("event-") ||
             /^(message|role|stop|update|delta|tool)-/.test(lane)) {
           const event = lane === "event-abort-reject" ? getter({type:"message_end"},"message") : badEvent();
@@ -1644,6 +1662,34 @@ const mockBootstrap = (lane: string, delivery = "awaited") => {
     assert.equal(deliveries,${eventFaults.includes(lane as any) || lane === "event-abort-reject" ? 3 : 0});
   `;
 };
+it("raw native mock preserves first failure before unsettled cleanup", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "cadence-sdk-unsettled-"));
+  const result = await nativeWorker(
+    cwd,
+    JSON.stringify(fixtureRequest(cwd)),
+    true,
+    mockBootstrap("cleanup-unsettled"),
+  );
+  expect(result.exitCode).toBe(1);
+  expect(result.stdout).toBe('{"type":"ready"}\n');
+  expect(result.stderr).not.toContain(rawCanary);
+  expect(result.stderr).not.toMatch(
+    /Error:|UnhandledPromiseRejection|\bat file:|\bat async/,
+  );
+  expect(result.stderr).not.toContain(genericFailure);
+  expect(diagnostic(result.stderr)).toMatchObject({
+    stage: "prompt",
+    class: "sdk-failure",
+    cleanupSettled: false,
+    cleanupFailures: 0,
+    preflight: "accepted",
+    terminalStopReason: "UNKNOWN",
+    requestPrepared: false,
+    actualResponseStatus: "UNKNOWN",
+  });
+  expect(readdirSync(cwd)).toEqual([]);
+}, 20000);
+
 for (const delivery of ["awaited", "independent"] as const) {
   for (const lane of [...eventFaults, "event-abort-reject"]) {
     it(`raw native mock event boundary/no final: ${delivery}/${lane}`, async () => {
