@@ -20,6 +20,8 @@ bun run traceability:check --map <repository-relative-map.json>
 A targeted test or temporary partial typecheck is not whole-package verification.
 For documentation-only changes, run scoped `node_modules/.bin/rumdl check <paths>`; historical task copies use the existing tasks exclusion, not a new broad ignore.
 Biome formats/checks JavaScript/TypeScript/JSON; do not hand-edit the generated operator.
+The single generated historical `research/release-preparation/g6-current-qualified-map.json` has formatting disabled only: its compact evidence/input repetition fits the traceability checker's1MiB bound, while pretty printing does not.
+Keep its parser/linter/reference/hash validation; preserve original bytes and failed/passed bindings, never broaden this exception to source/tests or general task data.
 
 ## Match the test to the boundary
 
