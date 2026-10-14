@@ -10,12 +10,14 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { fileURLToPath } from "node:url";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   runCheck,
   runProcess,
   runWorker,
   safeChildEnv,
+  type WorkerRequest,
 } from "../src/subagent-process.ts";
 import { TaskController } from "../src/task-controller.ts";
 import { captureChanges } from "../src/task-diff.ts";
@@ -26,6 +28,34 @@ import { diagnosticText } from "../src/verification-diagnostics.ts";
 vi.mock("node:child_process", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:child_process")>();
   return { ...original, spawn: vi.fn(original.spawn) };
+});
+
+// Isolate only route keys. Real ambient values stay in RAM and are never printed.
+const routeKeys = [
+  "http_proxy",
+  "https_proxy",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "all_proxy",
+  "NO_PROXY",
+  "no_proxy",
+  "NODE_USE_ENV_PROXY",
+  "NODE_OPTIONS",
+] as const;
+let savedRoutes: (PropertyDescriptor | undefined)[];
+beforeEach(() => {
+  savedRoutes = routeKeys.map((key) =>
+    Object.getOwnPropertyDescriptor(process.env, key),
+  );
+  for (const key of routeKeys) delete process.env[key];
+});
+afterEach(() => {
+  routeKeys.forEach((key, index) => {
+    delete process.env[key];
+    const descriptor = savedRoutes[index];
+    if (descriptor) Object.defineProperty(process.env, key, descriptor);
+  });
 });
 
 const nativeSpawn = vi.mocked(spawn).getMockImplementation() as typeof spawn;
@@ -413,6 +443,685 @@ describe("demand-based stdin transport", () => {
       exitCode: null,
     });
     expect(vi.mocked(spawn).mock.calls).toHaveLength(calls);
+  });
+});
+
+describe("SDK-only validated egress (labelled lifecycle mocks, not native waits)", () => {
+  const proxy = "http://127.0.0.1:2048/";
+  const unsupported = {
+    outcome: "failed",
+    closed: true,
+    exitCode: null,
+    signal: null,
+    durationMs: 0,
+    output: "",
+    truncated: false,
+    text: "unsupportedNetwork: SDK proxy configuration or runtime capability is unsupported; no worker launched.",
+  };
+  const request = (): WorkerRequest => ({
+    cwd: temporary(),
+    model: {},
+    auth: { ok: true },
+    kind: "code",
+    prompt: "fixed synthetic request",
+    instructions: "fixture only",
+  });
+  const pair = () => {
+    process.env.HTTP_PROXY = proxy;
+    process.env.HTTPS_PROXY = proxy;
+  };
+  // Node freezes the public Set: inject only local public capability facts, not its body.
+  const capability = (implementation: (flag: string) => boolean) => {
+    const descriptor = Object.getOwnPropertyDescriptor(
+      process,
+      "allowedNodeEnvironmentFlags",
+    )!;
+    const has = vi.fn(implementation);
+    Object.defineProperty(process, "allowedNodeEnvironmentFlags", {
+      value: { has },
+      configurable: true,
+    });
+    has.mockRestore = () => {
+      Object.defineProperty(process, "allowedNodeEnvironmentFlags", descriptor);
+    };
+    return has;
+  };
+  const supported = () => capability(() => true);
+  const refuse = async (
+    wire = request(),
+    signal = new AbortController().signal,
+  ) => {
+    const calls = vi.mocked(spawn).mock.calls.length;
+    const result = await runWorker(wire, signal);
+    expect(result).toEqual(unsupported);
+    expect(vi.mocked(spawn).mock.calls).toHaveLength(calls);
+    return result;
+  };
+  const completed = async (wire: WorkerRequest) => {
+    const input = JSON.stringify(wire);
+    const child = lifecycleChild(input);
+    const calls = vi.mocked(spawn).mock.calls.length;
+    const run = runWorker(wire, new AbortController().signal);
+    expect(vi.mocked(spawn).mock.calls).toHaveLength(calls + 1);
+    const launch = vi.mocked(spawn).mock.lastCall!;
+    expect(launch[0]).toBe(process.execPath);
+    expect(launch[1]).toEqual([
+      fileURLToPath(new URL("../src/sdk-worker.mjs", import.meta.url)),
+    ]);
+    expect(launch[2]).toMatchObject({
+      cwd: wire.cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    expect(launch[2]?.windowsVerbatimArguments).toBeUndefined();
+    expect(child.stdin?.end).toHaveBeenCalledExactlyOnceWith(input);
+    child.stdout.emit("data", validFrames);
+    child.emit("close", 0, null);
+    expect(await run).toMatchObject({
+      outcome: "completed",
+      closed: true,
+      exitCode: 0,
+      signal: null,
+      text: "transport-final",
+    });
+    const env = launch[2]?.env;
+    if (!env) throw new Error("Synthetic launch missing environment");
+    return env;
+  };
+  it.each([false, true])(
+    "DIRECT preserves narrow env; NODE_OPTIONS alone=%s is dropped",
+    async (options) => {
+      if (options) process.env.NODE_OPTIONS = "--fabricated-preload-never-run";
+      const flag = capability(() => {
+        throw new Error("must not check direct capability");
+      });
+      try {
+        const env = await completed(request());
+        expect(env).toEqual(safeChildEnv());
+        for (const key of routeKeys) expect(env).not.toHaveProperty(key);
+        expect(flag).not.toHaveBeenCalled();
+      } finally {
+        flag.mockRestore();
+      }
+    },
+  );
+  it.each([
+    ["lower", { http_proxy: proxy, https_proxy: proxy }],
+    ["upper", { HTTP_PROXY: proxy, HTTPS_PROXY: proxy }],
+    [
+      "duplicates",
+      {
+        http_proxy: proxy,
+        HTTP_PROXY: proxy,
+        https_proxy: proxy,
+        HTTPS_PROXY: proxy,
+      },
+    ],
+    ["mixed", { http_proxy: proxy, HTTPS_PROXY: proxy }],
+    [
+      "opt-in",
+      { HTTP_PROXY: proxy, HTTPS_PROXY: proxy, NODE_USE_ENV_PROXY: "1" },
+    ],
+    [
+      "https",
+      {
+        HTTP_PROXY: "https://proxy.example:443",
+        HTTPS_PROXY: "https://proxy.example:443",
+      },
+    ],
+    [
+      "scheme-case",
+      {
+        HTTP_PROXY: "HTTP://proxy.example:2048/",
+        HTTPS_PROXY: "HTTP://proxy.example:2048/",
+      },
+    ],
+    [
+      "ipv6",
+      { HTTP_PROXY: "http://[::1]:2048", HTTPS_PROXY: "http://[::1]:2048" },
+    ],
+  ])(
+    "validated %s projects only exact uppercase route before stdin",
+    async (_name, settings) => {
+      Object.assign(process.env, settings);
+      const flag = supported();
+      vi.stubEnv("OPENAI_API_KEY", "fabricated-ambient-secret");
+      vi.stubEnv("PI_SESSION_ID", "fabricated-session");
+      vi.stubEnv("CADENCE_CONTROL_FD", "999");
+      try {
+        const wire = request();
+        wire.auth = {
+          ok: true,
+          apiKey: "fabricated-request-key",
+          env: { FIXTURE_PROVIDER_SECRET: "fabricated-scoped-secret" },
+        };
+        const env = await completed(wire);
+        const exact =
+          "http_proxy" in settings ? settings.http_proxy : settings.HTTP_PROXY;
+        expect(env).toEqual({
+          ...safeChildEnv(),
+          HTTP_PROXY: exact,
+          HTTPS_PROXY: exact,
+          NODE_USE_ENV_PROXY: "1",
+        });
+        for (const key of [
+          "OPENAI_API_KEY",
+          "PI_SESSION_ID",
+          "CADENCE_CONTROL_FD",
+          "FIXTURE_PROVIDER_SECRET",
+          "NODE_OPTIONS",
+          "http_proxy",
+          "https_proxy",
+        ])
+          expect(env).not.toHaveProperty(key);
+        for (const key of routeKeys)
+          expect(safeChildEnv()).not.toHaveProperty(key);
+        expect(flag).toHaveBeenCalledWith("--use-env-proxy");
+      } finally {
+        flag.mockRestore();
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+  it.each([
+    "",
+    "ftp://proxy.example",
+    "http://",
+    "http://user@proxy.example",
+    "http://user:secret@proxy.example",
+    "http://proxy.example?",
+    "http://proxy.example#",
+    "http://proxy.example/?x=1",
+    "http://proxy.example/#x",
+    "http://proxy.example/path",
+    "http://proxy.example/./",
+    "http://proxy.example/a/..",
+    "http://proxy.example/%2e/",
+    "http://proxy.example\\",
+    "http://proxy.example:abc",
+    "http://proxy.example:",
+    "http://proxy.example:65536",
+    "http://proxy.example:0",
+    "http://proxy.example:1.5",
+    "http://proxy.example:2048:2049",
+    "http:///proxy.example",
+    " http://proxy.example",
+    "http://proxy.example\n",
+    "http://proxy.example\u0000",
+    "http://proxy.example\u200b",
+    "http://proxy.example\u202e",
+    "http://[bad]:2048",
+    `http://${"x".repeat(4090)}.example`,
+    `http://${"漢".repeat(1400)}.example`,
+  ])("unsafe synthetic URL refuses without spawn: %j", async (value) => {
+    const ambient = process.env;
+    try {
+      // A native env setter truncates NUL; this finite own-data fixture preserves it.
+      Object.defineProperty(process, "env", {
+        value: { HTTP_PROXY: value, HTTPS_PROXY: value },
+      });
+      await refuse();
+    } finally {
+      Object.defineProperty(process, "env", { value: ambient });
+    }
+  });
+  it.each(
+    [
+      ["ascii", "proxy.example:2048/"],
+      ["ipv4", "127.0.0.1"],
+      ["ipv6", "[::1]:2048"],
+      ["punycode", "xn--bcher-kva.example/"],
+      ["raw-unicode", "bücher.example:2048/"],
+    ].flatMap(([host, authority]) =>
+      ["http", "https"].map((scheme) => ({
+        name: `${scheme}/${host}`,
+        value: `${scheme}://${authority}`,
+      })),
+    ),
+  )(
+    "simple unencoded authority preserves exact route: $name",
+    async ({ value }) => {
+      const ambient = process.env;
+      const flag = supported();
+      try {
+        Object.defineProperty(process, "env", {
+          value: { HTTP_PROXY: value, HTTPS_PROXY: value },
+        });
+        const wire = request();
+        wire.auth.env = { https_proxy: value };
+        expect(await completed(wire)).toEqual({
+          ...safeChildEnv(),
+          HTTP_PROXY: value,
+          HTTPS_PROXY: value,
+          NODE_USE_ENV_PROXY: "1",
+        });
+      } finally {
+        flag.mockRestore();
+        Object.defineProperty(process, "env", { value: ambient });
+      }
+    },
+  );
+  it.each([
+    ["encoded-zero-width-space-upper", "pro%E2%80%8Bxy.example:2048/"],
+    ["encoded-zero-width-space-lower", "pro%e2%80%8bxy.example:2048/"],
+    ["encoded-soft-hyphen-upper", "pro%C2%ADxy.example:2048/"],
+    ["encoded-soft-hyphen-lower", "pro%c2%adxy.example:2048/"],
+    ["encoded-bom-upper", "pro%EF%BB%BFxy.example:2048/"],
+    ["encoded-bom-lower", "pro%ef%bb%bfxy.example:2048/"],
+    ["encoded-bidi-override", "pro%E2%80%AExy.example:2048/"],
+    ["encoded-bidi-isolate", "pro%e2%81%a6xy.example:2048/"],
+    ["raw-zero-width-space", "pro\u200bxy.example:2048/"],
+    ["raw-soft-hyphen", "pro\u00adxy.example:2048/"],
+    ["raw-bom", "pro\ufeffxy.example:2048/"],
+    ["raw-bidi-override", "pro\u202exy.example:2048/"],
+    ["raw-cc", "pro\u0001xy.example:2048/"],
+    ["encoded-nul", "pro%00xy.example:2048/"],
+    ["encoded-tab", "pro%09xy.example:2048/"],
+    ["encoded-line-feed", "pro%0axy.example:2048/"],
+    ["encoded-del", "pro%7Fxy.example:2048/"],
+    ["encoded-c1", "pro%C2%85xy.example:2048/"],
+    ["encoded-ascii-letter", "%70roxy.example:2048/"],
+    ["encoded-ascii-dot", "proxy%2Eexample:2048/"],
+    ["encoded-at", "pro%40xy.example:2048/"],
+    ["encoded-colon", "pro%3axy.example:2048/"],
+    ["encoded-slash", "pro%2Fxy.example:2048/"],
+    ["encoded-backslash", "pro%5Cxy.example:2048/"],
+    ["encoded-query", "pro%3Fxy.example:2048/"],
+    ["encoded-fragment", "pro%23xy.example:2048/"],
+    ["encoded-userinfo", "%75ser@proxy.example:2048/"],
+    ["encoded-port", "proxy.example:%32/"],
+    ["encoded-ipv6-zone", "[::1%25lo0]:2048/"],
+    ["bare-percent", "pro%xy.example:2048/"],
+    ["short-escape", "pro%2xy.example:2048/"],
+    ["invalid-hex", "pro%GGxy.example:2048/"],
+    ["truncated-utf8", "pro%E2%80xy.example:2048/"],
+    ["overlong-utf8", "pro%C0%80xy.example:2048/"],
+    ["encoded-surrogate", "pro%ED%A0%80xy.example:2048/"],
+    ["double-encoded-control", "pro%25E2%2580%258Bxy.example:2048/"],
+  ])(
+    "raw URL policy refuses before normalization/spawn: %s",
+    async (_name, authority) => {
+      const ambient = process.env;
+      const spawnImplementation = vi.mocked(spawn).getMockImplementation()!;
+      const flag = supported();
+      // Fail locally if admission regresses; never launch a real SDK/network request.
+      vi.mocked(spawn).mockImplementation(() => {
+        throw new Error("Synthetic unsafe URL reached spawn");
+      });
+      try {
+        for (const scheme of ["http", "https"]) {
+          const value = `${scheme}://${authority}`;
+          Object.defineProperty(process, "env", {
+            value: { http_proxy: value, HTTPS_PROXY: value },
+          });
+          await refuse(); // Exact production runWorker selector; fixed/null native facts.
+        }
+        expect(flag).not.toHaveBeenCalled();
+      } finally {
+        vi.mocked(spawn).mockImplementation(spawnImplementation);
+        flag.mockRestore();
+        Object.defineProperty(process, "env", { value: ambient });
+      }
+    },
+  );
+  it.each([
+    { HTTP_PROXY: proxy },
+    { HTTPS_PROXY: proxy },
+    { HTTP_PROXY: proxy, https_proxy: "http://127.0.0.1:2049" },
+    {
+      HTTP_PROXY: proxy,
+      HTTPS_PROXY: proxy,
+      http_proxy: "http://127.0.0.1:2049",
+    },
+    {
+      HTTP_PROXY: proxy,
+      HTTPS_PROXY: proxy,
+      https_proxy: `${proxy.slice(0, -1)}`,
+    },
+    { HTTP_PROXY: proxy, HTTPS_PROXY: proxy, http_proxy: "" },
+    { NODE_USE_ENV_PROXY: "1" },
+    ...[
+      "ALL_PROXY",
+      "all_proxy",
+      "NO_PROXY",
+      "no_proxy",
+      "NODE_OPTIONS",
+    ].flatMap((key) => [
+      { HTTP_PROXY: proxy, HTTPS_PROXY: proxy, [key]: "" },
+      { HTTP_PROXY: proxy, HTTPS_PROXY: proxy, [key]: "fabricated" },
+    ]),
+    ...["", "0", "true"].map((value) => ({
+      HTTP_PROXY: proxy,
+      HTTPS_PROXY: proxy,
+      NODE_USE_ENV_PROXY: value,
+    })),
+  ])(
+    "partial/conflicting/unsupported finite configuration %#",
+    async (settings) => {
+      const ambient = process.env;
+      try {
+        // These are finite own-case controls, not OS env-setter/Windows alias evidence.
+        Object.defineProperty(process, "env", { value: settings });
+        await refuse();
+      } finally {
+        Object.defineProperty(process, "env", { value: ambient });
+      }
+    },
+  );
+  it.each(["undefined", "number", "getter", "coercion"])(
+    "own-data ambient reader never invokes %s",
+    async (mode) => {
+      const env = process.env;
+      let reads = 0;
+      const synthetic = { HTTP_PROXY: proxy, HTTPS_PROXY: proxy };
+      Object.defineProperty(
+        synthetic,
+        "http_proxy",
+        mode === "getter"
+          ? {
+              enumerable: true,
+              get() {
+                reads++;
+                throw new Error("fabricated-getter");
+              },
+            }
+          : {
+              value:
+                mode === "undefined"
+                  ? undefined
+                  : mode === "number"
+                    ? 1
+                    : {
+                        [Symbol.toPrimitive]() {
+                          reads++;
+                          throw new Error("fabricated-coercion");
+                        },
+                      },
+              enumerable: true,
+            },
+      );
+      try {
+        Object.defineProperty(process, "env", { value: synthetic });
+        await refuse();
+        expect(reads).toBe(0);
+      } finally {
+        Object.defineProperty(process, "env", { value: env });
+      }
+    },
+  );
+  it.each([
+    "false",
+    "throw",
+    "missing",
+    "getter",
+    "bun",
+    "unknown",
+    "node-getter",
+  ])("public capability refusal: %s", async (mode) => {
+    pair();
+    const flags = Object.getOwnPropertyDescriptor(
+      process,
+      "allowedNodeEnvironmentFlags",
+    )!;
+    const node = Object.getOwnPropertyDescriptor(process.versions, "node")!;
+    const bun = Object.getOwnPropertyDescriptor(process.versions, "bun");
+    let nodeReads = 0;
+    try {
+      if (mode === "bun")
+        Object.defineProperty(process.versions, "bun", {
+          value: "fabricated-bun",
+          configurable: true,
+        });
+      if (mode === "unknown")
+        Object.defineProperty(process.versions, "node", { value: undefined });
+      if (mode === "node-getter")
+        Object.defineProperty(process.versions, "node", {
+          get() {
+            nodeReads++;
+            throw new Error("fabricated-node");
+          },
+        });
+      Object.defineProperty(
+        process,
+        "allowedNodeEnvironmentFlags",
+        mode === "getter"
+          ? {
+              get() {
+                throw new Error("fabricated-capability-getter");
+              },
+              configurable: true,
+            }
+          : {
+              value:
+                mode === "missing"
+                  ? undefined
+                  : {
+                      has() {
+                        if (mode === "throw")
+                          throw new Error("fabricated-capability");
+                        return false;
+                      },
+                    },
+              configurable: true,
+            },
+      );
+      await refuse();
+      expect(nodeReads).toBe(0);
+    } finally {
+      Object.defineProperty(process, "allowedNodeEnvironmentFlags", flags);
+      Object.defineProperty(process.versions, "node", node);
+      delete (process.versions as Record<string, unknown>).bun;
+      if (bun) Object.defineProperty(process.versions, "bun", bun);
+    }
+  });
+  it("matching scoped network stays literal; unrelated provider env never promoted", async () => {
+    pair();
+    const flag = supported();
+    try {
+      const wire = request();
+      wire.auth.env = {
+        http_proxy: proxy,
+        HTTPS_PROXY: proxy,
+        NODE_USE_ENV_PROXY: "1",
+        FIXTURE_SECRET: "fabricated-scoped-secret",
+      };
+      const original = JSON.stringify(wire);
+      const env = await completed(wire);
+      expect(env).not.toHaveProperty("FIXTURE_SECRET");
+      expect(JSON.stringify(wire)).toBe(original);
+    } finally {
+      flag.mockRestore();
+    }
+  });
+  it.each([
+    { http_proxy: "http://user:secret@127.0.0.1:2048" },
+    { HTTPS_PROXY: "http://127.0.0.1:2049" },
+    { HTTP_PROXY: "" },
+    { HTTP_PROXY: undefined },
+    { HTTP_PROXY: 1 },
+    { NODE_USE_ENV_PROXY: "0" },
+    { ALL_PROXY: "" },
+    { all_proxy: "" },
+    { NO_PROXY: "" },
+    { no_proxy: "" },
+    { NODE_OPTIONS: "" },
+  ])("scoped conflicting/unsupported own value %# refuses", async (env) => {
+    pair();
+    const flag = supported();
+    try {
+      const wire = request();
+      wire.auth.env = env as unknown as Record<string, string>;
+      await refuse(wire);
+    } finally {
+      flag.mockRestore();
+    }
+  });
+  it.each(["route", "opt-in", "env-getter", "route-getter"])(
+    "scoped-only or accessor %s never selects/invokes",
+    async (mode) => {
+      const wire = request();
+      let reads = 0;
+      wire.auth.env =
+        mode === "opt-in"
+          ? { NODE_USE_ENV_PROXY: "1" }
+          : { HTTP_PROXY: proxy, HTTPS_PROXY: proxy };
+      if (mode.endsWith("getter"))
+        Object.defineProperty(
+          mode === "env-getter" ? wire.auth : wire.auth.env!,
+          mode === "env-getter" ? "env" : "HTTP_PROXY",
+          {
+            enumerable: true,
+            get() {
+              reads++;
+              throw new Error("fabricated-scoped-getter");
+            },
+          },
+        );
+      await refuse(wire);
+      expect(reads).toBe(0);
+    },
+  );
+  it.each(["ambient", "scoped", "descriptor", "serialized-only"])(
+    "changed %s during labelled serialization refuses no recapture",
+    async (mode) => {
+      pair();
+      const flag = supported();
+      try {
+        const wire = request();
+        wire.auth.env = { HTTP_PROXY: proxy };
+        Object.defineProperty(wire.model, "toJSON", {
+          value() {
+            if (mode === "ambient")
+              process.env.HTTPS_PROXY = "http://127.0.0.1:2049";
+            if (mode === "scoped")
+              wire.auth.env!.HTTP_PROXY = "http://127.0.0.1:2049";
+            if (mode === "descriptor")
+              Object.defineProperty(wire.auth.env!, "HTTP_PROXY", {
+                enumerable: false,
+              });
+            return {};
+          },
+        });
+        if (mode === "serialized-only")
+          Object.defineProperty(wire.auth.env, "toJSON", {
+            value() {
+              return { HTTP_PROXY: "http://127.0.0.1:2049" };
+            },
+          });
+        await refuse(wire);
+      } finally {
+        flag.mockRestore();
+      }
+    },
+  );
+  it("already aborted precedes network admission and no worker exists", async () => {
+    process.env.ALL_PROXY = "";
+    const abort = new AbortController();
+    abort.abort();
+    const calls = vi.mocked(spawn).mock.calls.length;
+    expect(await runWorker(request(), abort.signal)).toEqual({
+      ...unsupported,
+      outcome: "canceled",
+      text: "Canceled before launch",
+    });
+    expect(vi.mocked(spawn).mock.calls).toHaveLength(calls);
+  });
+  it("SDK route never widens general default env or narrows ordinary parent checks", async () => {
+    pair();
+    process.env.NODE_USE_ENV_PROXY = "1";
+    const direct = await node(
+      "console.log(['HTTP_PROXY','HTTPS_PROXY','NODE_USE_ENV_PROXY'].every(key=>process.env[key]===undefined)?'general-narrow':'wrong')",
+    );
+    expect(direct).toMatchObject({
+      outcome: "completed",
+      closed: true,
+      exitCode: 0,
+    });
+    expect(direct.output).toContain("general-narrow");
+    const cwd = temporary();
+    writeFileSync(
+      join(cwd, "route-check.cjs"),
+      `if(process.env.HTTP_PROXY!==${JSON.stringify(proxy)} || process.env.HTTPS_PROXY!==${JSON.stringify(proxy)} || process.env.NODE_USE_ENV_PROXY!=='1') process.exitCode=7;else console.log('check-route-preserved');`,
+    );
+    const result = await runCheck(
+      {
+        name: "ordinary route environment",
+        command: `"${process.execPath}" route-check.cjs`,
+        timeoutMs: 5000,
+      },
+      cwd,
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({
+      outcome: "completed",
+      closed: true,
+      exitCode: 0,
+    });
+    expect(result.output).toContain("check-route-preserved");
+  });
+  it.each([
+    "final",
+    "split-stderr",
+    "malformed-tool",
+    "truncation",
+    "split-utf8",
+    "tool-name",
+  ])("cached route literal redacts %s before byte truncation", async (mode) => {
+    pair();
+    const flag = supported();
+    try {
+      const wire = request();
+      wire.auth.apiKey = "fixturesecret";
+      const child = lifecycleChild(JSON.stringify(wire));
+      const progress: string[] = [];
+      const run = runWorker(wire, new AbortController().signal, (text) =>
+        progress.push(text),
+      );
+      child.stdout.emit("data", Buffer.from('{"type":"ready"}\n'));
+      if (mode === "tool-name")
+        child.stdout.emit(
+          "data",
+          Buffer.from('{"type":"tool","name":"fixturesecret"}\n'),
+        );
+      if (mode === "malformed-tool")
+        child.stdout.emit(
+          "data",
+          Buffer.from(`${JSON.stringify({ type: "tool", name: proxy })}\n`),
+        );
+      else {
+        const text = mode === "final" ? `safe ${proxy}` : "safe";
+        child.stdout.emit(
+          "data",
+          Buffer.from(
+            `${JSON.stringify({ type: "final", text, stopReason: "stop" })}\n`,
+          ),
+        );
+        const bytes = Buffer.from(
+          `${mode === "truncation" ? `${proxy} ${"x".repeat(70000)}` : "漢字 "}${proxy}`,
+        );
+        for (const chunk of [
+          bytes.subarray(0, 2),
+          bytes.subarray(2, bytes.length - 8),
+          bytes.subarray(bytes.length - 8),
+        ])
+          child.stderr.emit("data", chunk);
+      }
+      child.emit("close", 0, null);
+      const result = await run;
+      expect(JSON.stringify({ result, progress })).not.toContain(proxy);
+      expect(progress.join("\n")).not.toContain("fixturesecret");
+      if (mode === "tool-name") expect(progress).toContain("Tool: [redacted]");
+      expect(Buffer.byteLength(result.text)).toBeLessThanOrEqual(16384);
+      expect(Buffer.byteLength(result.output)).toBeLessThanOrEqual(65536);
+      if (mode === "malformed-tool") expect(result.outcome).toBe("failed");
+      else {
+        expect(result.outcome).toBe("completed");
+        expect(result.output).toContain("[redacted]");
+      }
+      if (mode === "truncation") expect(result.output).toContain("[truncated]");
+    } finally {
+      flag.mockRestore();
+    }
   });
 });
 

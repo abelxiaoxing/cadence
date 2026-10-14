@@ -47,6 +47,9 @@ runWorker(request: WorkerRequest, signal: AbortSignal,
   onProgress?: (text: string) => void, timeoutMs = 1_200_000): Promise<RunResult>;
 runCheck(check: CheckDefinition, cwd: string, signal: AbortSignal): Promise<RunResult>;
 runProcess(spec: ProcessSpec): Promise<RunResult>;
+safeChildEnv(): NodeJS.ProcessEnv;
+// Private SDK selector in subagent-process.ts; finite readonly own-data snapshots only.
+// sdkNetworkEnvironment(ambient, scoped): {env: NodeJS.ProcessEnv; redactionLiterals: string[]};
 // ProcessSpec.windowsVerbatimArguments?: boolean; Windows parent-check use only.
 captureChanges(root: string): ChangeView;
 ```
@@ -101,10 +104,40 @@ Registered native/custom function transports (`getRegisteredNativeProvider`, con
 Auth env keys ending `_FILE`, `_PATH` or `_CREDENTIALS` refuse as unsupported ambient-file authentication.
 No silent model/provider/API fallback; auth expiry requires a new explicit run, not a token-lifetime guarantee.
 
-SDK environment allowlist: `PATH`, `HOME`, `USERPROFILE`, `SystemRoot`, `WINDIR`, `COMSPEC`, `TMP`, `TEMP`, `TMPDIR`, `LANG`, `LC_ALL`, `PATHEXT`.
+General `safeChildEnv()` allowlist (unchanged default `runProcess` environment): `PATH`, `HOME`, `USERPROFILE`, `SystemRoot`, `WINDIR`, `COMSPEC`, `TMP`, `TEMP`, `TMPDIR`, `LANG`, `LC_ALL`, `PATHEXT`.
 Set `CADENCE_SUBAGENT_CHILD=1`, `PI_OFFLINE=1`, `NO_COLOR=1`; do not inherit provider credentials, `NODE_OPTIONS` or session/control IDs.
 Auth travels only in the bounded stdin envelope, never resolved credential argv/files/logs.
 Host tools can still access files allowed by the OS account.
+
+SDK-only startup routing is owned by `src/subagent-process.ts#runWorker`, not by the general allowlist or SDK resolver.
+Its finite own-descriptor reader recognizes only `http_proxy`, `https_proxy`, `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `all_proxy`, `NO_PROXY`, `no_proxy`, `NODE_USE_ENV_PROXY`, `NODE_OPTIONS`.
+Absence differs from present empty/undefined/nonstring/accessor; selected readers never invoke getters or coerce values.
+DIRECT requires no HTTP(S)/ALL/bypass/opt-in request, ambient or scoped; ambient `NODE_OPTIONS` alone remains dropped with no new direct-runtime gate.
+VALIDATED_PROXY requires both effective HTTP/HTTPS entries exactly equal; lowercase preference cannot override conflicting uppercase entries.
+Matching duplicate cases or mixed cases are allowed, without URL normalization into equality.
+ALL/bypass entries refuse even when empty; a partial pair or standalone/bad opt-in refuses.
+Proxy mode refuses any ambient `NODE_OPTIONS`; `NODE_USE_ENV_PROXY` may be absent or exactly `"1"`.
+
+The exact proxy URL is at most4096 UTF-8 bytes: HTTP(S), nonempty hostname, optional decimal port1–65535 and only empty/root path.
+Validate raw authority/path as well as public URL parsing; reject userinfo/raw `@`, query/fragment delimiters (even empty), normalization-hidden/non-root paths, whitespace, Unicode controls/formats/surrogates, backslashes and malformed authority/ports.
+Percent-bearing authorities, including encoded ASCII, reserved characters, Cc/Cf, malformed escapes and IPv6 zones, are explicitly unsupported before public URL normalization; never decode or canonicalize them into admission.
+Unencoded HTTP(S) IPv4/IPv6, punycode and safe Unicode hosts retain exact route-string projection even when public URL parsing normalizes the hostname.
+Never strip credentials, synthesize a default route or claim a safe URL is trusted/reachable.
+Proxy capability requires actual `process.versions.node`, absent Bun identity, and public `process.allowedNodeEnvironmentFlags.has("--use-env-proxy")`.
+Missing/false/throwing/unknown support refuses before spawn; no numeric runtime minimum, guessed executable, install, dispatcher change, TLS override, adapter fallback or forced SSE.
+Only the cached SDK env adds `HTTP_PROXY=<exact route>`, `HTTPS_PROXY=<same route>`, `NODE_USE_ENV_PROXY=1` to `safeChildEnv()`, before the worker's static SDK imports.
+No lowercase copies, ALL/bypass, provider secrets, session/control IDs or preloads are promoted; the parent environment is unchanged.
+
+Recognized scoped `auth.env` route entries may only exactly match the captured validated ambient route (opt-in exactly `"1"`).
+Scoped-only/conflicting/credentialed/unsupported/accessor entries refuse; compatible recognized and unrelated provider entries remain literal stdin auth, never a spread into child env.
+Capture selected presence/value/descriptor facts once in RAM, serialize the unchanged request, compare serialized scoped presence/value too, then revalidate selected ambient/scoped facts immediately before the one `runProcess` call.
+A changed route/descriptor refuses, with no recapture or intervening await/alternate launcher.
+This bounds trusted-parent freshness, not hostile same-process atomic isolation.
+Append the entire captured credential-free proxy URL to in-memory known literals: existing longest-first `diagnosticText` redaction precedes truncation and buffers split streams/progress.
+Never persist/hash real routes, snapshots or parser exceptions; transformed/unknown secrets are not universally detected.
+Network refusal is fixed `unsupportedNetwork: SDK proxy configuration or runtime capability is unsupported; no worker launched.` with failed/closed, null exit/signal, duration0, empty output and truncated=false.
+Here closed means no launched child exists, not an observed native wait; already-aborted requests remain fixed canceled/no-spawn.
+Keep ambient-file-auth refusal and launched native settlement under their existing contracts.
 
 ### Process result → checks → human review
 
@@ -163,6 +196,7 @@ Raw observed bytes feed fingerprints; sanitized displays are not literal complet
 | Empty code plan, stale dialog/model/session/record                    | Refuse; fresh native interaction required                    |
 | Missing selected state                                                | Remains absent; no reset/bootstrap on observation            |
 | Unknown/corrupt/linked/oversized selected state                       | Refuse and preserve bytes                                    |
+| Unsafe/conflicting/stale SDK proxy or unavailable native flag         | Fixed unsupportedNetwork; spawn0, null native facts          |
 | Auth/custom transport unsupported or late after abort                 | No fallback and no late spawn                                |
 | Malformed UTF-8/frames, missing final, output overflow, nonzero close | Failed/incomplete, not completed                             |
 | Canceled/timeout then exit zero                                       | Retain cancellation/timeout outcome                          |
@@ -176,14 +210,22 @@ Raw observed bytes feed fingerprints; sanitized displays are not literal complet
 - Good: review a code plan, explicitly Start one SDK editor, confirm real parent commands, inspect existing and new dirt, then record human review.
 - Base: Open interrupted context, inspect files/new lock, and explicitly Continue with fresh auth and consent; nothing resumes automatically.
 - Bad: one configured command passes and another is absent, but Done reports an unqualified reviewed result.
+- Good: validated ambient pair initializes native Node startup routing; scoped auth stays literal and ordinary parent checks stay unchanged.
+- Base: DIRECT has no proxy requirement and still drops ambient NODE_OPTIONS.
+- Bad: silently ignore bypass, promote auth.env into process env, recapture a changed route, or call CONNECT502 expected SDK failure successful inference.
+- Bad: accept percent-encoded Cf in a bare authority because public URL parsing erases it; encoded ASCII is also outside this bounded simple-authority policy, not a model eligibility failure.
 - Bad: trim a filesystem root string, hide a submodule limit, clear a lock after unknown stop, or claim all arbitrary business secrets were redacted.
 
 ## 6. Tests Required
 
 - `test/lightweight-store-controller.test.ts`: absent noncreation, selected unsafe state, supported-writer exclusion, dead unchanged informed recovery, same-revision conflicts, goal-only readonly actions, advisory planning, unrun obligations and issue acknowledgment.
 - `test/lightweight-shell.test.ts`: production registrar with fake host; raw latch, stale/busy/mode/trust/child/navigation controls and no accidental readonly escalation.
-- `test/lightweight-process-diff.test.ts`: native commands/env, framing/UTF-8/flood/cancel/unknown, real whitespace paths, index preservation, gitlinks/ignored/non-Git limits and changed-during-check exit facts.
-- `test/lightweight-sdk.test.ts`: real SDK local HTTP key/tool, headers-only, fabricated OAuth Codex, base-URL/null-header and Azure-env lanes; not paid-provider qualification or wire coverage of every adapter.
+- `test/lightweight-process-diff.test.ts`: finite route/case/URL/refusal/own-getter/capability/serialization freshness and aborted no-spawn; exact actual executable/worker/env-before-stdin/protocol; known proxy literals in final/split stderr/malformed tool/progress and byte truncation; preserve general/check env plus native commands/env, framing/UTF-8/flood/cancel/unknown, real whitespace paths, index preservation, gitlinks/ignored/non-Git limits and changed-during-check exit facts.
+- URL correction regressions use the production runWorker selector with finite own-data fixtures: raw/encoded controls, upper/lower escapes, ASCII/reserved/invalid/double escapes and zones refuse with spawn0/fixed text/null native facts before capability/normalization; unencoded HTTP(S) ASCII/IPv4/IPv6/punycode/Unicode retains exact routes.
+- `test/lightweight-sdk.test.ts`: two actual runWorker/stock-worker/pinned-public-Codex guarded numeric-loopback controls: DIRECT sink>0/proxy0, VALIDATED_PROXY sink0/exact CONNECT>=1/fixed502; ready-only/error/prepared, actual nonzero exit/close, input delivered/both EOF/no force, raw fake canary-free streams and no working-file/tool writes.
+  Keep20s test/15s child budgets, all seven wire assertions and original153 cases.
+  Feature-unavailable means demonstrated no-spawn and unqualified routing, not skipped/promoted routing PASS.
+  Also real SDK local HTTP key/tool, headers-only, fabricated OAuth Codex, base-URL/null-header and Azure-env lanes; not paid-provider qualification or wire coverage of every adapter.
 - `test/distribution.test.mjs` and `test/terminal-integration.test.mjs`: real source/extracted entry/operator/SDK and four regular/fullscreen production PTYs, with actual plan/Start, paging/Unicode/resize, checks, review, cancel and waited quit.
 The broad negative matrix is primarily fake-host coverage; do not claim every negative was repeated through a physical terminal.
 [Quality](./quality-guidelines.md) separates budgets/evidence from historical failures.
@@ -214,3 +256,8 @@ Correct: retain the approved command's inner quotes and ordinary environment, th
 const args = ["/d", "/s", "/c", `"${check.command}"`];
 const options = { windowsVerbatimArguments: true }; // Windows runCheck only.
 ```
+
+Wrong: widen `safeChildEnv`, inherit NODE_OPTIONS or treat literal resolver env as native startup initialization.
+Correct: only runWorker supplies a validated cached explicit env before SDK import; checks/general defaults remain unchanged.
+Wrong: persist a credential-free route or report native exit0 for admission refusal.
+Correct: redact the entire RAM-only route literal and report spawn0/null native facts; CONNECT502 proves routing only.

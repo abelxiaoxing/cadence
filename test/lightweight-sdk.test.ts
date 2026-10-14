@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { createServer as createTCPServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,8 +12,47 @@ import {
   InMemoryModelsStore,
 } from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { expect, it, vi } from "vitest";
-import { runProcess, safeChildEnv } from "../src/subagent-process.ts";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import {
+  runProcess,
+  runWorker,
+  safeChildEnv,
+} from "../src/subagent-process.ts";
+
+// A native observer, not an executable/SDK substitution. Existing lanes still delegate unchanged.
+vi.mock("node:child_process", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:child_process")>();
+  return { ...original, spawn: vi.fn(original.spawn) };
+});
+const originalNativeSpawn = vi
+  .mocked(spawn)
+  .getMockImplementation() as typeof spawn;
+const selectedNetworkKeys = [
+  "http_proxy",
+  "https_proxy",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "all_proxy",
+  "NO_PROXY",
+  "no_proxy",
+  "NODE_USE_ENV_PROXY",
+  "NODE_OPTIONS",
+] as const;
+let savedNetwork: (PropertyDescriptor | undefined)[];
+beforeEach(() => {
+  savedNetwork = selectedNetworkKeys.map((key) =>
+    Object.getOwnPropertyDescriptor(process.env, key),
+  );
+  for (const key of selectedNetworkKeys) delete process.env[key];
+});
+afterEach(() => {
+  selectedNetworkKeys.forEach((key, index) => {
+    delete process.env[key];
+    const descriptor = savedNetwork[index];
+    if (descriptor) Object.defineProperty(process.env, key, descriptor);
+  });
+});
 
 // Real native SDK integration budget, not a retimed retired certification test.
 for (const lane of [
@@ -1817,4 +1857,344 @@ for (const mode of ["throw", "reject", "promise"] as const) {
     if (mode === "reject") await expect(promise).rejects.toBe(ownFault);
     else if (mode === "promise") await expect(promise).resolves.toBe(response);
   });
+}
+
+// Offline routing controls through production runWorker + byte-identical SDK worker.
+// An expected SDK transport failure is never model inference or workflow qualification.
+for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
+  it(`actual runWorker/public pinned Codex native routing: ${mode}`, async () => {
+    const feature =
+      !!process.versions.node &&
+      !process.versions.bun &&
+      process.allowedNodeEnvironmentFlags.has("--use-env-proxy");
+    const cwd = mkdtempSync(join(tmpdir(), "cadence-sdk-routing-"));
+    const sockets = new Set<Socket>();
+    let sinkContacts = 0;
+    let proxyContacts = 0;
+    let exactConnects = 0;
+    let unexpected = false;
+    let target = "";
+    const track = (socket: Socket) => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      socket.on("error", () => {
+        unexpected = true;
+      });
+      socket.setTimeout(5000, () => {
+        unexpected = true;
+        socket.destroy();
+      });
+    };
+    const sink = createTCPServer((socket) => {
+      sinkContacts++;
+      track(socket);
+      if (sinkContacts > 8) unexpected = true;
+      socket.end(); // Fake HTTPS endpoint: no TLS override, inference or forwarding.
+    });
+    const proxy = createServer({ maxHeaderSize: 8192 }, (_req, res) => {
+      unexpected = true;
+      res.writeHead(502);
+      res.end("FABRICATED_PROXY_BODY_CANARY");
+    });
+    proxy.on("connection", (socket) => {
+      proxyContacts++;
+      track(socket);
+      if (proxyContacts > 8) unexpected = true;
+    });
+    proxy.on("connect", (req, socket) => {
+      if (
+        req.method !== "CONNECT" ||
+        req.url !== target ||
+        Buffer.byteLength(req.rawHeaders.join("\r\n")) > 8192
+      )
+        unexpected = true;
+      else exactConnects++;
+      // Never retain headers, tunnel, resolve DNS or contact the target from the proxy.
+      const body = "FABRICATED_PROXY_BODY_CANARY";
+      socket.end(
+        `HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+      );
+    });
+    proxy.on("clientError", (_error, socket) => {
+      unexpected = true;
+      socket.destroy();
+    });
+    await new Promise<void>((resolve) => sink.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    try {
+      const sinkAddress = sink.address();
+      const proxyAddress = proxy.address();
+      if (
+        !sinkAddress ||
+        typeof sinkAddress === "string" ||
+        !proxyAddress ||
+        typeof proxyAddress === "string"
+      )
+        throw new Error("Synthetic routing fixture unavailable");
+      target = `127.0.0.1:${sinkAddress.port}`;
+      const route = `http://127.0.0.1:${proxyAddress.port}`;
+      if (mode === "VALIDATED_PROXY") {
+        process.env.http_proxy = route;
+        process.env.https_proxy = route;
+      }
+      const key = `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "fixture-account" } })).toString("base64url")}.fixture`;
+      const literal = "!fabricated-header-$NO_EXPANSION";
+      const request = {
+        cwd,
+        model: {
+          ...fixtureModel(`https://${target}/exact/v1`),
+          provider: "openai-codex",
+          api: "openai-codex-responses",
+        },
+        auth: {
+          ok: true as const,
+          apiKey: key,
+          headers: { "X-Literal": literal },
+        },
+        kind: "research" as const,
+        thinkingLevel: "off",
+        instructions:
+          "Public synthetic routing fixture only. Never call tools.",
+        prompt: "Answer WIRE_OK without tools.",
+      };
+      expect(
+        JSON.parse(
+          readFileSync(
+            new URL(
+              "../node_modules/@earendil-works/pi-ai/package.json",
+              import.meta.url,
+            ),
+            "utf8",
+          ),
+        ).version,
+      ).toBe("0.84.3");
+      const workerSha256 = createHash("sha256")
+        .update(readFileSync(new URL("../src/sdk-worker.mjs", import.meta.url)))
+        .digest("hex");
+      expect(workerSha256).toBe(
+        "2bcbf24c6deb32ab112ca73ef2445ffee4afecd54faba971355b337bc16a24d3",
+      );
+      let productionObserved = false;
+      let pid: number | undefined;
+      let stdout = "";
+      let stderr = "";
+      let bytes = 0;
+      let stdoutEOF = false;
+      let stderrEOF = false;
+      let inputDelivered = false;
+      let inputError = false;
+      let processError = false;
+      let forced = false;
+      const waits: {
+        event: string;
+        exitCode: number | null;
+        signal: string | null;
+      }[] = [];
+      const calls = vi.mocked(spawn).mock.calls.length;
+      // Observe genuine production options first, then add only the existing test guard.
+      if (mode === "DIRECT" || feature)
+        vi.mocked(spawn).mockImplementationOnce((command, args, options) => {
+          productionObserved = true;
+          expect(command).toBe(process.execPath);
+          expect(args).toEqual([
+            fileURLToPath(new URL("../src/sdk-worker.mjs", import.meta.url)),
+          ]);
+          expect(options?.stdio).toEqual(["pipe", "pipe", "pipe"]);
+          expect(options?.env).toEqual(
+            mode === "DIRECT"
+              ? safeChildEnv()
+              : {
+                  ...safeChildEnv(),
+                  HTTP_PROXY: route,
+                  HTTPS_PROXY: route,
+                  NODE_USE_ENV_PROXY: "1",
+                },
+          );
+          expect(options?.windowsVerbatimArguments).toBeUndefined();
+          const child = originalNativeSpawn(
+            command,
+            [
+              "--import",
+              new URL("./helpers/lightweight-sdk-guard.mjs", import.meta.url)
+                .href,
+              ...args!,
+            ],
+            options,
+          );
+          pid = child.pid;
+          const collect = (chunk: Buffer, out: boolean) => {
+            bytes += chunk.length;
+            if (bytes > 256 * 1024) {
+              forced = true;
+              child.kill("SIGKILL");
+            } else if (out) stdout += chunk.toString("utf8");
+            else stderr += chunk.toString("utf8");
+          };
+          child.stdout?.on("data", (chunk: Buffer) => collect(chunk, true));
+          child.stderr?.on("data", (chunk: Buffer) => collect(chunk, false));
+          child.stdout?.once("end", () => {
+            stdoutEOF = true;
+          });
+          child.stderr?.once("end", () => {
+            stderrEOF = true;
+          });
+          child.stdin?.once("finish", () => {
+            inputDelivered = true;
+          });
+          child.stdin?.on("error", () => {
+            inputError = true;
+          });
+          child.on("error", () => {
+            processError = true;
+          });
+          child.on("exit", (exitCode, signal) =>
+            waits.push({ event: "exit", exitCode, signal }),
+          );
+          child.on("close", (exitCode, signal) =>
+            waits.push({ event: "close", exitCode, signal }),
+          );
+          return child;
+        });
+      const result = await runWorker(
+        request,
+        new AbortController().signal,
+        undefined,
+        15000,
+      );
+      const receipt = {
+        boundary: "production-runWorker-stock-public-Codex-loopback",
+        mode,
+        nativeProxyFeature: feature,
+        node: process.versions.node,
+        bun: !!process.versions.bun,
+        executable: process.execPath,
+        platform: process.platform,
+        arch: process.arch,
+        publicSDKVersion: "0.84.3",
+        routingQualified:
+          !unexpected &&
+          (mode === "DIRECT"
+            ? sinkContacts > 0 && proxyContacts === 0 && exactConnects === 0
+            : feature &&
+              sinkContacts === 0 &&
+              proxyContacts > 0 &&
+              exactConnects >= 1),
+        pid: pid ?? null,
+        productionObserved,
+        waits,
+        stdoutEOF,
+        stderrEOF,
+        inputDelivered,
+        inputError,
+        processError,
+        forced,
+        sinkContacts,
+        proxyContacts,
+        exactConnects,
+        unexpected,
+        workerSha256,
+        result,
+        paidProvider: false,
+        workflowQualified: false,
+      };
+      if (process.env.CADENCE_SDK_TEST_EVIDENCE) {
+        const root = process.env.CADENCE_SDK_TEST_EVIDENCE;
+        for (const [name, text] of [
+          ["stdout", stdout],
+          ["stderr", stderr],
+        ])
+          writeFileSync(join(root, `routing-${mode}.${name}.log`), text, {
+            flag: "wx",
+            mode: 0o600,
+          });
+        writeFileSync(
+          join(root, `routing-${mode}.json`),
+          `${JSON.stringify(receipt)}\n`,
+          { flag: "wx", mode: 0o600 },
+        );
+      }
+      if (mode === "VALIDATED_PROXY" && !feature) {
+        expect(productionObserved).toBe(false);
+        expect(vi.mocked(spawn).mock.calls).toHaveLength(calls);
+        expect(result).toMatchObject({
+          outcome: "failed",
+          closed: true,
+          exitCode: null,
+          signal: null,
+          text: "unsupportedNetwork: SDK proxy configuration or runtime capability is unsupported; no worker launched.",
+        });
+        expect(sinkContacts + proxyContacts + exactConnects).toBe(0);
+        return; // Admission/refusal PASS only; routingQualified:false, not a routed pass or skip.
+      }
+      expect(vi.mocked(spawn).mock.calls).toHaveLength(calls + 1);
+      expect(pid).toBeGreaterThan(0);
+      expect(productionObserved).toBe(true);
+      expect(waits).toEqual([
+        { event: "exit", exitCode: 1, signal: null },
+        { event: "close", exitCode: 1, signal: null },
+      ]);
+      expect({
+        stdoutEOF,
+        stderrEOF,
+        inputDelivered,
+        inputError,
+        processError,
+        forced,
+      }).toEqual({
+        stdoutEOF: true,
+        stderrEOF: true,
+        inputDelivered: true,
+        inputError: false,
+        processError: false,
+        forced: false,
+      });
+      expect(result).toMatchObject({
+        outcome: "failed",
+        closed: true,
+        exitCode: 1,
+        signal: null,
+        truncated: false,
+      });
+      expect(result.durationMs).toBeLessThan(15000);
+      expect(stdout).toBe('{"type":"ready"}\n');
+      expect(diagnostic(stderr)).toMatchObject({
+        stage: "assistant-final",
+        class: "terminal-incomplete",
+        preflight: "accepted",
+        requestPrepared: true,
+        terminalStopReason: "error",
+        cleanupFailures: 0,
+        cleanupSettled: true,
+      });
+      for (const canary of [
+        key,
+        literal,
+        route,
+        target,
+        "FABRICATED_PROXY_BODY_CANARY",
+      ])
+        expect(stdout + stderr).not.toContain(canary); // Before parent redaction, not just safe result text.
+      expect(unexpected).toBe(false);
+      if (mode === "DIRECT") {
+        expect(sinkContacts).toBeGreaterThan(0);
+        expect(proxyContacts).toBe(0);
+        expect(exactConnects).toBe(0);
+      } else {
+        expect(sinkContacts).toBe(0);
+        expect(proxyContacts).toBeGreaterThan(0);
+        expect(exactConnects).toBeGreaterThanOrEqual(1);
+      }
+      expect(readdirSync(cwd)).toEqual([]);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await Promise.all(
+        [sink, proxy].map(
+          (server) =>
+            new Promise<void>((resolve, reject) =>
+              server.close((error) => (error ? reject(error) : resolve())),
+            ),
+        ),
+      );
+    }
+  }, 20000);
 }
