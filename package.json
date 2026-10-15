@@ -49,7 +49,8 @@
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
     "typebox": "*",
-    "@earendil-works/pi-ai": "*"
+    "@earendil-works/pi-ai": "*",
+    "undici": "^8.9.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
@@ -59,7 +60,8 @@
     "rumdl": "^0.2.10",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8",
-    "@earendil-works/pi-ai": "0.84.3"
+    "@earendil-works/pi-ai": "0.84.3",
+    "undici": "8.9.0"
   },
   "repository": {
     "type": "git",

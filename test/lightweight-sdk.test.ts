@@ -6,7 +6,7 @@ import { createServer as createTCPServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { zstdDecompressSync } from "node:zlib";
+import { gzipSync, zstdDecompressSync } from "node:zlib";
 import {
   InMemoryCredentialStore,
   InMemoryModelsStore,
@@ -428,7 +428,7 @@ const diagnostic = (stderr: string) => {
   expect(value.inputBytes).toBeLessThanOrEqual(128 * 1024 + 1);
   expect(value.modelOutputBytes).toBeLessThanOrEqual(256 * 1024 + 1);
   expect(value.protocolBytes).toBeLessThanOrEqual(256 * 1024 + 1);
-  expect(value.cleanupFailures).toBeLessThanOrEqual(7);
+  expect(value.cleanupFailures).toBeLessThanOrEqual(15);
   expect(
     value.actualResponseStatus === "UNKNOWN" ||
       (Number.isInteger(value.actualResponseStatus) &&
@@ -2134,7 +2134,7 @@ for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
         .update(readFileSync(new URL("../src/sdk-worker.mjs", import.meta.url)))
         .digest("hex");
       expect(workerSha256).toBe(
-        "2bcbf24c6deb32ab112ca73ef2445ffee4afecd54faba971355b337bc16a24d3",
+        "099261e6e7bfa67696fb9c1ee74be839b5bc79fac996b2481dba5cd82ae9766b",
       );
       let productionObserved = false;
       let pid: number | undefined;
@@ -2352,6 +2352,587 @@ for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
         expect(proxyContacts).toBeGreaterThan(0);
         expect(exactConnects).toBeGreaterThanOrEqual(1);
       }
+      expect(readdirSync(cwd)).toEqual([]);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await Promise.all(
+        [sink, proxy].map(
+          (server) =>
+            new Promise<void>((resolve, reject) =>
+              server.close((error) => (error ? reject(error) : resolve())),
+            ),
+        ),
+      );
+    }
+  }, 20000);
+}
+
+// PUBLIC RESOURCE BOUNDARY MOCKS ONLY. No native Undici API or SDK routing is
+// replaced in the real routing controls above. These raw Node children execute
+// the worker body with labelled SDK imports and a dynamic Undici import fixture.
+const networkResourceBootstrap = (lane: string, mask = 0) => {
+  const source = readFileSync(
+    new URL("../src/sdk-worker.mjs", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf("let session;");
+  expect(start).toBeGreaterThan(0);
+  const body = source.slice(start);
+  expect(body.split('await import("undici")')).toHaveLength(2);
+  return `
+    import assert from "node:assert/strict";
+    const lane = ${JSON.stringify(lane)};
+    const mask = ${mask};
+    const canary = ${JSON.stringify(rawCanary)};
+    let exceptionReads = 0;
+    const fault = {
+      get message() { exceptionReads++; throw new Error(canary); },
+      get stack() { exceptionReads++; throw new Error(canary); },
+      get code() { exceptionReads++; throw new Error(canary); },
+      toString() { exceptionReads++; throw new Error(canary); },
+      [Symbol.toPrimitive]() { exceptionReads++; throw new Error(canary); },
+    };
+    const route = "http://127.0.0.1:12345";
+    if (lane !== "direct") {
+      process.env.HTTP_PROXY = route;
+      process.env.HTTPS_PROXY = route;
+      process.env.NODE_USE_ENV_PROXY = "1";
+    }
+    if (lane === "partial") delete process.env.HTTPS_PROXY;
+    if (lane === "mismatch") process.env.HTTPS_PROXY = route + "/";
+    if (lane === "bad-optin") process.env.NODE_USE_ENV_PROXY = "0";
+    if (lane === "empty") process.env.HTTP_PROXY = process.env.HTTPS_PROXY = "";
+    const order = ["sdk-import"];
+    const counts = {imports:0, constructors:0, sets:0, gets:0, closes:0,
+      prompts:0, requests:0, unsubscribes:0, aborts:0, disposes:0};
+    let installed;
+    let instance;
+    const pending = lane.startsWith("pending-");
+    const fixtureSession = {
+      model: undefined,
+      messages:[{role:"assistant",stopReason:"stop"}],
+      getLastAssistantText:()=>"WIRE_OK",
+      agent:{streamFunction:()=>{ counts.requests++; }},
+      subscribe(listener) {
+        this.listener = listener;
+        return () => {
+          order.push("unsubscribe"); counts.unsubscribes++;
+          if (mask & 1) return Promise.reject(fault);
+        };
+      },
+      abort() {
+        order.push("abort"); counts.aborts++;
+        if (lane === "pending-abort" || lane === "pending-abort-close-reject")
+          return new Promise(()=>{});
+        if (mask & 2) throw fault;
+        return Promise.resolve();
+      },
+      dispose() {
+        order.push("dispose"); counts.disposes++;
+        if (mask & 4) return Promise.reject(fault);
+      },
+      async prompt(_prompt, options) {
+        order.push("prompt"); counts.prompts++;
+        options.preflightResult(true);
+        if (lane === "prompt-fault" || lane === "pending-close") throw fault;
+        if (lane === "pending-abort" || lane === "pending-abort-close-reject")
+          this.listener(null); // Starts the coalesced pending SDK abort.
+        else await this.agent.streamFunction(this.model, {}, {});
+        this.listener({type:"message_end",message:this.messages[0]});
+      },
+    };
+    const importUndiciFixture = async () => {
+      order.push("undici-import"); counts.imports++;
+      if (lane === "import-reject") throw fault;
+      const api = {
+        EnvHttpProxyAgent: class {
+          constructor(options) {
+            order.push("construct"); counts.constructors++;
+            assert.deepEqual(options,{httpProxy:route,httpsProxy:route,noProxy:""});
+            if (lane === "constructor-throw") throw fault;
+            instance = this;
+            if (lane === "close-getter") Object.defineProperty(this,"close",{get(){
+              order.push("close"); counts.closes++; throw fault;
+            }});
+          }
+          close() {
+            assert.equal(this,instance);
+            order.push("close"); counts.closes++;
+            if (lane === "pending-close") return new Promise(()=>{});
+            if (lane === "close-throw") throw fault;
+            if ((mask & 8) || lane === "close-reject" ||
+                lane === "setter-fault-close-reject" || lane === "pending-abort-close-reject")
+              return Promise.reject(fault);
+            return Promise.resolve();
+          }
+        },
+        setGlobalDispatcher(agent) {
+          order.push("set"); counts.sets++;
+          assert.equal(agent,instance);
+          if (lane === "setter-throw" || lane === "setter-fault-close-reject") throw fault;
+          installed = agent;
+        },
+        getGlobalDispatcher() {
+          order.push("get"); counts.gets++;
+          if (lane === "getter-throw") throw fault;
+          return lane === "getter-mismatch" ? {} : installed;
+        },
+      };
+      for (const name of ["EnvHttpProxyAgent","setGlobalDispatcher","getGlobalDispatcher"]) {
+        if (lane === "missing-" + name) delete api[name];
+        if (lane === "bad-" + name) api[name] = 42;
+        if (lane === "throwing-" + name)
+          Object.defineProperty(api,name,{get(){throw fault;}});
+      }
+      return api;
+    };
+    const adapters = {"openai-completions":async()=>{
+      order.push("adapter-import");
+      if (lane === "captured") {
+        process.env.HTTP_PROXY = process.env.HTTPS_PROXY = "http://127.0.0.1:54321";
+        process.env.NO_PROXY = "*";
+      }
+      return {};
+    }};
+    class InMemoryCredentialStore {}
+    class InMemoryModelsStore {}
+    const ModelRuntime = {async create(options) {
+      order.push("runtime");
+      assert.ok(options.credentials instanceof InMemoryCredentialStore);
+      assert.ok(options.modelsStore instanceof InMemoryModelsStore);
+      assert.equal(options.modelsPath,null);
+      assert.equal(options.refreshOnCreate,false);
+      assert.equal(options.allowModelNetwork,false);
+      return {registerNativeProvider(){}};
+    }};
+    const createProvider = config => config;
+    const createExtensionRuntime = () => ({});
+    const SessionManager = {inMemory:()=>({})};
+    const SettingsManager = {inMemory:()=>({})};
+    const createAgentSession = async options => {
+      order.push("session");
+      assert.deepEqual(options.resourceLoader.getSkills(),{skills:[],diagnostics:[]});
+      assert.deepEqual(options.resourceLoader.getAgentsFiles(),{agentsFiles:[]});
+      fixtureSession.model = options.model;
+      return {session:fixtureSession};
+    };
+    const verify = () => {
+      assert.equal(exceptionReads,0);
+      assert.ok(counts.imports <= 1 && counts.constructors <= 1 && counts.sets <= 1 && counts.closes <= 1);
+      if (counts.closes) {
+        const close = order.indexOf("close");
+        for (const label of ["unsubscribe","dispose"])
+          if (order.includes(label)) assert.ok(close < order.indexOf(label));
+        // A coalesced abort is allowed before finally; its independent final
+        // abort must still be attempted after close, even if either is pending.
+        if (order.includes("abort")) assert.ok(close < order.lastIndexOf("abort"));
+      }
+      if (counts.prompts) {
+        assert.equal(counts.unsubscribes,1);
+        assert.equal(counts.disposes,1);
+        assert.equal(counts.aborts,lane.startsWith("pending-abort") ? 2 : 1);
+        if (lane !== "direct")
+          assert.deepEqual(order.slice(0,8),["sdk-import","adapter-import","undici-import","construct","set","get","runtime","session"]);
+      } else {
+        assert.equal(counts.requests,0);
+        assert.equal(counts.unsubscribes+counts.aborts+counts.disposes,0);
+      }
+      if (lane === "direct") {
+        assert.equal(counts.imports+counts.constructors+counts.sets+counts.gets+counts.closes,0);
+        assert.equal(counts.prompts,1);
+      } else if (["success","captured","close-throw","close-reject","close-getter","cleanup-mask"].includes(lane)) {
+        assert.equal(counts.prompts,1);
+        assert.equal(counts.closes,1);
+      } else if (!pending && lane !== "prompt-fault") {
+        assert.equal(counts.prompts,0);
+        const allocated = ["setter-throw","setter-fault-close-reject","getter-throw","getter-mismatch"].includes(lane);
+        assert.equal(counts.closes,allocated ? 1 : 0);
+        assert.equal(counts.constructors,allocated || lane === "constructor-throw" ? 1 : 0);
+        assert.equal(counts.sets,allocated ? 1 : 0);
+        assert.equal(counts.gets,lane.startsWith("getter-") ? 1 : 0);
+      }
+      if (pending) {
+        assert.equal(cleanupSettled,false);
+        assert.equal(counts.closes,1);
+        assert.equal(process.exitCode,1);
+        assert.equal(cleanupFailures,lane === "pending-abort-close-reject" ? 8 : 0);
+      }
+    };
+    if (pending) process.once("beforeExit",verify);
+    ${body.replace('await import("undici")', "await importUndiciFixture()")}
+    verify();
+    assert.equal(cleanupSettled,true);
+  `;
+};
+
+for (const lane of [
+  "direct",
+  "success",
+  "captured",
+  "partial",
+  "mismatch",
+  "bad-optin",
+  "empty",
+  "import-reject",
+  ...[
+    "EnvHttpProxyAgent",
+    "setGlobalDispatcher",
+    "getGlobalDispatcher",
+  ].flatMap((name) =>
+    ["missing-", "bad-", "throwing-"].map((prefix) => prefix + name),
+  ),
+  "constructor-throw",
+  "setter-throw",
+  "setter-fault-close-reject",
+  "getter-throw",
+  "getter-mismatch",
+  "close-throw",
+  "close-reject",
+  "close-getter",
+  "prompt-fault",
+  "pending-close",
+  "pending-abort",
+  "pending-abort-close-reject",
+]) {
+  it(`PUBLIC RESOURCE MOCK bootstrap/ownership/raw cleanup: ${lane}`, async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "cadence-network-resource-mock-"));
+    const request = fixtureRequest(cwd);
+    // Literal scoped routes never become process routing, even in DIRECT.
+    request.auth.env = {
+      ...request.auth.env,
+      HTTP_PROXY: "http://127.0.0.1:12345",
+      HTTPS_PROXY: "http://127.0.0.1:12345",
+      NODE_USE_ENV_PROXY: "1",
+    } as any;
+    const result = await nativeWorker(
+      cwd,
+      JSON.stringify(request),
+      true,
+      networkResourceBootstrap(lane, lane === "prompt-fault" ? 15 : 0),
+    );
+    const success = ["direct", "success", "captured"].includes(lane);
+    const cleanup = lane.startsWith("close-");
+    const pending = lane.startsWith("pending-");
+    const promptFault = lane === "prompt-fault" || lane === "pending-close";
+    expect(result.exitCode).toBe(success ? 0 : 1);
+    expect(result.stdout).toBe(
+      success || cleanup
+        ? '{"type":"ready"}\n{"type":"final","text":"WIRE_OK","stopReason":"stop"}\n'
+        : pending || promptFault
+          ? '{"type":"ready"}\n'
+          : "",
+    );
+    expect(result.stderr).not.toContain(rawCanary);
+    expect(result.stderr).not.toMatch(
+      /Error:|UnhandledPromiseRejection|\bat file:|\bat async|127\.0\.0\.1|fabricated/i,
+    );
+    if (success) expect(result.stderr).toBe("");
+    else
+      expect(diagnostic(result.stderr)).toMatchObject({
+        stage: cleanup
+          ? "cleanup"
+          : promptFault
+            ? "prompt"
+            : pending
+              ? "events"
+              : "network",
+        class: cleanup
+          ? "cleanup-failure"
+          : promptFault
+            ? "sdk-failure"
+            : pending
+              ? "event-projection-failed"
+              : "unsupported-network",
+        cleanupFailures: pending
+          ? 0
+          : lane === "prompt-fault"
+            ? 15
+            : cleanup || lane === "setter-fault-close-reject"
+              ? 8
+              : 0,
+        cleanupSettled: !pending,
+        requestPrepared: false,
+      });
+    expect(readdirSync(cwd)).toEqual([]);
+  }, 20000);
+}
+for (let mask = 8; mask <= 15; mask++) {
+  it(`PUBLIC RESOURCE MOCK valid final cannot repair native nonzero cleanup bits=${mask}`, async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "cadence-network-cleanup-mock-"));
+    const result = await nativeWorker(
+      cwd,
+      JSON.stringify(fixtureRequest(cwd)),
+      true,
+      networkResourceBootstrap("cleanup-mask", mask),
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe(
+      '{"type":"ready"}\n{"type":"final","text":"WIRE_OK","stopReason":"stop"}\n',
+    );
+    expect(diagnostic(result.stderr)).toMatchObject({
+      stage: "cleanup",
+      class: "cleanup-failure",
+      cleanupFailures: mask,
+      cleanupSettled: true,
+      terminalStopReason: "stop",
+    });
+    expect(result.stderr).not.toContain(rawCanary);
+    expect(readdirSync(cwd)).toEqual([]);
+  }, 20000);
+}
+
+// NATIVE public SDK + public Undici, loopback fake completions only. The proxy
+// returns a fixed response itself: no forwarding, TLS override or fetch patch.
+for (const encoding of ["identity", "gzip"] as const) {
+  it(`actual runWorker/public HTTP proxy successful synthetic response: ${encoding}`, async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "cadence-sdk-proxy-response-"));
+    let sinkContacts = 0;
+    let requests = 0;
+    let unexpected = false;
+    let endpoint = "";
+    const sockets = new Set<Socket>();
+    const sink = createServer((_req, res) => {
+      sinkContacts++;
+      res.writeHead(500);
+      res.end();
+    });
+    const proxy = createServer({ maxHeaderSize: 8192 }, async (req, res) => {
+      try {
+        requests++;
+        if (req.method !== "POST" || req.url !== endpoint || requests !== 1)
+          throw new Error("Fixture request mismatch");
+        let bytes = 0;
+        for await (const chunk of req) {
+          bytes += chunk.length;
+          if (bytes > 128 * 1024) throw new Error("Fixture request bound");
+        }
+        const event = (delta: any, finish_reason: string | null = null) =>
+          `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 1, model: "fixture-model", choices: [{ index: 0, delta, finish_reason }] })}\n\n`;
+        const plain = Buffer.from(
+          event({ role: "assistant", content: "WIRE_OK" }) +
+            event({}, "stop") +
+            "data: [DONE]\n\n",
+        );
+        const body = encoding === "gzip" ? gzipSync(plain) : plain;
+        res.writeHead(200, {
+          "content-type": "text/event-stream",
+          "content-encoding": encoding,
+          "content-length": body.length,
+          connection: "close",
+        });
+        res.end(body);
+      } catch {
+        unexpected = true;
+        res.writeHead(500);
+        res.end();
+      }
+    });
+    proxy.on("connect", (_req, socket) => {
+      unexpected = true; // This HTTP fixture requires the public absolute form.
+      socket.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
+    });
+    for (const server of [sink, proxy])
+      server.on("connection", (socket) => {
+        sockets.add(socket);
+        socket.on("close", () => sockets.delete(socket));
+        socket.on("error", () => {
+          unexpected = true;
+        });
+      });
+    await new Promise<void>((resolve) => sink.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    try {
+      const target = sink.address();
+      const address = proxy.address();
+      if (
+        !target ||
+        typeof target === "string" ||
+        !address ||
+        typeof address === "string"
+      )
+        throw new Error("Fixture unavailable");
+      const baseUrl = `http://127.0.0.1:${target.port}/v1`;
+      endpoint = `${baseUrl}/chat/completions`;
+      const route = `http://127.0.0.1:${address.port}`;
+      process.env.HTTP_PROXY = process.env.HTTPS_PROXY = route;
+      const request = fixtureRequest(cwd, fixtureModel(baseUrl));
+      const feature =
+        !!process.versions.node &&
+        !process.versions.bun &&
+        process.allowedNodeEnvironmentFlags.has("--use-env-proxy");
+      let childPID: number | undefined;
+      let stdout = "";
+      let stderr = "";
+      let bytes = 0;
+      let forced = false;
+      let stdoutEOF = false;
+      let stderrEOF = false;
+      let inputDelivered = false;
+      let inputError = false;
+      let processError = false;
+      const waits: {
+        event: string;
+        exitCode: number | null;
+        signal: string | null;
+      }[] = [];
+      const calls = vi.mocked(spawn).mock.calls.length;
+      if (feature)
+        vi.mocked(spawn).mockImplementationOnce((command, args, options) => {
+          expect(command).toBe(process.execPath);
+          expect(args).toEqual([
+            fileURLToPath(new URL("../src/sdk-worker.mjs", import.meta.url)),
+          ]);
+          expect(options?.env).toEqual({
+            ...safeChildEnv(),
+            HTTP_PROXY: route,
+            HTTPS_PROXY: route,
+            NODE_USE_ENV_PROXY: "1",
+          });
+          const child = originalNativeSpawn(
+            command,
+            [
+              "--import",
+              new URL("./helpers/lightweight-sdk-guard.mjs", import.meta.url)
+                .href,
+              ...args!,
+            ],
+            options,
+          );
+          childPID = child.pid;
+          const collect = (chunk: Buffer, out: boolean) => {
+            bytes += chunk.length;
+            if (bytes > 256 * 1024) {
+              forced = true;
+              child.kill("SIGKILL");
+            } else if (out) stdout += chunk.toString("utf8");
+            else stderr += chunk.toString("utf8");
+          };
+          child.stdout?.on("data", (chunk: Buffer) => collect(chunk, true));
+          child.stderr?.on("data", (chunk: Buffer) => collect(chunk, false));
+          child.stdout?.once("end", () => {
+            stdoutEOF = true;
+          });
+          child.stderr?.once("end", () => {
+            stderrEOF = true;
+          });
+          child.stdin?.once("finish", () => {
+            inputDelivered = true;
+          });
+          child.stdin?.on("error", () => {
+            inputError = true;
+          });
+          child.on("error", () => {
+            processError = true;
+          });
+          child.on("exit", (exitCode, signal) =>
+            waits.push({ event: "exit", exitCode, signal }),
+          );
+          child.on("close", (exitCode, signal) =>
+            waits.push({ event: "close", exitCode, signal }),
+          );
+          return child;
+        });
+      const result = await runWorker(
+        request as any,
+        new AbortController().signal,
+        undefined,
+        15000,
+      );
+      const startup = feature
+        ? proxyStartupStderr(stderr, childPID!)
+        : { workerStderr: stderr, runtimeWarning: null };
+      const receipt = {
+        boundary: "native-public-proxy-fixed-completions",
+        encoding,
+        node: process.versions.node,
+        executable: process.execPath,
+        pid: childPID ?? null,
+        feature,
+        result,
+        waits,
+        inputDelivered,
+        inputError,
+        processError,
+        stdoutEOF,
+        stderrEOF,
+        forced,
+        nativeAggregateBytes: bytes,
+        nodeRuntimeWarning: startup.runtimeWarning,
+        sinkContacts,
+        requests,
+        unexpected,
+        paidProvider: false,
+      };
+      if (process.env.CADENCE_SDK_TEST_EVIDENCE) {
+        const root = process.env.CADENCE_SDK_TEST_EVIDENCE;
+        for (const [name, text] of [
+          ["stdout", stdout],
+          ["stderr", stderr],
+          ["json", `${JSON.stringify(receipt)}\n`],
+        ])
+          writeFileSync(
+            join(root, `proxy-response-${encoding}.${name}`),
+            text,
+            { flag: "wx", mode: 0o600 },
+          );
+      }
+      if (!feature) {
+        expect(vi.mocked(spawn).mock.calls).toHaveLength(calls);
+        expect(result).toMatchObject({
+          outcome: "failed",
+          closed: true,
+          exitCode: null,
+          signal: null,
+          text: "unsupportedNetwork: SDK proxy configuration or runtime capability is unsupported; no worker launched.",
+        });
+        expect(sinkContacts + requests).toBe(0);
+        return; // Unqualified network admission refusal, not successful routing.
+      }
+      expect(vi.mocked(spawn).mock.calls).toHaveLength(calls + 1);
+      expect(childPID).toBeGreaterThan(0);
+      expect(waits).toEqual([
+        { event: "exit", exitCode: 0, signal: null },
+        { event: "close", exitCode: 0, signal: null },
+      ]);
+      expect({
+        inputDelivered,
+        inputError,
+        processError,
+        stdoutEOF,
+        stderrEOF,
+        forced,
+      }).toEqual({
+        inputDelivered: true,
+        inputError: false,
+        processError: false,
+        stdoutEOF: true,
+        stderrEOF: true,
+        forced: false,
+      });
+      expect(result).toMatchObject({
+        outcome: "completed",
+        closed: true,
+        exitCode: 0,
+        signal: null,
+        text: "WIRE_OK",
+        truncated: false,
+      });
+      expect(stdout).toBe(
+        '{"type":"ready"}\n{"type":"final","text":"WIRE_OK","stopReason":"stop"}\n',
+      );
+      expect(startup.workerStderr).toBe("");
+      for (const canary of [
+        request.auth.apiKey,
+        request.auth.headers["X-Literal"],
+        route,
+        baseUrl,
+      ])
+        expect(stdout + stderr).not.toContain(canary);
+      expect({ sinkContacts, requests, unexpected }).toEqual({
+        sinkContacts: 0,
+        requests: 1,
+        unexpected: false,
+      });
       expect(readdirSync(cwd)).toEqual([]);
     } finally {
       for (const socket of sockets) socket.destroy();

@@ -232,7 +232,7 @@ for (const source of ["source", "extracted"])
           cpSync(path.join(root, "package"), packageRoot, {
             recursive: true,
           });
-          for (const name of ["@earendil-works", "typebox"])
+          for (const name of ["@earendil-works", "typebox", "undici"])
             symlinkSync(
               path.join(repo, "node_modules", name),
               path.join(root, "install/node_modules", name),

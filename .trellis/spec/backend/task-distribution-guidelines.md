@@ -19,6 +19,13 @@ A count/listing alone cannot replace this audit.
 `src/sdk-worker.mjs` is maintained ordinary JavaScript and runs against installed peers, with no TypeScript/source-tree fallback or CLI startup.
 Pi itself loads the extension TypeScript.
 Extracted fixtures use actual package bodies in node_modules layout and trusted existing peer links, not package-manager installation or automatic downloads.
+Cadence declares mandatory public `undici: ^8.9.0` as its own peer and pins development8.9.0, reusing the SDK's existing resolution; production `dependencies` remain absent and Pi peers remain wildcards.
+Its public dispatcher API is used only by configured-proxy ephemeral workers after SDK/adapter imports, never through a private Pi HTTP subpath or an incidental ancestor/transitive dependency.
+Source/extracted fixture peer roots are `@earendil-works`, `typebox`, `undici`; qualification identity capsules bind coding-agent/AI/TUI/agent-core/typebox/Undici separately (six identities).
+Trusted public package-store files can legitimately have nlink2; owned source/archive/receipt single-link checks must not be relaxed to accommodate them.
+The existing Cadence engine `>=22.13.0` is unchanged; reviewed Undici8.9.0 and SDK0.84.3 declare `>=22.19.0`, a dependency compatibility fact rather than evidence all metadata-eligible combinations were executed.
+Dependency-edge lock generation must be standard Bun lockfile-only, lifecycle-disabled and externally offline, with isolated HOME/config/temp/cache and trusted existing cache copies when needed; preserve failures/preimages and stop rather than fall back online.
+Body audits must bind changed worker/package bytes: unchanged16/34/3 membership does not imply an unchanged stock worker or archive.
 Archive validation alone does not prove that tar extraction or later copying produced a usable installed tree.
 `test/distribution.test.mjs` audits each extracted/copied/post-peer tree with `auditPackage(archive, treeRoot, expected, provenanceRepoRoot)` and refuses linked roots/ancestors before inspecting members.
 Its filtered `cpSync` traversal copies only extracted archive bytes while avoiding documented Unicode-sensitive native-copy paths; the first Windows missing-file cause remains unproven until native evidence identifies it.

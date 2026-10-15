@@ -50,6 +50,13 @@ CI uses the runner's available Node, not setup-node version/channel selection; p
 Version-neutral does not mean every Node/Pi/platform combination was executed or is known supported.
 Windows/macOS native lanes, ConPTY, manager installs, physical-human and paid-provider lanes remain unqualified unless their own receipts exist.
 Loopback adapters do not qualify paid services or every allowlisted adapter.
+Post-import public Undici proxy configuration requires a fresh native Node22 routing receipt before claiming the observed Node22 bootstrap gap fixed; local Node26 success or mocked setter identity is not Node22 qualification.
+Preserve DIRECT sink>0/proxy0/exactCONNECT0 and VALIDATED_PROXY sink0/proxy>0/exactCONNECT>=1 with the original HTTPS sink/fixed502 proxy, native exit1/close1, EOF/input/no-force and raw-canary assertions.
+Missing actual startup capability remains no-spawn/unqualified routing, not a proxy pass or a new runtime-version skip.
+Keep public-resource mock counts separate from native SDK controls and whole totals; configured plain/gzip loopback response controls must use stock fetch/SDK/public APIs and original bounds.
+A compression incompatibility must fail visibly; never copy `undici.install()` or replace global networking implementations to hide it.
+Diagnostic range15 extends only cleanup bit8; exact keys/two snapshots/512 bytes/shared256KiB and the narrowly recognized original-PID UNDICI-EHPA startup prefix remain unchanged.
+Whole543/0/27 and CI38619715664 Linux542/1/27, Windows565/1/4, macOS543/0/27 are historical after new worker/package bytes, not fresh repair evidence.
 
 ## Review checklist
 

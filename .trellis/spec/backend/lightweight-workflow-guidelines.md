@@ -124,9 +124,19 @@ Percent-bearing authorities, including encoded ASCII, reserved characters, Cc/Cf
 Unencoded HTTP(S) IPv4/IPv6, punycode and safe Unicode hosts retain exact route-string projection even when public URL parsing normalizes the hostname.
 Never strip credentials, synthesize a default route or claim a safe URL is trusted/reachable.
 Proxy capability requires actual `process.versions.node`, absent Bun identity, and public `process.allowedNodeEnvironmentFlags.has("--use-env-proxy")`.
-Missing/false/throwing/unknown support refuses before spawn; no numeric runtime minimum, guessed executable, install, dispatcher change, TLS override, adapter fallback or forced SSE.
+Missing/false/throwing/unknown support refuses before spawn; no numeric runtime minimum, guessed executable, install, parent dispatcher change, TLS override, adapter fallback or forced SSE.
 Only the cached SDK env adds `HTTP_PROXY=<exact route>`, `HTTPS_PROXY=<same route>`, `NODE_USE_ENV_PROXY=1` to `safeChildEnv()`, before the worker's static SDK imports.
 No lowercase copies, ALL/bypass, provider secrets, session/control IDs or preloads are promoted; the parent environment is unchanged.
+
+The ephemeral worker captures only that uppercase pair/opt-in in RAM before asynchronous setup.
+A configured projection requires nonempty equal HTTP/HTTPS strings and opt-in exactly `"1"`; this is consistency checking, not a second route parser.
+After static SDK and selected official adapter imports, before runtime/session requests, it dynamically imports its declared public `undici` peer.
+Require callable `EnvHttpProxyAgent`, `setGlobalDispatcher`, `getGlobalDispatcher`; construct exactly one `new EnvHttpProxyAgent({httpProxy, httpsProxy, noProxy: ""})`, retain ownership before setting once, and require public getter identity.
+Missing import/API, setup throw or identity mismatch fails with fixed stage `network`, class `unsupported-network`, before ready/prompt; no raw exception or direct fallback.
+SDK import-time dispatcher initialization can overwrite native startup routing; startup capability and post-import configuration are both necessary.
+DIRECT adds no Undici import, constructor, setter, close or runtime gate.
+Never use scoped auth.env as process routing, private dispatcher Symbols/SDK HTTP modules, `undici.install()`, fetch/WebSocket/global-class replacement, TLS overrides or adapter reconstruction.
+The parent and ordinary checks remain unchanged.
 
 Recognized scoped `auth.env` route entries may only exactly match the captured validated ambient route (opt-in exactly `"1"`).
 Scoped-only/conflicting/credentialed/unsupported/accessor entries refuse; compatible recognized and unrelated provider entries remain literal stdin auth, never a spread into child env.
@@ -190,27 +200,28 @@ Raw observed bytes feed fingerprints; sanitized displays are not literal complet
 
 ## 4. Validation & Error Matrix
 
-| Boundary                                                              | Refusal / truthful outcome                                   |
-| --------------------------------------------------------------------- | ------------------------------------------------------------ |
-| Nonterminal, synthetic/replayed entry, busy/untrusted host            | No task launch; startup presentation is independent          |
-| Empty code plan, stale dialog/model/session/record                    | Refuse; fresh native interaction required                    |
-| Missing selected state                                                | Remains absent; no reset/bootstrap on observation            |
-| Unknown/corrupt/linked/oversized selected state                       | Refuse and preserve bytes                                    |
-| Unsafe/conflicting/stale SDK proxy or unavailable native flag         | Fixed unsupportedNetwork; spawn0, null native facts          |
-| Auth/custom transport unsupported or late after abort                 | No fallback and no late spawn                                |
-| Malformed UTF-8/frames, missing final, output overflow, nonzero close | Failed/incomplete, not completed                             |
-| Canceled/timeout then exit zero                                       | Retain cancellation/timeout outcome                          |
-| Required payload stdin error despite valid final/native exit zero     | Failed delivery; never erase the transport failure           |
-| Unconfirmed close or release                                          | Interrupted/unknown; supported new writers blocked           |
-| Review fingerprint changed                                            | Refuse Done; review again                                    |
-| Unrun/failed/stale check or incomplete coverage                       | Explicit issues acknowledgment; never manufacture check PASS |
+| Boundary                                                              | Refusal / truthful outcome                                     |
+| --------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Nonterminal, synthetic/replayed entry, busy/untrusted host            | No task launch; startup presentation is independent            |
+| Empty code plan, stale dialog/model/session/record                    | Refuse; fresh native interaction required                      |
+| Missing selected state                                                | Remains absent; no reset/bootstrap on observation              |
+| Unknown/corrupt/linked/oversized selected state                       | Refuse and preserve bytes                                      |
+| Unsafe/conflicting/stale SDK proxy or unavailable native flag         | Fixed unsupportedNetwork; spawn0, null native facts            |
+| Auth/custom transport unsupported or late after abort                 | No fallback and no late spawn                                  |
+| Child public proxy bootstrap unavailable or inconsistent              | Fixed network/unsupported-network, no ready/prompt or fallback |
+| Malformed UTF-8/frames, missing final, output overflow, nonzero close | Failed/incomplete, not completed                               |
+| Canceled/timeout then exit zero                                       | Retain cancellation/timeout outcome                            |
+| Required payload stdin error despite valid final/native exit zero     | Failed delivery; never erase the transport failure             |
+| Unconfirmed close or release                                          | Interrupted/unknown; supported new writers blocked             |
+| Review fingerprint changed                                            | Refuse Done; review again                                      |
+| Unrun/failed/stale check or incomplete coverage                       | Explicit issues acknowledgment; never manufacture check PASS   |
 
 ## 5. Good/Base/Bad Cases
 
 - Good: review a code plan, explicitly Start one SDK editor, confirm real parent commands, inspect existing and new dirt, then record human review.
 - Base: Open interrupted context, inspect files/new lock, and explicitly Continue with fresh auth and consent; nothing resumes automatically.
 - Bad: one configured command passes and another is absent, but Done reports an unqualified reviewed result.
-- Good: validated ambient pair initializes native Node startup routing; scoped auth stays literal and ordinary parent checks stay unchanged.
+- Good: validated ambient pair initializes native Node startup routing and the child configures its owned public dispatcher after imports; scoped auth stays literal and ordinary parent checks stay unchanged.
 - Base: DIRECT has no proxy requirement and still drops ambient NODE_OPTIONS.
 - Bad: silently ignore bypass, promote auth.env into process env, recapture a changed route, or call CONNECT502 expected SDK failure successful inference.
 - Bad: accept percent-encoded Cf in a bare authority because public URL parsing erases it; encoded ASCII is also outside this bounded simple-authority policy, not a model eligibility failure.
@@ -223,7 +234,9 @@ Raw observed bytes feed fingerprints; sanitized displays are not literal complet
 - `test/lightweight-process-diff.test.ts`: finite route/case/URL/refusal/own-getter/capability/serialization freshness and aborted no-spawn; exact actual executable/worker/env-before-stdin/protocol; known proxy literals in final/split stderr/malformed tool/progress and byte truncation; preserve general/check env plus native commands/env, framing/UTF-8/flood/cancel/unknown, real whitespace paths, index preservation, gitlinks/ignored/non-Git limits and changed-during-check exit facts.
 - URL correction regressions use the production runWorker selector with finite own-data fixtures: raw/encoded controls, upper/lower escapes, ASCII/reserved/invalid/double escapes and zones refuse with spawn0/fixed text/null native facts before capability/normalization; unencoded HTTP(S) ASCII/IPv4/IPv6/punycode/Unicode retains exact routes.
 - `test/lightweight-sdk.test.ts`: two actual runWorker/stock-worker/pinned-public-Codex guarded numeric-loopback controls: DIRECT sink>0/proxy0, VALIDATED_PROXY sink0/exact CONNECT>=1/fixed502; ready-only/error/prepared, actual nonzero exit/close, input delivered/both EOF/no force, raw fake canary-free streams and no working-file/tool writes.
-  Keep20s test/15s child budgets, all seven wire assertions and original153 cases.
+  Keep20s test/15s child budgets, all seven wire assertions, original153 cases and subsequent warning-codec controls.
+  Label public-resource mocks separately: DIRECT import/set/close0, captured projection/after-import ordering, missing/bad/throwing APIs, allocated-before-failed-setter cleanup and prompt0 on bootstrap failure.
+  Native loopback HTTP proxy controls require successful fixed plain/gzip responses with sink0, real original zero close and no global fetch/TLS substitution; CONNECT502 alone is not successful response coverage.
   Feature-unavailable means demonstrated no-spawn and unqualified routing, not skipped/promoted routing PASS.
   Also real SDK local HTTP key/tool, headers-only, fabricated OAuth Codex, base-URL/null-header and Azure-env lanes; not paid-provider qualification or wire coverage of every adapter.
 - `test/distribution.test.mjs` and `test/terminal-integration.test.mjs`: real source/extracted entry/operator/SDK and four regular/fullscreen production PTYs, with actual plan/Start, paging/Unicode/resize, checks, review, cancel and waited quit.
@@ -258,6 +271,6 @@ const options = { windowsVerbatimArguments: true }; // Windows runCheck only.
 ```
 
 Wrong: widen `safeChildEnv`, inherit NODE_OPTIONS or treat literal resolver env as native startup initialization.
-Correct: only runWorker supplies a validated cached explicit env before SDK import; checks/general defaults remain unchanged.
+Correct: only runWorker supplies a validated cached explicit env before SDK import, and only the configured ephemeral child installs its declared public dispatcher after imports; checks/general defaults remain unchanged.
 Wrong: persist a credential-free route or report native exit0 for admission refusal.
 Correct: redact the entire RAM-only route literal and report spawn0/null native facts; CONNECT502 proves routing only.

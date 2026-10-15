@@ -84,8 +84,14 @@ Do not rewrite/filter provider events or add process-wide rejection suppression.
 Any recorded pre-final fault, including rejected-preflight-then-resolve, blocks final emission.
 Cleanup after an already emitted final is different: preserve that final as a received frame, but cleanup failure still forces nonzero close and cannot become completed work.
 
-Cleanup independently catches unsubscribe, abort and dispose, including returned promises; bitmask1/2/4 records caught failures separately from the first fault.
-Bound-triggered abort rejection is handled immediately and awaited; final abort/dispose still run independently.
+Configured-proxy bootstrap adds only fixed stage `network` and class `unsupported-network`; exception/API getter/route/auth values are never diagnostic fields.
+Cleanup bitmask is an integer0..15: unsubscribe=1, abort=2, dispose=4, owned dispatcher close=8.
+At finally entry start an immediately rejection-handled owned `close()` attempt before awaiting any SDK cleanup, including a pending bound-triggered abort.
+Independently start and catch unsubscribe, final abort and dispose, including returned promises, so a failure or pending earlier cleanup cannot prevent the other attempts.
+Await all those attempts, the handled bound-triggered abort and owned close before setting cleanupSettled.
+Close synchronous throw, getter throw or rejection sets bit8 and fixed cleanup/cleanup-failure/nonzero, without replacing the first run fault.
+No previous unowned dispatcher is restored or closed; DIRECT has no owned dispatcher operation.
+Graceful public close may remain pending: it is not an abort or a bounded native settlement guarantee.
 The diagnostic writer cannot replace the failed outcome by throwing; no raw unhandled finally error may escape the worker.
 Persist the first fixed fault before awaiting abort/cleanup: an unsettled top-level cleanup promise with no remaining native handles can end the process before finally emits anything.
 `cleanupSettled:false` preserves uncertainty; do not fabricate cleanup bits or a settled snapshot from child exit.
@@ -98,6 +104,9 @@ Original parent `RunResult.closed/exitCode/signal/outcome` remains the settlemen
 | ------------------------------------------------------- | ------------------------------------------------------------------ |
 | Guards/parse/auth-model/setup/session refuses           | Fixed stage/class, nonzero; no raw exception                       |
 | Prompt preflight rejects, then peer resolves valid stop | First fault retained, no final, nonzero                            |
+| Child public network import/API/install fails           | Fixed network/unsupported-network; no prompt, no fallback          |
+| Owned close throws/rejects after valid final            | Bit8, native nonzero; final cannot repair cleanup failure          |
+| Owned close or SDK abort remains pending                | Early fault snapshot stays cleanupSettled:false; no fake trailer   |
 | Malformed independently dispatched subscriber event     | Nonthrowing projection, fixed fault/handled abort; no canary/stack |
 | Response status getter throws                           | UNKNOWN observation; original callback still forwarded             |
 | Original request hook throws/rejects                    | Exact propagation retained; no observation-induced fallback        |
@@ -116,11 +125,12 @@ Bad: treat ready, preflight, one native Start, model metadata or host quit as an
 `test/lightweight-sdk.test.ts` keeps every original guarded wire/model/auth/header/tool-result/filesystem assertion.
 Native fabricated/loopback controls assert ready-only/nonzero/originalclose plus fixed refusal/result/bound/HTTP observations; success stderr stays empty.
 Clearly labelled public-boundary mocks cover hook snapshot/receiver/promise/throw identity, malformed async events/throwing accessors, rejected-preflight settlement, every cleanup path, first-fault retention and diagnostic-cap/write failures.
+Public-resource mocks additionally cover all bit8..15 combinations, ownership before setter failure, pending close/abort, close-before-SDK-cleanup ordering and opaque API/exception getters.
 Raw-child secret canaries must be absent before parent redaction; pure mocks are not real-provider evidence or additional hidden suite totals.
 
 ### 7. Wrong vs Correct
 
 Wrong: serialize `error.message`, let a finally rejection print a raw stack, or pass hooks as methods of incoming mutable options.
-Correct: fixed primitive diagnostics, independently handled cleanup and snapshot-captured ordinary wrappers forwarding actual SDK receivers.
+Correct: fixed primitive diagnostics, immediately handled owned close before independent SDK cleanup, and snapshot-captured ordinary wrappers forwarding actual SDK receivers.
 Wrong: infer original worker exit from PTY/host exit0 or silently reset a failed real attempt marker.
 Correct: retain actual direct-worker close facts and the first failed experiment; only a reviewed causally changed-input experiment may follow.

@@ -29,6 +29,7 @@ const adapters = {
     import("@earendil-works/pi-ai/api/azure-openai-responses"),
 };
 let session;
+let ownedAgent;
 let unsubscribe;
 let count = 0;
 let bytes = 0;
@@ -41,7 +42,7 @@ let terminalStopReason = "UNKNOWN";
 let requestPrepared = false;
 let actualResponseStatus = "UNKNOWN";
 let preflight = "UNKNOWN";
-let cleanupFailures = 0; // Bit flags: unsubscribe=1, abort=2, dispose=4.
+let cleanupFailures = 0; // Bit flags: unsubscribe=1, abort=2, dispose=4, owned close=8.
 let pendingAbort;
 let cleanupSettled = false;
 const fail = (where, category) => {
@@ -116,6 +117,30 @@ try {
     process.env.PI_OFFLINE !== "1"
   )
     refuse("guards", "guards-required");
+  // Only the parent's validated uppercase projection is input here. Capture in
+  // RAM before asynchronous setup; literal auth.env is never process routing.
+  let proxy;
+  try {
+    const httpProxy = process.env.HTTP_PROXY;
+    const httpsProxy = process.env.HTTPS_PROXY;
+    const optIn = process.env.NODE_USE_ENV_PROXY;
+    if (
+      httpProxy !== undefined ||
+      httpsProxy !== undefined ||
+      optIn !== undefined
+    ) {
+      if (
+        typeof httpProxy !== "string" ||
+        !httpProxy ||
+        httpProxy !== httpsProxy ||
+        optIn !== "1"
+      )
+        refuse("network", "unsupported-network");
+      proxy = { httpProxy, httpsProxy, noProxy: "" };
+    }
+  } catch {
+    refuse("network", "unsupported-network");
+  }
   stage = "parse";
   const chunks = [];
   for await (const chunk of process.stdin) {
@@ -153,6 +178,29 @@ try {
     refuse("auth-model", "unsupported-model");
   stage = "setup";
   const api = await adapters[model.api]();
+  if (proxy) {
+    stage = "network";
+    try {
+      // SDK/adapter imports can reset native startup routing. Configure only
+      // this disposable child, using our declared public peer after imports.
+      const { EnvHttpProxyAgent, setGlobalDispatcher, getGlobalDispatcher } =
+        await import("undici");
+      if (
+        typeof EnvHttpProxyAgent !== "function" ||
+        typeof setGlobalDispatcher !== "function" ||
+        typeof getGlobalDispatcher !== "function"
+      )
+        refuse("network", "unsupported-network");
+      ownedAgent = new EnvHttpProxyAgent(proxy);
+      // Retain ownership even when installation or its identity check fails.
+      setGlobalDispatcher(ownedAgent);
+      if (getGlobalDispatcher() !== ownedAgent)
+        refuse("network", "unsupported-network");
+    } catch {
+      refuse("network", "unsupported-network");
+    }
+  }
+  stage = "setup";
   const runtime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
     modelsStore: new InMemoryModelsStore(),
@@ -347,27 +395,50 @@ try {
   // The stage is a location, not a complete diagnosis of an SDK/provider cause.
   fail(stage, stage === "parse" ? "parse-failed" : "sdk-failure");
 } finally {
-  try {
-    unsubscribe?.();
-  } catch {
-    cleanupFailures |= 1;
-    fail("cleanup", "cleanup-failure");
-  }
-  if (pendingAbort) await pendingAbort;
-  if (session) {
+  // Start and rejection-handle owned close BEFORE any potentially pending SDK
+  // cleanup. Never restore or close the previous, unowned global dispatcher.
+  const closing = (async () => {
+    if (!ownedAgent) return;
+    try {
+      await ownedAgent.close();
+    } catch {
+      cleanupFailures |= 8;
+      fail("cleanup", "cleanup-failure");
+    }
+  })();
+  const unsubscribing = (async () => {
+    try {
+      await unsubscribe?.();
+    } catch {
+      cleanupFailures |= 1;
+      fail("cleanup", "cleanup-failure");
+    }
+  })();
+  const aborting = (async () => {
+    if (!session) return;
     try {
       await session.abort();
     } catch {
       cleanupFailures |= 2;
       fail("cleanup", "cleanup-failure");
     }
+  })();
+  const disposing = (async () => {
+    if (!session) return;
     try {
       await session.dispose();
     } catch {
       cleanupFailures |= 4;
       fail("cleanup", "cleanup-failure");
     }
-  }
+  })();
+  await Promise.all([
+    closing,
+    unsubscribing,
+    pendingAbort,
+    aborting,
+    disposing,
+  ]);
   // A final snapshot exists only after the actual cleanup attempts settle.
   cleanupSettled = true;
   // Cleanup failures cannot become success, nor replace the first run failure.

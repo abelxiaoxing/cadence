@@ -258,7 +258,7 @@ beforeAll(() => {
   recordStage(
     "after-peer-links",
     () => {
-      for (const name of ["@earendil-works", "typebox"]) {
+      for (const name of ["@earendil-works", "typebox", "undici"]) {
         symlinkSync(
           path.join(root, "node_modules", name),
           path.join(
