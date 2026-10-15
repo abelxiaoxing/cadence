@@ -249,12 +249,13 @@ try {
     },
   };
   stage = "session";
+  const requestedThinkingLevel = thinkingLevel ?? "off";
   const created = await createAgentSession({
     cwd,
     agentDir: cwd,
     model,
     modelRuntime: runtime,
-    thinkingLevel: thinkingLevel ?? "off",
+    thinkingLevel: requestedThinkingLevel,
     tools:
       kind === "code"
         ? ["read", "grep", "find", "ls", "write", "edit", "bash"]
@@ -264,14 +265,22 @@ try {
     settingsManager: SettingsManager.inMemory({
       compaction: { enabled: false },
       retry: { enabled: false },
+      cacheWarming: "off",
     }),
   });
   session = created.session;
+  let effectiveThinkingLevel;
+  try {
+    effectiveThinkingLevel = session.thinkingLevel;
+  } catch {
+    refuse("session", "model-substitution");
+  }
   if (
     created.modelFallbackMessage ||
     session.model?.id !== model.id ||
     session.model?.provider !== model.provider ||
-    session.model?.api !== model.api
+    session.model?.api !== model.api ||
+    effectiveThinkingLevel !== requestedThinkingLevel
   )
     refuse("session", "model-substitution");
   // Adapter retry defaults are not workflow retries; explicitly disable both.

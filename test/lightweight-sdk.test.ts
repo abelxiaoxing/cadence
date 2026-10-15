@@ -57,6 +57,7 @@ afterEach(() => {
 // Real native SDK integration budget, not a retimed retired certification test.
 for (const lane of [
   "key-tool",
+  "xhigh-key-tool",
   "headers-only-readonly",
   "diagnosis-readonly",
   "planner-readonly",
@@ -65,6 +66,7 @@ for (const lane of [
   "azure-env",
 ] as const) {
   it(`actual SDK stdin/native resolver: ${lane}`, async () => {
+    const toolLane = lane === "key-tool" || lane === "xhigh-key-tool";
     const cwd = mkdtempSync(join(tmpdir(), "cadence-lw-sdk-"));
     const key =
       lane === "oauth-only-api"
@@ -152,7 +154,7 @@ for (const lane of [
               model: body.model,
               choices: [{ index: 0, delta, finish_reason }],
             });
-          if (lane === "key-tool" && requests.length === 1) {
+          if (toolLane && requests.length === 1) {
             emit({
               role: "assistant",
               tool_calls: [
@@ -241,7 +243,10 @@ for (const lane of [
           {
             id: "fixture-model",
             name: "Fixture",
-            reasoning: false,
+            reasoning: lane === "xhigh-key-tool",
+            ...(lane === "xhigh-key-tool"
+              ? { thinkingLevelMap: { xhigh: "xhigh" } }
+              : {}),
             input: ["text"],
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             contextWindow: 8192,
@@ -283,47 +288,63 @@ for (const lane of [
         cwd,
         model,
         auth,
-        kind:
-          lane === "key-tool"
-            ? "code"
-            : lane === "diagnosis-readonly"
-              ? "diagnosis"
-              : "research",
-        thinkingLevel: "off",
+        kind: toolLane
+          ? "code"
+          : lane === "diagnosis-readonly"
+            ? "diagnosis"
+            : "research",
+        thinkingLevel: lane === "xhigh-key-tool" ? "xhigh" : "off",
         instructions:
           "Synthetic fixture only. Use write only when requested; no shell or external resources.",
-        prompt:
-          lane === "key-tool"
-            ? "Write fixture.txt containing fixture-only, then answer WIRE_OK."
-            : "Answer WIRE_OK. Do not call tools.",
+        prompt: toolLane
+          ? "Write fixture.txt containing fixture-only, then answer WIRE_OK."
+          : "Answer WIRE_OK. Do not call tools.",
       });
-      const result = await runProcess({
-        command: process.execPath,
-        args: [
-          "--import",
-          new URL("./helpers/lightweight-sdk-guard.mjs", import.meta.url).href,
-          fileURLToPath(new URL("../src/sdk-worker.mjs", import.meta.url)),
-        ],
-        cwd,
-        timeoutMs: 15000,
-        signal: new AbortController().signal,
-        input: wire,
-        protocol: true,
-        secrets: [key, literal],
-      });
+      const raw =
+        lane === "xhigh-key-tool" ? await nativeWorker(cwd, wire) : undefined;
+      const result = raw
+        ? undefined
+        : await runProcess({
+            command: process.execPath,
+            args: [
+              "--import",
+              new URL("./helpers/lightweight-sdk-guard.mjs", import.meta.url)
+                .href,
+              fileURLToPath(new URL("../src/sdk-worker.mjs", import.meta.url)),
+            ],
+            cwd,
+            timeoutMs: 15000,
+            signal: new AbortController().signal,
+            input: wire,
+            protocol: true,
+            secrets: [key, literal],
+          });
+      if (raw) {
+        expect(raw.exitCode).toBe(0);
+        expect(raw.stderr).toBe("");
+        expect(raw.stdout).toBe(
+          '{"type":"ready"}\n{"type":"tool","name":"write"}\n{"type":"final","text":"WIRE_OK","stopReason":"stop"}\n',
+        );
+        for (const canary of [key, literal])
+          expect(raw.stdout + raw.stderr).not.toContain(canary);
+      }
       expect(serverError).toBeUndefined();
-      expect(result, JSON.stringify(result)).toMatchObject({
-        outcome: "completed",
-        closed: true,
-        exitCode: 0,
-        text: "WIRE_OK",
-      });
-      expect(result.output).toBe(""); // Successful stderr/protocol remains unchanged.
-      expect(result.output).not.toContain(key);
-      expect(result.output).not.toContain(literal);
-      expect(requests).toHaveLength(lane === "key-tool" ? 2 : 1);
+      if (result) {
+        expect(result, JSON.stringify(result)).toMatchObject({
+          outcome: "completed",
+          closed: true,
+          exitCode: 0,
+          text: "WIRE_OK",
+        });
+        expect(result.output).toBe(""); // Successful stderr/protocol remains unchanged.
+        expect(result.output).not.toContain(key);
+        expect(result.output).not.toContain(literal);
+      }
+      expect(requests).toHaveLength(toolLane ? 2 : 1);
       for (const request of requests) {
         expect(request.body.model).toBe("fixture-model");
+        if (lane === "xhigh-key-tool")
+          expect(request.body.reasoning_effort).toBe("xhigh");
         expect(request.headers["x-literal"]).toBe(literal);
         if (lane === "resolved-baseurl-null") {
           expect(request.headers.authorization).toBeUndefined();
@@ -349,12 +370,12 @@ for (const lane of [
           (tool: any) => tool.function?.name ?? tool.name,
         );
         expect(names).toEqual(
-          lane === "key-tool"
+          toolLane
             ? ["read", "grep", "find", "ls", "write", "edit", "bash"]
             : ["read", "grep", "find", "ls"],
         );
       }
-      if (lane === "key-tool") {
+      if (toolLane) {
         expect(readFileSync(join(cwd, "fixture.txt"), "utf8")).toBe(
           "fixture-only",
         );
@@ -365,6 +386,34 @@ for (const lane of [
           ),
         ).toBe(true);
       } else expect(readdirSync(cwd)).toEqual([]);
+      if (raw && process.env.CADENCE_SDK_TEST_EVIDENCE)
+        writeFileSync(
+          join(
+            process.env.CADENCE_SDK_TEST_EVIDENCE,
+            "thinking-xhigh-positive.json",
+          ),
+          `${JSON.stringify({
+            boundary: "stock-sdk-loopback-mapped-xhigh-tool-result",
+            pid: raw.pid,
+            waits: raw.waits,
+            inputDelivered: raw.inputDelivered,
+            stdoutEOF: raw.stdoutEOF,
+            stderrEOF: raw.stderrEOF,
+            forced: raw.forced,
+            stderrBytes: raw.stderrBytes,
+            requests: requests.length,
+            exactWireEffortXhigh: requests.every(
+              (request) => request.body.reasoning_effort === "xhigh",
+            ),
+            toolResultObserved: requests[1].body.messages.some(
+              (message: any) => message.role === "tool",
+            ),
+            literalAuthAssertionsPassed: true,
+            onlyExpectedFixtureWrite: true,
+            paidProvider: false,
+          })}\n`,
+          { flag: "wx", mode: 0o600 },
+        );
     } finally {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) =>
@@ -655,19 +704,43 @@ const nativeWorker = async (
   let inputFailed = false;
   let processFailed = false;
   let deadlineExpired = false;
+  let forced = false;
+  let stdoutEOF = false;
+  let stderrEOF = false;
+  let inputDelivered = false;
+  const waits: {
+    event: string;
+    exitCode: number | null;
+    signal: string | null;
+  }[] = [];
   let bytes = 0;
   const timer = setTimeout(() => {
     deadlineExpired = true;
+    forced = true;
     child.kill("SIGKILL");
   }, 15000);
   const collect = (chunk: Buffer, out: boolean) => {
     bytes += chunk.length;
-    if (bytes > 256 * 1024) child.kill("SIGKILL");
-    else if (out) stdout += chunk.toString("utf8");
+    if (bytes > 256 * 1024) {
+      forced = true;
+      child.kill("SIGKILL");
+    } else if (out) stdout += chunk.toString("utf8");
     else stderr += chunk.toString("utf8");
   };
   child.stdout.on("data", (chunk: Buffer) => collect(chunk, true));
   child.stderr.on("data", (chunk: Buffer) => collect(chunk, false));
+  child.stdout.once("end", () => {
+    stdoutEOF = true;
+  });
+  child.stderr.once("end", () => {
+    stderrEOF = true;
+  });
+  child.stdin.once("finish", () => {
+    inputDelivered = true;
+  });
+  child.once("exit", (exitCode, signal) =>
+    waits.push({ event: "exit", exitCode, signal }),
+  );
   child.stdin.on("error", () => {
     inputFailed = true;
   });
@@ -678,7 +751,10 @@ const nativeWorker = async (
     exitCode: number | null;
     signal: string | null;
   }>((resolve) => {
-    child.once("close", (exitCode, signal) => resolve({ exitCode, signal }));
+    child.once("close", (exitCode, signal) => {
+      waits.push({ event: "close", exitCode, signal });
+      resolve({ exitCode, signal });
+    });
   });
   child.stdin.end(wire);
   const settled = await closed;
@@ -688,6 +764,11 @@ const nativeWorker = async (
     closed: true,
     ...settled,
     deadlineExpired,
+    forced,
+    inputDelivered,
+    stdoutEOF,
+    stderrEOF,
+    waits,
     inputFailed,
     processFailed,
     stdoutBytes: Buffer.byteLength(stdout),
@@ -727,12 +808,95 @@ const nativeWorker = async (
     closed: true,
     signal: null,
     deadlineExpired: false,
+    forced: false,
+    inputDelivered: true,
+    stdoutEOF: true,
+    stderrEOF: true,
+    waits: [
+      { event: "exit", ...settled },
+      { event: "close", ...settled },
+    ],
     inputFailed: false,
     processFailed: false,
   });
   expect(child.pid).toBeGreaterThan(0);
   return { ...receipt, stdout, stderr };
 };
+
+for (const lane of [
+  "nonreasoning-high",
+  "nonreasoning-xhigh",
+  "reasoning-xhigh-missing-map",
+] as const) {
+  it(`actual stock SDK effective-thinking refusal before ready: ${lane}`, async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "cadence-sdk-thinking-refusal-"));
+    let modelContacts = 0;
+    let requests = 0;
+    const server = createServer((_req, res) => {
+      requests++;
+      res.writeHead(500);
+      res.end("FABRICATED_THINKING_RESPONSE_CANARY");
+    });
+    server.on("connection", () => {
+      modelContacts++;
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new Error("Fixture unavailable");
+      const request = {
+        ...fixtureRequest(cwd, {
+          ...fixtureModel(`http://127.0.0.1:${address.port}/v1`),
+          reasoning: lane === "reasoning-xhigh-missing-map",
+        }),
+        thinkingLevel: lane === "nonreasoning-high" ? "high" : "xhigh",
+      };
+      const wire = JSON.stringify(request);
+      const result = await nativeWorker(cwd, wire);
+      expect(JSON.stringify(request)).toBe(wire);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(diagnostic(result.stderr)).toMatchObject({
+        stage: "session",
+        class: "model-substitution",
+        sdkEvents: 0,
+        preflight: "UNKNOWN",
+        requestPrepared: false,
+        actualResponseStatus: "UNKNOWN",
+        terminalStopReason: "UNKNOWN",
+        cleanupFailures: 0,
+        cleanupSettled: true,
+      });
+      for (const canary of [
+        request.auth.apiKey,
+        request.auth.headers["X-Literal"],
+        request.auth.env.FIXTURE_SECRET,
+        request.model.baseUrl,
+        "FABRICATED_THINKING_RESPONSE_CANARY",
+      ])
+        expect(result.stdout + result.stderr).not.toContain(canary);
+      expect({ modelContacts, requests }).toEqual({
+        modelContacts: 0,
+        requests: 0,
+      });
+      expect(readdirSync(cwd)).toEqual([]);
+      if (process.env.CADENCE_SDK_TEST_EVIDENCE)
+        writeFileSync(
+          join(process.env.CADENCE_SDK_TEST_EVIDENCE, `thinking-${lane}.json`),
+          `${JSON.stringify({ boundary: "stock-sdk-loopback-thinking-refusal", lane, pid: result.pid, waits: result.waits, inputDelivered: result.inputDelivered, stdoutEOF: result.stdoutEOF, stderrEOF: result.stderrEOF, forced: result.forced, modelContacts, requests, fileWrites: 0, paidProvider: false })}\n`,
+          { flag: "wx", mode: 0o600 },
+        );
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  }, 20000);
+}
 
 for (const lane of [
   "guards",
@@ -994,7 +1158,11 @@ const mockedWorker = async (scenario: string) => {
       return scenario === "response-promise" ? responsePromise : undefined;
     }),
   };
+  let sessionThinkingLevel: unknown;
   const session: any = {
+    get thinkingLevel() {
+      return sessionThinkingLevel;
+    },
     model: request.model,
     messages:
       scenario === "missing-assistant"
@@ -1149,11 +1317,13 @@ const mockedWorker = async (scenario: string) => {
         expect(settings).toEqual({
           compaction: { enabled: false },
           retry: { enabled: false },
+          cacheWarming: "off",
         });
         return {};
       },
     },
     createAgentSession: async (options: any) => {
+      sessionThinkingLevel = options.thinkingLevel;
       expect(options.tools).toEqual([
         "read",
         "grep",
@@ -1739,7 +1909,11 @@ const eventFaults = [
   "tool-getter",
 ] as const;
 const rawCanary = "FABRICATED_RAW_NODE_LEAK_CANARY";
-const mockBootstrap = (lane: string, delivery = "awaited") => {
+const mockBootstrap = (
+  lane: string,
+  delivery = "awaited",
+  requestedThinkingLevel: unknown = "off",
+) => {
   const source = readFileSync(
     new URL("../src/sdk-worker.mjs", import.meta.url),
     "utf8",
@@ -1756,6 +1930,9 @@ const mockBootstrap = (lane: string, delivery = "awaited") => {
     const opaqueFault = {
       get message() { exceptionReads++; throw fault; },
       get stack() { exceptionReads++; throw fault; },
+      get code() { exceptionReads++; throw fault; },
+      get cause() { exceptionReads++; throw fault; },
+      get headers() { exceptionReads++; throw fault; },
       toString() { exceptionReads++; throw fault; },
       [Symbol.toPrimitive]() { exceptionReads++; throw fault; },
     };
@@ -1791,11 +1968,30 @@ const mockBootstrap = (lane: string, delivery = "awaited") => {
     let aborts = 0;
     let disposed = false;
     let deliveries = 0;
+    let sessionThinkingLevel;
+    let thinkingReads = 0;
+    let modelReads = 0;
+    let selectedModel;
+    const counts = {subscribes:0,prompts:0,streamReads:0,requests:0};
+    const thinkingLane = lane.startsWith("thinking-");
     const message = {role:"assistant",stopReason:"stop"};
     const fixtureSession = {
-      model: undefined, messages:[message], getLastAssistantText:()=>"WIRE_OK",
-      agent:{streamFunction:()=>{}},
+      get thinkingLevel() {
+        thinkingReads++;
+        if (lane === "thinking-throw") throw opaqueFault;
+        if (lane === "thinking-missing") return undefined;
+        if (lane === "thinking-null") return null;
+        if (lane === "thinking-number") return 1;
+        if (lane === "thinking-object") return badValue;
+        if (lane === "thinking-mismatch") return "off";
+        return sessionThinkingLevel;
+      },
+      get model() { modelReads++; return selectedModel; },
+      messages:[message], getLastAssistantText:()=>"WIRE_OK",
+      agent:{get streamFunction() { counts.streamReads++; return ()=>{ counts.requests++; }; },
+        set streamFunction(value) { this.wrapped = value; }},
       subscribe(callback) {
+        counts.subscribes++;
         listener = callback;
         return () => { if (lane === "unsubscribe-opaque") throw opaqueFault; };
       },
@@ -1812,6 +2008,8 @@ const mockBootstrap = (lane: string, delivery = "awaited") => {
         if (lane === "dispose-reject-opaque") return Promise.reject(opaqueFault);
       },
       async prompt(_prompt, options) {
+        counts.prompts++;
+        if (thinkingLane) await this.agent.wrapped(this.model,{},{});
         if (lane === "preflight-resolve") {
           options.preflightResult(false);
           assert.equal(listener({type:"message_end",message}), undefined);
@@ -1852,18 +2050,96 @@ const mockBootstrap = (lane: string, delivery = "awaited") => {
     const createProvider = config => config;
     const createExtensionRuntime = () => ({});
     const SessionManager = {inMemory:()=>({})};
-    const SettingsManager = {inMemory:()=>({})};
+    const SettingsManager = {inMemory:settings=>{
+      assert.deepEqual(settings,{compaction:{enabled:false},retry:{enabled:false},cacheWarming:"off"});
+      return {};
+    }};
     const createAgentSession = async options => {
-      fixtureSession.model = options.model;
+      assert.equal(options.thinkingLevel,${JSON.stringify(requestedThinkingLevel ?? "off")});
+      selectedModel = options.model;
+      sessionThinkingLevel = options.thinkingLevel;
+      if (lane === "thinking-absent") delete fixtureSession.thinkingLevel;
       return {session:fixtureSession};
     };
     ${source.slice(start)}
+    assert.equal(thinkingReads,lane === "thinking-absent" ? 0 : 1);
+    if (thinkingLane) {
+      const success = lane === "thinking-match";
+      assert.deepEqual(counts,{subscribes:success?1:0,prompts:success?1:0,streamReads:success?1:0,requests:success?1:0});
+      // Mismatch is rejected even after all three public identity reads match.
+      if (!success && lane !== "thinking-throw") assert.equal(modelReads,3);
+    }
     assert.equal(exceptionReads,0);
     assert.equal(disposed,true);
     assert.equal(aborts,deliveries ? 2 : 1); // Coalesced request plus independent cleanup.
     assert.equal(deliveries,${eventFaults.includes(lane as any) || lane === "event-abort-reject" ? 3 : 0});
   `;
 };
+for (const thinkingLevel of [
+  undefined,
+  null,
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]) {
+  it(`PUBLIC BOUNDARY MOCK exact effective-thinking match: ${thinkingLevel}`, async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "cadence-sdk-thinking-mock-"));
+    const result = await nativeWorker(
+      cwd,
+      JSON.stringify({ ...fixtureRequest(cwd), thinkingLevel }),
+      true,
+      mockBootstrap("thinking-match", "awaited", thinkingLevel),
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe(
+      '{"type":"ready"}\n{"type":"final","text":"WIRE_OK","stopReason":"stop"}\n',
+    );
+    expect(readdirSync(cwd)).toEqual([]);
+  }, 20000);
+}
+for (const lane of [
+  "mismatch",
+  "absent",
+  "missing",
+  "null",
+  "number",
+  "object",
+  "throw",
+]) {
+  it(`PUBLIC BOUNDARY MOCK effective-thinking refusal/no getter coercion: ${lane}`, async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "cadence-sdk-thinking-mock-"));
+    const result = await nativeWorker(
+      cwd,
+      JSON.stringify({ ...fixtureRequest(cwd), thinkingLevel: "high" }),
+      true,
+      mockBootstrap(`thinking-${lane}`, "awaited", "high"),
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).not.toContain(rawCanary);
+    expect(result.stderr).not.toMatch(
+      /Error:|UnhandledPromiseRejection|\bat file:|\bat async/,
+    );
+    expect(diagnostic(result.stderr)).toMatchObject({
+      stage: "session",
+      class: "model-substitution",
+      sdkEvents: 0,
+      preflight: "UNKNOWN",
+      requestPrepared: false,
+      actualResponseStatus: "UNKNOWN",
+      terminalStopReason: "UNKNOWN",
+      cleanupFailures: 0,
+      cleanupSettled: true,
+    });
+    expect(readdirSync(cwd)).toEqual([]);
+  }, 20000);
+}
+
 it("raw native mock preserves first failure before unsettled cleanup", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "cadence-sdk-unsettled-"));
   const result = await nativeWorker(
@@ -2134,7 +2410,7 @@ for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
         .update(readFileSync(new URL("../src/sdk-worker.mjs", import.meta.url)))
         .digest("hex");
       expect(workerSha256).toBe(
-        "099261e6e7bfa67696fb9c1ee74be839b5bc79fac996b2481dba5cd82ae9766b",
+        "12fff81671cc0bd1d3011f43f9364531bba0a08007dd1abe728de00a676022f3",
       );
       let productionObserved = false;
       let pid: number | undefined;
@@ -2408,7 +2684,9 @@ const networkResourceBootstrap = (lane: string, mask = 0) => {
     let installed;
     let instance;
     const pending = lane.startsWith("pending-");
+    let sessionThinkingLevel;
     const fixtureSession = {
+      get thinkingLevel() { return sessionThinkingLevel; },
       model: undefined,
       messages:[{role:"assistant",stopReason:"stop"}],
       getLastAssistantText:()=>"WIRE_OK",
@@ -2514,6 +2792,7 @@ const networkResourceBootstrap = (lane: string, mask = 0) => {
       assert.deepEqual(options.resourceLoader.getSkills(),{skills:[],diagnostics:[]});
       assert.deepEqual(options.resourceLoader.getAgentsFiles(),{agentsFiles:[]});
       fixtureSession.model = options.model;
+      sessionThinkingLevel = options.thinkingLevel;
       return {session:fixtureSession};
     };
     const verify = () => {

@@ -93,6 +93,9 @@ Instructions combine one fixed package role and at most **32768 bytes** of root 
 `src/sdk-worker.mjs` runs via `process.execPath` and a package-relative URL, not Pi CLI startup or an installed TypeScript fallback.
 It creates in-memory credentials/models/settings/session and an explicit empty resource loader, with `modelsPath: null`, `allowModelNetwork: false`, `refreshOnCreate: false`.
 Compaction and agent retry are disabled; the stream wrapper sets `maxRetries: 0`.
+In-memory settings also set public `cacheWarming: "off"` to disable modern SDK automatic refresh scheduling outside that wrapper.
+This preserves model `promptCache` metadata and request/token limits; it is not a billing or request-count guarantee.
+Older SDKs preserve the unused setting in their in-memory clone.
 No default discovery, catalog refresh, CLI migrations or dependency download is introduced.
 
 The single uniform route is `registerNativeProvider(createProvider({ id, models: [model], api, auth }))` with the official adapter and a local resolver returning the literal parent auth/env snapshot.
@@ -103,6 +106,10 @@ The allowlist is `openai-completions`, `openai-responses`, `openai-codex-respons
 Registered native/custom function transports (`getRegisteredNativeProvider`, configured `streamSimple`) refuse rather than substitute behavior.
 Auth env keys ending `_FILE`, `_PATH` or `_CREDENTIALS` refuse as unsupported ambient-file authentication.
 No silent model/provider/API fallback; auth expiry requires a new explicit run, not a token-lifetime guarantee.
+Capture `thinkingLevel ?? "off"` once and pass that exact value to `createAgentSession`.
+After assigning the created session, read its public `thinkingLevel` getter once and strictly compare it with that captured request beside the existing model-identity guard, before stream wrapping, subscription, READY or prompt.
+Missing, null, nonstring, mismatched or throwing effective thinking refuses with the existing fixed `session` / `model-substitution` failure and independent cleanup; never inspect opaque exception properties.
+Never clamp, call `setThinkingLevel`, fill a missing map, retry or substitute a model to repair the mismatch.
 
 General `safeChildEnv()` allowlist (unchanged default `runProcess` environment): `PATH`, `HOME`, `USERPROFILE`, `SystemRoot`, `WINDIR`, `COMSPEC`, `TMP`, `TEMP`, `TMPDIR`, `LANG`, `LC_ALL`, `PATHEXT`.
 Set `CADENCE_SUBAGENT_CHILD=1`, `PI_OFFLINE=1`, `NO_COLOR=1`; do not inherit provider credentials, `NODE_OPTIONS` or session/control IDs.
@@ -239,6 +246,10 @@ Raw observed bytes feed fingerprints; sanitized displays are not literal complet
   Native loopback HTTP proxy controls require successful fixed plain/gzip responses with sink0, real original zero close and no global fetch/TLS substitution; CONNECT502 alone is not successful response coverage.
   Feature-unavailable means demonstrated no-spawn and unqualified routing, not skipped/promoted routing PASS.
   Also real SDK local HTTP key/tool, headers-only, fabricated OAuth Codex, base-URL/null-header and Azure-env lanes; not paid-provider qualification or wire coverage of every adapter.
+  Effective-thinking controls keep faithful public getters in all three mock session constructors, exact settings assertions and matching absent-request-to-off behavior.
+  Mismatch/missing/null/nonstring/throwing getters refuse with no subscription, stream wrapping, READY or prompt; getter reads1 and opaque exception reads0 remain explicit.
+  Genuine stock-SDK nonreasoning high/xhigh and reasoning xhigh-without-map controls require stdout0, model contacts0, writes0 and original nonzero close; valid mapped xhigh requires the complete tool-result/auth cycle, exact wire effort, empty stderr and original zero close.
+  Actual modern1.2 full-model session equality/effective-thinking and cache-warming-disabled eligible-metadata construction controls remain a separate pending isolated peer-domain lane, not inferred from mocks or declarations.
 - `test/distribution.test.mjs` and `test/terminal-integration.test.mjs`: real source/extracted entry/operator/SDK and four regular/fullscreen production PTYs, with actual plan/Start, paging/Unicode/resize, checks, review, cancel and waited quit.
 The broad negative matrix is primarily fake-host coverage; do not claim every negative was repeated through a physical terminal.
 [Quality](./quality-guidelines.md) separates budgets/evidence from historical failures.
