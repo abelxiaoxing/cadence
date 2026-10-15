@@ -41,7 +41,7 @@ No model prose/process exit is a passing parent check; no static reference count
 
 ## Evidence and platform policy
 
-The [independent review](../../tasks/10-06-cadence-retirement-distribution-qualification/research/lightweight-independent-review.md) records 15 files, 205 passed / 0 failed / 0 skipped, exact 34-member audit and four actual production PTYs on its frozen inputs.
+The [independent review](../../tasks/archive/2026-10/10-06-cadence-retirement-distribution-qualification/research/lightweight-independent-review.md) records 15 files, 205 passed / 0 failed / 0 skipped, exact 34-member audit and four actual production PTYs on its frozen inputs.
 This is prior local evidence, not an assertion that later edits were tested or that release is approved.
 Keep failed diagnostic receipts and distinguish overlapping separate distribution runs from additional test totals.
 

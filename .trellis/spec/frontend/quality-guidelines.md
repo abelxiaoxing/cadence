@@ -40,7 +40,7 @@ Use Biome on changed JSON metadata where applicable; it is not a Markdown valida
 For product/content changes use [backend gates](../backend/quality-guidelines.md), including focused tests and separate real pack as appropriate.
 Use one sentence per line, aligned tables and ascending numbered lists; do not add broad lint exemptions.
 
-The [independent review](../../tasks/10-06-cadence-retirement-distribution-qualification/research/lightweight-independent-review.md) reports 205 passed / 0 failed / 0 skipped across 15 files and four actual PTY lanes on its frozen inputs.
+The [independent review](../../tasks/archive/2026-10/10-06-cadence-retirement-distribution-qualification/research/lightweight-independent-review.md) reports 205 passed / 0 failed / 0 skipped across 15 files and four actual PTY lanes on its frozen inputs.
 That is prior local evidence, not a claim of rerunning it after documentation edits or release approval.
 Historical 5547 passed / 5 failed / 9 skipped remains failed/superseded, with original preimages/reports untouched.
 Reference-valid maps, retired test counts and passing local gates never authorize Git mutation, publication, task archival or consumer cleanup.

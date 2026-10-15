@@ -49,10 +49,10 @@ Stored statuses are not revalidated check freshness.
 
 All **93** inventoried obsolete source owners are absent from the reviewed replacement, including compiler/scheduler/seal/transaction/SQLite/native-helper/workspace-worker runtime.
 Do not retain them behind new UI or copy them into generated bodies.
-[Independent review](../../tasks/10-06-cadence-retirement-distribution-qualification/research/lightweight-independent-review.md) audits 194 old test files and **2499 static title rows** (2354 test + 145 suite declarations), not executed test counts or one-to-one equivalence.
+[Independent review](../../tasks/archive/2026-10/10-06-cadence-retirement-distribution-qualification/research/lightweight-independent-review.md) audits 194 old test files and **2499 static title rows** (2354 test + 145 suite declarations), not executed test counts or one-to-one equivalence.
 Retained/ported intent and superseded mechanisms have explicit dispositions in task research; fewer tests alone prove nothing.
 Historical **5547 passed / 5 failed / 9 skipped remains FAILED/SUPERSEDED**, never a new pass.
-Old preimages/reports and [pre-refresh specs](../../tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/manifest.json) remain historical evidence.
+Old preimages/reports and [pre-refresh specs](../../tasks/archive/2026-10/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/manifest.json) remain historical evidence.
 
 Consumer task/history/config/session/OpenSpec/Git bytes and uncertain legacy resources are not retirement targets.
 No old approval is imported, no old lock cleared and no old store reset.

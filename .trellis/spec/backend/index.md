@@ -32,5 +32,5 @@ Shared [reuse](../guides/code-reuse-thinking-guide.md) and [cross-layer](../guid
 ## Historical guidance
 
 The other `task-*` guides in this directory are short historical pointers, not extra requirements.
-[Byte-preserved pre-refresh bodies](../../tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/manifest.json) retain old SQL/compiler/seal/transaction/first-close guidance for historical reports only.
+[Byte-preserved pre-refresh bodies](../../tasks/archive/2026-10/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/manifest.json) retain old SQL/compiler/seal/transaction/first-close guidance for historical reports only.
 Do not restore those mechanisms to satisfy obsolete text or relabel their failures passed.

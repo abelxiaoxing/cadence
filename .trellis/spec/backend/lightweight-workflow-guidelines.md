@@ -8,9 +8,9 @@ The source is a trusted terminal workflow assistant: direct host-tool edits can 
 There is no compiler graph, candidate seal, multi-file rollback, certified Completion or universal descendant-closure guarantee.
 
 Source anchors below are repository-relative paths and symbol names.
-[Independent review](../../tasks/10-06-cadence-retirement-distribution-qualification/research/lightweight-independent-review.md) found and fixed five defects and recorded local passing gates, not release approval.
+[Independent review](../../tasks/archive/2026-10/10-06-cadence-retirement-distribution-qualification/research/lightweight-independent-review.md) found and fixed five defects and recorded local passing gates, not release approval.
 Native Windows/macOS, manager installation, physical-human and paid-provider qualification remain unexecuted there.
-Historical contracts are preserved through [the archive manifest](../../tasks/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/manifest.json), not retained as live instructions.
+Historical contracts are preserved through [the archive manifest](../../tasks/archive/2026-10/10-06-cadence-retirement-distribution-qualification/research/retired-certified-specs/manifest.json), not retained as live instructions.
 
 ## 2. Signatures
 

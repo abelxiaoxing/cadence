@@ -44,7 +44,7 @@ jobs:
       - run: bun run test
       - run: bun run check:agents
       - run: bun run pack:check
-      - run: bun run traceability:check --map .trellis/tasks/10-06-cadence-retirement-distribution-qualification/research/acceptance-map-ci.json
+      - run: bun run traceability:check --map .trellis/tasks/09-23-cadence-harness-redesign/research/g6-ci-current-map.json
       - name: Preserve new diagnostic fixtures without overriding failures
         if: always()
         uses: actions/upload-artifact@v4
