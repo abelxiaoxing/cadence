@@ -23,6 +23,9 @@ Biome formats/checks JavaScript/TypeScript/JSON; do not hand-edit the generated 
 The single generated historical `research/release-preparation/g6-current-qualified-map.json` has formatting disabled only: its compact evidence/input repetition fits the traceability checker's1MiB bound, while pretty printing does not.
 Keep its parser/linter/reference/hash validation; preserve original bytes and failed/passed bindings, never broaden this exception to source/tests or general task data.
 
+Long-lived CI reference maps belong outside active task directories, such as `.trellis/qualification/g6/ci-map.json`, so whole-task archival cannot break CI.
+Preserve historical maps and old evidence instead of rewriting their hashes or statuses during closure; closing a superseded task is not an original acceptance-criteria PASS.
+
 ## Match the test to the boundary
 
 - Fast controller/state tests inject services to test choice, phases, obligations and freshness without expensive host construction.
