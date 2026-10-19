@@ -40,7 +40,7 @@ ExecStart=/usr/bin/node scripts/npm-downloads.mjs fetch
 ```ini
 # ~/.config/systemd/user/cadence-downloads.timer
 [Timer]
-OnCalendar=*-*-*03:00:00
+OnCalendar=*-*-* 03:00:00
 RandomizedDelaySec=10min
 [Install]
 WantedBy=timers.target
