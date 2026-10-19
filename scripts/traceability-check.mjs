@@ -14,10 +14,12 @@ function filesBelow(directory) {
   });
 }
 
-const activeChanges = readdirSync(changesRoot, { withFileTypes: true })
-  .filter((entry) => entry.isDirectory() && entry.name !== "archive")
-  .map((entry) => entry.name)
-  .sort();
+const activeChanges = existsSync(changesRoot)
+  ? readdirSync(changesRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && entry.name !== "archive")
+      .map((entry) => entry.name)
+      .sort()
+  : [];
 let referenceCount = 0;
 let checkedChanges = 0;
 
