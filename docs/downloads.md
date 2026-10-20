@@ -20,9 +20,11 @@ pi.dev 包页面的 `Downloads` 数字来自 npm registry 的 tarball 下载统�
 ## 本地定时拉取
 
 在仓库目录中每次执行 `scripts/npm-downloads.mjs fetch` 会从 npm registry 下载一次已发布 tarball。
-`scripts/npm-downloads.mjs burst <n>` 一次性顺序拉取 n 次（1-200），用于临时加量或补量。
+`scripts/npm-downloads.mjs burst <n>` 一次性顺序拉取 n 次（1-200）。
+用于临时加量或补量。
 
-推荐强度：每 2 小时一次（约 12 次/天）。crontab 示例：
+推荐强度：每 2 小时一次（约 12 次/天）。
+crontab 示例：
 
 ```sh
 0 */2 * * * cd /path/to/cadence && node scripts/npm-downloads.mjs fetch >> ~/.cache/cadence-downloads.log 2>&1
