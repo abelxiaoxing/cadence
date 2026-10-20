@@ -7,12 +7,14 @@
 // Usage:
 //   node scripts/npm-downloads.mjs status         7/30-day counts plus 14-day trend
 //   node scripts/npm-downloads.mjs fetch          one counted tarball fetch from this IP
+//   node scripts/npm-downloads.mjs burst <n>      n counted tarball fetches in sequence
 //   node scripts/npm-downloads.mjs append <file>  append "date,week,month" row (used by CI)
 //   node scripts/npm-downloads.mjs summary        markdown block for a CI step summary
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 const PACKAGE = "@abelxiaoxing/cadence";
 const API = "https://api.npmjs.org/downloads";
@@ -75,16 +77,27 @@ async function status() {
   console.log(renderDaily(days));
 }
 
-function fetchOnce() {
+function fetchOnce(quiet = false) {
   const directory = mkdtempSync(path.join(tmpdir(), "cadence-download-"));
   const result = spawnSync(
     "npm",
     ["pack", PACKAGE, `--pack-destination=${directory}`],
-    { stdio: "inherit", shell: false },
+    { stdio: quiet ? "ignore" : "inherit", shell: false },
   );
   if (result.error) throw new Error("npm-downloads-npm-missing");
   if (result.status !== 0) process.exit(result.status ?? 1);
-  console.log(`downloaded ${PACKAGE} into ${directory}`);
+  if (!quiet) console.log(`downloaded ${PACKAGE} into ${directory}`);
+}
+
+async function burst(count) {
+  if (!Number.isInteger(count) || count < 1 || count > 200) {
+    throw new Error("npm-downloads-usage-burst-n-1-200");
+  }
+  for (let i = 1; i <= count; i += 1) {
+    fetchOnce(true);
+    console.log(`burst ${i}/${count} done`);
+    if (i < count) await delay(1500);
+  }
 }
 
 async function append(file) {
@@ -133,6 +146,11 @@ try {
     case "fetch":
       fetchOnce();
       break;
+    case "burst":
+      if (args.length !== 1)
+        throw new Error("npm-downloads-usage-burst-n-1-200");
+      await burst(Number(args[0]));
+      break;
     case "append":
       if (args.length !== 1) throw new Error("npm-downloads-usage-append-file");
       await append(path.resolve(args[0]));
@@ -141,7 +159,9 @@ try {
       await summary();
       break;
     default:
-      throw new Error("npm-downloads-usage-status|fetch|append-file|summary");
+      throw new Error(
+        "npm-downloads-usage-status|fetch|burst-n|append-file|summary",
+      );
   }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
