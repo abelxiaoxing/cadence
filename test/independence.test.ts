@@ -61,7 +61,8 @@ describe("standalone independence", () => {
       expect(f).not.toMatch(/pi-autoformat/);
     }
     const pkg = JSON.parse(read(path.join(root, "package.json")));
-    expect(pkg.dependencies).toBeUndefined();
+    expect(pkg.dependencies).toEqual({ ws: "8.21.3" });
+    expect(JSON.stringify(pkg)).not.toMatch(/pi-web-ui|pi-subagents|trellis/i);
     expect(pkg.workspaces).toBeUndefined();
   });
 
@@ -69,7 +70,11 @@ describe("standalone independence", () => {
     const readme = read(path.join(root, "README.md"));
     expect(readme).toMatch(/local package|tarball|\.tgz|installed/i);
     expect(readme).toMatch(/\.\/|absolute|relative/i);
-    expect(readme).not.toMatch(/0\.84\.1|supported.*version|compatib/i);
+    expect(readme).not.toMatch(
+      /0\.84\.1|(?:requires|supports only|supported versions of) Pi \d/i,
+    );
+    expect(readme).toContain("does not impose a Pi version range");
+    expect(readme).toContain("not universal compatibility promises");
     expect(readme).not.toMatch(/installed from npm|npm install @abel/i);
   });
 });

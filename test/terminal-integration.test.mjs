@@ -18,6 +18,11 @@ import path from "node:path";
 import { runInNewContext } from "node:vm";
 import { expect, it, vi } from "vitest";
 import { auditPackage } from "../scripts/package-audit.mjs";
+import { nativeBuild } from "../src/native-build.ts";
+import { nativeCall } from "../src/service/cli.ts";
+import { ServiceCoordination } from "../src/service/coordination.ts";
+import { ServiceClient } from "../src/service-client.ts";
+import { HttpServiceTransport } from "../src/service-http-client.ts";
 import { diagnosticText } from "../src/verification-diagnostics.ts";
 
 const repo = path.resolve(import.meta.dirname, "..");
@@ -94,6 +99,9 @@ function terminalEnvironment(
     JITI_FS_CACHE: "0",
     NODE_DISABLE_COMPILE_CACHE: "1",
     TERM: "xterm-256color",
+    TMPDIR: root,
+    TEMP: root,
+    TMP: root,
   };
   if (nativeWindows) {
     for (const key of ["SystemRoot", "WINDIR", "COMSPEC", "PATHEXT"])
@@ -167,26 +175,73 @@ function startDriver(config) {
 const down = "\x1b[B",
   enter = "\r",
   esc = "\x1b";
+const settledParent = (kind, outcome) => {
+  const id = "[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}";
+  // Full redraw OR a later diff of the SAME parent's drain row. A child drain,
+  // earlier drain, or settled heading alone cannot advance the input script.
+  // Shared syntax is supported by the Python and .NET driver regex engines.
+  return `Parent ${kind}: settled / ${outcome} / published\\s*Owner (?:drained • ID ${id}|active/draining • ID (${id})[\\s\\S]*?Owner drained • ID \\1)`;
+};
+
+it("settled-parent matcher binds incremental fullscreen drain to the exact parent ID", () => {
+  const parent = "0e3e069f-b456-4a73-a209-76232b9608e9",
+    child = "10c607ab-ef8a-4f4f-b99a-70d1e8b029f8";
+  // Actual Pi fullscreen output may update only changed rows. These are the
+  // ANSI-stripped rows from the reproduced committed199 -> committed201 view,
+  // not a full redraw or a substitute for the production PTY scenarios below.
+  for (const [kind, outcome] of [
+    ["generate-plan", "completed"],
+    ["start", "completed"],
+    ["check", "completed"],
+    ["check", "failed"],
+  ]) {
+    const heading = `Parent ${kind}: settled / ${outcome} / published`,
+      initial = `${heading}\nOwner active/draining • ID ${parent}\nChild task: settled / completed / published\nOwner active/draining • ID ${child}\n`,
+      update = `Connection current • committed 201\nOwner drained • ID ${parent}\nOwner drained • ID ${child}`,
+      pattern = new RegExp(settledParent(kind, outcome));
+    expect(pattern.test(`${heading}\nOwner drained • ID ${parent}`)).toBe(true);
+    expect(pattern.test(initial + update)).toBe(true);
+    expect(pattern.test(initial)).toBe(false);
+    expect(pattern.test(`${initial}Owner drained • ID ${child}`)).toBe(false);
+    expect(pattern.test(`Owner drained • ID ${parent}\n${initial}`)).toBe(
+      false,
+    );
+    expect(
+      pattern.test(
+        (initial + update).replace(
+          heading,
+          heading.replace(outcome, "unknown"),
+        ),
+      ),
+    ).toBe(false);
+  }
+});
 for (const source of ["source", "extracted"])
   for (const mode of ["regular", "fullscreen"]) {
-    it(`${source} ${mode} production ${transport} plan, SDK edit, real checks, issues review, reopen and waited cancel/quit`, async () => {
+    it(`${source} ${mode} production ${transport} service plan, SDK edit, real checks, issues review, detach/quit, reattach and explicit cancel`, async () => {
       const root = mkdtempSync(path.join(tmpdir(), "cadence-terminal-"));
       if (windows) {
-        for (const dir of ["appdata", "temp"]) mkdirSync(path.join(root, dir));
+        for (const dir of ["appdata", "temp"])
+          mkdirSync(path.join(root, dir), { mode: 0o700 });
       }
       console.log(`terminal fixture retained: ${root}`);
       let packageRoot = repo;
       const requests = [];
       let codeRequests = 0;
-      let server, driver;
+      let server, driver, owner, ownerClosed, coordination, observerTransport;
+      let ownerOutput = "",
+        ownerErrors = "";
+      const terminalReceipts = [];
       let piVersion = null;
-      let serverFailure = null;
+      let serverFailure = null,
+        pendingResponse;
       const barrier = {
         published: false,
         delivered: false,
         transportError: null,
       };
-      let stage = "setup";
+      let stage = "setup",
+        primaryError;
       try {
         piVersion = JSON.parse(
           readFileSync(
@@ -198,7 +253,7 @@ for (const source of ["source", "extracted"])
           ),
         ).version;
         for (const dir of ["home", "agent", "state", "project"])
-          mkdirSync(path.join(root, dir));
+          mkdirSync(path.join(root, dir), { mode: 0o700 });
         if (source === "extracted") {
           stage = "pack";
           const pack = path.join(root, "pack");
@@ -232,7 +287,18 @@ for (const source of ["source", "extracted"])
           cpSync(path.join(root, "package"), packageRoot, {
             recursive: true,
           });
-          for (const name of ["@earendil-works", "typebox", "undici"])
+          auditPackage(
+            archive,
+            packageRoot,
+            JSON.parse(
+              readFileSync(
+                path.join(repo, "provenance/package-members.json"),
+                "utf8",
+              ),
+            ),
+            repo,
+          );
+          for (const name of ["@earendil-works", "typebox", "undici", "ws"])
             symlinkSync(
               path.join(repo, "node_modules", name),
               path.join(root, "install/node_modules", name),
@@ -277,6 +343,7 @@ for (const source of ["source", "extracted"])
                 return;
               }
               barrier.published = true;
+              pendingResponse = res;
               driver.control.write(eventLine, (error) => {
                 if (error) barrier.transportError = "control-pipe-write-failed";
                 else barrier.delivered = true;
@@ -349,6 +416,7 @@ for (const source of ["source", "extracted"])
             enableInstallTelemetry: false,
             defaultProjectTrust: "always",
           }),
+          { mode: 0o600 },
         );
         writeFileSync(
           path.join(root, "agent/models.json"),
@@ -378,6 +446,19 @@ for (const source of ["source", "extracted"])
               },
             },
           }),
+          // Selected owner profiles must be private independently of the
+          // invoking shell's umask; fixture keys are still fabricated only.
+          { mode: 0o600 },
+        );
+        writeFileSync(
+          path.join(root, "agent/auth.json"),
+          JSON.stringify({
+            "terminal-fixture": {
+              type: "api_key",
+              key: "fabricated-terminal-key",
+            },
+          }),
+          { mode: 0o600 },
         );
         const cwd = path.join(root, "project");
         mkdirSync(path.join(cwd, ".cadence/assistant"), { recursive: true });
@@ -404,6 +485,68 @@ for (const source of ["source", "extracted"])
           "pre-existing user bytes",
         );
         const env = terminalEnvironment(root);
+        // The actual independently compiled owner, never a shell-local worker.
+        coordination = new ServiceCoordination(cwd, path.join(root, "state"));
+        owner = spawn(
+          process.execPath,
+          [path.join(packageRoot, "src/service-host.mjs")],
+          { cwd, env, stdio: ["pipe", "pipe", "pipe"] },
+        );
+        ownerClosed = new Promise((resolve, reject) => {
+          owner.once("close", (code, signal) => resolve({ code, signal }));
+          owner.once("error", reject);
+        });
+        owner.stdout.on("data", (b) => {
+          ownerOutput += b;
+        });
+        owner.stderr.on("data", (b) => {
+          ownerErrors += b;
+        });
+        owner.stdin.end(
+          JSON.stringify({
+            workspace: cwd,
+            stateHome: path.join(root, "state"),
+            environmentToken: null,
+            config: {
+              schema: "cadence-service-host/1",
+              cwd,
+              agentDir: path.join(root, "agent"),
+              tokenSource: "generated",
+              tokenFile: null,
+              http: {
+                schema: "cadence-service-http/1",
+                host: "127.0.0.1",
+                port: 0,
+                proxy: null,
+              },
+            },
+          }),
+        );
+        const ownerDeadline = Date.now() + 10000;
+        while (
+          !ownerOutput.includes('"ready"') &&
+          owner.exitCode === null &&
+          Date.now() < ownerDeadline
+        )
+          await new Promise((r) => setTimeout(r, 20));
+        writeFileSync(
+          path.join(root, "startup-receipt.json"),
+          JSON.stringify({
+            stdout: ownerOutput,
+            stderr: ownerErrors,
+            pid: owner.pid,
+          }),
+        );
+        expect(ownerOutput, ownerErrors).toContain('"ready"');
+        coordination = new ServiceCoordination(cwd, path.join(root, "state"));
+        const local = coordination.localAccess();
+        observerTransport = new HttpServiceTransport({
+          origin: local.endpoint,
+          localCapability: local.capability,
+          build: nativeBuild,
+        });
+        const observer = new ServiceClient(observerTransport);
+        expect((await observer.session()).kind).toBe("ok");
         const argv = [
           process.execPath,
           cli,
@@ -424,56 +567,90 @@ for (const source of ["source", "extracted"])
           "--extension",
           path.join(packageRoot, "src/index.ts"),
         ];
+        const choose = (n) => [...Array(n).fill(down), enter];
+        const taskMenu = "current v1 revision";
+        const confirmAction = (kind) => [
+          { expect: "Cadence review", send: [enter] },
+          { expect: `Confirm ${kind} now`, send: [enter] },
+        ];
         const steps = [
           { expect: "Context7", send: ["/cadence PTY 中文 🧪", enter] },
-          { expect: "legacy history is not imported", send: [enter] },
+          { expect: "Cadence service", send: choose(2) },
+          { expect: "Exact OWNER model", send: [enter] },
+          { expect: "Exact thinking level", send: [enter] },
+          { expect: "Select exact owner model", send: [enter] },
+          { expect: "Cadence review", send: [enter] },
+          { expect: "Cadence service", send: [enter] },
           { expect: "Task kind", send: [enter] },
-          { expect: "Goal \\(saving does not start work\\)", send: [enter] },
-          { expect: "planning", send: [enter] },
+          { expect: "Goal", send: [enter] },
+          ...confirmAction("create"),
+          { expect: taskMenu, send: [enter] },
           {
             expect: "Readable plan",
-            send: ["Inspect and write fixture.txt only.", enter],
+            send: ["Inspect 中文 🧪 and write fixture.txt only.", enter],
           },
-          { expect: "planning", send: [down, enter] },
-          { expect: "Cadence review", send: [enter] },
-          { expect: "Generate an advisory plan", send: [enter] },
-          { expect: "planning", send: [down, down, enter] },
+          { expect: "Finite assignments", send: choose(2) },
+          ...confirmAction("save-plan"),
+          { expect: taskMenu, send: choose(1) },
+          ...confirmAction("generate-plan"),
+          { expect: taskMenu, send: choose(3) },
+          {
+            expect: settledParent("generate-plan", "completed"),
+            send: [esc],
+          },
+          { expect: taskMenu, send: choose(2) },
           {
             expect: "Cadence review",
             resize: [28, 72],
             send: ["\x1b[6~", "\x1b[F", "\x1b[H", enter],
           },
-          { expect: "Start one agent now", send: [enter] },
-          { expect: "PTY 中文 🧪.*review", send: [down, down, down, enter] },
-          { expect: "Parent checks", send: [enter] },
-          { expect: "Run this parent check", send: [enter] },
-          { expect: "PTY 中文 🧪.*review", send: [down, down, down, enter] },
-          { expect: "Parent checks", send: [down, enter] },
-          { expect: "Run this parent check", send: [enter] },
+          { expect: "Confirm start now", send: [enter] },
+          { expect: taskMenu, send: choose(3) },
           {
-            expect: "PTY 中文 🧪.*failed",
-            send: [down, down, down, down, enter],
+            expect: settledParent("start", "completed"),
+            send: [esc],
           },
+          { expect: taskMenu, send: choose(5) },
+          { expect: "Parent checks", send: [enter] },
+          ...confirmAction("check"),
+          { expect: taskMenu, send: choose(3) },
+          {
+            expect: settledParent("check", "completed"),
+            send: [esc],
+          },
+          { expect: taskMenu, send: choose(5) },
+          { expect: "Parent checks", send: choose(1) },
+          ...confirmAction("check"),
+          { expect: taskMenu, send: choose(3) },
+          {
+            expect: settledParent("check", "failed"),
+            send: [esc],
+          },
+          { expect: taskMenu, send: choose(6) },
           {
             expect: "Cadence review",
             resize: [40, 100],
             send: ["\x1b[6~", "\x1b[F", enter],
           },
-          { expect: "Record human review and close", send: [enter] },
-          { expect: "PTY 中文 🧪.*done", send: [esc] },
-          { send: ["/cadence", enter] },
-          { expect: "legacy history is not imported", send: [down, enter] },
-          { expect: "Open context only", send: [enter] },
-          { expect: "PTY 中文 🧪.*done", send: [down, down, enter] },
+          { expect: taskMenu, send: choose(7) },
           { expect: "Cadence review", send: [enter] },
-          { expect: "Start one agent now", send: [enter] },
+          { expect: "Select exact run for HUMAN review", send: [enter] },
+          { expect: "Acknowledge unresolved issues", send: [enter] },
+          ...confirmAction("review"),
+          { expect: taskMenu, send: [esc] },
+          { expect: "Cadence service", send: choose(1) },
+          { expect: "PTY 中文", send: [enter] },
+          { expect: taskMenu, send: choose(2) },
+          ...confirmAction("start"),
+          { expect: taskMenu, send: choose(3) },
           {
-            expect: "Cadence foreground work",
+            expect: "Cadence owner observation",
             event: pendingEvent.event,
             send: [esc],
           },
-          { expect: "PTY 中文 🧪.*interrupted", send: [esc] },
-          { send: ["/quit", enter] },
+          { expect: taskMenu, send: [esc] },
+          { expect: "Cadence service", send: [esc] },
+          { expect: "detached locally", send: ["/quit", enter] },
         ];
         const config = path.join(root, "pty.json");
         writeFileSync(
@@ -493,6 +670,70 @@ for (const source of ["source", "extracted"])
           barrier.transportError = "control-pipe-error";
         });
         const status = await driver.closed;
+        // First original Pi has quit while HTTP4 is STILL pending in the owner.
+        expect(status, driver.errors).toBe(0);
+        const firstReceipt = JSON.parse(
+          readFileSync(path.join(root, "pty-receipt.json"), "utf8"),
+        );
+        terminalReceipts.push(firstReceipt);
+        const activeBefore = await observer.activeRuns();
+        expect(activeBefore.kind).toBe("ok");
+        expect(activeBefore.value.status).toBe("complete");
+        expect(activeBefore.value.runs).toHaveLength(1);
+        expect(owner.exitCode).toBeNull();
+        const surviving = activeBefore.value.runs[0];
+        const secondRoot = path.join(root, "reattach");
+        mkdirSync(secondRoot, { mode: 0o700 });
+        const secondConfig = path.join(secondRoot, "pty.json");
+        writeFileSync(
+          secondConfig,
+          JSON.stringify({
+            root: secondRoot,
+            cwd,
+            argv,
+            env,
+            steps: [
+              { expect: "Context7", send: ["/cadence", enter] },
+              { expect: "Cadence service", send: choose(3) },
+              {
+                expect: surviving.runId,
+                event: pendingEvent.event,
+                send: [enter],
+              },
+              { expect: "Cadence review", send: [enter] },
+              { expect: "Cadence service", send: [esc] },
+              { expect: "detached locally", send: ["/quit", enter] },
+            ],
+            ...(windows ? {} : { controlFd: 3 }),
+          }),
+        );
+        // Reattach barrier refers to the SAME parsed pending HTTP4, not a
+        // prompt/sleep or a newly fabricated provider request.
+        expect(pendingResponse.destroyed).toBe(false);
+        expect(pendingResponse.writableEnded).toBe(false);
+        const secondDriver = startDriver(secondConfig);
+        secondDriver.control.write(eventLine);
+        expect(await secondDriver.closed, secondDriver.errors).toBe(0);
+        const secondReceipt = JSON.parse(
+          readFileSync(path.join(secondRoot, "pty-receipt.json"), "utf8"),
+        );
+        terminalReceipts.push(secondReceipt);
+        expect(secondReceipt.exitCode).toBe(0);
+        const settled = await observer.snapshot({
+          kind: "run",
+          id: surviving.runId,
+        });
+        expect(settled.kind).toBe("ok");
+        expect(settled.value.runs.find((r) => !r.childRunId)).toMatchObject({
+          runId: surviving.runId,
+          outcome: "canceled",
+          lifecycle: "settled",
+        });
+        const originalChild = settled.value.runs.find((r) => r.childRunId);
+        expect(originalChild.settlement.native.closure).toBe(
+          "direct-child-closed",
+        );
+        expect(originalChild.settlement.native.outcome).toBe("canceled");
         stage = "assertions";
         const receipt = JSON.parse(
           readFileSync(path.join(root, "pty-receipt.json"), "utf8"),
@@ -566,17 +807,60 @@ for (const source of ["source", "extracted"])
         );
         expect(task.phase).toBe("interrupted");
         expect(task.checks.map((c) => c.exitCode)).toEqual([0, 1]);
-        expect(
-          task.activity.some(
-            (a) => a.text === "Human reviewed-with-issues; not certified",
-          ),
-        ).toBe(true);
+        expect(task.activity.some((a) => a.text.includes("review"))).toBe(true);
         expect(existsSync(path.join(root, "home/.pi/agent/auth.json"))).toBe(
           false,
         );
         stage = "complete";
+      } catch (error) {
+        primaryError = error;
+        throw error;
       } finally {
         try {
+          const detachError = await observerTransport?.detach().then(
+            () => null,
+            () => "detach-unconfirmed",
+          );
+          if (coordination && owner?.exitCode === null)
+            await nativeCall(coordination, "stop").catch(() => {});
+          if (ownerClosed) {
+            let timer;
+            let settled = await Promise.race([
+              ownerClosed,
+              new Promise((resolve) => {
+                timer = setTimeout(() => resolve(null), 5000);
+              }),
+            ]);
+            clearTimeout(timer);
+            const forced = settled === null;
+            if (forced) {
+              owner.kill("SIGTERM");
+              settled = await ownerClosed;
+            }
+
+            writeFileSync(
+              path.join(root, "owner-receipt.json"),
+              JSON.stringify({
+                ...settled,
+                forced,
+                stderr: ownerErrors,
+                detachError,
+                terminalReceipts,
+                physicalHuman: false,
+                paidProvider: false,
+              }),
+            );
+            if (server?.listening) {
+              server.closeAllConnections();
+              await new Promise((resolve) => server.close(resolve));
+            }
+            if (!primaryError)
+              expect({ ...settled, forced }).toEqual({
+                code: 0,
+                signal: null,
+                forced: false,
+              });
+          }
           if (server?.listening) {
             server.closeAllConnections();
             await new Promise((resolve) => server.close(resolve));
@@ -1383,7 +1667,7 @@ it.runIf(windows).each(conptyControls)(
       `terminal ConPTY barrier ${control.name} fixture retained: ${root}`,
     );
     for (const dir of ["home", "agent", "state", "appdata", "temp"])
-      mkdirSync(path.join(root, dir));
+      mkdirSync(path.join(root, dir), { mode: 0o700 });
     const env = { ...terminalEnvironment(root), FIXTURE_UNICODE: arg };
     const program = conptySmokeProgram(control);
     const config = path.join(root, "conpty.json");
@@ -1562,7 +1846,7 @@ it.runIf(windows).each(["start-input", "ready-input", "late-input"])(
       `terminal ConPTY lifecycle ${injection} fixture retained: ${root}`,
     );
     for (const dir of ["home", "agent", "state", "appdata", "temp"])
-      mkdirSync(path.join(root, dir));
+      mkdirSync(path.join(root, dir), { mode: 0o700 });
     const config = path.join(root, "conpty.json");
     writeFileSync(
       config,

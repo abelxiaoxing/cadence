@@ -202,7 +202,7 @@ describe("Cadence startup configuration card", () => {
         "cadence",
         expect.objectContaining({
           description:
-            "Plan, run one agent, check and review (explicit terminal workflow)",
+            "Native service client: plan, Start, checks, review and retained history; Return detaches",
         }),
       );
       expect(h.active()).toEqual(["read", "bash"]);
@@ -254,7 +254,7 @@ describe("Cadence startup configuration card", () => {
       "cadence",
       expect.objectContaining({
         description:
-          "Plan, run one agent, check and review (explicit terminal workflow)",
+          "Native service client: plan, Start, checks, review and retained history; Return detaches",
       }),
     );
     expect(h.active()).toEqual(["read", "bash"]);

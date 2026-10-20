@@ -22,7 +22,7 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     expect(pkg.name).toBe("@abelxiaoxing/cadence");
     expect(pkg.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(pkg.type).toBe("module");
-    expect(pkg.engines?.node).toBe(">=22.13.0");
+    expect(pkg.engines?.node).toBe(">=22.19.0");
     expect(pkg.license).toBe("MIT");
     expect(pkg.keywords).toContain("pi-package");
     expect(pkg.peerDependencies?.["@earendil-works/pi-coding-agent"]).toBe("*");
@@ -32,7 +32,8 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     expect(pkg.peerDependencies?.undici).toBe("^8.9.0");
     expect(pkg.peerDependenciesMeta?.undici?.optional).not.toBe(true);
     expect(pkg.devDependencies?.undici).toBe("8.9.0");
-    expect(pkg.dependencies).toBeUndefined();
+    expect(pkg.dependencies).toEqual({ ws: "8.21.3" });
+    expect(pkg.bin).toEqual({ "cadence-service": "./src/service-cli.mjs" });
     expect(pkg.workspaces).toBeUndefined();
     expect(pkg.exports).toBeUndefined();
     const all = JSON.stringify(pkg);
@@ -48,7 +49,11 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     expect(pkg.pi?.skills).toEqual(["./skills"]);
     expect(pkg.files).toEqual(
       expect.arrayContaining([
-        "src",
+        "src/index.ts",
+        "src/service-host.mjs",
+        "src/service-cli.mjs",
+        "web/dist",
+        "docs",
         "agents",
         "skills",
         "config",

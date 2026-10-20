@@ -1,0 +1,4129 @@
+{
+  "schema": "cadence-bundled-notices/1",
+  "noticeFile": "licenses/bundled-web.txt",
+  "noticeSha256": "a54614b6e451c5e3d4ba3f14697692d8528bae06db1275cdb11cb5edf0b6e60e",
+  "families": [
+    {
+      "name": "@ungap/structured-clone",
+      "version": "1.4.0",
+      "artifactSha256": "f481575dc2f23f404e3eec77eb6726bdf9c7d130f1b43f214291e601acf50996",
+      "gitHead": "df3b152a58afe238e6220548439d3fdf50003ad5",
+      "modules": [
+        {
+          "path": "node_modules/@ungap/structured-clone/esm/deserialize.js",
+          "sha256": "6b114d6e4acfa158885fcb8d0e0dda1f8daa8a6ba54acd5ccae59806eca1089f",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/@ungap/structured-clone/esm/index.js",
+          "sha256": "7ddb0560a1215343ca695210f659fb348ec5d93d0b0e76bbc5959f88cdc2036b",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/@ungap/structured-clone/esm/serialize.js",
+          "sha256": "913596ce0a90bade01473863f1f9895bd7e0d4e505f21b73bb206dc1d763a88f",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [0]
+    },
+    {
+      "name": "bail",
+      "version": "2.0.2",
+      "artifactSha256": "11719f7e1f7a31432177dd0cd987e7c967a826426d281c39c0025b474056c88b",
+      "gitHead": "442e2492a67d086354d38c00ec6dbb316cf953e3",
+      "modules": [
+        {
+          "path": "node_modules/bail/index.js",
+          "sha256": "bf9c61413349a74801f2583d1922c323b4b41ca520a70461b438fd08d1381bae",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [1]
+    },
+    {
+      "name": "ccount",
+      "version": "2.0.1",
+      "artifactSha256": "bdda8b4b3c7c3049bb118a9a01e3638033473b90c09f58eee1e9f2dda27984ca",
+      "gitHead": "7c7963f128ee9e366d631197891d74e3f29ba321",
+      "modules": [
+        {
+          "path": "node_modules/ccount/index.js",
+          "sha256": "cbba065a9f66c5909d49f740a64f12cfde03220303a845b2273d54af59e70af9",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [2]
+    },
+    {
+      "name": "comma-separated-tokens",
+      "version": "2.0.3",
+      "artifactSha256": "88123eefbb07a6048efa112653c80f4a0ac2e993bd1388c00273e14de29ec886",
+      "gitHead": "1c089f821008a95b4c001b5c288fa705506ea784",
+      "modules": [
+        {
+          "path": "node_modules/comma-separated-tokens/index.js",
+          "sha256": "a62eb07c352878a940619595a2e2d11221bc02a16f9a64501612105fddbc2c0b",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [3]
+    },
+    {
+      "name": "decode-named-character-reference",
+      "version": "1.3.0",
+      "artifactSha256": "b4399b50188513b31e4642b25437c9c309776aa34b6acb3eb18a0ee792e16f38",
+      "gitHead": "15a3b3ffb0c0ead9e999e215780f70c37a2d502f",
+      "modules": [
+        {
+          "path": "node_modules/decode-named-character-reference/index.dom.js",
+          "sha256": "bbfdff9072ab38fb0669b2fe2fef28e9b36e5cbbeed3592cd13fc29748755dd3",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [4]
+    },
+    {
+      "name": "devlop",
+      "version": "1.1.0",
+      "artifactSha256": "aed0b5ba97cc3aba851946766b1e4804e92a0d3b2051e047eed4e8bf508ecd5f",
+      "gitHead": "ef6cc1df94505f8daa2eab4c52efbc3ee310e002",
+      "modules": [
+        {
+          "path": "node_modules/devlop/lib/default.js",
+          "sha256": "702fcb7d6bfdfe7b673b8bb7fa9d531d9b7d02693bed89f8dbb0a2c461604cf6",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [5]
+    },
+    {
+      "name": "entities",
+      "version": "6.0.1",
+      "artifactSha256": "a4de957ab0852f6c91eae59a6000ced5a25a04f0b6e1c3062fbad732a6b5479d",
+      "gitHead": "9f7ca4c7b759151add244744deb2b99932f6048c",
+      "modules": [
+        {
+          "path": "node_modules/entities/dist/esm/decode-codepoint.js",
+          "sha256": "5d8ee93923d609724c69c8c356147176af5226585d4f343c87a5eec6590ebca9",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/entities/dist/esm/decode.js",
+          "sha256": "8af227bae5682a686bf9e9a6547af8c388274f41cb857ff39592fe74fc848d25",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/entities/dist/esm/generated/decode-data-html.js",
+          "sha256": "b035b71d6969983297e39df1a06d760f2a8000a0f98444c4fe845fe1155da451",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [6]
+    },
+    {
+      "name": "escape-string-regexp",
+      "version": "5.0.0",
+      "artifactSha256": "c8b662afe8aa2b852ecc27d766e584a502f8351fbbd890611f2509bf083d28e6",
+      "gitHead": "ba9a4473850cb367936417e97f1f2191b7cc67dd",
+      "modules": [
+        {
+          "path": "node_modules/escape-string-regexp/index.js",
+          "sha256": "af2065ad2f2d2b91946c2121e21618daa3f4b18787af9226f8c953ca54cca2f5",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [7]
+    },
+    {
+      "name": "estree-util-is-identifier-name",
+      "version": "3.0.0",
+      "artifactSha256": "fa9ffe7f957ff44a54894dd01e96851824e2f008181921585d69947a60eb702b",
+      "gitHead": "7f6f5cb118512cc846e3ea1c06455d37604a7964",
+      "modules": [
+        {
+          "path": "node_modules/estree-util-is-identifier-name/lib/index.js",
+          "sha256": "6d8907d1847bf9d24d7a8158a89296dbf6e1be33fd97efb2e411ea5a1cc37809",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [8]
+    },
+    {
+      "name": "extend",
+      "version": "3.0.2",
+      "artifactSha256": "1d91d0b0faa50cba223fa937c7b5a4a662968b1d78b3e59dca5c917dd5cf72b2",
+      "gitHead": "8d106d23931c0802e8b88188b0aac433e13358d9",
+      "modules": [
+        {
+          "path": "node_modules/extend/index.js",
+          "sha256": "b4879ec38a11a2458846788b91be630e6b1d06eb07f9515adc1ff9030af0b00b",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [9]
+    },
+    {
+      "name": "hast-util-from-dom",
+      "version": "5.0.1",
+      "artifactSha256": "2fafecd79507fdecc3c472c3c775a678e2aabb35c74aeb3e67bc3635679ca93d",
+      "gitHead": "a00e71765db75da0fbae2e86c90215aac2901335",
+      "modules": [
+        {
+          "path": "node_modules/hast-util-from-dom/lib/index.js",
+          "sha256": "22a217ed7f3701587f35531acff1f7637e20d02afc2f5a40aa306696e6e8fa23",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [10]
+    },
+    {
+      "name": "hast-util-from-html-isomorphic",
+      "version": "2.0.0",
+      "artifactSha256": "97ff1cb0db9442878afc8c49c7356ff460c9a2f86a43875f910b90b66b0706d2",
+      "gitHead": "40747b5cd8c907fa773f8915ab3248cde06c3549",
+      "modules": [
+        {
+          "path": "node_modules/hast-util-from-html-isomorphic/lib/browser.js",
+          "sha256": "f8423485cf579d691af6a50cc8242cbcd19dac5849b5201c38ce88c62cbe29d0",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [11]
+    },
+    {
+      "name": "hast-util-from-parse5",
+      "version": "8.0.3",
+      "artifactSha256": "085c56c1024d3b9cfd93d23cae61a20fca479e1d2a5a4cb8f6cc678c27bc306a",
+      "gitHead": "6fd23c9a4b53a6bce106ebc842de6f1727792954",
+      "modules": [
+        {
+          "path": "node_modules/hast-util-from-parse5/lib/index.js",
+          "sha256": "aef04d0f8bcba4d5ce63cda7346e282c227f3f07c7e2de6bb0cb1b460a2a8848",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [12]
+    },
+    {
+      "name": "hast-util-is-element",
+      "version": "3.0.0",
+      "artifactSha256": "7cae5b84402bfed675a0c2c25cf8b3c7d09487e87fa715ae467771f8d150ddee",
+      "gitHead": "e98fc840d5178d57d04ba34894506ca2aa88f78b",
+      "modules": [
+        {
+          "path": "node_modules/hast-util-is-element/lib/index.js",
+          "sha256": "b0d0daa95c5f4b870c2cdae20576277784bbfbf1a22520757cd6e0ba22c91428",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [13]
+    },
+    {
+      "name": "hast-util-parse-selector",
+      "version": "4.0.0",
+      "artifactSha256": "df79b69d2c5a494758576fe4016f1082aecb7ae1cde7cb908ad539ba4d8d8884",
+      "gitHead": "d61860a994d741af3c7af3a644b6bb03e43cf6f1",
+      "modules": [
+        {
+          "path": "node_modules/hast-util-parse-selector/lib/index.js",
+          "sha256": "76d02635547a5cbc5eb94c18c0010336b0dac306e4e39cfa48364c089f3919e4",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [14]
+    },
+    {
+      "name": "hast-util-raw",
+      "version": "9.1.0",
+      "artifactSha256": "66ceb754010844391f2506e903cfb05e5df643e5ab24e7fe0602095b51fa744b",
+      "gitHead": "af321ba0baebc1b73f5b4780842acbd064050169",
+      "modules": [
+        {
+          "path": "node_modules/hast-util-raw/lib/index.js",
+          "sha256": "698aac181c16471751ced74ddf67e8e2322fc92492bf99056372132ea8a53d72",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [15]
+    },
+    {
+      "name": "hast-util-sanitize",
+      "version": "5.0.2",
+      "artifactSha256": "517144c05a2fb9b6bd92a34f1ce2c78dc42cb6345bb2b59756b8d0563ad32d9e",
+      "gitHead": "7f30d9e6261583efc544ff6a93ba54ca6e53e1b5",
+      "modules": [
+        {
+          "path": "node_modules/hast-util-sanitize/lib/index.js",
+          "sha256": "bf0d6b218d113488b9242d43d4c982f737f74ee0491dbfa1da79bbc19c046012",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/hast-util-sanitize/lib/schema.js",
+          "sha256": "9878ed37c530f4301a19a21754b9ba941960b8601539e8f36ecafa59b92b23e8",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [16]
+    },
+    {
+      "name": "hast-util-to-jsx-runtime",
+      "version": "2.3.6",
+      "artifactSha256": "83468f1886b62230982ce2eb51a81173291e598e4ab532c81a95ea4db5d05fdc",
+      "gitHead": "b0920cd0837052144ebe94f53d8f792b05619444",
+      "modules": [
+        {
+          "path": "node_modules/hast-util-to-jsx-runtime/lib/index.js",
+          "sha256": "986dd5ff765f424432ab12dc8401f33acc50a5bed9ffb2e48f88300a25f9562f",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [17]
+    },
+    {
+      "name": "hast-util-to-parse5",
+      "version": "8.0.1",
+      "artifactSha256": "c1c99f978faf4016ee77ac601aab9e3ab52f718daa03982bb01ef28d6d15501e",
+      "gitHead": "cba581a04ae64a103c53cf651db790cf495ba4d4",
+      "modules": [
+        {
+          "path": "node_modules/hast-util-to-parse5/lib/index.js",
+          "sha256": "b2f5275dd01eb42a400fcc515ef8a9cc410a92e1b462f09451feaa4ece20b8f2",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [18]
+    },
+    {
+      "name": "hast-util-to-text",
+      "version": "4.0.2",
+      "artifactSha256": "0cbe35c3d652969dc8ecddff1afa20e64e5eac9a2e3e462acadc1ad8a97594b3",
+      "gitHead": "d83363ab0ceafadabbd50d5373a881c3f8f3e1c9",
+      "modules": [
+        {
+          "path": "node_modules/hast-util-to-text/lib/index.js",
+          "sha256": "187c17641008598b344d8799cc2faae3ca6f5c3aa9bb1f27dcc112555d681b7c",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [19]
+    },
+    {
+      "name": "hast-util-whitespace",
+      "version": "3.0.0",
+      "artifactSha256": "673f97f5bba3cac0184726f519a5750273e4434b839a769f4fbf09e4b4da2ceb",
+      "gitHead": "22b88c3f4d51f3777929758e980c257a2838a4b2",
+      "modules": [
+        {
+          "path": "node_modules/hast-util-whitespace/lib/index.js",
+          "sha256": "8b9342003bf1956922a92d6299ec98fdd6369e0d83f3d96bc144a793137e80f7",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [20]
+    },
+    {
+      "name": "hastscript",
+      "version": "9.0.1",
+      "artifactSha256": "1712fdcc26cd393a8f54f07232fbadb6b084af651beb11d0ec8af67eec00e3f3",
+      "gitHead": "1284c85bfa93adbf1b24e791caa2946f0ee6378b",
+      "modules": [
+        {
+          "path": "node_modules/hastscript/lib/create-h.js",
+          "sha256": "6496dd7cca2c50351ccdc474cb2c8d788ee89325dc8cde54de81e0df4a45267a",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/hastscript/lib/index.js",
+          "sha256": "54e6abdaf206033fcff422b71e7c8087e27bd09f29f72bdd4ceabeb84e4ea647",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/hastscript/lib/svg-case-sensitive-tag-names.js",
+          "sha256": "32f46483617509daf5cd801d1ceb732338d0fe2f418d3bb7ad05987fbbbb4c92",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [21]
+    },
+    {
+      "name": "highlight.js",
+      "version": "11.11.2",
+      "artifactSha256": "5737fc030ac76469b797691464564cd5a88068327519078022637d7d638c7ce9",
+      "gitHead": "f273f007f85e2096de41c42bf40b870dcb5a5a05",
+      "modules": [
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/core.js",
+          "sha256": "353255545aa6ffa7705728b85d94e6fe8efc66268cbd075e475daca636eab634",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/arduino.js",
+          "sha256": "872201ae76edfac293a384b150198a3052e4253b0e70e5942196b64e2e6d18cd",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/bash.js",
+          "sha256": "a87e45ea33984110330c418791d33a6646ffd0ef3697183ee77d6d7e19a8040c",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/c.js",
+          "sha256": "86d1b824b1d94d69cb495f02b9237d17ed96734ae9a609f96c821c72bd3c1ffd",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/cpp.js",
+          "sha256": "f14f6a6a74e5798795259eb9927e35ff4d5ecd375f8e40584939e6b61bc44159",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/csharp.js",
+          "sha256": "547d90294af1ca837b0befc238ad2c431975f827efbf91f6b06c883e5f336492",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/css.js",
+          "sha256": "e692b83a342ce600fcbe77a5477387b4473831ebc14dcdd75883e9303a3cc45b",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/diff.js",
+          "sha256": "01122ec2f2382616706d5aed311cb9f56fbe6ba8b4456933c1a5263b2183b342",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/go.js",
+          "sha256": "83ce34b17e6f9af61401653287a1119ddb0cf5c88f6e31303672f90341837e41",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/graphql.js",
+          "sha256": "2843ced97ca7c0c65b4d600440f5dfa2d412a6ed37bf8b8450f25ba239019d86",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/ini.js",
+          "sha256": "b01f2f7c70173605b5b70aa564de245d0f77b4f40d942eb526258e68ce8ef7ab",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/java.js",
+          "sha256": "78dccaefb883ff17b039d9735cc1512fb29228deb492b233b1c2e342595056e6",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/javascript.js",
+          "sha256": "82615cd893b9403bc9a3d078be918d4dcd53c7f1e432ca8d661231d91e431161",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/json.js",
+          "sha256": "e279b6b818cc32b4493b4796a7c705952a852df06ab3b8c5b8ae184f4bb21a08",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/kotlin.js",
+          "sha256": "2faa665a5d04ce58611d29aa8355c8c1184543f38309ca52df500316c478bff9",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/less.js",
+          "sha256": "697b24a0515e872b58ff0a61dff8bbf5c84c31ce2a0a5a89a1e1c889ecc8b823",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/lua.js",
+          "sha256": "c41592dd47d2f5e651bb4a7689cbf8992171f17116918991f04940de6e00aea4",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/makefile.js",
+          "sha256": "f4bf49ef1cc3c398cd5250c0050b8293bec42c6e7a77604acfc18e16322aa117",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/markdown.js",
+          "sha256": "f3244e507b12b4b3b5f9156efad1b74b18779b18039d522d926321c6cd87fa75",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/objectivec.js",
+          "sha256": "03340d47bc71f4dbc420257c4cb5e63635cae55def137c9e1d7bd536cc3ea3dd",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/perl.js",
+          "sha256": "9fd74a6c247ebf37ef1592afa2906e05afa324dc95debfbe86935a7213c3620c",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/php-template.js",
+          "sha256": "001d68482f363472c3fdc38eebeb717f9bd89b1c71e91296d764c04c85686d1d",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/php.js",
+          "sha256": "7760322c6e6d4a6979e86ea702b1c905862abac84891887d2bb03c62a2b33a9d",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/plaintext.js",
+          "sha256": "9c1a86b4ab27c18e4188dbd859df863049a3cbbca116e2a62da7c5b332ee9a74",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/python-repl.js",
+          "sha256": "a287a59f9953d3290f92bf04464302273a788e47ea1ea9fce9b985075b201db4",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/python.js",
+          "sha256": "ef18ea13e561cecbf6a537bd2f65bccd5deadc3e85a0141825b33de9c803a4b2",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/r.js",
+          "sha256": "08155a5b6b400432d5c6df45d06f41d5194dd582433d04e094b38118a8f8a358",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/ruby.js",
+          "sha256": "2b3aa8174ea789966c4e43aa250d161a3a9a7edd86e40be2088a7674f99bc79e",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/rust.js",
+          "sha256": "9c8509578ca1edc41255912714e2326f12f60c1fedfc5d2f28f8afda01954b54",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/scss.js",
+          "sha256": "0ad9b69e933b2d286b6d40599e58d4d39699972f77e7d42a5b03f4bf9d9dace9",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/shell.js",
+          "sha256": "3d2dc631071a18a96a51d16a7e85d68d42f811b4d950f3158a1b32d2bd624343",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/sql.js",
+          "sha256": "c73d618ec9634aad1374886b5f693e3a9f695232fd1eacf15b3fd6c3e0cd273e",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/swift.js",
+          "sha256": "866918c31b1a0b614ff81eee6b3654534131a9f623188964dd216eef713f57a2",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/typescript.js",
+          "sha256": "edc378cea2b1169115c98a447c3b2289820ab35d11426b7fa639cb8fe0b113ea",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/vbnet.js",
+          "sha256": "6b623c3e31b5f9b456072417181a3e9d305f0204bec4e8e27a5b7bdfbbd58409",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/wasm.js",
+          "sha256": "77b60cfffbdbeff14d7392d24a619f7bb39b5163c1ad538d696d8c587b3d2d37",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/xml.js",
+          "sha256": "6c04e48590d177f27f1a8274b4963b676eb49b6dcb005d68279ce80be086ebdc",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/es/languages/yaml.js",
+          "sha256": "64b7373a189e745e9bf28cb70342acd623574c362aa8d813305db2f5ca96918c",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/node_modules/highlight.js/lib/core.js",
+          "sha256": "7a8f471ae8fa53e87fc916d348b4fe602248e18c0a1707637756b64cf1edcc8e",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [22]
+    },
+    {
+      "name": "html-url-attributes",
+      "version": "3.0.1",
+      "artifactSha256": "9a63a922924f6d31add785bccd0a53706c047e0c0b56dcbcdc836254ded18ed9",
+      "gitHead": "79383ba769010ff52c547c57850d2dd3ecb815a9",
+      "modules": [
+        {
+          "path": "node_modules/html-url-attributes/lib/index.js",
+          "sha256": "294ddb9a402e62c9b05253165265b6f54bd67ae3db70c55e17819557130019b9",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [23]
+    },
+    {
+      "name": "html-void-elements",
+      "version": "3.0.0",
+      "artifactSha256": "301b6ef51a58d296bb3f837c4840211025a7e541f304d4a379e6062e45373530",
+      "gitHead": "b5781f3cfbea9942deb6edca24b54ad6cf2ab4fd",
+      "modules": [
+        {
+          "path": "node_modules/html-void-elements/index.js",
+          "sha256": "f9211e17693f8dfdab3613ac49f83d2b16c6868354244a253ab87b870f7cb037",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [24]
+    },
+    {
+      "name": "inline-style-parser",
+      "version": "0.2.7",
+      "artifactSha256": "edc328b12a2fc88d990bd877e4cebed9823b8427d79a6a73d9c65591d3ccb6bc",
+      "gitHead": "a9075f883e3d204835b9b1ec79c2dae68f22c23c",
+      "modules": [
+        {
+          "path": "node_modules/inline-style-parser/cjs/index.js",
+          "sha256": "02245958daf61d5e477fa13dbd577a8e53aff477768c183e9c51bad775c01c42",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [25]
+    },
+    {
+      "name": "is-plain-obj",
+      "version": "4.1.0",
+      "artifactSha256": "c71d874f7ab7cd560329b080ce790f9768dea503337fe2e2719a18e28be621f7",
+      "gitHead": "68e8cc77bb1bbd0bf7d629d3574b6ca70289b2cc",
+      "modules": [
+        {
+          "path": "node_modules/is-plain-obj/index.js",
+          "sha256": "957e14eb5863048b3eb7a97c7cedcf62cbca2bb94745198982d8e278f7b2f89d",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [26]
+    },
+    {
+      "name": "katex",
+      "version": "0.16.47",
+      "artifactSha256": "ad2d1ab2f7fcc227019784320e8a2c5218ff6bb333b36df4136d10365ae29375",
+      "gitHead": "878a61be7743a8ec4ee725b0b5efa810b5167c79",
+      "modules": [
+        {
+          "path": "node_modules/rehype-katex/node_modules/katex/dist/katex.mjs",
+          "sha256": "09a78a9812d1e7d3ace85033512e6a450127b9554ef281b4b6567408694c6e36",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [27]
+    },
+    {
+      "name": "longest-streak",
+      "version": "3.1.0",
+      "artifactSha256": "384446c12b28a0f29cd68b22871cff7c1001fdca5c173930e4eeb4811de210f6",
+      "gitHead": "fe3a930de34ad4a792d343fe6d1bcf390627881f",
+      "modules": [
+        {
+          "path": "node_modules/longest-streak/index.js",
+          "sha256": "41d5da657563b0bf09d2e5235349195276e9246e1239370d98416e27a85b989c",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [28]
+    },
+    {
+      "name": "lowlight",
+      "version": "3.3.0",
+      "artifactSha256": "00d85c3f0f77f3d1214e465b8a4c41e0513add492aab373ea1a8bee5e8dbd7ad",
+      "gitHead": "0f36148072cd096ca86753d6f1ff01589d30d78f",
+      "modules": [
+        {
+          "path": "node_modules/lowlight/lib/common.js",
+          "sha256": "996ebe61fae1eb889d1dfb03609851afd9162dcefc920b620f09750b69c6eb74",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/lowlight/lib/index.js",
+          "sha256": "d15a2267c0dd6cef21afc99507a2a1e12efd2e1f789b2351c7e66ea6317a4e0e",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [29]
+    },
+    {
+      "name": "markdown-table",
+      "version": "3.0.4",
+      "artifactSha256": "14e8b7c711b0be872cba307c2561ed991b089aa2e4dc4a8de74692a6d51bce58",
+      "gitHead": "1db562655146371abfbeb6615ff76e9a59b51be9",
+      "modules": [
+        {
+          "path": "node_modules/markdown-table/index.js",
+          "sha256": "2dd3014e8ce92317dfd819fc678217d8fdf47086a4607cc49566f0dee02b832a",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [30]
+    },
+    {
+      "name": "mdast-util-find-and-replace",
+      "version": "3.0.3",
+      "artifactSha256": "2d5a4ab0049573a354021ff4855797772d5b6610e02ef8f448121c1f53261932",
+      "gitHead": "6c4850c7c0d714886e3e2a8ae0a26bed736b3dbd",
+      "modules": [
+        {
+          "path": "node_modules/mdast-util-find-and-replace/lib/index.js",
+          "sha256": "a0258067b982faf86e02a64ed5f25db4dc8407e74bbcea442755bcbf4b4ac38a",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [31]
+    },
+    {
+      "name": "mdast-util-from-markdown",
+      "version": "2.0.3",
+      "artifactSha256": "adc7944beb265a36cbc8b3f0ad019bc939f56eb11ab9cefccc964392e0b9597d",
+      "gitHead": "971e0266bc1ec8e8af558b4a668feb2d42d904e5",
+      "modules": [
+        {
+          "path": "node_modules/mdast-util-from-markdown/lib/index.js",
+          "sha256": "2b19a9873232679ef08429e08c5836c865a54d8113ae5d58cb9409a60863727b",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [32]
+    },
+    {
+      "name": "mdast-util-gfm",
+      "version": "3.1.0",
+      "artifactSha256": "96204c6cdf253e43ee1431b88c7e46015a26d2b6d1d688a0153ce96eaecbe642",
+      "gitHead": "6b34bb2868c38c0b2909fa69c78534d5e44dc309",
+      "modules": [
+        {
+          "path": "node_modules/mdast-util-gfm/lib/index.js",
+          "sha256": "0ead64b5f705ade5818adf7059c62c34353f00aaf4528549aceccd342004297e",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [33]
+    },
+    {
+      "name": "mdast-util-gfm-autolink-literal",
+      "version": "2.0.1",
+      "artifactSha256": "5860bd6db7eb6f6336c5ddd4c713900fb973a05cee8dd531cbcb8548a122c77c",
+      "gitHead": "182000e93a49c259d362e6d3f474b13d35b6472d",
+      "modules": [
+        {
+          "path": "node_modules/mdast-util-gfm-autolink-literal/lib/index.js",
+          "sha256": "4965bd92f22009a0fd0fa4f7af73903e4d793165634c26ab5827fe5386fbcff2",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [34]
+    },
+    {
+      "name": "mdast-util-gfm-footnote",
+      "version": "2.1.0",
+      "artifactSha256": "d4d26b4257e56dffa0499654e3e812bee7490c71422ddfc0972e1b30930f117b",
+      "gitHead": "8ff7529028c33d336caa3ea0af2db19001157f96",
+      "modules": [
+        {
+          "path": "node_modules/mdast-util-gfm-footnote/lib/index.js",
+          "sha256": "47f5f97e3698325187eff57567e05f0a63162506cdd95f8f6468f2a7bbf69eff",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [35]
+    },
+    {
+      "name": "mdast-util-gfm-strikethrough",
+      "version": "2.0.1",
+      "artifactSha256": "624f42cf32ab405c198e77b889ec4c8269d93d6ed8f4d9a47356c78e5fb50a46",
+      "gitHead": "ecb120033eb878ff8862b7d3902a69ad064b9456",
+      "modules": [
+        {
+          "path": "node_modules/mdast-util-gfm-strikethrough/lib/index.js",
+          "sha256": "3dde7bed9aac562d2db25c24150eea442b73a8a5288277636f50ee0813b3f69c",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [36]
+    },
+    {
+      "name": "mdast-util-gfm-table",
+      "version": "2.0.0",
+      "artifactSha256": "c1d7b61db521f2279c32f1051dc42c98e99ac33538ae9f859b2f3daafb34366e",
+      "gitHead": "abf8c36f37e363194f994cc650a83ce1926c83f9",
+      "modules": [
+        {
+          "path": "node_modules/mdast-util-gfm-table/lib/index.js",
+          "sha256": "5f5fc1551fe95d4e4e5a8729e52391abb9a053c0a618aa79dfb0364728299be8",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [37]
+    },
+    {
+      "name": "mdast-util-gfm-task-list-item",
+      "version": "2.0.0",
+      "artifactSha256": "3ca34f4601317823f202df4692310c5d37ca628b76cdda2bd59d32de2c0a5d01",
+      "gitHead": "5a1964e76ff29d44e505c4722425466b2d639b47",
+      "modules": [
+        {
+          "path": "node_modules/mdast-util-gfm-task-list-item/lib/index.js",
+          "sha256": "1986b0f334e23659909982bc930ebc11784212d9331ef97efa14f268af01d852",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [38]
+    },
+    {
+      "name": "mdast-util-math",
+      "version": "3.0.0",
+      "artifactSha256": "4de30d5fa2382687ff805a2abeb55465c48bed3c859aa6fac8292fb377e8cd90",
+      "gitHead": "23647664692ae59be25896d0099ba3f7157d6a76",
+      "modules": [
+        {
+          "path": "node_modules/mdast-util-math/lib/index.js",
+          "sha256": "fabe05044becc9ae3ff1320f4c2ed30d8aa8859b4944e126cac22a570bae9574",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [39]
+    },
+    {
+      "name": "mdast-util-newline-to-break",
+      "version": "2.0.0",
+      "artifactSha256": "1b6027e3c8ac5803b563b75a5359d41f68e6b438c427c8b1b5fdf156924604f1",
+      "gitHead": "15c71344dae935541f4c2cf617ed18591a2dbd9d",
+      "modules": [
+        {
+          "path": "node_modules/mdast-util-newline-to-break/lib/index.js",
+          "sha256": "412eb32771875fc087f7e86a22860285aa27323151aa8b93acdc6c801db93698",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [40]
+    },
+    {
+      "name": "mdast-util-phrasing",
+      "version": "4.1.0",
+      "artifactSha256": "001c22ccbb8f66b889e468ba33c86df25aaf9e2cea1ee1d827fb172431f09835",
+      "gitHead": "67d563d643f75cf4fd26bc3121ddebb89e3a0a9c",
+      "modules": [
+        {
+          "path": "node_modules/mdast-util-phrasing/lib/index.js",
+          "sha256": "cfba43614dcc2d644d7f0b2a83a172b6119aa70ba10a504f03528a0fb4c873eb",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [41]
+    },
+    {
+      "name": "mdast-util-to-hast",
+      "version": "13.2.1",
+      "artifactSha256": "41f70e2f73a4ad9c67a401faa3143d16d6a1bda2c6bf9ae48073a2d4f5ebb1f4",
+      "gitHead": "174795b21f7757fffb54dd8d5fb4012f4751f791",
+      "modules": [
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/footer.js",
+          "sha256": "40a9dbaa5cf1e3f3ff993bbdd7e9d8666cb620b3dabd4276af5212d1f95fe7d7",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/blockquote.js",
+          "sha256": "9744b0434bd3f70716b1208a8e580ce01cdc3b99736ddac44aafe32503a05b60",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/break.js",
+          "sha256": "bbd9617fec60951f0a0d46477cfa1a3355375f6a655adb13f11a6fd9d8aee47d",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/code.js",
+          "sha256": "60d18f00c0f40917ad26a2e112f5dd0be66e7ab1088832932ec14aa69df8eb29",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/delete.js",
+          "sha256": "20a3aa0fca3e1cb6c80e4103392168c945c97477573d13bd123f92cfea071672",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/emphasis.js",
+          "sha256": "d40b9afbcd5a1ab9f598d5ff439e73cbfa8f1cc9708115e439c030ffc5bf1edf",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/footnote-reference.js",
+          "sha256": "f5c49df607b90b1a1e89b754cfdd3290f49e5ca42b5af9ea9a01f1af1ccacae8",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/heading.js",
+          "sha256": "c54a67319a4ac1d9d25eb8a8fb73f094b2ffac385d11f64ef748d8e0a0c0aec3",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/html.js",
+          "sha256": "18af5a6b0d9eebad977bb78e60b247d4cde445bb1cc5c275f1bea61e1151b14a",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/image-reference.js",
+          "sha256": "79c616d913f42ecb997b008a3147a3a208c08c18dfd01c573976656f370b425c",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/image.js",
+          "sha256": "06c2c63d11c4ef7b0fe8f082ec2fe47ffd5bf00e7a2a2d4756515951dccad50e",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/index.js",
+          "sha256": "4de11cfac2c9486f6633a60f180e7fb772d48d005a6168b50d41c7de062098aa",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/inline-code.js",
+          "sha256": "99e74e1891add9c61f640f859308e3f907c90eb4e92c381b1f29fab2e16c19a1",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/link-reference.js",
+          "sha256": "c1dcf7f39f12ab58603197504f6707372bf936fc113aaa7625910faff37063b5",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/link.js",
+          "sha256": "ac8d90073fee56d692f964775332dce0ffda38b07f86f1b412212f21f1d19d1e",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/list-item.js",
+          "sha256": "0da607553981392d7ce7c1bc49f74bb4eb643ee517e959fac6dbd276d7b80488",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/list.js",
+          "sha256": "f6b70088d06ca8c101c07c6dff2363c7962a5aeecd7a2b26005848b2e14100d8",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/paragraph.js",
+          "sha256": "a77301efe0f60029bd39935a64c456556f945f22c780e2c93f610a4711ab68d7",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/root.js",
+          "sha256": "aeba8659e5c4dca7c269f4ded5c39688876f3f76057b5f2459eadd956bf44a86",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/strong.js",
+          "sha256": "3dba3cfd6954bc3c52653ba74c50771e3b776b561c901f542f28e07eb6591191",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/table-cell.js",
+          "sha256": "6faa2956741b11b277e7d2189f5bb97786a13462e39e412aeaefa65325588f8f",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/table-row.js",
+          "sha256": "bec1dca051d327477166c745be7d7a51fe97ef182b57e889f17e7b57bd7ecee3",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/table.js",
+          "sha256": "f12e3d16638a2159b08e6f0cb816c34d3c2ede3ab592235621bb60cda3d0d128",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/text.js",
+          "sha256": "66aa96a1369887fe40759b200f80b609316e8cc66da424e2832400aad41eebeb",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/handlers/thematic-break.js",
+          "sha256": "bf3cfab49b184da92b8e53ddf86e13625da8d5055db3a9abc904daff1312aa56",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/index.js",
+          "sha256": "f6e0be6ee208cd0d0d6ee5a532cc61d9a6a88b87de60d2453a241f3e5a113413",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/revert.js",
+          "sha256": "09ec851551e7d2076f9a542975f480e046efd0b66db755903fb7a8855e23acff",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-hast/lib/state.js",
+          "sha256": "3efa2af554f55b9d6b9fde660f40886669976e73bdea09c4884fabf6a65e2803",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [42]
+    },
+    {
+      "name": "mdast-util-to-markdown",
+      "version": "2.2.0",
+      "artifactSha256": "775386258ecfbf4efa5f6ead8ed633ae67c11c58826e191d931d7804f73814b0",
+      "gitHead": "1fca1b46a87c99a0d85890378b9807e21f7adb67",
+      "modules": [
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/blockquote.js",
+          "sha256": "3612c47afdd6d45dd7101ce55341b9c9c82ed0d26038c22c8483c86dd6465b1b",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/break.js",
+          "sha256": "9a62eba63d895398498893fda044f91b9fff0f6451915f21c549ecff59e4e99f",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/code.js",
+          "sha256": "8e4ea87d06a7adbd788811e47312c3f080d3ad96c0ddfa38f9a77989cb629e38",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/definition.js",
+          "sha256": "bea11725a190842251ea5a66a65518fdcf8e2df6e2f160cd1437a9c538e20348",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/emphasis.js",
+          "sha256": "0f126fe257f4632b0adbf0922536e7dd477f6673f3e18ba103a591e5b843736b",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/heading.js",
+          "sha256": "7395f281e4cf9b78191cdb2d9fda0eb6be1f7fc02af233d718f946dde8e24de5",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/html.js",
+          "sha256": "6aacacd2ee3646d4fbe98be5ed2b22012ef35c2fc1160791296a0ecb865690b8",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/image-reference.js",
+          "sha256": "7b43ac169b208e68cab5e7e857e964b82fccf9958b3ced69bad815c612cc9daf",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/image.js",
+          "sha256": "4372df3f81d47c46645d3d8b57909cab249df4a404a7cc4d091aef9824c8b7a0",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/index.js",
+          "sha256": "490a5bac7d713e0c0576cde3bad5e18a581836540f62c2bb08ec6ecb01fd6c83",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/inline-code.js",
+          "sha256": "d8efae83a3e82c41277b31c8104f3173cd0828e2f8330599865fd6db53aa889a",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/link-reference.js",
+          "sha256": "fe9de6e7073e7bfebd5bfdca1175fcdcb2f7727c0dac3c2d267f87a12e16cc0c",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/link.js",
+          "sha256": "c06030c9037f426f7eebca929f7d03e8bbab15d3cdc720077d2c018cf30985fc",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/list-item.js",
+          "sha256": "f98dbb028581df514d55716f484338208a7f3e287ba554af96dd96171db45447",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/list.js",
+          "sha256": "dc4a8b6fc1783640c3cd6fc6effa4b360dca089f50b76e46b8fe614450b87091",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/paragraph.js",
+          "sha256": "d46fa062df3840a2f5010aec6924a48ea43a5fc4b973649a2debe3b641380598",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/root.js",
+          "sha256": "6fc0248c23b0b0b9c91bd98ca62e99dd5dfa1a714ea5c9e30b7b9e06086d422c",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/strong.js",
+          "sha256": "052e68425dc8d15b2ae388fee2ed1e94f85a9cd14ed14d8c164101e769e4c46b",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/text.js",
+          "sha256": "d85483dc323028a20f5b05be6f9646edd839c4afa5ed00741ea70e0ef142a524",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/handle/thematic-break.js",
+          "sha256": "f9cbc4096fe64700fb560378168ff69c25f4dd894e54a07a9ddfc29a7c58f138",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/util/check-bullet-ordered.js",
+          "sha256": "92ee16f617804b623faa12ea90cbb52e01e7b7b6069235d5173a55b2e41091e3",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/util/check-bullet-other.js",
+          "sha256": "a7228c78a5e8bf8e0000e26e4f700b3d0d18bea32ee44ad8b125096667dfeea7",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/util/check-bullet.js",
+          "sha256": "d9bdba93f1574c090b949d6c6e10f1524933beaf0a2953cdcd22088632dbb166",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/util/check-emphasis.js",
+          "sha256": "180e6f87481de03aa5a8495fca38e2d0c2de0b22b3da7b63132a09a66adf6fca",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/util/check-fence.js",
+          "sha256": "bfa1940fc621da40e87d90eb042066391aa2341688f71195be38751560f26ecd",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/util/check-list-item-indent.js",
+          "sha256": "f256fd6dda3b3a01ec45a370772b4fb111dec45ba0c9f8b4967bccf38c7fc592",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/util/check-quote.js",
+          "sha256": "66427ad80edc36c5f790b77340a245271e81cf15375cb19f801a47f40ddfea29",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/util/check-rule-repetition.js",
+          "sha256": "0e3e6754c9632fc31a50f69a9b2d642e4d0a7a1a02369a403bd0af034103bdc0",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/util/check-rule.js",
+          "sha256": "d3c5726de238c530026f3f36b0de86737d0dda5e632910d4d320474de01f9015",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/util/check-strong.js",
+          "sha256": "85b29305319bf3f4526ae55cc029442aa627c7ce125710e70b4f6bca9987ab09",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/util/encode-character-reference.js",
+          "sha256": "a1aacc0ea2e4cd7fb84deaa115a5deaf4576e0701dd9441d5d6ffa70386c5dfd",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/util/format-code-as-indented.js",
+          "sha256": "615179730ba061cd5a626c434a0020fcbfc25ff4a5d627838d386bc5af207015",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/util/format-heading-as-setext.js",
+          "sha256": "7c575d8408bce3dc406aaf24f2206e94aba3b5daa69115e11b526fba048bff5d",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/util/format-link-as-autolink.js",
+          "sha256": "5489fb2b89234088f84ec2c39e3ff481ab6e519443c81832d8dd90a58608efad",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/mdast-util-to-markdown/lib/util/pattern-in-scope.js",
+          "sha256": "6e5c7fe11a24ccd5b943d5eee96dc5b5e3f09803f34820569fceae03f5c0deee",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [43]
+    },
+    {
+      "name": "mdast-util-to-string",
+      "version": "4.0.0",
+      "artifactSha256": "bbfe70a5652305df7e8e484f674975c69bddbbad048ced52dc71835e64bba37a",
+      "gitHead": "ac06283ba35bb8b6a0065343a4038e5fe91e3c87",
+      "modules": [
+        {
+          "path": "node_modules/mdast-util-to-string/lib/index.js",
+          "sha256": "53015b2b0b7a72aed1c2d880d3c2aaed73972241f968d4a206a18d92fbe57b21",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [44]
+    },
+    {
+      "name": "micromark",
+      "version": "4.0.3",
+      "artifactSha256": "2f3f1e4dfc15279ffd246cb739200dd7ce823d047d9648938c3e3ee50be5ee02",
+      "gitHead": "4aec52013e73e8b33d07dc6a55de7a2ff9fcf64e",
+      "modules": [
+        {
+          "path": "node_modules/micromark/lib/constructs.js",
+          "sha256": "afecd299e4b5e7edb3ecba007000c311ed2b7c86e4e28729f9783da9021da2cf",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark/lib/create-tokenizer.js",
+          "sha256": "4d563d31e0f48eb0460072c869c6e38d92da7179768a671c66fa9db9fbe4fadf",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark/lib/initialize/content.js",
+          "sha256": "a1e1ad9cb372cc3ad2caa172de2f0658a9d38cde01a3f1109041a8b1ea83345e",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark/lib/initialize/document.js",
+          "sha256": "81ba0ecd6105c92a3b1f40490c67bf9b02e765894430ece35257b2f4a80f2dc3",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark/lib/initialize/flow.js",
+          "sha256": "36a507211b00526d6ec1e9d9cca7547d26a5b01db61bb6d0d94d625d2babe66f",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark/lib/initialize/text.js",
+          "sha256": "1c5682291dbb6cea7f95edeb6d50421238b91752c9e0fb9485bdde44628ce090",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark/lib/parse.js",
+          "sha256": "a8e110b17213a26a212332b2c8c39d31c302735c810bb0078e00b752f00552d9",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark/lib/postprocess.js",
+          "sha256": "0faf397c79cefaa71f92b00aa11c5b2e954aa7560ceb1c93d85d21853136b5d6",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark/lib/preprocess.js",
+          "sha256": "7b537d897bec551f515477d1033e1fafaa84519ee296cad0c5331ecd2e86d188",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [45]
+    },
+    {
+      "name": "micromark-core-commonmark",
+      "version": "2.0.4",
+      "artifactSha256": "84979e673035ced9448b39f2c6eabc9d6d543b53ec211d1be77fedf72564a5eb",
+      "gitHead": "c890f37cd9c00fd934b08ba203fb5af4df51a58e",
+      "modules": [
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/attention.js",
+          "sha256": "cd9329ed32379acf1e80e427124f25648fba7722886ecc0de3c5dc8551268ee4",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/autolink.js",
+          "sha256": "d0762261ea02440fbc81b5facf994bc42ba1561d4c7bf822dd9d09a7c05a69ed",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/blank-line.js",
+          "sha256": "ef542164abcf6a5e6806720105146feba7e340a1f6d8c08c840707208ca76d69",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/block-quote.js",
+          "sha256": "dc87caa801ada12890767e83534b15746097b3cc6c9d5a99c046c1a252632366",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/character-escape.js",
+          "sha256": "8fd107627d4f0363999adf68fadd375a17a7536da8eee96799c805e3e57b3fe4",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/character-reference.js",
+          "sha256": "cc8138483321def7b2f4304df0e76ee2bcea84bb1bc5bc603534063b30ddd959",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/code-fenced.js",
+          "sha256": "57966350d6a9407a58af84fc325dc30085529f177c34e8edf9709e907c4db026",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/code-indented.js",
+          "sha256": "c140b105e03ea81816d760081d8ebb79cb0ef88153c8f131be813ca70ba5d995",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/code-text.js",
+          "sha256": "6e59e9b77a76a825c8cd142b0a2f0495aa5122da271770cb09322456a5207451",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/content.js",
+          "sha256": "86fe007055efee6edaecfbb2ccebb9bdd1e7887a45d1c5881bcaa7ed6a973b77",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/definition.js",
+          "sha256": "800e7ef9f722e2536dc5e9774d0e22b0dcc58770d7a8011dc2c205f5fd263009",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/hard-break-escape.js",
+          "sha256": "a84fdfcc8ad17557345f074d2cc61ac902349ae4666a86c934be7914029a80bd",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/heading-atx.js",
+          "sha256": "401caddfc10436f9ffb9e7395d0b6b2262bd13ed324f716c505a96b4e5052717",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/html-flow.js",
+          "sha256": "d32bc5869302bb4b54bd6c5c9c25b3004bd97a2155e0d9cdeb53fbd08510e7d8",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/html-text.js",
+          "sha256": "017f2b1f7be2303f4b849394f29430f4daea803dbb7eaf4ce82bb63e42e6c47c",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/label-end.js",
+          "sha256": "055ac0d7f62144011730fbd5bf81ee6f4cb40bdd8428b44d2f0febd3f1ea4364",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/label-start-image.js",
+          "sha256": "f7798649e305506de8a5f9cacabca6c0b9a9ea0cea8c2531e9669bbde1e5860d",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/label-start-link.js",
+          "sha256": "46b5641a812fedf1023e247a4d4939d7ec03f5f0fb84ad4f50487bcb7004d72a",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/line-ending.js",
+          "sha256": "3fa206316adeeb5a76e93c52d044f9ed32c1c1aad3a25346b913fec375ada089",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/list.js",
+          "sha256": "86115cefb14f3d7076cfe28a6f06dd805ae4e024b0897eaa897d64db1966c7e4",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/partial-non-lazy-continuation.js",
+          "sha256": "b81419f360ea1704bf19b0fd4147ff9a20ec12dcae11e935c25e5a8cec6badb1",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/setext-underline.js",
+          "sha256": "c343a50a90138a7cf0f8df9bb833299f8ee0352b74c29238500715e616ade0a6",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-core-commonmark/lib/thematic-break.js",
+          "sha256": "0249d3b4ed750ed74d7b9cdcf7b0ad07048a6fcf735c22a41c43d6f54c8d4a10",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [46]
+    },
+    {
+      "name": "micromark-extension-gfm",
+      "version": "3.0.0",
+      "artifactSha256": "35f3336120e336f7bf4737a93ca90b5549a353efc9496a31feec97215b756cf1",
+      "gitHead": "d4d848ba0cf6ffc8ce29f897bceda8dee4f2612f",
+      "modules": [
+        {
+          "path": "node_modules/micromark-extension-gfm/index.js",
+          "sha256": "66b05551c6efe3d6a1c75bca914c192139bc3c998fdb2b0d0784ab6685934bbc",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [47]
+    },
+    {
+      "name": "micromark-extension-gfm-autolink-literal",
+      "version": "2.1.0",
+      "artifactSha256": "c26bf2024d0741030b554cd784413776291ab4904c1ab45a55fb98e66e5cc3bf",
+      "gitHead": "6c39e501836f58a0448cbcbdacae4d51b46b5172",
+      "modules": [
+        {
+          "path": "node_modules/micromark-extension-gfm-autolink-literal/lib/syntax.js",
+          "sha256": "2b45c68982c1f80daf125b709faba88803b131a0d710b0374dd309495a74efeb",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [48]
+    },
+    {
+      "name": "micromark-extension-gfm-footnote",
+      "version": "2.1.0",
+      "artifactSha256": "a1b9858641efe4ddabf48062397663f9de3fdea1fb43b4c34faa9987eb6f2f8a",
+      "gitHead": "df527f58c1cc92f2b212d02e1fe967e02d881ca9",
+      "modules": [
+        {
+          "path": "node_modules/micromark-extension-gfm-footnote/lib/syntax.js",
+          "sha256": "5fd8d63fcbb9918a0f7b92f2ba6adea3845e9cbf7f1e74ee239f4d018943ef6b",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [49]
+    },
+    {
+      "name": "micromark-extension-gfm-strikethrough",
+      "version": "2.1.0",
+      "artifactSha256": "e3d9e7b8ee5d45c4c49835d2172492a5bb34f304dc5efbb68294f69a16d1c762",
+      "gitHead": "a3a75cc000d5cb607ebef07ad76ff4dc2e0b3794",
+      "modules": [
+        {
+          "path": "node_modules/micromark-extension-gfm-strikethrough/lib/syntax.js",
+          "sha256": "293e9b13a554fe569efd096cd7f1c3f4d6da861f30bba701e8b923f621181250",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [50]
+    },
+    {
+      "name": "micromark-extension-gfm-table",
+      "version": "2.1.2",
+      "artifactSha256": "8398e26854cb955c07dfe6394203b9a491d4b77d0a23166102b7acd6030a63e1",
+      "gitHead": "1511204dae5a01e81588cee417ecd4fb8d2c8aff",
+      "modules": [
+        {
+          "path": "node_modules/micromark-extension-gfm-table/lib/edit-map.js",
+          "sha256": "46973cc1af222ae8c47c90df32b58fd7a1745e6052a5c141a8524e012985cda6",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-extension-gfm-table/lib/infer.js",
+          "sha256": "c2a038479872bd8026d513d528e56717fa266f09905f53192c6b5a0da6bc9ea7",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-extension-gfm-table/lib/syntax.js",
+          "sha256": "2e4cd89043d22236dcc386c92e9a20f9b631b039197ced3f6141b27329d52b0b",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [51]
+    },
+    {
+      "name": "micromark-extension-gfm-task-list-item",
+      "version": "2.1.0",
+      "artifactSha256": "2af93a84aca7141d88f8967be748a2f84d5ac6dc7cdb14a62edcbbd8a27b11af",
+      "gitHead": "3e20f5941d501e4e03858da6126cbbe9c1d8b9c6",
+      "modules": [
+        {
+          "path": "node_modules/micromark-extension-gfm-task-list-item/lib/syntax.js",
+          "sha256": "b819eb327b98387d58b3c254df11324b9291420e7b59306cc41d8a25b0820385",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [52]
+    },
+    {
+      "name": "micromark-extension-math",
+      "version": "3.1.0",
+      "artifactSha256": "a634d9a310781fa7385d28a66de744458a9da8330eef32952381e1ac004d05f1",
+      "gitHead": "e2afefe07f3bdbc8d7188e009aff71566a2ab6f0",
+      "modules": [
+        {
+          "path": "node_modules/micromark-extension-math/lib/math-flow.js",
+          "sha256": "5399d010e7dee830eb033b56bc3162c6ec0be64cc4da82d808533bd9aa918248",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-extension-math/lib/math-text.js",
+          "sha256": "228234cea5f5ee00ebe3e1c2e5e0362efbbdc7f296d77f0ead3ee0b9fdb8ef78",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-extension-math/lib/syntax.js",
+          "sha256": "abe6c2f50bdd1899290310c20d77ca6db1f17c5542eea85141e83460a4b02810",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [53]
+    },
+    {
+      "name": "micromark-factory-destination",
+      "version": "2.0.1",
+      "artifactSha256": "b4acd1721e4756a61f2482c3424344b8b01bdbf79180cf6e411ed491887bd8db",
+      "gitHead": "bcb6195e777f4109ddd2a20bbe0c24ec6fa369e9",
+      "modules": [
+        {
+          "path": "node_modules/micromark-factory-destination/index.js",
+          "sha256": "8ef4475091af9f26c98ef6ee0fcccc8964fcbf60c7654b9f3d4af34da2adaa4b",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [54]
+    },
+    {
+      "name": "micromark-factory-label",
+      "version": "2.0.1",
+      "artifactSha256": "c65fb436893844fb5be29814dc2528a596236423c4c7e5b1130cd49b5bae8c1d",
+      "gitHead": "bcb6195e777f4109ddd2a20bbe0c24ec6fa369e9",
+      "modules": [
+        {
+          "path": "node_modules/micromark-factory-label/index.js",
+          "sha256": "011484772e200ea32f3139c0a258627af573dcabd78bd4eb514a34495cb4aea0",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [55]
+    },
+    {
+      "name": "micromark-factory-space",
+      "version": "2.1.0",
+      "artifactSha256": "5218d07cfd00f867e94f4197c9aac409fb8ea17c26ab38a124f9dd79ba8b8a3d",
+      "gitHead": "d9679ad653c87e9378d0313cb734ad10a426da49",
+      "modules": [
+        {
+          "path": "node_modules/micromark-factory-space/index.js",
+          "sha256": "52114eb0c4995741081b53942f9b429d04b8a20e84c1aed368e8edc2aef586a0",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [56]
+    },
+    {
+      "name": "micromark-factory-title",
+      "version": "2.0.1",
+      "artifactSha256": "2e247f3d7ddef39cde036ee828a66ec410059b3963ce3e376160e48011f257b0",
+      "gitHead": "bcb6195e777f4109ddd2a20bbe0c24ec6fa369e9",
+      "modules": [
+        {
+          "path": "node_modules/micromark-factory-title/index.js",
+          "sha256": "1556b0f5d6f04b32d7178ea89b6381b936d7b8a18c92f4ca2844c4c062ed7a89",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [57]
+    },
+    {
+      "name": "micromark-factory-whitespace",
+      "version": "2.0.1",
+      "artifactSha256": "57dc50841f76fac5cf46e093b8325397079e10406febebb6c58a58e1528a4fec",
+      "gitHead": "bcb6195e777f4109ddd2a20bbe0c24ec6fa369e9",
+      "modules": [
+        {
+          "path": "node_modules/micromark-factory-whitespace/index.js",
+          "sha256": "8cdbba455b8ff17dee625a111eab27ccf3966ac3840e66a8b21aa0d800c639d4",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [58]
+    },
+    {
+      "name": "micromark-util-character",
+      "version": "2.1.1",
+      "artifactSha256": "bacefea968d21cedf290ec319ec92e2bc20e4f7b02f62cb4ad1e7b07c5a45185",
+      "gitHead": "bcb6195e777f4109ddd2a20bbe0c24ec6fa369e9",
+      "modules": [
+        {
+          "path": "node_modules/micromark-util-character/index.js",
+          "sha256": "0ec487160ae3fa7f375698f9f951a0c5d7d752800bca2e3b1de15e3a07ee0417",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [59]
+    },
+    {
+      "name": "micromark-util-chunked",
+      "version": "2.0.1",
+      "artifactSha256": "a7b753059876eda10e9e14c024d1cf6eb3a2eb2021c79ef59fb483d72cda754a",
+      "gitHead": "bcb6195e777f4109ddd2a20bbe0c24ec6fa369e9",
+      "modules": [
+        {
+          "path": "node_modules/micromark-util-chunked/index.js",
+          "sha256": "0776986647dd83ca16594bc02984a288f11e4c8a2d6f81b2487b3c9ef3a34f94",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [60]
+    },
+    {
+      "name": "micromark-util-classify-character",
+      "version": "2.0.1",
+      "artifactSha256": "ae1040e3100c019e183e474cb7f174eb436d856013169a0c8783a52519bacced",
+      "gitHead": "bcb6195e777f4109ddd2a20bbe0c24ec6fa369e9",
+      "modules": [
+        {
+          "path": "node_modules/micromark-util-classify-character/index.js",
+          "sha256": "fa7b4a93bc117a88844216e2bb8fef3483825bac1d9186126048ca42f1ed3e57",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [61]
+    },
+    {
+      "name": "micromark-util-combine-extensions",
+      "version": "2.0.1",
+      "artifactSha256": "717cb91921ff540a2c776317f31ad005c3c45ec0ae1c188f1b99de621521b4b5",
+      "gitHead": "bcb6195e777f4109ddd2a20bbe0c24ec6fa369e9",
+      "modules": [
+        {
+          "path": "node_modules/micromark-util-combine-extensions/index.js",
+          "sha256": "b2aaec9f3549d92afb610d41b4f5ab73293fbeab0d2b6080ad7a8bd3518e46e1",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [62]
+    },
+    {
+      "name": "micromark-util-decode-numeric-character-reference",
+      "version": "2.0.2",
+      "artifactSha256": "cd26a08f068727f3cc892e8f2549b85065362bd920506649386c791fe349db98",
+      "gitHead": "bcb6195e777f4109ddd2a20bbe0c24ec6fa369e9",
+      "modules": [
+        {
+          "path": "node_modules/micromark-util-decode-numeric-character-reference/index.js",
+          "sha256": "74d2139b3651d79a7f4c1d3b21159d9c89459256e12b263ed2eb6b4fce599f87",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [63]
+    },
+    {
+      "name": "micromark-util-decode-string",
+      "version": "2.0.1",
+      "artifactSha256": "09ab2cda2d2f4fec4e3b829042866fa3d619d4c48c895233495a4ac49f325059",
+      "gitHead": "bcb6195e777f4109ddd2a20bbe0c24ec6fa369e9",
+      "modules": [
+        {
+          "path": "node_modules/micromark-util-decode-string/index.js",
+          "sha256": "d38b07736ff9de94721153d910fd2966608bf8cd423f2dad9c091acf8ef3377d",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [64]
+    },
+    {
+      "name": "micromark-util-edit-map",
+      "version": "1.0.0",
+      "artifactSha256": "da60526f11a9853fdc86c18ceaa8eb7b5058c2537433e66b6ba7cf9d24cac334",
+      "gitHead": "21cd4c321a325131c39736b210eea425cae0d1e8",
+      "modules": [
+        {
+          "path": "node_modules/micromark-util-edit-map/index.js",
+          "sha256": "0a29b60e6299a7b17e57e3c185014ad9bfe5a0ad6fd1365ce14605d6d299cbf0",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [65]
+    },
+    {
+      "name": "micromark-util-html-tag-name",
+      "version": "2.0.1",
+      "artifactSha256": "9d56df2779bb23785d208136430484ccedca4378bd36976c4793ace4c1cae077",
+      "gitHead": "bcb6195e777f4109ddd2a20bbe0c24ec6fa369e9",
+      "modules": [
+        {
+          "path": "node_modules/micromark-util-html-tag-name/index.js",
+          "sha256": "da74ea4080075b3f45a13eda9a05789e7038e1560954aff6979daafa68d0f096",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [66]
+    },
+    {
+      "name": "micromark-util-normalize-identifier",
+      "version": "2.0.1",
+      "artifactSha256": "6687cbaaa6a420bad0e5ca2ea0dfaea409ba8dc9e13ca03059291da8b68ceb2d",
+      "gitHead": "bcb6195e777f4109ddd2a20bbe0c24ec6fa369e9",
+      "modules": [
+        {
+          "path": "node_modules/micromark-util-normalize-identifier/index.js",
+          "sha256": "6def6e2422ac8905df740d27603d8eaa5d2fdbe41122c40958ac785ff0c8dfe3",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [67]
+    },
+    {
+      "name": "micromark-util-resolve-all",
+      "version": "2.0.1",
+      "artifactSha256": "f7c8f03bdbdb16113879dadabc7091aa4277a1c106f202e05af164a917964555",
+      "gitHead": "bcb6195e777f4109ddd2a20bbe0c24ec6fa369e9",
+      "modules": [
+        {
+          "path": "node_modules/micromark-util-resolve-all/index.js",
+          "sha256": "fa3b71cedce7b6f31ae68720dccfd561b7191e3d7280663cee1400a2dd38698c",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [68]
+    },
+    {
+      "name": "micromark-util-sanitize-uri",
+      "version": "2.0.1",
+      "artifactSha256": "8fcf4cf2900f807194fc89fb3e4dd5e5b28143cb44e55955a9f31d764264547e",
+      "gitHead": "bcb6195e777f4109ddd2a20bbe0c24ec6fa369e9",
+      "modules": [
+        {
+          "path": "node_modules/micromark-util-sanitize-uri/index.js",
+          "sha256": "c8c100c6e730dd6b19ecaa70ef9f1da99c10c415dc9b6539820d41756c0fc197",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [69]
+    },
+    {
+      "name": "micromark-util-subtokenize",
+      "version": "2.1.0",
+      "artifactSha256": "10aca3d9ae4d1776f029fa6dbf5d9706291cbafc55ff39ba88141e65b7c59a8b",
+      "gitHead": "352de3619bc3b6ee86fa6ecfc0e1866dd5544bec",
+      "modules": [
+        {
+          "path": "node_modules/micromark-util-subtokenize/index.js",
+          "sha256": "a70e48d4652be4f956606dcda3e4c13707952dc74b86f6f71990eba88d4a1e79",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/micromark-util-subtokenize/lib/splice-buffer.js",
+          "sha256": "addce56cc7eccc0cb0ba10f7f8eab4c902f5ddf55ff43e0fb2907815ea63440e",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [70]
+    },
+    {
+      "name": "parse5",
+      "version": "7.3.0",
+      "artifactSha256": "9316ca7af41da9e85071b62b9605aa0a6aaeb0463f833c29e7a331e7898f0420",
+      "gitHead": "d34155ca54783a382f6b5ecc1803c770553c19e6",
+      "modules": [
+        {
+          "path": "node_modules/parse5/dist/common/doctype.js",
+          "sha256": "855d8cd764782cdc73003a9847d03ed261c5158f6a6901e563ccd4d3b92c8b16",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/parse5/dist/common/error-codes.js",
+          "sha256": "b38ae5ac4f2a31ce2e1cfeca35cf7b89cc66736cd5be068cc433a3ccaca78be2",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/parse5/dist/common/foreign-content.js",
+          "sha256": "129a84a9d04b6050b6896de45a70e1ee468434e19bdd6486e3aef3405d137cac",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/parse5/dist/common/html.js",
+          "sha256": "e6cf93f387be70ddcd4f2bec67fbeb53161094f6306d834de461ec888a9dab76",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/parse5/dist/common/token.js",
+          "sha256": "52dac9efba3a637771818d633a5cf1df30c7913d05ff23235150c88319ea035a",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/parse5/dist/common/unicode.js",
+          "sha256": "69a0a52be895d2bcf88850beead4a098c5305c0b5669d1e8a0fe26f621ea25c6",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/parse5/dist/parser/formatting-element-list.js",
+          "sha256": "a6e04b000b228a0bf7eba4e5462b343ec1e13dbfbe40bce913ade646bbde4461",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/parse5/dist/parser/index.js",
+          "sha256": "23eb8e0f6b45abc36132c08f067899e0e615acbe9069762ba7780a66db78e65d",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/parse5/dist/parser/open-element-stack.js",
+          "sha256": "fe4b609a572c9aa06fbd45ac53632b3ad565168903f4126a6f98d5a9d1f42999",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/parse5/dist/serializer/index.js",
+          "sha256": "bb11a62d05d463bf756814d89227ea889733d3808fe7ebe27cb4f607ed85a4c7",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/parse5/dist/tokenizer/index.js",
+          "sha256": "738969a05c4e7d3c0ce566225e742d730d248db82972a84e517828cd97bc3bb4",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/parse5/dist/tokenizer/preprocessor.js",
+          "sha256": "12199175a31eb461dcecefa10ce2536c69ab92cdd2a1f67da3ea20b214599ac1",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/parse5/dist/tree-adapters/default.js",
+          "sha256": "14b6408b0abb1c041e645644f977db34da280239be8a59a2eb3c9e282e89b7c4",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [71]
+    },
+    {
+      "name": "property-information",
+      "version": "7.2.0",
+      "artifactSha256": "22ab7ee8774c8c3c90086f2fec7d2d4cca7c16ac795596ae16cf326c763606c7",
+      "gitHead": "f6f547b1ab52429dba18dcee19fd1ef4c1212b78",
+      "modules": [
+        {
+          "path": "node_modules/property-information/index.js",
+          "sha256": "c70e5d2c76ea00116e87d0fabe961f6d260e94641ab76dfb0a73c9c9498a4a3d",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/property-information/lib/aria.js",
+          "sha256": "e46d46194887fe65bfc84dac050b20c163f131f81f10e88f38b48925cf01602b",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/property-information/lib/find.js",
+          "sha256": "0e7b3a54af5d32fe6b30648b420f82ccf0bf7e2d2af9460e3c173c2785084336",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/property-information/lib/hast-to-react.js",
+          "sha256": "47ba04ebd32327cae23e50c70f218c17161722942616182d46ce0cde7a2d58a8",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/property-information/lib/html.js",
+          "sha256": "e204fcc00f9ba1c19049be6dbe1fa0c9378d8401482aead17cb0d0e47adff671",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/property-information/lib/normalize.js",
+          "sha256": "b682cd82e5383c9752b3fd9b354d4694150a1b70027337998bcd46e030ed3e93",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/property-information/lib/svg.js",
+          "sha256": "c12f46a6c616f46cf7d24f4979471402f78320d71e6642db88c3566f160f0356",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/property-information/lib/util/case-insensitive-transform.js",
+          "sha256": "ed53a57e86ad3153460b9aa558206d9781bb21ace54f825b3ff8ba26c708aa5e",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/property-information/lib/util/case-sensitive-transform.js",
+          "sha256": "4935f8bbb39e31920d1efe1a1feb742678113f6355b4feb7b3060118a04c9eda",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/property-information/lib/util/create.js",
+          "sha256": "e1da7557afffe2afa5ee8b582fa8e302578342e9ced8bc8410fc618968730137",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/property-information/lib/util/defined-info.js",
+          "sha256": "abfc5c18f95ffe73105e336370b778d4d24eb539fe609428035f690e3ded73b2",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/property-information/lib/util/info.js",
+          "sha256": "9cacb8f3711acde4ef79814c4f42d97a4923ccb37e5a6ddd550ebbffb452a1e5",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/property-information/lib/util/merge.js",
+          "sha256": "4f9b3be6a66510d379a3096297da53f2a5a49eebeba6b8db17a5e7b044a90c33",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/property-information/lib/util/schema.js",
+          "sha256": "d97aa20f271dd5e3ea798dff8cc1fa196a074081b92e60b9335824ce00d05ba6",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/property-information/lib/util/types.js",
+          "sha256": "534ee498a7991c73556e49cf8031de26b193f4ffdf3da0aeac52add9d7b6ea1c",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/property-information/lib/xlink.js",
+          "sha256": "9a92f5105b5f4558bf1b63cb43a11c57289fb4b638e9ad4f1d99716602b95a91",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/property-information/lib/xml.js",
+          "sha256": "aa91faf152020c8be409ae8253d3ebaf85b2a9246c5a3ed96d9d5424c9e4064c",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/property-information/lib/xmlns.js",
+          "sha256": "5e3700fcaa7faf7542982e2657286be3a652744c0f3d0ee64c311ed158ef00d9",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [72]
+    },
+    {
+      "name": "react",
+      "version": "19.3.0",
+      "artifactSha256": "5a4024110c49476e1538a70fd65b9e59d038fcc280b78eb933c24e10453afbf9",
+      "gitHead": "1d34f91dfde6bba84d08b683aaba164c7194dacb",
+      "modules": [
+        {
+          "path": "node_modules/react/cjs/react-jsx-runtime.production.js",
+          "sha256": "1e46f15002696985e80c61d47aaa30dabb03c954270a690f5f7dfbbacfa9002b",
+          "assets": ["assets/react.js"]
+        },
+        {
+          "path": "node_modules/react/cjs/react.production.js",
+          "sha256": "6b28feb9dbe9781ab1e1b64dea7b29a7c70f03d2dc10eaa966363053d8a9b4e5",
+          "assets": ["assets/react.js"]
+        },
+        {
+          "path": "node_modules/react/index.js",
+          "sha256": "60caffdecbdc5db3bc4ec4e83df9488345ccb271d07533b9210bf5750918d97e",
+          "assets": ["assets/react.js"]
+        },
+        {
+          "path": "node_modules/react/jsx-runtime.js",
+          "sha256": "b392951a77d0a2e6a6bd017e49d768481ae5b63c4109c6c31f622cf7b2433edc",
+          "assets": ["assets/react.js"]
+        }
+      ],
+      "notices": [73]
+    },
+    {
+      "name": "react-dom",
+      "version": "19.3.0",
+      "artifactSha256": "dbeffb1e6cdbbbba07f799da4635333d0e20c210a32278dded85441ec4cb6a17",
+      "gitHead": "1d34f91dfde6bba84d08b683aaba164c7194dacb",
+      "modules": [
+        {
+          "path": "node_modules/react-dom/cjs/react-dom-client.production.js",
+          "sha256": "8a8147c1cebdb19d82fd11bdb76391be9b20d00edf67cc8e8b30f44e850ce693",
+          "assets": ["assets/react.js"]
+        },
+        {
+          "path": "node_modules/react-dom/cjs/react-dom.production.js",
+          "sha256": "fd016e2c887f97b82f466ca435ae259d08cf7d4e7fef37e087963336d4770c01",
+          "assets": ["assets/react.js"]
+        },
+        {
+          "path": "node_modules/react-dom/client.js",
+          "sha256": "00e348ab3d6bc2eef908345d0bc4e008c95bcfecec060dfda5c4967953761396",
+          "assets": ["assets/react.js"]
+        },
+        {
+          "path": "node_modules/react-dom/index.js",
+          "sha256": "ba1a3e33489f868371561777607e3ee5091df0f7ea3f1a10f789d6b86e4c1505",
+          "assets": ["assets/react.js"]
+        }
+      ],
+      "notices": [74]
+    },
+    {
+      "name": "react-icons",
+      "version": "5.7.0",
+      "artifactSha256": "303a6555d6433f4368ed96802bf0e2ec0fa05164bb1918cdc090d7deabef3a5e",
+      "gitHead": "87470d588c5624bf3e291f17527c3ecd1419c8ae",
+      "modules": [
+        {
+          "path": "node_modules/react-icons/fi/index.mjs",
+          "sha256": "e12e1b87401a63ab982f2fcab824833ad5b42b721cbbbb6409cb90846364b339",
+          "assets": ["assets/cadence.js"]
+        },
+        {
+          "path": "node_modules/react-icons/lib/iconBase.mjs",
+          "sha256": "fe99683590425b4c026a84342b3f80efd0a7172e54c60ddce50d27952f3a25b9",
+          "assets": ["assets/cadence.js"]
+        },
+        {
+          "path": "node_modules/react-icons/lib/iconContext.mjs",
+          "sha256": "f8102f9585f401a8f1b545eac889f4938c30a46fc3cb46b7e2545fbc5a903935",
+          "assets": ["assets/cadence.js"]
+        }
+      ],
+      "notices": [75]
+    },
+    {
+      "name": "react-markdown",
+      "version": "10.1.0",
+      "artifactSha256": "205f5c607c68e1e42b8d7a036326bdb3a105ae55e6469ecfcaf998004609d5f7",
+      "gitHead": "44d2e4a44b37461ab7778d6870c1a9eb36393ad2",
+      "modules": [
+        {
+          "path": "node_modules/react-markdown/lib/index.js",
+          "sha256": "1c8d95723a74051c354dd4470fb669ae5269baf0ac62aa9b52c4516960ace5ee",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [76]
+    },
+    {
+      "name": "rehype-highlight",
+      "version": "7.0.2",
+      "artifactSha256": "e60d5c6b2c84ce1eb2c56893f675a94c0cd39e25bd7760eca7cb4ceb0d44d1bb",
+      "gitHead": "86a5e9b1a5a3b43ab94416ac21f17d1d37051224",
+      "modules": [
+        {
+          "path": "node_modules/rehype-highlight/lib/index.js",
+          "sha256": "e4ac7886d983bf6dbb811d5bda8862b9cb34a72edc27816979b6d771f3e99840",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [77]
+    },
+    {
+      "name": "rehype-katex",
+      "version": "7.0.1",
+      "artifactSha256": "b76022624276e22d83bc214e998c7a744504ac1b837f9233d0e0c0ef2c0c5e7d",
+      "gitHead": "88a9497e1ede93b958237c85edbf5651faeca7af",
+      "modules": [
+        {
+          "path": "node_modules/rehype-katex/lib/index.js",
+          "sha256": "54d3d2c7df56a9e35a53a437a11bc92e70d7c7a4e7ee29ef2cf30852555f6f5c",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [78]
+    },
+    {
+      "name": "rehype-raw",
+      "version": "7.0.0",
+      "artifactSha256": "59f9d5a4ae9894bf1afb0397c686f71301c4504b209866fbf7a6c898b0742b12",
+      "gitHead": "b34629920abbb5484409778412cdad3f94ff9b1f",
+      "modules": [
+        {
+          "path": "node_modules/rehype-raw/lib/index.js",
+          "sha256": "65cd9ff08b722b9a89a6e89d09c5e2038bcd577ec446c11d17e445509002dc97",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [79]
+    },
+    {
+      "name": "rehype-sanitize",
+      "version": "6.0.0",
+      "artifactSha256": "09fb2b59a6960f2c89cc12abe56c55cc9611bc7f575082dfacb11ffc406a66de",
+      "gitHead": "566a856d8b626c3d016f610048bdaf327464e467",
+      "modules": [
+        {
+          "path": "node_modules/rehype-sanitize/lib/index.js",
+          "sha256": "d49253b1f2d8be32483f6527ef7d3362a976b019a173e186baf616351c3fefee",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [80]
+    },
+    {
+      "name": "remark-breaks",
+      "version": "4.0.0",
+      "artifactSha256": "bccf6161a50ed008fe5c8405bee6c7e9bb5ae7709afb3568f65789374dd9fb94",
+      "gitHead": "71f4ff3ca9f08b685dccf2fdb9882d8bbaea3388",
+      "modules": [
+        {
+          "path": "node_modules/remark-breaks/lib/index.js",
+          "sha256": "7c00668d4a90ac284d3dfc68c18d36d724d4dd54e3e65a48f6f32d54ae293496",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [81]
+    },
+    {
+      "name": "remark-gfm",
+      "version": "4.0.1",
+      "artifactSha256": "a5c7441a02eb0c5f5b0a15b23f04c2a00b9faf698dc3dfb4e5c1a1d0991d4259",
+      "gitHead": "109972e8a773bf5dac1d6d2da0776557f36971aa",
+      "modules": [
+        {
+          "path": "node_modules/remark-gfm/lib/index.js",
+          "sha256": "9317003279e791d39b7e3482cecfb3409843378164a238a535984f644e53c7ef",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [82]
+    },
+    {
+      "name": "remark-math",
+      "version": "6.0.0",
+      "artifactSha256": "33d1b07c723a1167e0e4360437d98dedc1ef95cc9f0da1122147f26efb345417",
+      "gitHead": "d5d0660b150810a535bbb07eac6cc96a4510aa24",
+      "modules": [
+        {
+          "path": "node_modules/remark-math/lib/index.js",
+          "sha256": "d89e4f61bb3e92fd317064a2419edc99e863b1a63783fcddeb428c7eccb03de9",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [83]
+    },
+    {
+      "name": "remark-parse",
+      "version": "11.0.0",
+      "artifactSha256": "381d16667f0d394ac045dad61cea875d680a49eae0cbe88a87b0259dc4b2dd33",
+      "gitHead": "de740c7d52c0278bbc36d8eac218ab74995c6420",
+      "modules": [
+        {
+          "path": "node_modules/remark-parse/lib/index.js",
+          "sha256": "9d5a9a197d1d91a1abbf47b8cf67e1ee0decbfc9471d94c4a2ee712ff73b90c8",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [84]
+    },
+    {
+      "name": "remark-rehype",
+      "version": "11.1.2",
+      "artifactSha256": "7bb4ca02a6fe89bbfa5e56485bb5086e2cfa13bbbf7455cd29faac20a6eeaa82",
+      "gitHead": "b5a2e5bb0f14607b6fc79ccbfdf0d518a4f304de",
+      "modules": [
+        {
+          "path": "node_modules/remark-rehype/lib/index.js",
+          "sha256": "85f8d8985414613d2a64c4b6927e10ebd1edefe87a956190a1343dd833f689ef",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [85]
+    },
+    {
+      "name": "scheduler",
+      "version": "0.28.0",
+      "artifactSha256": "302995d590e3c0a11eeb40d1d0f299c1df1800135d599d85cdd5faeb614f32d6",
+      "gitHead": "1d34f91dfde6bba84d08b683aaba164c7194dacb",
+      "modules": [
+        {
+          "path": "node_modules/scheduler/cjs/scheduler.production.js",
+          "sha256": "679adff761d31e9426604f80c0e99be44a3e6f4c6834b0218ecf0312a67c171f",
+          "assets": ["assets/react.js"]
+        },
+        {
+          "path": "node_modules/scheduler/index.js",
+          "sha256": "145965504d60007bc25486ab930b0367867dcd5d579ccd343c148d69349a7cfb",
+          "assets": ["assets/react.js"]
+        }
+      ],
+      "notices": [86]
+    },
+    {
+      "name": "space-separated-tokens",
+      "version": "2.0.2",
+      "artifactSha256": "b386cce96593975cebbb054a8e287eb15c2e004cd6ef416f7a26b5c265930b67",
+      "gitHead": "faaabb2a4d24bf5c61cc7125484ca805ad0aae67",
+      "modules": [
+        {
+          "path": "node_modules/space-separated-tokens/index.js",
+          "sha256": "080bce26a6623cdb189d1cd62c6bdd27fe9984b40f19d81abe113a20dae3c379",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [87]
+    },
+    {
+      "name": "style-to-js",
+      "version": "1.1.21",
+      "artifactSha256": "87f2f0c9c052c7840d789c2389f1d212f3c5ba77c58b7d08ce4485f59d34f024",
+      "gitHead": "b861a5040e14e7d3020b729a1c34730028b14624",
+      "modules": [
+        {
+          "path": "node_modules/style-to-js/cjs/index.js",
+          "sha256": "4d72a5338a27ea5526f6d3111e4a02129576f6238e0b346743454381c835bef2",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/style-to-js/cjs/utilities.js",
+          "sha256": "0463aa5f7ac6322ebcdce9bafe3b2ce018e9428e340b9e97f034cc6e8abc6a5c",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [88]
+    },
+    {
+      "name": "style-to-object",
+      "version": "1.0.14",
+      "artifactSha256": "edfb15e0912047f3f78e683015d310dc35903f1623aada6a8e629ed9077bf45d",
+      "gitHead": "6afc04999b9dbd5500b0670c416a69ac7409ab68",
+      "modules": [
+        {
+          "path": "node_modules/style-to-object/cjs/index.js",
+          "sha256": "210c4e97e6134e0617412ce7ee84e7a0a8923a1fd4d8adbc58206d766eed55fc",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [89]
+    },
+    {
+      "name": "trim-lines",
+      "version": "3.0.1",
+      "artifactSha256": "5880f0ef03e792c4705dc0789f2999671d4796d1d10a0110df059f25c565d63d",
+      "gitHead": "0ab84463b9bb0e81734ea2e5f1055de7d6dcac63",
+      "modules": [
+        {
+          "path": "node_modules/trim-lines/index.js",
+          "sha256": "d784a46164df3f83ea47bedc6a5c316fd29469e79b6a99e206856961321c2460",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [90]
+    },
+    {
+      "name": "trough",
+      "version": "2.2.0",
+      "artifactSha256": "0a357f8de5e3a6f69fa3672daf31a19a87fc153b21085790c78fa4097263ab58",
+      "gitHead": "f5b7dbf722a7df379d0247a6ab07bd41d0db376d",
+      "modules": [
+        {
+          "path": "node_modules/trough/lib/index.js",
+          "sha256": "a5a84b499ac99ebc3435fe0027de0b836cdbcb5c7413e525fd8e13f2aec5b1c2",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [91]
+    },
+    {
+      "name": "unified",
+      "version": "11.0.5",
+      "artifactSha256": "bc6d6d9e336d7d775f3c369f0a29462523ae75254d4a6e4888b95eba44c4aa78",
+      "gitHead": "242105bd6e18c61ca10f37d99529b89f1be37518",
+      "modules": [
+        {
+          "path": "node_modules/unified/lib/callable-instance.js",
+          "sha256": "28c9baa7aea87597c4eca19a2e2b3342d3017347fabf7d513278787b5a950c58",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/unified/lib/index.js",
+          "sha256": "4a2e5111187985134153358e282f2613d3e862ee9da6336bfb95ed1850f3914d",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [92]
+    },
+    {
+      "name": "unist-util-find-after",
+      "version": "5.0.0",
+      "artifactSha256": "09ca2ef0344212863bb39ec000effdc518d4a5b3e60c645b7607172da0641da9",
+      "gitHead": "94c8d35aca8b51e931026c27cdc6786de741d9f6",
+      "modules": [
+        {
+          "path": "node_modules/unist-util-find-after/lib/index.js",
+          "sha256": "dce4a988b2957a9f51a7b27b56289cd0fa7dc1f138ec76c4140560d2300b183a",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [93]
+    },
+    {
+      "name": "unist-util-is",
+      "version": "6.0.1",
+      "artifactSha256": "6d406238b6e281d38d30c30f77287ce8d70f6d9c4503612f979333865aaafff5",
+      "gitHead": "ebfb3f602eb9c5f76eff0eeaf85dc7126cee3d0b",
+      "modules": [
+        {
+          "path": "node_modules/unist-util-is/lib/index.js",
+          "sha256": "ce90bad6b772a7e1115d76e4cc53bfade1ee1fe8ac1b8880f48b0e1512ffba44",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [94]
+    },
+    {
+      "name": "unist-util-position",
+      "version": "5.0.0",
+      "artifactSha256": "248cefc2080c0a78817b20e88da7324e7dee7175c5df8ac0e6d193d2d381c200",
+      "gitHead": "f7e6a973448608b0b9b20fdbc48a7b32f7630644",
+      "modules": [
+        {
+          "path": "node_modules/unist-util-position/lib/index.js",
+          "sha256": "3a751e6977493112a744188be93f88005f89c6490a7ee88b2e50ff3756d79e44",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [95]
+    },
+    {
+      "name": "unist-util-stringify-position",
+      "version": "4.0.0",
+      "artifactSha256": "8692d2396f091680fe342c344acc4594534a9a811b0a9cbcfae7d71c694168b4",
+      "gitHead": "be908410e4acaca52ea5a723ca7c558fdb269cab",
+      "modules": [
+        {
+          "path": "node_modules/unist-util-stringify-position/lib/index.js",
+          "sha256": "9d66941cf43fa4f4faa5912019ad9dae3f1ea3395b0c2fe64c2bcd5c2d4b2c28",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [96]
+    },
+    {
+      "name": "unist-util-visit",
+      "version": "5.1.0",
+      "artifactSha256": "8d5724e443d279deda20fe03ce18de53a944f8154e94297de0f49c5fb51f72ef",
+      "gitHead": "5d601df684ca7341646d6b57eb0f20fdfe277bc2",
+      "modules": [
+        {
+          "path": "node_modules/unist-util-visit/lib/index.js",
+          "sha256": "83779ce32216704c4a7593fd350c48a6570f445b1bb583cbe6d1da12d86cc4bd",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [97]
+    },
+    {
+      "name": "unist-util-visit-parents",
+      "version": "6.0.2",
+      "artifactSha256": "5250902af03c4b335c68cd60ed5eb4f1d9fbd6338e129d7df476690b8a245da5",
+      "gitHead": "f06035e9161f25119fb68d178167c30003d32dfb",
+      "modules": [
+        {
+          "path": "node_modules/unist-util-visit-parents/lib/color.js",
+          "sha256": "84d02ef62d60a8e4fc8529fa6725abb85729274a873afbb8d4d9fb317ae01135",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/unist-util-visit-parents/lib/index.js",
+          "sha256": "8789a4f20d3e3c82bcaeec9628697752d662461bf6237ecfba61cfcc00f30bf7",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [98]
+    },
+    {
+      "name": "vfile",
+      "version": "6.0.3",
+      "artifactSha256": "a0dbad2fd8dcc9ae9f652dee6ba49a1db5db2843a8ec2ceb9190ccdba0e0df0c",
+      "gitHead": "51177d2c8d9460862fe43cbf2509d1a64c85989e",
+      "modules": [
+        {
+          "path": "node_modules/vfile/lib/index.js",
+          "sha256": "c3ace457947030204553dc06a65249cfa427649ce18949999b34029c5a270265",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/vfile/lib/minpath.browser.js",
+          "sha256": "6c011d74955d2c202e1af91c8616e92e0a2381dce628128553dd81b03c900f95",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/vfile/lib/minproc.browser.js",
+          "sha256": "f13b22707f7048a983027bec0bfefa9f4630ae4b992031cfd772642c1598f993",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/vfile/lib/minurl.browser.js",
+          "sha256": "c0fdbff8069606f5eef2ccb588abe8f06a7597bcf1894bd1a9ba155b1ebafc1f",
+          "assets": ["assets/markdown.js"]
+        },
+        {
+          "path": "node_modules/vfile/lib/minurl.shared.js",
+          "sha256": "92df001e690fd3b8ec4bbe2cfb0d176da8aa9011e404a454c88158c05153b8f1",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [99]
+    },
+    {
+      "name": "vfile-location",
+      "version": "5.0.3",
+      "artifactSha256": "8b8cf426e26395482ca8c4485dc3f98e29628711c69b5f3dc2673ed00940ce58",
+      "gitHead": "8d5d41dca227bc2d6535d3d293b31287d5d7953f",
+      "modules": [
+        {
+          "path": "node_modules/vfile-location/lib/index.js",
+          "sha256": "ad96f58fd35cb42e76f5085d18c17a09a7d28b3825bbeeaaad9e486d9a23a594",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [100]
+    },
+    {
+      "name": "vfile-message",
+      "version": "4.0.3",
+      "artifactSha256": "9d6d94ee59296ef0516217a79e902ba417fe3d8816ab1d0527ddf353b455c2cb",
+      "gitHead": "2c782c8580c5b0a14baae19fa8badc628e567461",
+      "modules": [
+        {
+          "path": "node_modules/vfile-message/lib/index.js",
+          "sha256": "2aa3a64765f6708ef3a65a2a6637a4b9647d4a14ca934b157f51e1e3330cd9b8",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [101]
+    },
+    {
+      "name": "vis-timeline",
+      "version": "8.5.4",
+      "artifactSha256": "695f0491f385444add8bddb040bdd59d3b6e7ca5e3283ba33186164291c5f200",
+      "gitHead": "3948038f9b16854daa508b2d111cfec762bb057f",
+      "modules": [
+        {
+          "path": "node_modules/vis-timeline/standalone/esm/vis-timeline-graph2d.mjs",
+          "sha256": "82ce3dd35a440340e760e06c2a4045e2e72edc65b397f4c6bfc021354d2fe421",
+          "assets": ["assets/vis-timeline.js"]
+        }
+      ],
+      "notices": [102, 103, 104]
+    },
+    {
+      "name": "web-namespaces",
+      "version": "2.0.1",
+      "artifactSha256": "df250d9dc73331f79700486335f046bdebb09158d172754220cc546fb5149a84",
+      "gitHead": "fef810169775b173f42ca77c9ef695d952d4e0a5",
+      "modules": [
+        {
+          "path": "node_modules/web-namespaces/index.js",
+          "sha256": "8f72a63a66820c0e4656958f8ba33be2635a87a74ad5cc0734507eabf9770743",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [105]
+    },
+    {
+      "name": "zwitch",
+      "version": "2.0.4",
+      "artifactSha256": "2c162e000f5fb5a816987d6f8ad7aad295203f777a5992d514ae4660778a51a4",
+      "gitHead": "7a4992d2fd34772bf7caf3f755ba9a767cf79771",
+      "modules": [
+        {
+          "path": "node_modules/zwitch/index.js",
+          "sha256": "81f592d700aff8042238e7cab8e03c002e689117ecf15844ed753e08825a2873",
+          "assets": ["assets/markdown.js"]
+        }
+      ],
+      "notices": [106]
+    }
+  ],
+  "embeddedVis": [
+    {
+      "name": "@babel/runtime-corejs3",
+      "version": "7.29.7",
+      "artifactSha256": "27c8652c26dc2af304860834bdd410318d989b895e74b222cc65f2f72fe3b5d3",
+      "matched": 55,
+      "notices": [107]
+    },
+    {
+      "name": "@egjs/hammerjs",
+      "version": "2.0.17",
+      "artifactSha256": "d931dbb173f8028d1fe3167cd8049f4064bf268d55e9f6d374d8cea289b84cfd",
+      "matched": 1,
+      "notices": [108]
+    },
+    {
+      "name": "component-emitter",
+      "version": "1.3.1",
+      "artifactSha256": "f65c306d4a782baa8535616a4593104806fa2d0c2957d3a605366c37cd0db3c9",
+      "matched": 1,
+      "notices": [109]
+    },
+    {
+      "name": "core-js-pure",
+      "version": "3.49.0",
+      "artifactSha256": "44caa460ded23a03f172325478898b302f462c5bc5b8f8a2e3b3b10617f070b1",
+      "matched": 416,
+      "notices": [110]
+    },
+    {
+      "name": "cssfilter",
+      "version": "0.0.10",
+      "artifactSha256": "a4fdecba1f39d632846559741df519e1386fc7a2f2342071e65ac4d24a324d4f",
+      "matched": 5,
+      "notices": [111]
+    },
+    {
+      "name": "keycharm",
+      "version": "0.4.0",
+      "artifactSha256": "1dd82923d5c1d0b507d1e4e579171a4a94afe0fdfee8354062c6594b700a043b",
+      "matched": 1,
+      "notices": [112, 113]
+    },
+    {
+      "name": "moment",
+      "version": "2.30.1",
+      "artifactSha256": "52219a9fee5e1faade4c72536c173c54cedd5e2619272dd0c251a30aeafcde8c",
+      "matched": 11,
+      "notices": [114]
+    },
+    {
+      "name": "propagating-hammerjs",
+      "version": "3.0.0",
+      "artifactSha256": "5a62b559ddced660af5e128b69aca61f02cf54922e09e7d3cdd97d6973f712d7",
+      "matched": 1,
+      "notices": [115]
+    },
+    {
+      "name": "style-inject",
+      "version": "0.3.0",
+      "artifactSha256": "bb015cc38bdc388fc8ead1b20311c3a351d4c4cb9595a5daa49494823adf6db8",
+      "matched": 1,
+      "notices": [116]
+    },
+    {
+      "name": "uuid",
+      "version": "14.0.1",
+      "artifactSha256": "e062c57ed120ea135478f305da04802bf69eab23fbc0ca2bae6989b6855390c4",
+      "matched": 3,
+      "notices": [117]
+    },
+    {
+      "name": "vis-data",
+      "version": "8.0.4",
+      "artifactSha256": "c74d9af6c12881436a88f2602315b6dd94084da50ee503477e1345e801df0d0c",
+      "matched": 1,
+      "notices": [118, 119]
+    },
+    {
+      "name": "vis-util",
+      "version": "6.0.0",
+      "artifactSha256": "fa0b0f72a9724724310948ee8eec92be5c2de54384a85dc6140e939ab41a5e03",
+      "matched": 1,
+      "notices": [120, 121]
+    },
+    {
+      "name": "xss",
+      "version": "1.0.15",
+      "artifactSha256": "2574486d507bcc7585d2e9dbd717a9710484972a8ea60b1baa3cd57bf57aa439",
+      "matched": 5,
+      "notices": [122]
+    }
+  ],
+  "fonts": [
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_AMS-Regular.ttf",
+      "asset": "assets/KaTeX_AMS-Regular.ttf",
+      "sha256": "68534840bcfdd2bffb6f0e8deb48684dd01e7f04ea2813267577afb906de1d13"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_AMS-Regular.woff",
+      "asset": "assets/KaTeX_AMS-Regular.woff",
+      "sha256": "30da91e84c893f875e252689faebdc590b2871145e8adc7f9a9d4dbd8ce0b251"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_AMS-Regular.woff2",
+      "asset": "assets/KaTeX_AMS-Regular.woff2",
+      "sha256": "0cdd387c9590a1a9f9794560022dbb59654a7d86f187aa0c81495ad42d3a7308"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Caligraphic-Bold.ttf",
+      "asset": "assets/KaTeX_Caligraphic-Bold.ttf",
+      "sha256": "07d8e303ce4fc12b4bb54f1004170dd190a1f3db45d400fe68060df3e0897268"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Caligraphic-Bold.woff",
+      "asset": "assets/KaTeX_Caligraphic-Bold.woff",
+      "sha256": "1ae6bd7475590e97e7f145a89e09ccde322f7a6bc0b91607b1c8b8ee28290fed"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Caligraphic-Bold.woff2",
+      "asset": "assets/KaTeX_Caligraphic-Bold.woff2",
+      "sha256": "de7701e42cf1f4cf0b766c03fb27977207eee2f4fd5d76fa82188406da43ea4c"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Caligraphic-Regular.ttf",
+      "asset": "assets/KaTeX_Caligraphic-Regular.ttf",
+      "sha256": "ed0b74372feefcbb9c0666b2e210da37b7e49fa7fbbf3eeb11db5f693dacfbb7"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Caligraphic-Regular.woff",
+      "asset": "assets/KaTeX_Caligraphic-Regular.woff",
+      "sha256": "3398dd02302557a793f2863f88e02d96ce10df2abffa07c8e9fa90775116e65c"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Caligraphic-Regular.woff2",
+      "asset": "assets/KaTeX_Caligraphic-Regular.woff2",
+      "sha256": "5d53e70ad607c2352162dec9e0923fb54ecdafaccbf604cd8dcf7d00facb989b"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Fraktur-Bold.ttf",
+      "asset": "assets/KaTeX_Fraktur-Bold.ttf",
+      "sha256": "9163df9c7122432e6495b4229fa9071cf9ae86a758ae5efc4924ec2e1a6dbce1"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Fraktur-Bold.woff",
+      "asset": "assets/KaTeX_Fraktur-Bold.woff",
+      "sha256": "9be7ceb88004ab8ad124082246fbfcca4091e36385d4ec6ed1df67375dad50fb"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Fraktur-Bold.woff2",
+      "asset": "assets/KaTeX_Fraktur-Bold.woff2",
+      "sha256": "74444efd593c005e3f4573b44524704c0af0a937fe911cca9e94068d0d140d3f"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Fraktur-Regular.ttf",
+      "asset": "assets/KaTeX_Fraktur-Regular.ttf",
+      "sha256": "1e6f9579e90e2cac37f8f60a597c436e075c114385652b7cbeb0dec0421291b3"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Fraktur-Regular.woff",
+      "asset": "assets/KaTeX_Fraktur-Regular.woff",
+      "sha256": "5e28753be717dac97f559f49bc10be9cf3c124ddcabda6659d11cb68febc6463"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Fraktur-Regular.woff2",
+      "asset": "assets/KaTeX_Fraktur-Regular.woff2",
+      "sha256": "51814d270d06ff0255dba0799994fa4d8c84d11f09951d47595f4abb1f3602dc"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Main-Bold.ttf",
+      "asset": "assets/KaTeX_Main-Bold.ttf",
+      "sha256": "138ac28d1663b3037e9c5f52371fa5c63d8324f4a38d22cd573e6ea3a3fd0cf8"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Main-Bold.woff",
+      "asset": "assets/KaTeX_Main-Bold.woff",
+      "sha256": "c76c5d696297d51b9cb1639c7da4334f0e7dec81b42b11213b5e25ef671bb822"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Main-Bold.woff2",
+      "asset": "assets/KaTeX_Main-Bold.woff2",
+      "sha256": "0f60d1b897938ec918c8ce073092411baf9438f6739465693ff18b0f9d20b021"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Main-BoldItalic.ttf",
+      "asset": "assets/KaTeX_Main-BoldItalic.ttf",
+      "sha256": "70ee1f64a20f2048c21940ef46d0144fd215baa953ca69afd1e31e98544f708f"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Main-BoldItalic.woff",
+      "asset": "assets/KaTeX_Main-BoldItalic.woff",
+      "sha256": "a6f7ec0d846ac7ad975adb8959c37ed49b94acbc4ae436db9ce9e20287e4a64c"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Main-BoldItalic.woff2",
+      "asset": "assets/KaTeX_Main-BoldItalic.woff2",
+      "sha256": "99cd42a3c072d918f2f44984a807cf7aa16e13545fd0875fc07c6c65f99e715b"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Main-Italic.ttf",
+      "asset": "assets/KaTeX_Main-Italic.ttf",
+      "sha256": "0d85ae7cc30f23790a7f1a58c4a112fdca8aae769b6ba11429af1d98b1b6cb3a"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Main-Italic.woff",
+      "asset": "assets/KaTeX_Main-Italic.woff",
+      "sha256": "f1d6ef86f3b11a528bd5185199bd2443ecb2b0dead96d88674b5a2c12be24bdf"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Main-Italic.woff2",
+      "asset": "assets/KaTeX_Main-Italic.woff2",
+      "sha256": "97479ca6cce906abc961ecac96faa5f9ca2e61b8e7670d475826bcdee9a7c267"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Main-Regular.ttf",
+      "asset": "assets/KaTeX_Main-Regular.ttf",
+      "sha256": "d0332f52868370fd83ae7fa46470f90c8f2eab2fcf12bc4f88080b340c95a830"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Main-Regular.woff",
+      "asset": "assets/KaTeX_Main-Regular.woff",
+      "sha256": "c6368d87e8a1a3a5d337623d83d8dc4b868f242a9ad476237d6f8d1e0f168cdc"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Main-Regular.woff2",
+      "asset": "assets/KaTeX_Main-Regular.woff2",
+      "sha256": "c2342cd8b869e01752a9321dc17213fc40d4d04c79688c1d43f2cf316abd7866"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Math-BoldItalic.ttf",
+      "asset": "assets/KaTeX_Math-BoldItalic.ttf",
+      "sha256": "f9377ab0271cda59af24bcffbd46a4d0c8a3572ffafdbb38de2ad5ea7b0d5ee5"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Math-BoldItalic.woff",
+      "asset": "assets/KaTeX_Math-BoldItalic.woff",
+      "sha256": "850c0af5c2238497febaf5e461d880bf458c341f42f4f330f1b1ab5698b1998e"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Math-BoldItalic.woff2",
+      "asset": "assets/KaTeX_Math-BoldItalic.woff2",
+      "sha256": "dc47344dbb6cb5b655c8460d561f4df5f501b90c804ad3c6cec65fe322351ab1"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Math-Italic.ttf",
+      "asset": "assets/KaTeX_Math-Italic.ttf",
+      "sha256": "08ce98e51b04d58945a301e639e02b6998af29fdfd61a7b8afdd07bbfc479d4a"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Math-Italic.woff",
+      "asset": "assets/KaTeX_Math-Italic.woff",
+      "sha256": "8a8d244581371912b8f3f5a23e2437cb2a59cd9bcaebb0346e722c05737a2571"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Math-Italic.woff2",
+      "asset": "assets/KaTeX_Math-Italic.woff2",
+      "sha256": "7af58c5ec8f132a2ddde9027c6d7814decce4d3b822a11192a42a20e2e973264"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_SansSerif-Bold.ttf",
+      "asset": "assets/KaTeX_SansSerif-Bold.ttf",
+      "sha256": "1ece03f79f95277d57dc7f6b435a74e1379b0d46104a8530286b60ff49369ea0"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_SansSerif-Bold.woff",
+      "asset": "assets/KaTeX_SansSerif-Bold.woff",
+      "sha256": "ece03cfd83e22c212cdef66feb8442d25a083beb988db3f1883f3f9738d750ba"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_SansSerif-Bold.woff2",
+      "asset": "assets/KaTeX_SansSerif-Bold.woff2",
+      "sha256": "e99ae51144bf1232efcc1bfe5add36262c6866b0faab24fa75740e1b98577a62"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_SansSerif-Italic.ttf",
+      "asset": "assets/KaTeX_SansSerif-Italic.ttf",
+      "sha256": "3931dd81faed86ba021bb2bbdc36f5bed9a38d6b4f4077aca59b265aa1b02083"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_SansSerif-Italic.woff",
+      "asset": "assets/KaTeX_SansSerif-Italic.woff",
+      "sha256": "91ee67500cc0129aa0ace3ac5c61ff1692102f0f31d02b69347fba35dcb75bf2"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_SansSerif-Italic.woff2",
+      "asset": "assets/KaTeX_SansSerif-Italic.woff2",
+      "sha256": "00b26ac825e2095056396e0553b8ac26d3f8ad158c3826e28b4c45b385c4714a"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_SansSerif-Regular.ttf",
+      "asset": "assets/KaTeX_SansSerif-Regular.ttf",
+      "sha256": "f36ea897e19f4a2e571d1e900e4e3710e438deb05a842486045ba0a3e616a4ad"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_SansSerif-Regular.woff",
+      "asset": "assets/KaTeX_SansSerif-Regular.woff",
+      "sha256": "11e4dc8a6471ff6d6ee561d53d10fde8f7489e798257ff449c5d37c197435605"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_SansSerif-Regular.woff2",
+      "asset": "assets/KaTeX_SansSerif-Regular.woff2",
+      "sha256": "68e8c73ef42afd3ccec58bf0fba302cce448938e7fc020a5e31f8a952eee1342"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Script-Regular.ttf",
+      "asset": "assets/KaTeX_Script-Regular.ttf",
+      "sha256": "1c67f068fea8bb09bf099c088b1cf64bd27516a6e07f4684344873564bb66a67"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Script-Regular.woff",
+      "asset": "assets/KaTeX_Script-Regular.woff",
+      "sha256": "d96cdf2b3bdd4d64a8fd5f74a4c467f123a8a73931cd435889f08ffaf9bf947a"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Script-Regular.woff2",
+      "asset": "assets/KaTeX_Script-Regular.woff2",
+      "sha256": "036d4e95149b69ff9bcc0cd55771efeb25ffa3947293e69acd78d5ac328c684b"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Size1-Regular.ttf",
+      "asset": "assets/KaTeX_Size1-Regular.ttf",
+      "sha256": "95b6d2f1a50173bfedb8c63e1d1c99b10427d0a4df4201cb44513b226951a22b"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Size1-Regular.woff",
+      "asset": "assets/KaTeX_Size1-Regular.woff",
+      "sha256": "c943cc986384f59e86bea5fd7dc50a9c4dfe567a7c05eb40d6790720dead97c9"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Size1-Regular.woff2",
+      "asset": "assets/KaTeX_Size1-Regular.woff2",
+      "sha256": "6b47c40166b6dbe21a5dfca7718413f2147fd2399be1ba605d8ad39cedf25dfe"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Size2-Regular.ttf",
+      "asset": "assets/KaTeX_Size2-Regular.ttf",
+      "sha256": "a6b2099fb555c60e3a0db3a08842ebf1d732c6eb4e4bf44913613bed4fc4e39b"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Size2-Regular.woff",
+      "asset": "assets/KaTeX_Size2-Regular.woff",
+      "sha256": "2014c523c3210bcc166648c4d4cc57f05b747df07a24277bf71c51e67dc79e3d"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Size2-Regular.woff2",
+      "asset": "assets/KaTeX_Size2-Regular.woff2",
+      "sha256": "d04c54219f9eaec6d4d4fd42dfb28785975a4794d6b2fc71e566b9cd6db842dd"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Size3-Regular.ttf",
+      "asset": "assets/KaTeX_Size3-Regular.ttf",
+      "sha256": "500e04d54f0d51666332c9d2089aa803be22aa878eca539e59fa53c6e522b082"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Size3-Regular.woff",
+      "asset": "assets/KaTeX_Size3-Regular.woff",
+      "sha256": "6ab6b62e9b62dae2c00dd90f791bd10950be0ecc3490d7d6045f51c2e8fe0949"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Size3-Regular.woff2",
+      "asset": "assets/KaTeX_Size3-Regular.woff2",
+      "sha256": "73d591271b1604960cb10bb90fee021670af7297017e0e98480b332d11f51995"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Size4-Regular.ttf",
+      "asset": "assets/KaTeX_Size4-Regular.ttf",
+      "sha256": "c647367d1dd4e162468717d020e1fc0f1dc5c26ebfdffbe55261713bf88c5877"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Size4-Regular.woff",
+      "asset": "assets/KaTeX_Size4-Regular.woff",
+      "sha256": "99f9c6750b489c9462bf04900bd3f939df9b829339daaaaa99ef5495cdddea58"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Size4-Regular.woff2",
+      "asset": "assets/KaTeX_Size4-Regular.woff2",
+      "sha256": "a4af7d414440a1c1790825cfb700cf9cf43b0f2c4b04f0ebc523011ad9853ec0"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Typewriter-Regular.ttf",
+      "asset": "assets/KaTeX_Typewriter-Regular.ttf",
+      "sha256": "f01f3e87d9c6a61c0c081ceb577abd864eb00a612f7ac1620dd6915fad2ef5aa"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Typewriter-Regular.woff",
+      "asset": "assets/KaTeX_Typewriter-Regular.woff",
+      "sha256": "e14fed02b1aba7ce9f5afd5844b5d0321b22351febc720e0de8b8723527609f7"
+    },
+    {
+      "source": "node_modules/katex/dist/fonts/KaTeX_Typewriter-Regular.woff2",
+      "asset": "assets/KaTeX_Typewriter-Regular.woff2",
+      "sha256": "71d517d67827787cfabdf186914cc3358eda539e37931941f2b2fd4a21f68c0b"
+    }
+  ],
+  "notices": [
+    {
+      "label": "@ungap/structured-clone@1.4.0 / package/LICENSE",
+      "source": {
+        "artifactSha256": "f481575dc2f23f404e3eec77eb6726bdf9c7d130f1b43f214291e601acf50996",
+        "member": "package/LICENSE"
+      },
+      "sha256": "dc6d4961d8b6ee747231582ae9c53ce1d66bf76bc9f5a28f554c0e97210953bf",
+      "offset": 61,
+      "bytes": 765
+    },
+    {
+      "label": "bail@2.0.2 / package/license",
+      "source": {
+        "artifactSha256": "11719f7e1f7a31432177dd0cd987e7c967a826426d281c39c0025b474056c88b",
+        "member": "package/license"
+      },
+      "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf",
+      "offset": 868,
+      "bytes": 1099
+    },
+    {
+      "label": "ccount@2.0.1 / package/license",
+      "source": {
+        "artifactSha256": "bdda8b4b3c7c3049bb118a9a01e3638033473b90c09f58eee1e9f2dda27984ca",
+        "member": "package/license"
+      },
+      "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf",
+      "offset": 2011,
+      "bytes": 1099
+    },
+    {
+      "label": "comma-separated-tokens@2.0.3 / package/license",
+      "source": {
+        "artifactSha256": "88123eefbb07a6048efa112653c80f4a0ac2e993bd1388c00273e14de29ec886",
+        "member": "package/license"
+      },
+      "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d",
+      "offset": 3170,
+      "bytes": 1099
+    },
+    {
+      "label": "decode-named-character-reference@1.3.0 / package/license",
+      "source": {
+        "artifactSha256": "b4399b50188513b31e4642b25437c9c309776aa34b6acb3eb18a0ee792e16f38",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 4339,
+      "bytes": 1094
+    },
+    {
+      "label": "devlop@1.1.0 / package/license",
+      "source": {
+        "artifactSha256": "aed0b5ba97cc3aba851946766b1e4804e92a0d3b2051e047eed4e8bf508ecd5f",
+        "member": "package/license"
+      },
+      "sha256": "6f296a5eccc1dc96714bb94ebaa9cac25b0a1467d74cc5263ac4d0646ab01f62",
+      "offset": 5477,
+      "bytes": 1099
+    },
+    {
+      "label": "entities@6.0.1 / package/LICENSE",
+      "source": {
+        "artifactSha256": "a4de957ab0852f6c91eae59a6000ced5a25a04f0b6e1c3062fbad732a6b5479d",
+        "member": "package/LICENSE"
+      },
+      "sha256": "cb992345949ccd6e8394b2cd6c465f7b897c864f845937dbf64e8997f389e164",
+      "offset": 6622,
+      "bytes": 1260
+    },
+    {
+      "label": "escape-string-regexp@5.0.0 / package/license",
+      "source": {
+        "artifactSha256": "c8b662afe8aa2b852ecc27d766e584a502f8351fbbd890611f2509bf083d28e6",
+        "member": "package/license"
+      },
+      "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3",
+      "offset": 7940,
+      "bytes": 1117
+    },
+    {
+      "label": "estree-util-is-identifier-name@3.0.0 / package/license",
+      "source": {
+        "artifactSha256": "fa9ffe7f957ff44a54894dd01e96851824e2f008181921585d69947a60eb702b",
+        "member": "package/license"
+      },
+      "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61",
+      "offset": 9125,
+      "bytes": 1099
+    },
+    {
+      "label": "extend@3.0.2 / package/LICENSE",
+      "source": {
+        "artifactSha256": "1d91d0b0faa50cba223fa937c7b5a4a662968b1d78b3e59dca5c917dd5cf72b2",
+        "member": "package/LICENSE"
+      },
+      "sha256": "97af7428f93afbab9bf79cd09254da1357161794f4255eb1b4599f04dd2d2e7c",
+      "offset": 10268,
+      "bytes": 1081
+    },
+    {
+      "label": "hast-util-from-dom@5.0.1 / package/license",
+      "source": {
+        "artifactSha256": "2fafecd79507fdecc3c472c3c775a678e2aabb35c74aeb3e67bc3635679ca93d",
+        "member": "package/license"
+      },
+      "sha256": "c01b44788e1829e81cb20d621c93c07a08ea010063118b956739f2ab050d17ca",
+      "offset": 11405,
+      "bytes": 760
+    },
+    {
+      "label": "hast-util-from-html-isomorphic@2.0.0 / package/license",
+      "source": {
+        "artifactSha256": "97ff1cb0db9442878afc8c49c7356ff460c9a2f86a43875f910b90b66b0706d2",
+        "member": "package/license"
+      },
+      "sha256": "fb5678944a6345b1d30a8fe006aef2be2f6bb1c22431a7cc92674fb0944a7578",
+      "offset": 12233,
+      "bytes": 1101
+    },
+    {
+      "label": "hast-util-from-parse5@8.0.3 / package/license",
+      "source": {
+        "artifactSha256": "085c56c1024d3b9cfd93d23cae61a20fca479e1d2a5a4cb8f6cc678c27bc306a",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 13393,
+      "bytes": 1094
+    },
+    {
+      "label": "hast-util-is-element@3.0.0 / package/license",
+      "source": {
+        "artifactSha256": "7cae5b84402bfed675a0c2c25cf8b3c7d09487e87fa715ae467771f8d150ddee",
+        "member": "package/license"
+      },
+      "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d",
+      "offset": 14545,
+      "bytes": 1099
+    },
+    {
+      "label": "hast-util-parse-selector@4.0.0 / package/license",
+      "source": {
+        "artifactSha256": "df79b69d2c5a494758576fe4016f1082aecb7ae1cde7cb908ad539ba4d8d8884",
+        "member": "package/license"
+      },
+      "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d",
+      "offset": 15706,
+      "bytes": 1099
+    },
+    {
+      "label": "hast-util-raw@9.1.0 / package/license",
+      "source": {
+        "artifactSha256": "66ceb754010844391f2506e903cfb05e5df643e5ab24e7fe0602095b51fa744b",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 16856,
+      "bytes": 1094
+    },
+    {
+      "label": "hast-util-sanitize@5.0.2 / package/license",
+      "source": {
+        "artifactSha256": "517144c05a2fb9b6bd92a34f1ce2c78dc42cb6345bb2b59756b8d0563ad32d9e",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 18006,
+      "bytes": 1094
+    },
+    {
+      "label": "hast-util-to-jsx-runtime@2.3.6 / package/license",
+      "source": {
+        "artifactSha256": "83468f1886b62230982ce2eb51a81173291e598e4ab532c81a95ea4db5d05fdc",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 19162,
+      "bytes": 1094
+    },
+    {
+      "label": "hast-util-to-parse5@8.0.1 / package/license",
+      "source": {
+        "artifactSha256": "c1c99f978faf4016ee77ac601aab9e3ab52f718daa03982bb01ef28d6d15501e",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 20313,
+      "bytes": 1094
+    },
+    {
+      "label": "hast-util-to-text@4.0.2 / package/license",
+      "source": {
+        "artifactSha256": "0cbe35c3d652969dc8ecddff1afa20e64e5eac9a2e3e462acadc1ad8a97594b3",
+        "member": "package/license"
+      },
+      "sha256": "691115fe0234b1f05cb52a9c4aded367e389784a6501af824e85a7e54ca47d38",
+      "offset": 21462,
+      "bytes": 1099
+    },
+    {
+      "label": "hast-util-whitespace@3.0.0 / package/license",
+      "source": {
+        "artifactSha256": "673f97f5bba3cac0184726f519a5750273e4434b839a769f4fbf09e4b4da2ceb",
+        "member": "package/license"
+      },
+      "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d",
+      "offset": 22619,
+      "bytes": 1099
+    },
+    {
+      "label": "hastscript@9.0.1 / package/license",
+      "source": {
+        "artifactSha256": "1712fdcc26cd393a8f54f07232fbadb6b084af651beb11d0ec8af67eec00e3f3",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 23766,
+      "bytes": 1094
+    },
+    {
+      "label": "highlight.js@11.11.2 / package/LICENSE",
+      "source": {
+        "artifactSha256": "5737fc030ac76469b797691464564cd5a88068327519078022637d7d638c7ce9",
+        "member": "package/LICENSE"
+      },
+      "sha256": "6c081431591d9df696c82dc598fe1423765b8a299b200ed00b281afd0f64c490",
+      "offset": 24912,
+      "bytes": 1514
+    },
+    {
+      "label": "html-url-attributes@3.0.1 / package/license",
+      "source": {
+        "artifactSha256": "9a63a922924f6d31add785bccd0a53706c047e0c0b56dcbcdc836254ded18ed9",
+        "member": "package/license"
+      },
+      "sha256": "e18cf5173e928f808f0cd208097fee8fbec9d28fc0255213938e4c559e29ff58",
+      "offset": 26483,
+      "bytes": 1070
+    },
+    {
+      "label": "html-void-elements@3.0.0 / package/license",
+      "source": {
+        "artifactSha256": "301b6ef51a58d296bb3f837c4840211025a7e541f304d4a379e6062e45373530",
+        "member": "package/license"
+      },
+      "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d",
+      "offset": 27609,
+      "bytes": 1099
+    },
+    {
+      "label": "inline-style-parser@0.2.7 / package/LICENSE",
+      "source": {
+        "artifactSha256": "edc328b12a2fc88d990bd877e4cebed9823b8427d79a6a73d9c65591d3ccb6bc",
+        "member": "package/LICENSE"
+      },
+      "sha256": "395c95f20598da653ff1eb1cb9d74947c7fac689697147f1d192fd0242a0e635",
+      "offset": 28765,
+      "bytes": 1098
+    },
+    {
+      "label": "is-plain-obj@4.1.0 / package/license",
+      "source": {
+        "artifactSha256": "c71d874f7ab7cd560329b080ce790f9768dea503337fe2e2719a18e28be621f7",
+        "member": "package/license"
+      },
+      "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3",
+      "offset": 29913,
+      "bytes": 1117
+    },
+    {
+      "label": "katex@0.16.47 / package/LICENSE",
+      "source": {
+        "artifactSha256": "ad2d1ab2f7fcc227019784320e8a2c5218ff6bb333b36df4136d10365ae29375",
+        "member": "package/LICENSE"
+      },
+      "sha256": "766ccc1f306c885aa45542a9846bbd0a505b27a0374f146778171c2254ce18e3",
+      "offset": 31075,
+      "bytes": 1107
+    },
+    {
+      "label": "longest-streak@3.1.0 / package/license",
+      "source": {
+        "artifactSha256": "384446c12b28a0f29cd68b22871cff7c1001fdca5c173930e4eeb4811de210f6",
+        "member": "package/license"
+      },
+      "sha256": "9f084fac69d8cf1e6ce983ba5a3499c7695ed74a26ec625c38f0fd19fddd5e10",
+      "offset": 32234,
+      "bytes": 1106
+    },
+    {
+      "label": "lowlight@3.3.0 / package/license",
+      "source": {
+        "artifactSha256": "00d85c3f0f77f3d1214e465b8a4c41e0513add492aab373ea1a8bee5e8dbd7ad",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 33386,
+      "bytes": 1094
+    },
+    {
+      "label": "markdown-table@3.0.4 / package/license",
+      "source": {
+        "artifactSha256": "14e8b7c711b0be872cba307c2561ed991b089aa2e4dc4a8de74692a6d51bce58",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 34532,
+      "bytes": 1094
+    },
+    {
+      "label": "mdast-util-find-and-replace@3.0.3 / package/license",
+      "source": {
+        "artifactSha256": "2d5a4ab0049573a354021ff4855797772d5b6610e02ef8f448121c1f53261932",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 35691,
+      "bytes": 1094
+    },
+    {
+      "label": "mdast-util-from-markdown@2.0.3 / package/license",
+      "source": {
+        "artifactSha256": "adc7944beb265a36cbc8b3f0ad019bc939f56eb11ab9cefccc964392e0b9597d",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 36847,
+      "bytes": 1094
+    },
+    {
+      "label": "mdast-util-gfm@3.1.0 / package/license",
+      "source": {
+        "artifactSha256": "96204c6cdf253e43ee1431b88c7e46015a26d2b6d1d688a0153ce96eaecbe642",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 37993,
+      "bytes": 1094
+    },
+    {
+      "label": "mdast-util-gfm-autolink-literal@2.0.1 / package/license",
+      "source": {
+        "artifactSha256": "5860bd6db7eb6f6336c5ddd4c713900fb973a05cee8dd531cbcb8548a122c77c",
+        "member": "package/license"
+      },
+      "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61",
+      "offset": 39156,
+      "bytes": 1099
+    },
+    {
+      "label": "mdast-util-gfm-footnote@2.1.0 / package/license",
+      "source": {
+        "artifactSha256": "d4d26b4257e56dffa0499654e3e812bee7490c71422ddfc0972e1b30930f117b",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 40316,
+      "bytes": 1094
+    },
+    {
+      "label": "mdast-util-gfm-strikethrough@2.0.1 / package/license",
+      "source": {
+        "artifactSha256": "624f42cf32ab405c198e77b889ec4c8269d93d6ed8f4d9a47356c78e5fb50a46",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 41476,
+      "bytes": 1094
+    },
+    {
+      "label": "mdast-util-gfm-table@2.0.0 / package/license",
+      "source": {
+        "artifactSha256": "c1d7b61db521f2279c32f1051dc42c98e99ac33538ae9f859b2f3daafb34366e",
+        "member": "package/license"
+      },
+      "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61",
+      "offset": 42628,
+      "bytes": 1099
+    },
+    {
+      "label": "mdast-util-gfm-task-list-item@2.0.0 / package/license",
+      "source": {
+        "artifactSha256": "3ca34f4601317823f202df4692310c5d37ca628b76cdda2bd59d32de2c0a5d01",
+        "member": "package/license"
+      },
+      "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61",
+      "offset": 43794,
+      "bytes": 1099
+    },
+    {
+      "label": "mdast-util-math@3.0.0 / package/license",
+      "source": {
+        "artifactSha256": "4de30d5fa2382687ff805a2abeb55465c48bed3c859aa6fac8292fb377e8cd90",
+        "member": "package/license"
+      },
+      "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61",
+      "offset": 44946,
+      "bytes": 1099
+    },
+    {
+      "label": "mdast-util-newline-to-break@2.0.0 / package/license",
+      "source": {
+        "artifactSha256": "1b6027e3c8ac5803b563b75a5359d41f68e6b438c427c8b1b5fdf156924604f1",
+        "member": "package/license"
+      },
+      "sha256": "d8fc337aaf98fc7a0f5498edc18b47a9df8cdfcc1a0f013519105905722c7a4c",
+      "offset": 46110,
+      "bytes": 1099
+    },
+    {
+      "label": "mdast-util-phrasing@4.1.0 / package/license",
+      "source": {
+        "artifactSha256": "001c22ccbb8f66b889e468ba33c86df25aaf9e2cea1ee1d827fb172431f09835",
+        "member": "package/license"
+      },
+      "sha256": "b6d1a4e1831b177acc96f22a817d4f0f4c18419355badc3125754445fc69e3a7",
+      "offset": 47266,
+      "bytes": 1150
+    },
+    {
+      "label": "mdast-util-to-hast@13.2.1 / package/license",
+      "source": {
+        "artifactSha256": "41f70e2f73a4ad9c67a401faa3143d16d6a1bda2c6bf9ae48073a2d4f5ebb1f4",
+        "member": "package/license"
+      },
+      "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d",
+      "offset": 48473,
+      "bytes": 1099
+    },
+    {
+      "label": "mdast-util-to-markdown@2.2.0 / package/license",
+      "source": {
+        "artifactSha256": "775386258ecfbf4efa5f6ead8ed633ae67c11c58826e191d931d7804f73814b0",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 49632,
+      "bytes": 1094
+    },
+    {
+      "label": "mdast-util-to-string@4.0.0 / package/license",
+      "source": {
+        "artifactSha256": "bbfe70a5652305df7e8e484f674975c69bddbbad048ced52dc71835e64bba37a",
+        "member": "package/license"
+      },
+      "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf",
+      "offset": 50784,
+      "bytes": 1099
+    },
+    {
+      "label": "micromark@4.0.3 / package/license",
+      "source": {
+        "artifactSha256": "2f3f1e4dfc15279ffd246cb739200dd7ce823d047d9648938c3e3ee50be5ee02",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 51930,
+      "bytes": 1094
+    },
+    {
+      "label": "micromark-core-commonmark@2.0.4 / package/license",
+      "source": {
+        "artifactSha256": "84979e673035ced9448b39f2c6eabc9d6d543b53ec211d1be77fedf72564a5eb",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 53087,
+      "bytes": 1094
+    },
+    {
+      "label": "micromark-extension-gfm@3.0.0 / package/license",
+      "source": {
+        "artifactSha256": "35f3336120e336f7bf4737a93ca90b5549a353efc9496a31feec97215b756cf1",
+        "member": "package/license"
+      },
+      "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61",
+      "offset": 54242,
+      "bytes": 1099
+    },
+    {
+      "label": "micromark-extension-gfm-autolink-literal@2.1.0 / package/license",
+      "source": {
+        "artifactSha256": "c26bf2024d0741030b554cd784413776291ab4904c1ab45a55fb98e66e5cc3bf",
+        "member": "package/license"
+      },
+      "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61",
+      "offset": 55419,
+      "bytes": 1099
+    },
+    {
+      "label": "micromark-extension-gfm-footnote@2.1.0 / package/license",
+      "source": {
+        "artifactSha256": "a1b9858641efe4ddabf48062397663f9de3fdea1fb43b4c34faa9987eb6f2f8a",
+        "member": "package/license"
+      },
+      "sha256": "807a88522a850092aece49486207c17c313c4d5708ac276524840fe1caa0b0fa",
+      "offset": 56588,
+      "bytes": 1099
+    },
+    {
+      "label": "micromark-extension-gfm-strikethrough@2.1.0 / package/license",
+      "source": {
+        "artifactSha256": "e3d9e7b8ee5d45c4c49835d2172492a5bb34f304dc5efbb68294f69a16d1c762",
+        "member": "package/license"
+      },
+      "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61",
+      "offset": 57762,
+      "bytes": 1099
+    },
+    {
+      "label": "micromark-extension-gfm-table@2.1.2 / package/license",
+      "source": {
+        "artifactSha256": "8398e26854cb955c07dfe6394203b9a491d4b77d0a23166102b7acd6030a63e1",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 58928,
+      "bytes": 1094
+    },
+    {
+      "label": "micromark-extension-gfm-task-list-item@2.1.0 / package/license",
+      "source": {
+        "artifactSha256": "2af93a84aca7141d88f8967be748a2f84d5ac6dc7cdb14a62edcbbd8a27b11af",
+        "member": "package/license"
+      },
+      "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61",
+      "offset": 60098,
+      "bytes": 1099
+    },
+    {
+      "label": "micromark-extension-math@3.1.0 / package/license",
+      "source": {
+        "artifactSha256": "a634d9a310781fa7385d28a66de744458a9da8330eef32952381e1ac004d05f1",
+        "member": "package/license"
+      },
+      "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61",
+      "offset": 61259,
+      "bytes": 1099
+    },
+    {
+      "label": "micromark-factory-destination@2.0.1 / package/license",
+      "source": {
+        "artifactSha256": "b4acd1721e4756a61f2482c3424344b8b01bdbf79180cf6e411ed491887bd8db",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 62425,
+      "bytes": 1094
+    },
+    {
+      "label": "micromark-factory-label@2.0.1 / package/license",
+      "source": {
+        "artifactSha256": "c65fb436893844fb5be29814dc2528a596236423c4c7e5b1130cd49b5bae8c1d",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 63580,
+      "bytes": 1094
+    },
+    {
+      "label": "micromark-factory-space@2.1.0 / package/license",
+      "source": {
+        "artifactSha256": "5218d07cfd00f867e94f4197c9aac409fb8ea17c26ab38a124f9dd79ba8b8a3d",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 64735,
+      "bytes": 1094
+    },
+    {
+      "label": "micromark-factory-title@2.0.1 / package/license",
+      "source": {
+        "artifactSha256": "2e247f3d7ddef39cde036ee828a66ec410059b3963ce3e376160e48011f257b0",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 65890,
+      "bytes": 1094
+    },
+    {
+      "label": "micromark-factory-whitespace@2.0.1 / package/license",
+      "source": {
+        "artifactSha256": "57dc50841f76fac5cf46e093b8325397079e10406febebb6c58a58e1528a4fec",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 67050,
+      "bytes": 1094
+    },
+    {
+      "label": "micromark-util-character@2.1.1 / package/license",
+      "source": {
+        "artifactSha256": "bacefea968d21cedf290ec319ec92e2bc20e4f7b02f62cb4ad1e7b07c5a45185",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 68206,
+      "bytes": 1094
+    },
+    {
+      "label": "micromark-util-chunked@2.0.1 / package/license",
+      "source": {
+        "artifactSha256": "a7b753059876eda10e9e14c024d1cf6eb3a2eb2021c79ef59fb483d72cda754a",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 69360,
+      "bytes": 1094
+    },
+    {
+      "label": "micromark-util-classify-character@2.0.1 / package/license",
+      "source": {
+        "artifactSha256": "ae1040e3100c019e183e474cb7f174eb436d856013169a0c8783a52519bacced",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 70525,
+      "bytes": 1094
+    },
+    {
+      "label": "micromark-util-combine-extensions@2.0.1 / package/license",
+      "source": {
+        "artifactSha256": "717cb91921ff540a2c776317f31ad005c3c45ec0ae1c188f1b99de621521b4b5",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 71690,
+      "bytes": 1094
+    },
+    {
+      "label": "micromark-util-decode-numeric-character-reference@2.0.2 / package/license",
+      "source": {
+        "artifactSha256": "cd26a08f068727f3cc892e8f2549b85065362bd920506649386c791fe349db98",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 72871,
+      "bytes": 1094
+    },
+    {
+      "label": "micromark-util-decode-string@2.0.1 / package/license",
+      "source": {
+        "artifactSha256": "09ab2cda2d2f4fec4e3b829042866fa3d619d4c48c895233495a4ac49f325059",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 74031,
+      "bytes": 1094
+    },
+    {
+      "label": "micromark-util-edit-map@1.0.0 / package/license",
+      "source": {
+        "artifactSha256": "da60526f11a9853fdc86c18ceaa8eb7b5058c2537433e66b6ba7cf9d24cac334",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 75186,
+      "bytes": 1094
+    },
+    {
+      "label": "micromark-util-html-tag-name@2.0.1 / package/license",
+      "source": {
+        "artifactSha256": "9d56df2779bb23785d208136430484ccedca4378bd36976c4793ace4c1cae077",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 76346,
+      "bytes": 1094
+    },
+    {
+      "label": "micromark-util-normalize-identifier@2.0.1 / package/license",
+      "source": {
+        "artifactSha256": "6687cbaaa6a420bad0e5ca2ea0dfaea409ba8dc9e13ca03059291da8b68ceb2d",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 77513,
+      "bytes": 1094
+    },
+    {
+      "label": "micromark-util-resolve-all@2.0.1 / package/license",
+      "source": {
+        "artifactSha256": "f7c8f03bdbdb16113879dadabc7091aa4277a1c106f202e05af164a917964555",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 78671,
+      "bytes": 1094
+    },
+    {
+      "label": "micromark-util-sanitize-uri@2.0.1 / package/license",
+      "source": {
+        "artifactSha256": "8fcf4cf2900f807194fc89fb3e4dd5e5b28143cb44e55955a9f31d764264547e",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 79830,
+      "bytes": 1094
+    },
+    {
+      "label": "micromark-util-subtokenize@2.1.0 / package/license",
+      "source": {
+        "artifactSha256": "10aca3d9ae4d1776f029fa6dbf5d9706291cbafc55ff39ba88141e65b7c59a8b",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 80988,
+      "bytes": 1094
+    },
+    {
+      "label": "parse5@7.3.0 / package/LICENSE",
+      "source": {
+        "artifactSha256": "9316ca7af41da9e85071b62b9605aa0a6aaeb0463f833c29e7a331e7898f0420",
+        "member": "package/LICENSE"
+      },
+      "sha256": "8c535800331e1e4439835555b3f9edc7fe9dee2fab0d8bbbd5a982e8b8343d4d",
+      "offset": 82126,
+      "bytes": 1109
+    },
+    {
+      "label": "property-information@7.2.0 / package/license",
+      "source": {
+        "artifactSha256": "22ab7ee8774c8c3c90086f2fec7d2d4cca7c16ac795596ae16cf326c763606c7",
+        "member": "package/license"
+      },
+      "sha256": "5d0698266086f217bb11ea0499d33453e401fe479fb9126ad04e625e63d3557b",
+      "offset": 83293,
+      "bytes": 1101
+    },
+    {
+      "label": "react@19.3.0 / package/LICENSE",
+      "source": {
+        "artifactSha256": "5a4024110c49476e1538a70fd65b9e59d038fcc280b78eb933c24e10453afbf9",
+        "member": "package/LICENSE"
+      },
+      "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+      "offset": 84438,
+      "bytes": 1088
+    },
+    {
+      "label": "react-dom@19.3.0 / package/LICENSE",
+      "source": {
+        "artifactSha256": "dbeffb1e6cdbbbba07f799da4635333d0e20c210a32278dded85441ec4cb6a17",
+        "member": "package/LICENSE"
+      },
+      "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+      "offset": 85574,
+      "bytes": 1088
+    },
+    {
+      "label": "react-icons@5.7.0 / package/LICENSE",
+      "source": {
+        "artifactSha256": "303a6555d6433f4368ed96802bf0e2ec0fa05164bb1918cdc090d7deabef3a5e",
+        "member": "package/LICENSE"
+      },
+      "sha256": "a0c1e5484fb4c79e2a683834253864e640e1ca57cb57b807bd5bddb72bbbf74f",
+      "offset": 86711,
+      "bytes": 4807
+    },
+    {
+      "label": "react-markdown@10.1.0 / package/license",
+      "source": {
+        "artifactSha256": "205f5c607c68e1e42b8d7a036326bdb3a105ae55e6469ecfcaf998004609d5f7",
+        "member": "package/license"
+      },
+      "sha256": "f6196c64e144f9a6fa9154c3a80bc8b89615a9567934b83a8951879f06ba2aef",
+      "offset": 91571,
+      "bytes": 1079
+    },
+    {
+      "label": "rehype-highlight@7.0.2 / package/license",
+      "source": {
+        "artifactSha256": "e60d5c6b2c84ce1eb2c56893f675a94c0cd39e25bd7760eca7cb4ceb0d44d1bb",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 92704,
+      "bytes": 1094
+    },
+    {
+      "label": "rehype-katex@7.0.1 / official license",
+      "source": {
+        "gitHead": "88a9497e1ede93b958237c85edbf5651faeca7af",
+        "path": "/tmp/cadence-w1-provision-ar5oshfh/licenses/rehype-katex-7.0.1.full-license.txt"
+      },
+      "sha256": "cb992262f361a5359e6771c28740d33c7041e15332ae8537fae40538992591a9",
+      "offset": 93849,
+      "bytes": 1098
+    },
+    {
+      "label": "rehype-raw@7.0.0 / package/license",
+      "source": {
+        "artifactSha256": "59f9d5a4ae9894bf1afb0397c686f71301c4504b209866fbf7a6c898b0742b12",
+        "member": "package/license"
+      },
+      "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d",
+      "offset": 94995,
+      "bytes": 1099
+    },
+    {
+      "label": "rehype-sanitize@6.0.0 / package/license",
+      "source": {
+        "artifactSha256": "09fb2b59a6960f2c89cc12abe56c55cc9611bc7f575082dfacb11ffc406a66de",
+        "member": "package/license"
+      },
+      "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d",
+      "offset": 96147,
+      "bytes": 1099
+    },
+    {
+      "label": "remark-breaks@4.0.0 / package/license",
+      "source": {
+        "artifactSha256": "bccf6161a50ed008fe5c8405bee6c7e9bb5ae7709afb3568f65789374dd9fb94",
+        "member": "package/license"
+      },
+      "sha256": "d8fc337aaf98fc7a0f5498edc18b47a9df8cdfcc1a0f013519105905722c7a4c",
+      "offset": 97297,
+      "bytes": 1099
+    },
+    {
+      "label": "remark-gfm@4.0.1 / package/license",
+      "source": {
+        "artifactSha256": "a5c7441a02eb0c5f5b0a15b23f04c2a00b9faf698dc3dfb4e5c1a1d0991d4259",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 98444,
+      "bytes": 1094
+    },
+    {
+      "label": "remark-math@6.0.0 / official license",
+      "source": {
+        "gitHead": "d5d0660b150810a535bbb07eac6cc96a4510aa24",
+        "path": "/tmp/cadence-w1-provision-ar5oshfh/licenses/remark-math-6.0.0.full-license.txt"
+      },
+      "sha256": "cb992262f361a5359e6771c28740d33c7041e15332ae8537fae40538992591a9",
+      "offset": 99588,
+      "bytes": 1098
+    },
+    {
+      "label": "remark-parse@11.0.0 / package/license",
+      "source": {
+        "artifactSha256": "381d16667f0d394ac045dad61cea875d680a49eae0cbe88a87b0259dc4b2dd33",
+        "member": "package/license"
+      },
+      "sha256": "413654b0a78b98661dce96d2aff2e4d075603d220b8483e28b1aa010ccc138b4",
+      "offset": 100737,
+      "bytes": 1099
+    },
+    {
+      "label": "remark-rehype@11.1.2 / package/license",
+      "source": {
+        "artifactSha256": "7bb4ca02a6fe89bbfa5e56485bb5086e2cfa13bbbf7455cd29faac20a6eeaa82",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 101888,
+      "bytes": 1094
+    },
+    {
+      "label": "scheduler@0.28.0 / package/LICENSE",
+      "source": {
+        "artifactSha256": "302995d590e3c0a11eeb40d1d0f299c1df1800135d599d85cdd5faeb614f32d6",
+        "member": "package/LICENSE"
+      },
+      "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+      "offset": 103030,
+      "bytes": 1088
+    },
+    {
+      "label": "space-separated-tokens@2.0.2 / package/license",
+      "source": {
+        "artifactSha256": "b386cce96593975cebbb054a8e287eb15c2e004cd6ef416f7a26b5c265930b67",
+        "member": "package/license"
+      },
+      "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d",
+      "offset": 104178,
+      "bytes": 1099
+    },
+    {
+      "label": "style-to-js@1.1.21 / package/LICENSE",
+      "source": {
+        "artifactSha256": "87f2f0c9c052c7840d789c2389f1d212f3c5ba77c58b7d08ce4485f59d34f024",
+        "member": "package/LICENSE"
+      },
+      "sha256": "bbb380e5c1a717079378d6ea4d33c8a5a81655d4612b749f882e34e46712aab5",
+      "offset": 105327,
+      "bytes": 1110
+    },
+    {
+      "label": "style-to-object@1.0.14 / package/LICENSE",
+      "source": {
+        "artifactSha256": "edfb15e0912047f3f78e683015d310dc35903f1623aada6a8e629ed9077bf45d",
+        "member": "package/LICENSE"
+      },
+      "sha256": "896c9fd6b5fc48ac31800b9d29a6e3ffcb0c2d534ed077ebfa5c2fa388cc38b7",
+      "offset": 106491,
+      "bytes": 1110
+    },
+    {
+      "label": "trim-lines@3.0.1 / package/license",
+      "source": {
+        "artifactSha256": "5880f0ef03e792c4705dc0789f2999671d4796d1d10a0110df059f25c565d63d",
+        "member": "package/license"
+      },
+      "sha256": "9f084fac69d8cf1e6ce983ba5a3499c7695ed74a26ec625c38f0fd19fddd5e10",
+      "offset": 107649,
+      "bytes": 1106
+    },
+    {
+      "label": "trough@2.2.0 / package/license",
+      "source": {
+        "artifactSha256": "0a357f8de5e3a6f69fa3672daf31a19a87fc153b21085790c78fa4097263ab58",
+        "member": "package/license"
+      },
+      "sha256": "6c03fd41cfd7c92d8aa8a2fa521b94b2683f059123281dcf921ddea9216b6254",
+      "offset": 108799,
+      "bytes": 1099
+    },
+    {
+      "label": "unified@11.0.5 / package/license",
+      "source": {
+        "artifactSha256": "bc6d6d9e336d7d775f3c369f0a29462523ae75254d4a6e4888b95eba44c4aa78",
+        "member": "package/license"
+      },
+      "sha256": "05811400116ed61f1a7693b78fe8ca6598c155a12f3978e609db4df648a4cb3d",
+      "offset": 109944,
+      "bytes": 1099
+    },
+    {
+      "label": "unist-util-find-after@5.0.0 / package/license",
+      "source": {
+        "artifactSha256": "09ca2ef0344212863bb39ec000effdc518d4a5b3e60c645b7607172da0641da9",
+        "member": "package/license"
+      },
+      "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf",
+      "offset": 111102,
+      "bytes": 1099
+    },
+    {
+      "label": "unist-util-is@6.0.1 / package/license",
+      "source": {
+        "artifactSha256": "6d406238b6e281d38d30c30f77287ce8d70f6d9c4503612f979333865aaafff5",
+        "member": "package/license"
+      },
+      "sha256": "82974dbf2639d13edab95c32ed9cb6c0867ede272cd2e07ce47ce8548fe55c05",
+      "offset": 112252,
+      "bytes": 1099
+    },
+    {
+      "label": "unist-util-position@5.0.0 / package/license",
+      "source": {
+        "artifactSha256": "248cefc2080c0a78817b20e88da7324e7dee7175c5df8ac0e6d193d2d381c200",
+        "member": "package/license"
+      },
+      "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf",
+      "offset": 113408,
+      "bytes": 1099
+    },
+    {
+      "label": "unist-util-stringify-position@4.0.0 / package/license",
+      "source": {
+        "artifactSha256": "8692d2396f091680fe342c344acc4594534a9a811b0a9cbcfae7d71c694168b4",
+        "member": "package/license"
+      },
+      "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d",
+      "offset": 114574,
+      "bytes": 1099
+    },
+    {
+      "label": "unist-util-visit@5.1.0 / package/license",
+      "source": {
+        "artifactSha256": "8d5724e443d279deda20fe03ce18de53a944f8154e94297de0f49c5fb51f72ef",
+        "member": "package/license"
+      },
+      "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf",
+      "offset": 115727,
+      "bytes": 1099
+    },
+    {
+      "label": "unist-util-visit-parents@6.0.2 / package/license",
+      "source": {
+        "artifactSha256": "5250902af03c4b335c68cd60ed5eb4f1d9fbd6338e129d7df476690b8a245da5",
+        "member": "package/license"
+      },
+      "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d",
+      "offset": 116888,
+      "bytes": 1099
+    },
+    {
+      "label": "vfile@6.0.3 / package/license",
+      "source": {
+        "artifactSha256": "a0dbad2fd8dcc9ae9f652dee6ba49a1db5db2843a8ec2ceb9190ccdba0e0df0c",
+        "member": "package/license"
+      },
+      "sha256": "05811400116ed61f1a7693b78fe8ca6598c155a12f3978e609db4df648a4cb3d",
+      "offset": 118030,
+      "bytes": 1099
+    },
+    {
+      "label": "vfile-location@5.0.3 / package/license",
+      "source": {
+        "artifactSha256": "8b8cf426e26395482ca8c4485dc3f98e29628711c69b5f3dc2673ed00940ce58",
+        "member": "package/license"
+      },
+      "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d",
+      "offset": 119181,
+      "bytes": 1099
+    },
+    {
+      "label": "vfile-message@4.0.3 / package/license",
+      "source": {
+        "artifactSha256": "9d6d94ee59296ef0516217a79e902ba417fe3d8816ab1d0527ddf353b455c2cb",
+        "member": "package/license"
+      },
+      "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb",
+      "offset": 120331,
+      "bytes": 1094
+    },
+    {
+      "label": "vis-timeline@8.5.4 / package/LICENSE.md",
+      "source": {
+        "artifactSha256": "695f0491f385444add8bddb040bdd59d3b6e7ca5e3283ba33186164291c5f200",
+        "member": "package/LICENSE.md"
+      },
+      "sha256": "535036cac87eaf62b4460a592c2d12e349d6b1135f0203e77eab1b23ad08bc55",
+      "offset": 121478,
+      "bytes": 315
+    },
+    {
+      "label": "vis-timeline@8.5.4 / package/LICENSE.Apache-2.0.txt",
+      "source": {
+        "artifactSha256": "695f0491f385444add8bddb040bdd59d3b6e7ca5e3283ba33186164291c5f200",
+        "member": "package/LICENSE.Apache-2.0.txt"
+      },
+      "sha256": "1509904280a272780fd69c04b858f512cf216f8e3464a0dd98d8f34416feced9",
+      "offset": 121858,
+      "bytes": 10171
+    },
+    {
+      "label": "vis-timeline@8.5.4 / package/LICENSE.MIT.txt",
+      "source": {
+        "artifactSha256": "695f0491f385444add8bddb040bdd59d3b6e7ca5e3283ba33186164291c5f200",
+        "member": "package/LICENSE.MIT.txt"
+      },
+      "sha256": "507e7e91e0a385c9de0464889068fada0620e327d23f1d64605a7d046490ec97",
+      "offset": 132087,
+      "bytes": 1145
+    },
+    {
+      "label": "web-namespaces@2.0.1 / package/license",
+      "source": {
+        "artifactSha256": "df250d9dc73331f79700486335f046bdebb09158d172754220cc546fb5149a84",
+        "member": "package/license"
+      },
+      "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d",
+      "offset": 133284,
+      "bytes": 1099
+    },
+    {
+      "label": "zwitch@2.0.4 / package/license",
+      "source": {
+        "artifactSha256": "2c162e000f5fb5a816987d6f8ad7aad295203f777a5992d514ae4660778a51a4",
+        "member": "package/license"
+      },
+      "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d",
+      "offset": 134427,
+      "bytes": 1099
+    },
+    {
+      "label": "vis embedded @babel/runtime-corejs3@7.29.7 / package/LICENSE",
+      "source": {
+        "artifactSha256": "27c8652c26dc2af304860834bdd410318d989b895e74b222cc65f2f72fe3b5d3",
+        "member": "package/LICENSE"
+      },
+      "sha256": "117da2af0d4ce0fe1c8e19b5cff9dcd806adf973d328d27b11d4448c4ff24f76",
+      "offset": 135600,
+      "bytes": 1106
+    },
+    {
+      "label": "vis embedded @egjs/hammerjs@2.0.17 / package/LICENSE.md",
+      "source": {
+        "artifactSha256": "d931dbb173f8028d1fe3167cd8049f4064bf268d55e9f6d374d8cea289b84cfd",
+        "member": "package/LICENSE.md"
+      },
+      "sha256": "68e3fbc87924b2ca7f6a10d52be2ee83e86f7d2f28e74f343795e8f9e58f3ec1",
+      "offset": 136775,
+      "bytes": 1143
+    },
+    {
+      "label": "vis embedded component-emitter@1.3.1 / package/LICENSE",
+      "source": {
+        "artifactSha256": "f65c306d4a782baa8535616a4593104806fa2d0c2957d3a605366c37cd0db3c9",
+        "member": "package/LICENSE"
+      },
+      "sha256": "0f0b408b8b871d983e767528c6dc51e0ad7efaa022890c449fe2b2e1ee24dbb7",
+      "offset": 137986,
+      "bytes": 1104
+    },
+    {
+      "label": "vis embedded core-js-pure@3.49.0 / package/LICENSE",
+      "source": {
+        "artifactSha256": "44caa460ded23a03f172325478898b302f462c5bc5b8f8a2e3b3b10617f070b1",
+        "member": "package/LICENSE"
+      },
+      "sha256": "b87653fff2d44426ab5cd4723cee3b1364dc8d35a0acdf098c54689543123bf8",
+      "offset": 139154,
+      "bytes": 1134
+    },
+    {
+      "label": "vis embedded cssfilter@0.0.10 / package/LICENSE",
+      "source": {
+        "artifactSha256": "a4fdecba1f39d632846559741df519e1386fc7a2f2342071e65ac4d24a324d4f",
+        "member": "package/LICENSE"
+      },
+      "sha256": "6b16a2f12f0ebe66e6940b7cc7fc0100bde0e5738b1f2007d6147950019dbe56",
+      "offset": 140349,
+      "bytes": 1074
+    },
+    {
+      "label": "vis embedded keycharm@0.4.0 / package/LICENSE-MIT",
+      "source": {
+        "artifactSha256": "1dd82923d5c1d0b507d1e4e579171a4a94afe0fdfee8354062c6594b700a043b",
+        "member": "package/LICENSE-MIT"
+      },
+      "sha256": "7909cb1efaa8bd800a6d33d73cb9538bfe56a7da61c1fd8b4afb9ddd557ec044",
+      "offset": 141486,
+      "bytes": 1102
+    },
+    {
+      "label": "vis embedded keycharm@0.4.0 / package/LICENSE-APACHE-2.0",
+      "source": {
+        "artifactSha256": "1dd82923d5c1d0b507d1e4e579171a4a94afe0fdfee8354062c6594b700a043b",
+        "member": "package/LICENSE-APACHE-2.0"
+      },
+      "sha256": "7a1da246f5e03ea6f987021848a3ff9d9e9a86a54adf96a216f2ee57a9a762d6",
+      "offset": 142658,
+      "bytes": 10347
+    },
+    {
+      "label": "vis embedded moment@2.30.1 / package/LICENSE",
+      "source": {
+        "artifactSha256": "52219a9fee5e1faade4c72536c173c54cedd5e2619272dd0c251a30aeafcde8c",
+        "member": "package/LICENSE"
+      },
+      "sha256": "8f38f320bbf5eb84c08e08676f7ee1d2204ebe5797f6a090d077329cf212fca3",
+      "offset": 153063,
+      "bytes": 1075
+    },
+    {
+      "label": "vis embedded propagating-hammerjs@3.0.0 / package/LICENSE",
+      "source": {
+        "artifactSha256": "5a62b559ddced660af5e128b69aca61f02cf54922e09e7d3cdd97d6973f712d7",
+        "member": "package/LICENSE"
+      },
+      "sha256": "ac9579e0acfe1f27d342adb5c61fe3dafe7bff388e0200d6d3f951a3e37f42dd",
+      "offset": 154209,
+      "bytes": 1084
+    },
+    {
+      "label": "vis embedded style-inject@0.3.0 / package/LICENSE",
+      "source": {
+        "artifactSha256": "bb015cc38bdc388fc8ead1b20311c3a351d4c4cb9595a5daa49494823adf6db8",
+        "member": "package/LICENSE"
+      },
+      "sha256": "4043c740a6b6749d1f706cacae941ddfaff6f882b66fce5df99b7f36176ae112",
+      "offset": 155356,
+      "bytes": 1091
+    },
+    {
+      "label": "vis embedded uuid@14.0.1 / package/LICENSE.md",
+      "source": {
+        "artifactSha256": "e062c57ed120ea135478f305da04802bf69eab23fbc0ca2bae6989b6855390c4",
+        "member": "package/LICENSE.md"
+      },
+      "sha256": "beaa6b04fb82e41dd2ad679e19e27953afb5999b1abbb455b6564e78ebfeb332",
+      "offset": 156506,
+      "bytes": 1109
+    },
+    {
+      "label": "vis embedded vis-data@8.0.4 / package/LICENSE-MIT",
+      "source": {
+        "artifactSha256": "c74d9af6c12881436a88f2602315b6dd94084da50ee503477e1345e801df0d0c",
+        "member": "package/LICENSE-MIT"
+      },
+      "sha256": "1f65085e54c036645082257618db2c7b787e68c3b02485e214ecd09e0834ee8f",
+      "offset": 157678,
+      "bytes": 1084
+    },
+    {
+      "label": "vis embedded vis-data@8.0.4 / package/LICENSE-APACHE-2.0",
+      "source": {
+        "artifactSha256": "c74d9af6c12881436a88f2602315b6dd94084da50ee503477e1345e801df0d0c",
+        "member": "package/LICENSE-APACHE-2.0"
+      },
+      "sha256": "1509904280a272780fd69c04b858f512cf216f8e3464a0dd98d8f34416feced9",
+      "offset": 158832,
+      "bytes": 10171
+    },
+    {
+      "label": "vis embedded vis-util@6.0.0 / package/LICENSE-MIT",
+      "source": {
+        "artifactSha256": "fa0b0f72a9724724310948ee8eec92be5c2de54384a85dc6140e939ab41a5e03",
+        "member": "package/LICENSE-MIT"
+      },
+      "sha256": "b88d2c1898485a909bfd92d1a2a676c266db5384d7153f3bdb80caebb7038351",
+      "offset": 169066,
+      "bytes": 1121
+    },
+    {
+      "label": "vis embedded vis-util@6.0.0 / package/LICENSE-APACHE-2.0",
+      "source": {
+        "artifactSha256": "fa0b0f72a9724724310948ee8eec92be5c2de54384a85dc6140e939ab41a5e03",
+        "member": "package/LICENSE-APACHE-2.0"
+      },
+      "sha256": "1509904280a272780fd69c04b858f512cf216f8e3464a0dd98d8f34416feced9",
+      "offset": 170257,
+      "bytes": 10171
+    },
+    {
+      "label": "vis embedded xss@1.0.15 / package/LICENSE",
+      "source": {
+        "artifactSha256": "2574486d507bcc7585d2e9dbd717a9710484972a8ea60b1baa3cd57bf57aa439",
+        "member": "package/LICENSE"
+      },
+      "sha256": "93dbf94b858812876168fbd4de2da2251ad21d9856a09347ecdbb0aaa56a6e89",
+      "offset": 180483,
+      "bytes": 1127
+    },
+    {
+      "label": "feather-4.29.1.full-license.txt",
+      "source": {
+        "path": "/tmp/cadence-w1-provision-ar5oshfh/licenses/feather-4.29.1.full-license.txt",
+        "provisioning": "cadence-w1-provision-ar5oshfh"
+      },
+      "sha256": "308028e93fcf84972523cdf6e616f73168546b4953895f516d01287f16fe7bee",
+      "offset": 181655,
+      "bytes": 1082
+    },
+    {
+      "label": "katex-distributed-font-notices.txt",
+      "source": {
+        "path": "/tmp/cadence-w1-provision-ar5oshfh/licenses/katex-distributed-font-notices.txt",
+        "provisioning": "cadence-w1-provision-ar5oshfh"
+      },
+      "sha256": "8b70dc6bc125ed6de8dbd8374f5dfd11c6ebcf0f6c55a5251d169a57faf361ae",
+      "offset": 182785,
+      "bytes": 7990
+    },
+    {
+      "label": "SIL-OFL-1.1.txt",
+      "source": {
+        "path": "/tmp/cadence-w1-provision-ar5oshfh/licenses/SIL-OFL-1.1.txt",
+        "provisioning": "cadence-w1-provision-ar5oshfh"
+      },
+      "sha256": "1d361a8f8e8ce6e68457dcd93fb56e162e6baa3bbb7e7573a290d44399f6b57e",
+      "offset": 190804,
+      "bytes": 4599
+    },
+    {
+      "label": "vis-standalone-embedded-comments.txt",
+      "source": {
+        "path": "/tmp/cadence-w1-provision-ar5oshfh/licenses/vis-standalone-embedded-comments.txt",
+        "provisioning": "cadence-w1-provision-ar5oshfh"
+      },
+      "sha256": "6a5c4c6839081b0308ff7544e3801146974e7e3a6826ea13e5b1868618b315bd",
+      "offset": 195453,
+      "bytes": 789
+    },
+    {
+      "label": "vite@8.3.0 emitted runtime / package/LICENSE.md",
+      "source": {
+        "artifactSha256": "8341c0e40cf1700c68998ce5e7b1c715b9f89d700abf6c41f5d8af067a270a72",
+        "member": "package/LICENSE.md"
+      },
+      "sha256": "387dd7baa307083401a27c58c362c30832f5ba1dba84f10cc22c33401523f45c",
+      "offset": 196303,
+      "bytes": 112425
+    },
+    {
+      "label": "rolldown@1.2.14 emitted runtime / package/LICENSE",
+      "source": {
+        "artifactSha256": "9c142fca1d5bfb9c9a6b58a3da16db75d9d30f3e6f8778d94a75b976c806e53d",
+        "member": "package/LICENSE"
+      },
+      "sha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734",
+      "offset": 308791,
+      "bytes": 1302
+    }
+  ],
+  "virtualModules": [
+    {
+      "name": "vite",
+      "version": "8.3.0",
+      "artifactSha256": "8341c0e40cf1700c68998ce5e7b1c715b9f89d700abf6c41f5d8af067a270a72",
+      "notices": [127],
+      "modules": [
+        {
+          "id": "\u0000vite/modulepreload-polyfill.js",
+          "assets": ["assets/cadence.js"]
+        },
+        {
+          "id": "\u0000vite/preload-helper.js",
+          "assets": ["assets/cadence.js"]
+        }
+      ]
+    },
+    {
+      "name": "rolldown",
+      "version": "1.2.14",
+      "artifactSha256": "9c142fca1d5bfb9c9a6b58a3da16db75d9d30f3e6f8778d94a75b976c806e53d",
+      "notices": [128],
+      "modules": [
+        {
+          "id": "\u0000rolldown/runtime.js",
+          "assets": ["assets/rolldown-runtime.js"]
+        }
+      ]
+    }
+  ]
+}

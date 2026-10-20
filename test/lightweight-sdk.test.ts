@@ -14,10 +14,14 @@ import {
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
+  legacyWorkerEnvelope,
   runProcess,
   runWorker,
   safeChildEnv,
+  type WorkerRequest,
 } from "../src/subagent-process.ts";
+import { LIMITS } from "../src/worker-public.mjs";
+import { captureSummary } from "./helpers/worker-v2.ts";
 
 // A native observer, not an executable/SDK substitution. Existing lanes still delegate unchanged.
 vi.mock("node:child_process", async (importOriginal) => {
@@ -284,22 +288,24 @@ for (const lane of [
         expect(auth.env?.AZURE_OPENAI_BASE_URL).toBe(baseUrl);
         expect(auth.env?.AZURE_OPENAI_API_VERSION).toBe("fixture-version");
       }
-      const wire = JSON.stringify({
-        cwd,
-        model,
-        auth,
-        kind: toolLane
-          ? "code"
-          : lane === "diagnosis-readonly"
-            ? "diagnosis"
-            : "research",
-        thinkingLevel: lane === "xhigh-key-tool" ? "xhigh" : "off",
-        instructions:
-          "Synthetic fixture only. Use write only when requested; no shell or external resources.",
-        prompt: toolLane
-          ? "Write fixture.txt containing fixture-only, then answer WIRE_OK."
-          : "Answer WIRE_OK. Do not call tools.",
-      });
+      const wire = JSON.stringify(
+        legacyWorkerEnvelope({
+          cwd,
+          model: { ...model },
+          auth,
+          kind: toolLane
+            ? "code"
+            : lane === "diagnosis-readonly"
+              ? "diagnosis"
+              : "research",
+          thinkingLevel: lane === "xhigh-key-tool" ? "xhigh" : "off",
+          instructions:
+            "Synthetic fixture only. Use write only when requested; no shell or external resources.",
+          prompt: toolLane
+            ? "Write fixture.txt containing fixture-only, then answer WIRE_OK."
+            : "Answer WIRE_OK. Do not call tools.",
+        }),
+      );
       const raw =
         lane === "xhigh-key-tool" ? await nativeWorker(cwd, wire) : undefined;
       const result = raw
@@ -322,7 +328,7 @@ for (const lane of [
       if (raw) {
         expect(raw.exitCode).toBe(0);
         expect(raw.stderr).toBe("");
-        expect(raw.stdout).toBe(
+        expect(captureSummary(raw.stdout)).toBe(
           '{"type":"ready"}\n{"type":"tool","name":"write"}\n{"type":"final","text":"WIRE_OK","stopReason":"stop"}\n',
         );
         for (const canary of [key, literal])
@@ -446,7 +452,7 @@ const diagnostic = (stderr: string) => {
   const hasGeneric = lines.at(-1) === genericFailure.trimEnd();
   if (hasGeneric) lines.pop();
   expect(lines.length).toBeGreaterThanOrEqual(1);
-  expect(lines.length).toBeLessThanOrEqual(2);
+  expect(lines.length, stderr).toBeLessThanOrEqual(2);
   const values = lines.map((line) => {
     expect(Buffer.byteLength(`${line}\n`)).toBeLessThanOrEqual(512);
     const snapshot = JSON.parse(line);
@@ -473,10 +479,10 @@ const diagnostic = (stderr: string) => {
     expect(Number.isSafeInteger(value[key])).toBe(true);
     expect(value[key]).toBeGreaterThanOrEqual(0);
   }
-  expect(value.sdkEvents).toBeLessThanOrEqual(4097);
+  expect(value.sdkEvents).toBeLessThanOrEqual(1_000_001);
   expect(value.inputBytes).toBeLessThanOrEqual(128 * 1024 + 1);
-  expect(value.modelOutputBytes).toBeLessThanOrEqual(256 * 1024 + 1);
-  expect(value.protocolBytes).toBeLessThanOrEqual(256 * 1024 + 1);
+  expect(value.modelOutputBytes).toBeLessThanOrEqual(128 * 1024 * 1024 + 1);
+  expect(value.protocolBytes).toBeLessThanOrEqual(128 * 1024 * 1024 + 1);
   expect(value.cleanupFailures).toBeLessThanOrEqual(15);
   expect(
     value.actualResponseStatus === "UNKNOWN" ||
@@ -684,6 +690,12 @@ const nativeWorker = async (
   guards = true,
   mockBootstrap?: string,
 ) => {
+  try {
+    const old = JSON.parse(wire);
+    if (!old.request) wire = JSON.stringify(legacyWorkerEnvelope(old));
+  } catch {
+    /* Explicit malformed/oversized input controls remain malformed. */
+  }
   const child = spawn(
     process.execPath,
     mockBootstrap === undefined
@@ -721,7 +733,7 @@ const nativeWorker = async (
   }, 15000);
   const collect = (chunk: Buffer, out: boolean) => {
     bytes += chunk.length;
-    if (bytes > 256 * 1024) {
+    if (bytes > LIMITS.childProtocolBytes) {
       forced = true;
       child.kill("SIGKILL");
     } else if (out) stdout += chunk.toString("utf8");
@@ -858,7 +870,7 @@ for (const lane of [
       const result = await nativeWorker(cwd, wire);
       expect(JSON.stringify(request)).toBe(wire);
       expect(result.exitCode).toBe(1);
-      expect(result.stdout).toBe("");
+      expect(captureSummary(result.stdout), result.stderr).toBe("");
       expect(diagnostic(result.stderr)).toMatchObject({
         stage: "session",
         class: "model-substitution",
@@ -919,18 +931,18 @@ for (const lane of [
         : JSON.stringify(request);
     const result = await nativeWorker(cwd, wire, lane !== "guards");
     expect(result.exitCode).toBe(1);
-    expect(result.stdout).toBe("");
+    expect(captureSummary(result.stdout), result.stderr).toBe("");
     expect(diagnostic(result.stderr)).toMatchObject({
       stage:
         lane === "guards"
           ? "guards"
-          : lane === "parse"
+          : ["parse", "invalid-request", "unsupported-model"].includes(lane)
             ? "parse"
             : "auth-model",
       class:
         lane === "guards"
           ? "guards-required"
-          : lane === "parse"
+          : ["parse", "invalid-request", "unsupported-model"].includes(lane)
             ? "parse-failed"
             : lane,
       sdkEvents: 0,
@@ -999,7 +1011,7 @@ for (const lane of [
             lane === "final-bound"
               ? "x".repeat(16385)
               : lane === "model-bound"
-                ? "x".repeat(256 * 1024 + 1)
+                ? "x".repeat(2 * 1024 * 1024 + 8192)
                 : "WIRE_OK",
         });
       send(
@@ -1035,19 +1047,45 @@ for (const lane of [
           request.auth.apiKey = `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "fixture-account" } })).toString("base64url")}.fixture`;
       }
       const result = await nativeWorker(cwd, JSON.stringify(request));
+      if (["final-bound", "model-bound"].includes(lane)) {
+        // Intentional v2 replacement: old 16KiB/256KiB ceilings are no longer
+        // refusal thresholds. Preserve complete native delivery/close coverage,
+        // and assert the retained final byte count, not the bounded preview.
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr).toBe("");
+        const frames = result.stdout
+          .trimEnd()
+          .split("\n")
+          .map((line) => JSON.parse(line));
+        captureSummary(result.stdout); // validates every original sequence/hash/link
+        const final = frames.at(-1).event;
+        expect(final.kind).toBe("final");
+        expect(
+          frames.find(
+            (frame) =>
+              frame.event.kind === "detail-end" &&
+              frame.event.detailId === final.detailId,
+          ).event.bytes,
+        ).toBe(lane === "final-bound" ? 16385 : 2 * 1024 * 1024 + 8192);
+        expect(calls).toBe(1);
+        expect(readdirSync(cwd)).toEqual([]);
+        return;
+      }
       expect(result.exitCode).toBe(1);
-      expect(result.stdout).toBe('{"type":"ready"}\n');
+      expect(captureSummary(result.stdout), result.stderr).toBe(
+        '{"type":"ready"}\n',
+      );
       expect(calls).toBe(lane === "codex-local-error" ? 0 : 1);
       const d = diagnostic(result.stderr);
       expect(d).toMatchObject({
         stage: ["final-bound", "model-bound"].includes(lane)
-          ? "outputbounds"
+          ? "events"
           : "assistant-final",
         class:
           lane === "final-bound"
-            ? "final-text-bound"
+            ? "event-projection-failed"
             : lane === "model-bound"
-              ? "model-output-bound"
+              ? "event-projection-failed"
               : "terminal-incomplete",
         preflight: "accepted",
         requestPrepared: lane !== "codex-local-error",
@@ -1062,7 +1100,7 @@ for (const lane of [
       if (lane === "length") expect(d.terminalStopReason).toBe("length");
       if (lane.startsWith("codex-") || lane === "refusal")
         expect(d.terminalStopReason).toBe("error");
-      if (lane === "final-bound") expect(d.terminalStopReason).toBe("stop");
+      if (lane === "final-bound") expect(d.terminalStopReason).toBe("UNKNOWN");
       expect(d.sdkEvents).toBeGreaterThan(0);
       expect(result.stderr).not.toContain("fabricated");
       expect(result.stderr).not.toContain(request.auth.apiKey);
@@ -1106,6 +1144,15 @@ const mockedWorker = async (scenario: string) => {
   ];
   const stop = stops.includes(scenario) ? scenario : "stop";
   const message = {
+    content: [
+      {
+        type: "text",
+        text:
+          scenario === "final-bound"
+            ? "x".repeat(LIMITS.detailBytes + 1)
+            : "WIRE_OK",
+      },
+    ],
     role: "assistant",
     stopReason: stop,
     errorMessage: secretFault.message,
@@ -1164,6 +1211,7 @@ const mockedWorker = async (scenario: string) => {
       return sessionThinkingLevel;
     },
     model: request.model,
+    systemPrompt: request.instructions,
     messages:
       scenario === "missing-assistant"
         ? []
@@ -1171,7 +1219,9 @@ const mockedWorker = async (scenario: string) => {
           ? [{ ...message, stopReason: "length" }]
           : [message],
     getLastAssistantText: () =>
-      scenario === "final-bound" ? "x".repeat(16385) : "WIRE_OK",
+      scenario === "final-bound"
+        ? "x".repeat(LIMITS.detailBytes + 1)
+        : "WIRE_OK",
     subscribe: (callback: typeof listener) => {
       listener = callback;
       return () => {
@@ -1194,6 +1244,12 @@ const mockedWorker = async (scenario: string) => {
         return Promise.reject(secretFault);
     },
     agent: {
+      state: { tools: [] },
+      toolExecution:
+        scenario === "unsupported-tool-mode" ? undefined : "parallel",
+      subscribe(callback: typeof listener) {
+        return session.subscribe(callback);
+      },
       streamFunction: (_model: unknown, _context: unknown, options: any) => {
         requests++;
         expect(_model).toBe(selected);
@@ -1235,39 +1291,57 @@ const mockedWorker = async (scenario: string) => {
       }
       expect(payload).toEqual({ private: "fabricated-payload-secret" });
       if (["event-bound", "bound-cleanup"].includes(scenario))
-        for (let n = 0; n < 4097; n++) listener({ type: "agent_start" });
+        for (let n = 0; n < LIMITS.sdkEvents + 1; n++)
+          await listener({ type: "agent_start" });
       if (scenario === "model-bound")
-        listener({
+        await listener({
           type: "message_update",
           assistantMessageEvent: {
             type: "thinking_delta",
-            delta: "x".repeat(256 * 1024 + 1),
+            delta: "x".repeat(LIMITS.childProtocolBytes + 1),
           },
         });
       if (scenario === "line-bound")
-        listener({ type: "tool_execution_start", toolName: "x".repeat(65536) });
+        await listener({
+          type: "tool_execution_start",
+          toolName: "x".repeat(65536),
+        });
       if (scenario === "frame-bound")
         for (let n = 0; n < 4096; n++)
-          listener({ type: "tool_execution_start", toolName: "read" });
+          await listener({ type: "tool_execution_start", toolName: "read" });
       if (scenario === "aggregate-bound")
         for (let n = 0; n < 4; n++)
-          listener({
+          await listener({
             type: "tool_execution_start",
             toolName: "x".repeat(65500),
           });
       if (scenario === "no-diagnostic-room") {
         // Exactly 256KiB minus 51 bytes emitted; generic52/JSON cannot fit.
         for (let n = 0; n < 3; n++)
-          listener({
+          await listener({
             type: "tool_execution_start",
             toolName: "x".repeat(65500),
           });
-        listener({ type: "tool_execution_start", toolName: "x".repeat(65472) });
+        await listener({
+          type: "tool_execution_start",
+          toolName: "x".repeat(65472),
+        });
         throw secretFault;
       }
-      listener({
+      await listener({
+        type: "message_start",
+        message: {
+          role: scenario === "missing-assistant" ? "user" : "assistant",
+        },
+      });
+      await listener({
         type: "message_end",
-        message: scenario === "missing-assistant" ? { role: "user" } : message,
+        message:
+          scenario === "missing-assistant"
+            ? { role: "user", content: [] }
+            : scenario === "validation-mismatch"
+              ? { ...message, stopReason: "length" }
+              : message,
       });
       if (["error-after-stop", "invalid-status"].includes(scenario))
         throw secretFault;
@@ -1294,6 +1368,9 @@ const mockedWorker = async (scenario: string) => {
   }));
   vi.doMock("@earendil-works/pi-ai/api/openai-completions", () => ({}));
   vi.doMock("@earendil-works/pi-coding-agent", () => ({
+    createLocalBashOperations: () => {
+      throw new Error("Fixture must not execute bash");
+    },
     ModelRuntime: {
       create: async (options: any) => {
         expect(options).toMatchObject({
@@ -1348,14 +1425,20 @@ const mockedWorker = async (scenario: string) => {
   vi.spyOn(process.stdin, Symbol.asyncIterator).mockImplementation(
     async function* () {
       yield Buffer.from(
-        scenario === "input-bound" ? "x".repeat(128 * 1024 + 1) : originalWire,
+        scenario === "input-bound"
+          ? "x".repeat(128 * 1024 + 1)
+          : JSON.stringify(legacyWorkerEnvelope(request as WorkerRequest)),
       );
     },
   );
-  vi.spyOn(process.stdout, "write").mockImplementation(((text: string) => {
-    if (scenario === "ready-throw" && text === '{"type":"ready"}\n')
+  vi.spyOn(process.stdout, "write").mockImplementation(((
+    text: string,
+    callback?: () => void,
+  ) => {
+    if (scenario === "ready-throw" && JSON.parse(text).event.kind === "ready")
       throw secretFault;
     stdout += text;
+    callback?.();
     return true;
   }) as any);
   vi.spyOn(process.stderr, "write").mockImplementation(((text: string) => {
@@ -1396,6 +1479,25 @@ for (const scenario of [
   "response-promise",
 ]) {
   it(`public hook unit chain preserves original returns/identity: ${scenario}`, async () => {
+    if (scenario === "no-diagnostic-room") {
+      // v2's larger aggregate and strict metadata no longer allow the old
+      // malformed tool-name flood. Exercise the unchanged live diagnostic writer
+      // at its new remaining-capacity boundary (injected accounting, not native).
+      const source = readFileSync(
+        new URL("../src/sdk-worker.mjs", import.meta.url),
+        "utf8",
+      );
+      const body = source.slice(
+        source.indexOf("const emitFailure ="),
+        source.indexOf("\ntry {"),
+      );
+      const output = new Function(
+        "LIMITS",
+        `let bytes=LIMITS.childProtocolBytes-51; const emitter=undefined; const failure={stage:"prompt",class:"sdk-failure"}; const sdkEvents=0,inputBytes=0,modelOutputBytes=0,terminalStopReason="UNKNOWN",preflight="UNKNOWN",requestPrepared=false,actualResponseStatus="UNKNOWN",cleanupFailures=0,cleanupSettled=true; let output=""; const process={stderr:{write(text){output+=text;}}}; ${body}; emitFailure(); return output;`,
+      )(LIMITS);
+      expect(output).toBe("");
+      return;
+    }
     const result = await mockedWorker(scenario);
     expect(result).toMatchObject({
       exitCode: 0,
@@ -1406,7 +1508,7 @@ for (const scenario of [
       payloadCalls: 1,
       responseCalls: 1,
     });
-    expect(result.stdout).toBe(
+    expect(captureSummary(result.stdout), result.stderr).toBe(
       '{"type":"ready"}\n{"type":"final","text":"WIRE_OK","stopReason":"stop"}\n',
     );
   });
@@ -1450,24 +1552,55 @@ for (const scenario of [
   "diagnostic-write-throw",
 ]) {
   it(`fixed diagnostic unit fault/cleanup/privacy: ${scenario}`, async () => {
+    if (scenario === "no-diagnostic-room") {
+      // v2's larger aggregate and strict metadata no longer allow the old
+      // malformed tool-name flood. Exercise the unchanged live diagnostic writer
+      // at its new remaining-capacity boundary (injected accounting, not native).
+      const source = readFileSync(
+        new URL("../src/sdk-worker.mjs", import.meta.url),
+        "utf8",
+      );
+      const body = source.slice(
+        source.indexOf("const emitFailure ="),
+        source.indexOf("\ntry {"),
+      );
+      const output = new Function(
+        "LIMITS",
+        `let bytes=LIMITS.childProtocolBytes-51; const emitter=undefined; const failure={stage:"prompt",class:"sdk-failure"}; const sdkEvents=0,inputBytes=0,modelOutputBytes=0,terminalStopReason="UNKNOWN",preflight="UNKNOWN",requestPrepared=false,actualResponseStatus="UNKNOWN",cleanupFailures=0,cleanupSettled=true; let output=""; const process={stderr:{write(text){output+=text;}}}; ${body}; emitFailure(); return output;`,
+      )(LIMITS);
+      expect(output).toBe("");
+      return;
+    }
     const result = await mockedWorker(scenario);
+    if (scenario === "session") {
+      // Public capability absence must not be repaired by assigning a new JS
+      // property that an older agent loop would silently ignore.
+      const unsupported = await mockedWorker("unsupported-tool-mode");
+      expect(unsupported).toMatchObject({
+        exitCode: 1,
+        stdout: "",
+        requests: 0,
+        disposed: true,
+      });
+      expect(diagnostic(unsupported.stderr)).toMatchObject({
+        stage: "session",
+        class: "capture-unsupported",
+        preflight: "UNKNOWN",
+      });
+    }
     expect(result.exitCode).toBe(1);
     expect(result.stderr).not.toContain("fabricated");
     expect(result.stderr).not.toContain("secret");
     expect(result.stdout).not.toContain("fabricated");
     if (scenario === "diagnostic-write-throw") {
       expect(result.stderr).toBe("");
-      expect(result.stdout).toBe('{"type":"ready"}\n');
+      expect(captureSummary(result.stdout), result.stderr).toBe(
+        '{"type":"ready"}\n',
+      );
       expect(result.disposed).toBe(true);
       return;
     }
-    if (["no-diagnostic-room", "aggregate-bound"].includes(scenario)) {
-      expect(result.stderr).toBe("");
-      expect(Buffer.byteLength(result.stdout)).toBe(
-        256 * 1024 - (scenario === "no-diagnostic-room" ? 51 : 23),
-      );
-      return;
-    }
+
     const d = diagnostic(result.stderr);
     const beforeReady = [
       "input-bound",
@@ -1514,8 +1647,8 @@ for (const scenario of [
       });
     else if (scenario === "ready-throw")
       expect(d).toMatchObject({
-        stage: "ready",
-        class: "sdk-failure",
+        stage: "events",
+        class: "event-projection-failed",
         sdkEvents: 0,
       });
     else if (scenario === "preflight")
@@ -1545,7 +1678,7 @@ for (const scenario of [
       if (cleanup) {
         expect(result.disposed).toBe(true);
         expect(d.terminalStopReason).toBe("stop");
-        expect(result.stdout).toContain('"type":"final"'); // Final does not erase nonzero cleanup.
+        expect(captureSummary(result.stdout)).toContain('"type":"final"'); // Final does not erase nonzero cleanup.
         expect(d.cleanupFailures).toBe(
           scenario.startsWith("abort")
             ? 2
@@ -1554,6 +1687,15 @@ for (const scenario of [
               : 1,
         );
       }
+    } else if (
+      ["line-bound", "frame-bound", "aggregate-bound", "final-bound"].includes(
+        scenario,
+      )
+    ) {
+      expect(d).toMatchObject({
+        stage: "events",
+        class: "event-projection-failed",
+      });
     } else if (scenario.endsWith("-bound")) {
       expect(d).toMatchObject({
         stage: "outputbounds",
@@ -1582,12 +1724,13 @@ for (const scenario of [
         )
           ? "UNKNOWN"
           : scenario === "validation-mismatch"
-            ? "stop"
+            ? "length"
             : scenario,
       });
-    if (beforeReady) expect(result.stdout).toBe("");
+    if (beforeReady)
+      expect(captureSummary(result.stdout), result.stderr).toBe("");
     else if (!/^(abort|dispose|unsubscribe)-/.test(scenario))
-      expect(result.stdout).not.toContain('"type":"final"');
+      expect(captureSummary(result.stdout)).not.toContain('"type":"final"');
   });
 }
 
@@ -1602,7 +1745,7 @@ const observedHooks = (stream: (...args: any[]) => any) => {
   const start = source.indexOf(
     "  const stream = session.agent.streamFunction;",
   );
-  const end = source.indexOf("  let protocolFailed = false;", start);
+  const end = source.indexOf("  // Public awaited core subscription", start);
   expect(start).toBeGreaterThan(0);
   expect(end).toBeGreaterThan(start);
   return new Function(
@@ -1909,6 +2052,12 @@ const eventFaults = [
   "tool-getter",
 ] as const;
 const rawCanary = "FABRICATED_RAW_NODE_LEAK_CANARY";
+const captureFixtureImports = `    import { LIMITS, closed, decodeWorkerPublicRequest, parseWireJson } from ${JSON.stringify(new URL("../src/worker-public.mjs", import.meta.url).href)};
+    import { CaptureEmitter, SdkCapture } from ${JSON.stringify(new URL("../src/worker-capture.mjs", import.meta.url).href)};
+    import { own } from ${JSON.stringify(new URL("../src/worker-redaction.mjs", import.meta.url).href)};
+    import { captureBash, ToolIngress } from ${JSON.stringify(new URL("../src/worker-tools.mjs", import.meta.url).href)};
+    const createLocalBashOperations = () => { throw new Error("Fixture bash forbidden"); };
+`;
 const mockBootstrap = (
   lane: string,
   delivery = "awaited",
@@ -1974,7 +2123,7 @@ const mockBootstrap = (
     let selectedModel;
     const counts = {subscribes:0,prompts:0,streamReads:0,requests:0};
     const thinkingLane = lane.startsWith("thinking-");
-    const message = {role:"assistant",stopReason:"stop"};
+    const message = {role:"assistant",stopReason:"stop",content:[{type:"text",text:"WIRE_OK"}]};
     const fixtureSession = {
       get thinkingLevel() {
         thinkingReads++;
@@ -1987,8 +2136,8 @@ const mockBootstrap = (
         return sessionThinkingLevel;
       },
       get model() { modelReads++; return selectedModel; },
-      messages:[message], getLastAssistantText:()=>"WIRE_OK",
-      agent:{get streamFunction() { counts.streamReads++; return ()=>{ counts.requests++; }; },
+      messages:[message], systemPrompt:"fixture", getLastAssistantText:()=>"WIRE_OK",
+      agent:{state:{tools:[]},toolExecution:"parallel", subscribe(callback) { return fixtureSession.subscribe(callback); }, get streamFunction() { counts.streamReads++; return ()=>{ counts.requests++; }; },
         set streamFunction(value) { this.wrapped = value; }},
       subscribe(callback) {
         counts.subscribes++;
@@ -2012,7 +2161,7 @@ const mockBootstrap = (
         if (thinkingLane) await this.agent.wrapped(this.model,{},{});
         if (lane === "preflight-resolve") {
           options.preflightResult(false);
-          assert.equal(listener({type:"message_end",message}), undefined);
+          await listener({type:"message_start",message:{role:"assistant"}}); await listener({type:"message_end",message});
           return; // Negative peer: reject callback, but valid stop and resolve.
         }
         options.preflightResult(true);
@@ -2020,9 +2169,9 @@ const mockBootstrap = (
         if (lane === "event-abort-reject" || lane.startsWith("event-") ||
             /^(message|role|stop|update|delta|tool)-/.test(lane)) {
           const event = lane === "event-abort-reject" ? getter({type:"message_end"},"message") : badEvent();
-          const dispatch = () => {
+          const dispatch = async () => {
             deliveries++;
-            assert.equal(listener(event), undefined);
+            await listener(event);
           };
           if (delivery === "independent") {
             // Deliberately NOT chained to/awaited by prompt and NO rejection
@@ -2033,7 +2182,7 @@ const mockBootstrap = (
             for (let n=0;n<3;n++) await Promise.resolve().then(dispatch);
           }
         }
-        assert.equal(listener({type:"message_end",message}), undefined);
+        await listener({type:"message_start",message:{role:"assistant"}}); await listener({type:"message_end",message});
       },
     };
     const adapters = {"openai-completions":async()=>({})};
@@ -2061,6 +2210,8 @@ const mockBootstrap = (
       if (lane === "thinking-absent") delete fixtureSession.thinkingLevel;
       return {session:fixtureSession};
     };
+
+    ${captureFixtureImports}
     ${source.slice(start)}
     assert.equal(thinkingReads,lane === "thinking-absent" ? 0 : 1);
     if (thinkingLane) {
@@ -2092,11 +2243,22 @@ for (const thinkingLevel of [
       cwd,
       JSON.stringify({ ...fixtureRequest(cwd), thinkingLevel }),
       true,
-      mockBootstrap("thinking-match", "awaited", thinkingLevel),
+      thinkingLevel === "max"
+        ? undefined
+        : mockBootstrap("thinking-match", "awaited", thinkingLevel),
     );
+    if (thinkingLevel === "max") {
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(diagnostic(result.stderr)).toMatchObject({
+        stage: "parse",
+        class: "parse-failed",
+      });
+      return;
+    }
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
-    expect(result.stdout).toBe(
+    expect(captureSummary(result.stdout), result.stderr).toBe(
       '{"type":"ready"}\n{"type":"final","text":"WIRE_OK","stopReason":"stop"}\n',
     );
     expect(readdirSync(cwd)).toEqual([]);
@@ -2120,7 +2282,7 @@ for (const lane of [
       mockBootstrap(`thinking-${lane}`, "awaited", "high"),
     );
     expect(result.exitCode).toBe(1);
-    expect(result.stdout).toBe("");
+    expect(captureSummary(result.stdout), result.stderr).toBe("");
     expect(result.stderr).not.toContain(rawCanary);
     expect(result.stderr).not.toMatch(
       /Error:|UnhandledPromiseRejection|\bat file:|\bat async/,
@@ -2149,7 +2311,9 @@ it("raw native mock preserves first failure before unsettled cleanup", async () 
     mockBootstrap("cleanup-unsettled"),
   );
   expect(result.exitCode).toBe(1);
-  expect(result.stdout).toBe('{"type":"ready"}\n');
+  expect(captureSummary(result.stdout), result.stderr).toBe(
+    '{"type":"ready"}\n',
+  );
   expect(result.stderr).not.toContain(rawCanary);
   expect(result.stderr).not.toMatch(
     /Error:|UnhandledPromiseRejection|\bat file:|\bat async/,
@@ -2179,7 +2343,9 @@ for (const delivery of ["awaited", "independent"] as const) {
         mockBootstrap(lane, delivery),
       );
       expect(result.exitCode).toBe(1);
-      expect(result.stdout).toBe('{"type":"ready"}\n');
+      expect(captureSummary(result.stdout), result.stderr).toBe(
+        '{"type":"ready"}\n',
+      );
       expect(result.stderr).not.toContain(rawCanary);
       expect(result.stderr).not.toMatch(
         /Error:|UnhandledPromiseRejection|\bat file:|\bat async/,
@@ -2187,7 +2353,7 @@ for (const delivery of ["awaited", "independent"] as const) {
       expect(diagnostic(result.stderr)).toMatchObject({
         stage: "events",
         class: "event-projection-failed",
-        sdkEvents: 4,
+        sdkEvents: 5,
         terminalStopReason: "stop",
         preflight: "accepted",
         requestPrepared: false,
@@ -2221,7 +2387,7 @@ for (const lane of [
       /Error:|UnhandledPromiseRejection|\bat file:|\bat async/,
     );
     const cleanup = !["preflight-resolve", "prompt-opaque"].includes(lane);
-    expect(result.stdout).toBe(
+    expect(captureSummary(result.stdout), result.stderr).toBe(
       cleanup
         ? '{"type":"ready"}\n{"type":"final","text":"WIRE_OK","stopReason":"stop"}\n'
         : '{"type":"ready"}\n',
@@ -2410,7 +2576,7 @@ for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
         .update(readFileSync(new URL("../src/sdk-worker.mjs", import.meta.url)))
         .digest("hex");
       expect(workerSha256).toBe(
-        "12fff81671cc0bd1d3011f43f9364531bba0a08007dd1abe728de00a676022f3",
+        "55016e65b7b10bbf3d360ae4828fb47395972fcc062afba3018c6a2250512544",
       );
       let productionObserved = false;
       let pid: number | undefined;
@@ -2600,7 +2766,7 @@ for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
         truncated: false,
       });
       expect(result.durationMs).toBeLessThan(15000);
-      expect(stdout).toBe('{"type":"ready"}\n');
+      expect(captureSummary(stdout)).toBe('{"type":"ready"}\n');
       for (const canary of [
         key,
         literal,
@@ -2688,9 +2854,9 @@ const networkResourceBootstrap = (lane: string, mask = 0) => {
     const fixtureSession = {
       get thinkingLevel() { return sessionThinkingLevel; },
       model: undefined,
-      messages:[{role:"assistant",stopReason:"stop"}],
+      systemPrompt:"fixture", messages:[{role:"assistant",stopReason:"stop",content:[{type:"text",text:"WIRE_OK"}]}],
       getLastAssistantText:()=>"WIRE_OK",
-      agent:{streamFunction:()=>{ counts.requests++; }},
+      agent:{state:{tools:[]},toolExecution:"parallel", subscribe(callback) { return session.subscribe(callback); },streamFunction:()=>{ counts.requests++; }},
       subscribe(listener) {
         this.listener = listener;
         return () => {
@@ -2714,9 +2880,9 @@ const networkResourceBootstrap = (lane: string, mask = 0) => {
         options.preflightResult(true);
         if (lane === "prompt-fault" || lane === "pending-close") throw fault;
         if (lane === "pending-abort" || lane === "pending-abort-close-reject")
-          this.listener(null); // Starts the coalesced pending SDK abort.
+          await this.listener(null); // Starts the coalesced pending SDK abort.
         else await this.agent.streamFunction(this.model, {}, {});
-        this.listener({type:"message_end",message:this.messages[0]});
+        await this.listener({type:"message_start",message:{role:"assistant"}}); await this.listener({type:"message_end",message:this.messages[0]});
       },
     };
     const importUndiciFixture = async () => {
@@ -2838,6 +3004,7 @@ const networkResourceBootstrap = (lane: string, mask = 0) => {
       }
     };
     if (pending) process.once("beforeExit",verify);
+    ${captureFixtureImports}
     ${body.replace('await import("undici")', "await importUndiciFixture()")}
     verify();
     assert.equal(cleanupSettled,true);
@@ -2894,7 +3061,7 @@ for (const lane of [
     const pending = lane.startsWith("pending-");
     const promptFault = lane === "prompt-fault" || lane === "pending-close";
     expect(result.exitCode).toBe(success ? 0 : 1);
-    expect(result.stdout).toBe(
+    expect(captureSummary(result.stdout), result.stderr).toBe(
       success || cleanup
         ? '{"type":"ready"}\n{"type":"final","text":"WIRE_OK","stopReason":"stop"}\n'
         : pending || promptFault
@@ -2945,7 +3112,7 @@ for (let mask = 8; mask <= 15; mask++) {
       networkResourceBootstrap("cleanup-mask", mask),
     );
     expect(result.exitCode).toBe(1);
-    expect(result.stdout).toBe(
+    expect(captureSummary(result.stdout), result.stderr).toBe(
       '{"type":"ready"}\n{"type":"final","text":"WIRE_OK","stopReason":"stop"}\n',
     );
     expect(diagnostic(result.stderr)).toMatchObject({
@@ -3196,7 +3363,7 @@ for (const encoding of ["identity", "gzip"] as const) {
         text: "WIRE_OK",
         truncated: false,
       });
-      expect(stdout).toBe(
+      expect(captureSummary(stdout)).toBe(
         '{"type":"ready"}\n{"type":"final","text":"WIRE_OK","stopReason":"stop"}\n',
       );
       expect(startup.workerStderr).toBe("");

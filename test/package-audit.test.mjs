@@ -111,16 +111,53 @@ function sourceFixture() {
     expected.push(`package/${relative}`);
   }
   writeFileSync(path.join(root, "provenance/adapted-modules.yaml"), pins);
+  writeFileSync(path.join(root, "notice.txt"), "fixture notice");
+  entries.push(header("package/notice.txt", 48, "fixture notice"));
+  expected.push("package/notice.txt");
+  writeFileSync(
+    path.join(root, "provenance/bundled-notices.json"),
+    JSON.stringify({
+      noticeFile: "notice.txt",
+      noticeSha256: sha256("fixture notice"),
+      fonts: [],
+    }),
+  );
   return { root, expected, file: archive(entries) };
 }
 it("rejects same-member changed bodies and missing members", () => {
   const f = sourceFixture();
-  expect(auditPackage(f.file, f.root, f.expected).members).toHaveLength(3);
+  expect(auditPackage(f.file, f.root, f.expected).members).toHaveLength(4);
   expect(() => auditPackage(f.file, f.root, f.expected.slice(1))).toThrow(
     "member-drift",
   );
   writeFileSync(path.join(f.root, "agents/design-explorer.md"), "changed");
   expect(() => auditPackage(f.file, f.root, f.expected)).toThrow("body-drift");
+});
+it("rejects extracted extras and linked roots even when selected bodies match", () => {
+  const f = sourceFixture();
+  const extracted = path.join(f.root, "extracted");
+  mkdirSync(path.join(extracted, "agents"), { recursive: true });
+  for (const member of f.expected)
+    writeFileSync(
+      path.join(extracted, member.slice(8)),
+      readFileSync(path.join(f.root, member.slice(8))),
+    );
+  expect(
+    auditPackage(f.file, extracted, f.expected, f.root).members,
+  ).toHaveLength(4);
+  writeFileSync(path.join(extracted, "extra"), "unreviewed");
+  expect(() => auditPackage(f.file, extracted, f.expected, f.root)).toThrow(
+    "extracted-extra",
+  );
+  const alias = path.join(f.root, "alias");
+  symlinkSync(
+    extracted,
+    alias,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  expect(() => auditPackage(f.file, alias, f.expected, f.root)).toThrow(
+    "source-link",
+  );
 });
 it("rejects mismatched Agent provenance even when bodies match", () => {
   const f = sourceFixture();

@@ -122,15 +122,27 @@ function parseRecord(data) {
 function absent(error) {
   return object(error) && error.code === "ENOENT";
 }
-function safeDirectory(path, create = false) {
+function safeDirectory(path, create = false, inspectExisting) {
   const full = resolve(path);
   const root = parse(full).root;
+  if (inspectExisting) {
+    const st = lstatSync(root);
+    if (!st.isDirectory() || st.isSymbolicLink())
+      throw new Error("Unsafe directory");
+    inspectExisting(root, st);
+  }
   let at = root;
   for (const part of full.slice(root.length).split(sep).filter(Boolean)) {
     at = join(at, part);
+    let existing;
     try {
-      if (!lstatSync(at).isDirectory() || lstatSync(at).isSymbolicLink())
+      const st = lstatSync(at);
+      if (!st.isDirectory())
         throw new Error("Unsafe directory");
+      const checked = lstatSync(at);
+      if (checked.isSymbolicLink() || inspectExisting && !checked.isDirectory())
+        throw new Error("Unsafe directory");
+      existing = checked;
     } catch (error) {
       if (!absent(error))
         throw error;
@@ -145,6 +157,8 @@ function safeDirectory(path, create = false) {
       if (!lstatSync(at).isDirectory() || lstatSync(at).isSymbolicLink())
         throw new Error("Unsafe directory");
     }
+    if (existing)
+      inspectExisting?.(at, existing);
   }
   return true;
 }

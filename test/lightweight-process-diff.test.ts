@@ -23,6 +23,7 @@ import { TaskController } from "../src/task-controller.ts";
 import { captureChanges } from "../src/task-diff.ts";
 import { resolveWorkspace, TaskStore } from "../src/task-store.ts";
 import { diagnosticText } from "../src/verification-diagnostics.ts";
+import { v2Frames } from "./helpers/worker-v2.ts";
 
 // Observe actual launch arguments without replacing native execution.
 vi.mock("node:child_process", async (importOriginal) => {
@@ -81,11 +82,16 @@ function node(
 // separately verify spawn options, real EOF/exit and injected parent-side
 // Writable faults on actual child pipes (not native reader-close evidence).
 function lifecycleChild(input?: string) {
-  const stream = () =>
-    Object.assign(new EventEmitter(), {
+  const stream = () => {
+    const result = Object.assign(new EventEmitter(), {
       end: vi.fn(),
       destroy: vi.fn(),
     });
+    result.end.mockImplementation(() => {
+      result.emit("finish");
+    });
+    return result;
+  };
   const child = Object.assign(new EventEmitter(), {
     stdin: input === undefined ? null : stream(),
     stdout: stream(),
@@ -99,9 +105,19 @@ function lifecycleChild(input?: string) {
   return child;
 }
 
-const validFrames = Buffer.from(
-  '{"type":"ready"}\n{"type":"final","text":"transport-final","stopReason":"stop"}\n',
-);
+const validFrames = Buffer.from(v2Frames("transport-final"));
+const workerFrames = (
+  child: ReturnType<typeof lifecycleChild>,
+  text = "transport-final",
+  tool?: string,
+) =>
+  Buffer.from(
+    v2Frames(
+      text,
+      JSON.parse(child.stdin!.end.mock.calls[0][0]).request.childRunId,
+      tool,
+    ),
+  );
 
 describe("demand-based stdin transport", () => {
   it.each([
@@ -327,7 +343,11 @@ describe("demand-based stdin transport", () => {
     async (order) => {
       const request = {
         cwd: temporary(),
-        model: {},
+        model: {
+          id: "fixture",
+          provider: "fixture",
+          api: "openai-completions",
+        },
         auth: { ok: true as const },
         kind: "code" as const,
         prompt: "synthetic payload",
@@ -341,15 +361,22 @@ describe("demand-based stdin transport", () => {
         "pipe",
         "pipe",
       ]);
-      expect(child.stdin?.end).toHaveBeenCalledExactlyOnceWith(input);
-      expect(Buffer.byteLength(input)).toBeLessThanOrEqual(128 * 1024);
+      expect(child.stdin?.end).toHaveBeenCalledTimes(1);
+      const actualInput = child.stdin!.end.mock.calls[0][0];
+      expect(JSON.parse(actualInput)).toMatchObject({
+        cwd: request.cwd,
+        model: request.model,
+        auth: request.auth,
+        request: { protocol: 2, prompt: request.prompt },
+      });
+      expect(Buffer.byteLength(actualInput)).toBeLessThanOrEqual(128 * 1024);
       let settled = false;
       void run.then(() => {
         settled = true;
       });
       // The production data handler synchronously parses both valid frames.
       // The no-error twin below proves the same frames yield the final text.
-      child.stdout.emit("data", validFrames);
+      child.stdout.emit("data", workerFrames(child));
       const error = () =>
         child.stdin?.emit(
           "error",
@@ -478,7 +505,7 @@ describe("SDK-only validated egress (labelled lifecycle mocks, not native waits)
   };
   const request = (): WorkerRequest => ({
     cwd: temporary(),
-    model: {},
+    model: { id: "fixture", provider: "fixture", api: "openai-completions" },
     auth: { ok: true },
     kind: "code",
     prompt: "fixed synthetic request",
@@ -532,8 +559,20 @@ describe("SDK-only validated egress (labelled lifecycle mocks, not native waits)
       windowsHide: true,
     });
     expect(launch[2]?.windowsVerbatimArguments).toBeUndefined();
-    expect(child.stdin?.end).toHaveBeenCalledExactlyOnceWith(input);
-    child.stdout.emit("data", validFrames);
+    expect(child.stdin?.end).toHaveBeenCalledTimes(1);
+    const envelope = JSON.parse(child.stdin!.end.mock.calls[0][0]);
+    expect(envelope).toMatchObject({
+      cwd: wire.cwd,
+      model: wire.model,
+      auth: wire.auth,
+      request: {
+        protocol: 2,
+        taskKind: wire.kind,
+        prompt: wire.prompt,
+        instructions: wire.instructions,
+      },
+    });
+    child.stdout.emit("data", workerFrames(child));
     child.emit("close", 0, null);
     expect(await run).toMatchObject({
       outcome: "completed",
@@ -1095,23 +1134,26 @@ describe("SDK-only validated egress (labelled lifecycle mocks, not native waits)
       const run = runWorker(wire, new AbortController().signal, (text) =>
         progress.push(text),
       );
-      child.stdout.emit("data", Buffer.from('{"type":"ready"}\n'));
-      if (mode === "tool-name")
-        child.stdout.emit(
-          "data",
-          Buffer.from('{"type":"tool","name":"fixturesecret"}\n'),
-        );
-      if (mode === "malformed-tool")
-        child.stdout.emit(
-          "data",
-          Buffer.from(`${JSON.stringify({ type: "tool", name: proxy })}\n`),
-        );
-      else {
-        const text = mode === "final" ? `safe ${proxy}` : "safe";
+      if (mode === "malformed-tool") {
+        const frames = workerFrames(child, "safe")
+          .toString()
+          .trimEnd()
+          .split("\n");
+        child.stdout.emit("data", Buffer.from(`${frames[0]}\n`));
         child.stdout.emit(
           "data",
           Buffer.from(
-            `${JSON.stringify({ type: "final", text, stopReason: "stop" })}\n`,
+            `${JSON.stringify({ ...JSON.parse(frames[1]), event: { kind: "tool-start", name: proxy } })}\n`,
+          ),
+        );
+      } else {
+        const text = mode === "final" ? `safe ${proxy}` : "safe";
+        child.stdout.emit(
+          "data",
+          workerFrames(
+            child,
+            text,
+            mode === "tool-name" ? "fixturesecret" : undefined,
           ),
         );
         const bytes = Buffer.from(
@@ -1239,7 +1281,7 @@ describe("bounded real process owner", () => {
   it("even tool-name progress redacts known request secrets", async () => {
     const progress: string[] = [];
     const result = await node(
-      `for (const event of [{type:'ready'},{type:'tool',name:'fixturesecret'},{type:'final',text:'Done',stopReason:'stop'}]) console.log(JSON.stringify(event));`,
+      `process.stdout.write(${JSON.stringify(v2Frames("Done", undefined, "fixturesecret"))});`,
       {
         protocol: true,
         secrets: ["fixturesecret"],
@@ -1253,7 +1295,11 @@ describe("bounded real process owner", () => {
     const result = await runWorker(
       {
         cwd: temporary(),
-        model: {},
+        model: {
+          id: "fixture",
+          provider: "fixture",
+          api: "openai-completions",
+        },
         auth: {
           ok: true,
           env: { AWS_SHARED_CREDENTIALS_FILE: "/fabricated/not-read" },
@@ -1279,7 +1325,7 @@ describe("bounded real process owner", () => {
   });
 
   it("requires valid protocol final AND native zero close", async () => {
-    const frames = `console.log(JSON.stringify({type:'ready'}));console.log(JSON.stringify({type:'final',text:'Done',stopReason:'stop'}));`;
+    const frames = `process.stdout.write(${JSON.stringify(v2Frames("Done"))});`;
     // Protocol-only fixtures may omit input: ignored EOF does not waive any
     // framing/final/close obligation. runWorker always supplies its JSON input.
     const complete = await node(frames, { protocol: true });
@@ -1294,7 +1340,7 @@ describe("bounded real process owner", () => {
       "",
       "console.log('broken')",
       `${frames}process.exitCode=2;`,
-      `console.log(JSON.stringify({type:'ready'}));`,
+      `process.stdout.write(${JSON.stringify(`${v2Frames("Done").split("\n")[0]}\n`)});`,
       `${frames}${frames}`,
     ])
       expect((await node(code, { protocol: true })).outcome).toBe("failed");
@@ -1497,4 +1543,72 @@ describe("readonly dirty/change observations", () => {
     writeFileSync(join(root, "huge"), Buffer.alloc(1024 * 1024 + 1));
     expect(captureChanges(root).complete).toBe(false);
   });
+});
+
+it.each(["timeout", "protocol"] as const)(
+  "automatic %s stop checks a lost/throwing service lease before TERM and KILL (injected native handle)",
+  async (cause) => {
+    vi.useFakeTimers();
+    const child = lifecycleChild();
+    const guard = vi.fn(() => {
+      if (cause === "protocol") throw new Error("injected lost lease");
+      return false;
+    });
+    try {
+      const original = node("unused injected process", {
+        timeoutMs: 100,
+        protocol: cause === "protocol",
+        maySignal: guard,
+      });
+      if (cause === "protocol")
+        child.stdout.emit("data", Buffer.from("not-json\n"));
+      else await vi.advanceTimersByTimeAsync(100);
+      expect(guard).toHaveBeenCalledTimes(1);
+      expect(child.kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(guard).toHaveBeenCalledTimes(2);
+      expect(child.kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(2000);
+      const result = await original;
+      expect(result).toMatchObject({
+        outcome: "unknown",
+        closed: false,
+        exitCode: null,
+        signal: null,
+      });
+      child.emit("close", 0, null);
+      expect(await original).toBe(result);
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("service signal guard rechecks TERM and KILL separately and unknown is not close (injected native handle)", async () => {
+  vi.useFakeTimers();
+  const child = lifecycleChild();
+  const abort = new AbortController();
+  let owned = true;
+  const guard = vi.fn(() => owned);
+  try {
+    const original = node("unused injected process", {
+      signal: abort.signal,
+      maySignal: guard,
+    });
+    abort.abort();
+    expect(child.kill).toHaveBeenCalledExactlyOnceWith("SIGTERM");
+    owned = false;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(guard).toHaveBeenCalledTimes(2);
+    expect(child.kill).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(await original).toMatchObject({
+      outcome: "unknown",
+      closed: false,
+      exitCode: null,
+      signal: null,
+    });
+  } finally {
+    vi.useRealTimers();
+  }
 });

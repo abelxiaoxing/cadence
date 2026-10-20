@@ -1,6 +1,6 @@
 // Strict real archive audit shared by development pack gates, never shipped.
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
 
@@ -13,6 +13,7 @@ function safe(name) {
   return (
     name.startsWith("package/") &&
     !name.includes("\\") &&
+    !/[\p{Cc}\p{Cf}\p{Cs}\uFFFD]/u.test(name) &&
     [...name].every((c) => c.charCodeAt(0) >= 32 && c.charCodeAt(0) !== 127) &&
     name.split("/").every((s) => s && s !== "." && s !== "..")
   );
@@ -83,6 +84,15 @@ export function auditPackage(
     !expected.every(safe)
   )
     refuse("manifest");
+  // Reject links in the supplied root AND every ancestor before any body read.
+  let ancestor = path.resolve(sourceRoot);
+  for (;;) {
+    const stat = lstatSync(ancestor);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) refuse("source-link");
+    const parent = path.dirname(ancestor);
+    if (parent === ancestor) break;
+    ancestor = parent;
+  }
   const bodies = archiveBodies(archive);
   if (
     JSON.stringify([...bodies.keys()].sort()) !==
@@ -98,6 +108,25 @@ export function auditPackage(
     const stat = lstatSync(file);
     if (!stat.isFile() || stat.nlink !== 1 || !bytes.equals(readFileSync(file)))
       refuse("body-drift");
+  }
+  if (path.resolve(sourceRoot) !== path.resolve(provenanceRoot)) {
+    const allowed = new Set(expected.map((name) => name.slice(8)));
+    const directories = new Set();
+    for (const name of allowed) {
+      const parts = name.split("/");
+      for (let i = 1; i < parts.length; i++)
+        directories.add(parts.slice(0, i).join("/"));
+    }
+    const walk = (directory, prefix = "") => {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const name = prefix + entry.name;
+        if (entry.isDirectory() && directories.has(name))
+          walk(path.join(directory, entry.name), `${name}/`);
+        else if (!entry.isFile() || !allowed.has(name))
+          refuse("extracted-extra");
+      }
+    };
+    walk(sourceRoot);
   }
   const provenance = readFileSync(
     path.join(provenanceRoot, "provenance/adapted-modules.yaml"),
@@ -119,6 +148,26 @@ export function auditPackage(
       sha256(bodies.get(`package/agents/${role}.md`) ?? Buffer.alloc(0))
     )
       refuse("agent-pin");
+  }
+  // The independently recorded license/font body policy is not inferred from tar.
+  const notices = JSON.parse(
+    readFileSync(
+      path.join(provenanceRoot, "provenance/bundled-notices.json"),
+      "utf8",
+    ),
+  );
+  if (
+    sha256(bodies.get(`package/${notices.noticeFile}`) ?? Buffer.alloc(0)) !==
+    notices.noticeSha256
+  )
+    refuse("notice-drift");
+  for (const font of notices.fonts) {
+    if (
+      sha256(
+        bodies.get(`package/web/dist/${font.asset}`) ?? Buffer.alloc(0),
+      ) !== font.sha256
+    )
+      refuse("font-drift");
   }
   return {
     members: [...bodies.keys()].sort(),

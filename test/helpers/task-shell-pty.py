@@ -18,6 +18,21 @@ import time
 config = json.load(open(sys.argv[1], encoding="utf-8"))
 root = config["root"]
 control = config["controlFd"]
+# Additional readonly mixed-client lane, never a replacement for the HTTP4
+# production barrier. Exact finite interactions cannot confirm Start or Cancel.
+observer_run = config.get("readonlyObserverRun")
+if observer_run is not None:
+    if not re.fullmatch(r"[0-9a-f-]{36}", observer_run):
+        raise RuntimeError("observer-run-invalid")
+    expected_steps = [
+        {"expect": "Context7", "send": ["/cadence", "\r"]},
+        {"expect": "Cadence service", "send": ["\x1b[B", "\x1b[B", "\x1b[B", "\r"]},
+        {"expect": observer_run, "send": ["\x1b"]},
+        {"expect": "Cadence service", "send": ["\x1b"]},
+        {"expect": "detached locally", "send": ["/quit", "\r"]},
+    ]
+    if config["steps"] != expected_steps:
+        raise RuntimeError("observer-steps-invalid")
 expected_event = {"event": "cancellation-http-pending", "requestOrdinal": 4, "editingOrdinal": 3}
 pid, descriptor = pty.fork()
 if pid == 0:
@@ -147,8 +162,10 @@ try:
                     drain(max(0, min(0.04, until - time.monotonic())))
                 if key == "\x1b":
                     escape_keys.append({"inputHex":"1b","minimumDelayMs":100,"elapsedMs":(time.monotonic()-sent)*1000})
-    if not barrier["consumed"]:
+    if observer_run is None and not barrier["consumed"]:
         raise RuntimeError("control-event-not-consumed")
+    if observer_run is not None and not any(o["pattern"] == observer_run and o["matched"] for o in observations):
+        raise RuntimeError("observer-run-not-seen")
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         drain(max(0, min(0.1, deadline - time.monotonic())))

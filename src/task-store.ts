@@ -12,6 +12,7 @@ import {
   readSync,
   realpathSync,
   renameSync,
+  type Stats,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -45,16 +46,46 @@ function parseRecord(data: Buffer): unknown {
 function absent(error: unknown): boolean {
   return object(error) && error.code === "ENOENT";
 }
-/** Reject links in every existing ancestor. Missing observation never creates paths. */
-export function safeDirectory(path: string, create = false): boolean {
+/** Reject links in every existing ancestor. Missing observation never creates paths.
+ * The readonly hook inspects each existing directory synchronously, including
+ * the root, before visiting its child. It must not await, mutate or retain state
+ * as authority for a later call/effect. Legacy/default traversal is unchanged.
+ */
+export function safeDirectory(path: string, create?: boolean): boolean;
+export function safeDirectory(
+  path: string,
+  create: false,
+  inspectExisting: (path: string, stat: Stats) => void,
+): boolean;
+export function safeDirectory(
+  path: string,
+  create = false,
+  inspectExisting?: (path: string, stat: Stats) => void,
+): boolean {
   const full = resolve(path);
   const root = parse(full).root;
+  if (inspectExisting) {
+    const st = lstatSync(root);
+    if (!st.isDirectory() || st.isSymbolicLink())
+      throw new Error("Unsafe directory");
+    inspectExisting(root, st);
+  }
   let at = root;
   for (const part of full.slice(root.length).split(sep).filter(Boolean)) {
     at = join(at, part);
+    let existing: Stats | undefined;
     try {
-      if (!lstatSync(at).isDirectory() || lstatSync(at).isSymbolicLink())
+      const st = lstatSync(at);
+      if (!st.isDirectory()) throw new Error("Unsafe directory");
+      const checked = lstatSync(at);
+      if (
+        checked.isSymbolicLink() ||
+        (inspectExisting && !checked.isDirectory())
+      )
         throw new Error("Unsafe directory");
+      // Inspect the latest observation, not an earlier stat whose mode/uid
+      // may already have changed. No extra IO or cross-call authority cache.
+      existing = checked;
     } catch (error) {
       if (!absent(error)) throw error;
       if (!create) return false;
@@ -67,6 +98,9 @@ export function safeDirectory(path: string, create = false): boolean {
       if (!lstatSync(at).isDirectory() || lstatSync(at).isSymbolicLink())
         throw new Error("Unsafe directory");
     }
+    // Outside the ENOENT handler: an inspection refusal is never absence and
+    // must not authorize creation, even if its error happens to carry ENOENT.
+    if (existing) inspectExisting?.(at, existing);
   }
   return true;
 }

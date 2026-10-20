@@ -7,10 +7,20 @@ import {
 import {
   createAgentSession,
   createExtensionRuntime,
+  createLocalBashOperations,
   ModelRuntime,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { CaptureEmitter, SdkCapture } from "./worker-capture.mjs";
+import {
+  closed,
+  decodeWorkerPublicRequest,
+  LIMITS,
+  parseWireJson,
+} from "./worker-public.mjs";
+import { own } from "./worker-redaction.mjs";
+import { captureBash, ToolIngress } from "./worker-tools.mjs";
 
 const adapters = {
   "openai-completions": () =>
@@ -31,7 +41,10 @@ const adapters = {
 let session;
 let ownedAgent;
 let unsubscribe;
-let count = 0;
+let emitter;
+let capture;
+let ingress;
+let stdoutFailureListener;
 let bytes = 0;
 let inputBytes = 0;
 let sdkEvents = 0;
@@ -50,6 +63,27 @@ const fail = (where, category) => {
   failure ??= { stage: where, class: category };
   process.exitCode = 1;
   if (first) {
+    if (
+      emitter?.state.position.workerSeq &&
+      !emitter.state.position.final &&
+      !emitter.broken
+    ) {
+      try {
+        void emitter
+          .emit({
+            kind: "worker-failure",
+            code:
+              where === "cleanup"
+                ? "cleanup"
+                : where === "network"
+                  ? "network"
+                  : "capture",
+          })
+          .catch(() => {});
+      } catch {
+        /* A failed capture cannot fabricate a failure receipt. */
+      }
+    }
     // A cleanup promise can remain unsettled after all native handles close.
     // Preserve the observed failure before awaiting it, without claiming cleanup.
     try {
@@ -75,23 +109,19 @@ const abortForFailure = () => {
     }
   })();
 };
-const emit = (value) => {
-  const line = `${JSON.stringify(value)}\n`;
-  bytes += Buffer.byteLength(line);
-  if (++count > 4096 || bytes > 256 * 1024 || Buffer.byteLength(line) > 65536)
-    refuse("outputbounds", "protocol-bound");
-  process.stdout.write(line);
-};
 const emitFailure = () => {
   // Construct from fixed labels/primitives only; never inspect exception text,
   // provider diagnostics, response headers, payloads, usage or tool contents.
   const line = `${JSON.stringify({
     ...failure,
     outcome: "failed",
-    sdkEvents: Math.min(sdkEvents, 4097),
+    sdkEvents: Math.min(sdkEvents, LIMITS.sdkEvents + 1),
     inputBytes: Math.min(inputBytes, 128 * 1024 + 1),
-    modelOutputBytes: Math.min(modelOutputBytes, 256 * 1024 + 1),
-    protocolBytes: Math.min(bytes, 256 * 1024 + 1),
+    modelOutputBytes: Math.min(modelOutputBytes, LIMITS.childProtocolBytes + 1),
+    protocolBytes: Math.min(
+      bytes + (emitter?.state.bytes ?? 0),
+      LIMITS.childProtocolBytes + 1,
+    ),
     terminalStopReason,
     preflight,
     requestPrepared,
@@ -102,7 +132,10 @@ const emitFailure = () => {
   // Diagnostic output shares the existing aggregate cap, not a new allowance.
   const write = (text) => {
     const size = Buffer.byteLength(text);
-    if (bytes + size <= 256 * 1024) {
+    if (
+      bytes + (emitter?.state.bytes ?? 0) + size <=
+      LIMITS.childProtocolBytes
+    ) {
       bytes += size;
       process.stderr.write(text);
     }
@@ -148,7 +181,26 @@ try {
     if (inputBytes > 128 * 1024) refuse("parse", "input-bound");
     chunks.push(chunk);
   }
-  const request = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  const envelope = closed(
+    parseWireJson(
+      new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)),
+      LIMITS.workerRequestBytes,
+    ),
+    ["request", "cwd", "model", "auth"],
+  );
+  const publicRequest = decodeWorkerPublicRequest(envelope.request);
+  const request = {
+    ...envelope,
+    kind:
+      publicRequest.purpose === "edit"
+        ? "code"
+        : publicRequest.purpose === "diagnosis"
+          ? "diagnosis"
+          : "research",
+    prompt: publicRequest.prompt,
+    instructions: publicRequest.instructions,
+    thinkingLevel: publicRequest.model.thinking,
+  };
   stage = "auth-model";
   const { cwd, auth, kind, prompt, instructions, thinkingLevel } = request;
   if (
@@ -173,7 +225,10 @@ try {
   if (
     !Object.hasOwn(adapters, model.api) ||
     typeof model.provider !== "string" ||
-    typeof model.id !== "string"
+    typeof model.id !== "string" ||
+    model.id !== publicRequest.model.model ||
+    model.provider !== publicRequest.model.provider ||
+    model.api !== publicRequest.model.api
   )
     refuse("auth-model", "unsupported-model");
   stage = "setup";
@@ -248,6 +303,26 @@ try {
       throw new Error("Discovery disabled");
     },
   };
+  const secrets = [
+    auth.apiKey ?? "",
+    ...Object.values(auth.headers ?? {}).filter((v) => typeof v === "string"),
+    ...Object.values(auth.env ?? {}),
+    ...(proxy ? [proxy.httpProxy] : []),
+  ];
+  const captureFailure = () => {
+    fail("events", "event-projection-failed");
+    abortForFailure();
+  };
+  emitter = new CaptureEmitter(
+    publicRequest.childRunId,
+    process.stdout,
+    captureFailure,
+    publicRequest,
+  );
+  capture = new SdkCapture(emitter, secrets);
+  ingress = new ToolIngress(secrets, captureFailure, emitter.queue);
+  stdoutFailureListener = captureFailure;
+  process.stdout.on("error", stdoutFailureListener);
   stage = "session";
   const requestedThinkingLevel = thinkingLevel ?? "off";
   const created = await createAgentSession({
@@ -260,6 +335,18 @@ try {
       kind === "code"
         ? ["read", "grep", "find", "ls", "write", "edit", "bash"]
         : ["read", "grep", "find", "ls"],
+    customTools:
+      kind === "code"
+        ? [
+            captureBash(
+              cwd,
+              secrets,
+              captureFailure,
+              createLocalBashOperations,
+              emitter.queue,
+            ),
+          ]
+        : [],
     resourceLoader,
     sessionManager: SessionManager.inMemory(cwd),
     settingsManager: SettingsManager.inMemory({
@@ -312,24 +399,35 @@ try {
     };
     return stream(selected, context, snapshot);
   };
-  let protocolFailed = false;
-  unsubscribe = session.subscribe((event) => {
-    // Protect the whole local projection, not just the awaited prompt chain.
-    // Independently dispatched SDK callbacks must never leak a raw exception.
+  // Public awaited core subscription, not synchronous AgentSession forwarding.
+  if (
+    typeof session.agent.subscribe !== "function" ||
+    !["parallel", "sequential"].includes(session.agent.toolExecution)
+  )
+    refuse("session", "capture-unsupported");
+  session.agent.toolExecution = "sequential";
+  if (session.agent.toolExecution !== "sequential")
+    refuse("session", "capture-unsupported");
+  session.agent.state.tools = ingress.wrap(session.agent.state.tools);
+  unsubscribe = session.agent.subscribe(async (event) => {
     try {
       sdkEvents++;
-      if (!event || typeof event !== "object")
-        throw new Error("Malformed SDK event");
-      const type = event.type;
-      if (typeof type !== "string") throw new Error("Malformed SDK event");
-      if (type === "message_end") {
-        const message = event.message;
-        const role = message?.role;
-        if (typeof role !== "string") throw new Error("Malformed SDK event");
-        if (role === "assistant") {
-          const reason = message.stopReason;
-          if (typeof reason !== "string")
-            throw new Error("Malformed SDK event");
+      if (sdkEvents > LIMITS.sdkEvents) refuse("outputbounds", "event-bound");
+      if (own(event, "type") === "message_update") {
+        const update = own(event, "assistantMessageEvent");
+        const type = own(update, "type");
+        if (type === "text_delta" || type === "thinking_delta") {
+          const delta = own(update, "delta");
+          if (typeof delta !== "string") throw new Error("Malformed SDK event");
+          modelOutputBytes += Buffer.byteLength(delta);
+          if (modelOutputBytes > LIMITS.childProtocolBytes)
+            refuse("outputbounds", "model-output-bound");
+        }
+      }
+      if (own(event, "type") === "message_end") {
+        const message = own(event, "message");
+        if (own(message, "role") === "assistant") {
+          const reason = own(message, "stopReason");
           terminalStopReason = [
             "pending",
             "stop",
@@ -343,47 +441,35 @@ try {
             : "UNKNOWN";
         }
       }
-      if (type === "message_update") {
-        const update = event.assistantMessageEvent;
-        const updateType = update?.type;
-        if (typeof updateType !== "string")
-          throw new Error("Malformed SDK event");
-        if (["text_delta", "thinking_delta"].includes(updateType)) {
-          const delta = update.delta;
-          if (typeof delta !== "string") throw new Error("Malformed SDK event");
-          modelOutputBytes += Buffer.byteLength(delta);
-        }
-      }
-      if (sdkEvents > 4096 || modelOutputBytes > 256 * 1024) {
-        protocolFailed = true;
-        fail(
-          "outputbounds",
-          sdkEvents > 4096 ? "event-bound" : "model-output-bound",
-        );
-        abortForFailure();
-        return;
-      }
-      if (type === "tool_execution_start") {
-        const name = event.toolName;
-        if (typeof name !== "string") throw new Error("Malformed SDK event");
-        try {
-          emit({ type: "tool", name });
-        } catch {
-          protocolFailed = true;
-          fail("outputbounds", "protocol-bound");
-          abortForFailure();
-        }
-      }
+      if (failure) return;
+      await capture.event(event);
     } catch {
-      protocolFailed = true;
       fail("events", "event-projection-failed");
       abortForFailure();
+    } finally {
+      try {
+        ingress.release(event);
+      } catch {
+        fail("events", "event-projection-failed");
+        abortForFailure();
+      }
     }
   });
   stage = "ready";
-  emit({ type: "ready" });
+  await emitter.emit({ kind: "ready", requestProtocol: 2 });
+  await capture.context(publicRequest, session.systemPrompt);
   stage = "prompt";
-  await session.prompt(prompt, {
+  const suppliedPrompt = [
+    publicRequest.context,
+    ...publicRequest.handoff.inputs.map(
+      (input) =>
+        `Dependency ${input.assignmentId} (recorded input):\n${input.text}`,
+    ),
+    prompt,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  await session.prompt(suppliedPrompt, {
     expandPromptTemplates: false,
     preflightResult: (accepted) => {
       preflight = accepted ? "accepted" : "rejected";
@@ -391,19 +477,19 @@ try {
     },
   });
   stage = "assistant-final";
-  const last = session.messages
-    .filter((message) => message.role === "assistant")
-    .at(-1);
-  const text = session.getLastAssistantText() ?? "";
-  if (failure || protocolFailed || last?.stopReason !== "stop")
+  if (failure || terminalStopReason !== "stop" || ingress.frames !== 0)
     refuse("assistant-final", "terminal-incomplete");
-  if (Buffer.byteLength(text) > 16384)
-    refuse("outputbounds", "final-text-bound");
-  emit({ type: "final", text, stopReason: "stop" });
+  await capture.final();
+  await emitter.drain();
 } catch {
   // The stage is a location, not a complete diagnosis of an SDK/provider cause.
   fail(stage, stage === "parse" ? "parse-failed" : "sdk-failure");
 } finally {
+  try {
+    capture?.dispose();
+  } catch {
+    fail("cleanup", "cleanup-failure");
+  }
   // Start and rejection-handle owned close BEFORE any potentially pending SDK
   // cleanup. Never restore or close the previous, unowned global dispatcher.
   const closing = (async () => {
@@ -447,8 +533,11 @@ try {
     pendingAbort,
     aborting,
     disposing,
+    emitter?.drain(),
   ]);
   // A final snapshot exists only after the actual cleanup attempts settle.
+  if (stdoutFailureListener)
+    process.stdout.removeListener("error", stdoutFailureListener);
   cleanupSettled = true;
   // Cleanup failures cannot become success, nor replace the first run failure.
   try {

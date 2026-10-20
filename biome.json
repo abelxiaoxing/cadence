@@ -61,7 +61,11 @@
       }
     },
     {
-      "includes": ["src/operator-cli.mjs"],
+      "includes": [
+        "src/operator-cli.mjs",
+        "src/service-cli.mjs",
+        "src/service-host.mjs"
+      ],
       "formatter": {
         "enabled": false
       },

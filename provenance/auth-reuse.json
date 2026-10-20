@@ -1,0 +1,67 @@
+{
+  "schema": "cadence-auth-reuse/1",
+  "upstream": {
+    "repository": "https://github.com/xing-shuyin/pi-web-ui",
+    "commit": "e8bab487af208bc9a1ab60a821652323f598127f",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2026 xing-shuyin"
+  },
+  "sources": {
+    "server/auth-cookie.ts": "b050bae2b098e7cbe965bfb5e202f628615464c2b463cc0095f8c0fa2ce2b137",
+    "server/host-guard.ts": "cfb56dcaa2a98ad78c1aaa1e2993f93cf5eb1157c188affc8c7764ae2ca1d4ef",
+    "server/index.ts": "e82639f4cf0f878e6695be5fd0136142459aa1fe065e2cc8384dbba90ebd6604",
+    "LICENSE": "a8068b68c721f3c80c9e17ecf31b325e12e85cb4da9be5b48bd60f36b1ff039c"
+  },
+  "groups": [
+    {
+      "source": "server/auth-cookie.ts:26-58",
+      "destination": "src/service/auth.ts#buildTokenCookie,decodeCookieToken,cookieTokens",
+      "reuse": "Direct cookie constructor/decode and request-cookie split/join adaptation. Checkout-specific name; 12-hour max age; duplicate selected cookie refusal."
+    },
+    {
+      "source": "server/index.ts:289-329,354-393",
+      "destination": "src/service/auth.ts#sameSecret,HttpAuthentication;src/service/http.ts#handle",
+      "reuse": "Direct fixed SHA-256 digest/timingSafeEqual and raw/decoded cookie-candidate adaptation. Explicit query-only bootstrap precedes clean redirect, wrong explicit token refuses even with valid cookie; no optional token, header/browser bearer, repeated query or localStorage. Cross-site bootstrap is limited to top-level navigation; native capability rejects browser-only Sec-Fetch metadata, retaining the lone cors mode emitted by actual Node Fetch."
+    },
+    {
+      "source": "server/host-guard.ts:41-68;server/index.ts:980-1001,1064-1081",
+      "destination": "src/service/config.ts#loopbackAddress;src/service/auth.ts#requestBoundary;src/service/http.ts#upgrade",
+      "reuse": "Numeric loopback/mapped IPv4 and pre-upgrade Host/Origin/auth ordering adaptation. Remove token Host bypass, private-LAN/DNS fallback, scheme-insensitive Origin and arbitrary forwarding trust."
+    }
+  ],
+  "destinations": {
+    "src/service/auth.ts": "3c13466fa86be47910086b90eb146d733a26fa524c3e257ad580a95458202105",
+    "src/service/config.ts": "d1c9598ab4c026d419ff621ae894f618961e2b5acdf2c16b45ff84b8d50830f8",
+    "src/service/http.ts": "bb40b0aac4f020ac3de853e126351f64a82415d3aa83150194d2b6fdb25e0f3b",
+    "licenses/pi-web-ui-MIT.txt": "a8068b68c721f3c80c9e17ecf31b325e12e85cb4da9be5b48bd60f36b1ff039c",
+    "THIRD_PARTY_NOTICES.md": "713bb642a94b26144f124f82e76e0e014adc657c01b519f54607d2eff82e457a"
+  },
+  "licenseBodyPreserved": true,
+  "limitations": [
+    "Auth adaptation only, not completion of substantial browser source-family reuse.",
+    "Source SHA/body identities are provenance, not executed product qualification.",
+    "W7 complete package/member/build/asset/font/vendor notice audit is still pending.",
+    "Actual host now composes task/model choice/current ports and independent build ingress; authentication/Origin/CSRF/local/attachment policies remain. Informed recovery, outbound auth proxy and complete distribution remain pending."
+  ],
+  "revisions": [
+    {
+      "id": "w6-flat-assets-csp",
+      "previousHttpSha256": "38a212511f15b71f19f1c5b1984dd46faead18754c475d52787dd6700313d948",
+      "note": "Assigned flat WOFF/TTF MIME/path support and explicit style-src-attr unsafe-inline with style-src-elem self. Script/auth/Origin/referrer/framing/host admission unchanged. See W6 qualification evidence; no execution-browser claim."
+    },
+    {
+      "id": "w4-model-catalog-closed-choice",
+      "previousHttpSha256": "e1e47ce7ddaa5b17e3da34fe38bcd9b702c2b34d96eafc8852f084e27b127a14",
+      "note": "Finite authenticated catalog and separately optional explicit-choice port. Actual host installs readonly catalog only; choice and task mutations remain unavailable pending real build/current/client composition. Existing auth/Origin/CSRF/local/attachment rules unchanged. See W4 current-host handoff; no accepting-host claim."
+    },
+    {
+      "id": "w4-current-readonly-ports",
+      "previousHttpSha256": "6b571fd7fd9274866c289803da202d8cdc49efb1e781a74e5698c51273e8889e",
+      "note": "Optional finite current/current-changes/active-runs readers reuse existing auth and readonly GET/POST policy. Production current bindings, model choice POST and task admission remain closed. Actual owner/current readonly HTTP is separately composed in focused tests; no accepting-host or build-handshake claim."
+    },
+    {
+      "id": "d1-d2-accepting-composition",
+      "note": "Real owner/action/current/model ports and package assets composed; independent compiled contract/browser identity enforced on normal ingress, contract-compatible explicit Cancel separate. Existing reference source pins and previous evidence remain unchanged. Current binding qualification is recorded in W4 research/d1-d2-evidence.json; complete package/terminal/proxy/recovery acceptance remains pending."
+    }
+  ]
+}

@@ -1,10 +1,36 @@
 import { type ChildProcessByStdio, spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import type { Readable, Writable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
+import {
+  networkSnapshot,
+  safeChildEnv,
+  sameNetwork,
+  scopedNetwork,
+  sdkNetworkEnvironment,
+} from "./sdk-network.ts";
+
+export { safeChildEnv } from "./sdk-network.ts";
+
+import type { CheckRecording } from "./service/check-recording.ts";
+import type { PreparedModelContext } from "./service/model-context.ts";
+import type { CaptureReservation, CaptureSink } from "./service/ports.ts";
+import type { CheckNativeSettlement } from "./service-contract.ts";
 import type { CheckDefinition, RunResult, TaskKind } from "./task-types.ts";
-import { object } from "./task-types.ts";
 import { diagnosticText } from "./verification-diagnostics.ts";
+import { CaptureState, parseCaptureLine } from "./worker-capture.mjs";
+import {
+  decodeCaptureFrame,
+  decodeRecordingLink,
+  decodeWorkerPublicRequest,
+  LIMITS,
+  type NativeSettlement,
+  type RecordingLink,
+  type WorkerCompletion,
+  type WorkerPublicRequest,
+} from "./worker-public.mjs";
+import { WorkerRecording } from "./worker-recording.ts";
 
 export interface RequestAuth {
   ok: true;
@@ -22,31 +48,6 @@ export interface WorkerRequest {
   instructions: string;
   thinkingLevel?: string;
 }
-export function safeChildEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
-  // No ambient provider credentials, NODE_OPTIONS, session/control IDs or SDK discovery configuration.
-  for (const key of [
-    "PATH",
-    "HOME",
-    "USERPROFILE",
-    "SystemRoot",
-    "WINDIR",
-    "COMSPEC",
-    "TMP",
-    "TEMP",
-    "TMPDIR",
-    "LANG",
-    "LC_ALL",
-    "PATHEXT",
-  ])
-    if (process.env[key] !== undefined) env[key] = process.env[key];
-  return {
-    ...env,
-    CADENCE_SUBAGENT_CHILD: "1",
-    PI_OFFLINE: "1",
-    NO_COLOR: "1",
-  };
-}
 export interface ProcessSpec {
   command: string;
   args: string[];
@@ -56,7 +57,19 @@ export interface ProcessSpec {
   input?: string;
   env?: NodeJS.ProcessEnv;
   windowsVerbatimArguments?: boolean;
+  /** Service lease ownership, rechecked for EVERY TERM/KILL, including recorder failure. */
+  maySignal?: () => boolean;
+  /** Owner-only native check recording, mutually exclusive with SDK protocol. */
+  checkRecording?: CheckRecording;
+  onCheckNative?: (native: CheckNativeSettlement) => void;
   protocol?: boolean;
+  childRunId?: string;
+  expectedRequest?: WorkerPublicRequest;
+  recording?: WorkerRecording;
+  onNative?: (
+    native: NativeSettlement,
+    state: CaptureState | undefined,
+  ) => void;
   secrets?: string[];
   onProgress?: (text: string) => void;
 }
@@ -73,8 +86,25 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
     output: "",
     truncated: false,
   });
-  if (spec.signal.aborted)
+  if (spec.signal.aborted) {
+    spec.onCheckNative?.({
+      outcome: "canceled",
+      closure: "not-launched",
+      exitCode: null,
+      signal: null,
+      durationMs: 0,
+      stdin: "not-required",
+    });
     return Promise.resolve(early("canceled", "Canceled before launch"));
+  }
+  if (
+    spec.checkRecording &&
+    (spec.protocol ||
+      spec.input !== undefined ||
+      !spec.maySignal ||
+      !spec.onCheckNative)
+  )
+    throw new Error("Invalid service check context");
   if (spec.input !== undefined && Buffer.byteLength(spec.input) > 128 * 1024)
     return Promise.resolve(early("failed", "Worker input exceeds bound"));
   return new Promise((resolve) => {
@@ -89,6 +119,12 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       stdio: [spec.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     }) as ChildProcessByStdio<Writable | null, Readable, Readable>;
     let settled = false;
+    let nativeClosed = false;
+    let launched = false;
+    child.once("spawn", () => {
+      launched = true;
+    });
+    const ingressStop = new AbortController();
     let stopping: RunResult["outcome"] | undefined;
     let byteCount = 0;
     let truncated = false;
@@ -96,7 +132,9 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
     let pending = "";
     let final: string | undefined;
     let ready = false;
-    let events = 0;
+    let capture: CaptureState | undefined;
+    let stdin: NativeSettlement["stdin"] =
+      spec.input === undefined ? "not-required" : "failed";
     const stdoutDecoder = new StringDecoder("utf8");
     const protocolDecoder = new TextDecoder("utf-8", { fatal: true });
     const stderrDecoder = new StringDecoder("utf8");
@@ -111,6 +149,7 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
     ) => {
       if (settled) return;
       settled = true;
+      ingressStop.abort();
       clearTimeout(timeout);
       clearTimeout(killTimer);
       clearTimeout(unknownTimer);
@@ -120,10 +159,46 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         : "unknown";
       if (
         spec.protocol &&
-        (!ready || final === undefined || pending.trim()) &&
+        (!ready ||
+          final === undefined ||
+          pending.length ||
+          (spec.input !== undefined && stdin !== "delivered")) &&
         outcome === "completed"
       )
         outcome = "failed";
+      spec.onCheckNative?.({
+        outcome,
+        closure: closed
+          ? launched
+            ? "direct-child-closed"
+            : "not-launched"
+          : "unconfirmed",
+        exitCode: launched ? exitCode : null,
+        signal: launched ? signal : null,
+        durationMs: Date.now() - started,
+        stdin: "not-required",
+      });
+      spec.onNative?.(
+        {
+          outcome,
+          closure: closed ? "direct-child-closed" : "unconfirmed",
+          exitCode,
+          signal,
+          durationMs: Date.now() - started,
+          stdin,
+          final: capture?.selected ? "valid" : "missing",
+          // A nonzero close may be a provider/protocol failure despite clean
+          // SDK teardown. Do not invent a particular cleanup failure from it.
+          cleanup: closed && exitCode === 0 ? "settled" : "unconfirmed",
+          capture: capture?.coverage ?? {
+            observed: "incomplete",
+            source: "unavailable",
+            redacted: false,
+            omissions: ["gap"],
+          },
+        },
+        capture,
+      );
       resolve({
         outcome,
         closed,
@@ -148,6 +223,7 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
     };
     const signalChild = (signal: NodeJS.Signals) => {
       try {
+        if (spec.maySignal && !spec.maySignal()) return;
         if (process.platform !== "win32" && child.pid)
           process.kill(-child.pid, signal);
         else child.kill(signal);
@@ -158,6 +234,8 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
     const stop = (outcome: RunResult["outcome"]) => {
       if (settled || stopping) return;
       stopping = outcome;
+      ingressStop.abort();
+      if (nativeClosed) return; // Decoder/recorder waiting is not a live PID.
       signalChild("SIGTERM");
       killTimer = setTimeout(() => signalChild("SIGKILL"), 1000);
       unknownTimer = setTimeout(() => finish(false, null, null), 3000);
@@ -167,37 +245,42 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
     spec.signal.addEventListener("abort", abort, { once: true });
     if (spec.signal.aborted) abort();
     const frame = (line: string) => {
+      let lease: CaptureReservation | undefined;
       try {
-        const value: unknown = JSON.parse(line);
-        if (!object(value) || ++events > 4096 || final !== undefined)
-          throw new Error("Invalid frame");
-        if (value.type === "ready" && !ready && events === 1) {
+        lease = spec.recording?.reserveRaw(Buffer.byteLength(line));
+        const value = parseCaptureLine(line);
+        if (!capture)
+          capture = new CaptureState(
+            spec.childRunId ?? decodeCaptureFrame(value).childRunId,
+            spec.expectedRequest,
+          );
+        const decoded = capture.accept(value, Buffer.byteLength(line) + 1);
+        if (decoded.event.kind === "ready") {
           ready = true;
           spec.onProgress?.("Agent ready");
-        } else if (
-          value.type === "tool" &&
-          ready &&
-          typeof value.name === "string" &&
-          /^[a-z_]{1,32}$/.test(value.name)
-        )
-          spec.onProgress?.(clean(`Tool: ${value.name}`, 128));
-        else if (
-          value.type === "final" &&
-          ready &&
-          value.stopReason === "stop" &&
-          typeof value.text === "string" &&
-          Buffer.byteLength(value.text) <= 16384
-        )
-          final = value.text;
-        else throw new Error("Invalid frame");
+        }
+        if (decoded.event.kind === "tool-start")
+          spec.onProgress?.(clean(`Tool: ${decoded.event.name}`, 128));
+        if (decoded.event.kind === "final") final = capture.preview;
+        if (lease) {
+          spec.recording?.accept(decoded, lease);
+          lease = undefined;
+        }
       } catch {
+        lease?.release();
         stop("failed");
       }
     };
-    const receive = (chunk: Buffer, stdout: boolean) => {
+    const receive = async (chunk: Buffer, stdout: boolean) => {
       if (settled || stopping) return;
+      if (spec.checkRecording) {
+        await spec.checkRecording.receive(chunk, stdout ? "stdout" : "stderr");
+        return;
+      }
       byteCount += chunk.length;
-      if (byteCount > 256 * 1024) {
+      if (
+        byteCount > (spec.protocol ? LIMITS.childProtocolBytes : 256 * 1024)
+      ) {
         truncated = true;
         stop("failed");
         return;
@@ -213,234 +296,245 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         return;
       }
       // Buffer the bounded complete stream before redacting: split secrets/UTF-8 cannot leak through progress.
-      if (!spec.protocol || !stdout) output += text;
-      else {
-        pending += text;
-        if (Buffer.byteLength(pending) > 65536) {
+      if (!spec.protocol || !stdout) {
+        output += text;
+        if (Buffer.byteLength(output) > 256 * 1024) {
           truncated = true;
           stop("failed");
-          return;
         }
+      } else {
+        pending += text;
         let end = pending.indexOf("\n");
         while (end >= 0) {
           const line = pending.slice(0, end);
           pending = pending.slice(end + 1);
+          if (Buffer.byteLength(line) >= LIMITS.frameBytes) {
+            truncated = true;
+            stop("failed");
+            break;
+          }
+          if (spec.recording) await spec.recording.writable(ingressStop.signal);
+          if (settled || stopping) break;
           frame(line);
+          if (settled || stopping) break;
           end = pending.indexOf("\n");
+        }
+        if (Buffer.byteLength(pending) > LIMITS.frameBytes) {
+          truncated = true;
+          stop("failed");
         }
       }
     };
-    child.stdout.on("data", (chunk: Buffer) => receive(chunk, true));
-    child.stderr.on("data", (chunk: Buffer) => receive(chunk, false));
+    let stdoutWork = Promise.resolve();
+    let stderrWork = Promise.resolve();
+    let stdoutEnded = false,
+      stderrEnded = false;
+    if (spec.checkRecording) {
+      child.stdout.once("end", () => {
+        stdoutEnded = true;
+      });
+      child.stderr.once("end", () => {
+        stderrEnded = true;
+      });
+      child.stdout.on("error", () => stop("failed"));
+      child.stderr.on("error", () => stop("failed"));
+    }
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (!spec.recording && !spec.checkRecording) {
+        void receive(chunk, true).catch(() => stop("failed"));
+        return;
+      }
+      // One bounded native read at a time. pause() leaves further bytes in the
+      // pipe/Readable rather than copying an uncharged promise queue.
+      child.stdout.pause();
+      const original = receive(chunk, true)
+        .catch(() => stop("failed"))
+        .finally(() => {
+          if (!settled && stdoutWork === original) child.stdout.resume();
+        });
+      stdoutWork = original;
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (!spec.checkRecording) {
+        void receive(chunk, false).catch(() => stop("failed"));
+        return;
+      }
+      child.stderr.pause();
+      const original = receive(chunk, false)
+        .catch(() => stop("failed"))
+        .finally(() => {
+          if (!settled && stderrWork === original) child.stderr.resume();
+        });
+      stderrWork = original;
+    });
     child.on("error", () => {
       stopping = "failed";
     });
     child.on("close", (code, signal) => {
-      if (!spec.protocol) output += stdoutDecoder.end();
-      else {
-        try {
-          pending += protocolDecoder.decode();
-        } catch {
-          stopping ??= "failed";
+      nativeClosed = true;
+      clearTimeout(timeout);
+      clearTimeout(killTimer);
+      clearTimeout(unknownTimer);
+      // Native close can race the final paused read's continuation. Never use
+      // exit/EOF or a still-pending decoder as a substitute for either fact.
+      const close = () => {
+        if (!spec.protocol) output += stdoutDecoder.end();
+        else {
+          try {
+            pending += protocolDecoder.decode();
+          } catch {
+            stopping ??= "failed";
+          }
         }
-      }
-      output += stderrDecoder.end();
-      finish(true, code, signal);
+        output += stderrDecoder.end();
+        finish(true, code, signal);
+      };
+      if (spec.checkRecording) {
+        void Promise.all([stdoutWork, stderrWork]).then(async () => {
+          // Both original stream continuations and final prefix flushing precede
+          // native completion. Capture failure never erases the actual exit code.
+          try {
+            await spec.checkRecording?.end(
+              !settled && !stopping && stdoutEnded && stderrEnded,
+            );
+          } catch {
+            /* Recording disposition is separate from native exit/close. */
+          }
+          close();
+        });
+      } else if (spec.recording) void stdoutWork.then(close);
+      else close();
     });
     if (child.stdin) {
-      child.stdin.on("error", () => stop("failed"));
-      child.stdin.end(spec.input);
+      child.stdin.on("error", () => {
+        stdin = "failed";
+        stop("failed");
+      });
+      child.stdin.once("finish", () => {
+        stdin = "delivered";
+      });
+      try {
+        child.stdin.end(spec.input);
+      } catch {
+        stdin = "failed";
+        stop("failed");
+      }
     }
   });
 }
-// SDK-only route facts. Never clone the ambient environment or invoke route getters.
-const networkKeys = [
-  "http_proxy",
-  "https_proxy",
-  "HTTP_PROXY",
-  "HTTPS_PROXY",
-  "ALL_PROXY",
-  "all_proxy",
-  "NO_PROXY",
-  "no_proxy",
-  "NODE_USE_ENV_PROXY",
-  "NODE_OPTIONS",
-] as const;
-type NetworkKey = (typeof networkKeys)[number];
-type NetworkFact = Readonly<{
-  present: boolean;
-  value?: string;
-  writable?: boolean;
-  enumerable?: boolean;
-  configurable?: boolean;
-}>;
-type NetworkSnapshot = Readonly<Record<NetworkKey, NetworkFact>>;
-function networkSnapshot(source: unknown): NetworkSnapshot {
-  if (source !== undefined && !object(source))
-    throw new Error("Unsupported network");
-  const facts = {} as Record<NetworkKey, NetworkFact>;
-  for (const key of networkKeys) {
-    const descriptor =
-      source === undefined
-        ? undefined
-        : Object.getOwnPropertyDescriptor(source, key);
-    facts[key] =
-      descriptor === undefined
-        ? { present: false }
-        : {
-            present: true,
-            value:
-              "value" in descriptor && typeof descriptor.value === "string"
-                ? descriptor.value
-                : undefined,
-            writable: descriptor.writable,
-            enumerable: descriptor.enumerable,
-            configurable: descriptor.configurable,
-          };
-  }
-  return facts;
-}
-function scopedNetwork(request: WorkerRequest): NetworkSnapshot {
-  const auth = Object.getOwnPropertyDescriptor(request, "auth");
-  if (!auth || !("value" in auth) || !object(auth.value))
-    throw new Error("Unsupported network");
-  const env = Object.getOwnPropertyDescriptor(auth.value, "env");
-  if (env && !("value" in env)) throw new Error("Unsupported network");
-  return networkSnapshot(env?.value);
-}
-function sameNetwork(
-  a: NetworkSnapshot,
-  b: NetworkSnapshot,
-  descriptors = true,
-): boolean {
-  return networkKeys.every(
-    (key) =>
-      a[key].present === b[key].present &&
-      a[key].value === b[key].value &&
-      (!descriptors ||
-        (a[key].writable === b[key].writable &&
-          a[key].enumerable === b[key].enumerable &&
-          a[key].configurable === b[key].configurable)),
-  );
-}
-function safeProxyURL(value: string): boolean {
-  if (
-    Buffer.byteLength(value) > 4096 ||
-    /[\s\p{Cc}\p{Cf}\p{Cs}\\@?#]/u.test(value)
-  )
-    return false;
-  // Percent-bearing authorities are unsupported: never decode into normalized validity.
-  // Check raw authority/path too: URL normalization must not hide a path or empty port.
-  const raw =
-    /^(https?):\/\/(\[[0-9a-fA-F:.]+\]|[^/:%]+)(?::([0-9]+))?(\/?)$/i.exec(
-      value,
-    );
-  if (
-    !raw ||
-    (raw[3] !== undefined && (Number(raw[3]) < 1 || Number(raw[3]) > 65535))
-  )
-    return false;
-  try {
-    const url = new URL(value);
-    return (
-      !!url.hostname &&
-      !url.username &&
-      !url.password &&
-      !url.search &&
-      !url.hash &&
-      (url.pathname === "" || url.pathname === "/")
-    );
-  } catch {
-    return false; // Never project parser exceptions or the deployment-sensitive route.
-  }
-}
-function sdkNetworkEnvironment(
-  ambient: NetworkSnapshot,
-  scoped: NetworkSnapshot,
-): {
-  env: NodeJS.ProcessEnv;
-  redactionLiterals: string[];
-} {
-  const unsupported = (): never => {
-    throw new Error("Unsupported network");
+/** Temporary W5 compatibility: bounded presentation ONLY, over the same v2
+ * runner. These synthetic routing IDs are not durable service/history IDs. */
+export function legacyWorkerEnvelope(request: WorkerRequest) {
+  const purpose = request.kind === "code" ? "edit" : request.kind;
+  const publicRequest = decodeWorkerPublicRequest({
+    protocol: 2,
+    taskId: randomUUID(),
+    taskKind: request.kind,
+    runId: randomUUID(),
+    childRunId: randomUUID(),
+    assignmentId: "legacy",
+    purpose,
+    model: {
+      sourceSelectionId: randomUUID(),
+      provider: request.model.provider,
+      model: request.model.id,
+      api: request.model.api,
+      thinking: request.thinkingLevel ?? "off",
+    },
+    role: {
+      role:
+        purpose === "edit"
+          ? "implementation-worker"
+          : purpose === "diagnosis"
+            ? "diagnosis-worker"
+            : "design-explorer",
+      sha256: createHash("sha256").update(request.instructions).digest("hex"),
+    },
+    context: "",
+    instructions: request.instructions,
+    prompt: request.prompt,
+    handoff: { graphRevision: 1, inputs: [] },
+  });
+  // Private model shape is selected/validated by the existing native SDK route;
+  // no public history DTO or credential cast is introduced here.
+  return {
+    request: publicRequest,
+    cwd: request.cwd,
+    model: request.model,
+    auth: request.auth,
   };
-  const configured = networkKeys.some(
-    (key) => key !== "NODE_OPTIONS" && ambient[key].present,
-  );
-  let route: string | undefined;
-  if (configured) {
-    for (const key of [
-      "ALL_PROXY",
-      "all_proxy",
-      "NO_PROXY",
-      "no_proxy",
-      "NODE_OPTIONS",
-    ] as const)
-      if (ambient[key].present) unsupported();
-    const scheme = (lower: NetworkKey, upper: NetworkKey): string => {
-      const a = ambient[lower];
-      const b = ambient[upper];
-      if (
-        (!a.present && !b.present) ||
-        (a.present && !a.value) ||
-        (b.present && !b.value) ||
-        (a.present && b.present && a.value !== b.value)
-      )
-        return unsupported();
-      return (a.present ? a.value : b.value) ?? unsupported();
-    };
-    route = scheme("http_proxy", "HTTP_PROXY");
-    if (
-      route !== scheme("https_proxy", "HTTPS_PROXY") ||
-      !safeProxyURL(route) ||
-      (ambient.NODE_USE_ENV_PROXY.present &&
-        ambient.NODE_USE_ENV_PROXY.value !== "1")
+}
+type Envelope = ReturnType<typeof legacyWorkerEnvelope>;
+class AmbientFileAuth extends Error {}
+function encodeEnvelope(
+  material: Envelope,
+  captured?: {
+    ambient: ReturnType<typeof networkSnapshot>;
+    scoped: ReturnType<typeof scopedNetwork>;
+  },
+) {
+  const ambient = captured?.ambient ?? networkSnapshot(process.env);
+  const scoped = captured?.scoped ?? scopedNetwork(material);
+  if (
+    Object.keys(material.auth.env ?? {}).some((name) =>
+      /(?:_FILE|_PATH|_CREDENTIALS)$/.test(name),
     )
-      unsupported();
-    // Public native capability, not a numeric version/model/endpoint predicate.
-    const node = Object.getOwnPropertyDescriptor(process.versions, "node");
-    if (
-      !node ||
-      !("value" in node) ||
-      typeof node.value !== "string" ||
-      !node.value ||
-      Object.hasOwn(process.versions, "bun") ||
-      process.allowedNodeEnvironmentFlags.has("--use-env-proxy") !== true
-    )
-      unsupported();
-  }
-  for (const key of networkKeys) {
-    const fact = scoped[key];
-    if (!fact.present) continue;
-    if (
-      !route ||
-      (
-        [
-          "ALL_PROXY",
-          "all_proxy",
-          "NO_PROXY",
-          "no_proxy",
-          "NODE_OPTIONS",
-        ] as readonly string[]
-      ).includes(key) ||
-      fact.value !== (key === "NODE_USE_ENV_PROXY" ? "1" : route)
-    )
-      unsupported();
-  }
-  const env = safeChildEnv();
-  if (route)
-    Object.assign(env, {
-      HTTP_PROXY: route,
-      HTTPS_PROXY: route,
-      NODE_USE_ENV_PROXY: "1",
-    });
-  return { env, redactionLiterals: route ? [route] : [] };
+  )
+    throw new AmbientFileAuth();
+  const selected = sdkNetworkEnvironment(ambient, scoped);
+  const literals = (source: object) =>
+    Object.values(Object.getOwnPropertyDescriptors(source)).flatMap(
+      (descriptor) =>
+        "value" in descriptor && typeof descriptor.value === "string"
+          ? [descriptor.value]
+          : [],
+    );
+  const secrets = [
+    material.auth.apiKey ?? "",
+    ...literals(material.auth.headers ?? {}),
+    ...literals(material.auth.env ?? {}),
+    ...selected.redactionLiterals,
+  ];
+  const input = JSON.stringify(material);
+  if (!sameNetwork(scoped, scopedNetwork(JSON.parse(input)), false))
+    throw new Error("network");
+  return { material, ambient, scoped, selected, secrets, input };
+}
+function launchEncoded(
+  encoded: ReturnType<typeof encodeEnvelope>,
+  signal: AbortSignal,
+  timeoutMs: number,
+  extra: Pick<
+    ProcessSpec,
+    "onProgress" | "recording" | "onNative" | "maySignal"
+  > = {},
+): Promise<RunResult> {
+  if (
+    !sameNetwork(encoded.ambient, networkSnapshot(process.env)) ||
+    !sameNetwork(encoded.scoped, scopedNetwork(encoded.material))
+  )
+    throw new Error("network");
+  // One native launcher, no intervening await/recapture after freshness.
+  return runProcess({
+    command: process.execPath,
+    args: [fileURLToPath(new URL("./sdk-worker.mjs", import.meta.url))],
+    cwd: encoded.material.cwd,
+    input: encoded.input,
+    env: encoded.selected.env,
+    protocol: true,
+    childRunId: encoded.material.request.childRunId,
+    expectedRequest: encoded.material.request,
+    signal,
+    timeoutMs,
+    secrets: encoded.secrets,
+    ...extra,
+  });
 }
 export function runWorker(
   request: WorkerRequest,
   signal: AbortSignal,
   onProgress?: (text: string) => void,
-  timeoutMs = 1_200_000,
+  timeoutMs: number = LIMITS.workerMs,
 ): Promise<RunResult> {
   const noSpawn = (outcome: RunResult["outcome"], text: string) =>
     Promise.resolve<RunResult>({
@@ -454,72 +548,152 @@ export function runWorker(
       truncated: false,
     });
   if (signal.aborted) return noSpawn("canceled", "Canceled before launch");
-  let selected: { env: NodeJS.ProcessEnv; redactionLiterals: string[] };
-  let input: string;
-  let secrets: string[];
   try {
     const ambient = networkSnapshot(process.env);
     const scoped = scopedNetwork(request);
-    if (
-      Object.keys(request.auth.env ?? {}).some((name) =>
-        /(?:_FILE|_PATH|_CREDENTIALS)$/.test(name),
-      )
-    )
-      return noSpawn(
-        "failed",
-        "Unsupported ambient-file authentication; no worker launched. Resolve request credentials in the parent first.",
-      );
-    selected = sdkNetworkEnvironment(ambient, scoped);
-    const literals = (source: object) =>
-      Object.values(Object.getOwnPropertyDescriptors(source)).flatMap(
-        (descriptor) =>
-          "value" in descriptor && typeof descriptor.value === "string"
-            ? [descriptor.value]
-            : [],
-      );
-    secrets = [
-      request.auth.apiKey ?? "",
-      ...literals(request.auth.headers ?? {}),
-      ...literals(request.auth.env ?? {}),
-      ...selected.redactionLiterals,
-    ];
-    input = JSON.stringify(request);
-    // The literal serialized auth route must also agree; toJSON cannot select another route.
-    if (
-      !sameNetwork(scoped, scopedNetwork(JSON.parse(input)), false) ||
-      !sameNetwork(ambient, networkSnapshot(process.env)) ||
-      !sameNetwork(scoped, scopedNetwork(request))
-    )
-      throw new Error("Unsupported network");
-  } catch {
+    const encoded = encodeEnvelope(legacyWorkerEnvelope(request), {
+      ambient,
+      scoped,
+    });
+    if (!sameNetwork(scoped, scopedNetwork(request)))
+      throw new Error("network");
+    return launchEncoded(encoded, signal, timeoutMs, { onProgress });
+  } catch (error) {
     return noSpawn(
       "failed",
-      "unsupportedNetwork: SDK proxy configuration or runtime capability is unsupported; no worker launched.",
+      error instanceof AmbientFileAuth
+        ? "Unsupported ambient-file authentication; no worker launched. Resolve request credentials in the parent first."
+        : "unsupportedNetwork: SDK proxy configuration or runtime capability is unsupported; no worker launched.",
     );
   }
-  // No await, recapture or alternate launcher between freshness and the one process owner.
-  return runProcess({
-    command: process.execPath,
-    args: [fileURLToPath(new URL("./sdk-worker.mjs", import.meta.url))],
-    cwd: request.cwd,
-    input,
-    env: selected.env,
-    protocol: true,
-    signal,
-    timeoutMs,
-    secrets,
-    onProgress,
-  });
+}
+/** W1 opaque one-use consumption + W3 mandatory sink. W4 must durably account
+ * launch intent BEFORE calling this and original completion AFTER it resolves.
+ * No accepting default sink, fabricated ContentRef or own settlement wait. */
+export function preparedWorker(
+  prepared: PreparedModelContext,
+  request: WorkerPublicRequest,
+  link: RecordingLink,
+  ownerSecrets: readonly string[],
+  timeoutMs: number = LIMITS.workerMs,
+  maySignal?: () => boolean,
+) {
+  const expected = decodeWorkerPublicRequest(request);
+  link = decodeRecordingLink(link);
+  if (
+    expected.childRunId !== link.childRunId ||
+    expected.runId !== link.runId ||
+    expected.taskId !== link.taskId
+  )
+    throw new Error("Invalid recording identity");
+  return {
+    request: expected,
+    async launch(
+      signal: AbortSignal,
+      sink: CaptureSink,
+    ): Promise<WorkerCompletion> {
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+      let native: NativeSettlement = {
+        outcome: signal.aborted ? "canceled" : "failed",
+        closure: "not-launched",
+        exitCode: null,
+        signal: null,
+        durationMs: 0,
+        stdin: "not-required",
+        final: "missing",
+        cleanup: "settled",
+        capture: {
+          observed: "incomplete",
+          source: "unavailable",
+          redacted: false,
+          omissions: ["gap"],
+        },
+      };
+      let state: CaptureState | undefined;
+      let recorder: WorkerRecording | undefined;
+      try {
+        if (!sink || typeof sink.reserve !== "function")
+          throw new Error("Recording required");
+        if (!controller.signal.aborted) {
+          let encoded: ReturnType<typeof encodeEnvelope> | undefined;
+          await prepared.consume(
+            (material) => {
+              if (JSON.stringify(material.request) !== JSON.stringify(expected))
+                throw new Error("Prepared request changed");
+              encoded = encodeEnvelope({
+                ...material,
+                model: { ...material.model },
+              });
+              // All sink callbacks/reservations precede W1's final source,
+              // size and cancellation recheck. The use callback only launches.
+              recorder = new WorkerRecording(
+                link,
+                sink,
+                [...ownerSecrets, ...encoded.secrets],
+                abort,
+              );
+              return encoded.input;
+            },
+            (input) => {
+              if (
+                !encoded ||
+                encoded.input !== input ||
+                controller.signal.aborted
+              )
+                throw new Error("Prepared request unavailable");
+              return launchEncoded(encoded, controller.signal, timeoutMs, {
+                recording: recorder,
+                maySignal,
+                onNative: (facts, observed) => {
+                  native = facts;
+                  state = observed;
+                },
+              });
+            },
+          );
+        }
+        await recorder?.drain();
+      } catch {
+        /* Fixed no-launch/recording uncertainty, never raw auth errors. */
+      } finally {
+        recorder?.closeIngress();
+        signal.removeEventListener("abort", abort);
+      }
+      const selected = state?.selected ?? null;
+      return {
+        childRunId: expected.childRunId,
+        native,
+        selected,
+        recording: (native.closure !== "not-launched"
+          ? recorder?.result(selected)
+          : undefined) ?? {
+          status: "refused",
+          selected,
+          error: { code: "unavailable", effect: "none", recovery: "operator" },
+        },
+      };
+    },
+  };
+}
+export interface ServiceCheckContext {
+  environment: Readonly<NodeJS.ProcessEnv>;
+  recording: CheckRecording;
+  maySignal(): boolean;
+  onNative(native: CheckNativeSettlement): void;
 }
 export function runCheck(
   check: CheckDefinition,
   cwd: string,
   signal: AbortSignal,
+  service?: ServiceCheckContext,
 ): Promise<RunResult> {
   return runProcess({
     command:
       process.platform === "win32"
-        ? (process.env.COMSPEC ?? "cmd.exe")
+        ? ((service?.environment ?? process.env).COMSPEC ?? "cmd.exe")
         : "/bin/sh",
     args:
       process.platform === "win32"
@@ -532,7 +706,17 @@ export function runCheck(
     timeoutMs: check.timeoutMs,
     // Checks are explicitly approved host commands, not SDK workers. Preserve
     // the ordinary project environment; never inject resolved request auth.
-    env: { ...process.env, CADENCE_SUBAGENT_CHILD: "1" },
+    env: {
+      ...(service?.environment ?? process.env),
+      CADENCE_SUBAGENT_CHILD: "1",
+    },
+    ...(service
+      ? {
+          checkRecording: service.recording,
+          maySignal: service.maySignal,
+          onCheckNative: service.onNative,
+        }
+      : {}),
     signal,
   });
 }

@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   cpSync,
   existsSync,
@@ -41,7 +42,7 @@ const failureCode = (error) =>
 function saveDiagnostics() {
   try {
     const json = `${JSON.stringify(diagnostics, null, 2)}\n`;
-    if (Buffer.byteLength(json) > 256 * 1024)
+    if (Buffer.byteLength(json) > 1024 * 1024)
       throw new Error("Diagnostic bound");
     writeFileSync(path.join(fixture, "distribution-diagnostics.json"), json, {
       mode: 0o600,
@@ -54,7 +55,7 @@ function saveDiagnostics() {
 function bodyChecks(treeRoot) {
   if (!treeRoot || !referenceAudit) return [];
   let bytes = 0;
-  return expected.slice(0, 64).map((member) => {
+  return expected.map((member) => {
     const check = {
       member,
       expectedSha256: referenceAudit.bodyHashes[member],
@@ -258,7 +259,7 @@ beforeAll(() => {
   recordStage(
     "after-peer-links",
     () => {
-      for (const name of ["@earendil-works", "typebox", "undici"]) {
+      for (const name of ["@earendil-works", "typebox", "undici", "ws"]) {
         symlinkSync(
           path.join(root, "node_modules", name),
           path.join(
@@ -293,11 +294,11 @@ afterAll(() => {
 });
 
 describe("real lightweight package", () => {
-  it("audits exactly 34 unique regular members, every source body and all Agent pins", () => {
-    expect(expected).toHaveLength(34);
+  it("audits exactly 129 unique regular members, every source body and all Agent pins", () => {
+    expect(expected).toHaveLength(129);
     const audit = auditPackage(archive, root, expected);
     expect(audit.members).toEqual(expected);
-    expect(Object.keys(audit.bodyHashes)).toHaveLength(34);
+    expect(Object.keys(audit.bodyHashes)).toHaveLength(129);
     const receipt = JSON.parse(
       readFileSync(path.join(fixture, "distribution-diagnostics.json"), "utf8"),
     );
@@ -306,13 +307,13 @@ describe("real lightweight package", () => {
     for (const stage of ["after-extract", "after-copy", "after-peer-links"]) {
       const entry = receipt.stages.find((entry) => entry.stage === stage);
       expect(entry.status).toBe("passed");
-      expect(entry.bodyChecks).toHaveLength(34);
+      expect(entry.bodyChecks).toHaveLength(129);
       expect(
         entry.bodyChecks.every((check) => check.status === "matched"),
       ).toBe(true);
     }
     expect(expected.filter((p) => p.startsWith("package/src/"))).toHaveLength(
-      16,
+      35,
     );
     expect(expected.join("\n")).not.toMatch(
       /sqlite|workspace-io|windows-job|apply-transaction|compiler|scheduler/,
@@ -520,7 +521,27 @@ describe("real lightweight package", () => {
       child.stdin.end(
         JSON.stringify({
           cwd,
-          kind: "code",
+          request: {
+            protocol: 2,
+            taskId: randomUUID(),
+            taskKind: "code",
+            runId: randomUUID(),
+            childRunId: randomUUID(),
+            assignmentId: "installed",
+            purpose: "edit",
+            model: {
+              sourceSelectionId: randomUUID(),
+              provider: "installed-fixture",
+              model: "exact-model",
+              api: "openai-completions",
+              thinking: "off",
+            },
+            role: { role: "implementation-worker", sha256: "a".repeat(64) },
+            context: "",
+            instructions: "Synthetic local fixture only.",
+            prompt: "Write installed.txt then finish.",
+            handoff: { graphRevision: 1, inputs: [] },
+          },
           model: {
             provider: "installed-fixture",
             id: "exact-model",
@@ -539,9 +560,6 @@ describe("real lightweight package", () => {
             apiKey: "!fixture-$LITERAL",
             headers: { "X-Literal": "!header-$LITERAL" },
           },
-          thinkingLevel: "off",
-          instructions: "Synthetic local fixture only.",
-          prompt: "Write installed.txt then finish.",
         }),
       );
       let code;
