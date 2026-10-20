@@ -1,1 +1,0 @@
-{"first":{"state":"quarantined","pending":{"process":0,"auth":0,"storage":1,"work":1},"settlement":"uncertain"},"finalState":"stopped","pendingWrites":0,"acceptedPending":0,"scheduler":{"episodes":0,"queued":0,"reservations":0,"retainedAllowance":0},"native":[],"listening":false,"locksRetained":false,"fabricatedProvider":true,"injectedTiming":true,"productionAdmission":null}

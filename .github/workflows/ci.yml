@@ -44,7 +44,7 @@ jobs:
       - run: bun run test
       - run: bun run check:agents
       - run: bun run pack:check
-      - run: bun run traceability:check --map .trellis/qualification/g6/ci-map.json
+      - run: bun run check:notices
       - name: Preserve new diagnostic fixtures without overriding failures
         if: always()
         uses: actions/upload-artifact@v4

@@ -1,9 +1,0 @@
-{
-  "inputs": {
-    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/final-inputs-repaired.json",
-    "bytes": 68114,
-    "sha256": "39968359075a32c8a83812efeaa63e157585d5e51b3e398f61a43459ba9edb42"
-  },
-  "count": 467,
-  "changed": []
-}

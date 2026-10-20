@@ -54,14 +54,6 @@
     },
     {
       "includes": [
-        ".trellis/tasks/archive/2026-10/10-06-cadence-retirement-distribution-qualification/research/release-preparation/g6-current-qualified-map.json"
-      ],
-      "formatter": {
-        "enabled": false
-      }
-    },
-    {
-      "includes": [
         "src/operator-cli.mjs",
         "src/service-cli.mjs",
         "src/service-host.mjs"

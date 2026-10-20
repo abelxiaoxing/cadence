@@ -1,1 +1,0 @@
-Initial identity collection exited 1: require("@earendil-works/pi-coding-agent/package.json") is not exported (ERR_PACKAGE_PATH_NOT_EXPORTED). No SDK construction or test occurred. Corrected below to filesystem-only package metadata read.

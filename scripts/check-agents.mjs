@@ -87,11 +87,13 @@ for (const route of routes) {
 for (const route of [
   "package.json",
   "src/index.ts",
-  ".trellis/spec/backend/",
-  ".trellis/spec/frontend/",
+  "README.md",
+  "src/service/",
+  "src/history/",
+  "web/src/",
 ]) {
   if (!block.includes(`\`${route}\``))
-    throw new Error("AGENTS index missing task ownership route");
+    throw new Error("AGENTS index missing project ownership route");
 }
 if (/openspec|prompts\//iu.test(block))
   throw new Error("AGENTS index retains retired ownership");

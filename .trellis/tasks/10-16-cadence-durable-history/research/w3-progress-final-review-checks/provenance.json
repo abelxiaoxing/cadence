@@ -1,7 +1,0 @@
-{
-  "src/service/auth.ts": true,
-  "src/service/config.ts": true,
-  "src/service/http.ts": true,
-  "licenses/pi-web-ui-MIT.txt": true,
-  "THIRD_PARTY_NOTICES.md": true
-}

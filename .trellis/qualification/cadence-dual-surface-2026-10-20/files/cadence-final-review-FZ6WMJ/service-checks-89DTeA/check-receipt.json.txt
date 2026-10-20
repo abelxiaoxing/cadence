@@ -1,1 +1,0 @@
-{"stop":{"state":"stopped","pending":{"process":0,"auth":0,"storage":0,"work":0},"settlement":"known"},"natives":[{"kind":"sdk","start":270705.996119,"end":271948.947334,"code":0,"ignoredInput":false}],"pendingWrites":0,"acceptedPending":0,"locksRetained":false,"contacts":1,"productionAdmission":null,"physicalHuman":false,"paidProvider":false}

@@ -1,6 +1,0 @@
-{
-  "src/service/contracts/history.ts": "18d0456a3fd48ac1f7d1dee9c60fa446ab617b67ce3eaeefd543fa97031a4498",
-  "src/history/reader.ts": "1347961a173e58f0a98879be6a5df8548a4c3f99901d1d0abf7eb1fe5b3e2ed6",
-  "src/history/list-progress.ts": "96d514607df17ee20d099128cf9c8ed791084b8b3ca98d1dc52c89870cf0bf0a",
-  "src/history/graph-progress.ts": "11759c15e020360325a5ff5894ca992a0be7b19c72254af7c7db7f8ff43d85f5"
-}

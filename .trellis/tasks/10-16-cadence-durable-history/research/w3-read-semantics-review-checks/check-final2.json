@@ -1,8 +1,0 @@
-{
-  "command": ["bun", "run", "check"],
-  "startedAt": "2026-10-17T09:27:13.550584+00:00",
-  "exitCode": 0,
-  "durationSeconds": 7.152,
-  "inputsUnchanged": true,
-  "changedInputs": []
-}

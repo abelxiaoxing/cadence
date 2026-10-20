@@ -124,6 +124,201 @@ Source/extracted PTYs, fabricated loopback providers and isolated HTTPS are dist
 Those additional lanes remain unqualified unless their own receipts exist.
 No passing gate authorizes commit, push, publication, installation, deployment or cleanup.
 
+## Engineering knowledge
+
+This section is the temporary, tool-independent home for project knowledge formerly spread across development-task records.
+Ordinary engineering uses source edits, focused tests and code review directly; no task-management extension, task creation, archive step or workflow-specific agent is required.
+Do not recreate the removed project workflow integration unless explicitly requested.
+`AGENTS.md` is a short entry guide; this section owns the maintained engineering contracts.
+Historical logs are not runtime dependencies, and removing development tooling must never delete consumer `.cadence` data or private service state.
+
+### Source ownership and API boundaries
+
+| Owner                                                                                                  | Responsibility                                                                                                            |
+| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `src/index.ts`, `src/task-shell.ts`, `src/native-*.ts`                                                 | Nonactivating Pi entry, raw native consent, typed service attachment, paging and verified export; no embedded executor    |
+| `src/service/host.ts`, `src/service/cli.ts`                                                            | Real single-owner composition and explicit management; generated management entry stays SDK-free                          |
+| `src/service/{coordination,private-files,owner,recovery}.ts`                                           | Canonical overlap exclusion, exact locks, original-operation lifetime and informed local recovery                         |
+| `src/service/{admission,task-actions,graph,scheduler}.ts`                                              | Context-bound actions, actual current views, finite graph scheduling, check/review barriers                               |
+| `src/service/{model-config,model-context,model-choice,auth-network}.ts`, `src/sdk-network.ts`          | Existing Pi sources, explicit exact model/thinking, original OAuth writeback and strict shared network policy             |
+| `src/worker-public.mjs` and `.d.mts`, `src/service-contract.ts`                                        | One portable core/domain/capture codec with matching declarations and facade; TS core/domain/capture modules re-export it |
+| `src/service/contracts/`, `src/service-client.ts`, `src/service-wire.ts`, `src/service-http-client.ts` | Closed DTOs, typed named operations, reply correlation, transport bounds and one projection tracker                       |
+| `src/subagent-process.ts`, `src/sdk-worker.mjs`, `src/worker-{capture,redaction,tools}.mjs`            | Same native worker/check launcher, genuine SDK capture, incremental sanitizer and bounded no-raw-spill bash adapter       |
+| `src/history/{writer,run-state,publication}.ts`                                                        | One committed sequence authority, shared semantic reducers and expected-byte strict-v1 summaries                          |
+| `src/history/` readers/proof/search/export/live modules                                                | Original-source integrity, bounded retained navigation, exact search and complete nonblocking exports                     |
+| `src/task-store.ts`, `src/task-types.ts`, `src/task-diff.ts`                                           | Literal workspace identity, bounded plain summaries/configuration and honest change observation                           |
+| `web/src/`                                                                                             | Reused presentation and thin shared-client adapters, not SDK/session/execution ownership                                  |
+| `scripts/`, `provenance/`, `licenses/`                                                                 | Reproducible builds, exact package/body/reference/notice audits and pinned reuse                                          |
+
+The native path is `index → shell → native client → service → scheduler/process/history`.
+`src/task-controller.ts` remains a legacy regression subject, not a reachable or shipped production executor.
+The readonly operator and independent research/startup modules must not gain service startup or execution side effects.
+Inspect actual installed public Pi declarations before changing host/SDK bindings; never import private SDK implementation paths or select a global substitute.
+
+Key maintained seams include `TaskActions.current/currentChanges/activeRuns/checkObligations`, `ServiceClient.preflight` and named action methods, `HistoryWriter.commit/capture/publishTask`, and `NativeConnection.attach/refresh/detach`.
+Use their current declarations rather than copying DTO parsing, reducers, a second controller, or process ownership into a client.
+
+### Admission, execution and original lifetimes
+
+- One canonical checkout/state-home domain has one persistent owner, including while idle.
+  Registry reservation atomically rejects canonical ancestor/descendant overlaps, including nested Git roots and aliases; a different state-home does not coordinate arbitrary other owners.
+- Native entry requires fresh raw Enter within1500ms, trusted/idle TUI, no pending modal/messages and no child guard.
+  Browser authentication grants access, not task consent; normal mutation ingress also requires independently built compatible client/service/assets identities.
+- Boot model choice is absent until explicitly selected.
+  Preserve exact provider/model/API/thinking/source identities; unsupported transport or thinking refuses without fallback or clamping.
+  Choice changes refuse while accepted work, admissions, barriers or original operations are busy.
+- A120s one-use grant binds exact action, epoch/access/config/control/task raw bytes/graph/cwd/model/check-environment and relevant observations.
+  Durable acceptance precedes effects; identical command IDs observe the same receipt, conflicting identities refuse, and inconclusive lookup never means absent.
+- Generate is a separate readonly advisory episode, with no saved graph execution or automatic plan replacement, Save or Start.
+  A prospective plan UUID/hash is not a committed reference; accepted retention and successful expected-byte publication establish saved membership.
+- Independent readonly assignments may overlap; writers and native parent checks exclude readers and other writers across tasks.
+  Reserve bounded slots/bytes before copying/auth/effects; dependencies use exact committed predecessor content only after actual native and recording settlement.
+  Overflow, stale dependencies, first failure or wait expiry closes admission without retry; independent already-running siblings retain their own outcomes.
+- Register the original accepted control flow before its first effect, in addition to separate native/auth/storage originals.
+  Reporting timeout, a caught promise, PID absence or an empty roster cannot release resources.
+  Stop publishes one shared attempt, quiesces all admissions, requests stops before awaiting children and joins permitted original continuation/safety writes.
+  Already-started publication can finish; new post-Stop ordinary publication cannot start.
+- TERM/KILL recheck lease ownership at each signal boundary.
+  Native close is authoritative for the direct child, not `exit`, EOF or escaped-descendant closure.
+  Unknown process/auth/storage settlement preserves fences; late completion never retroactively repairs an unknown result.
+- Return, navigation, browser disconnect and Pi quit detach accepted work.
+  Reconnect does not resend mutations; a refused Cancel permits only another explicit click, not automatic retry.
+
+### Checks, publication and review truth
+
+Configured checks match exact name, command and timeout; missing obligations project not-run rather than fabricated execution records.
+Manual checks require native local capability and fresh confirmation; browsers have no arbitrary-shell/PTY endpoint.
+Use the frozen service-launch ordinary environment, stripped of access/control material; never merge resolved model auth or a browser environment overlay.
+Service check output retains bounded complete stdout/stderr with independent UTF-8/sanitizer state and explicit observation labels, not the legacy64KiB preview.
+Join both original stream tails, actual EOF/close and storage completion; Node may resume paused stdio while draining exit.
+Known access-token rotation must update private redaction without sending access secrets into child environment.
+
+A fresh check may account for exactly one owned generation advance bound to its check/operation/held gate.
+Do not replace this proof with a general before≤after comparison.
+Changes to files, definitions, epoch/cwd/environment or a foreign generation stale the current obligation without rewriting historical native exit or PASS.
+Human Review binds exact selected run/graph/check/change identities and recaptures under a short exclusive barrier only after confirmation, not throughout the human modal.
+Acknowledgment permits reviewed-with-issues, never changes failed/partial/canceled/native/recording/check facts or revives blocked execution.
+Unavailable concurrent views may display conservative stale status but cannot advance authoritative review revisions and invalidate an otherwise unchanged accepted Review.
+
+Task v1 remains a strict human-readable summary; rich graph/transcript data never become unknown siblings beside `task.json`.
+`TaskStore.loadSnapshot` includes raw-byte identity; save/publication requires exact expected bytes and revision.
+A same-revision external edit conflicts and remains preserved.
+Summary clipping is labeled and never clips retained detail; a subsequent publication failure remains separate from previously completed execution.
+
+### Capture, retained history and privacy
+
+The maintained worker uses public SDK APIs, explicit empty resources, in-memory session/settings and disabled retries/compaction/cache warming.
+Verify exact model and effective thinking before READY/prompt; no provider discovery, credential argv/file envelope or implicit network fallback.
+Use the awaited public core-agent subscription for backpressure, reserving synchronous tool/update ingress before any copy or await.
+Custom bash uses public local operations plus the bounded redacted accumulator, not the stock raw-spill accumulator.
+Never await a run's own settlement from inside its awaited subscriber.
+
+Sanitize known literals, structured sensitive values and terminal controls before stdout and again before owner persistence.
+Preserve split UTF-8, escaped literals, surrogate pairs and possible secret prefixes across chunks; independent per-chunk string replacement is insufficient.
+Tool-start is an SDK observation, not proof of native execution; tool error is not a parent check result.
+Hidden thinking, signatures, provider envelopes and binary/media bodies remain explicitly omitted.
+Known-secret sanitation is not universal business-secret detection or an OS privacy sandbox.
+
+Only the serialized history writer assigns committed sequence and persisted content references.
+Commit actual admission/auth/launch/result facts in order; an index, observer callback or candidate reducer cannot authorize effects.
+Quota/exhaustion/refusal stops unsafe work without eviction; torn tails retain a verified prefix and visible gaps, while interior corruption refuses affected ranges.
+Derived indexes are optional accelerators: readers validate original batches/artifacts, use bounded fallback and never repair on view.
+Prepared journal heads avoid redundant mutable legacy hints; no-root compatibility and its original integrity checks remain.
+
+New history uses private format3 at `service-v1/history-v2/`, with exclusive private read-proof key creation before the final format marker.
+Format2 remains readonly, without silent migration or key regeneration.
+AES-256-GCM navigation authenticates bounded suspended source validation; cursors never grant authentication, admission, recovery or lock-release authority.
+Resume must advance actual semantic work and revalidate selected source/key/format incarnations, not merely produce a new nonce or reset proof budgets.
+These are supported-writer observations, not atomic snapshots of every archived file or change-and-revert detection.
+
+History data pages are untagged; list readers also return explicit `progress` or initial `snapshot`, while detail/entity/graph return data or progress.
+`SearchPage` has hits/next/coverage: zero hits with next is not completion.
+Keep exact snapshot/entity/version/UTF-8 ranges and source coverage; do not map progress to an empty successful page or rebase Back navigation.
+Readonly POST uses the same finite security/decoder boundary when inputs cannot fit GET; it is not execution consent.
+Exports stream task/run/child scope with actual counts/digest/watermark/trailer and original EOF; revoked or interrupted output has no successful completion.
+Browser download requested is not UI-verified completion; native export verifies the complete stream and creates destinations exclusively.
+
+### Current resource ceilings
+
+Byte values are UTF-8/encoded bounds where specified; they are not targets to silently increase when a fixture fails.
+
+| Boundary              | Default / ceiling                                                                                                |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Graph / assignments   | 512KiB body;1–16 required assignments                                                                            |
+| Scheduling            | 8 episodes;128 queued assignments;2 preparing/running/closing child-or-check reservations                        |
+| Policy deadlines      | 6h episode;10min ready wait;20min default worker                                                                 |
+| Dependency input      | 16KiB per predecessor;32KiB aggregate; oversized required input blocks, not clips                                |
+| Worker request        | 96KiB public pre-auth plus32KiB reserve; actual complete envelope128KiB                                          |
+| Process stop          | TERM then KILL after1000ms; unknown after3000ms without confirmed close                                          |
+| Native service checks | 16MiB aggregate raw output;64KiB raw chunk;32MiB retained detail; legacy256KiB/64KiB behavior unchanged          |
+| Capture               | 64KiB encoded frame;8KiB decoded chunk;32MiB detail;128MiB child protocol                                        |
+| Capture queues        | Worker4MiB/1024 frames; owner8MiB/2048;5s reporting stall retains original charges                               |
+| Task v1               | 128KiB record; goal8KiB/plan32KiB/result and baseline16KiB;32 checks/64 activity;1000-task compatibility ceiling |
+| Read quantum          | 8MiB or100ms cooperative work, including resumed proof/accounting                                                |
+| Read replies          | 512KiB full paged/progress Reply;256KiB detail text; graph data/export-frame1MiB with graph body512KiB           |
+| Paging/search         | 50 default/200 maximum entries; literal case-sensitive query1–1024 bytes                                         |
+| Navigation            | 8192 encoded ASCII bytes; encrypted plaintext6000 bytes; no execution authority                                  |
+| Live/export           | 16 viewers,256 messages/1MiB each; two search/two export readers;120s download idle, not total archive timeout   |
+| Storage               | 10GiB checkout quota;512MiB reserved per episode;256MiB free-space floor; no TTL cleanup                         |
+| Assets                | 16MiB per member/64MiB closure; fixed complete manifest and all font bodies                                      |
+
+### Validation and regression lessons
+
+| Condition                                                      | Required behavior                                                                 |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Missing/unsafe/corrupt/partial selected state                  | Absent or fixed refusal; no bootstrap, adoption, repair or cleanup on observation |
+| Native exit0 with recording/stdin/final/cleanup failure        | Preserve native zero independently; no workflow success                           |
+| Stale grant, selected task bytes or model/source identity      | Refuse and require fresh observation/confirmation                                 |
+| Unknown original stop/auth/storage or changed lease            | Retain fences/charges; no guessed process signaling or automatic release          |
+| Failed/unrun/stale check, partial child or incomplete coverage | Explicit issues review; preserve independent recorded outcomes                    |
+| Lost reply or detached view                                    | Observe original receipt/run; no mutation replay or implicit Cancel               |
+| Invalid read proof or changed source/key                       | Refuse; never rebase or interpret budget exhaustion as absence                    |
+| Dirty/partial/extra compiled assets or unsafe archive          | Refuse in place; no source refill, wildcard serving or fallback build             |
+
+Good: current context → explicit grant → durable acceptance → genuine original native/storage settlement → exact retained dependency → real checks → human review.
+Base: a client leaves and another reattaches to the same accepted run without launching it again.
+Bad: model prose, a valid cursor, a prepared graph, one native exit or a human Done checkbox becomes fabricated execution/check success.
+
+Wrong: release a reservation when `Promise.race` reports a timeout, or retry a mutation when its reply is missing.
+Correct: retain the original operation/fences and observe the exact receipt; a separately explicit safety request does not renew task consent.
+Wrong: show only preview/ring text as full history, or sum overlapping test runs into a larger suite total.
+Correct: expose bounded continuations/full exports and report the exact executed domain and final original exit.
+
+### Development and verification practice
+
+Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.
+Use ordinary source editing and directly affected checks while developing; independently review complete capabilities and run full `verify` at stable integration boundaries.
+Do not run the entire suite after every local edit, but do not replace final integration with unit mocks or citation counts.
+On this development host create fresh0700 disk roots under `/home/mirako/abel` and explicitly set TMPDIR/TEMP/TMP; `/tmp` is inode-exhausted.
+Use fabricated credentials, isolated browser/profile/state roots and local fixtures; never personal credentials, automatic downloads or unknown process cleanup.
+Outer command budgets must cover whole suites and preserve original runner waits; existing SDK20s/child15s, PTY90s/interaction15s and browser120s/action15s fixture budgets are not increased to obtain green.
+Preserve failed attempts; correct a demonstrated cause before rerunning, and never assign old failures a retrospective cause without evidence.
+
+Regression owners:
+
+- `service-contract`, `service-current`, `service-model-choice`, `service-auth`: closed DTOs, exact source/choice/current authority, security and compatibility.
+- `service-owner`, `service-accepted-work`, `service-stop-continuation`, `service-recovery`: original operations, overlap, Stop, unknown fences and informed recovery.
+- `service-scheduler`, `service-checks`, `service-human-review`, `service-accepting-host`: real SDK overlap/exclusion, native checks, review and publication.
+- `worker-*`, `lightweight-sdk`, `lightweight-process-diff`: genuine SDK/tool capture, split redaction, no-spill bounds and original native facts.
+- `service-history-*`: durable ordering, cold/no-index/restarted proof/search/export, corruption/torn/quota and expected-byte publication.
+- `lightweight-shell`, `native-client`, `native-history`, `terminal-integration`: native consent, shared service, Unicode/paging, detach/cancel and actual source/extracted PTYs.
+- `test/web/`: adapted pure/SSR tests separately from actual built-browser contexts, HTTPS, mixed clients, focus/viewports and complete downloads.
+- `package-*`, `distribution`, `service-package`, `independence`: exact tar/member/body/import/notice closure and nonactivating installation/discovery.
+
+Regenerate operator/service/native/browser outputs only through their canonical builders; `--check` variants compare new private output without overwriting canonical bytes.
+Review the independently enumerated package member list and every emitted body, not a count or an expected list generated from the tar under test.
+Keep public Pi peers external, the exact ws runtime edge and all upstream/font/vendor notices.
+Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
+
+### Prior integrated acceptance snapshot
+
+Before removal of development-workflow tooling, the integrated redesign passed full `verify`:1839 root tests/69 files,110 web tests/8 files and5 real-browser scenarios/3 files, with27 existing Windows-only controls skipped on Linux.
+It also passed separate129-member/35-runtime-source real pack/extraction, all four source/extracted regular/fullscreen Pi PTYs, mixed clients, CA-validated HTTPS/WSS, plain/gzip OAuth proxy, informed recovery and complete retained-history exports.
+Observed environment: Linux x86_64, Node26.7.0, Bun1.3.14, Pi0.84.3 and Chromium151.0.7922.34.
+These are prior executed results, not a claim that every later edit or other environment has been tested.
+The implementation/docs/evidence checkpoints are Git commits `b0fde94`, `531b158` and `2fd28b0`; historical failed/unknown outcomes are not rewritten by this summary.
+Additional Windows/macOS/ConPTY, Node22/other peers, paid accounts/every adapter, physical phone/human/second-machine, package-manager installation and real deployment remain unqualified.
+
 ## Licenses and reuse
 
 Cadence is MIT.

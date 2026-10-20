@@ -1,4 +1,0 @@
-{
-  "checkedOriginalReceipts": 137,
-  "hashFailures": []
-}

@@ -1,11 +1,6 @@
 [global]
 exclude = [
   "**/CHANGELOG.md",
-  ".agents/**",
-  ".trellis/workflow.md",
-  ".trellis/agents/**",
-  ".trellis/workspace/**",
-  ".trellis/tasks/**",
 ]
 disable = ["MD041"]
 extend-enable = ["MD060"]

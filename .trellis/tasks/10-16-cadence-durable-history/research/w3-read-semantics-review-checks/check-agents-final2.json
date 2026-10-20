@@ -1,8 +1,0 @@
-{
-  "command": ["bun", "run", "check:agents"],
-  "startedAt": "2026-10-17T09:27:20.702671+00:00",
-  "exitCode": 0,
-  "durationSeconds": 0.068,
-  "inputsUnchanged": true,
-  "changedInputs": []
-}

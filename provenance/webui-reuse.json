@@ -468,7 +468,11 @@
         }
       ],
       "reason": "Reviewed existing rendered-notice build gate, shared plan compatibility-input regression and owner-model capability-refresh regression. Their destination hashes were stale despite current bodies being covered by W7 verify. Added complete destination/integration-body hash regression in test/service-package.test.ts; no adapted runtime bytes changed. The same regression exposed two declared integration components without destination entries; reviewed exact model-choice/current-change adapters are now pinned too.",
-      "preimage": ".trellis/tasks/10-16-cadence-integrated-delivery/research/final-review-preimages/webui-reuse.json"
+      "preimage": {
+        "gitBlob": "ce41a6d5d830120966067d53367cc58c66611b1c",
+        "sha256": "bedd1bfcf892dd2153e65a09b997da4318897ae282d933b2b34c9a2857669ed5",
+        "bytes": 31556
+      }
     }
   ],
   "testAdaptations": [
