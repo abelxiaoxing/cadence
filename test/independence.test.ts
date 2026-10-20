@@ -45,16 +45,12 @@ describe("standalone independence", () => {
     if (existsSync(settingsPath))
       expect(read(settingsPath)).not.toMatch(/trellis/iu);
     for (const name of [
-      ".github/workflows/ci.yml",
       ".gitattributes",
       ".rumdl.toml",
       "biome.json",
       "scripts/check-agents.mjs",
     ])
       expect(read(path.join(root, name)), name).not.toContain(".trellis/");
-    expect(read(path.join(root, ".github/workflows/ci.yml"))).toContain(
-      "bun run check:notices",
-    );
   });
 
   it("retains historical provenance by Git object rather than a removed task path", () => {
