@@ -1,0 +1,29 @@
+{
+  "schema": "cadence-scheduler-timings/1",
+  "start": 189.522085,
+  "events": [
+    {
+      "ms": 0.4405299999999954,
+      "stage": "write:registered",
+      "id": 1
+    },
+    {
+      "ms": 0.9001099999999838,
+      "stage": "diagnostic:snapshot",
+      "id": 0
+    },
+    {
+      "ms": 2.0739110000000096,
+      "stage": "write:settled",
+      "id": 1
+    },
+    {
+      "ms": 2.078300999999982,
+      "stage": "diagnostic:snapshot",
+      "id": 0
+    }
+  ],
+  "totals": {},
+  "dropped": 0,
+  "pendingOriginalOrReportIds": []
+}

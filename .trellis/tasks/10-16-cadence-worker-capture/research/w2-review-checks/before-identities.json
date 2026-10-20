@@ -1,0 +1,62 @@
+{
+  "src/service/contracts/core.ts": {
+    "recorded": "40e0653703f764227eaa1bb71a0e732452b0feeedbc6e7c532a376affc20f14b",
+    "observed": "40e0653703f764227eaa1bb71a0e732452b0feeedbc6e7c532a376affc20f14b"
+  },
+  "src/service/contracts/domain.ts": {
+    "recorded": "0c1f0ff9d156add1869d4d12717b5f2a94239b033345cf6bb384071066a90bc1",
+    "observed": "0c1f0ff9d156add1869d4d12717b5f2a94239b033345cf6bb384071066a90bc1"
+  },
+  "src/service/contracts/capture.ts": {
+    "recorded": "4f595019e758b28b9e8affba3ecc0b494c1defc679fe1c40e4e428f8e63bc0ac",
+    "observed": "4f595019e758b28b9e8affba3ecc0b494c1defc679fe1c40e4e428f8e63bc0ac"
+  },
+  "src/service-contract.ts": {
+    "recorded": "ca33c5d963cc2513199138c77f51b02885aa89f6998d9386c82d95fb3594ff9a",
+    "observed": "ca33c5d963cc2513199138c77f51b02885aa89f6998d9386c82d95fb3594ff9a"
+  },
+  "src/service/contracts/history.ts": {
+    "recorded": "07810b6052e3a5c012a62388c4b77ddd24121be753294c4f63bde2c0ee48bf82",
+    "observed": "07810b6052e3a5c012a62388c4b77ddd24121be753294c4f63bde2c0ee48bf82"
+  },
+  "src/service/contracts/budget.ts": {
+    "recorded": "968c85e35fb1e34c8e77ded90e29c41535728077a07be041b014068362a5463d",
+    "observed": "968c85e35fb1e34c8e77ded90e29c41535728077a07be041b014068362a5463d"
+  },
+  "src/service/ports.ts": {
+    "recorded": "7134c4576caa55718d8ba914bb4c4f19f2dbeed4317eba041e53614e3e6c028e",
+    "observed": "7134c4576caa55718d8ba914bb4c4f19f2dbeed4317eba041e53614e3e6c028e"
+  },
+  "src/subagent-process.ts": {
+    "recorded": "dd79396eef36d2f621fc5e19b183bdd974a9e300d536da01920de94fee81d984",
+    "observed": "dd79396eef36d2f621fc5e19b183bdd974a9e300d536da01920de94fee81d984"
+  },
+  "test/service-contract.test.ts": {
+    "recorded": "b64ad03461e5ebec8edd0902d55a4095200336bc64472620b8d97172df085c6d",
+    "observed": "b64ad03461e5ebec8edd0902d55a4095200336bc64472620b8d97172df085c6d"
+  },
+  "src/sdk-worker.mjs": {
+    "recorded": "12fff81671cc0bd1d3011f43f9364531bba0a08007dd1abe728de00a676022f3",
+    "observed": "12fff81671cc0bd1d3011f43f9364531bba0a08007dd1abe728de00a676022f3"
+  },
+  "src/worker-public.mjs": {
+    "recorded": "7b9db72f4ec299d339bd84b68f16b2c5c31ff0596d567c752d5a9c3fe2680ca3",
+    "observed": "7b9db72f4ec299d339bd84b68f16b2c5c31ff0596d567c752d5a9c3fe2680ca3"
+  },
+  "src/worker-public.d.mts": {
+    "recorded": "bbf12619e4984fa0d4de830c0a89504c512cfa2b309f239bb83635a2fd19346e",
+    "observed": "bbf12619e4984fa0d4de830c0a89504c512cfa2b309f239bb83635a2fd19346e"
+  },
+  "src/sdk-network.ts": {
+    "recorded": "8284b710cd419d0d87639bcb4931a989dde06a797aea5405e2a2994f61ef9468",
+    "observed": "8284b710cd419d0d87639bcb4931a989dde06a797aea5405e2a2994f61ef9468"
+  },
+  "test/worker-public.test.ts": {
+    "recorded": "a7ab2451e95a2b9fecad342fa7a8579847557634588dad84d28eff65b3db462a",
+    "observed": "a7ab2451e95a2b9fecad342fa7a8579847557634588dad84d28eff65b3db462a"
+  },
+  "test/helpers/worker-capability-child.mjs": {
+    "recorded": "3bd00dc7197e84e4bbc0838f6ae22c16dc10cb4927f622445c4e603d795daa7c",
+    "observed": "3bd00dc7197e84e4bbc0838f6ae22c16dc10cb4927f622445c4e603d795daa7c"
+  }
+}

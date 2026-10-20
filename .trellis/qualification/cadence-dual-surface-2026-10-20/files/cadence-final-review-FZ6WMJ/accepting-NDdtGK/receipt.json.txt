@@ -1,0 +1,27 @@
+{
+  "mode": "generated",
+  "packageRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-final/package",
+  "contacts": 1,
+  "maxActive": 1,
+  "observations": [
+    {
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ],
+      "mode": "single"
+    }
+  ],
+  "stopped": [
+    0,
+    null
+  ],
+  "restartedCloses": [],
+  "stdout": "{\"status\":\"ready\",\"epoch\":\"5f4e12fd-8c54-4056-8e53-141ea6e26e2e\"}\n",
+  "stderr": "",
+  "sdk": "actual installed public SDK",
+  "paidProvider": false,
+  "physicalHuman": false
+}

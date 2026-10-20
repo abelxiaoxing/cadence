@@ -1,0 +1,14 @@
+import os, sys, json, time, subprocess, hashlib
+from pathlib import Path
+root=Path(__file__).parent
+name=sys.argv[1]; cmd=sys.argv[2:]
+env=os.environ.copy(); env.update(TMPDIR=str(root),TEMP=str(root),TMP=str(root),CADENCE_BROWSER_PATH='/home/mirako/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome')
+start=time.time(); log=root/(name+'.log')
+with log.open('xb') as out:
+ p=subprocess.Popen(cmd,stdout=out,stderr=subprocess.STDOUT,env=env)
+ receipt={'command':cmd,'cwd':os.getcwd(),'pid':p.pid,'started':start,'temporaryRoot':str(root),'originalWait':False}
+ (root/(name+'.started.json')).write_text(json.dumps(receipt,indent=2)+'\n')
+ code=p.wait()
+receipt.update(originalWait=True,exit=code,elapsedSeconds=round(time.time()-start,3),log=str(log),logSha256=hashlib.sha256(log.read_bytes()).hexdigest())
+(root/(name+'.json')).write_text(json.dumps(receipt,indent=2)+'\n')
+print(json.dumps(receipt,indent=2)); print(log.read_text(errors='replace')[-10000:]); sys.exit(code)

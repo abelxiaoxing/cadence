@@ -1,0 +1,11 @@
+{
+  "processes": [
+    {
+      "pid": "2032848",
+      "comm": "pi",
+      "cwd": "/home/mirako/abel/cadence",
+      "ppid": "7597"
+    }
+  ],
+  "signalsSent": []
+}

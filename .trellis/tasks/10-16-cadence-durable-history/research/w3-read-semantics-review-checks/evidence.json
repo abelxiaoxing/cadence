@@ -1,0 +1,226 @@
+{
+  "scope": "Independent W3 semantics and retained read/index/projection/live continuation review; not W3/product/pack completion",
+  "definitive": {
+    "receipt": "focused-final2.json",
+    "log": "focused-final2.log",
+    "inputs": "tested-inputs-final.json",
+    "files": 14,
+    "passed": 1113,
+    "failed": 0,
+    "skipped": 0,
+    "vitestDurationSeconds": 387.53,
+    "historyCases": 132,
+    "priorTenFileCases": 981,
+    "addedCases": 25,
+    "baselineCases": 1088,
+    "inputsUnchanged": true
+  },
+  "gates": {
+    "check": {
+      "receipt": "check-final2.json",
+      "log": "check-final2.log",
+      "exitCode": 0
+    },
+    "agents": {
+      "receipt": "check-agents-final2.json",
+      "log": "check-agents-final2.log",
+      "exitCode": 0
+    },
+    "lint": {
+      "command": "bun run lint",
+      "log": "lint-final.log"
+    },
+    "report": {
+      "command": "node_modules/.bin/rumdl check --no-exclude .trellis/tasks/10-16-cadence-durable-history/research/w3-read-semantics-review.md",
+      "log": "report-check-final.log"
+    }
+  },
+  "runtime": {
+    "executable": "/usr/bin/node",
+    "node": "26.7.0",
+    "platform": "linux",
+    "arch": "x64",
+    "bun": "1.3.14",
+    "peers": {
+      "@earendil-works/pi-coding-agent": "0.84.3",
+      "@earendil-works/pi-ai": "0.84.3",
+      "@earendil-works/pi-agent-core": "0.84.3",
+      "vitest": "4.1.10"
+    }
+  },
+  "changedInputs": {
+    "src/history/files.ts": {
+      "before": "58bd86ed15ea814d149649ab06bb4a8d305bbd5e2d86e72fb371957695fed6e9",
+      "final": "82e767f36075037717c382339585c7dc662d7e40643d071123bc5fe5d0904451"
+    },
+    "src/history/navigation.ts": {
+      "before": "689536d488855677950e25ff7294c1bf8d1ea797920a3e18dcd33df2d356fd34",
+      "final": "17bb7e57da9045aad4328119f912600c4a022b6a36d591913da51afef8da7287"
+    },
+    "src/history/projection.ts": {
+      "before": "7fa6f1de05df8fcef8bd32f2b9f097aa3aab54e6e9379cc6c539c7da40a1270c",
+      "final": "23836cdd0a9580e124160d604df023bb9fe0c718a270538d8c74aff8ea00d635"
+    },
+    "src/history/reader.ts": {
+      "before": "54e2fae592b6cb250d1214e3e46fc095641b0da00e0265eb9dceacb12ee303ed",
+      "final": "e82aa47efbd35abc0d2b5790dcb5d9ea3f46de0a09515110d9322dddb2901971"
+    },
+    "src/history/run-state.ts": {
+      "before": "009dd009ef826ad5f51153af8ef73be5d8014775dca5903c14b767ed0a321468",
+      "final": "d7617557c73d6c0aff7014cbc6f23fc44ae5c3c904745bda5a8ddd0265e3a827"
+    },
+    "src/history/writer.ts": {
+      "before": "5edbc131851309e90b54fe10b033b375baddf06a3297151d81e5b7bb5f534b47",
+      "final": "7d478fbbd2208170564ce63ec759d515273daab102b2615fdafb6be31e38a274"
+    },
+    "test/helpers/history-crash.ts": {
+      "before": "408f2fe9c89b628fff567fb4b3b602af2178758f2887dcdd0f63a4bcd816eef6",
+      "final": "2e4d663120f4cc0b4b2c51e8549f115ee73a4ef4e8df52fa47457da212da3e15"
+    },
+    "test/service-history-live-detail.test.ts": {
+      "before": "cab831edca1d71cb684a6204f58c62c2a3ba130569b744918387bc24687cdbdc",
+      "final": "e45993a4e31eb356bda4a2118d8a1238ba4693cc9ae7c319343d9567cf6b86a2"
+    },
+    "test/service-history-projection.test.ts": {
+      "before": "1140d06fb264b9288d03856b4bbe69ad73a57b6c6db03d36b888b33faebcf6fc",
+      "final": "6e0701877c64bb50ad67257fe0abe60bb1453e29ef440f749f3db29ee593a6d7"
+    },
+    "test/service-history-semantics.test.ts": {
+      "before": "712d3d64a95a1e90962228a20c790eb9671760113835e52564479be7f2578b45",
+      "final": "1f2ba0f30518527c364f95119804af691716f0d8f5a4fe0d25112abfeffc0f68"
+    },
+    "test/service-history.test.ts": {
+      "before": "f3069f5ae2027b9a0602512022b2729247fcc9c7b155065b1fa1710855162ef1",
+      "final": "32726dd3f8f0b9a76b69a7e610d292cc5eb30b6c5caf4f45d4ad3481f3e39443"
+    }
+  },
+  "unchangedSharedInputs": [
+    "bun.lock",
+    "package.json",
+    "src/sdk-worker.mjs",
+    "src/service/admission.ts",
+    "src/service/auth.ts",
+    "src/service/config.ts",
+    "src/service/contracts/budget.ts",
+    "src/service/contracts/capture.ts",
+    "src/service/contracts/core.ts",
+    "src/service/contracts/domain.ts",
+    "src/service/contracts/history.ts",
+    "src/service/coordination.ts",
+    "src/service/http.ts",
+    "src/service/model-config.ts",
+    "src/service/model-context.ts",
+    "src/service/owner.ts",
+    "src/service/ports.ts",
+    "src/service/private-files.ts",
+    "src/service/recovery.ts",
+    "src/subagent-process.ts",
+    "src/worker-capture.d.mts",
+    "src/worker-capture.mjs",
+    "src/worker-public.d.mts",
+    "src/worker-public.mjs",
+    "src/worker-recording.ts",
+    "src/worker-redaction.d.mts",
+    "src/worker-redaction.mjs",
+    "src/worker-tools.d.mts",
+    "src/worker-tools.mjs"
+  ],
+  "evidenceClasses": {
+    "nativeSdk": "Unchanged guarded real W1 preparation/W2 SDK/native/W3 journal >2MiB capture; original stdin/cleanup/close/canary/one-contact assertions; test20s child15s.",
+    "nativeCrash": "Seven original waited Node exit77 windows; auth helper uses an independent UUID; no automatic replay/recovery.",
+    "httpWs": "Actual W1 HTTP/WS composed with current history writer/projection; fabricated access/current-context; original snapshot race, lost-notification injection, real heartbeat/resync.",
+    "newControls": "Actual isolated private files and readonly native IO with fabricated public/native/check/publication facts. Actual lease release/reacquisition for new-epoch review; no new provider/scheduler/TaskStore execution claim.",
+    "injections": "Existing ENOSPC/free-space/stall/observer gates remain injections. New coverage/unknown/native-zero/publication facts are structural inputs.",
+    "overlap": "114 codec vectors run through two surfaces; prior passing/development runs are not added to definitive count."
+  },
+  "counterexampleLogs": [
+    "counterexample-cancel-identity.log",
+    "counterexample-marker.log",
+    "counterexample-review-content.log",
+    "counterexamples-1.log",
+    "counterexamples-2.log",
+    "counterexamples-3.log",
+    "counterexamples-4.log",
+    "counterexamples-5.log",
+    "counterexamples-6.log",
+    "counterexamples-7.log"
+  ],
+  "preservedEarlierPass": {
+    "receipt": "focused-final.json",
+    "inputs": "tested-inputs.json",
+    "passed": 1112,
+    "meaning": "Precedes the independently demonstrated Cancel operation-ID correction; not rebound to final source."
+  },
+  "remaining": [
+    "literal search",
+    "streaming NDJSON/Markdown export and access revocation",
+    "actual strict-v1 TaskStore publication",
+    "guarded W1-authorized recovery",
+    "broader quota/recovery/crash composition and explicit navigation rebuilding",
+    "W1/W4 production composition",
+    "W5/W6 client cutover",
+    "W7 exact distribution/integrated acceptance"
+  ],
+  "unexecuted": [
+    "whole repository suite",
+    "pack/extracted service",
+    "browser/terminal cutover",
+    "paid provider",
+    "physical human/device",
+    "Node22",
+    "modern Pi1.2",
+    "native Windows/macOS/ConPTY"
+  ],
+  "notes": [
+    "Standalone cold/damaged-store lookups may remain bounded-inconclusive; no false absence or accepting replay.",
+    "No W1/W2/shared/public/package/lock/spec/status/Git/real credential changes.",
+    "New JSON is formatted before final lint. Final lint/report raw logs are direct execution evidence, not fabricated hash claims."
+  ],
+  "artifacts": {
+    "before-inputs.json": "ef4a55d204c95f7cbb8f6ec42f630393130d5500fa4ef0eba779197cb837bb55",
+    "before-status.txt": "aa41ff4bca5f7fc1f5b0db80f79e252a22064d6d082a90207341af971209fa0e",
+    "check-agents-final.log": "fc459b9f542bbe9546842994f18a74f6a80e908f467ce497916608c24531eebf",
+    "check-agents-final2.json": "7f211235e4e31ac6e3684d6e562927cef34c9939bdac17a9c8880dc26ce6c843",
+    "check-agents-final2.log": "fc459b9f542bbe9546842994f18a74f6a80e908f467ce497916608c24531eebf",
+    "check-development.log": "d8e0559fba0bc409f2ba5d1a97a129af498576567949aee4278dd415d3d51e90",
+    "check-final.log": "d8e0559fba0bc409f2ba5d1a97a129af498576567949aee4278dd415d3d51e90",
+    "check-final2.json": "42bdfa8b69568bd1162ed3abd5eadbf83118fda73a095094ef8d381f55e87393",
+    "check-final2.log": "d8e0559fba0bc409f2ba5d1a97a129af498576567949aee4278dd415d3d51e90",
+    "check-preflight.log": "ec831031b9613a58bd50a977b57851db3f2645d6ab7e81142ba90663300be42f",
+    "counterexample-cancel-identity.log": "4e9004f9b7fc6fb6e9e26de37802dc03be804d4e14bede2cf5fd458351c5f5e4",
+    "counterexample-marker.log": "9cbd4aa4b8bf7141ac53ecb4f34d37fa19225a40439a6b7571d4073dbc2e890d",
+    "counterexample-review-content.log": "35c3ef17d70e28a700bd3251b83ed5e50df0fe4d3348a497e665d93314262f57",
+    "counterexamples-1.log": "682ec89f202cc5312d2f5769651e2b37c5749a0f20d47cca603585bb7b5a3997",
+    "counterexamples-2.log": "7ec8df044c60904ebc115e6079b30ad2bf5b1f09da6fd701ac78bd36054b0365",
+    "counterexamples-3.log": "d59a8801170ea7ea8ae99af63d2b76eb14bf4c6d992a386f4b8dea459367afe0",
+    "counterexamples-4.log": "20123f378874689aaf29f0ff27915b1ff49ceba9a2ff713be22652f919102483",
+    "counterexamples-5.log": "59dd8c488a54f6fbc568cb8b5e2ccfd0254dcc3bf99f1b0776ac45e00618222f",
+    "counterexamples-6.log": "c419b6a410767aba8f21f091b48a69b56c17c3a7f980b76873dac3dfbcf63439",
+    "counterexamples-7.log": "31b3b1a31c064aca3ed6eae106f6cb33712417c205b5a535cea957d3c8b54254",
+    "evidence-format.log": "9545dadef4bd3b2166362667ef88a6381050b5e7351f59c26ea7527cf073d863",
+    "fixes-1.log": "f55eaa9df62d75267406e9f24a9c627888a18e718c4e4e46dcc6fbb11e0da568",
+    "fixes-2.log": "b6905c79b52eba8bf1668fc06766655ecbfc04b382e827255ef332bf4a51d070",
+    "fixes-3.log": "2158678e0005fa28895e10bd7278988d9e537c1b84d3f63afcd916a18d044a2c",
+    "fixes-4.log": "c350b947fa7aaa0bff37a965d0d371c068ff0af83965defe6bc8642caad59040",
+    "fixes-5.log": "7ae010f0eb46c12f1d88ac9e30bc32f7211a989138d99a92b897250fca889406",
+    "fixes-6.log": "f0489c440731218250fa09794886848cdc84974bb18a43c7329bbca3649325ee",
+    "fixes-7.log": "8f2f5bc18f77a7bfd91fdf3f909c2f687fc1176c6ce1d92e5f7637aa77b710a6",
+    "fixes-cancel.log": "71beb63a0136f9212e459313f67b3c9d37663980de52bc1d78c90f2e9dcebaa7",
+    "focused-final.json": "1729ff67f811fcd0b5ef43b54cb0066b6621cd5c8a0cf3b303385a663e07a0c1",
+    "focused-final.log": "96e23a872aa1285b8b1eccf5598d2ad6af738bb0aea8c01c0eed5b8f1c1d9da8",
+    "focused-final2.json": "e0328e8d3df78da13622a3c4587004e3f97d30391cadac0b864ac1e5622690b1",
+    "focused-final2.log": "f4556a6178443ce5be8bd3203afbf831b627cdc80739bdaebbd1353356e4875b",
+    "format-cancel.log": "e72d1920d0f373cdd6630919b0801206dffe05d89cbe3504e262627c2187b4eb",
+    "format-development-2.log": "c011f75d72e8d4bc84668f2affb03185f8a63f821102ea3cc6413026a868009d",
+    "format-development.log": "c1bba27e6686fab03572f9001fde326b008221fb48d13b1cb39db881ebe4bb94",
+    "format-final-source.log": "be0c2a1029f5c857817aff73478d43497abba2c3a65eb36d118e7392487174b8",
+    "history-development-1.log": "bf107c4e841805d9f0531b11d333d4868f0cf4fd081cb1ce34b1796dc76922fd",
+    "history-development-2.log": "015720837a0e3c1b79993328c03d19a12fe15cb623a984a12ae0f97b294cdcec",
+    "report-check-development.log": "e6920c98d794190dce05402857611db3a325a3b528840f68fcf68524a6cf39c7",
+    "report-format.log": "1ae74a9a5efa340063c6d826ce2f59dced39d677c3421e7baca24875eeb4fb46",
+    "runtime.json": "22480040bb27703b55253eff8feb70cbe7a7b90178b4804a1e59c309e6add7ba",
+    "tested-inputs-final.json": "424ee613abc4db4a1a261bc2ee4156bc3f6e9fd60b158738e14432e6ece80e2e",
+    "tested-inputs.json": "9c5c55186d489d200198fc2f8101c92a265e884d6115b291f70d2dcf9b508330"
+  },
+  "reportSha256": "6cedf19545e0ca11fef602c994b1ea5a75123fc7190eb6332eea06f92781354d"
+}

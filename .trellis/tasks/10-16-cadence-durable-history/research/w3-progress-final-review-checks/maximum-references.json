@@ -1,0 +1,72 @@
+[
+  {
+    "n": 0,
+    "result": "progress",
+    "ms": 106.98137100000008,
+    "bytes": 2961994,
+    "phase": "locate",
+    "at": 1454666,
+    "member": 0,
+    "event": 0,
+    "reference": -1,
+    "size": 877,
+    "repeated": false
+  },
+  {
+    "n": 1,
+    "result": "progress",
+    "ms": 100.90099600000008,
+    "bytes": 2841348,
+    "phase": "members",
+    "at": 1897190,
+    "member": 0,
+    "event": 1292,
+    "reference": 1291,
+    "size": 932,
+    "repeated": false
+  },
+  {
+    "n": 2,
+    "result": "progress",
+    "ms": 100.38753600000007,
+    "bytes": 2683634,
+    "phase": "members",
+    "at": 1897190,
+    "member": 727333,
+    "event": 750,
+    "reference": 2047,
+    "size": 937,
+    "repeated": false
+  },
+  {
+    "n": 3,
+    "result": {
+      "segment": 1,
+      "offset": 0,
+      "bytes": 1897190,
+      "seq": "2"
+    },
+    "ms": 71.5649269999999,
+    "bytes": 1169858,
+    "phase": "ready",
+    "at": 1897190,
+    "member": 1454666,
+    "event": 0,
+    "reference": 2047,
+    "size": 940,
+    "repeated": false
+  },
+  {
+    "n": 4,
+    "result": null,
+    "ms": 2.171982000000071,
+    "bytes": 0,
+    "phase": "done",
+    "at": 0,
+    "member": 0,
+    "event": 0,
+    "reference": -1,
+    "size": 830,
+    "repeated": false
+  }
+]

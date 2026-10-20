@@ -1,0 +1,1 @@
+{"stop":{"state":"quarantined","pending":{"process":0,"auth":0,"storage":0,"work":0},"settlement":"uncertain"},"natives":[{"kind":"check","start":74130.177664,"end":74230.42835,"code":0,"ignoredInput":true}],"pendingWrites":0,"acceptedPending":0,"locksRetained":true,"contacts":0,"productionAdmission":null,"physicalHuman":false,"paidProvider":false}

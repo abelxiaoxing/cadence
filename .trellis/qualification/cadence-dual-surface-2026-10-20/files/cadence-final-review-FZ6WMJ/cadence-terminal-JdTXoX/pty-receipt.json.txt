@@ -1,0 +1,177 @@
+{
+  "pid": 2353041,
+  "waitpidReturned": true,
+  "waitStatus": 0,
+  "exitCode": 0,
+  "failure": "terminal-step-deadline: Parent start: settled / completed / published\\s*Owner drained",
+  "observations": [
+    {
+      "pattern": "Context7",
+      "matched": true,
+      "rawStart": 0,
+      "rawEnd": 6291
+    },
+    {
+      "pattern": "Cadence service",
+      "matched": true,
+      "rawStart": 6291,
+      "rawEnd": 9045
+    },
+    {
+      "pattern": "Exact OWNER model",
+      "matched": true,
+      "rawStart": 9045,
+      "rawEnd": 16463
+    },
+    {
+      "pattern": "Exact thinking level",
+      "matched": true,
+      "rawStart": 16463,
+      "rawEnd": 22767
+    },
+    {
+      "pattern": "Select exact owner model",
+      "matched": true,
+      "rawStart": 22767,
+      "rawEnd": 30150
+    },
+    {
+      "pattern": "Cadence review",
+      "matched": true,
+      "rawStart": 30150,
+      "rawEnd": 36113
+    },
+    {
+      "pattern": "Cadence service",
+      "matched": true,
+      "rawStart": 36113,
+      "rawEnd": 43613
+    },
+    {
+      "pattern": "Task kind",
+      "matched": true,
+      "rawStart": 43613,
+      "rawEnd": 50313
+    },
+    {
+      "pattern": "Goal",
+      "matched": true,
+      "rawStart": 50313,
+      "rawEnd": 61222
+    },
+    {
+      "pattern": "Cadence review",
+      "matched": true,
+      "rawStart": 61222,
+      "rawEnd": 67108
+    },
+    {
+      "pattern": "Confirm create now",
+      "matched": true,
+      "rawStart": 67108,
+      "rawEnd": 74985
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 74985,
+      "rawEnd": 90409
+    },
+    {
+      "pattern": "Readable plan",
+      "matched": true,
+      "rawStart": 90409,
+      "rawEnd": 101462
+    },
+    {
+      "pattern": "Finite assignments",
+      "matched": true,
+      "rawStart": 101462,
+      "rawEnd": 108579
+    },
+    {
+      "pattern": "Cadence review",
+      "matched": true,
+      "rawStart": 108579,
+      "rawEnd": 115671
+    },
+    {
+      "pattern": "Confirm save-plan now",
+      "matched": true,
+      "rawStart": 115671,
+      "rawEnd": 123569
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 123569,
+      "rawEnd": 137713
+    },
+    {
+      "pattern": "Cadence review",
+      "matched": true,
+      "rawStart": 137713,
+      "rawEnd": 144555
+    },
+    {
+      "pattern": "Confirm generate-plan now",
+      "matched": true,
+      "rawStart": 144555,
+      "rawEnd": 152453
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 152453,
+      "rawEnd": 161082
+    },
+    {
+      "pattern": "Parent generate-plan: settled / completed / published\\s*Owner drained",
+      "matched": true,
+      "rawStart": 161082,
+      "rawEnd": 168762
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 168762,
+      "rawEnd": 176712
+    },
+    {
+      "pattern": "Cadence review",
+      "matched": true,
+      "rawStart": 176712,
+      "rawEnd": 183909
+    },
+    {
+      "pattern": "Confirm start now",
+      "matched": true,
+      "rawStart": 183909,
+      "rawEnd": 193082
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 193082,
+      "rawEnd": 200809
+    }
+  ],
+  "seconds": 31.372159919003025,
+  "physicalHuman": false,
+  "nativeExecutor": false,
+  "escapeKeys": [
+    {
+      "inputHex": "1b",
+      "minimumDelayMs": 100,
+      "elapsedMs": 100.07554502226412
+    }
+  ],
+  "barrier": {
+    "event": null,
+    "receivedBeforeWait": null,
+    "waitStep": null,
+    "consumed": false,
+    "escapeAfterReady": false,
+    "bytes": 0
+  }
+}

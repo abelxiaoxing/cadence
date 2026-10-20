@@ -1,0 +1,15 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Current backend ownership; intentional replacements are in parent design."}
+{"file": ".trellis/spec/backend/lightweight-workflow-guidelines.md", "reason": "Preserve applicable consent/auth/process/check/review contracts."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Single decoder/projection ownership across boundaries."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse compatible source rather than duplicate mechanisms."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Strict v1/private paths/locks and selected-state preservation."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Boundary-specific evidence and whole-package gates."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Sanitization and private/public diagnostics; rich capture replacement is deliberate."}
+{"file": ".trellis/tasks/10-16-cadence-webui-terminal/research/approved-design-boundaries.md", "reason": "Task-specific source/design evidence; parent design resolves differing recommendations."}
+{"file": ".trellis/tasks/10-16-cadence-webui-terminal/research/implementation-context.md", "reason": "Bounded source/design index; read mandatory parent design appendices and consult full oversized topic reports on demand instead of truncated injection."}
+{"file": ".trellis/tasks/10-16-cadence-webui-terminal/research/interface-freeze.md", "reason": "Joint W1-owned producer/store/client contract freeze and single-editor handoffs."}
+{"file": ".trellis/tasks/10-16-cadence-service-owner/research/w1-w3-client-freeze-acceptance.md", "reason": "Accepted concrete one-writer/read/export interfaces; private accounting taxonomy differs from public transcript."}
+{"file": ".trellis/tasks/10-16-cadence-worker-capture/research/w2-producer-handoff.md", "reason": "Actual mandatory sink and native prepared worker adapter."}
+{"file": ".trellis/tasks/10-16-cadence-worker-capture/research/w2-producer-review.md", "reason": "Reviewed ordered pipelined sink admission/backpressure, private redaction/native facts and real batching test."}
+{"file": ".trellis/spec/backend/service-owner-guidelines.md", "reason": "Owner original promises/lease/recovery boundaries for W3 integration."}
+{"file": ".trellis/tasks/10-16-cadence-webui-terminal/research/read-progress-decision.md", "reason": "Main-approved additive read-progress format/API/transport resolution and sole-editor cross-owner handoff; old frozen hashes remain historical."}

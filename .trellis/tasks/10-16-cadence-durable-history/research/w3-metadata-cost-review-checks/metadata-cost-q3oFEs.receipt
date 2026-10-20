@@ -1,0 +1,18 @@
+{
+  "schema": "cadence-w3-metadata-cost/1",
+  "phases": [
+    {
+      "name": "setup",
+      "ms": 50.74436299999991,
+      "counts": {
+        "parse.calls": 4,
+        "parse.bytes": 2,
+        "tree.head": 2,
+        "tree.head.ms": 0.15136999999992895,
+        "hash.calls": 1001,
+        "hash.bytes": 2000
+      }
+    }
+  ],
+  "trees": []
+}

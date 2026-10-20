@@ -1,0 +1,27 @@
+{
+  "command": [
+    "bun",
+    "run",
+    "test",
+    "--",
+    "test/service-contract.test.ts",
+    "test/service-owner.test.ts",
+    "test/service-auth.test.ts",
+    "test/service-model-context.test.ts",
+    "test/lightweight-store-controller.test.ts",
+    "test/lightweight-process-diff.test.ts",
+    "test/lightweight-sdk.test.ts",
+    "test/worker-public.test.ts",
+    "test/worker-capture.test.ts",
+    "test/worker-recording.test.ts",
+    "test/service-history.test.ts",
+    "test/service-history-semantics.test.ts",
+    "test/service-history-projection.test.ts",
+    "test/service-history-live-detail.test.ts"
+  ],
+  "startedAt": "2026-10-17T09:20:03.993144+00:00",
+  "exitCode": 0,
+  "durationSeconds": 377.826,
+  "inputsUnchanged": true,
+  "changedInputs": []
+}

@@ -1,0 +1,5 @@
+{
+  "comparison": "Initial TypeScript type erasure versus maintained JS syntax tree, ignoring comments/formatting/commas/semicolons",
+  "equal": false,
+  "sha256": "4c11621dfc29913025d57cf89f1e3b180693a0b99bc83a76701517257daeb288"
+}

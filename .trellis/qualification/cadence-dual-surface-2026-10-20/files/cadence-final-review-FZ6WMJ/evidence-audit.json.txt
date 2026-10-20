@@ -1,0 +1,21 @@
+{
+  "checkedReferences": 61,
+  "hashFailures": [],
+  "frozenInputs": 467,
+  "changes": [
+    {
+      "file": ".trellis/spec/backend/directory-structure.md",
+      "actual": "860a2a83910dd817dd00b8d5c28b72d74cfd4de731e7a70e510b0b99a4a2b4be"
+    },
+    {
+      "file": ".trellis/spec/backend/task-distribution-guidelines.md",
+      "actual": "685add2e897b9be93dd405c628c1dcd642e7cbe2d92447b9d6595cf16e7fae10"
+    },
+    {
+      "file": ".trellis/spec/frontend/directory-structure.md",
+      "actual": "f049cbe9100e95d690c6c22e07455453c1efdb47bdbfccd12f5c0ff6abacb764"
+    }
+  ],
+  "originalCommandsWaited": 10,
+  "originalEvidenceSha256": "66e6ea3779607a80f191a59a26c14c97ab45a617677cc24731346c6a92be15cc"
+}

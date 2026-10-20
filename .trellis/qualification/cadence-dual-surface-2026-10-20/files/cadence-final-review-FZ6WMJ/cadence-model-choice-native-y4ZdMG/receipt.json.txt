@@ -1,0 +1,1 @@
+{"scenario":"capacity","passed":true,"authCalls":0,"availabilityCalls":0,"constructed":1,"taskAdmission":false,"evidence":"actual SDK/disk/read HTTP; choice private core; busy originals/replay admission injected; production mutation closed"}

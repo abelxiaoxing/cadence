@@ -1,0 +1,1 @@
+{"archive":"/home/mirako/abel/cadence-final-review-FZ6WMJ/pack-final/abelxiaoxing-cadence-1.8.4.tgz","installed":"/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-final/package","members":129,"archiveSha256":"0358c904827e5508ac251cb98c87149ef98e14ed0640adf5097dbb95a176c995","cliExit":0}

@@ -1,0 +1,1 @@
+{"waitpidReturned": true, "exitCode": 1, "forced": false, "fault": null}

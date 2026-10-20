@@ -1,0 +1,28 @@
+{
+  "schema": "cadence-interface-freeze/1",
+  "at": "2026-10-16T16:54:21.547287+00:00",
+  "task": ".trellis/tasks/10-16-cadence-service-owner",
+  "status": "joint-consumer-accepted",
+  "scope": "Portable executable contracts and ports only; no native/durable/client product acceptance",
+  "reviews": {
+    ".trellis/tasks/10-16-cadence-service-owner/research/w1-contract-revision-review.md": "17b0acad6cbf89ef15716a9b542a8cf77e43ec65227f3830ed7d6171f58a670f",
+    ".trellis/tasks/10-16-cadence-service-owner/research/w1-w2-freeze-acceptance.md": "9d345179039428425f7406084a42b9f0e54613c1c63d4f086bcc03b9513686a3",
+    ".trellis/tasks/10-16-cadence-service-owner/research/w1-w3-client-freeze-acceptance.md": "8e779036ac43c9039459ebe6f1946084729b4a3c022b26f8cba39c5459eaaffb"
+  },
+  "sources": {
+    "src/service-contract.ts": "7d166451e88e89b9ef86b3e48c38716324637dd736b89d5ab679cde5b8acebff",
+    "src/service-client.ts": "a61ae7f04a6b3665b077b550193f24dc3134ee39d4645d86f7f0e52dc7e63c79",
+    "src/service/ports.ts": "7134c4576caa55718d8ba914bb4c4f19f2dbeed4317eba041e53614e3e6c028e",
+    "src/service/admission.ts": "c44a27cfe505bb6ac524928a4682a157b291fe777ed5b8979f3f07c0cde78cbd",
+    "src/service/contracts/budget.ts": "968c85e35fb1e34c8e77ded90e29c41535728077a07be041b014068362a5463d",
+    "src/service/contracts/capture.ts": "1063989d0b7ae4b6a982243da272e3f01905013ba79bb145362fde1f15deddb7",
+    "src/service/contracts/core.ts": "c0872f2f0dce34c5ebfb73827b5200675b4d8ecfa312b2bb722c8e4bb51afb41",
+    "src/service/contracts/domain.ts": "f24eb52dafd058614828209135a3f9ac372232a74bcbf06c20c79ec05057b32a",
+    "src/service/contracts/history.ts": "07810b6052e3a5c012a62388c4b77ddd24121be753294c4f63bde2c0ee48bf82",
+    "test/service-contract.test.ts": "4f5cf173e61219912e814ae8ae5e20ea052f15b4cb9c17f60d8a197a727f545e"
+  },
+  "sharedEditor": "W1/main; frozen read-only until explicit single-editor handoff",
+  "w2CodecRelocation": "Accepted plan only, not assigned yet; move one executable core/domain/capture closure to maintained JS with declarations and same vectors; no duplicate validators",
+  "runtimeQualified": false,
+  "productComplete": false
+}

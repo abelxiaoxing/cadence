@@ -1,0 +1,63 @@
+{
+  "passed": true,
+  "paidProvider": false,
+  "physicalHuman": false,
+  "viewports": [
+    {
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "width": 768,
+      "height": 1024
+    },
+    {
+      "width": 390,
+      "height": 844
+    },
+    {
+      "width": 320,
+      "height": 568
+    }
+  ],
+  "downloads": [
+    {
+      "scope": "task",
+      "format": "ndjson",
+      "bytes": 346107,
+      "path": "/home/mirako/abel/cdb-foOW0V/task.ndjson"
+    },
+    {
+      "scope": "task",
+      "format": "markdown",
+      "bytes": 286557,
+      "path": "/home/mirako/abel/cdb-foOW0V/task.markdown"
+    },
+    {
+      "scope": "run",
+      "format": "ndjson",
+      "bytes": 274175,
+      "path": "/home/mirako/abel/cdb-foOW0V/run.ndjson"
+    },
+    {
+      "scope": "child",
+      "format": "markdown",
+      "bytes": 101757,
+      "path": "/home/mirako/abel/cdb-foOW0V/child.markdown"
+    }
+  ],
+  "errors": [],
+  "secondContextRunId": "e941bcd6-4722-497c-8ff8-ecc87d960ad7",
+  "coldRestart": {
+    "priorEpoch": "3146e1c5-b416-42e8-93d5-966597c90d7d",
+    "epoch": "16be1039-3275-44b3-ae47-f403c145c0b4",
+    "taskId": "06a9dfba-2cf4-4c8c-8f92-137248395617",
+    "runId": "e941bcd6-4722-497c-8ff8-ecc87d960ad7",
+    "exactHit": "END-RETAINED",
+    "contactsUnchanged": true
+  },
+  "originalBrowserClose": [
+    0,
+    null
+  ]
+}

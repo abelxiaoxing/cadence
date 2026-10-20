@@ -1,0 +1,2202 @@
+{
+  "schema": "cadence-w4-accepted-work-lifetime-review/1",
+  "disposition": "reviewed-scoped-after-one-fix-production-admission-closed",
+  "root": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg",
+  "identity": {
+    "platform": "Linux-7.1.8-arch1-3-x86_64-with-glibc2.44",
+    "machine": "x86_64",
+    "node": "v26.7.0",
+    "bun": "1.3.14",
+    "nodeSha256": "d51d79e0e04abfe366345496a8e1379d56493271af4e0d6f27dd6ba76be628ea",
+    "peers": {
+      "@earendil-works/pi-coding-agent": {
+        "version": "0.84.3",
+        "sha256": "6c0bfa4558a0de32fb54fa97ca73397753ec7d4ad7d0ba607790920168de751f"
+      },
+      "@earendil-works/pi-ai": {
+        "version": "0.84.3",
+        "sha256": "ed696e001e0154b2095f5c5d9153cb61a68a1ba850cc324d704ed87ae505ce4c"
+      },
+      "vitest": {
+        "version": "4.1.10",
+        "sha256": "caa41f04799bd42f3cfd100c4282e630d77ffc7deb1e7e4927794fcb7f137f34"
+      },
+      "ws": {
+        "version": "8.21.3",
+        "sha256": "a56a3fd55945a3ce177e3ca165dafae6f7eb03b7aefd58c092ac723d5741a6fb"
+      }
+    }
+  },
+  "filesystem": "/dev/sda2 ext4, mode0700 roots",
+  "outerAllowanceSeconds": 1800,
+  "originalRunnerWait": true,
+  "preservation": {
+    "productionAdmission": null,
+    "taskStatusEdits": false,
+    "dependenciesChanged": false,
+    "frontendChanged": false,
+    "userGitMutations": false,
+    "realCredentials": false,
+    "deployment": false,
+    "cleanup": false,
+    "historyRewritten": false,
+    "initialSetupDeviation": "Initial readonly task/context/diff/status discovery preceded fresh temporary-root allocation. Every verification/build/test used newly allocated 0700 home-disk TMPDIR/TEMP/TMP; subsequent inspection commands also selected fresh roots."
+  },
+  "changes": {
+    "src/service/task-actions.ts": {
+      "before": "4cf307d4a7d8e0db9b28682759d161ec0d552f1def14e146a8d412085fbf01ad",
+      "after": "bbec133a0ac923fb9c71f79a638f8f22dc7043bed436f1573a6959c341fe0a0e"
+    },
+    "test/lightweight-process-diff.test.ts": {
+      "before": "8c7e0c9f3d5487dac4f7fd9fc3c53abeac9f379819b12233cb601d84722880db",
+      "after": "918e28bbbb5c01942ebfad6a4568210c69bce22376c0561c78e2ceed90cc44a5"
+    },
+    "test/service-accepted-work.test.ts": {
+      "before": "ff4e393f5b222481a05fd74f3e8e66291f4f65e10f03ca34fa59fe0c291fe33c",
+      "after": "c20a15565985ad16772da04ace625183302131890487225c82a11ae417798c23"
+    }
+  },
+  "priorHandoff": {
+    "evidence": {
+      "path": ".trellis/tasks/10-16-cadence-subagent-orchestration/research/w4-accepted-work-lifetime-evidence.json",
+      "sha256": "2f0566d30af66bfd4f38053d024d5d7022265c1e050f6f1aeba9455cb94abefa"
+    },
+    "comparison": {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/handoff-comparison.json",
+      "sha256": "a36fd3e42e8a82e289f1ad943fd1ee08528de29149d4e4c45203b91cec4cfae2"
+    },
+    "allTwelveChangedInputHashesMatched": true
+  },
+  "freeze": {
+    "count": 356,
+    "before": {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/inputs-final-before.json",
+      "sha256": "f22e0690c323760872a4b68657c3e862a15428553fead315baa05ecf52f5a148"
+    },
+    "after": {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/inputs-final-after.json",
+      "sha256": "f22e0690c323760872a4b68657c3e862a15428553fead315baa05ecf52f5a148"
+    },
+    "equal": true,
+    "inputs": {
+      "biome.json": "5a0f89511d646353b40bc2cc3cc9d080f490301ad51c219f075d89acee4778db",
+      "bun.lock": "cc31e7ad885c21849b38515cb47bb9913b75801a3b484bf647e11fe354f47551",
+      "package.json": "81a4298ad42b7e704264f5158efe0e6e111b23c0f0f2792489557fd4190b135d",
+      "scripts/build-operator.mjs": "7b0a51464b2952ad7a59c1c0cc84d2579c3e3410deb07ebe44ee2f69fdd9d3c9",
+      "scripts/build-service.mjs": "7576c72991f6d0a31e5d4af246cd7afa5960f8134c3d37724b79632ea4805481",
+      "scripts/build-web.mjs": "7c2d594ba571c5e16b65b504e5c35863a4eb406dfac3f255ae14eae9953978d8",
+      "scripts/check-agents.mjs": "3c713c6f18b2f078aeaadaa7972617d93124df5a409d4f20240df6d5d4a6cb45",
+      "scripts/check-syntax.mjs": "c0730a7f53675bae14b68b8b2a41c60a23c42157c47df22984a47bbf9c23dd51",
+      "scripts/ci-package-probes.mjs": "0b2278b702d95bd1bea121bb4e08b7f609c15ce53080a53f054c44f1839cb96d",
+      "scripts/ci-temp.mjs": "c83e883c85a451873652291855638d7d8e1d557aff5b5e3a008797a347aed57f",
+      "scripts/pack-check.mjs": "66651aa1c87beac38bbdefbbfda21943566474a7d8a0b3718211aa13199cebf6",
+      "scripts/package-audit.d.mts": "34b1403614c3d0ce8398312014305f517a52c43b8097c3b3ec32c8d8e2d07b6d",
+      "scripts/package-audit.mjs": "798af55e5005cb6ba6427db76a2b71a29c72a5abe2ce4faa2419aab19f7402fb",
+      "scripts/seed-acceptance.mjs": "16d34e865c927cb4ea8cf8ff483c3760975d18d2858057e2d17403022c9979e6",
+      "scripts/traceability-check.mjs": "999c27977b3d7e118fe9ce2753fd200a879d120ac23c5f5bb73134799e7edc46",
+      "scripts/web-output.ts": "78e14fba215c986457fbfa705f53af8b01c8b63eb2a845383f011e7d2fc7d628",
+      "src/agent-registry.ts": "ff91cc7ac91e1407c7da1a93be9dcf13f1ce8948c0f7a7b6b8bcc48514899434",
+      "src/history/admission.ts": "475fc0973c87b4decc0dee78be980d86ab41861440b8327abf4176a455aef5cc",
+      "src/history/detail-progress.ts": "31ccc4a10a9ee53b70bb031011812f2bc0838bd32142d5de717af90cb78b24a4",
+      "src/history/entity-state.ts": "7819f11a9116a51c4007013ca52509ff7df8c49aae17b2e1c5eed41ab7e25a5e",
+      "src/history/export.ts": "976459f27658b59bb97825d48f354c31e039561ad4e8cd5bca7a3af37091de8f",
+      "src/history/files.ts": "f7bbf4d32e4d30a62bfa07ef5fe1c6d2ba591f2b2d0f2ca5cd556871758923db",
+      "src/history/graph-progress.ts": "e9afbfa8a7d7678df26a0736b09a45a83fc00207ec17c53ce6eb09501f7af52b",
+      "src/history/index-tree.ts": "612b52be2ee91a2e1e911aa05402592b66b63a76a32f64afe67406d68e71ca05",
+      "src/history/list-progress.ts": "2324dd276224ea4024db294e56fb24190317b725f81ce55ce124375a4b3f9206",
+      "src/history/live.ts": "4fc728699b467c82522f7e239d055c06a8dfa3b5ab3f8865a8046bbffcc8535f",
+      "src/history/navigation.ts": "545a0c68cbaa3c33fc644aace8bcadd6c1d974861454859ca555fa657357d07f",
+      "src/history/plans.ts": "dbc64d48a6b2ddedee053a4a676265760052326f622ee35507f106e83d312570",
+      "src/history/projection.ts": "c8811be6256580dc5ed17e42090100e4b63a651200a83941067c317d0b3a84b6",
+      "src/history/publication.ts": "ac5e7df048a1febb50835b3657f2e738a859b1fc1de3e90583fbaa46739c6b2c",
+      "src/history/read-io.ts": "e2efb3661897c32788f2bb74cca760a2000faa164ed01a6e860853821fbf3d3d",
+      "src/history/read-proof.ts": "e6e5761d5315e5c55abea85bca2584c19b3df2dcebfb6f3061eed150467e44b7",
+      "src/history/reader.ts": "269f826f27f471a5f59b19b247db996df6a9d60d76ec760f844bcedc40d60922",
+      "src/history/recovery.ts": "379e72bd2dd19bb309ab36f414879230587326260909c8a68a03788ad34bcc84",
+      "src/history/retained-progress.ts": "9c7be364a58a73b45228b36721c5a319194e5ddd80b550822a530a46ea07afc0",
+      "src/history/retained-traversal.ts": "4589fc78c794d1d0caa1530e8a35113d2ce013a756bf98d5d470e5050f652a6c",
+      "src/history/run-progress-state.ts": "f2c4cfa71bd3c3d7b1cea23ec850966e03d0d8ad017712f30b488d40667d3910",
+      "src/history/run-state.ts": "67faba426870116e13ee45bc78ba22979de9e0781fb6ec1d0ddafe34dce6e0a1",
+      "src/history/saved-graph-state.ts": "70e508b2c8d29811a02b410a931e0ab947a36c69e64b08d75e0c222f1b9293b4",
+      "src/history/search.ts": "b1b1f7ba74e57e518a90e1efe564155ba0d236443cc5b484620ab127039d3f72",
+      "src/history/sha256-state.ts": "38d88f1885d68f59584b73047305b2b2b75145341d6e328aee9a96ae434522a7",
+      "src/history/source-row.ts": "2188a92a134c294dbcc6836f33fc4bc4a58b1f6812c02824a7764ab5dc9e80c6",
+      "src/history/types.ts": "36e5faf9be280363941de014027f8b23342115d6b3458088d79213ce6cc0b50a",
+      "src/history/validator.ts": "5a0c62aaaa6f845bef16e5b1e3561602054335726db6fc08d3ec105f50a64f9f",
+      "src/history/writer.ts": "6b6d5aa1cb298c4daaebabe7fffa333202787f14352e4461c73c107fe7ecc9ad",
+      "src/index.ts": "96fe0fb28733617aecb980e65549a52a940ad4958d10668f2389627f6a9f9066",
+      "src/install-config.d.mts": "18715ca0ca818463891a3e22f631a1d53d97c487cbcc7a187c1fcf3be061f572",
+      "src/install-config.mjs": "d40abd4a42a9ff82376abdd176819674a35d0f3e13128c5776bc055884c2538b",
+      "src/operator-cli-entry.mjs": "4cf6f6bc82db7d725c984f04c9b6c58c75c26395013273d81f7c120b15fbec8f",
+      "src/operator-cli.mjs": "151e87aecdb5fe5d05b40a1dfff539cfa98e60dc7a9d5fffc94e94a70d5b466e",
+      "src/operator-tools.ts": "bd099e9ab3c796f9e7936b5df983d961a6760beb9fe00ddfbe1a6d6d7b3fe9b1",
+      "src/sdk-network.ts": "8284b710cd419d0d87639bcb4931a989dde06a797aea5405e2a2994f61ef9468",
+      "src/sdk-worker.mjs": "55016e65b7b10bbf3d360ae4828fb47395972fcc062afba3018c6a2250512544",
+      "src/service/admission.ts": "9019c32dd46b9ef95ef3877db4747d0977b2252847edae5c22772f3097cdccae",
+      "src/service/auth.ts": "a1858397d383c5d433c9d6a774643044a58777e032fa15a2eaf4bf053bf59301",
+      "src/service/cli.ts": "9706ac1cacc62915e7e57dba27e7491cb04bc70a24fab1e3b39fe85244369827",
+      "src/service/config.ts": "d1c9598ab4c026d419ff621ae894f618961e2b5acdf2c16b45ff84b8d50830f8",
+      "src/service/contracts/budget.ts": "968c85e35fb1e34c8e77ded90e29c41535728077a07be041b014068362a5463d",
+      "src/service/contracts/capture.ts": "4f595019e758b28b9e8affba3ecc0b494c1defc679fe1c40e4e428f8e63bc0ac",
+      "src/service/contracts/core.ts": "40e0653703f764227eaa1bb71a0e732452b0feeedbc6e7c532a376affc20f14b",
+      "src/service/contracts/domain.ts": "647aa01235df5aac982423b8deb489ed9502b449d101155979e7b58dc7db559d",
+      "src/service/contracts/history.ts": "7133717efcdc32f450148cbbba1f5a08ccfbc07bbe9a6d0762f5fd357f3ef0fe",
+      "src/service/coordination.ts": "160a21cde4ca0e39cfb7106cf8d9134171ed846771f6bfcec6ff66405c45d7dc",
+      "src/service/graph.ts": "ef8a721516957c8b298599e9b8aa63eea4ee2f27a04f4c2161ac86bb95532f4b",
+      "src/service/host.ts": "2e63538b2f02cc732a46c6591ff94e7990add0570e4bb97b0444a167bdbd7a9f",
+      "src/service/http.ts": "e1e47ce7ddaa5b17e3da34fe38bcd9b702c2b34d96eafc8852f084e27b127a14",
+      "src/service/model-config.ts": "2d131e01667e0f82f074952a6fb50836099a34c2fb76f0583068609230f96661",
+      "src/service/model-context.ts": "d631150f37e109a37b8ec3a2855d31f69e8935e94d3ab0340a666b71ab0a6b89",
+      "src/service/owner.ts": "cc89376adc3748495a9247d5a4180f34e9291b1520efff522f8398ffceb7f804",
+      "src/service/ports.ts": "2ca0c23a0d7c62d54db38906b8717d2bf801fa82d1209cd88196c330bdfe7b32",
+      "src/service/private-files.ts": "6b470e30cfbdd94e386ca6d375559bbdc2383708be27ea73f1f5b82cd7755503",
+      "src/service/recovery.ts": "fdc239b4b6947abe28599a961000cdda11b22c619bdb83d1deda256d99d36a26",
+      "src/service/runtime.ts": "96e4ceb6b5212aedc0f0647a6ab2b35783c4956926bff09a56e7c7de212949e1",
+      "src/service/scheduler.ts": "f24e663ed16ffe2b17beb90909e902dc91ca79884d26330ef2d667ba30f18274",
+      "src/service/task-actions.ts": "bbec133a0ac923fb9c71f79a638f8f22dc7043bed436f1573a6959c341fe0a0e",
+      "src/service-assets.ts": "eab134aff1798aebe0b176fc6d725d781647dbf5da75a9622dd1d324f9e056be",
+      "src/service-cli-entry.mjs": "f2099f4138f3ef307e2d92ac03c4d28cc0190472280eb11438a5eb951d169819",
+      "src/service-cli.mjs": "51f9d2bd083fb1d52305a1ab465e08a47502a3854755bfcb8f17f1dabff41bdb",
+      "src/service-client.ts": "c9cc5e995022e1a235a55a789fbdf4db957bcdc0ad661fc95c9d6b4f14d99fba",
+      "src/service-contract.ts": "8327c1a7647b4e237c1408404f22b20bdea5d591085773d70af194e9fa919f03",
+      "src/service-host-entry.mjs": "aab60dfca01b22a4f0cff3a50d8b908d15de50ee86934a041f51722799f4e619",
+      "src/service-host.mjs": "08f2b00266cc6aae7fa47cca94ef06e4fa828d8896f0dba2bbd278198a0a7645",
+      "src/service-http-client.ts": "6a62750cf7d53a5b3d89c30b0c9ce1c42b5476ff82be38a2e2202cf334129bf2",
+      "src/service-wire.ts": "d9743545feb92dacd5319c8805180d21e5e0c494a28a995fffce9ed2cd66fa8b",
+      "src/startup-card.ts": "d94ae8a1e123475925809b25e69cba8b20e428a732138001e49828ae935e7388",
+      "src/subagent-process.ts": "a58353431d903242da330d998febc808553cf909ad10f0e0d195cdec06bacff8",
+      "src/task-controller.ts": "0e1d540f6a4c8c1c74680ad9e6cb2eab86bea8d0a69beaa02bab66dcac37d05c",
+      "src/task-diff.ts": "c343c3e2145dce795a4f1f3362e45a1ba3016628b4f813f41fe04df7270a2426",
+      "src/task-shell.ts": "1d7d96e3968ea8672065bbccc33d818bfed495847a4c0ff075cf6d618d42f456",
+      "src/task-store.ts": "7c28b6cbc01f62dff1f355b270b12b8df73cc7a8570a00bf3430bff8ab5d9846",
+      "src/task-types.ts": "58f59f20ef2201d5f471dca1ea26b2c9d0a17a21e33b1f64ee7d8af107db1973",
+      "src/verification-diagnostics.ts": "45767df1951f186bc14a68983cbdc9d7c369ab50a6aa7f092fd71311bfab8dc1",
+      "src/worker-capture.d.mts": "c7573cec9d01ab5a54e2e9373b1c43b72f2d664d1d993ab5994d8fe1e027f229",
+      "src/worker-capture.mjs": "c85677217edfabef622656950b4f6d1f11e6f06cae1985ea8b218d2fc88fbe1d",
+      "src/worker-public.d.mts": "2e7e8e601e70ae67e2be15a156ccad3488700dd9e5c3069728855cad9d03df3f",
+      "src/worker-public.mjs": "61988435327b243b6c23bfd92328417bdff2ba715843b5283407ab48fd7484f2",
+      "src/worker-recording.ts": "889fdd74c641c39590d2312704652efdda9ab0397ba99d3af94e7a6309f08bef",
+      "src/worker-redaction.d.mts": "c4b8a29a362dab1c595a8037b65dfa5f4defeb18b39e639dd5b6f91ea185b775",
+      "src/worker-redaction.mjs": "cc453cc09ac8c8c86a35f9aa762f746da5eaa43e48c91c55e3c9a2675b09eafc",
+      "src/worker-tools.d.mts": "b047734d3901165e8d731eac52c6e3fec61739906608795f41227906905a665b",
+      "src/worker-tools.mjs": "26855dc5a61f746fcf53b90c797a23c093ca9ad9bd94d655441e82ce65300267",
+      "test/config-context7.test.mjs": "10452e325bb95be0ab82123821c96fd258974d1b6152c72911e7920edf4655e6",
+      "test/distribution.test.mjs": "68ad9d5e60b8046ec59d838bc9a982e6971953e4e74d5b8d702b5ca53cf8da8c",
+      "test/git-commit.test.mjs": "688d7df7ebedc8d07d017c698e54f3f3673a2d8e9d04231f264b758fd2ccda7d",
+      "test/grok-search.test.mjs": "d64be9b33caa91604b423de00fd0a834a2ce239e4f790b7c41a55f46f816a5e5",
+      "test/helpers/history-cold-detail.ts": "a254db37c3ab95c6f6fd5622c1f407562c005e356facc5dd16fcde90c86fdb4c",
+      "test/helpers/history-crash.ts": "2e4d663120f4cc0b4b2c51e8549f115ee73a4ef4e8df52fa47457da212da3e15",
+      "test/helpers/history-data-read.ts": "78dec016e0109102ad1c5b569c65a72427ffbd3255ea4103e0cb3619b2b452d2",
+      "test/helpers/history-enospc-child.ts": "b987b6bac14eb84582d1942801c1cb30c2e85e244ecfad38bfb991b72d28cf36",
+      "test/helpers/history-fixture.ts": "9ec503ccb66d801d29fbfabe2cf95ecc6b5056d0b5f4fc079b7c39a7e4b816dd",
+      "test/helpers/history-graph-fixture.ts": "d66ad3b23075739e942b269ec27e43d92d2512cc8b5d978d376dc8e033795670",
+      "test/helpers/history-list-archive.ts": "a1780b001faa41db5dece87811b887d981e8ad3ffdc8716b9e1be3f44ae2eef0",
+      "test/helpers/history-long-lookahead.ts": "0afc3ae3619ffbf6e020261ec93ddc3bcd10d837fde801e16ce74de91be6b01c",
+      "test/helpers/history-metadata-cost.ts": "edf6a8a586912e945d186f106e2f6e1f0ca2165460158d48c7b6e81ce07f6ea1",
+      "test/helpers/history-metadata-counters.ts": "23f34b6efb285a0c88401a284afea899127e9b16da8c0c076cfa48e449dbf4f9",
+      "test/helpers/history-phase-metrics.ts": "518390651cfae76a3d3505be30d625bce368658557a1bed9abedb15ee27f1af2",
+      "test/helpers/history-point-pages.ts": "b47ff37de5037926be5a2ca415a4aebb15c3f1ce36d6ae3f19d315ceb62de4c1",
+      "test/helpers/history-profile.ts": "570ccc81fe44edaff3b3d226b2b499ff024b009458a552ec4db085c09f492fc9",
+      "test/helpers/history-progress-probe.ts": "380e7e7160a83eb9a9825d8850f88ca1a96ca34bc94e203170ad8f11d9e0b3a5",
+      "test/helpers/history-publication-child.ts": "06321c83504e1c22444c873b35146d291a21cea6de967b51e23601f512c3826b",
+      "test/helpers/history-publication-fixture.ts": "69c6f4e494b05f26377b3db0a7dc84469d214cad75a9237db94d0dfb39049135",
+      "test/helpers/history-read-child.ts": "66aa5c68844ee4ae7713b1cdc86e6223d33aba9857944cd6e1c55cfb1a731679",
+      "test/helpers/history-read-fixture.ts": "63f1c1df3975bac55ebb220e9d0c6ce2c263d6977a479aa019c127f038591cff",
+      "test/helpers/lightweight-sdk-guard.mjs": "9ddac66ec16f73c959b97aa209879e657a3862890ee74d5e641458bc8a653278",
+      "test/helpers/model-runtime.ts": "61cd9ce0ac888b07d3307ea609f63925f38fee5a9fe04f119752b76436765d99",
+      "test/helpers/scheduler-diagnostics.ts": "825b3e718d79eb7ad54e46995cf5988d139ba387022196306da9e48e90ee2621",
+      "test/helpers/scheduler-io-diagnostics.ts": "4a6ad752c50f9a6d87ee4933c3fa4665dedec14d63e34d854e3254ab56870793",
+      "test/helpers/scheduler-io-run.py": "8c2615407f67321950d98467d223093b3025f063eeedab35665cbef7a853865a",
+      "test/helpers/service-delayed-cli.mjs": "1847767f6d36daa296a5f7754478ef3df5328664de97262df1ffcdab2fd62a50",
+      "test/helpers/service-host-delayed.mjs": "8f49cbe518d3174aa1d3bd5f1351a2b2c3d4aa33f4d6b03c40b3203412d35040",
+      "test/helpers/service-host-fixture.ts": "63ce3cae380744e84f70a9c6230d42fc953b666840dc87fdaf84af72ccbe004a",
+      "test/helpers/service-host-lifetime.ts": "e5dd09882811eaf82bd925dfa4693edf4199eb1bc38510a9ffcefc67099252d2",
+      "test/helpers/service-http-fixture.ts": "95be09d3366899249b26dae56a4aa57e36d408636470d44fedf0a8931b056a91",
+      "test/helpers/service-model-auth-competitor.mjs": "55f6a385d69cb73855fa3520e2b48ebb1a56d178ef5da44d85b124ed332f373b",
+      "test/helpers/service-model-context-child.mjs": "3f8df18ac57b7da4b9417088a1f593084db15b2ef6d67a98758abf980866d5ba",
+      "test/helpers/service-model-context-guard.mjs": "85ece8d0445901b0d4c1e42c07509cb289f779f3880e1de055c7e77244a5f3d7",
+      "test/helpers/service-model-route-probe.mjs": "b80cf8172af397f73d9ab2744603b55399d4af341e96a6fed425030fb28109bd",
+      "test/helpers/service-owner-child.mjs": "c7b3c6203d516f577062cb73722fd00beeb6547caf53abcb64639945d79261a0",
+      "test/helpers/task-shell-conpty.cs": "1a2a451057f03b08502c1a9a34b7b37264b8adc2a7ba35926487bd313647f6bf",
+      "test/helpers/task-shell-conpty.ps1": "54024a5b623c9e0ec53daf4c7e1be2a0b80ae00019ef736b6c8b2e7f7a096e52",
+      "test/helpers/task-shell-pty.py": "655a42c23c3a5e363d638a59d539c92326b81b747587655d59eabe3f79a17062",
+      "test/helpers/worker-accounting-observer.mjs": "f456b635c3de7b964ff61afb89d7e594af66e4389e128451e6620dbf0f961131",
+      "test/helpers/worker-accounting-preload.mjs": "362b8817d183925b0a1a0e9552cf8acda2c0d7ea1c8764b303a45168d71b3b4b",
+      "test/helpers/worker-bash-guard.mjs": "58c1fb204e27d6a81acec727f7a909f46457cdf6e638d0e580b7c0543244013b",
+      "test/helpers/worker-canonical-overlap.mjs": "57e115830521f456099ec6e44afe1d3929c220eb40b6d5111d6c6723e390afde",
+      "test/helpers/worker-capability-child.mjs": "91020d75486750635633ddce1436adf39421946f160cdbc94c9212f364f9a221",
+      "test/helpers/worker-v2.ts": "2e70ba34408477e0a53c1df78fde4c64288c8b36032ea1e785211f42efe153ea",
+      "test/independence.test.ts": "cdcaf072b470be22f9c9013784de9ceca36c299114f7ee01582dc8dea04356d0",
+      "test/install-config.test.ts": "9102027c7c624defcfd5ed8918de90bb71b016bcbd510c2ec4c291deba42187e",
+      "test/lightweight-process-diff.test.ts": "918e28bbbb5c01942ebfad6a4568210c69bce22376c0561c78e2ceed90cc44a5",
+      "test/lightweight-sdk.test.ts": "38140ae5ba2b684ee0eb6d89deda7e039d016ac83da41162675a3137ad6a6df6",
+      "test/lightweight-shell.test.ts": "b141ea3370abafd15c3ad51bd1d23bc5b68e573079b9b817796ad32f7f9bc090",
+      "test/lightweight-store-controller.test.ts": "df41fa1c6ec898930d91855d3ad25b497379a9de789182b8a9f8a3e38cb354bf",
+      "test/package-audit.test.mjs": "8804f030a4f4c36113b47c79f0dca2de7c5958109f2d00f510b4f5ab027a9551",
+      "test/package-contract.test.mjs": "ba787a0f5b105be8e1e5daab0ee9818c9e7d785908049948a5e71de8fab3d82d",
+      "test/scheduler-diagnostics.test.ts": "814dadc4a5ad99a5352d5532767a28ae39b25650ba01d2b2216b3984d7dc80ae",
+      "test/scheduler-io-diagnostics.test.ts": "572d5ebb9bd462bc0f852c3e03c9044e5d53b086c69610689c66db2d160824e4",
+      "test/service-accepted-work.test.ts": "c20a15565985ad16772da04ace625183302131890487225c82a11ae417798c23",
+      "test/service-auth.test.ts": "1abc98f4773641a1997601c923057e5c5d66aee66390517061825e1b021d97a7",
+      "test/service-cli.test.ts": "ca0d6f5308a07959e655acc7b497145485d01125746c5d93ae9a588e8c195d53",
+      "test/service-contract.test.ts": "193c7ab314a35cb8a5cb8f34c41629793ebd623753e48281cdef949c883d3a84",
+      "test/service-core-review.test.ts": "f00612815cb357478c467b4f69442a4a25d96d4b9f2c1387f51ee030397cb0d3",
+      "test/service-history-blocker-repair.test.ts": "e51768647b73924b36b12976122782a89d2f1bb8628da1542c937fa0183a1f61",
+      "test/service-history-export-http.test.ts": "4764576a57bd78c43a990f4b71c949307b13a191d44b1df88405e2f6d37ebbb2",
+      "test/service-history-final-review.test.ts": "03d8ae077c621209553fe3e8064da6d9dc1e04923631488ebb360db87db943db",
+      "test/service-history-graph-boundary-review.test.ts": "ca224280b852380e3edfd8f8f92e07f3d8a9a1ba4bec0c769701559a18d718b4",
+      "test/service-history-graph-boundary.test.ts": "604ed21a54bbac17e7e4780005962581d455fa84ba899defd0931f88b49b8d68",
+      "test/service-history-list-contract.test.ts": "85be4dc5701a26677607c9d9561881d55090292c7983fc231f1d3e1020348d18",
+      "test/service-history-list-entity.test.ts": "27398541d3e6f548f98d4ebf192312e9ee0faa4ab8f6e733ca0768b98c8d9944",
+      "test/service-history-live-detail.test.ts": "e6a8ee2f26f5a0684370eff36e0bb59df1f34743728ebf2bd69ac13a9b07a71b",
+      "test/service-history-lookahead.test.ts": "e4ee912a7d3decb14dada93eed96713244a0bc847dd16be1f20d951da0a2dccd",
+      "test/service-history-metadata-cost.test.ts": "e8c530248c0403369ab34392e3c8badc9948790aaaad3cd34fa5c4dc7b9112c8",
+      "test/service-history-plans.test.ts": "cd922fe6850767dd41a8408caa5cf8fd6e17a63785b9be188a5a81ad2b2663a5",
+      "test/service-history-progress-review.test.ts": "a9b2146a8481f8f5022973bc874f308981d0f5d3032fc42910045aebe6971dfa",
+      "test/service-history-progress.test.ts": "269329865cc66d22757ac3674247f94ddc924e83b55d3eef3d10b7eaa86ca947",
+      "test/service-history-projection.test.ts": "6816c07360cb5192870cdc3d760cef268f87d59c498ebe4837f8cc57c2e58e39",
+      "test/service-history-proof-http.test.ts": "049312f58ebb5e594e698bc362c753fef780454eb11214fdce45fc0248a47220",
+      "test/service-history-publication-recovery.test.ts": "7c663863fafd27c096d66357ab6cd8c629fbdfb073e5d95fb9823043c6d43394",
+      "test/service-history-read-completion.test.ts": "26a89c5e4f05597a5f06ec56da4e88afd6a4116df4bebf5b2cfbce0875402886",
+      "test/service-history-search-export.test.ts": "cf33c4e65a50b39e15055a22980b23e73c543fe0584a93303fbdad78d6e29c05",
+      "test/service-history-search-scope.test.ts": "a93c5cbf2a670205e5e7d789c1ba7a3653d0d23c3d543085f4b4fb7d7f2af35d",
+      "test/service-history-semantics.test.ts": "4fb72c421a73363c95de95a4434a75eb4b2069fb3fff693b4e906cadcef1ece5",
+      "test/service-history-validator.test.ts": "3e6579cb0b57a619b46d83ba4921b7bfd65463ba7abde0af5be871be2801bc53",
+      "test/service-history.test.ts": "f48675bcbbd1d6eca25f19337dd6fe4243f52def65f11c4ce0a78e0e79088f10",
+      "test/service-model-context.test.ts": "9442f56d263133a79f4d04980589f3b921d49200abbcf23cc071127293a25728",
+      "test/service-owner.test.ts": "467c5c788e0b6cad55cb8b666368ed2db6a62fdcf22fc521266cff737e01cf65",
+      "test/service-private-files.test.ts": "d078665537fdf888d4e9053d1eb0072fd5bb23984d633e01fd1e2d6562508157",
+      "test/service-publication-parity-review.test.ts": "3cfbcd15820b18f9ab85251b727dc1df059656f2f01e69f40668b13b4dc5a179",
+      "test/service-scheduler-facts.test.ts": "fe73027afc9569ec8a6f9ee5cb1ef1960365c6f98a69303ef72e8a6111c8eb9b",
+      "test/service-scheduler.test.ts": "3290542bbf4b3c5383c455a9833f8e40daa09ac362f4d3db2f3ea45512bbde9e",
+      "test/startup-card.test.ts": "92f7586ceec042f9383e2486636b590af39288146705ee122134ea7c34b83b03",
+      "test/terminal-integration.test.mjs": "94cace9155c454fca351da90517185a3eeca066174737ff98e9762623a5e6c5a",
+      "test/traceability-check.test.mjs": "c831edc0fe0133e053c68abd3eea1fe43f1431d4a99070abea7b44d53f6d1f8e",
+      "test/web/assets-browser.e2e.mjs": "a533e08b14ab25d16cc62b3da840bd8d65cbe8b6e1e46c3fa0afc7bb390a3227",
+      "test/web/assets.test.tsx": "04ee19ed58a6f0db00318360406119baca5a73cc2a49c0361b7034a806d070a1",
+      "test/web/fixtures.tsx": "2224fa5c37c5ba352476e96a35170f4d7c5d8c62399418a1a192c6c30f1b3f20",
+      "test/web/history-timeline.test.tsx": "dcc99efe7f6f7d9ed72f167c89fc1177f0b4506218fe147c5cd1f2e0d2914851",
+      "test/web/lazy-window.test.tsx": "96f1519b79b504e44e7b97a5595783006d463c3dee35877eece5a193c346573c",
+      "test/web/observation.test.tsx": "2446e0341e5a932579171662e0558e02690d8ecf0226e6a36cb75f8b9f8c2a34",
+      "test/web/presentation.test.tsx": "1274a03ca32dfb5fb7cadea2b7459556d81638777d52eae0f28b416efb9854fe",
+      "test/web/readonly-browser-fixture.tsx": "151666b8562322d4542dc76afe7a7fac6623c6296a000d1dbd5a466f4aa57977",
+      "test/web/stream-markdown.test.tsx": "313d5cc27f9bad97e9fc7fcc280980aa7ba85246e279def955df52b6b1d09d8b",
+      "test/web/swipe-drawer.test.tsx": "578069233ef78b985bea3668cdbe31f17236a6b7ca6216ec8da3efdceae9b27d",
+      "test/worker-accounting-observer.test.mjs": "c1e6f835534ccd3711962572bec6a63292ee2071dfda48032014203ab9217eb4",
+      "test/worker-canonical-budget.test.ts": "3cf670611b2cce5e37ae65cdb374a17a57d601007a7d9fbb6e2cc2894bffcff9",
+      "test/worker-capture.test.ts": "73363663165c882b42c94e6b4040c8d3f57386d178464be0621b5ae54ca28acc",
+      "test/worker-public.test.ts": "85de74375631d26991fe70eaacff764693a561bd9697f415c1bf7ec5c256804e",
+      "test/worker-recording.test.ts": "4ead3654f4082aa004a16c6803b45d641cb9596ca03e9a0f36233522aff79e0e",
+      "tsconfig.json": "af6131d346563f1b751e7e8e742295199c8b8f7375521fb50a45af30cc81a952",
+      "vitest.config.ts": "d1c9d82d43739f0f6fe62bcd5215125be92a7a1cad507fa3e76534e1befd21be",
+      "web/browser.config.ts": "d3c6dd30f7f9caaeea1d48984421ca9d8a5fd2ef9c70a049c89b75d9aa487799",
+      "web/build-vis-style.ts": "37e9c8259d75b9b5322d5108ac57e3e51d5ce1212d649f0f0d282f919c72a8c3",
+      "web/dist/assets/KaTeX_AMS-Regular.ttf": "68534840bcfdd2bffb6f0e8deb48684dd01e7f04ea2813267577afb906de1d13",
+      "web/dist/assets/KaTeX_AMS-Regular.woff": "30da91e84c893f875e252689faebdc590b2871145e8adc7f9a9d4dbd8ce0b251",
+      "web/dist/assets/KaTeX_AMS-Regular.woff2": "0cdd387c9590a1a9f9794560022dbb59654a7d86f187aa0c81495ad42d3a7308",
+      "web/dist/assets/KaTeX_Caligraphic-Bold.ttf": "07d8e303ce4fc12b4bb54f1004170dd190a1f3db45d400fe68060df3e0897268",
+      "web/dist/assets/KaTeX_Caligraphic-Bold.woff": "1ae6bd7475590e97e7f145a89e09ccde322f7a6bc0b91607b1c8b8ee28290fed",
+      "web/dist/assets/KaTeX_Caligraphic-Bold.woff2": "de7701e42cf1f4cf0b766c03fb27977207eee2f4fd5d76fa82188406da43ea4c",
+      "web/dist/assets/KaTeX_Caligraphic-Regular.ttf": "ed0b74372feefcbb9c0666b2e210da37b7e49fa7fbbf3eeb11db5f693dacfbb7",
+      "web/dist/assets/KaTeX_Caligraphic-Regular.woff": "3398dd02302557a793f2863f88e02d96ce10df2abffa07c8e9fa90775116e65c",
+      "web/dist/assets/KaTeX_Caligraphic-Regular.woff2": "5d53e70ad607c2352162dec9e0923fb54ecdafaccbf604cd8dcf7d00facb989b",
+      "web/dist/assets/KaTeX_Fraktur-Bold.ttf": "9163df9c7122432e6495b4229fa9071cf9ae86a758ae5efc4924ec2e1a6dbce1",
+      "web/dist/assets/KaTeX_Fraktur-Bold.woff": "9be7ceb88004ab8ad124082246fbfcca4091e36385d4ec6ed1df67375dad50fb",
+      "web/dist/assets/KaTeX_Fraktur-Bold.woff2": "74444efd593c005e3f4573b44524704c0af0a937fe911cca9e94068d0d140d3f",
+      "web/dist/assets/KaTeX_Fraktur-Regular.ttf": "1e6f9579e90e2cac37f8f60a597c436e075c114385652b7cbeb0dec0421291b3",
+      "web/dist/assets/KaTeX_Fraktur-Regular.woff": "5e28753be717dac97f559f49bc10be9cf3c124ddcabda6659d11cb68febc6463",
+      "web/dist/assets/KaTeX_Fraktur-Regular.woff2": "51814d270d06ff0255dba0799994fa4d8c84d11f09951d47595f4abb1f3602dc",
+      "web/dist/assets/KaTeX_Main-Bold.ttf": "138ac28d1663b3037e9c5f52371fa5c63d8324f4a38d22cd573e6ea3a3fd0cf8",
+      "web/dist/assets/KaTeX_Main-Bold.woff": "c76c5d696297d51b9cb1639c7da4334f0e7dec81b42b11213b5e25ef671bb822",
+      "web/dist/assets/KaTeX_Main-Bold.woff2": "0f60d1b897938ec918c8ce073092411baf9438f6739465693ff18b0f9d20b021",
+      "web/dist/assets/KaTeX_Main-BoldItalic.ttf": "70ee1f64a20f2048c21940ef46d0144fd215baa953ca69afd1e31e98544f708f",
+      "web/dist/assets/KaTeX_Main-BoldItalic.woff": "a6f7ec0d846ac7ad975adb8959c37ed49b94acbc4ae436db9ce9e20287e4a64c",
+      "web/dist/assets/KaTeX_Main-BoldItalic.woff2": "99cd42a3c072d918f2f44984a807cf7aa16e13545fd0875fc07c6c65f99e715b",
+      "web/dist/assets/KaTeX_Main-Italic.ttf": "0d85ae7cc30f23790a7f1a58c4a112fdca8aae769b6ba11429af1d98b1b6cb3a",
+      "web/dist/assets/KaTeX_Main-Italic.woff": "f1d6ef86f3b11a528bd5185199bd2443ecb2b0dead96d88674b5a2c12be24bdf",
+      "web/dist/assets/KaTeX_Main-Italic.woff2": "97479ca6cce906abc961ecac96faa5f9ca2e61b8e7670d475826bcdee9a7c267",
+      "web/dist/assets/KaTeX_Main-Regular.ttf": "d0332f52868370fd83ae7fa46470f90c8f2eab2fcf12bc4f88080b340c95a830",
+      "web/dist/assets/KaTeX_Main-Regular.woff": "c6368d87e8a1a3a5d337623d83d8dc4b868f242a9ad476237d6f8d1e0f168cdc",
+      "web/dist/assets/KaTeX_Main-Regular.woff2": "c2342cd8b869e01752a9321dc17213fc40d4d04c79688c1d43f2cf316abd7866",
+      "web/dist/assets/KaTeX_Math-BoldItalic.ttf": "f9377ab0271cda59af24bcffbd46a4d0c8a3572ffafdbb38de2ad5ea7b0d5ee5",
+      "web/dist/assets/KaTeX_Math-BoldItalic.woff": "850c0af5c2238497febaf5e461d880bf458c341f42f4f330f1b1ab5698b1998e",
+      "web/dist/assets/KaTeX_Math-BoldItalic.woff2": "dc47344dbb6cb5b655c8460d561f4df5f501b90c804ad3c6cec65fe322351ab1",
+      "web/dist/assets/KaTeX_Math-Italic.ttf": "08ce98e51b04d58945a301e639e02b6998af29fdfd61a7b8afdd07bbfc479d4a",
+      "web/dist/assets/KaTeX_Math-Italic.woff": "8a8d244581371912b8f3f5a23e2437cb2a59cd9bcaebb0346e722c05737a2571",
+      "web/dist/assets/KaTeX_Math-Italic.woff2": "7af58c5ec8f132a2ddde9027c6d7814decce4d3b822a11192a42a20e2e973264",
+      "web/dist/assets/KaTeX_SansSerif-Bold.ttf": "1ece03f79f95277d57dc7f6b435a74e1379b0d46104a8530286b60ff49369ea0",
+      "web/dist/assets/KaTeX_SansSerif-Bold.woff": "ece03cfd83e22c212cdef66feb8442d25a083beb988db3f1883f3f9738d750ba",
+      "web/dist/assets/KaTeX_SansSerif-Bold.woff2": "e99ae51144bf1232efcc1bfe5add36262c6866b0faab24fa75740e1b98577a62",
+      "web/dist/assets/KaTeX_SansSerif-Italic.ttf": "3931dd81faed86ba021bb2bbdc36f5bed9a38d6b4f4077aca59b265aa1b02083",
+      "web/dist/assets/KaTeX_SansSerif-Italic.woff": "91ee67500cc0129aa0ace3ac5c61ff1692102f0f31d02b69347fba35dcb75bf2",
+      "web/dist/assets/KaTeX_SansSerif-Italic.woff2": "00b26ac825e2095056396e0553b8ac26d3f8ad158c3826e28b4c45b385c4714a",
+      "web/dist/assets/KaTeX_SansSerif-Regular.ttf": "f36ea897e19f4a2e571d1e900e4e3710e438deb05a842486045ba0a3e616a4ad",
+      "web/dist/assets/KaTeX_SansSerif-Regular.woff": "11e4dc8a6471ff6d6ee561d53d10fde8f7489e798257ff449c5d37c197435605",
+      "web/dist/assets/KaTeX_SansSerif-Regular.woff2": "68e8c73ef42afd3ccec58bf0fba302cce448938e7fc020a5e31f8a952eee1342",
+      "web/dist/assets/KaTeX_Script-Regular.ttf": "1c67f068fea8bb09bf099c088b1cf64bd27516a6e07f4684344873564bb66a67",
+      "web/dist/assets/KaTeX_Script-Regular.woff": "d96cdf2b3bdd4d64a8fd5f74a4c467f123a8a73931cd435889f08ffaf9bf947a",
+      "web/dist/assets/KaTeX_Script-Regular.woff2": "036d4e95149b69ff9bcc0cd55771efeb25ffa3947293e69acd78d5ac328c684b",
+      "web/dist/assets/KaTeX_Size1-Regular.ttf": "95b6d2f1a50173bfedb8c63e1d1c99b10427d0a4df4201cb44513b226951a22b",
+      "web/dist/assets/KaTeX_Size1-Regular.woff": "c943cc986384f59e86bea5fd7dc50a9c4dfe567a7c05eb40d6790720dead97c9",
+      "web/dist/assets/KaTeX_Size1-Regular.woff2": "6b47c40166b6dbe21a5dfca7718413f2147fd2399be1ba605d8ad39cedf25dfe",
+      "web/dist/assets/KaTeX_Size2-Regular.ttf": "a6b2099fb555c60e3a0db3a08842ebf1d732c6eb4e4bf44913613bed4fc4e39b",
+      "web/dist/assets/KaTeX_Size2-Regular.woff": "2014c523c3210bcc166648c4d4cc57f05b747df07a24277bf71c51e67dc79e3d",
+      "web/dist/assets/KaTeX_Size2-Regular.woff2": "d04c54219f9eaec6d4d4fd42dfb28785975a4794d6b2fc71e566b9cd6db842dd",
+      "web/dist/assets/KaTeX_Size3-Regular.ttf": "500e04d54f0d51666332c9d2089aa803be22aa878eca539e59fa53c6e522b082",
+      "web/dist/assets/KaTeX_Size3-Regular.woff": "6ab6b62e9b62dae2c00dd90f791bd10950be0ecc3490d7d6045f51c2e8fe0949",
+      "web/dist/assets/KaTeX_Size3-Regular.woff2": "73d591271b1604960cb10bb90fee021670af7297017e0e98480b332d11f51995",
+      "web/dist/assets/KaTeX_Size4-Regular.ttf": "c647367d1dd4e162468717d020e1fc0f1dc5c26ebfdffbe55261713bf88c5877",
+      "web/dist/assets/KaTeX_Size4-Regular.woff": "99f9c6750b489c9462bf04900bd3f939df9b829339daaaaa99ef5495cdddea58",
+      "web/dist/assets/KaTeX_Size4-Regular.woff2": "a4af7d414440a1c1790825cfb700cf9cf43b0f2c4b04f0ebc523011ad9853ec0",
+      "web/dist/assets/KaTeX_Typewriter-Regular.ttf": "f01f3e87d9c6a61c0c081ceb577abd864eb00a612f7ac1620dd6915fad2ef5aa",
+      "web/dist/assets/KaTeX_Typewriter-Regular.woff": "e14fed02b1aba7ce9f5afd5844b5d0321b22351febc720e0de8b8723527609f7",
+      "web/dist/assets/KaTeX_Typewriter-Regular.woff2": "71d517d67827787cfabdf186914cc3358eda539e37931941f2b2fd4a21f68c0b",
+      "web/dist/assets/cadence.css": "334964187a5a9125767826c880926647d81dd390a02c408c1cc05767578acf39",
+      "web/dist/assets/cadence.js": "5d2bd8a1b42b1c31fba808ba3274d9fe3f30b1c7bbb340d994602afccbe3e482",
+      "web/dist/assets/markdown.js": "8176da275ed35ef409028dcaab73dadd00578b98fab0741aff50d8f9d5c8b42c",
+      "web/dist/assets/react.js": "37f3e79ca8c7f45f6002174922a963e3139e22568e400fa2395a2229ae1ae083",
+      "web/dist/assets/rolldown-runtime.js": "548d1dbf321e7d2ae804fcc158b588706a7c52f8ca175de1490c6ccb4dbe55b7",
+      "web/dist/assets/timeline-client.js": "be4442e3b1dfb7d297ecb8c704de834c241483128792ff4b47fd49fda1711977",
+      "web/dist/assets/vis-timeline.css": "c59b69abdd0e298d975163cacec16f316ea27889f0d8ba5c676203a4413afe13",
+      "web/dist/assets/vis-timeline.js": "e80f98e605d7fc6d1474c4dca56e930e76bc7e25fc2b263608208cfda3d958ce",
+      "web/dist/index.html": "8f7f8ccac2056653927f045a9e8a0f1473291fa2a989861fee2e45bcde6dceaa",
+      "web/dist/manifest.json": "f8efe5ffeb00aed71e83ec89e27eb5a29551f7f9171dd566dbc46f074cffb20d",
+      "web/index.html": "d4f99afb551ce57f3c0c361b176c37540520cd1658ef568c86ef01e0cce9e5b1",
+      "web/src/App.tsx": "ae34434f1f5617e6c9cecba255b32de1000298fa9961b9eb2fd70d10acf3f2c5",
+      "web/src/client/actions.ts": "192587fe7eee7b7d669a0e93641d0880a4ca33a56a6ca25d0fe4265a8519db88",
+      "web/src/client/browser.ts": "4fc999154bd5d9521c2dcaae308bda6ef6c323522599bd5158b9fd4e3b54c31f",
+      "web/src/client/build-identity.ts": "7a853b6e2d3c8fbc6c0794f4fcbaa57e081774b366b6f8ba954ddc2e8b1cc3f7",
+      "web/src/client/message-delta.ts": "9133b161d07c0f5ca6a85562d396c36f724982d51f35ea0abae03035d79e4e8b",
+      "web/src/client/observer.ts": "950bfdd47b232b847b5cf028fd0dc6778cd0b563fce160ac8d31d058bac7a8ab",
+      "web/src/client/plan-metadata.ts": "a75d6f2ff41a09182a0a1c29a0c13e4d4555f4e65fae81dd9c1c6d986c982643",
+      "web/src/client/receipts.ts": "a6b22b6974d95c1bd6a5ca4283aa306c53a7edcc81e6e8c310f2ea7fc309c721",
+      "web/src/client/use-workspace.ts": "604a96685b2774289543a54bb728749dfd12473fbbbfd4dd92dcfd40af95972f",
+      "web/src/client/view-lifetime.ts": "3abdedb9393cadb44ed016d81dbf759fc6eab78fa7031f37def222d719de2b06",
+      "web/src/components/actions/ActionDialog.tsx": "275c3db03b8919b19801dcdc1386b030d5cf1d8997d0603b7d2797fdd05ea8a6",
+      "web/src/components/actions/ConfirmAction.tsx": "2fac1a65d54c516ac8c1948724d397003f113a23ef41719b3da7a97114a5849a",
+      "web/src/components/actions/ReceiptPanel.tsx": "0c4288266206f3b55c1454aa49c51964fd3cd53a6a0a5aef1c97d8bca0fabfdf",
+      "web/src/components/history/ContentExplorer.tsx": "971f777fd26b6407edf9c54a64dc7e150b8edbd2c7bcf7e7bd0283a9b915a1f6",
+      "web/src/components/history/Coverage.tsx": "db1a1f0e2ccd46d02de9be3ef6b99be4d109584d1f51269ec5fc527c44401d0b",
+      "web/src/components/history/DetailPane.tsx": "2e3c40f6b8f430c3fcc3b69c9fcb43d47610ff13af651305b8cbb215f5f3ec1b",
+      "web/src/components/history/EntityPane.tsx": "5e0aca571009274194d4128edc9e3995a8e0052208460ef5541f01a7aa082cf0",
+      "web/src/components/history/ExportDialog.tsx": "3438c9d7b7be075f1c63b226f2ced0dfc0f3081905d8f06df49e52d06ca7521c",
+      "web/src/components/history/GlobalSearchModal.tsx": "9757588be8a266efed2bbbdf9799b75cd19f0e1f8cb52555e5103baae3820d80",
+      "web/src/components/history/GraphPane.tsx": "67571e93479ac41e25d1d4f1c0fd930ec3d0cac03757d81dd74be05125e6ff0e",
+      "web/src/components/history/LocalSearchBar.tsx": "c2fb8877de97248b8f9dd36745b70f12166fd2a68dcced43d21b384f26349d1f",
+      "web/src/components/history/PageControls.tsx": "7f94b32666b3de0350f06c44f30144f6a420107a5c1e63ec5c2ed3aea4011d19",
+      "web/src/components/history/RunBrowser.tsx": "2d7a955dc2ccf96c64595ee146263fdd1329150616f62257dbe811236accc3b7",
+      "web/src/components/history/SearchBar.tsx": "09c64d57ccf095c0b0785be0eb06c572d87a26361f48a375c8fd5b757786aaf0",
+      "web/src/components/plan/PlanBoard.tsx": "d0c08636b0d10f9f0a557a5f106795b8183a4411ac087ef066db5474c4513780",
+      "web/src/components/review/ArtifactPreview.tsx": "c59f978973fbf605ea7a1b7e19ecf11a14ec7bb3bf10af27b7412e65098317c7",
+      "web/src/components/review/CheckPanel.tsx": "74f224edba3f6d154752c21024898cb9ae2c028714a5797fec40868acd6da7f5",
+      "web/src/components/review/DiffView.tsx": "038102afae254cd1d6662eb7898ed126ca73ae8dfcedaf22979783b4edac703b",
+      "web/src/components/review/ObservationPanel.tsx": "b38559b5992186cca9587487036743f02e141eda2e49c07e54fd68325dd8560c",
+      "web/src/components/rich/CopyButton.tsx": "605ed71407129fb8ce748e0057e570fdc44ebbe32bd6d6448452a47ab24fdc4c",
+      "web/src/components/rich/Markdown.tsx": "1236273f6dd3978185c1e84670dcc62238fb46d806eddaf59fc707e91042f652",
+      "web/src/components/rich/StreamMarkdown.tsx": "0bc78a104899ce0f236febcc9f9191b37aceb4cf8f5bb0c076a5d67559fca846",
+      "web/src/components/transcript/CollapsibleHead.tsx": "5ff6f7f0f442384ff0df6fdc5efdfbd41728b6e0ee8d40659d875931f4406f9f",
+      "web/src/components/transcript/LazyMount.tsx": "4c18f96386c2164af00b9811a76ec5016a637810d33f5ba06932268a159b88cc",
+      "web/src/components/transcript/Message.tsx": "7594db13718c18e1bcf1ea98a0255e8c18dbd2144bebcf4d7e95731f794ca30d",
+      "web/src/components/transcript/MessageList.tsx": "698f0b7752028ccc7cd12aa9393f7f234f1fa1caa4cb790f0deb4d665680fdb5",
+      "web/src/components/transcript/ToolCallBlock.tsx": "7821e25abd861e9d209bcf4d52b3cd537084b14effd291d595de920954cc0d3f",
+      "web/src/components/workspace/InspectorPanel.tsx": "0c4e824920dfe2b31d76043eb33e5b321cebd00e2484e00373596e4596a48f49",
+      "web/src/components/workspace/RunSummary.tsx": "5fa8d52272af92ae5be9f0e5469dfddf02bf67380f4a8d354e9028db2ef5913a",
+      "web/src/components/workspace/TaskSidebar.tsx": "bf18bc817e1a6ba4f391237b28627d1be051f7679661bb3fa3a2bd40c2fe57b5",
+      "web/src/history/download-export.ts": "8444b3f0face7c4e82f24601bc80eddc1e49d5236f352ec9d40d5739f6e9c76e",
+      "web/src/history/history-url.ts": "220424cb0d14afbc2dedd2e50fede09ad75f7b129654831ab449a1b0058e86af",
+      "web/src/history/readers.ts": "48bed1b8d4d89bc5719b729fcc3b938f9a88a447583b32dd4a71364b2e88c1e0",
+      "web/src/history/search-page.ts": "69656774cfd6d11379a74348d15b0249e4b609d066f121ca9d82231cc454302c",
+      "web/src/history/search-request.ts": "646b3ac1271351fcc8c9fa700c12b88e5a919828215344a4c0553f8f7db24459",
+      "web/src/history/search-summary.ts": "0263b7448323ecef02d157be3be2ed44145d44670d322b76655f4947c241274b",
+      "web/src/history/use-page.ts": "26244cc7f1da133ac820ebaab3804aecf943608e2ac65ebeb5b32e84aa2a6d5a",
+      "web/src/layout/ResizeHandle.tsx": "1a1daeb2ba3654bab9c2d9b69e27829dce26e62ce1b5a3de241498890fa46093",
+      "web/src/layout/panel-sash.ts": "0ce5758e99a8ff77fc1993cff787daa464af3accc5d0cefb5b69a044414da562",
+      "web/src/layout/swipe-drawer.ts": "1404d6dacc4e8af0d358e9b9e60b00af81b4a8507eb3adc27e31b27deee6950a",
+      "web/src/layout/use-drawer-focus.ts": "e351d6974ab80cf223b51bee8f0526ef7102c491cab73bf48a27e21453a1edbf",
+      "web/src/layout/use-swipe-drawer.ts": "3eb0b5ad000dfb36e4fc78b7d8690c714c7ad8bc16b8dd55262667e0035d740a",
+      "web/src/main.tsx": "0b1301eee55b927bb66566a98769f5c5908813ccbeffdffeaaf3a14134caab74",
+      "web/src/navigation/assignment-rows.ts": "366ee712340945865fdb4745f378a33750b5ca1a92d1875728e81f8ced63f439",
+      "web/src/reference.css": "250b68c4d588c188db96135a35de64d1a3b2cfd1c9068bf4872e8a847deedb34",
+      "web/src/review/preview-toc.ts": "3b8687648c5a69356dd41e50dac7b4787215f859718f06b5e70560d616ceb324",
+      "web/src/rich/code-lines.ts": "d0b58279669bfe675df638b10735211ff175ef4e8fb1a6a8ff1279f41e79081e",
+      "web/src/rich/remark-backslash-math.ts": "273205bd4694172f14fab2adad28acf9993e35c476c00756cbafb73135516c2e",
+      "web/src/rich/stream-markdown.ts": "ce80d88c65bd49b3fdb4586201090c46b5fdbb81850ef321a782929f3a40e41e",
+      "web/src/rich/text-lines.ts": "28096ea4e5a89c1fdfd9b99cd5dfb896b095d987b9f341e8970adcefd765a39e",
+      "web/src/rich/use-copy-feedback.ts": "6df2a9e9e085b516c98816220420e307a24c5b8826049d0d276e08b59e19a321",
+      "web/src/styles.css": "360e4615bfadea1db4cd3187306ad7dac5a6f61657f7763ee42a0e966a97bf3e",
+      "web/src/timeline/TimelineView.tsx": "014339c7876543e912fb114ca61a7fc932437453b061cb39e30de23bb1922c79",
+      "web/src/timeline/timeline-adapter.ts": "5e1afb53d9d91c8101c84e55db2ac31a1fa43cea3fe3f5387181b287548972c5",
+      "web/src/timeline/timeline-client.d.mts": "be20e9ccb6922540854e0a941b711344f77941498056d23de67a876cf86e06fd",
+      "web/src/timeline/timeline-client.mjs": "266ec076fbbd5c469833c8049a23817e42b090fcad0502a5811611a12d06a4b0",
+      "web/src/timeline/timeline.css": "92bd283ffbbad8b990dc87b44c1cacfe42762c6bce991265ea2dd2b92f98b73b",
+      "web/src/transcript/lazy-window.ts": "d960cf6aa9f354298c3ca7fabe9c10c4f71066fe69ea7c6f3c1f1bbf8622dcf9",
+      "web/src/types.ts": "832a6d73a96cb541246bc5deab532c192fc685b9d35253e25434036536b93372",
+      "web/tsconfig.config.json": "47fbf0677e51c9303cd87916a022bb6b25a58b221ad733e95dd7e8d64430a4d7",
+      "web/tsconfig.json": "147c75adcc96ca3fec938036e0c1e4aa97d1b32eb59096cdcfba8341bac8dd1a",
+      "web/vite.config.ts": "4f372e948d2261f408232612c451a37b3393d3b0d2a14b53984cb04efcd1e5d5",
+      "web/vitest.config.ts": "e439a39d4a59c7e279e5eb4b869405699f38ff617f413cb6fe1a70e2b15f4ab5"
+    },
+    "scope": "Selected repository executable/source/test/web/build/config/lock inputs; not exhaustive installed transitive dependencies or all historical artifacts."
+  },
+  "runs": [
+    {
+      "argv": [
+        "/usr/bin/node",
+        "node_modules/vitest/vitest.mjs",
+        "run",
+        "--no-file-parallelism",
+        "test/service-accepted-work.test.ts",
+        "test/service-scheduler.test.ts",
+        "test/service-owner.test.ts",
+        "test/service-cli.test.ts",
+        "test/service-model-context.test.ts",
+        "test/service-core-review.test.ts",
+        "test/service-scheduler-facts.test.ts",
+        "test/service-contract.test.ts",
+        "test/service-history.test.ts",
+        "test/service-history-plans.test.ts",
+        "test/service-history-semantics.test.ts",
+        "test/service-history-publication-recovery.test.ts",
+        "test/service-history-final-review.test.ts",
+        "test/service-publication-parity-review.test.ts",
+        "test/lightweight-process-diff.test.ts",
+        "test/lightweight-sdk.test.ts",
+        "test/worker-recording.test.ts",
+        "test/worker-capture.test.ts",
+        "--reporter=verbose",
+        "--reporter=json",
+        "--outputFile=/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/tests.json"
+      ],
+      "pid": 1673525,
+      "exit": 0,
+      "originalWait": true,
+      "elapsed": 601.6451395989861,
+      "root": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw",
+      "mode": "0o700",
+      "environment": {
+        "TMPDIR": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw",
+        "TEMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw",
+        "TMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw"
+      },
+      "logSha256": "7b5a258b5bcb9b7e6febf0185915fae46be9487dc4ff5ddcf77a7311eab9e122",
+      "receipt": {
+        "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/receipt.json",
+        "sha256": "39c3e3a86ca8e2493832e1e0cc9f8ac08d374460f0ec812808fcf25cde7f5c24"
+      },
+      "tests": {
+        "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/tests.json",
+        "sha256": "95a8098c6056f9df5ef4a767e30a3cadc9f95b80bb8e31efbe451211e4d51bc6"
+      },
+      "passed": 1114,
+      "failed": 0,
+      "pending": 0,
+      "files": [
+        {
+          "path": "test/lightweight-process-diff.test.ts",
+          "status": "passed",
+          "cases": 179
+        },
+        {
+          "path": "test/lightweight-sdk.test.ts",
+          "status": "passed",
+          "cases": 237
+        },
+        {
+          "path": "test/service-accepted-work.test.ts",
+          "status": "passed",
+          "cases": 10
+        },
+        {
+          "path": "test/service-cli.test.ts",
+          "status": "passed",
+          "cases": 24
+        },
+        {
+          "path": "test/service-contract.test.ts",
+          "status": "passed",
+          "cases": 232
+        },
+        {
+          "path": "test/service-core-review.test.ts",
+          "status": "passed",
+          "cases": 2
+        },
+        {
+          "path": "test/service-history-final-review.test.ts",
+          "status": "passed",
+          "cases": 8
+        },
+        {
+          "path": "test/service-history-plans.test.ts",
+          "status": "passed",
+          "cases": 18
+        },
+        {
+          "path": "test/service-history-publication-recovery.test.ts",
+          "status": "passed",
+          "cases": 57
+        },
+        {
+          "path": "test/service-history-semantics.test.ts",
+          "status": "passed",
+          "cases": 47
+        },
+        {
+          "path": "test/service-history.test.ts",
+          "status": "passed",
+          "cases": 42
+        },
+        {
+          "path": "test/service-model-context.test.ts",
+          "status": "passed",
+          "cases": 76
+        },
+        {
+          "path": "test/service-owner.test.ts",
+          "status": "passed",
+          "cases": 103
+        },
+        {
+          "path": "test/service-publication-parity-review.test.ts",
+          "status": "passed",
+          "cases": 2
+        },
+        {
+          "path": "test/service-scheduler-facts.test.ts",
+          "status": "passed",
+          "cases": 5
+        },
+        {
+          "path": "test/service-scheduler.test.ts",
+          "status": "passed",
+          "cases": 31
+        },
+        {
+          "path": "test/worker-capture.test.ts",
+          "status": "passed",
+          "cases": 30
+        },
+        {
+          "path": "test/worker-recording.test.ts",
+          "status": "passed",
+          "cases": 11
+        }
+      ],
+      "failures": []
+    },
+    {
+      "argv": ["bun", "run", "build:service"],
+      "pid": 1673424,
+      "exit": 0,
+      "originalWait": true,
+      "elapsed": 0.16426765802316368,
+      "root": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/build-service-b98xjvm0",
+      "mode": "0o700",
+      "environment": {
+        "TMPDIR": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/build-service-b98xjvm0",
+        "TEMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/build-service-b98xjvm0",
+        "TMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/build-service-b98xjvm0"
+      },
+      "logSha256": "ea8a475ab54c996705a851424eb0c022513a8b4cf81a6a56d240186e22ae8367",
+      "receipt": {
+        "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/build-service-b98xjvm0/receipt.json",
+        "sha256": "7c9c06e6c5831043c70c34d13a9ee06bd4914608d0c9de24e263e10d514aaa89"
+      }
+    },
+    {
+      "argv": ["bun", "run", "build:web:check"],
+      "pid": 1681381,
+      "exit": 0,
+      "originalWait": true,
+      "elapsed": 2.4199219269212335,
+      "root": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/build-web-check-1bhblc1x",
+      "mode": "0o700",
+      "environment": {
+        "TMPDIR": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/build-web-check-1bhblc1x",
+        "TEMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/build-web-check-1bhblc1x",
+        "TMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/build-web-check-1bhblc1x"
+      },
+      "logSha256": "77fd0a31ea436ad0c7fc2f54f1a8e87bc3a0c5390f91201291fd926f775feb24",
+      "receipt": {
+        "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/build-web-check-1bhblc1x/receipt.json",
+        "sha256": "726fe4363795557e31eff758b7e9ab13505cd27849b92ba83e8f51e0acef198f"
+      }
+    },
+    {
+      "argv": ["bun", "run", "check:agents"],
+      "pid": 1681309,
+      "exit": 0,
+      "originalWait": true,
+      "elapsed": 0.06406421202700585,
+      "root": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/check-agents-27wlpn5g",
+      "mode": "0o700",
+      "environment": {
+        "TMPDIR": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/check-agents-27wlpn5g",
+        "TEMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/check-agents-27wlpn5g",
+        "TMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/check-agents-27wlpn5g"
+      },
+      "logSha256": "fc459b9f542bbe9546842994f18a74f6a80e908f467ce497916608c24531eebf",
+      "receipt": {
+        "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/check-agents-27wlpn5g/receipt.json",
+        "sha256": "296f0a2b366fd5e723c880bc58a2f45dfd02f85fdf1f646d6dde8539077fb32c"
+      }
+    },
+    {
+      "argv": ["bun", "run", "check"],
+      "pid": 1680859,
+      "exit": 0,
+      "originalWait": true,
+      "elapsed": 10.134476883918978,
+      "root": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/check-gcpdqlvi",
+      "mode": "0o700",
+      "environment": {
+        "TMPDIR": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/check-gcpdqlvi",
+        "TEMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/check-gcpdqlvi",
+        "TMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/check-gcpdqlvi"
+      },
+      "logSha256": "6de17e4bf4234c4eecf065c2988d1bb9bee715f226572eaefab255ca433b46cc",
+      "receipt": {
+        "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/check-gcpdqlvi/receipt.json",
+        "sha256": "3737d50eea36a0840d47e0cd2c1b8da1d1e75fccee294d07b7049abf6673844f"
+      }
+    },
+    {
+      "argv": ["bun", "run", "check:web"],
+      "pid": 1681329,
+      "exit": 0,
+      "originalWait": true,
+      "elapsed": 10.637342164060101,
+      "root": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/check-web-_r9vm0vj",
+      "mode": "0o700",
+      "environment": {
+        "TMPDIR": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/check-web-_r9vm0vj",
+        "TEMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/check-web-_r9vm0vj",
+        "TMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/check-web-_r9vm0vj"
+      },
+      "logSha256": "43ce92ddb3c48eeacc0797faf239b934fa483f575abe89f591537621426f6c29",
+      "receipt": {
+        "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/check-web-_r9vm0vj/receipt.json",
+        "sha256": "637dfd5a92cdb99a18783fe2d45a4db6aa6e151e8361e18ddf8f6752cfa271ab"
+      }
+    },
+    {
+      "argv": [
+        "/usr/bin/node",
+        "node_modules/vitest/vitest.mjs",
+        "run",
+        "--no-file-parallelism",
+        "test/service-accepted-work.test.ts",
+        "test/lightweight-process-diff.test.ts",
+        "--reporter=verbose",
+        "--reporter=json",
+        "--outputFile=/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/counterexample-kcol7awz/tests.json"
+      ],
+      "pid": 1672407,
+      "exit": 1,
+      "originalWait": true,
+      "elapsed": 40.65151004400104,
+      "root": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/counterexample-kcol7awz",
+      "mode": "0o700",
+      "environment": {
+        "TMPDIR": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/counterexample-kcol7awz",
+        "TEMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/counterexample-kcol7awz",
+        "TMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/counterexample-kcol7awz"
+      },
+      "logSha256": "5fe3ca43bd8f7bfc8e82865894282c23a19c2a3b14d7fb7eba6347cbd1ce62e8",
+      "receipt": {
+        "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/counterexample-kcol7awz/receipt.json",
+        "sha256": "05a5cbba22ec29f740f386068655ffc55c4812dec1ceef536c7210733a1d670d"
+      },
+      "tests": {
+        "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/counterexample-kcol7awz/tests.json",
+        "sha256": "535b6616aef64eebe0b6157cf48b6283d37043f2f425ade228d8c38a536eb8d0"
+      },
+      "passed": 188,
+      "failed": 1,
+      "pending": 0,
+      "files": [
+        {
+          "path": "test/lightweight-process-diff.test.ts",
+          "status": "passed",
+          "cases": 179
+        },
+        {
+          "path": "test/service-accepted-work.test.ts",
+          "status": "failed",
+          "cases": 10
+        }
+      ],
+      "failures": [
+        {
+          "name": "late original admission after its reporting timeout records nonapplication, not a permanently pending publication",
+          "messages": [
+            "AssertionError: expected { status: 'found', record: { \u2026(2) } } to match object { status: 'found', record: { \u2026(1) } }\n(12 matching properties omitted from actual)\n    at Proxy.<anonymous> (file:///home/mirako/abel/cadence/node_modules/@vitest/expect/dist/index.js:1283:10)\n    at Proxy.<anonymous> (file:///home/mirako/abel/cadence/node_modules/@vitest/expect/dist/index.js:1156:15)\n    at Proxy.methodWrapper (file:///home/mirako/abel/cadence/node_modules/chai/index.js:1700:25)\n    at /home/mirako/abel/cadence/test/service-accepted-work.test.ts:506:54\n    at file:///home/mirako/abel/cadence/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:20"
+          ]
+        }
+      ]
+    },
+    {
+      "argv": [
+        "node_modules/.bin/biome",
+        "check",
+        "--write",
+        "src/service/task-actions.ts",
+        "test/service-accepted-work.test.ts",
+        "test/lightweight-process-diff.test.ts"
+      ],
+      "pid": 1673339,
+      "exit": 0,
+      "originalWait": true,
+      "elapsed": 0.21430932998191565,
+      "root": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/format-w_6cgp8f",
+      "mode": "0o700",
+      "environment": {
+        "TMPDIR": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/format-w_6cgp8f",
+        "TEMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/format-w_6cgp8f",
+        "TMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/format-w_6cgp8f"
+      },
+      "logSha256": "73553aa9ff44f7360aaa04c14197b1ecd7fb2c2b490fba1f3b3696eb56734fb8",
+      "receipt": {
+        "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/format-w_6cgp8f/receipt.json",
+        "sha256": "925a55fffde40358c79cfb55ca0b2123858a95147392f026d5d2654af2151ef3"
+      }
+    },
+    {
+      "argv": [
+        "/usr/bin/node",
+        "node_modules/vitest/vitest.mjs",
+        "run",
+        "--no-file-parallelism",
+        "test/lightweight-store-controller.test.ts",
+        "--reporter=verbose",
+        "--reporter=json",
+        "--outputFile=/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/legacy-store-4vg0agoo/tests.json"
+      ],
+      "pid": 1681932,
+      "exit": 0,
+      "originalWait": true,
+      "elapsed": 1.7673517379444093,
+      "root": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/legacy-store-4vg0agoo",
+      "mode": "0o700",
+      "environment": {
+        "TMPDIR": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/legacy-store-4vg0agoo",
+        "TEMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/legacy-store-4vg0agoo",
+        "TMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/legacy-store-4vg0agoo"
+      },
+      "logSha256": "afc2fd3c16ed32af50334af1683919f7525837239f30bec4586d662adcc97fc1",
+      "receipt": {
+        "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/legacy-store-4vg0agoo/receipt.json",
+        "sha256": "8833d3338b185ebc49a2ca0bc5411d5dfc9e3db2dbab7a9e0b545591e5d962b4"
+      },
+      "tests": {
+        "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/legacy-store-4vg0agoo/tests.json",
+        "sha256": "6cd6475387fa9906e3bf0d105d04f65e6dfbc42505608a70baac6beee58c336a"
+      },
+      "passed": 25,
+      "failed": 0,
+      "pending": 0,
+      "files": [
+        {
+          "path": "test/lightweight-store-controller.test.ts",
+          "status": "passed",
+          "cases": 25
+        }
+      ],
+      "failures": []
+    },
+    {
+      "argv": ["bun", "run", "lint"],
+      "pid": 1681662,
+      "exit": 0,
+      "originalWait": true,
+      "elapsed": 0.7156586900819093,
+      "root": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/lint-t6fmfywm",
+      "mode": "0o700",
+      "environment": {
+        "TMPDIR": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/lint-t6fmfywm",
+        "TEMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/lint-t6fmfywm",
+        "TMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/lint-t6fmfywm"
+      },
+      "logSha256": "4c3ef3423b344590bfa219eef02513ed8843799f70b3418946195b6d3768793f",
+      "receipt": {
+        "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/lint-t6fmfywm/receipt.json",
+        "sha256": "fcc99b155b2167287ccaa1a281be20e9197c8eb5713e5b9901e577d5097cd0d8"
+      }
+    }
+  ],
+  "selectedCases": [
+    {
+      "file": "test/lightweight-process-diff.test.ts",
+      "name": "automatic timeout stop checks a lost/throwing service lease before TERM and KILL (injected native handle)",
+      "status": "passed",
+      "durationMs": 14.455759000000398
+    },
+    {
+      "file": "test/lightweight-process-diff.test.ts",
+      "name": "automatic protocol stop checks a lost/throwing service lease before TERM and KILL (injected native handle)",
+      "status": "passed",
+      "durationMs": 4.519913000000088
+    },
+    {
+      "file": "test/lightweight-process-diff.test.ts",
+      "name": "service signal guard rechecks TERM and KILL separately and unknown is not close (injected native handle)",
+      "status": "passed",
+      "durationMs": 3.6080020000008517
+    },
+    {
+      "file": "test/service-accepted-work.test.ts",
+      "name": "Stop at commit-gap retains accepted metadata, revokes grants and never publishes late",
+      "status": "passed",
+      "durationMs": 1292.763257
+    },
+    {
+      "file": "test/service-accepted-work.test.ts",
+      "name": "Stop at metadata-microtask retains accepted metadata, revokes grants and never publishes late",
+      "status": "passed",
+      "durationMs": 402.23584299999993
+    },
+    {
+      "file": "test/service-accepted-work.test.ts",
+      "name": "Stop before accepted episode allocation does not invent a run admission or launch",
+      "status": "passed",
+      "durationMs": 771.6550360000001
+    },
+    {
+      "file": "test/service-accepted-work.test.ts",
+      "name": "Stop retains the original preparing continuation and prevents late native launch",
+      "status": "passed",
+      "durationMs": 2548.581221
+    },
+    {
+      "file": "test/service-accepted-work.test.ts",
+      "name": "Stop during native activity joins original close and never signals after ownership loss: false",
+      "status": "passed",
+      "durationMs": 4240.960291
+    },
+    {
+      "file": "test/service-accepted-work.test.ts",
+      "name": "Stop during native activity joins original close and never signals after ownership loss: true",
+      "status": "passed",
+      "durationMs": 3528.205263
+    },
+    {
+      "file": "test/service-accepted-work.test.ts",
+      "name": "Stop joins post-native/metadata original writer at publication-intent, without late save or replay",
+      "status": "passed",
+      "durationMs": 495.9852150000006
+    },
+    {
+      "file": "test/service-accepted-work.test.ts",
+      "name": "Stop joins post-native/metadata original writer at settlement, without late save or replay",
+      "status": "passed",
+      "durationMs": 4487.207131999998
+    },
+    {
+      "file": "test/service-accepted-work.test.ts",
+      "name": "late original admission after its reporting timeout records nonapplication, not a permanently pending publication",
+      "status": "passed",
+      "durationMs": 5385.197920999999
+    },
+    {
+      "file": "test/service-accepted-work.test.ts",
+      "name": "Stop closes queued work and requests BOTH real native stops before joining either original",
+      "status": "passed",
+      "durationMs": 6932.792866
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "real Create/save-plan/Start overlaps two readonly SDK children through admission and durable native facts",
+      "status": "passed",
+      "durationMs": 8975.346854
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "a dependent receives exact durable predecessor text and cannot run before original native settlement",
+      "status": "passed",
+      "durationMs": 9640.563111000001
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "explicit Cancel stops both original native children and never launches queued work",
+      "status": "passed",
+      "durationMs": 7440.595678999998
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "goal-only readonly Start retains a default plan only after accepted authority",
+      "status": "passed",
+      "durationMs": 4904.458945000002
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "first native failure closes only its parent admission while an independent native sibling drains",
+      "status": "passed",
+      "durationMs": 8148.2498929999965
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "checkout writer preference excludes native readers across tasks and stale queued work never relaunches",
+      "status": "passed",
+      "durationMs": 12202.870780999998
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "start cancel during original preparation accounting retains its slot and cannot launch late (injected continuation barrier)",
+      "status": "passed",
+      "durationMs": 3335.7385270000013
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "generate-plan cancel during original preparation accounting retains its slot and cannot launch late (injected continuation barrier)",
+      "status": "passed",
+      "durationMs": 2643.4055829999998
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "injected policy clock wait-expired preserves actual native outcomes and never revives queued work",
+      "status": "passed",
+      "durationMs": 8583.762898
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "injected policy clock timeout preserves actual native outcomes and never revives queued work",
+      "status": "passed",
+      "durationMs": 7849.877567000003
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "Cancel requests both native stops before an unrelated original journal write settles",
+      "status": "passed",
+      "durationMs": 6685.806002999991
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "accepted default Start survives access rotation without reusing the caller grant",
+      "status": "passed",
+      "durationMs": 4917.101494000002
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "post-commit 'start' 'task' mutation cannot be hidden by the own controlRev transition",
+      "status": "passed",
+      "durationMs": 1122.4644459999981
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "post-commit 'generate-plan' 'task' mutation cannot be hidden by the own controlRev transition",
+      "status": "passed",
+      "durationMs": 1127.4911890000076
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "post-commit 'start' 'hints' mutation cannot be hidden by the own controlRev transition",
+      "status": "passed",
+      "durationMs": 1125.2157480000023
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "post-commit 'generate-plan' 'hints' mutation cannot be hidden by the own controlRev transition",
+      "status": "passed",
+      "durationMs": 1109.3679879999981
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "post-commit 'start' 'files' mutation cannot be hidden by the own controlRev transition",
+      "status": "passed",
+      "durationMs": 1185.7881970000017
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "post-commit 'generate-plan' 'files' mutation cannot be hidden by the own controlRev transition",
+      "status": "passed",
+      "durationMs": 1153.967976999993
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "post-native ORIGINAL settlement storage holds the slot, episode and dependency after its reporting timeout",
+      "status": "passed",
+      "durationMs": 9922.169754999995
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "a real SDK editor's own generation advance permits its exact current dependent",
+      "status": "passed",
+      "durationMs": 10888.90324900001
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "real retained large predecessor whole never silently clips the selected input",
+      "status": "passed",
+      "durationMs": 7128.450954
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "real retained large predecessor range never silently clips the selected input",
+      "status": "passed",
+      "durationMs": 9955.204836999997
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "real retained large predecessor split-utf8 never silently clips the selected input",
+      "status": "passed",
+      "durationMs": 6674.444546000013
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "one actual action owner fences metadata while duplicate/lost receipts never activate it twice",
+      "status": "passed",
+      "durationMs": 466.734025999991
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "refuses a displayed task cwd different from the actual host launch cwd in the same Git checkout",
+      "status": "passed",
+      "durationMs": 204.1942829999898
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "already accepted save-plan publication also survives real access rotation",
+      "status": "passed",
+      "durationMs": 883.0371990000131
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "Generate uses one actual readonly child, graph null and never saves its advisory output (saved graph: false)",
+      "status": "passed",
+      "durationMs": 4724.391567999992
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "Generate uses one actual readonly child, graph null and never saves its advisory output (saved graph: true)",
+      "status": "passed",
+      "durationMs": 5788.499654999992
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "Generate is independently forbidden for a readonly task and never contacts the provider",
+      "status": "passed",
+      "durationMs": 489.1176909999922
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "Generate survives real token rotation/detach; explicit Cancel joins original native closure without saving",
+      "status": "passed",
+      "durationMs": 4557.872827999992
+    },
+    {
+      "file": "test/service-scheduler.test.ts",
+      "name": "Generate publication conflict preserves external raw task bytes and genuine native success separately",
+      "status": "passed",
+      "durationMs": 4611.05602399999
+    }
+  ],
+  "fixtureReceipts": [
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-3KIMkx/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": []
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-3Yt0Ds/sdk-receipt.json",
+      "sha256": "8a50f1ddfcd713c61f7f0c19a6c55ff4d249fdc2667c853e01077fea222c59dd",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": [
+          {
+            "start": 146055.946812,
+            "end": 147374.902187,
+            "exit": 0
+          }
+        ]
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-6CmiUV/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": []
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-AbFnXg/sdk-receipt.json",
+      "sha256": "3f0d8a4f9d9f97a7ce23b9d6f864688bc512db4c881b6e4beda7381ac22c6593",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": [
+          {
+            "start": 133272.655771,
+            "end": 134556.617752,
+            "exit": 0
+          }
+        ]
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-AjHa9k/sdk-receipt.json",
+      "sha256": "a1787553375f1427c49d52003e0af85e02ca11c000c360fbca515e2bdd5a536a",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": [
+          {
+            "start": 35048.25624,
+            "end": 36739.578489,
+            "exit": 1
+          },
+          {
+            "start": 35310.139361,
+            "end": 37358.286244,
+            "exit": 0
+          }
+        ]
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-Cxv3Gi/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": []
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-DUPCYx/sdk-receipt.json",
+      "sha256": "e26d278e385a6e8beebc6491075f40a525a2dd65b8401d08ac67669350c30016",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": [
+          {
+            "start": 77907.927261,
+            "end": 79948.105028,
+            "exit": null
+          },
+          {
+            "start": 78182.12361,
+            "end": 79947.769638,
+            "exit": null
+          }
+        ]
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-DVhFNn/sdk-receipt.json",
+      "sha256": "c863cb16dd4a113093e86ef3cdfb8620c2d5d22217af92955610436d872e80d1",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": [
+          {
+            "start": 22663.230889,
+            "end": 24269.418933,
+            "exit": null
+          },
+          {
+            "start": 22920.842298,
+            "end": 24269.219612,
+            "exit": null
+          }
+        ]
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-HTvn9Y/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": []
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-Hux5dR/sdk-receipt.json",
+      "sha256": "719e6c000cf064341044c1c82c24eff32a2c634c3c23a8d9b468b07968bef71a",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": [
+          {
+            "start": 5058.756927,
+            "end": 6787.01094,
+            "exit": 0
+          },
+          {
+            "start": 5332.220686,
+            "end": 6787.833931,
+            "exit": 0
+          }
+        ]
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-Mq2iKc/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": []
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-PNfZ0g/sdk-receipt.json",
+      "sha256": "42a1bc550ee1e10baa230020d606c14d5c1bcf20eaef1af76bd988f44a1d30b1",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": [
+          {
+            "start": 105399.123575,
+            "end": 107096.572688,
+            "exit": 0
+          },
+          {
+            "start": 110053.517237,
+            "end": 111383.718779,
+            "exit": 0
+          }
+        ]
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-VyFAav/sdk-receipt.json",
+      "sha256": "55d08f9d1b726594630bd43e8ed0d7af83681bfe4aec17e9955ae798388253f7",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": [
+          {
+            "start": 43099.571319,
+            "end": 44908.301824,
+            "exit": 0
+          },
+          {
+            "start": 47903.721588,
+            "end": 49103.527795,
+            "exit": 0
+          }
+        ]
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-XQDF7X/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": []
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-YBC0tC/sdk-receipt.json",
+      "sha256": "284088114dde7bf1b727d57a224cfe3c692e13d7c34cf1a7ed8e6069d7cadf2e",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": [
+          {
+            "start": 140792.998571,
+            "end": 141974.211736,
+            "exit": 0
+          }
+        ]
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-YiQh2B/sdk-receipt.json",
+      "sha256": "7c549f59162c8c4b63116a8961e675fa2ec931c9e3c3f48d3d1e1a017e3cb9b0",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": [
+          {
+            "start": 69895.041937,
+            "end": 72266.811942,
+            "exit": null
+          },
+          {
+            "start": 70181.300895,
+            "end": 72266.609662,
+            "exit": null
+          }
+        ]
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-cVvO2V/sdk-receipt.json",
+      "sha256": "5bcdc29b80e70117e9bd29fe85371cf4a8b13609be70688186958d061729ce25",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": [
+          {
+            "start": 28769.326583,
+            "end": 29951.272098,
+            "exit": 0
+          }
+        ]
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-hMP8my/sdk-receipt.json",
+      "sha256": "4559e245a978223cb53086aa4fed8b061539a996d12c39909203694b437aee9a",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": [
+          {
+            "start": 83158.631653,
+            "end": 84379.222734,
+            "exit": 0
+          }
+        ]
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-kN6WVT/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": []
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-kuoUXe/sdk-receipt.json",
+      "sha256": "03b5cdbc328f211cb3cc6c89184498651421f3a9477f71f8be2c83d72440a7d1",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": [
+          {
+            "start": 151871.423265,
+            "end": 153025.859242,
+            "exit": null
+          }
+        ]
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-l5ojZN/sdk-receipt.json",
+      "sha256": "28eff215e7ea64bc423079615db0ba1ee406010dfdc630fb8a30d91eb53bceab",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": [
+          {
+            "start": 95474.646348,
+            "end": 96688.748214,
+            "exit": 0
+          }
+        ]
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-lEF02p/sdk-receipt.json",
+      "sha256": "d0ada6d0499faf49a587aaf63418428e22dd3fe35aba994f9feb39af49c50a8e",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": [
+          {
+            "start": 61324.735788,
+            "end": 63874.90959,
+            "exit": 0
+          },
+          {
+            "start": 61598.208227,
+            "end": 63875.08952,
+            "exit": 0
+          }
+        ]
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-lsmhtt/sdk-receipt.json",
+      "sha256": "128a4c4a186cf70f2b219db554d00442feacbc090ee655ef3a4f69e668689943",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": [
+          {
+            "start": 116477.084019,
+            "end": 117827.196784,
+            "exit": 0
+          }
+        ]
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-mltZO4/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": []
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-nvuYxk/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": []
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-o21O2b/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": []
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-oiEZVu/sdk-receipt.json",
+      "sha256": "b42f12ba9e3fda96f2e1017f4552608bcfeaeff6a73437a01466b69af5b2d90d",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": [
+          {
+            "start": 12194.285905,
+            "end": 13382.780355,
+            "exit": 0
+          },
+          {
+            "start": 15915.612955,
+            "end": 17195.689735,
+            "exit": 0
+          }
+        ]
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-uG9tmR/sdk-receipt.json",
+      "sha256": "c351a73debd5e4623dde89f34fbc755a29f0fc3efd2449f6e97a286353abaaad",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": [
+          {
+            "start": 156358.052947,
+            "end": 157572.706313,
+            "exit": 0
+          }
+        ]
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-w2wtSs/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": []
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-xtGNNY/sdk-receipt.json",
+      "sha256": "16061fc8f2673602e5fa82f80bab7f378117adf53fde2bbf3a751d376045b473",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": [
+          {
+            "start": 123441.444575,
+            "end": 124738.225435,
+            "exit": 0
+          },
+          {
+            "start": 127358.666563,
+            "end": 128601.361288,
+            "exit": 0
+          }
+        ]
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/cadence-w4-native-xzKO6Z/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "value": {
+        "schema": "cadence-w4-fixture-native/1",
+        "node": "v26.7.0",
+        "executable": "/usr/bin/node",
+        "platform": "linux",
+        "arch": "x64",
+        "fabricatedProvider": true,
+        "physicalHuman": false,
+        "paidProvider": false,
+        "hostActions": false,
+        "originals": []
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/accepted-work-1NbssH/lifetime-receipt.json",
+      "sha256": "b47cf6504b2acda58787d290389e117d886f6170984e5ba2b06798cfe6382558",
+      "value": {
+        "first": {
+          "state": "quarantined",
+          "pending": {
+            "process": 0,
+            "auth": 0,
+            "storage": 2,
+            "work": 1
+          },
+          "settlement": "uncertain"
+        },
+        "finalState": "quarantined",
+        "pendingWrites": 0,
+        "acceptedPending": 0,
+        "scheduler": {
+          "episodes": 0,
+          "queued": 0,
+          "reservations": 0,
+          "retainedAllowance": 0
+        },
+        "native": [],
+        "listening": false,
+        "locksRetained": true,
+        "fabricatedProvider": true,
+        "injectedTiming": true,
+        "productionAdmission": null
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/accepted-work-3QUWDJ/lifetime-receipt.json",
+      "sha256": "881c6b67c6de4ea5fa739e84d4b48d24b7c06d81bdba3e496483c86ad71cf154",
+      "value": {
+        "first": {
+          "state": "quarantined",
+          "pending": {
+            "process": 0,
+            "auth": 0,
+            "storage": 0,
+            "work": 0
+          },
+          "settlement": "uncertain"
+        },
+        "finalState": "quarantined",
+        "pendingWrites": 0,
+        "acceptedPending": 0,
+        "scheduler": {
+          "episodes": 1,
+          "queued": 0,
+          "reservations": 0,
+          "retainedAllowance": 786432
+        },
+        "native": [
+          {
+            "closed": true,
+            "code": null,
+            "signal": "SIGTERM"
+          }
+        ],
+        "listening": false,
+        "locksRetained": true,
+        "fabricatedProvider": true,
+        "injectedTiming": true,
+        "productionAdmission": null
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/accepted-work-9nnqLn/lifetime-receipt.json",
+      "sha256": "a61b462063db65dff9a47416633edeec9d923c911cc97df94178e2d0869846a2",
+      "value": {
+        "first": {
+          "state": "quarantined",
+          "pending": {
+            "process": 0,
+            "auth": 0,
+            "storage": 0,
+            "work": 0
+          },
+          "settlement": "uncertain"
+        },
+        "finalState": "quarantined",
+        "pendingWrites": 0,
+        "acceptedPending": 0,
+        "scheduler": {
+          "episodes": 1,
+          "queued": 0,
+          "reservations": 0,
+          "retainedAllowance": 786432
+        },
+        "native": [
+          {
+            "closed": true,
+            "code": null,
+            "signal": "SIGTERM"
+          },
+          {
+            "closed": true,
+            "code": null,
+            "signal": "SIGTERM"
+          }
+        ],
+        "listening": false,
+        "locksRetained": true,
+        "fabricatedProvider": true,
+        "injectedTiming": true,
+        "productionAdmission": null
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/accepted-work-KuBswu/lifetime-receipt.json",
+      "sha256": "e2d34b6f4b8a0f1b33b1f4b549981ab4f765cd281341075feabddc53cdf29f19",
+      "value": {
+        "first": {
+          "state": "quarantined",
+          "pending": {
+            "process": 0,
+            "auth": 0,
+            "storage": 1,
+            "work": 1
+          },
+          "settlement": "uncertain"
+        },
+        "finalState": "quarantined",
+        "pendingWrites": 0,
+        "acceptedPending": 0,
+        "scheduler": {
+          "episodes": 0,
+          "queued": 0,
+          "reservations": 0,
+          "retainedAllowance": 0
+        },
+        "native": [],
+        "listening": false,
+        "locksRetained": true,
+        "fabricatedProvider": true,
+        "injectedTiming": true,
+        "productionAdmission": null
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/accepted-work-PIjKcE/lifetime-receipt.json",
+      "sha256": "989ce2e733aed13c9127bd47602aaafb6f708ad430e1b1f2c638b3dd8a1a74f5",
+      "value": {
+        "first": {
+          "state": "quarantined",
+          "pending": {
+            "process": 0,
+            "auth": 0,
+            "storage": 1,
+            "work": 1
+          },
+          "settlement": "uncertain"
+        },
+        "finalState": "quarantined",
+        "pendingWrites": 0,
+        "acceptedPending": 0,
+        "scheduler": {
+          "episodes": 1,
+          "queued": 0,
+          "reservations": 1,
+          "retainedAllowance": 1441792
+        },
+        "native": [],
+        "listening": false,
+        "locksRetained": true,
+        "fabricatedProvider": true,
+        "injectedTiming": true,
+        "productionAdmission": null
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/accepted-work-lVs1tg/lifetime-receipt.json",
+      "sha256": "819819cf38a39f512e9d983f53148feb3f2c76dbaac6ddb842c6a773573a213c",
+      "value": {
+        "first": {
+          "state": "quarantined",
+          "pending": {
+            "process": 0,
+            "auth": 0,
+            "storage": 0,
+            "work": 0
+          },
+          "settlement": "uncertain"
+        },
+        "finalState": "quarantined",
+        "pendingWrites": 0,
+        "acceptedPending": 0,
+        "scheduler": {
+          "episodes": 0,
+          "queued": 0,
+          "reservations": 0,
+          "retainedAllowance": 0
+        },
+        "native": [],
+        "listening": false,
+        "locksRetained": true,
+        "fabricatedProvider": true,
+        "injectedTiming": true,
+        "productionAdmission": null
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/accepted-work-m7mDUJ/lifetime-receipt.json",
+      "sha256": "521e5aadace481b0738e0effd0414ad1ee8a31aec8bae06db7bcbcb8ea6b7e1f",
+      "value": {
+        "first": {
+          "state": "quarantined",
+          "pending": {
+            "process": 0,
+            "auth": 0,
+            "storage": 0,
+            "work": 0
+          },
+          "settlement": "uncertain"
+        },
+        "finalState": "quarantined",
+        "pendingWrites": 0,
+        "acceptedPending": 0,
+        "scheduler": {
+          "episodes": 1,
+          "queued": 1,
+          "reservations": 0,
+          "retainedAllowance": 786432
+        },
+        "native": [],
+        "listening": false,
+        "locksRetained": true,
+        "fabricatedProvider": true,
+        "injectedTiming": true,
+        "productionAdmission": null
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/accepted-work-mRt0pR/lifetime-receipt.json",
+      "sha256": "91806d226b7e941615209dfab8e730559a7c881e7b2211b6ba78758901910a40",
+      "value": {
+        "first": {
+          "state": "quarantined",
+          "pending": {
+            "process": 0,
+            "auth": 0,
+            "storage": 0,
+            "work": 0
+          },
+          "settlement": "uncertain"
+        },
+        "finalState": "quarantined",
+        "pendingWrites": 0,
+        "acceptedPending": 0,
+        "scheduler": {
+          "episodes": 1,
+          "queued": 0,
+          "reservations": 1,
+          "retainedAllowance": 1441792
+        },
+        "native": [
+          {
+            "closed": true,
+            "code": 0,
+            "signal": null
+          }
+        ],
+        "listening": false,
+        "locksRetained": true,
+        "fabricatedProvider": true,
+        "injectedTiming": true,
+        "productionAdmission": null
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/accepted-work-maZ8rv/lifetime-receipt.json",
+      "sha256": "0cc38872780047863a355d916233fad03daa4cad5e21531f8699a5f572e7ed21",
+      "value": {
+        "first": {
+          "state": "quarantined",
+          "pending": {
+            "process": 0,
+            "auth": 0,
+            "storage": 2,
+            "work": 1
+          },
+          "settlement": "uncertain"
+        },
+        "finalState": "quarantined",
+        "pendingWrites": 0,
+        "acceptedPending": 0,
+        "scheduler": {
+          "episodes": 1,
+          "queued": 0,
+          "reservations": 1,
+          "retainedAllowance": 1441792
+        },
+        "native": [
+          {
+            "closed": true,
+            "code": 0,
+            "signal": null
+          }
+        ],
+        "listening": false,
+        "locksRetained": true,
+        "fabricatedProvider": true,
+        "injectedTiming": true,
+        "productionAdmission": null
+      }
+    },
+    {
+      "path": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/affected-final-r12tt1vw/accepted-work-sPEyPQ/lifetime-receipt.json",
+      "sha256": "819819cf38a39f512e9d983f53148feb3f2c76dbaac6ddb842c6a773573a213c",
+      "value": {
+        "first": {
+          "state": "quarantined",
+          "pending": {
+            "process": 0,
+            "auth": 0,
+            "storage": 0,
+            "work": 0
+          },
+          "settlement": "uncertain"
+        },
+        "finalState": "quarantined",
+        "pendingWrites": 0,
+        "acceptedPending": 0,
+        "scheduler": {
+          "episodes": 0,
+          "queued": 0,
+          "reservations": 0,
+          "retainedAllowance": 0
+        },
+        "native": [],
+        "listening": false,
+        "locksRetained": true,
+        "fabricatedProvider": true,
+        "injectedTiming": true,
+        "productionAdmission": null
+      }
+    }
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "status": "fixed",
+      "owner": "src/service/task-actions.ts#commit",
+      "counterexample": "Real original admission append held beyond unchanged five-second writer report. Late original commit yielded accepted/pending with no activation or nonapplication continuation. First complete two-file run:188 passed/1 failed, original exit1.",
+      "correction": "Queue abandonPublication on uncertainty behind the same writer original chain; original safety write separately tracked; no candidate/allocation/native outcome manufactured.",
+      "verification": "Final18-file1114/0/0 includes late-original counterexample passing and all original31 scheduler cases."
+    }
+  ],
+  "limits": {
+    "schedulerCases": 31,
+    "caseMs": 20000,
+    "sdkChildMs": 15000,
+    "captureReportMs": 5000,
+    "readBytes": 8388608,
+    "readMs": 100,
+    "termToKillMs": 1000,
+    "termToUnknownMs": 3000,
+    "changed": false
+  },
+  "classification": {
+    "finalAffected": "1114/0/0 in18files; not full suite/product acceptance",
+    "separateLegacy": "25/0/0, not added to1114",
+    "native": "Real isolated SDK/fabricated-provider/disk/HTTP and original native process facts, mixed with explicitly injected handles/clocks/write boundaries. Selected41 fixture receipts have29 scheduler plus5 accepted-work children, not total suite native count.",
+    "teardown": "Fixture-owned live/HTTP/provider transports close separately from production Stop. All10 accepted-work fixture receipts remain quarantined with retained locks; no descendant closure inferred.",
+    "newAutomaticSignalControls": "Two injected-native-handle/fake-clock tests: timeout false guard, protocol throwing guard; both TERM/KILL checked, no signals, unknown retained after late close. No new production native-runner change."
+  },
+  "remainingGates": [
+    "accepting host remains admission:null",
+    "checks/human review",
+    "current model choice/metadata/lineage/build compatibility",
+    "W1 proxy/informed recovery",
+    "W5 native cutover",
+    "W6 accepting browser",
+    "W7 complete distribution/full verify/parent acceptance",
+    "additional platform/peer/provider/physical human/device qualification"
+  ],
+  "historicalFailures": "Prior11 scheduler failures, event35 and prior native/large-capture timeouts remain failed and causally unexplained. Fresh changed-source passing checks do not rewrite or explain them.",
+  "documentationValidation": {
+    "report": {
+      "path": ".trellis/tasks/10-16-cadence-subagent-orchestration/research/w4-accepted-work-lifetime-review.md",
+      "sha256": "ba478b194d56cf8894d047512b77866e533f1ea57a77b1dab64e1d1da870cce9"
+    },
+    "note": "Initial report-only lint13 formatting issues failed and is preserved. Scoped canonical formatting then final report lint passed; no source/test input changed.",
+    "commands": [
+      {
+        "argv": [
+          "node_modules/.bin/rumdl",
+          "fmt",
+          "--no-exclude",
+          ".trellis/tasks/10-16-cadence-subagent-orchestration/research/w4-accepted-work-lifetime-review.md"
+        ],
+        "pid": 1682362,
+        "exit": 0,
+        "originalWait": true,
+        "elapsed": 0.11400233407039195,
+        "root": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/report-format-ckvcuhvm",
+        "mode": "0o700",
+        "environment": {
+          "TMPDIR": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/report-format-ckvcuhvm",
+          "TEMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/report-format-ckvcuhvm",
+          "TMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/report-format-ckvcuhvm"
+        },
+        "logSha256": "eb586b5afdc5631c256f4de5902bfdb415405f1b139d0408f5b618b12ae06ed3"
+      },
+      {
+        "argv": [
+          "node_modules/.bin/rumdl",
+          "check",
+          "--no-exclude",
+          ".trellis/tasks/10-16-cadence-subagent-orchestration/research/w4-accepted-work-lifetime-review.md"
+        ],
+        "pid": 1682324,
+        "exit": 1,
+        "originalWait": true,
+        "elapsed": 0.11422068497631699,
+        "root": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/report-lint-e3b8lb3b",
+        "mode": "0o700",
+        "environment": {
+          "TMPDIR": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/report-lint-e3b8lb3b",
+          "TEMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/report-lint-e3b8lb3b",
+          "TMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/report-lint-e3b8lb3b"
+        },
+        "logSha256": "53da6c283984d4c76b9df579b4ae5fd6293e1d9237fb5a5523e7406fb6086160"
+      },
+      {
+        "argv": [
+          "node_modules/.bin/rumdl",
+          "check",
+          "--no-exclude",
+          ".trellis/tasks/10-16-cadence-subagent-orchestration/research/w4-accepted-work-lifetime-review.md"
+        ],
+        "pid": 1682392,
+        "exit": 0,
+        "originalWait": true,
+        "elapsed": 0.11407755489926785,
+        "root": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/report-lint-final-_82v82sd",
+        "mode": "0o700",
+        "environment": {
+          "TMPDIR": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/report-lint-final-_82v82sd",
+          "TEMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/report-lint-final-_82v82sd",
+          "TMP": "/home/mirako/abel/cadence-lifetime-review-DBxkaSEg/report-lint-final-_82v82sd"
+        },
+        "logSha256": "029d53aa75808a6774f4967f2d9689681730b475cf6ff7e0c261c236c94fb04a"
+      }
+    ]
+  }
+}

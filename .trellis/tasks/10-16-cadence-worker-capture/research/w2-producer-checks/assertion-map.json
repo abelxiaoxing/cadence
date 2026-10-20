@@ -1,0 +1,102 @@
+{
+  "schema": "cadence-w2-assertion-dispositions/1",
+  "executionEvidence": "producer-evidence.json (references themselves are not executions)",
+  "groups": [
+    {
+      "id": "W2-AC1",
+      "intent": "Genuine messages, local occurrences, declarations/start/update/result, actual finalized text",
+      "owners": "src/worker-capture.mjs#SdkCapture; src/worker-capture.mjs#CaptureState",
+      "assertions": [
+        "test/worker-capture.test.ts: injected SDK stream/final differences",
+        "test/worker-capture.test.ts: injected genuine occurrence vectors",
+        "test/lightweight-sdk.test.ts: actual SDK stdin/native resolver"
+      ],
+      "evidenceLimit": "Actual SDK ordinary cycles plus explicitly injected partial/absent/reused/unsafe/orphan vectors; no guessed ambiguous links.",
+      "status": "local-controls-passed-not-product-acceptance"
+    },
+    {
+      "id": "W2-AC2",
+      "intent": "Worker and owner field/escaped/UTF-8/literal sanitization",
+      "owners": "src/worker-redaction.mjs; src/worker-recording.ts",
+      "assertions": [
+        "test/worker-capture.test.ts: incremental text redacts split literals",
+        "test/worker-capture.test.ts: structured own-data and owner escaped JSON",
+        "test/worker-recording.test.ts: actual SDK producer / recording disk fixture"
+      ],
+      "evidenceLimit": "Owner-only fake canary absent from stdin and stored output; worker fake auth literal absent raw stdout. No universal privacy claim.",
+      "status": "local-controls-passed-not-product-acceptance"
+    },
+    {
+      "id": "W2-AC3",
+      "intent": "Public narrow bash, synchronous source accounting, no raw spill",
+      "owners": "src/worker-tools.mjs",
+      "assertions": [
+        "test/worker-capture.test.ts: actual v2 SDK/native capture and custom bash: tool=true",
+        "test/worker-capture.test.ts: actual v2 SDK/native capture and custom bash: tool=invalid-utf8"
+      ],
+      "evidenceLimit": "Actual guarded command with exact tool-role returned content beyond stock preview and no filesystem writes; invalid UTF-8 gives failed native close, not successful replacement text.",
+      "status": "local-controls-passed-not-product-acceptance"
+    },
+    {
+      "id": "W2-AC4",
+      "intent": "Mandatory v2, actual stdin/native/cleanup/stop and source limits",
+      "owners": "src/sdk-worker.mjs; src/subagent-process.ts; src/worker-capture.mjs",
+      "assertions": [
+        "test/lightweight-process-diff.test.ts",
+        "test/lightweight-sdk.test.ts",
+        "test/worker-capture.test.ts: shared native decoder rejects changed hash",
+        "test/worker-capture.test.ts: new source frame/control limits"
+      ],
+      "evidenceLimit": "All original case bodies retained/migrated. Native malformed/close/stdin/cancel/unknown and injected model/auth/proxy/cleanup controls remain distinct.",
+      "status": "local-controls-passed-not-product-acceptance"
+    },
+    {
+      "id": "W2-AC5",
+      "intent": "Native, source coverage and required recording are independent",
+      "owners": "src/worker-recording.ts; src/subagent-process.ts#preparedWorker",
+      "assertions": [
+        "test/worker-recording.test.ts: actual SDK producer / stalled disk fixture",
+        "test/worker-capture.test.ts: actual emitter queue retains outstanding write charges"
+      ],
+      "evidenceLimit": "Actual SDK + controlled disk gate/shared lease pool; unresolved original writes retain charges after reporting and late settlement cannot repair returned completion. Real W3 durability still pending.",
+      "status": "local-controls-passed-not-product-acceptance"
+    }
+  ],
+  "replacements": [
+    {
+      "old": "v1 ready/tool/final fixture bytes",
+      "new": "test/helpers/worker-v2.ts builds complete v2 identities/details/hashes. captureSummary validates every v2 frame before the old vocabulary projection; raw wait/secrecy checks remain raw.",
+      "negativeIntent": "No v1 accepting parser or fixture executor fallback."
+    },
+    {
+      "old": "Native 16KiB final / 256KiB transcript refusal",
+      "new": "Same native lanes assert retained 16385-byte and >2MiB finals; 32MiB detail/model aggregate and new data/control/queue failures have separately labelled controls.",
+      "negativeIntent": "No truncation-to-success, no preview-as-archive claim."
+    },
+    {
+      "old": "Malformed oversized tool names used to reach old frame/aggregate caps",
+      "new": "Stricter v2 structural projection refuses earlier; shared 100000-data/256-control and real Writable saturation controls cover the new counters.",
+      "negativeIntent": "Malformed/flood input cannot become completed."
+    },
+    {
+      "old": "Old diagnostic-room producer using oversized malformed tool frames",
+      "new": "Maintained emitFailure writer executed with injected remaining-capacity accounting.",
+      "negativeIntent": "No extra diagnostic allowance or failure repair; not native 128MiB emission."
+    },
+    {
+      "old": "Opaque requested thinking max accepted by test mock",
+      "new": "max is outside frozen v2 request enum and refuses before SDK; valid exact-thinking/effective getter cases preserved.",
+      "negativeIntent": "No silent clamping or fallback."
+    },
+    {
+      "old": "Historical stock worker source hash in Codex route controls",
+      "new": "Pin deliberately advanced to current maintained worker; full helper closure is bound in producer-evidence.json.",
+      "negativeIntent": "Actual executable/worker/proxy/CONNECT/EOF/input/native close facts unchanged; old receipts not rewritten."
+    }
+  ],
+  "temporarySeam": {
+    "owner": "W5",
+    "path": "src/subagent-process.ts#runWorker",
+    "removal": "Remove embedded production reachability at client cutover. Same v2 native launcher, bounded legacy projection only, no durable service result."
+  }
+}

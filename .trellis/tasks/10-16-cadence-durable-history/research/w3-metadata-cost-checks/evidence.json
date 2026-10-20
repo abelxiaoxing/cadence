@@ -1,0 +1,368 @@
+{
+  "schema": "cadence-w3-metadata-cost-evidence/1",
+  "scope": "bounded immutable-index preparation/readback cost; no historical timeout causal attribution or W3/product acceptance",
+  "evidenceRoot": "/home/mirako/abel/.cadence-w3-metadata-cost-zdcU808u",
+  "directoryMode": "0o700",
+  "filesystem": "ext4",
+  "tempEnvironment": {
+    "TMPDIR": "/home/mirako/abel/.cadence-w3-metadata-cost-zdcU808u",
+    "TEMP": "/home/mirako/abel/.cadence-w3-metadata-cost-zdcU808u",
+    "TMP": "/home/mirako/abel/.cadence-w3-metadata-cost-zdcU808u"
+  },
+  "identity": {
+    "node": "26.7.0",
+    "executable": "/usr/bin/node",
+    "bun": "1.3.14",
+    "platform": "linux",
+    "arch": "x64",
+    "vitest": "4.1.10",
+    "piCodingAgent": "0.84.3"
+  },
+  "originalFailure": {
+    "receipt": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/original-failed-22-files.log",
+      "sha256": "dc8dba5fb84ceaa680a1e49adb4495e60d1494f1654d449e2212df915ee524d2"
+    },
+    "passed": 1234,
+    "failed": 1,
+    "skipped": 0,
+    "files": 22,
+    "caseMs": 50018,
+    "budgetMs": 45000,
+    "cause": "unknown; neither O(N^2) target fallback nor native variability is established for that past run"
+  },
+  "sourceBefore": {
+    "src/history/index-tree.ts": "1d88c8641bf1475dc18e5da4769aa4b6ee90fae72676399d43c69744afbd4767",
+    "src/history/navigation.ts": "bf4cb9273fb20127884dce959e4ddb531357929caf70ee718dcc8c274f2f3693",
+    "test/service-history-projection.test.ts": "79aa8a40d7c727bfbc21110da45805340f9a78e395b31983486169185353d280"
+  },
+  "sourceFinal": {
+    "src/history/index-tree.ts": "612b52be2ee91a2e1e911aa05402592b66b63a76a32f64afe67406d68e71ca05",
+    "src/history/navigation.ts": "545a0c68cbaa3c33fc644aace8bcadd6c1d974861454859ca555fa657357d07f",
+    "test/service-history-projection.test.ts": "6816c07360cb5192870cdc3d760cef268f87d59c498ebe4837f8cc57c2e58e39",
+    "test/service-history-metadata-cost.test.ts": "cb915d6e4212fd4ae3860a59d9bc9f64bbfb96495ad19fe82ce17b8631594430",
+    "test/helpers/history-metadata-cost.ts": "68729c2b1dfca2b0c4f55b21e6129fec88ce1775eab7d7b2b97abef3b7365c4a",
+    "test/helpers/history-metadata-counters.ts": "23f34b6efb285a0c88401a284afea899127e9b16da8c0c076cfa48e449dbf4f9"
+  },
+  "unownedSourceChanges": [],
+  "pairedComparison": {
+    "before": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/paired-before-phases.receipt",
+      "sha256": "1fa8db414d349a37ca2508018cca7f85b8e0d5a1d197c37ad1a11049045f90e3"
+    },
+    "after": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/paired-after-phases.receipt",
+      "sha256": "b06e1073c314261292e25e0e46261345143a6a9414822d958be70ca155d3fa35"
+    },
+    "beforeInputManifest": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/before-inputs.json",
+    "afterInputManifest": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/after-inputs.json",
+    "sameFixtureAndInstrumentation": true,
+    "fixture": "unchanged 82 real 100-row append/index batches; 1200 partial messages; 70 tasks; lost latest commit hint only; 45000ms case and 8MiB/100ms read windows",
+    "randomIdentityNote": "Fresh native fixtures retain random UUIDs; radix shape and exact bytes differ. Equal input keys/bytes are controlled separately by the 25-lookups-to-one-unit test. No native timing ratio is an invariant."
+  },
+  "metrics": {
+    "initial-phases": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/initial-phases.receipt",
+      "sha256": "5cd4e85dc6c82677095067db1a41bad76cbcedcd0b730c0a7d23279672c8f6d9"
+    },
+    "attribution-phases": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/attribution-phases.receipt",
+      "sha256": "11e88088a20de7f167ff43b6ace48d9de4c2a58906e2dd71962aa1239986ded8"
+    },
+    "head-candidate-phases": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/head-candidate-phases.receipt",
+      "sha256": "4ebebbe189373030fe1dc0b306948c0062e04d6208ff6d56be81ef2c633ea8c5"
+    },
+    "rejected-read-helper-phases": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/rejected-read-helper-phases.receipt",
+      "sha256": "578c0092811a37a2233f2329b7dc323ee73ffe292f1b15b68b5b2b7cbcbb56c9"
+    },
+    "original-source-bounded-meter-phases": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/original-source-bounded-meter-phases.receipt",
+      "sha256": "4b1da8ef6b447d4aecf1069a3e14297a8c059f8d59e92516e83a931e97ef9f0a"
+    },
+    "paired-before-phases": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/paired-before-phases.receipt",
+      "sha256": "1fa8db414d349a37ca2508018cca7f85b8e0d5a1d197c37ad1a11049045f90e3"
+    },
+    "paired-after-phases": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/paired-after-phases.receipt",
+      "sha256": "b06e1073c314261292e25e0e46261345143a6a9414822d958be70ca155d3fa35"
+    },
+    "focused-590-phases": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/focused-590-phases.receipt",
+      "sha256": "11a934c3040d9036bd4726fdbcceafd8a7673662b64bc29bade5e93574645b04"
+    },
+    "final-73-phases": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/final-73-phases.receipt",
+      "sha256": "7fa35e2a95ded0ff223f2d1ba461ca0932bab1fc27b87054b553e81c5eff86cb"
+    }
+  },
+  "logs": {
+    "01-instrument-format.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/01-instrument-format.log",
+      "sha256": "09a8d4fc69081bdc2e27a67d44f854c154f936602de3d3d58d2720eac1073293"
+    },
+    "02-frozen-before.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/02-frozen-before.log",
+      "sha256": "29123b31a5ca445b99df92eafc5d1a33a86455ec52e82f7a28f7642625d73260"
+    },
+    "03-timing-format.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/03-timing-format.log",
+      "sha256": "caf0355ff13c675a4b7840464b347f0165fd9a30b8368505607b8524c2465200"
+    },
+    "04-frozen-before-attribution.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/04-frozen-before-attribution.log",
+      "sha256": "79df436a4301911361c8041c307164fb79dc5923cc3b47721304a603c30bbcb3"
+    },
+    "05-format.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/05-format.log",
+      "sha256": "c24db799fc84a72b6a692acda5632164a1d9c4a3bd33584da417722505dab188"
+    },
+    "06-after-head-reuse.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/06-after-head-reuse.log",
+      "sha256": "facfebbb1b30b6e335a5b1352ccf8c749410ea223abace070a44bfabb9a3dd15"
+    },
+    "07-format.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/07-format.log",
+      "sha256": "41c422be3ced03d14e551028ba002530d21d4b715c8bc15237a30edee5b93981"
+    },
+    "08-after-index-io.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/08-after-index-io.log",
+      "sha256": "7f94076b1dbe8daf1fc5e5069ee3770a3618b21896315b5df69acc8e2f63056c"
+    },
+    "09-bounded-observer-format.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/09-bounded-observer-format.log",
+      "sha256": "030e56c6c9370a50f737ff08693921d61e4f43bd8ff1406aa30ccd2cbea35611"
+    },
+    "10-original-production-bounded-observer.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/10-original-production-bounded-observer.log",
+      "sha256": "9301e6d64ac9e78b2d7a7b43581ce3816e5f381a99a3583a18bbd88292961708"
+    },
+    "11-format.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/11-format.log",
+      "sha256": "198fef126ba6b57ae3a3ea39cd87ce8553abe640873940d2601ff788573f718d"
+    },
+    "12-check.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/12-check.log",
+      "sha256": "e6291c00f3e10beeb02a7ea81e7d1d8393192ec5ff2ccb0cc8c99ca0b6e314e6"
+    },
+    "13-final-format.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/13-final-format.log",
+      "sha256": "38ba6680dcb9dc5f1461ee9fcd6e3c55c917bd9be0f27c0ab078f28a26d82c68"
+    },
+    "14-check.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/14-check.log",
+      "sha256": "3685e331621a9eb20bdfbf0a16e71694df784cd246a64b25f0791ac8a7620e45"
+    },
+    "15-cost-controls.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/15-cost-controls.log",
+      "sha256": "5ac7945872e562cb3a1dc248e7fb2d27d7782c847eea8be1abfa063de2b71e49"
+    },
+    "16-final-frozen-before.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/16-final-frozen-before.log",
+      "sha256": "fb2dbbc3b458614daf83b759f8fb8f208764e10695492a1965ef40f2b95cff6b"
+    },
+    "17-final-after.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/17-final-after.log",
+      "sha256": "c695bf4431e23f478eddb3489a1d436d6aa6a2d4e5a4a2c7acb13c95948f5ced"
+    },
+    "18-check.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/18-check.log",
+      "sha256": "d8e0559fba0bc409f2ba5d1a97a129af498576567949aee4278dd415d3d51e90"
+    },
+    "19-focused.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/19-focused.log",
+      "sha256": "ebc9e7c60e763fbafba2ff3ef2b8dc32f5d7a06590ba03921faffcc21f7664a6"
+    },
+    "20-ceiling-format.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/20-ceiling-format.log",
+      "sha256": "198fef126ba6b57ae3a3ea39cd87ce8553abe640873940d2601ff788573f718d"
+    },
+    "21-final-boundary.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/21-final-boundary.log",
+      "sha256": "a612dc74d9eaf10d866a47fcd2fae76f159f0f40a3e26e9be76a60fc3f55777d"
+    },
+    "22-final-check.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/22-final-check.log",
+      "sha256": "d8e0559fba0bc409f2ba5d1a97a129af498576567949aee4278dd415d3d51e90"
+    },
+    "23-check-agents.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/23-check-agents.log",
+      "sha256": "fc459b9f542bbe9546842994f18a74f6a80e908f467ce497916608c24531eebf"
+    },
+    "original-reconstruction-format.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/original-reconstruction-format.log",
+      "sha256": "eb17cae9f93807490ded287aa90f4f264aaade8e39e73c1ad59d92afb504eb62"
+    },
+    "24-evidence-format.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/24-evidence-format.log",
+      "sha256": "953d45fd4b167607b235486b5963d52621cf988c8ec4484cd3b66a2819ffa3bb"
+    },
+    "25-report-format.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/25-report-format.log",
+      "sha256": "1d3f65928e4f99d98d75facd254bd2f326f767112235e17e30b6b635e635d738"
+    },
+    "26-final-lint.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/26-final-lint.log",
+      "sha256": "53adc55cd263334f3162c0e1b5bf665438cdabdb315be106ebe32eded70f5fcd"
+    }
+  },
+  "runs": [
+    {
+      "id": "02",
+      "exit": 0,
+      "kind": "initial causal phase observation on frozen original production",
+      "passed": 1,
+      "filtered": 23
+    },
+    {
+      "id": "04",
+      "exit": 0,
+      "kind": "added nested attribution, not identical retry",
+      "passed": 1,
+      "filtered": 23
+    },
+    {
+      "id": "06",
+      "exit": 0,
+      "kind": "head reuse/exact readback candidate",
+      "passed": 1,
+      "filtered": 23
+    },
+    {
+      "id": "08",
+      "exit": 0,
+      "kind": "additional selected-read helper experiment; rejected, source not retained",
+      "passed": 1,
+      "filtered": 23
+    },
+    {
+      "id": "10",
+      "exit": 0,
+      "kind": "isolate bounded diagnostic meter on original production; no material time improvement",
+      "passed": 1,
+      "filtered": 23
+    },
+    {
+      "id": "12",
+      "exit": 2,
+      "kind": "fixture Hash overload type errors"
+    },
+    {
+      "id": "14",
+      "exit": 2,
+      "kind": "fixture readSync overload tuple type error"
+    },
+    {
+      "id": "15",
+      "exit": 0,
+      "passed": 2,
+      "failed": 0,
+      "kind": "native equal-root head reuse and exact readback assertions"
+    },
+    {
+      "id": "16",
+      "exit": 0,
+      "passed": 1,
+      "filtered": 23,
+      "kind": "final identical fixture/instrumentation frozen production comparison",
+      "seconds": 42.53
+    },
+    {
+      "id": "17",
+      "exit": 0,
+      "passed": 1,
+      "filtered": 23,
+      "kind": "paired changed production comparison",
+      "seconds": 41.15
+    },
+    {
+      "id": "18",
+      "exit": 0,
+      "kind": "check"
+    },
+    {
+      "id": "19",
+      "exit": 0,
+      "passed": 590,
+      "failed": 0,
+      "skipped": 0,
+      "files": 17,
+      "seconds": 747.6,
+      "kind": "native/disk/HTTP/portable regression set before final defensive index-size guard",
+      "inputManifest": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/focused-after-inputs.json"
+    },
+    {
+      "id": "21",
+      "exit": 0,
+      "passed": 73,
+      "failed": 0,
+      "skipped": 0,
+      "files": 4,
+      "seconds": 123.93,
+      "kind": "final-source native/disk/graph/projection and record-ceiling regression",
+      "inputManifest": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/final-inputs.json"
+    },
+    {
+      "id": "22",
+      "exit": 0,
+      "kind": "final check"
+    },
+    {
+      "id": "23",
+      "exit": 0,
+      "kind": "check:agents"
+    },
+    {
+      "id": "24",
+      "exit": 0,
+      "kind": "evidence JSON formatting"
+    },
+    {
+      "id": "25",
+      "exit": 0,
+      "kind": "scoped new-report Markdown formatting"
+    },
+    {
+      "id": "26",
+      "exit": 0,
+      "kind": "whole lint after evidence formatting; two pre-existing informational useTemplate notices only"
+    }
+  ],
+  "finalChangesAfter590": [
+    "src/history/navigation.ts",
+    "test/service-history-metadata-cost.test.ts"
+  ],
+  "preservedInvariants": [
+    "all original native writes/flushes and lease assertions",
+    "original index-record byte ceiling (explicit before exact readback allowance)",
+    "no write-side memo across calls",
+    "no read/schema/token/format/key/budget changes",
+    "no W2 or private-files/coordination change",
+    "corrupt/missing indexes require actual authoritative fallback; unchanged readers",
+    "original metadata fixture assertions; IO assertions now primitive counters"
+  ],
+  "limitations": [
+    "No reproduction or causal repair claim for historical 50018ms or two old 5s failures",
+    "No event35 attribution",
+    "Measured metadata native write/setup dominates; paired total gain is modest, not a runtime upper-bound guarantee",
+    "590-case and 73-case sets overlap and have separately bound source revisions; do not sum",
+    "No full repository/package/browser/terminal/product/platform/provider acceptance; main and independent review remain required"
+  ],
+  "patch": {
+    "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/changes.patch",
+    "sha256": "59b818ef5c661505bf224cef922d4e7298d66643d652f3a71a4ec7fe05c279ac"
+  },
+  "handoff": {
+    "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-handoff.md",
+    "sha256": "462be5abeb32c88af066c78fe886704d9c53d52841f5e9f6590efd5398e66002"
+  },
+  "packageUnchanged": true,
+  "sourceManifestHashes": {
+    "before-inputs.json": "90e3e2aeaba0a78b2982d35a5b97b83c528d60392c3b5c3d3d10956cba24fbf1",
+    "after-inputs.json": "9296eeab02c037d01e1f613b29970253b57063eae801a0bb57d90f4f75bab93c",
+    "focused-after-inputs.json": "9296eeab02c037d01e1f613b29970253b57063eae801a0bb57d90f4f75bab93c",
+    "final-inputs.json": "09d62603ab2046e0ef7db784099ca049364d62f8c26cf3ec3e4efb1d63e6e6c6"
+  }
+}

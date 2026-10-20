@@ -1,0 +1,719 @@
+
+
+```json
+{"event":{"coverage":{"observed":"complete","omissions":[],"redacted":false,"source":"complete"},"kind":"manifest","provenance":{"capturePolicy":"public-text-tools/2","exporterBuildSha256":"ae84448104820c8bc44f387abdfadd421566ceaf2084bb674eec84ece375430b"},"request":{"format":"markdown","scope":{"id":"272ced6d-6ab4-45a8-a897-df489319944e","kind":"child"},"snapshotSeq":"272","storeId":"38af98aa-66c1-4fce-b9a7-489fabc2a86c"},"schema":"cadence-public-export/2","serviceProtocol":1,"workerProtocol":2},"exportId":"ccd52953-d79a-45e0-99a9-1638772b10ab","ordinal":1}
+```
+
+
+### context — 00000000-0000-401b-8a31-b01ebd056332 / v2
+
+Entity: child 272ced6d-6ab4-45a8-a897-df489319944e / v1. UTF-8 bytes 0–42 of 42.
+
+    Browser independent readonly collaboration
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### plan — 3bb96378-3757-486f-818e-fc31fb60e742 / v1
+
+Entity: child 272ced6d-6ab4-45a8-a897-df489319944e / v1. UTF-8 bytes 0–101 of 101.
+
+    Inspect two independent readonly questions. Run the real configured check and review current changes.
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+## Frozen graph and identity
+
+```json
+{"graph":{"assignments":[{"dependencies":[],"expectedOutput":"Report full retained observations.","id":"assignment-1","instructions":"Inspect first independently without editing.","model":{"api":"openai-completions","model":"fixed","provider":"fixture","sourceSelectionId":"2b70cc17-275a-4728-a9ad-8e34b01306dd","thinking":"off"},"purpose":"research","role":{"role":"design-explorer","sha256":"26256f9e7c56e2be93dac05bf3c2b3f33a06c63f20367e74853564a59974ece2"}},{"dependencies":[],"expectedOutput":"Report full retained observations.","id":"assignment-2","instructions":"Inspect second independently without editing.","model":{"api":"openai-completions","model":"fixed","provider":"fixture","sourceSelectionId":"2b70cc17-275a-4728-a9ad-8e34b01306dd","thinking":"off"},"purpose":"research","role":{"role":"design-explorer","sha256":"26256f9e7c56e2be93dac05bf3c2b3f33a06c63f20367e74853564a59974ece2"}}],"plan":{"bytes":101,"field":"plan","recordId":"3bb96378-3757-486f-818e-fc31fb60e742","sha256":"32098f22b43cabf55fed00dad10199d67e6c1b48830ee3ccdda2649f93b1dca0","version":1},"planRevision":1,"revision":2,"schema":"cadence-graph/2","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355","taskKind":"code","taskRevision":2},"request":{"graph":{"recordId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","revision":2,"sha256":"a516910e6136a778545467e0cf59bd5fde988daae863ee3c180f13bb1e7fe31c"},"scope":{"id":"272ced6d-6ab4-45a8-a897-df489319944e","kind":"child"},"snapshotSeq":"272","storeId":"38af98aa-66c1-4fce-b9a7-489fabc2a86c"}}
+```
+
+
+## Captured observation: ready
+
+```json
+{"capture":{"event":{"kind":"ready","requestProtocol":2},"source":{"first":1,"firstObservedMs":8,"last":1,"lastObservedMs":8}},"committedSeq":"99","kind":"capture-fact","link":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"recordId":"04653050-5ae7-4a41-a196-25c7dca3c8b1"}
+```
+
+
+## Captured observation: detail-begin
+
+```json
+{"capture":{"event":{"descriptor":{"encoding":"utf8","field":"context","owner":{"component":"request-context","kind":"context"}},"detailId":"5e633d2b-70ab-4ea0-bcd9-9a2aa7b99c30","kind":"detail-begin"},"source":{"first":2,"firstObservedMs":16,"last":2,"lastObservedMs":16}},"committedSeq":"100","kind":"capture-fact","link":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"recordId":"c537ecdb-4916-483a-b6f4-7a97f495775c"}
+```
+
+
+### context — b539143f-9d37-4ed4-9bdb-bdf45357ec71 / v1
+
+Entity: child 272ced6d-6ab4-45a8-a897-df489319944e / v1. UTF-8 bytes 0–37 of 101.
+
+    Inspect two independent readonly ques
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### context — b539143f-9d37-4ed4-9bdb-bdf45357ec71 / v1
+
+Entity: child 272ced6d-6ab4-45a8-a897-df489319944e / v1. UTF-8 bytes 37–101 of 101.
+
+    tions. Run the real configured check and review current changes.
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+## Retained content
+
+```json
+{"content":{"bytes":101,"field":"context","recordId":"b539143f-9d37-4ed4-9bdb-bdf45357ec71","sha256":"32098f22b43cabf55fed00dad10199d67e6c1b48830ee3ccdda2649f93b1dca0","version":1},"coverage":{"observed":"complete","omissions":[],"redacted":false,"source":"complete"},"descriptor":{"encoding":"utf8","field":"context","owner":{"component":"request-context","kind":"context"}},"detailId":"5e633d2b-70ab-4ea0-bcd9-9a2aa7b99c30","kind":"content","owner":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","entity":{"id":"272ced6d-6ab4-45a8-a897-df489319944e","kind":"child","version":1},"runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"version":1}
+```
+
+
+## Captured observation: detail-begin
+
+```json
+{"capture":{"event":{"descriptor":{"encoding":"utf8","field":"context","owner":{"component":"request-prompt","kind":"context"}},"detailId":"8065f097-084b-42aa-b57c-3c9cc5351c9e","kind":"detail-begin"},"source":{"first":6,"firstObservedMs":19,"last":6,"lastObservedMs":19}},"committedSeq":"104","kind":"capture-fact","link":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"recordId":"a5b568bc-dac3-467e-bc33-5d5b3c7abd29"}
+```
+
+
+### context — 2b1b4bce-de8f-4d4d-90d1-187ffe6853b5 / v1
+
+Entity: child 272ced6d-6ab4-45a8-a897-df489319944e / v1. UTF-8 bytes 0–72 of 200.
+
+    {"assignment":"Inspect first independently without editing.","expectedOu
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### context — 2b1b4bce-de8f-4d4d-90d1-187ffe6853b5 / v1
+
+Entity: child 272ced6d-6ab4-45a8-a897-df489319944e / v1. UTF-8 bytes 72–136 of 200.
+
+    tput":"Report full retained observations.","goal":"Browser indep
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### context — 2b1b4bce-de8f-4d4d-90d1-187ffe6853b5 / v1
+
+Entity: child 272ced6d-6ab4-45a8-a897-df489319944e / v1. UTF-8 bytes 136–200 of 200.
+
+    endent readonly collaboration","untrustedProjectConventions":""}
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+## Retained content
+
+```json
+{"content":{"bytes":200,"field":"context","recordId":"2b1b4bce-de8f-4d4d-90d1-187ffe6853b5","sha256":"a5f532b6cdc5ac8460ebdbdd0c05b266b344bbffab4b33750a23b2ae8dba9af3","version":1},"coverage":{"observed":"complete","omissions":[],"redacted":false,"source":"complete"},"descriptor":{"encoding":"utf8","field":"context","owner":{"component":"request-prompt","kind":"context"}},"detailId":"8065f097-084b-42aa-b57c-3c9cc5351c9e","kind":"content","owner":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","entity":{"id":"272ced6d-6ab4-45a8-a897-df489319944e","kind":"child","version":1},"runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"version":1}
+```
+
+
+## Captured observation: detail-begin
+
+```json
+{"capture":{"event":{"descriptor":{"encoding":"utf8","field":"context","owner":{"component":"request-instructions","kind":"context"}},"detailId":"94beddae-5bcc-4d5a-a305-4f408e3eabbc","kind":"detail-begin"},"source":{"first":10,"firstObservedMs":20,"last":10,"lastObservedMs":20}},"committedSeq":"108","kind":"capture-fact","link":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"recordId":"01f8f49b-09f8-4872-ab8e-22c0ed559dca"}
+```
+
+
+### context — 022f7c8e-2aff-43fb-aa9c-8710b4f61ddf / v1
+
+Entity: child 272ced6d-6ab4-45a8-a897-df489319944e / v1. UTF-8 bytes 0–887 of 1015.
+
+    ---
+    name: design-explorer
+    description: Readonly planning and research for an explicit Cadence task
+    ---
+    
+    # Design Explorer
+    
+    Understand the supplied goal and inspect relevant local sources with readonly tools.
+    Read project conventions and adjacent code; cite concrete paths and distinguish facts from assumptions.
+    Suggest a small, readable plan with scope, risks and useful checks, or summarize research conclusions.
+    State missing evidence and unavailable capabilities honestly; do not invent a successful check.
+    
+    Your plan is advisory, not permission to edit.
+    Do not change files, run shell commands, delegate editing, mutate Git, install software, clean consumer data or publish.
+    Do not invoke workflow commands or approve your own work.
+    Never reveal credentials, private diagnostics or session transcripts.
+    Return a concise final answer with references and unresolved questions; the hum
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### context — 022f7c8e-2aff-43fb-aa9c-8710b4f61ddf / v1
+
+Entity: child 272ced6d-6ab4-45a8-a897-df489319944e / v1. UTF-8 bytes 887–951 of 1015.
+
+    an reviews it in the terminal.
+    
+    Do not delegate, retry, install,
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### context — 022f7c8e-2aff-43fb-aa9c-8710b4f61ddf / v1
+
+Entity: child 272ced6d-6ab4-45a8-a897-df489319944e / v1. UTF-8 bytes 951–1015 of 1015.
+
+     publish or mutate Git. Worker completion is not a parent check.
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+## Retained content
+
+```json
+{"content":{"bytes":1015,"field":"context","recordId":"022f7c8e-2aff-43fb-aa9c-8710b4f61ddf","sha256":"e7b0bb3df5d75569b9715c5941caadd768cf9e0603fe88a1e8a1299891a8eeab","version":1},"coverage":{"observed":"complete","omissions":[],"redacted":false,"source":"complete"},"descriptor":{"encoding":"utf8","field":"context","owner":{"component":"request-instructions","kind":"context"}},"detailId":"94beddae-5bcc-4d5a-a305-4f408e3eabbc","kind":"content","owner":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","entity":{"id":"272ced6d-6ab4-45a8-a897-df489319944e","kind":"child","version":1},"runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"version":1}
+```
+
+
+## Captured observation: detail-begin
+
+```json
+{"capture":{"event":{"descriptor":{"encoding":"utf8","field":"context","owner":{"component":"role","kind":"context"}},"detailId":"b2d16c8a-b3a5-4bb0-90cd-aa549a0065f5","kind":"detail-begin"},"source":{"first":14,"firstObservedMs":22,"last":14,"lastObservedMs":22}},"committedSeq":"112","kind":"capture-fact","link":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"recordId":"04d28c0c-6000-452e-b8a4-b95e77ccfe8b"}
+```
+
+
+### context — caddc787-1206-47fd-926e-ca2e3051dd4c / v1
+
+Entity: child 272ced6d-6ab4-45a8-a897-df489319944e / v1. UTF-8 bytes 0–38 of 102.
+
+    {"role":"design-explorer","sha256":"26
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### context — caddc787-1206-47fd-926e-ca2e3051dd4c / v1
+
+Entity: child 272ced6d-6ab4-45a8-a897-df489319944e / v1. UTF-8 bytes 38–102 of 102.
+
+    256f9e7c56e2be93dac05bf3c2b3f33a06c63f20367e74853564a59974ece2"}
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+## Retained content
+
+```json
+{"content":{"bytes":102,"field":"context","recordId":"caddc787-1206-47fd-926e-ca2e3051dd4c","sha256":"2fd12399d49a4bd2422a61a19837399f42dee7e19ba1f181297a234ceed25e7c","version":1},"coverage":{"observed":"complete","omissions":[],"redacted":false,"source":"complete"},"descriptor":{"encoding":"utf8","field":"context","owner":{"component":"role","kind":"context"}},"detailId":"b2d16c8a-b3a5-4bb0-90cd-aa549a0065f5","kind":"content","owner":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","entity":{"id":"272ced6d-6ab4-45a8-a897-df489319944e","kind":"child","version":1},"runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"version":1}
+```
+
+
+## Captured observation: detail-begin
+
+```json
+{"capture":{"event":{"descriptor":{"encoding":"utf8","field":"context","owner":{"component":"effective-system","kind":"context"}},"detailId":"3fc8af91-b09c-4898-9b91-cccd9b62191c","kind":"detail-begin"},"source":{"first":18,"firstObservedMs":23,"last":18,"lastObservedMs":23}},"committedSeq":"116","kind":"capture-fact","link":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"recordId":"f52abf7f-a312-407d-a703-14a2a34cabc6"}
+```
+
+
+### context — 330c4279-37d9-4fad-ac35-aeb791684f0b / v1
+
+Entity: child 272ced6d-6ab4-45a8-a897-df489319944e / v1. UTF-8 bytes 0–986 of 1114.
+
+    ---
+    name: design-explorer
+    description: Readonly planning and research for an explicit Cadence task
+    ---
+    
+    # Design Explorer
+    
+    Understand the supplied goal and inspect relevant local sources with readonly tools.
+    Read project conventions and adjacent code; cite concrete paths and distinguish facts from assumptions.
+    Suggest a small, readable plan with scope, risks and useful checks, or summarize research conclusions.
+    State missing evidence and unavailable capabilities honestly; do not invent a successful check.
+    
+    Your plan is advisory, not permission to edit.
+    Do not change files, run shell commands, delegate editing, mutate Git, install software, clean consumer data or publish.
+    Do not invoke workflow commands or approve your own work.
+    Never reveal credentials, private diagnostics or session transcripts.
+    Return a concise final answer with references and unresolved questions; the human reviews it in the terminal.
+    
+    Do not delegate, retry, install, publish or mutate Git. Worker comp
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### context — 330c4279-37d9-4fad-ac35-aeb791684f0b / v1
+
+Entity: child 272ced6d-6ab4-45a8-a897-df489319944e / v1. UTF-8 bytes 986–1050 of 1114.
+
+    letion is not a parent check.
+    Current working directory: /home/m
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### context — 330c4279-37d9-4fad-ac35-aeb791684f0b / v1
+
+Entity: child 272ced6d-6ab4-45a8-a897-df489319944e / v1. UTF-8 bytes 1050–1114 of 1114.
+
+    irako/abel/cadence-final-review-FZ6WMJ/accepting-dHisbE/project
+    
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+## Retained content
+
+```json
+{"content":{"bytes":1114,"field":"context","recordId":"330c4279-37d9-4fad-ac35-aeb791684f0b","sha256":"4734eb90be03c88098e28cd9a1156ef7e803e1ccf625b9451fe83d3e735e3563","version":1},"coverage":{"observed":"complete","omissions":[],"redacted":false,"source":"complete"},"descriptor":{"encoding":"utf8","field":"context","owner":{"component":"effective-system","kind":"context"}},"detailId":"3fc8af91-b09c-4898-9b91-cccd9b62191c","kind":"content","owner":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","entity":{"id":"272ced6d-6ab4-45a8-a897-df489319944e","kind":"child","version":1},"runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"version":1}
+```
+
+
+## Captured observation: message-start
+
+```json
+{"capture":{"event":{"kind":"message-start","messageId":"cee055ef-1eda-4f99-a3cc-213b4493ed2b","resultCallId":null,"role":"user","source":{"disposition":"unavailable","value":null}},"source":{"first":22,"firstObservedMs":26,"last":22,"lastObservedMs":26}},"committedSeq":"120","kind":"capture-fact","link":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"recordId":"a7a4e36b-b67f-4d9a-9182-338fdedc26aa"}
+```
+
+
+## Captured observation: detail-begin
+
+```json
+{"capture":{"event":{"descriptor":{"encoding":"utf8","field":"message","owner":{"blockId":"dc9359f0-9359-4093-8904-d7e548bd7d2c","index":0,"kind":"message","messageId":"cee055ef-1eda-4f99-a3cc-213b4493ed2b","stage":"final"}},"detailId":"08b08c0e-f31e-487c-bae1-205eb67a56ac","kind":"detail-begin"},"source":{"first":23,"firstObservedMs":27,"last":23,"lastObservedMs":27}},"committedSeq":"121","kind":"capture-fact","link":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"recordId":"d5a0baa5-8857-4de4-94b9-e26ad12329fc"}
+```
+
+
+### message — 23a35191-ed64-4ccf-9009-7156fe6cbba6 / v1
+
+Entity: message cee055ef-1eda-4f99-a3cc-213b4493ed2b / v1. UTF-8 bytes 0–175 of 303.
+
+    Inspect two independent readonly questions. Run the real configured check and review current changes.
+    
+    {"assignment":"Inspect first independently without editing.","expectedOu
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — 23a35191-ed64-4ccf-9009-7156fe6cbba6 / v1
+
+Entity: message cee055ef-1eda-4f99-a3cc-213b4493ed2b / v1. UTF-8 bytes 175–239 of 303.
+
+    tput":"Report full retained observations.","goal":"Browser indep
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — 23a35191-ed64-4ccf-9009-7156fe6cbba6 / v1
+
+Entity: message cee055ef-1eda-4f99-a3cc-213b4493ed2b / v1. UTF-8 bytes 239–303 of 303.
+
+    endent readonly collaboration","untrustedProjectConventions":""}
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+## Retained content
+
+```json
+{"content":{"bytes":303,"field":"message","recordId":"23a35191-ed64-4ccf-9009-7156fe6cbba6","sha256":"c63629fad63f75ee54634fb8254871f953633f6efbcbe6f14e8743f97dc1b39b","version":1},"coverage":{"observed":"complete","omissions":[],"redacted":false,"source":"complete"},"descriptor":{"encoding":"utf8","field":"message","owner":{"blockId":"dc9359f0-9359-4093-8904-d7e548bd7d2c","index":0,"kind":"message","messageId":"cee055ef-1eda-4f99-a3cc-213b4493ed2b","stage":"final"}},"detailId":"08b08c0e-f31e-487c-bae1-205eb67a56ac","kind":"content","owner":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","entity":{"id":"cee055ef-1eda-4f99-a3cc-213b4493ed2b","kind":"message","version":1},"runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"version":1}
+```
+
+
+## Captured observation: message-text
+
+```json
+{"capture":{"event":{"blockId":"dc9359f0-9359-4093-8904-d7e548bd7d2c","detailId":"08b08c0e-f31e-487c-bae1-205eb67a56ac","kind":"message-text","messageId":"cee055ef-1eda-4f99-a3cc-213b4493ed2b"},"source":{"first":27,"firstObservedMs":28,"last":27,"lastObservedMs":28}},"committedSeq":"125","kind":"capture-fact","link":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"recordId":"639a9629-8073-469f-adf5-97c7205c198c"}
+```
+
+
+## Captured observation: message-end
+
+```json
+{"capture":{"event":{"finalBlockCount":1,"finalDetailId":null,"kind":"message-end","messageId":"cee055ef-1eda-4f99-a3cc-213b4493ed2b","stopReason":"unknown"},"source":{"first":28,"firstObservedMs":28,"last":28,"lastObservedMs":28}},"committedSeq":"126","kind":"capture-fact","link":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"recordId":"22d29ad9-e585-4c60-aad1-f8a71ab653e1"}
+```
+
+
+## Captured observation: message-start
+
+```json
+{"capture":{"event":{"kind":"message-start","messageId":"e0d47838-8150-4b78-8d4b-9c27ae40c0e7","resultCallId":null,"role":"assistant","source":{"disposition":"unavailable","value":null}},"source":{"first":29,"firstObservedMs":482,"last":29,"lastObservedMs":482}},"committedSeq":"197","kind":"capture-fact","link":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"recordId":"3ac220f5-a77a-46a8-8bd8-4c87d86702de"}
+```
+
+
+## Captured observation: detail-begin
+
+```json
+{"capture":{"event":{"descriptor":{"encoding":"utf8","field":"message","owner":{"blockId":"ae5af281-c5dd-44db-88bb-409e3252188c","index":0,"kind":"message","messageId":"e0d47838-8150-4b78-8d4b-9c27ae40c0e7","stage":"stream"}},"detailId":"74b8a4f6-e414-4f8c-838d-22045428ab39","kind":"detail-begin"},"source":{"first":30,"firstObservedMs":484,"last":30,"lastObservedMs":484}},"committedSeq":"198","kind":"capture-fact","link":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"recordId":"0e66ec57-e981-48b7-bef8-b5bdccfba3b1"}
+```
+
+
+## Captured observation: message-text
+
+```json
+{"capture":{"event":{"blockId":"ae5af281-c5dd-44db-88bb-409e3252188c","detailId":"74b8a4f6-e414-4f8c-838d-22045428ab39","kind":"message-text","messageId":"e0d47838-8150-4b78-8d4b-9c27ae40c0e7"},"source":{"first":31,"firstObservedMs":485,"last":31,"lastObservedMs":485}},"committedSeq":"199","kind":"capture-fact","link":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"recordId":"17670ba6-65fc-451a-a4e3-1a071be714b5"}
+```
+
+
+### message — 7fabe914-d3c5-4a2b-b46f-c8961f7d79cb / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 0–2202 of 20741.
+
+    Actual retained SDK result. retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-det
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — 7fabe914-d3c5-4a2b-b46f-c8961f7d79cb / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 2202–4559 of 20741.
+
+    ail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ 
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — 7fabe914-d3c5-4a2b-b46f-c8961f7d79cb / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 4559–6913 of 20741.
+
+    retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — 7fabe914-d3c5-4a2b-b46f-c8961f7d79cb / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 6913–9267 of 20741.
+
+    -detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — 7fabe914-d3c5-4a2b-b46f-c8961f7d79cb / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 9267–11624 of 20741.
+
+    αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ reta
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — 7fabe914-d3c5-4a2b-b46f-c8961f7d79cb / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 11624–13978 of 20741.
+
+    ined-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-det
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — 7fabe914-d3c5-4a2b-b46f-c8961f7d79cb / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 13978–16335 of 20741.
+
+    ail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ 
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — 7fabe914-d3c5-4a2b-b46f-c8961f7d79cb / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 16335–18689 of 20741.
+
+    retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — 7fabe914-d3c5-4a2b-b46f-c8961f7d79cb / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 18689–20595 of 20741.
+
+    -detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retai
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — 7fabe914-d3c5-4a2b-b46f-c8961f7d79cb / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 20595–20668 of 20741.
+
+    ned-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — 7fabe914-d3c5-4a2b-b46f-c8961f7d79cb / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 20668–20741 of 20741.
+
+    detail-αβγ retained-detail-αβγ retained-detail-αβγ  END-RETAINED
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+## Retained content
+
+```json
+{"content":{"bytes":20741,"field":"message","recordId":"7fabe914-d3c5-4a2b-b46f-c8961f7d79cb","sha256":"b86dc9095a1f2789aea9772da521501a63b7e64d6730d49f08ee41d6a1fae6a4","version":1},"coverage":{"observed":"complete","omissions":[],"redacted":false,"source":"complete"},"descriptor":{"encoding":"utf8","field":"message","owner":{"blockId":"ae5af281-c5dd-44db-88bb-409e3252188c","index":0,"kind":"message","messageId":"e0d47838-8150-4b78-8d4b-9c27ae40c0e7","stage":"stream"}},"detailId":"74b8a4f6-e414-4f8c-838d-22045428ab39","kind":"content","owner":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","entity":{"id":"e0d47838-8150-4b78-8d4b-9c27ae40c0e7","kind":"message","version":1},"runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"version":1}
+```
+
+
+## Captured observation: detail-begin
+
+```json
+{"capture":{"event":{"descriptor":{"encoding":"utf8","field":"message","owner":{"blockId":"16bdd9f5-4d89-47ad-9dff-0b91dc54d825","index":0,"kind":"message","messageId":"e0d47838-8150-4b78-8d4b-9c27ae40c0e7","stage":"final"}},"detailId":"b8f7568f-70b5-4923-a400-18d47b009540","kind":"detail-begin"},"source":{"first":43,"firstObservedMs":496,"last":43,"lastObservedMs":496}},"committedSeq":"211","kind":"capture-fact","link":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"recordId":"776c714c-f002-4f88-a90a-0d637c91dd76"}
+```
+
+
+### message — f0ab3dcb-d913-4b17-a495-539e8d508601 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 0–2202 of 20741.
+
+    Actual retained SDK result. retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-det
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — f0ab3dcb-d913-4b17-a495-539e8d508601 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 2202–4559 of 20741.
+
+    ail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ 
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — f0ab3dcb-d913-4b17-a495-539e8d508601 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 4559–6913 of 20741.
+
+    retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — f0ab3dcb-d913-4b17-a495-539e8d508601 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 6913–9267 of 20741.
+
+    -detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — f0ab3dcb-d913-4b17-a495-539e8d508601 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 9267–11624 of 20741.
+
+    αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ reta
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — f0ab3dcb-d913-4b17-a495-539e8d508601 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 11624–13978 of 20741.
+
+    ined-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-det
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — f0ab3dcb-d913-4b17-a495-539e8d508601 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 13978–16335 of 20741.
+
+    ail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ 
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — f0ab3dcb-d913-4b17-a495-539e8d508601 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 16335–18689 of 20741.
+
+    retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — f0ab3dcb-d913-4b17-a495-539e8d508601 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 18689–20595 of 20741.
+
+    -detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retai
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — f0ab3dcb-d913-4b17-a495-539e8d508601 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 20595–20668 of 20741.
+
+    ned-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### message — f0ab3dcb-d913-4b17-a495-539e8d508601 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 20668–20741 of 20741.
+
+    detail-αβγ retained-detail-αβγ retained-detail-αβγ  END-RETAINED
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+## Retained content
+
+```json
+{"content":{"bytes":20741,"field":"message","recordId":"f0ab3dcb-d913-4b17-a495-539e8d508601","sha256":"b86dc9095a1f2789aea9772da521501a63b7e64d6730d49f08ee41d6a1fae6a4","version":1},"coverage":{"observed":"complete","omissions":[],"redacted":false,"source":"complete"},"descriptor":{"encoding":"utf8","field":"message","owner":{"blockId":"16bdd9f5-4d89-47ad-9dff-0b91dc54d825","index":0,"kind":"message","messageId":"e0d47838-8150-4b78-8d4b-9c27ae40c0e7","stage":"final"}},"detailId":"b8f7568f-70b5-4923-a400-18d47b009540","kind":"content","owner":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","entity":{"id":"e0d47838-8150-4b78-8d4b-9c27ae40c0e7","kind":"message","version":1},"runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"version":1}
+```
+
+
+## Captured observation: message-text
+
+```json
+{"capture":{"event":{"blockId":"16bdd9f5-4d89-47ad-9dff-0b91dc54d825","detailId":"b8f7568f-70b5-4923-a400-18d47b009540","kind":"message-text","messageId":"e0d47838-8150-4b78-8d4b-9c27ae40c0e7"},"source":{"first":55,"firstObservedMs":514,"last":55,"lastObservedMs":514}},"committedSeq":"223","kind":"capture-fact","link":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"recordId":"5e98d756-dd55-4bf6-9751-3637235c3bf9"}
+```
+
+
+## Captured observation: detail-begin
+
+```json
+{"capture":{"event":{"descriptor":{"encoding":"utf8","field":"final-text","owner":{"kind":"message-final","messageId":"e0d47838-8150-4b78-8d4b-9c27ae40c0e7"}},"detailId":"bc0b885c-9f05-47f8-9fde-46de8edfa201","kind":"detail-begin"},"source":{"first":56,"firstObservedMs":515,"last":56,"lastObservedMs":515}},"committedSeq":"224","kind":"capture-fact","link":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"recordId":"0ebd50bc-d2ce-4eba-be6a-408a8d7d8fb9"}
+```
+
+
+### final-text — e61dd259-f2fe-408e-99e2-327363050e28 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 0–2202 of 20741.
+
+    Actual retained SDK result. retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-det
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### final-text — e61dd259-f2fe-408e-99e2-327363050e28 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 2202–4559 of 20741.
+
+    ail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ 
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### final-text — e61dd259-f2fe-408e-99e2-327363050e28 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 4559–6913 of 20741.
+
+    retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### final-text — e61dd259-f2fe-408e-99e2-327363050e28 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 6913–9267 of 20741.
+
+    -detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### final-text — e61dd259-f2fe-408e-99e2-327363050e28 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 9267–11624 of 20741.
+
+    αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ reta
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### final-text — e61dd259-f2fe-408e-99e2-327363050e28 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 11624–13978 of 20741.
+
+    ined-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-det
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### final-text — e61dd259-f2fe-408e-99e2-327363050e28 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 13978–16335 of 20741.
+
+    ail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ 
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### final-text — e61dd259-f2fe-408e-99e2-327363050e28 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 16335–18689 of 20741.
+
+    retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### final-text — e61dd259-f2fe-408e-99e2-327363050e28 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 18689–20595 of 20741.
+
+    -detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-detail-αβγ retai
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### final-text — e61dd259-f2fe-408e-99e2-327363050e28 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 20595–20668 of 20741.
+
+    ned-detail-αβγ retained-detail-αβγ retained-detail-αβγ retained-
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+### final-text — e61dd259-f2fe-408e-99e2-327363050e28 / v1
+
+Entity: message e0d47838-8150-4b78-8d4b-9c27ae40c0e7 / v1. UTF-8 bytes 20668–20741 of 20741.
+
+    detail-αβγ retained-detail-αβγ retained-detail-αβγ  END-RETAINED
+
+Coverage: {"observed":"complete","omissions":[],"redacted":false,"source":"complete"}
+
+
+## Retained content
+
+```json
+{"content":{"bytes":20741,"field":"final-text","recordId":"e61dd259-f2fe-408e-99e2-327363050e28","sha256":"b86dc9095a1f2789aea9772da521501a63b7e64d6730d49f08ee41d6a1fae6a4","version":1},"coverage":{"observed":"complete","omissions":[],"redacted":false,"source":"complete"},"descriptor":{"encoding":"utf8","field":"final-text","owner":{"kind":"message-final","messageId":"e0d47838-8150-4b78-8d4b-9c27ae40c0e7"}},"detailId":"bc0b885c-9f05-47f8-9fde-46de8edfa201","kind":"content","owner":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","entity":{"id":"e0d47838-8150-4b78-8d4b-9c27ae40c0e7","kind":"message","version":1},"runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"version":1}
+```
+
+
+## Captured observation: message-end
+
+```json
+{"capture":{"event":{"finalBlockCount":1,"finalDetailId":"bc0b885c-9f05-47f8-9fde-46de8edfa201","kind":"message-end","messageId":"e0d47838-8150-4b78-8d4b-9c27ae40c0e7","stopReason":"stop"},"source":{"first":68,"firstObservedMs":750,"last":68,"lastObservedMs":750}},"committedSeq":"236","kind":"capture-fact","link":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"recordId":"9eea3a8e-6d52-47a2-893f-bc271f63ac51"}
+```
+
+
+## Captured observation: capture-status
+
+```json
+{"capture":{"event":{"coverage":{"observed":"complete","omissions":[],"redacted":false,"source":"complete"},"kind":"capture-status"},"source":{"first":69,"firstObservedMs":752,"last":69,"lastObservedMs":752}},"committedSeq":"237","kind":"capture-fact","link":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"recordId":"4f802137-cafe-4647-b7ff-f35499117033"}
+```
+
+
+## Captured observation: final
+
+```json
+{"capture":{"event":{"detailId":"bc0b885c-9f05-47f8-9fde-46de8edfa201","kind":"final","messageId":"e0d47838-8150-4b78-8d4b-9c27ae40c0e7","stopReason":"stop"},"source":{"first":70,"firstObservedMs":752,"last":70,"lastObservedMs":752}},"committedSeq":"238","kind":"capture-fact","link":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"},"recordId":"168b9fff-f0eb-4bf0-91ca-6eaaae1a0676"}
+```
+
+
+## Recorded child 272ced6d-6ab4-45a8-a897-df489319944e
+
+```json
+{"kind":"run","projection":{"admission":{"assignments":[{"assignmentId":"assignment-1","childRunId":"272ced6d-6ab4-45a8-a897-df489319944e"},{"assignmentId":"assignment-2","childRunId":"a8e586c2-bc8a-4c14-8b18-e4fb8b931e85"}],"commandId":"61c4fff3-824f-446c-b859-84f5a58e6848","context":{"accessGeneration":1,"checkEnvGeneration":1,"checkoutGeneration":0,"configRev":2,"controlRev":3,"cwdId":"9266cd27-2d36-4729-95c5-2d204560cbdd","epoch":"86f5d1b2-8b60-4eaa-a780-cfa9564e9d3d","model":{"api":"openai-completions","model":"fixed","provider":"fixture","sourceSelectionId":"2b70cc17-275a-4728-a9ad-8e34b01306dd","thinking":"off"},"observation":{"complete":true,"identity":"55d3b511bbc95016bde4fbfdcfcd17e556f15b2fb1bb584d0fa33fd840735e28"},"task":{"graphIdentity":"a516910e6136a778545467e0cf59bd5fde988daae863ee3c180f13bb1e7fe31c","graphRevision":2,"id":"61992e74-1e24-4c07-b66d-5aff88af7355","identity":"e21b45f0cded46ac6ec176aca3d34c253deb4c9f372387c255489b5e65e9ef37","kind":"code","revision":4},"workspaceId":"88f50e2f-e92d-4268-9c34-91370229cd82"},"graph":{"recordId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","revision":2,"sha256":"a516910e6136a778545467e0cf59bd5fde988daae863ee3c180f13bb1e7fe31c"},"kind":"start","operationId":"a426e089-586f-4144-b1b5-23959921209d"},"assignmentId":"assignment-1","childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","coverage":{"observed":"complete","omissions":[],"redacted":false,"source":"complete"},"lifecycle":"settled","outcome":"completed","publication":"published","reason":null,"result":{"bytes":20741,"field":"final-text","recordId":"e61dd259-f2fe-408e-99e2-327363050e28","sha256":"b86dc9095a1f2789aea9772da521501a63b7e64d6730d49f08ee41d6a1fae6a4","version":1},"runId":"dc2e6369-6a7c-4a22-b01c-0d7091bfce04","settlement":{"kind":"sdk","native":{"capture":{"observed":"complete","omissions":[],"redacted":false,"source":"complete"},"cleanup":"settled","closure":"direct-child-closed","durationMs":1805,"exitCode":0,"final":"valid","outcome":"completed","signal":null,"stdin":"delivered"},"recording":{"detail":{"childRunId":"272ced6d-6ab4-45a8-a897-df489319944e","committedSeq":"237","content":{"bytes":20741,"field":"final-text","recordId":"e61dd259-f2fe-408e-99e2-327363050e28","sha256":"b86dc9095a1f2789aea9772da521501a63b7e64d6730d49f08ee41d6a1fae6a4","version":1},"detailId":"bc0b885c-9f05-47f8-9fde-46de8edfa201"},"selected":{"detailId":"bc0b885c-9f05-47f8-9fde-46de8edfa201","messageId":"e0d47838-8150-4b78-8d4b-9c27ae40c0e7"},"status":"committed"},"settlementSeq":"242"},"taskId":"61992e74-1e24-4c07-b66d-5aff88af7355"}}
+```
+
+
+```json
+{"event":{"committedSeq":"272","complete":true,"coverage":{"observed":"complete","omissions":[],"redacted":false,"source":"complete"},"encodedBytes":101415,"frames":244,"kind":"trailer","sha256":"0dc636082688136a5aae9a26757e1f922ef535cbb3621cb0653a2895cce95f70"},"exportId":"ccd52953-d79a-45e0-99a9-1638772b10ab","ordinal":245}
+```

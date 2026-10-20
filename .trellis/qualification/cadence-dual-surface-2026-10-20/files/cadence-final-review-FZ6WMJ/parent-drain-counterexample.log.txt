@@ -1,0 +1,35 @@
+$ vitest run --no-file-parallelism test/terminal-integration.test.mjs -t "settled-parent matcher"
+
+ RUN  v4.1.10 /home/mirako/abel/cadence
+
+ ❯ test/terminal-integration.test.mjs (37 tests | 1 failed | 36 skipped) 40ms
+   × settled-parent matcher binds incremental fullscreen drain to the exact parent ID 37ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/terminal-integration.test.mjs > settled-parent matcher binds incremental fullscreen drain to the exact parent ID
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ test/terminal-integration.test.mjs:198:44
+    196|       pattern = new RegExp(settledParent(kind, outcome));
+    197|     expect(pattern.test(`${heading}\nOwner drained • ID ${parent}`)).t…
+    198|     expect(pattern.test(initial + update)).toBe(true);
+       |                                            ^
+    199|     expect(pattern.test(initial)).toBe(false);
+    200|     expect(pattern.test(`${initial}Owner drained • ID ${child}`)).toBe…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 36 skipped (37)
+   Start at  02:20:30
+   Duration  822ms (transform 481ms, setup 0ms, import 607ms, tests 40ms, environment 0ms)
+
+error: script "test" exited with code 1

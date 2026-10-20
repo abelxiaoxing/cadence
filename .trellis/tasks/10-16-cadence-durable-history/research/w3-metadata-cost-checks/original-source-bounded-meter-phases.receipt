@@ -1,0 +1,163 @@
+{
+  "schema": "cadence-w3-metadata-cost/1",
+  "phases": [
+    {
+      "name": "setup",
+      "ms": 132.86021699999992,
+      "counts": {
+        "hash.calls": 102,
+        "hash.bytes": 24492,
+        "io.lstatSync": 10392,
+        "io.openSync": 211,
+        "io.fsyncSync": 27,
+        "io.closeSync": 211,
+        "io.fstatSync": 272,
+        "io.readSync": 192,
+        "io.readBytes": 23633,
+        "io.requestedBytes": 15101039,
+        "parse.calls": 89,
+        "parse.bytes": 4445,
+        "lease.assert": 9,
+        "lease.assert.ms": 43.61474800000042
+      }
+    },
+    {
+      "name": "append-index-82x100",
+      "ms": 36102.028501,
+      "counts": {
+        "navigation.prepare": 82,
+        "tree.head": 1562,
+        "hash.calls": 66448,
+        "hash.bytes": 227004975,
+        "tree.head.ms": 3375.5151430000324,
+        "tree.update": 82,
+        "lease.assert": 4924,
+        "io.lstatSync": 6032207,
+        "io.openSync": 95494,
+        "io.fstatSync": 126921,
+        "io.readSync": 90736,
+        "io.readBytes": 164712509,
+        "io.requestedBytes": 13405426227,
+        "io.closeSync": 95494,
+        "parse.calls": 10064,
+        "parse.bytes": 6831210,
+        "lease.assert.ms": 14186.975439000007,
+        "io.fsyncSync": 9348,
+        "tree.update.ms": 10100.050305000002,
+        "navigation.prepare.ms": 13513.573593000023,
+        "navigation.publish": 82,
+        "navigation.publish.ms": 20038.886198000015
+      }
+    },
+    {
+      "name": "before-tree",
+      "ms": 114.89630500000203,
+      "counts": {
+        "io.readdirSync": 1677,
+        "io.readFileSync": 4451,
+        "io.readFileBytes": 3574726
+      }
+    },
+    {
+      "name": "events-restart-zero-result",
+      "ms": 669.0167389999988,
+      "counts": {
+        "budget.reserve": 19134,
+        "io.lstatSync": 37743,
+        "io.openSync": 508,
+        "io.fstatSync": 804,
+        "io.readSync": 508,
+        "io.readBytes": 29126364,
+        "io.requestedBytes": 29967264,
+        "io.closeSync": 508,
+        "hash.calls": 18869,
+        "hash.bytes": 8286917,
+        "parse.calls": 743,
+        "parse.bytes": 15658,
+        "navigation.snapshot": 53,
+        "navigation.batch": 27,
+        "navigation.batch.ms": 33.37997199999518,
+        "navigation.snapshot.ms": 122.6136909999841,
+        "navigation.next": 171,
+        "navigation.next.ms": 214.87720800005627
+      }
+    },
+    {
+      "name": "messages-1200",
+      "ms": 3934.5388599999933,
+      "counts": {
+        "budget.reserve": 25972,
+        "io.lstatSync": 678374,
+        "io.openSync": 3632,
+        "io.fstatSync": 6990,
+        "io.readSync": 3617,
+        "io.readBytes": 45822813,
+        "io.requestedBytes": 45823331,
+        "io.closeSync": 3632,
+        "hash.calls": 29984,
+        "hash.bytes": 20233326,
+        "parse.calls": 20491,
+        "parse.bytes": 1861555,
+        "navigation.snapshot": 74,
+        "navigation.batch": 4838,
+        "navigation.batch.ms": 182.12400700013677,
+        "navigation.snapshot.ms": 126.70963599998504,
+        "navigation.next": 155,
+        "navigation.next.ms": 210.12324900000385,
+        "target.entityAt": 1232,
+        "navigation.entityBatches": 1232,
+        "tree.head": 2458,
+        "tree.head.ms": 1285.912977999964,
+        "navigation.entityBatches.ms": 3021.067026000055,
+        "sources.read": 2400,
+        "sources.read.ms": 79.69536300004984,
+        "sources.assertCurrent": 1200,
+        "sources.assertCurrent.ms": 40.30603400016844,
+        "target.entityAt.ms": 3228.638678000083
+      }
+    },
+    {
+      "name": "tasks-70",
+      "ms": 404.9463850000029,
+      "counts": {
+        "budget.reserve": 18160,
+        "io.lstatSync": 52422,
+        "io.openSync": 340,
+        "io.fstatSync": 647,
+        "io.readSync": 338,
+        "io.readBytes": 5156890,
+        "io.requestedBytes": 5253930,
+        "io.closeSync": 340,
+        "hash.calls": 10963,
+        "hash.bytes": 6612449,
+        "parse.calls": 1303,
+        "parse.bytes": 127816,
+        "navigation.snapshot": 8,
+        "navigation.batch": 289,
+        "navigation.batch.ms": 80.82402099988394,
+        "navigation.snapshot.ms": 15.40233099998295,
+        "navigation.next": 89,
+        "navigation.next.ms": 80.86252799995418,
+        "target.entityAt": 73,
+        "navigation.entityBatches": 73,
+        "tree.head": 145,
+        "tree.head.ms": 97.62645599998359,
+        "navigation.entityBatches.ms": 268.6015449999977,
+        "sources.read": 142,
+        "sources.read.ms": 4.415315999991435,
+        "sources.assertCurrent": 71,
+        "sources.assertCurrent.ms": 2.0637099999948987,
+        "target.entityAt.ms": 279.69529699997656
+      }
+    },
+    {
+      "name": "after-tree",
+      "ms": 142.38646300000255,
+      "counts": {
+        "io.readdirSync": 1677,
+        "io.readFileSync": 4451,
+        "io.readFileBytes": 3574726
+      }
+    }
+  ]
+}

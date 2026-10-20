@@ -1,0 +1,34 @@
+[
+  {
+    "phase": "before-worker",
+    "elapsedMs": 1453
+  },
+  {
+    "phase": "after-worker",
+    "elapsedMs": 14626
+  },
+  {
+    "phase": "after-settlement",
+    "elapsedMs": 16035
+  },
+  {
+    "phase": "after-inspect",
+    "elapsedMs": 17287
+  },
+  {
+    "phase": "after-pages",
+    "elapsedMs": 17511
+  },
+  {
+    "phase": "after-canaries",
+    "elapsedMs": 17581
+  },
+  {
+    "phase": "after-parent",
+    "elapsedMs": 17667
+  },
+  {
+    "phase": "after-restart",
+    "elapsedMs": 20488
+  }
+]

@@ -1,0 +1,20 @@
+import { readFileSync, writeFileSync, symlinkSync, mkdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { auditPackage } from '/home/mirako/abel/cadence/scripts/package-audit.mjs';
+const source='/home/mirako/abel/cadence', root='/home/mirako/abel/cadence-final-review-FZ6WMJ';
+const archive=root+'/pack-final/abelxiaoxing-cadence-1.8.4.tgz';
+const expected=JSON.parse(readFileSync(source+'/provenance/package-members.json','utf8'));
+const audit=auditPackage(archive,source,expected);
+const extraction=spawnSync('tar',['xzf',archive,'-C',root+'/extracted-final'],{cwd:root+'/unrelated',encoding:'utf8'});
+if(extraction.status!==0)throw Error('extract failed');
+const installed=root+'/extracted-final/package';
+const after=auditPackage(archive,installed,expected,source);
+// Peer/runtime dependencies supplied explicitly by the isolated fixture host,
+// outside the package tree. Not copied/bundled/refilled from source.
+mkdirSync(root+'/extracted-final/node_modules',{mode:0o700});
+for(const name of ['@earendil-works','typebox','undici','ws'])symlinkSync(source+'/node_modules/'+name,root+'/extracted-final/node_modules/'+name,'dir');
+const final=auditPackage(archive,installed,expected,source);
+const cli=spawnSync(process.execPath,[installed+'/src/service-cli.mjs','--help'],{cwd:root+'/unrelated',encoding:'utf8',env:process.env});
+if(cli.status!==0)throw Error('ordinary extracted CLI failed');
+writeFileSync(root+'/extraction-final-audit.json',JSON.stringify({archive,installed,audit,extraction:{exit:extraction.status,signal:extraction.signal},after,final,ordinaryNodeCli:{executable:process.execPath,cwd:root+'/unrelated',exit:cli.status,signal:cli.signal,stdout:cli.stdout,stderr:cli.stderr},peerProvision:'explicit existing @earendil-works/typebox/undici/ws fixture links outside package; no install or package body refill'},null,2));
+console.log(JSON.stringify({archive,installed,members:audit.members.length,archiveSha256:audit.archiveSha256,cliExit:cli.status}));

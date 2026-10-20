@@ -1,0 +1,20 @@
+{
+  "command": [
+    "bun",
+    "run",
+    "test",
+    "--",
+    "test/service-human-review.test.ts",
+    "-t",
+    "concurrent unavailable viewer"
+  ],
+  "cwd": "/home/mirako/abel/cadence",
+  "pid": 2398564,
+  "started": 1792437399.2289891,
+  "temporaryRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ",
+  "originalWait": true,
+  "exit": 1,
+  "elapsedSeconds": 12.445,
+  "log": "/home/mirako/abel/cadence-final-review-FZ6WMJ/review-observer-counterexample.log",
+  "logSha256": "caba80484cacf73d7cb02c430a501127d2d5579d47c6c4344edfc452c0086435"
+}

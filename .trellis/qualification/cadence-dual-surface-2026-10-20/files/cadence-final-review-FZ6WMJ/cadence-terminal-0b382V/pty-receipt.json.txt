@@ -1,0 +1,33 @@
+{
+  "pid": 2420951,
+  "waitpidReturned": true,
+  "waitStatus": 15,
+  "exitCode": -15,
+  "failure": "terminal-event-step-deadline",
+  "observations": [
+    {
+      "pattern": "CONTROL_FD_CLOSED CHILD_READY",
+      "matched": true,
+      "rawStart": 0,
+      "rawEnd": 30
+    },
+    {
+      "pattern": "FOREGROUND",
+      "matched": true,
+      "rawStart": 30,
+      "rawEnd": 41
+    }
+  ],
+  "seconds": 15.05928905296605,
+  "physicalHuman": false,
+  "nativeExecutor": false,
+  "escapeKeys": [],
+  "barrier": {
+    "event": null,
+    "receivedBeforeWait": null,
+    "waitStep": 1,
+    "consumed": false,
+    "escapeAfterReady": false,
+    "bytes": 0
+  }
+}

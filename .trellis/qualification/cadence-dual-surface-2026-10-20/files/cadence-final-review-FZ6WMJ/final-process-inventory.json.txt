@@ -1,0 +1,6 @@
+{
+  "observedAt": 1792441324.1475425,
+  "ownedPathCandidates": [],
+  "signalsSent": false,
+  "absenceIsNotClosureEvidence": true
+}

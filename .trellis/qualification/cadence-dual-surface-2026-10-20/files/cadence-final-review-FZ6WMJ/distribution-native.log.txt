@@ -1,0 +1,38 @@
+$ vitest run --no-file-parallelism test/distribution.test.mjs test/service-accepting-host.test.ts test/native-client.test.ts test/terminal-integration.test.mjs
+
+ RUN  v4.1.10 /home/mirako/abel/cadence
+
+stdout | test/terminal-integration.test.mjs > extracted fullscreen production posix-pty service plan, SDK edit, real checks, issues review, detach/quit, reattach and explicit cancel
+terminal fixture retained: /home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-JdTXoX
+
+ ❯ test/terminal-integration.test.mjs (36 tests | 1 failed | 27 skipped) 269601ms
+   × extracted fullscreen production posix-pty service plan, SDK edit, real checks, issues review, detach/quit, reattach and explicit cancel 33131ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/terminal-integration.test.mjs > extracted fullscreen production posix-pty service plan, SDK edit, real checks, issues review, detach/quit, reattach and explicit cancel
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ test/terminal-integration.test.mjs:637:39
+    635|         const status = await driver.closed;
+    636|         // First original Pi has quit while HTTP4 is STILL pending in …
+    637|         expect(status, driver.errors).toBe(0);
+       |                                       ^
+    638|         const firstReceipt = JSON.parse(
+    639|           readFileSync(path.join(root, "pty-receipt.json"), "utf8"),
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 3 passed (4)
+      Tests  1 failed | 22 passed | 27 skipped (50)
+   Start at  02:12:18
+   Duration  390.40s (transform 1.42s, setup 0ms, import 2.16s, tests 387.62s, environment 0ms)
+
+error: script "test" exited with code 1

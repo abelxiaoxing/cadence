@@ -1,0 +1,96 @@
+{
+  "label": "cold-snapshot",
+  "elapsedMs": 629.2471729999997,
+  "counts": {
+    "private.create": {
+      "count": 26,
+      "ms": 65.40670500000488,
+      "maximumMs": 5.686364000001049,
+      "bytes": 0
+    },
+    "private.read": {
+      "count": 276,
+      "ms": 118.66773799999646,
+      "maximumMs": 5.148363000000245,
+      "bytes": 0
+    },
+    "private.replace": {
+      "count": 1,
+      "ms": 3.889963000001444,
+      "maximumMs": 3.889963000001444,
+      "bytes": 0
+    },
+    "private.assert": {
+      "count": 216,
+      "ms": 79.5869150000035,
+      "maximumMs": 5.150272999999288,
+      "bytes": 0
+    },
+    "history.syncParents": {
+      "count": 2,
+      "ms": 6.651033999998617,
+      "maximumMs": 4.845213000000513,
+      "bytes": 0
+    },
+    "budget": {
+      "count": 50,
+      "ms": 0.06674999997994746,
+      "maximumMs": 0.007379999999102438,
+      "bytes": 1888337
+    },
+    "history.writeArtifact": {
+      "count": 1,
+      "ms": 11.770988000000216,
+      "maximumMs": 11.770988000000216,
+      "bytes": 0
+    },
+    "navigation.prepare": {
+      "count": 1,
+      "ms": 7.537895000001299,
+      "maximumMs": 7.537895000001299,
+      "bytes": 0
+    },
+    "history.encodeBatch": {
+      "count": 3,
+      "ms": 202.33793100000184,
+      "maximumMs": 200.910401000001,
+      "bytes": 0
+    },
+    "history.append": {
+      "count": 2,
+      "ms": 264.77749499999845,
+      "maximumMs": 233.90375399999903,
+      "bytes": 0
+    },
+    "native.sync": {
+      "count": 2,
+      "ms": 4.34663300000102,
+      "maximumMs": 2.9744920000011916,
+      "bytes": 0
+    },
+    "navigation.publish": {
+      "count": 1,
+      "ms": 70.95668599999772,
+      "maximumMs": 70.95668599999772,
+      "bytes": 0
+    },
+    "navigation.publishActive": {
+      "count": 1,
+      "ms": 5.326234000000113,
+      "maximumMs": 5.326234000000113,
+      "bytes": 0
+    },
+    "navigation.snapshot": {
+      "count": 2,
+      "ms": 57.67664800000057,
+      "maximumMs": 53.05506500000047,
+      "bytes": 0
+    },
+    "navigation.batch": {
+      "count": 2,
+      "ms": 0.8087010000053851,
+      "maximumMs": 0.7795710000027611,
+      "bytes": 0
+    }
+  }
+}

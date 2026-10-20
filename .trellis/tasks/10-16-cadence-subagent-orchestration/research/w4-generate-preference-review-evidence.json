@@ -1,0 +1,722 @@
+{
+  "schema": "cadence-w4-generate-preference-review/1",
+  "disposition": "BLOCKED: unchanged writer-preference case still fails; no production repair or accepting-host qualification",
+  "root": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek",
+  "rootMode": "0o700",
+  "disk": "/dev/sda2 ext4 (df observation)",
+  "environment": {
+    "TMPDIR": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp",
+    "TEMP": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp",
+    "TMP": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp",
+    "recordedRunnerHOME": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/home",
+    "native": "isolated fabricated profiles, actual SDK/guard, numeric loopback; no user credentials"
+  },
+  "identity": {
+    "node": "v26.7.0",
+    "execPath": "/usr/bin/node",
+    "platform": "linux",
+    "arch": "x64",
+    "pi": "0.84.3",
+    "bun": "1.3.14"
+  },
+  "productionAdmission": "null; unchanged src/service/host.ts",
+  "unchangedReviewedProduction": [
+    {
+      "path": "src/history/publication.ts",
+      "priorSha256": "ac5e7df048a1febb50835b3657f2e738a859b1fc1de3e90583fbaa46739c6b2c",
+      "currentSha256": "ac5e7df048a1febb50835b3657f2e738a859b1fc1de3e90583fbaa46739c6b2c",
+      "unchanged": true
+    },
+    {
+      "path": "src/history/run-state.ts",
+      "priorSha256": "f84bdfa7b3e5c6da7e06d2193c3fd16fb1d8be620805ec26bcafad8011bc527e",
+      "currentSha256": "f84bdfa7b3e5c6da7e06d2193c3fd16fb1d8be620805ec26bcafad8011bc527e",
+      "unchanged": true
+    },
+    {
+      "path": "src/service/graph.ts",
+      "priorSha256": "ef8a721516957c8b298599e9b8aa63eea4ee2f27a04f4c2161ac86bb95532f4b",
+      "currentSha256": "ef8a721516957c8b298599e9b8aa63eea4ee2f27a04f4c2161ac86bb95532f4b",
+      "unchanged": true
+    },
+    {
+      "path": "src/service/scheduler.ts",
+      "priorSha256": "4117e1f559bb02c1261471bea8dea75f488b9d2f5e7a7df020c53c3689e330e6",
+      "currentSha256": "4117e1f559bb02c1261471bea8dea75f488b9d2f5e7a7df020c53c3689e330e6",
+      "unchanged": true
+    },
+    {
+      "path": "src/service/task-actions.ts",
+      "priorSha256": "bbe85ba12dd36e3e9e027b1cff3971f449cabb6d6510e45edbd2b8c968327de4",
+      "currentSha256": "bbe85ba12dd36e3e9e027b1cff3971f449cabb6d6510e45edbd2b8c968327de4",
+      "unchanged": true
+    },
+    {
+      "path": "src/service-host.mjs",
+      "priorSha256": "510a1a259b6adeeaee01ecf0ae74a8bde06918e8675c77ee2aaf95211e9da0ef",
+      "currentSha256": "510a1a259b6adeeaee01ecf0ae74a8bde06918e8675c77ee2aaf95211e9da0ef",
+      "unchanged": true
+    }
+  ],
+  "finalInputs": {
+    "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/final-check-inputs.json",
+    "sha256": "9ebcb8d45f9211335ba061d2dcedb5cabdc7d1b2a02add79734b59af35e5f3a8",
+    "count": 350,
+    "currentAllEqual": true
+  },
+  "nativeHistoryInputManifest": {
+    "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/generate-review-inputs.json",
+    "sha256": "0f2bb5701c8cf48d8920ca790758ec8a47a7c72a37303cd6afa93d8b3c33cb8f",
+    "count": 349
+  },
+  "lateChanges": "Only test helper diagnostics type/teardown/cap/error handling and new diagnostic unit file differ after scoped native/history runs; production/tests exercised by those runs unchanged.",
+  "changed": [
+    {
+      "path": "test/service-scheduler.test.ts",
+      "sha256": "f00cf2a1ad03bdac3b1fde0a0bcb5b39db58529bd073b7b18614f58953e8fbbf"
+    },
+    {
+      "path": "test/helpers/scheduler-diagnostics.ts",
+      "sha256": "3d5564acf1b84e850b0bb4bda2b9be1db752ad5b7f53b7e00823c9f54134e751"
+    },
+    {
+      "path": "test/scheduler-diagnostics.test.ts",
+      "sha256": "814dadc4a5ad99a5352d5532767a28ae39b25650ba01d2b2216b3984d7dc80ae"
+    },
+    {
+      "path": "test/service-publication-parity-review.test.ts",
+      "sha256": "d3e74b967aa21392a0b7139a33abddaba218bf6438dbde020039690f2c0ca1b2"
+    },
+    {
+      "path": ".trellis/spec/backend/service-orchestration-guidelines.md",
+      "sha256": "5d9958bb13c1021b4f42fa70fc104a186d9ac3e98ebeb93e6bf9c113467fbdd5"
+    }
+  ],
+  "before": {
+    "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/inputs-before.json",
+    "sha256": "bc3ebe841720fc8063362e00188d069c38620b6bf650bc6919c11d22efdf3757",
+    "limitation": "initial diagnostic helper draft already existed at this snapshot; not claimed absent baseline"
+  },
+  "preferenceCaseDiff": {
+    "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/scheduler-review.diff",
+    "sha256": "b9144aa4529b8917ac5958ea125b822c8c217cd188408a653183210cc5d9a646"
+  },
+  "commands": [
+    {
+      "command": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-scheduler.test.ts",
+        "-t",
+        "writer preference"
+      ],
+      "exit": 1,
+      "seconds": 22.5962350750342,
+      "log": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/preference-diagnostic.log",
+      "logSha256": "8271489bf964f0520599f9f47e50e364c9d10744172f2710021cec5777c75f87",
+      "inputs": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/preference-diagnostic-inputs.json",
+      "inputSha256": "b453afff53f4d4f9dcbcd5e62c12c3cd21c025c88cd9a77213166cf5cb9a54c7",
+      "name": "preference-diagnostic"
+    },
+    {
+      "command": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-scheduler.test.ts",
+        "-t",
+        "writer preference"
+      ],
+      "exit": 1,
+      "seconds": 22.630600787932053,
+      "log": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/preference-cost-diagnostic.log",
+      "logSha256": "7095f7844cc8160da0f625ec9c009aa367683c5b31704f42ea6b66928bbbbd9b",
+      "inputs": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/preference-cost-diagnostic-inputs.json",
+      "inputSha256": "90d0dd67aa3f2f0216c81358285497899ca94a90a8d15e77eaa74f5c9409cb76",
+      "name": "preference-cost-diagnostic"
+    },
+    {
+      "command": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-publication-parity-review.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 2.9251042179530486,
+      "log": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/publication-parity.log",
+      "logSha256": "6fd9dca05f802d6f4a578c6d7f6c0474545e035d06598e15c5294a07b207d563",
+      "inputs": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/publication-parity-inputs.json",
+      "inputSha256": "7487f332bd82a78068271bf6aa8107899f444c69544334faabab53e56c23f898",
+      "name": "publication-parity"
+    },
+    {
+      "command": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-scheduler.test.ts",
+        "-t",
+        "Generate|generate-plan cancel|post-commit"
+      ],
+      "exit": 0,
+      "seconds": 50.56776140502188,
+      "log": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/generate-review.log",
+      "logSha256": "983bf1e8e526e99365cd24c704f40fec10421a48a9edfeeead9ef71a07c9482a",
+      "inputs": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/generate-review-inputs.json",
+      "inputSha256": "0f2bb5701c8cf48d8920ca790758ec8a47a7c72a37303cd6afa93d8b3c33cb8f",
+      "name": "generate-review"
+    },
+    {
+      "command": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-scheduler.test.ts",
+        "-t",
+        "overlaps two|dependent receives|explicit Cancel stops|first native failure|stalled original|post-native ORIGINAL|actual SDK write|original preparation accounting"
+      ],
+      "exit": 0,
+      "seconds": 83.21712389099412,
+      "log": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/adjacent-scheduler.log",
+      "logSha256": "f191b8f658e332a564a2ebdbc4c23ccc89d96c5e82187d31fa16584078222fe3",
+      "inputs": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/adjacent-scheduler-inputs.json",
+      "inputSha256": "0f2bb5701c8cf48d8920ca790758ec8a47a7c72a37303cd6afa93d8b3c33cb8f",
+      "name": "adjacent-scheduler"
+    },
+    {
+      "command": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-contract.test.ts",
+        "test/service-history-publication-recovery.test.ts",
+        "test/service-history-plans.test.ts",
+        "test/service-history-semantics.test.ts",
+        "test/service-history-final-review.test.ts",
+        "test/service-scheduler-facts.test.ts",
+        "test/service-publication-parity-review.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 121.49257858598139,
+      "log": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/history-contract.log",
+      "logSha256": "68c8fc6b58fc0b8c40889bd961bc88be8d4dbfd1fd97b00156db04ef9d6fc278",
+      "inputs": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/history-contract-inputs.json",
+      "inputSha256": "0f2bb5701c8cf48d8920ca790758ec8a47a7c72a37303cd6afa93d8b3c33cb8f",
+      "name": "history-contract"
+    },
+    {
+      "command": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/lightweight-sdk.test.ts",
+        "test/lightweight-process-diff.test.ts",
+        "test/worker-recording.test.ts",
+        "test/worker-public.test.ts",
+        "test/service-owner.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 110.79137982998509,
+      "log": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/native-owner.log",
+      "logSha256": "79fdad9cc884b019d0b74ee735d140f0e5ebdadd6ee0d7cd6da63fff37af0658",
+      "inputs": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/native-owner-inputs.json",
+      "inputSha256": "0f2bb5701c8cf48d8920ca790758ec8a47a7c72a37303cd6afa93d8b3c33cb8f",
+      "name": "native-owner"
+    },
+    {
+      "command": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/scheduler-diagnostics.test.ts"
+      ],
+      "exit": 0,
+      "seconds": 1.1209820349467918,
+      "log": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/diagnostics-tests.log",
+      "logSha256": "9d0ad96a5ef724c66f797c2fb689d69619a16d584db5ab9a1a2d6e99c7a3698f",
+      "inputs": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/diagnostics-tests-inputs.json",
+      "inputSha256": "9ebcb8d45f9211335ba061d2dcedb5cabdc7d1b2a02add79734b59af35e5f3a8",
+      "name": "diagnostics-tests"
+    },
+    {
+      "command": ["bun", "run", "check"],
+      "exit": 0,
+      "seconds": 10.82050504500512,
+      "log": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/check.log",
+      "logSha256": "6de17e4bf4234c4eecf065c2988d1bb9bee715f226572eaefab255ca433b46cc",
+      "inputs": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/check-inputs.json",
+      "inputSha256": "0f2bb5701c8cf48d8920ca790758ec8a47a7c72a37303cd6afa93d8b3c33cb8f",
+      "name": "check"
+    },
+    {
+      "command": ["bun", "run", "check:agents"],
+      "exit": 0,
+      "seconds": 0.05593797704204917,
+      "log": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/agents.log",
+      "logSha256": "fc459b9f542bbe9546842994f18a74f6a80e908f467ce497916608c24531eebf",
+      "inputs": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/agents-inputs.json",
+      "inputSha256": "0f2bb5701c8cf48d8920ca790758ec8a47a7c72a37303cd6afa93d8b3c33cb8f",
+      "name": "agents"
+    },
+    {
+      "command": ["bun", "run", "check:web"],
+      "exit": 0,
+      "seconds": 10.485205185017549,
+      "log": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/webtype.log",
+      "logSha256": "43ce92ddb3c48eeacc0797faf239b934fa483f575abe89f591537621426f6c29",
+      "inputs": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/webtype-inputs.json",
+      "inputSha256": "0f2bb5701c8cf48d8920ca790758ec8a47a7c72a37303cd6afa93d8b3c33cb8f",
+      "name": "webtype"
+    },
+    {
+      "command": ["bun", "run", "build:web:check"],
+      "exit": 0,
+      "seconds": 2.5235107239568606,
+      "log": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/web-bytecheck.log",
+      "logSha256": "d3398913c2ad889ec96490cc885475750aae4158a641bed0358311fd904a8b81",
+      "inputs": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/web-bytecheck-inputs.json",
+      "inputSha256": "0f2bb5701c8cf48d8920ca790758ec8a47a7c72a37303cd6afa93d8b3c33cb8f",
+      "name": "web-bytecheck"
+    },
+    {
+      "command": ["bun", "run", "lint"],
+      "exit": 0,
+      "seconds": 0.6850444689625874,
+      "log": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/lint.log",
+      "logSha256": "490b8204bbe2587e624de81c39e5864f23b7fa65ffade236cdd1ef30885cc539",
+      "inputs": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/lint-inputs.json",
+      "inputSha256": "0f2bb5701c8cf48d8920ca790758ec8a47a7c72a37303cd6afa93d8b3c33cb8f",
+      "name": "lint"
+    },
+    {
+      "command": ["bun", "run", "check"],
+      "exit": 0,
+      "seconds": 10.02115916996263,
+      "log": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/final-check.log",
+      "logSha256": "6de17e4bf4234c4eecf065c2988d1bb9bee715f226572eaefab255ca433b46cc",
+      "inputs": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/final-check-inputs.json",
+      "inputSha256": "9ebcb8d45f9211335ba061d2dcedb5cabdc7d1b2a02add79734b59af35e5f3a8",
+      "name": "final-check"
+    },
+    {
+      "command": ["bun", "run", "lint"],
+      "exit": 0,
+      "seconds": 0.6755142429610714,
+      "log": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/final-lint.log",
+      "logSha256": "6058afe0d12b77afb4ec6ad9f2366e457fa0f62aea9446767aca7e1d69391dbb",
+      "inputs": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/final-lint-inputs.json",
+      "inputSha256": "9ebcb8d45f9211335ba061d2dcedb5cabdc7d1b2a02add79734b59af35e5f3a8",
+      "name": "final-lint"
+    },
+    {
+      "command": [
+        "node_modules/.bin/rumdl",
+        "check",
+        "--no-exclude",
+        ".trellis/tasks/10-16-cadence-subagent-orchestration/research/w4-generate-preference-review.md",
+        ".trellis/spec/backend/service-orchestration-guidelines.md"
+      ],
+      "exit": 1,
+      "seconds": 0.10092082689516246,
+      "log": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/report-check.log",
+      "logSha256": "7603cea0252fbd416d2909a9ddb28b2e0ed8f508dbbd9a84234702c206085b30",
+      "inputs": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/report-check-inputs.json",
+      "inputSha256": "9ebcb8d45f9211335ba061d2dcedb5cabdc7d1b2a02add79734b59af35e5f3a8",
+      "name": "report-check"
+    },
+    {
+      "command": [
+        "node_modules/.bin/rumdl",
+        "check",
+        "--no-exclude",
+        ".trellis/tasks/10-16-cadence-subagent-orchestration/research/w4-generate-preference-review.md",
+        ".trellis/spec/backend/service-orchestration-guidelines.md"
+      ],
+      "exit": 1,
+      "seconds": 0.10761882096994668,
+      "log": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/report-check-final.log",
+      "logSha256": "fa7517a858dda39ac53d5e7560f3d20e8e2608a71ada5594dbd134cfb35b63c8",
+      "inputs": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/report-check-final-inputs.json",
+      "inputSha256": "9ebcb8d45f9211335ba061d2dcedb5cabdc7d1b2a02add79734b59af35e5f3a8",
+      "name": "report-check-final"
+    },
+    {
+      "command": [
+        "node_modules/.bin/rumdl",
+        "check",
+        "--no-cache",
+        "--no-exclude",
+        ".trellis/tasks/10-16-cadence-subagent-orchestration/research/w4-generate-preference-review.md",
+        ".trellis/spec/backend/service-orchestration-guidelines.md"
+      ],
+      "exit": 0,
+      "seconds": 0.10065039596520364,
+      "log": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/report-check-uncached.log",
+      "logSha256": "de3beab7c44f196df90e47e1986137e99203ce3bb4b60c8ab06870a0fdc6c0d5",
+      "inputs": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/report-check-uncached-inputs.json",
+      "inputSha256": "9ebcb8d45f9211335ba061d2dcedb5cabdc7d1b2a02add79734b59af35e5f3a8",
+      "name": "report-check-uncached"
+    },
+    {
+      "command": ["bun", "run", "lint"],
+      "exit": 0,
+      "seconds": 0.6822102679871023,
+      "log": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/evidence-lint.log",
+      "logSha256": "aee909c7236556dd9699e8bac769c3c498074fd2142a365933fce3ddcf43a9e1",
+      "inputs": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/evidence-lint-inputs.json",
+      "inputSha256": "9ebcb8d45f9211335ba061d2dcedb5cabdc7d1b2a02add79734b59af35e5f3a8",
+      "name": "evidence-lint"
+    }
+  ],
+  "diagnosticRuns": [
+    {
+      "trace": {
+        "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-PtOemm/scheduler-timings.json",
+        "sha256": "4014a0e47db047fd8cef53a388b34933f294153e8f704c0c9ce11b8329e19ca9"
+      },
+      "native": {
+        "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-PtOemm/sdk-receipt.json",
+        "sha256": "e05366e7d243ab42033d763e964036e659489871665f28502961ea473ad07823"
+      },
+      "inclusiveOverlappingTotals": {
+        "private-read": {
+          "count": 17400,
+          "ms": 8036.051285000065,
+          "maxMs": 11.683657000001404
+        },
+        "lease-assert": {
+          "count": 1798,
+          "ms": 6024.053115000011,
+          "maxMs": 18.835832000000664
+        },
+        "observe-sync": {
+          "count": 24,
+          "ms": 897.8720970000018,
+          "maxMs": 60.09297999999944
+        },
+        "private-create": {
+          "count": 968,
+          "ms": 2631.4833389999353,
+          "maxMs": 34.66593300000022
+        },
+        "navigation:prepare": {
+          "count": 71,
+          "ms": 1864.7261439999907,
+          "maxMs": 104.67025899999862
+        },
+        "navigation:publish": {
+          "count": 71,
+          "ms": 5839.219664999985,
+          "maxMs": 282.23442499999874
+        },
+        "navigation:active": {
+          "count": 71,
+          "ms": 104.98827000000756,
+          "maxMs": 10.819886999999653
+        },
+        "private-replace": {
+          "count": 301,
+          "ms": 1717.0752230000298,
+          "maxMs": 8.039894999999888
+        }
+      },
+      "originalOrReportDurations": {
+        "append": {
+          "count": 71,
+          "maxMs": 200.7211610000013
+        },
+        "write": {
+          "count": 140,
+          "maxMs": 1267.2105310000006
+        },
+        "write-safety": {
+          "count": 8,
+          "maxMs": 487.3076599999986
+        },
+        "auth-original": {
+          "count": 2,
+          "maxMs": 582.4883819999995
+        },
+        "worker": {
+          "count": 2,
+          "maxMs": 3375.2079129999984
+        }
+      },
+      "relativeNative": [
+        {
+          "start": 6989.219753000001,
+          "end": 9642.530533000001,
+          "exit": 0
+        },
+        {
+          "start": 14856.338171000001,
+          "end": 16388.690906,
+          "exit": 0
+        }
+      ],
+      "snapshot": {
+        "schema": "cadence-scheduler-timings/1",
+        "dropped": 0,
+        "pendingOriginalOrReportIds": [],
+        "ownerState": "quarantined",
+        "writerPending": 0,
+        "scheduler": {
+          "episodes": 1,
+          "queued": 0,
+          "reservations": 0,
+          "retainedAllowance": 786432
+        }
+      },
+      "limits": "case20000/child15000/read8MiB100ms/capture5000 unchanged; failed, not a clean settlement claim"
+    },
+    {
+      "trace": {
+        "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-zFA9H1/scheduler-timings.json",
+        "sha256": "ea62881bfeb6cc793dfde1e34f7155b01f9482a311e5a12c9ef9402290c7b94e"
+      },
+      "native": {
+        "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-zFA9H1/sdk-receipt.json",
+        "sha256": "dafa30dbf531fd3257ae8c652f041d4bfad9c1db82389bb29ff9b7f657044a54"
+      },
+      "inclusiveOverlappingTotals": {
+        "private-read": {
+          "count": 17276,
+          "ms": 7927.013122999932,
+          "maxMs": 10.471577000000252
+        },
+        "lease-assert": {
+          "count": 1786,
+          "ms": 5996.139856999967,
+          "maxMs": 11.67385800000011
+        },
+        "observe-sync": {
+          "count": 24,
+          "ms": 854.0223109999979,
+          "maxMs": 61.37317999999868
+        }
+      },
+      "originalOrReportDurations": {
+        "append": {
+          "count": 71,
+          "maxMs": 191.3579860000027
+        },
+        "write": {
+          "count": 140,
+          "maxMs": 1207.171591999997
+        },
+        "write-safety": {
+          "count": 8,
+          "maxMs": 511.72028599999976
+        },
+        "auth-original": {
+          "count": 2,
+          "maxMs": 586.5556239999996
+        },
+        "worker": {
+          "count": 2,
+          "maxMs": 3408.6157550000007
+        }
+      },
+      "relativeNative": [
+        {
+          "start": 6929.699453000001,
+          "end": 9851.484229,
+          "exit": 0
+        },
+        {
+          "start": 14823.150579000001,
+          "end": 16334.90082,
+          "exit": 0
+        }
+      ],
+      "snapshot": {
+        "schema": "cadence-scheduler-timings/1",
+        "dropped": 0,
+        "pendingOriginalOrReportIds": [],
+        "ownerState": "quarantined",
+        "writerPending": 0,
+        "scheduler": {
+          "episodes": 1,
+          "queued": 0,
+          "reservations": 0,
+          "retainedAllowance": 786432
+        }
+      },
+      "limits": "case20000/child15000/read8MiB100ms/capture5000 unchanged; failed, not a clean settlement claim"
+    }
+  ],
+  "allCurrentNativeReceipts": [
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-19NRDI/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-7ECuzE/sdk-receipt.json",
+      "sha256": "8ce0c8225b35f5571054a6645cb5239c8db96709024680a3b53b1342c470c8f8"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-E55qjk/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-Gdo1C6/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-JHNSqs/sdk-receipt.json",
+      "sha256": "8b9f00199f9fdb462d6d3573ed74677e477cce5c0ad28665673aefb360d5cf63"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-OdGccV/sdk-receipt.json",
+      "sha256": "37e17e64116b5d9c87eddf7cdc19c86095ed598e22b996f06fc24824edab9a98"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-PbG39u/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-PtOemm/sdk-receipt.json",
+      "sha256": "e05366e7d243ab42033d763e964036e659489871665f28502961ea473ad07823"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-RkhMWW/sdk-receipt.json",
+      "sha256": "855d5e7e9f2d1c118c8cb562f3f48097fb6e74083cedeade39be1ac99471ad2d"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-Tqh9GW/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-dmVkfm/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-e67Fog/sdk-receipt.json",
+      "sha256": "7ad6b88ffbad093ecd8673daad9ae103bdaa17d0528f111b58268143d9068e0a"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-evCglh/sdk-receipt.json",
+      "sha256": "ae9225c446c537f226a865bac3d53ce12016852634a74bca5117bf850cc1d2d9"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-fnRU37/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-hz4TSi/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-i2q1HG/sdk-receipt.json",
+      "sha256": "81cbd4efebcde8999c77ec6d78645193ef87ea5824bd025aa2308d0d540862bf"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-iN6UPY/sdk-receipt.json",
+      "sha256": "76d37a15999acb7dd88cd68bb7ce9507a9385d4f8352687ac133785591e1e955"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-l5lwx8/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-mVCR8P/sdk-receipt.json",
+      "sha256": "951ecbac7d623bdd9ba6eefebe20410a1a12f65b936eacc5c01e0972f1d6422f"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-z0VwoL/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/cadence-w4-native-zFA9H1/sdk-receipt.json",
+      "sha256": "dafa30dbf531fd3257ae8c652f041d4bfad9c1db82389bb29ff9b7f657044a54"
+    }
+  ],
+  "historicalFailuresPreserved": [
+    {
+      "path": "/home/mirako/abel/cadence-w4-accepting-VzLBMo/tmp/core-batch.log",
+      "sha256": "5da1f908450233af33b90aef56c8d69306dacb2f6f8a262d758fea805c7f78ba"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-accepting-VzLBMo/tmp/corrected-focused.log",
+      "sha256": "1b96473dc8c77415b3625fd0b0f67ad50c06e09c96b9350ddfa36e210056b4ae"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-accepting-VzLBMo/tmp/cadence-w4-native-ACLwOi/sdk-receipt.json",
+      "sha256": "24fd9f627d7dfb2d90da85fa4be73e7085b9ef85f7292bc10377fe11cff35ab4"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-accepting-VzLBMo/tmp/cadence-w4-native-aeMDju/sdk-receipt.json",
+      "sha256": "f70ae6cdf234580d0344893b6d8b1e1790066938d1b0e41426ea4ed30a332fd7"
+    },
+    {
+      "path": "/home/mirako/abel/w4-core-review-0rjH10Bf/core-expanded.log",
+      "sha256": "eb6adaa8ac6a1637cbb9e782dfa393bc6a53c56d0567530aa4b5567cb9dc6a01"
+    }
+  ],
+  "historicalReceiptAssociation": "Old native receipt schema has no case name; associations are chronological, not receipt-contained test identity. No old causal claim.",
+  "observed": [
+    "Both instrumented complete preference cases failed20000ms. Original native closes exit0, reads/writes/gates continue progressing.",
+    "Second trace71 appends,140 ordinary and8 safety original jobs; longest ordinary original1267ms, no observed5s write stall.",
+    "Substantial inclusive navigation preparation/publication and selected-file/lease validation cost; counters overlap and must not be added."
+  ],
+  "unknown": [
+    "No demonstrated safely removable operation or production repair.",
+    "Exclusive CPU/kernel/flush attribution and all historical timeout causes remain unknown.",
+    "Post-timeout scheduler wait return is not successful publication; teardown already intervened."
+  ],
+  "evidenceClasses": {
+    "generate": "actual closed core/native SDK/disk with fabricated provider; preparation/source mutation controls are injections",
+    "parity": "real disk/reopened/finite read/NDJSON and Markdown with injected owner facts, not native execution",
+    "diagnostics": "observational wrappers on real original methods; observer controls are unit tests",
+    "counts": "12 filtered Generate/freshness,7 filtered adjacent scheduler,368 history-contract,532 native-owner,3 diagnostics; selections overlap, not a whole sum"
+  },
+  "developmentFailures": [
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/diag2-type.log",
+      "sha256": "6b8b274b539b3de03d506cc76cd601d99cd38a5d6582869a7d74d10fec418083",
+      "exit": 2,
+      "reason": "missing explicit this annotation on test prototype wrappers; fixed"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/tmp/review-type.log",
+      "sha256": "7d38d647ccb9090540fe1b0052ebc3b1400b18a8f094cae04729db05e0ec1cc5",
+      "exit": 2,
+      "reason": "fixture ListScope versus export Scope; fixed"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-w4-generate-review-lmJ9Ek/report-check.log",
+      "sha256": "7603cea0252fbd416d2909a9ddb28b2e0ed8f508dbbd9a84234702c206085b30",
+      "exit": 1,
+      "reason": "evidence JSON not yet created; final check separate"
+    }
+  ],
+  "remaining": [
+    "safe performance repair and complete unchanged preference case on changed production source",
+    "checks/full output/exact generation/human review",
+    "accepted metadata and whole episode Stop ownership",
+    "cold/current/saved-plan/proposal usability metadata",
+    "real model choice and W6 adapter/build handshake",
+    "accepting host and integrated native/browser workflows",
+    "W1 proxy/recovery, W5 cutover, W7 distribution/verify",
+    "platform/provider/physical-human qualification"
+  ],
+  "deviations": [
+    "Initial context probes and allocation preceded temp environment.",
+    "Initial read-only git status probes contradicted narrower no-Git delegation; no Git mutation performed. Subsequent review used preimages/hash manifests/non-Git diff."
+  ],
+  "preservation": "No agents/dependency/credential/deployment/cleanup/commit/task-status/product-source changes; all failed roots retained.",
+  "report": {
+    "path": ".trellis/tasks/10-16-cadence-subagent-orchestration/research/w4-generate-preference-review.md",
+    "sha256": "a7d2c439ed135ba03d2b57db0315ed876587d5d6d1fb6a5ba2c1c23586358733"
+  }
+}

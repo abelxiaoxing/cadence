@@ -1,0 +1,20 @@
+{
+  "pid": 2420943,
+  "waitpidReturned": true,
+  "waitStatus": 15,
+  "exitCode": -15,
+  "failure": "control-event-overflow",
+  "observations": [],
+  "seconds": 0.0011497909436002374,
+  "physicalHuman": false,
+  "nativeExecutor": false,
+  "escapeKeys": [],
+  "barrier": {
+    "event": null,
+    "receivedBeforeWait": null,
+    "waitStep": null,
+    "consumed": false,
+    "escapeAfterReady": false,
+    "bytes": 513
+  }
+}

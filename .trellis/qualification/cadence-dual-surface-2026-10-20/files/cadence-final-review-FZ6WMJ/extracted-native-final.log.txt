@@ -1,0 +1,10 @@
+$ vitest run --no-file-parallelism test/distribution.test.mjs test/service-accepting-host.test.ts test/native-client.test.ts
+
+ RUN  v4.1.10 /home/mirako/abel/cadence
+
+
+ Test Files  3 passed (3)
+      Tests  14 passed (14)
+   Start at  04:15:58
+   Duration  120.94s (transform 1.04s, setup 0ms, import 1.56s, tests 118.91s, environment 0ms)
+

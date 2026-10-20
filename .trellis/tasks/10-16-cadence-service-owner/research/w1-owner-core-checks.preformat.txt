@@ -1,0 +1,286 @@
+{
+  "schema": "cadence-w1-owner-core-checks/1",
+  "startedAt": "2026-10-16T17:10:23.281529+00:00",
+  "preInputs": {
+    "package.json": "2aa7fe4c464835cdebdafbed2cf5d4831cc02c753886eb6f0b42041c46f7464c",
+    "bun.lock": "cc31e7ad885c21849b38515cb47bb9913b75801a3b484bf647e11fe354f47551",
+    "src/service/private-files.ts": "a0275cb8132d83a1614990a50485d9beeffcc1b3bc59262907790e734082f8a6",
+    "src/service/coordination.ts": "fcbb2a9bda8417ba02d80893c6374840fa712086ce6758e569390ee142ebdb37",
+    "src/service/owner.ts": "f7c1eba77fe8898cf248f56306c3221b48757927ab00b5874c8ae47cd11a4822",
+    "src/service/recovery.ts": "fdc239b4b6947abe28599a961000cdda11b22c619bdb83d1deda256d99d36a26",
+    "test/service-owner.test.ts": "f30efcfab6cdcbb416075e8da6678bdddb1ca9792d206575fcae95a28495a642",
+    "test/helpers/service-owner-child.mjs": "e8afe3ca8eba054dbbcb187906d68d6132c864376eb1d11826f47ef23a4187b0",
+    "src/task-store.ts": "b80e61d5ec4845f9d857db9da89ecde607c2727e1c6c5abf5e239c69ee6bd73e",
+    "src/operator-cli.mjs": "0bb6120b422ef93a1e02e1ca2aa30943464d34060202bcf81f817800dffd4f7a"
+  },
+  "frozenSources": {
+    "src/service-contract.ts": "7d166451e88e89b9ef86b3e48c38716324637dd736b89d5ab679cde5b8acebff",
+    "src/service-client.ts": "a61ae7f04a6b3665b077b550193f24dc3134ee39d4645d86f7f0e52dc7e63c79",
+    "src/service/ports.ts": "7134c4576caa55718d8ba914bb4c4f19f2dbeed4317eba041e53614e3e6c028e",
+    "src/service/admission.ts": "c44a27cfe505bb6ac524928a4682a157b291fe777ed5b8979f3f07c0cde78cbd",
+    "src/service/contracts/budget.ts": "968c85e35fb1e34c8e77ded90e29c41535728077a07be041b014068362a5463d",
+    "src/service/contracts/capture.ts": "1063989d0b7ae4b6a982243da272e3f01905013ba79bb145362fde1f15deddb7",
+    "src/service/contracts/core.ts": "c0872f2f0dce34c5ebfb73827b5200675b4d8ecfa312b2bb722c8e4bb51afb41",
+    "src/service/contracts/domain.ts": "f24eb52dafd058614828209135a3f9ac372232a74bcbf06c20c79ec05057b32a",
+    "src/service/contracts/history.ts": "07810b6052e3a5c012a62388c4b77ddd24121be753294c4f63bde2c0ee48bf82",
+    "test/service-contract.test.ts": "4f5cf173e61219912e814ae8ae5e20ea052f15b4cb9c17f60d8a197a727f545e"
+  },
+  "commands": [
+    {
+      "label": "focused",
+      "argv": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-contract.test.ts",
+        "test/service-owner.test.ts",
+        "test/lightweight-store-controller.test.ts"
+      ],
+      "preInputs": {
+        "package.json": "2aa7fe4c464835cdebdafbed2cf5d4831cc02c753886eb6f0b42041c46f7464c",
+        "bun.lock": "cc31e7ad885c21849b38515cb47bb9913b75801a3b484bf647e11fe354f47551",
+        "src/service/private-files.ts": "a0275cb8132d83a1614990a50485d9beeffcc1b3bc59262907790e734082f8a6",
+        "src/service/coordination.ts": "fcbb2a9bda8417ba02d80893c6374840fa712086ce6758e569390ee142ebdb37",
+        "src/service/owner.ts": "f7c1eba77fe8898cf248f56306c3221b48757927ab00b5874c8ae47cd11a4822",
+        "src/service/recovery.ts": "fdc239b4b6947abe28599a961000cdda11b22c619bdb83d1deda256d99d36a26",
+        "test/service-owner.test.ts": "f30efcfab6cdcbb416075e8da6678bdddb1ca9792d206575fcae95a28495a642",
+        "test/helpers/service-owner-child.mjs": "e8afe3ca8eba054dbbcb187906d68d6132c864376eb1d11826f47ef23a4187b0",
+        "src/task-store.ts": "b80e61d5ec4845f9d857db9da89ecde607c2727e1c6c5abf5e239c69ee6bd73e",
+        "src/operator-cli.mjs": "0bb6120b422ef93a1e02e1ca2aa30943464d34060202bcf81f817800dffd4f7a"
+      },
+      "exitCode": 0,
+      "elapsedMs": 10839,
+      "output": {
+        "path": "/tmp/cadence-w1-apply-yb6pics9/verified-focused.log",
+        "sha256": "0dfea4627c51588a776124b91f4a6e7be594a77dcfbc8032eecf7cc91bd21346",
+        "bytes": 1086
+      },
+      "postInputs": {
+        "package.json": "2aa7fe4c464835cdebdafbed2cf5d4831cc02c753886eb6f0b42041c46f7464c",
+        "bun.lock": "cc31e7ad885c21849b38515cb47bb9913b75801a3b484bf647e11fe354f47551",
+        "src/service/private-files.ts": "a0275cb8132d83a1614990a50485d9beeffcc1b3bc59262907790e734082f8a6",
+        "src/service/coordination.ts": "fcbb2a9bda8417ba02d80893c6374840fa712086ce6758e569390ee142ebdb37",
+        "src/service/owner.ts": "f7c1eba77fe8898cf248f56306c3221b48757927ab00b5874c8ae47cd11a4822",
+        "src/service/recovery.ts": "fdc239b4b6947abe28599a961000cdda11b22c619bdb83d1deda256d99d36a26",
+        "test/service-owner.test.ts": "f30efcfab6cdcbb416075e8da6678bdddb1ca9792d206575fcae95a28495a642",
+        "test/helpers/service-owner-child.mjs": "e8afe3ca8eba054dbbcb187906d68d6132c864376eb1d11826f47ef23a4187b0",
+        "src/task-store.ts": "b80e61d5ec4845f9d857db9da89ecde607c2727e1c6c5abf5e239c69ee6bd73e",
+        "src/operator-cli.mjs": "0bb6120b422ef93a1e02e1ca2aa30943464d34060202bcf81f817800dffd4f7a"
+      }
+    },
+    {
+      "label": "check",
+      "argv": [
+        "bun",
+        "run",
+        "check"
+      ],
+      "preInputs": {
+        "package.json": "2aa7fe4c464835cdebdafbed2cf5d4831cc02c753886eb6f0b42041c46f7464c",
+        "bun.lock": "cc31e7ad885c21849b38515cb47bb9913b75801a3b484bf647e11fe354f47551",
+        "src/service/private-files.ts": "a0275cb8132d83a1614990a50485d9beeffcc1b3bc59262907790e734082f8a6",
+        "src/service/coordination.ts": "fcbb2a9bda8417ba02d80893c6374840fa712086ce6758e569390ee142ebdb37",
+        "src/service/owner.ts": "f7c1eba77fe8898cf248f56306c3221b48757927ab00b5874c8ae47cd11a4822",
+        "src/service/recovery.ts": "fdc239b4b6947abe28599a961000cdda11b22c619bdb83d1deda256d99d36a26",
+        "test/service-owner.test.ts": "f30efcfab6cdcbb416075e8da6678bdddb1ca9792d206575fcae95a28495a642",
+        "test/helpers/service-owner-child.mjs": "e8afe3ca8eba054dbbcb187906d68d6132c864376eb1d11826f47ef23a4187b0",
+        "src/task-store.ts": "b80e61d5ec4845f9d857db9da89ecde607c2727e1c6c5abf5e239c69ee6bd73e",
+        "src/operator-cli.mjs": "0bb6120b422ef93a1e02e1ca2aa30943464d34060202bcf81f817800dffd4f7a"
+      },
+      "exitCode": 0,
+      "elapsedMs": 5276,
+      "output": {
+        "path": "/tmp/cadence-w1-apply-yb6pics9/verified-check.log",
+        "sha256": "d8e0559fba0bc409f2ba5d1a97a129af498576567949aee4278dd415d3d51e90",
+        "bytes": 90
+      },
+      "postInputs": {
+        "package.json": "2aa7fe4c464835cdebdafbed2cf5d4831cc02c753886eb6f0b42041c46f7464c",
+        "bun.lock": "cc31e7ad885c21849b38515cb47bb9913b75801a3b484bf647e11fe354f47551",
+        "src/service/private-files.ts": "a0275cb8132d83a1614990a50485d9beeffcc1b3bc59262907790e734082f8a6",
+        "src/service/coordination.ts": "fcbb2a9bda8417ba02d80893c6374840fa712086ce6758e569390ee142ebdb37",
+        "src/service/owner.ts": "f7c1eba77fe8898cf248f56306c3221b48757927ab00b5874c8ae47cd11a4822",
+        "src/service/recovery.ts": "fdc239b4b6947abe28599a961000cdda11b22c619bdb83d1deda256d99d36a26",
+        "test/service-owner.test.ts": "f30efcfab6cdcbb416075e8da6678bdddb1ca9792d206575fcae95a28495a642",
+        "test/helpers/service-owner-child.mjs": "e8afe3ca8eba054dbbcb187906d68d6132c864376eb1d11826f47ef23a4187b0",
+        "src/task-store.ts": "b80e61d5ec4845f9d857db9da89ecde607c2727e1c6c5abf5e239c69ee6bd73e",
+        "src/operator-cli.mjs": "0bb6120b422ef93a1e02e1ca2aa30943464d34060202bcf81f817800dffd4f7a"
+      }
+    },
+    {
+      "label": "lint",
+      "argv": [
+        "bun",
+        "run",
+        "lint"
+      ],
+      "preInputs": {
+        "package.json": "2aa7fe4c464835cdebdafbed2cf5d4831cc02c753886eb6f0b42041c46f7464c",
+        "bun.lock": "cc31e7ad885c21849b38515cb47bb9913b75801a3b484bf647e11fe354f47551",
+        "src/service/private-files.ts": "a0275cb8132d83a1614990a50485d9beeffcc1b3bc59262907790e734082f8a6",
+        "src/service/coordination.ts": "fcbb2a9bda8417ba02d80893c6374840fa712086ce6758e569390ee142ebdb37",
+        "src/service/owner.ts": "f7c1eba77fe8898cf248f56306c3221b48757927ab00b5874c8ae47cd11a4822",
+        "src/service/recovery.ts": "fdc239b4b6947abe28599a961000cdda11b22c619bdb83d1deda256d99d36a26",
+        "test/service-owner.test.ts": "f30efcfab6cdcbb416075e8da6678bdddb1ca9792d206575fcae95a28495a642",
+        "test/helpers/service-owner-child.mjs": "e8afe3ca8eba054dbbcb187906d68d6132c864376eb1d11826f47ef23a4187b0",
+        "src/task-store.ts": "b80e61d5ec4845f9d857db9da89ecde607c2727e1c6c5abf5e239c69ee6bd73e",
+        "src/operator-cli.mjs": "0bb6120b422ef93a1e02e1ca2aa30943464d34060202bcf81f817800dffd4f7a"
+      },
+      "exitCode": 0,
+      "elapsedMs": 566,
+      "output": {
+        "path": "/tmp/cadence-w1-apply-yb6pics9/verified-lint.log",
+        "sha256": "15a6ede2f745af4372b54864dee385e0b0ff0e127dbae471a406d8d0757d309c",
+        "bytes": 2085
+      },
+      "postInputs": {
+        "package.json": "2aa7fe4c464835cdebdafbed2cf5d4831cc02c753886eb6f0b42041c46f7464c",
+        "bun.lock": "cc31e7ad885c21849b38515cb47bb9913b75801a3b484bf647e11fe354f47551",
+        "src/service/private-files.ts": "a0275cb8132d83a1614990a50485d9beeffcc1b3bc59262907790e734082f8a6",
+        "src/service/coordination.ts": "fcbb2a9bda8417ba02d80893c6374840fa712086ce6758e569390ee142ebdb37",
+        "src/service/owner.ts": "f7c1eba77fe8898cf248f56306c3221b48757927ab00b5874c8ae47cd11a4822",
+        "src/service/recovery.ts": "fdc239b4b6947abe28599a961000cdda11b22c619bdb83d1deda256d99d36a26",
+        "test/service-owner.test.ts": "f30efcfab6cdcbb416075e8da6678bdddb1ca9792d206575fcae95a28495a642",
+        "test/helpers/service-owner-child.mjs": "e8afe3ca8eba054dbbcb187906d68d6132c864376eb1d11826f47ef23a4187b0",
+        "src/task-store.ts": "b80e61d5ec4845f9d857db9da89ecde607c2727e1c6c5abf5e239c69ee6bd73e",
+        "src/operator-cli.mjs": "0bb6120b422ef93a1e02e1ca2aa30943464d34060202bcf81f817800dffd4f7a"
+      }
+    },
+    {
+      "label": "agents",
+      "argv": [
+        "bun",
+        "run",
+        "check:agents"
+      ],
+      "preInputs": {
+        "package.json": "2aa7fe4c464835cdebdafbed2cf5d4831cc02c753886eb6f0b42041c46f7464c",
+        "bun.lock": "cc31e7ad885c21849b38515cb47bb9913b75801a3b484bf647e11fe354f47551",
+        "src/service/private-files.ts": "a0275cb8132d83a1614990a50485d9beeffcc1b3bc59262907790e734082f8a6",
+        "src/service/coordination.ts": "fcbb2a9bda8417ba02d80893c6374840fa712086ce6758e569390ee142ebdb37",
+        "src/service/owner.ts": "f7c1eba77fe8898cf248f56306c3221b48757927ab00b5874c8ae47cd11a4822",
+        "src/service/recovery.ts": "fdc239b4b6947abe28599a961000cdda11b22c619bdb83d1deda256d99d36a26",
+        "test/service-owner.test.ts": "f30efcfab6cdcbb416075e8da6678bdddb1ca9792d206575fcae95a28495a642",
+        "test/helpers/service-owner-child.mjs": "e8afe3ca8eba054dbbcb187906d68d6132c864376eb1d11826f47ef23a4187b0",
+        "src/task-store.ts": "b80e61d5ec4845f9d857db9da89ecde607c2727e1c6c5abf5e239c69ee6bd73e",
+        "src/operator-cli.mjs": "0bb6120b422ef93a1e02e1ca2aa30943464d34060202bcf81f817800dffd4f7a"
+      },
+      "exitCode": 0,
+      "elapsedMs": 114,
+      "output": {
+        "path": "/tmp/cadence-w1-apply-yb6pics9/verified-agents.log",
+        "sha256": "fc459b9f542bbe9546842994f18a74f6a80e908f467ce497916608c24531eebf",
+        "bytes": 65
+      },
+      "postInputs": {
+        "package.json": "2aa7fe4c464835cdebdafbed2cf5d4831cc02c753886eb6f0b42041c46f7464c",
+        "bun.lock": "cc31e7ad885c21849b38515cb47bb9913b75801a3b484bf647e11fe354f47551",
+        "src/service/private-files.ts": "a0275cb8132d83a1614990a50485d9beeffcc1b3bc59262907790e734082f8a6",
+        "src/service/coordination.ts": "fcbb2a9bda8417ba02d80893c6374840fa712086ce6758e569390ee142ebdb37",
+        "src/service/owner.ts": "f7c1eba77fe8898cf248f56306c3221b48757927ab00b5874c8ae47cd11a4822",
+        "src/service/recovery.ts": "fdc239b4b6947abe28599a961000cdda11b22c619bdb83d1deda256d99d36a26",
+        "test/service-owner.test.ts": "f30efcfab6cdcbb416075e8da6678bdddb1ca9792d206575fcae95a28495a642",
+        "test/helpers/service-owner-child.mjs": "e8afe3ca8eba054dbbcb187906d68d6132c864376eb1d11826f47ef23a4187b0",
+        "src/task-store.ts": "b80e61d5ec4845f9d857db9da89ecde607c2727e1c6c5abf5e239c69ee6bd73e",
+        "src/operator-cli.mjs": "0bb6120b422ef93a1e02e1ca2aa30943464d34060202bcf81f817800dffd4f7a"
+      }
+    }
+  ],
+  "identities": {
+    "node": "v26.7.0",
+    "bun": "1.3.14",
+    "bwrap": "bubblewrap 0.11.2",
+    "platform": "Linux/x86_64",
+    "pi": {
+      "pi-coding-agent": "0.84.3",
+      "pi-ai": "0.84.3",
+      "pi-tui": "0.84.3",
+      "pi-agent-core": "0.84.3"
+    },
+    "nodeExecutable": "/usr/bin/node",
+    "bunExecutable": "/usr/bin/bun",
+    "bunInstallBanner": "1.3.14-canary.1 (0d9b296a)"
+  },
+  "postInputs": {
+    "package.json": "2aa7fe4c464835cdebdafbed2cf5d4831cc02c753886eb6f0b42041c46f7464c",
+    "bun.lock": "cc31e7ad885c21849b38515cb47bb9913b75801a3b484bf647e11fe354f47551",
+    "src/service/private-files.ts": "a0275cb8132d83a1614990a50485d9beeffcc1b3bc59262907790e734082f8a6",
+    "src/service/coordination.ts": "fcbb2a9bda8417ba02d80893c6374840fa712086ce6758e569390ee142ebdb37",
+    "src/service/owner.ts": "f7c1eba77fe8898cf248f56306c3221b48757927ab00b5874c8ae47cd11a4822",
+    "src/service/recovery.ts": "fdc239b4b6947abe28599a961000cdda11b22c619bdb83d1deda256d99d36a26",
+    "test/service-owner.test.ts": "f30efcfab6cdcbb416075e8da6678bdddb1ca9792d206575fcae95a28495a642",
+    "test/helpers/service-owner-child.mjs": "e8afe3ca8eba054dbbcb187906d68d6132c864376eb1d11826f47ef23a4187b0",
+    "src/task-store.ts": "b80e61d5ec4845f9d857db9da89ecde607c2727e1c6c5abf5e239c69ee6bd73e",
+    "src/operator-cli.mjs": "0bb6120b422ef93a1e02e1ca2aa30943464d34060202bcf81f817800dffd4f7a"
+  },
+  "limits": [
+    "No HTTP/auth/SDK/CLI or actual W3/W4 composition",
+    "No actual user credentials/deployment/browser/pack/product acceptance",
+    "Injected accounting/listener/UID tests are not native W3/auth/HTTP evidence",
+    "Native second-process fixtures are local-source Bun bundles, not distributed service executables"
+  ],
+  "priorAttempts": [
+    {
+      "path": "/tmp/cadence-w1-apply-yb6pics9/owner-first.log",
+      "bytes": 3329,
+      "sha256": "76c315e7dc21fcfd629d30f1a4271d9009f10d086a09fbf8725ff92053d06be5"
+    },
+    {
+      "path": "/tmp/cadence-w1-apply-yb6pics9/check-initial.log",
+      "bytes": 90,
+      "sha256": "d8e0559fba0bc409f2ba5d1a97a129af498576567949aee4278dd415d3d51e90"
+    },
+    {
+      "path": "/tmp/cadence-w1-apply-yb6pics9/check-second.log",
+      "bytes": 813,
+      "sha256": "0445b151e711116073958bf7ae5af36c40f529bf4794e5a8d4c819c1d2ff28c9"
+    },
+    {
+      "path": "/tmp/cadence-w1-apply-yb6pics9/biome-first.log",
+      "bytes": 54470,
+      "sha256": "096c4b22f07c0cbe5f820238e8537fe491738a31b384a4e70425bffc3b8334be"
+    },
+    {
+      "path": "/tmp/cadence-w1-apply-yb6pics9/biome-format.log",
+      "bytes": 3307,
+      "sha256": "8d5c74f9d92b9ad9486da7ecea3a5575a1f009962e3e0346542a776f801f70e5"
+    },
+    {
+      "path": "/tmp/cadence-w1-apply-yb6pics9/owner-second.log",
+      "bytes": 274,
+      "sha256": "cb909a80fe014ad7207ca39a72133d979171a9c5e2b706e4f5a960a08e2bd151"
+    },
+    {
+      "path": "/tmp/cadence-w1-apply-yb6pics9/focused.log",
+      "bytes": 349,
+      "sha256": "b5ec00d9feefb0f1e5aa76d5d296fdc8a79aee9a3d0cbe51cd3cf670908678bb"
+    },
+    {
+      "path": "/tmp/cadence-w1-apply-yb6pics9/check-final.log",
+      "bytes": 90,
+      "sha256": "d8e0559fba0bc409f2ba5d1a97a129af498576567949aee4278dd415d3d51e90"
+    },
+    {
+      "path": "/tmp/cadence-w1-apply-yb6pics9/lint-final.log",
+      "bytes": 2085,
+      "sha256": "aeaf31ace9796f8c567690606ae950c9ab3d2d09199b3ef2e2ac9cef2f306045"
+    },
+    {
+      "path": "/tmp/cadence-w1-apply-yb6pics9/agents-final.log",
+      "bytes": 65,
+      "sha256": "fc459b9f542bbe9546842994f18a74f6a80e908f467ce497916608c24531eebf"
+    }
+  ],
+  "runner": {
+    "path": "/tmp/cadence-w1-apply-yb6pics9/verify-and-check.py",
+    "bytes": 4114,
+    "sha256": "130121cf1004b635c2f8febbab21e5be26912d19982d28f678e6326a2cbb9764"
+  },
+  "focusedResult": {
+    "files": 3,
+    "passed": 217,
+    "failed": 0,
+    "skipped": 0
+  }
+}

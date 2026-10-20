@@ -1,0 +1,24 @@
+{
+  "pid": 2420941,
+  "waitpidReturned": true,
+  "waitStatus": 15,
+  "exitCode": -15,
+  "failure": "control-event-duplicate",
+  "observations": [],
+  "seconds": 0.0013912309659644961,
+  "physicalHuman": false,
+  "nativeExecutor": false,
+  "escapeKeys": [],
+  "barrier": {
+    "event": {
+      "event": "cancellation-http-pending",
+      "requestOrdinal": 4,
+      "editingOrdinal": 3
+    },
+    "receivedBeforeWait": true,
+    "waitStep": null,
+    "consumed": false,
+    "escapeAfterReady": false,
+    "bytes": 152
+  }
+}

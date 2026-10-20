@@ -1,0 +1,331 @@
+{
+  "schema": "cadence-w1-model-context-independent-review/1",
+  "verdict": "four adapter defects fixed; no remaining in-scope adapter defect identified; not W1/product completion",
+  "identity": {
+    "executable": "/usr/bin/node",
+    "node": "26.7.0",
+    "platform": "linux",
+    "arch": "x64",
+    "bun": "1.3.14",
+    "startupProxyCapability": true,
+    "peers": {
+      "@earendil-works/pi-coding-agent": "0.84.3",
+      "@earendil-works/pi-ai": "0.84.3",
+      "@earendil-works/pi-agent-core": "0.84.3",
+      "@earendil-works/pi-tui": "0.84.3",
+      "undici": "8.9.0",
+      "vitest": "4.1.10"
+    }
+  },
+  "lineage": {
+    "report": ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-checks/results.json",
+    "sha256": "3580b53182f8197d860778ab19bdd424c2100effc8391a2618a70ca621370eb9",
+    "inheritedOwnedHashes": {
+      "src/service/model-context.ts": "95bbb609a2da0b4b7f043e50c542d97b657d7884ec38b8c6d3c5e5e5b958a4be",
+      "src/service/model-config.ts": "8fadf5f29e9e51bb0dd05f6dd1e18b48ea3e9172bba99ab0c4578a892d17394e",
+      "test/service-model-context.test.ts": "94faeca4adbd006ff25b7c6da7e235b41cbf27235df91e820b9bd299b78d700a",
+      "test/helpers/service-model-auth-competitor.mjs": "55f6a385d69cb73855fa3520e2b48ebb1a56d178ef5da44d85b124ed332f373b",
+      "test/helpers/service-model-context-child.mjs": "6b3a0507902b0958a778dd7ae244ba2fedaebc023ca94123fb5c90b66966138f",
+      "test/helpers/service-model-context-guard.mjs": "578858ff9f21024ef1268e03a52a9037df14d40d8d7ad3b6c272f4ef8664bbf7",
+      "test/helpers/service-model-route-probe.mjs": "397af3877f098ac60e8935b58ba484b5ce91f193544109b2c08b3529f1e1a890"
+    },
+    "note": "Inherited hashes are cited from the original handoff, not newly measured preimages. The new final input snapshot is measured separately."
+  },
+  "changedSourcePaths": [
+    "src/service/model-context.ts",
+    "src/service/model-config.ts",
+    "test/service-model-context.test.ts",
+    "test/helpers/service-model-context-child.mjs",
+    "test/helpers/service-model-context-guard.mjs",
+    "test/helpers/service-model-route-probe.mjs"
+  ],
+  "after": {
+    "src/service/model-context.ts": "2a92b40db9eaa35ddc5ea8e1fecea1945b6fccf39117cfcbf7207b1b18275964",
+    "src/service/model-config.ts": "2d131e01667e0f82f074952a6fb50836099a34c2fb76f0583068609230f96661",
+    "test/service-model-context.test.ts": "9442f56d263133a79f4d04980589f3b921d49200abbcf23cc071127293a25728",
+    "test/helpers/service-model-auth-competitor.mjs": "55f6a385d69cb73855fa3520e2b48ebb1a56d178ef5da44d85b124ed332f373b",
+    "test/helpers/service-model-context-child.mjs": "3f8df18ac57b7da4b9417088a1f593084db15b2ef6d67a98758abf980866d5ba",
+    "test/helpers/service-model-context-guard.mjs": "85ece8d0445901b0d4c1e42c07509cb289f779f3880e1de055c7e77244a5f3d7",
+    "test/helpers/service-model-route-probe.mjs": "b80cf8172af397f73d9ab2744603b55399d4af341e96a6fed425030fb28109bd",
+    "src/service/owner.ts": "d62e35cdd7be3d26cc9827d00ea52f4cd4ea4f40b04324f4137993790825602c",
+    "src/service/ports.ts": "7134c4576caa55718d8ba914bb4c4f19f2dbeed4317eba041e53614e3e6c028e",
+    "src/service/coordination.ts": "47b7e3f615b177d74bc7fa71655028808bd24ede16c2e9ea1a64571ac20fc7e7",
+    "src/service/auth.ts": "ddc66aa77eac77877c66067157bb8cc801233fc340f04d0e261d88c5e622e437",
+    "src/service/http.ts": "5a09abed7628af7dd553e61b130fd7149f21422efde37d2d82779eaf4483ac9e",
+    "src/service/admission.ts": "c44a27cfe505bb6ac524928a4682a157b291fe777ed5b8979f3f07c0cde78cbd",
+    "src/service-contract.ts": "7d166451e88e89b9ef86b3e48c38716324637dd736b89d5ab679cde5b8acebff",
+    "src/service-client.ts": "a61ae7f04a6b3665b077b550193f24dc3134ee39d4645d86f7f0e52dc7e63c79",
+    "src/sdk-worker.mjs": "12fff81671cc0bd1d3011f43f9364531bba0a08007dd1abe728de00a676022f3",
+    "src/subagent-process.ts": "c357e4033e50767a6e5935231411e5b55f03f2f3ff70d8483099ca07d7b10ce9",
+    "src/task-controller.ts": "0e1d540f6a4c8c1c74680ad9e6cb2eab86bea8d0a69beaa02bab66dcac37d05c",
+    "src/task-shell.ts": "1d7d96e3968ea8672065bbccc33d818bfed495847a4c0ff075cf6d618d42f456",
+    "package.json": "2aa7fe4c464835cdebdafbed2cf5d4831cc02c753886eb6f0b42041c46f7464c",
+    "bun.lock": "cc31e7ad885c21849b38515cb47bb9913b75801a3b484bf647e11fe354f47551",
+    "src/service/contracts/budget.ts": "968c85e35fb1e34c8e77ded90e29c41535728077a07be041b014068362a5463d",
+    "src/service/contracts/capture.ts": "1063989d0b7ae4b6a982243da272e3f01905013ba79bb145362fde1f15deddb7",
+    "src/service/contracts/core.ts": "c0872f2f0dce34c5ebfb73827b5200675b4d8ecfa312b2bb722c8e4bb51afb41",
+    "src/service/contracts/domain.ts": "f24eb52dafd058614828209135a3f9ac372232a74bcbf06c20c79ec05057b32a",
+    "src/service/contracts/history.ts": "07810b6052e3a5c012a62388c4b77ddd24121be753294c4f63bde2c0ee48bf82"
+  },
+  "readonlyScopeMatchesInheritedHandoff": true,
+  "checkedInputsUnchanged": true,
+  "inputs": {
+    "file": ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review-checks/inputs.json",
+    "sha256": "66df1fe0a7af9b4dda0cc224caf35403604efb6ae65537e44c8ef4adaab3b59b"
+  },
+  "installedSdkSourceEvidence": {
+    "node_modules/@earendil-works/pi-coding-agent/dist/core/model-runtime.d.ts": "cac728f9b70f18f39ae54073ee1c088eb256707364714bc57235b04f7e18d9c8",
+    "node_modules/@earendil-works/pi-coding-agent/dist/core/model-runtime.js": "f1d32af458229981db68d587df88d10bce7317f4e4916cd0f04b803d7b64f091",
+    "node_modules/@earendil-works/pi-coding-agent/dist/core/model-config.js": "ada94b8764c31c15329acffb7507b95e4707fa25979442f0944b87b3ae639a8b",
+    "node_modules/@earendil-works/pi-coding-agent/dist/core/resolve-config-value.js": "01fdb1673990635bb419c7418eefa298b6a1c6fbb3c6193d3b05a4902e51992d",
+    "node_modules/@earendil-works/pi-coding-agent/dist/core/provider-composer.js": "0aa496b035f94f82d09f779e60e30c26e4391b0c5c5f2b1a314c134874b2b174",
+    "node_modules/@earendil-works/pi-coding-agent/dist/core/auth-storage.js": "0b45029901579032b19273a1427f63b622df8e1aaf9ea185eb932c0d4898998c",
+    "node_modules/@earendil-works/pi-ai/dist/auth/types.d.ts": "6358ddc2437eb24a0662b7e59b1b9205896689821eb0966821fb2131a0ebc2bd",
+    "node_modules/@earendil-works/pi-ai/dist/auth/resolve.js": "82ee45ecec319f59536759312a4de25313a8bb8cb7ce43db43d18edc10fef305"
+  },
+  "commands": [
+    {
+      "command": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-model-context.test.ts",
+        "test/service-contract.test.ts",
+        "test/service-owner.test.ts",
+        "test/service-auth.test.ts",
+        "test/lightweight-store-controller.test.ts"
+      ],
+      "exitCode": 0,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review-checks/baseline.log",
+      "logSha256": "4207330dbbded5292944d6c41968db3a562bebc2814c92b4c6f7025fe8f3fc7e",
+      "classification": "inherited baseline; overlapping tests, not added",
+      "counts": {
+        "passed": 396,
+        "failed": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "command": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-model-context.test.ts",
+        "-t",
+        "bad-compat|template-literal-braces|abort-during-current|oauth-expiry-during-encode"
+      ],
+      "exitCode": 1,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review-checks/regressions-before.log",
+      "logSha256": "b7a971eb51df40cedf7e77021420b2acff890eedd5887d213631a2b09d013f53",
+      "classification": "intentional regression reproduction; original failed run preserved including expiry-fixture force-stop",
+      "counts": {
+        "passed": 0,
+        "failed": 6,
+        "skipped": 67
+      }
+    },
+    {
+      "command": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-model-context.test.ts",
+        "-t",
+        "bad-compat|template-literal-braces|abort-during-current|oauth-expiry-during-encode"
+      ],
+      "exitCode": 0,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review-checks/regressions-after.log",
+      "logSha256": "7b8f55634732c0a1177a406167b0e161f7c97a3a08fa19c258c5625530e31a01",
+      "classification": "focused corrections; filter skips, not full-suite skips",
+      "counts": {
+        "passed": 6,
+        "failed": 0,
+        "skipped": 67
+      }
+    },
+    {
+      "command": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-model-context.test.ts",
+        "-t",
+        "valid-compat|guard denies|oauth-refresh|oauth-competing|stock SDK proxy"
+      ],
+      "exitCode": 0,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review-checks/guard-and-controls.log",
+      "logSha256": "9e82a6073ffcb493b3f39e3164ef3d75592f61a6c53aa59dee8e72e53906a952",
+      "classification": "selected native controls, overlapping final total",
+      "counts": {
+        "passed": 7,
+        "failed": 0,
+        "skipped": 69
+      }
+    },
+    {
+      "command": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-model-context.test.ts",
+        "test/service-contract.test.ts",
+        "test/service-owner.test.ts",
+        "test/service-auth.test.ts",
+        "test/lightweight-store-controller.test.ts"
+      ],
+      "exitCode": 0,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review-checks/focused.log",
+      "logSha256": "cd5e721b62ddf68b64f6a7b2aed463265bdff50d48874ae0a2a068a8874297eb",
+      "classification": "final five-file focused qualification; not whole suite",
+      "counts": {
+        "passed": 405,
+        "failed": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "command": ["bun", "run", "check"],
+      "exitCode": 0,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review-checks/check.log",
+      "logSha256": "d8e0559fba0bc409f2ba5d1a97a129af498576567949aee4278dd415d3d51e90",
+      "classification": "whole syntax/operator bytes/TypeScript no-emit"
+    },
+    {
+      "command": ["bun", "run", "check:agents"],
+      "exitCode": 0,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review-checks/agents.log",
+      "logSha256": "fc459b9f542bbe9546842994f18a74f6a80e908f467ce497916608c24531eebf",
+      "classification": "whole Agent index"
+    },
+    {
+      "command": ["bun", "run", "lint"],
+      "exitCode": 0,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review-checks/lint-qualified.log",
+      "logSha256": "b138f9554523fc1e93b5dec483daac51c1db10f71644d8519fef82592683c5c2",
+      "classification": "whole lint; only two inherited informational package-audit suggestions"
+    },
+    {
+      "command": [
+        "node_modules/.bin/rumdl",
+        "check",
+        "--no-respect-gitignore",
+        ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review.md"
+      ],
+      "exitCode": 2,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review-checks/markdown.log",
+      "logSha256": "2cb0f54bca03fd25bcd0992cd24f05e54e1747bd6fec50900d50b6c9a8d19c88",
+      "classification": "failed tool invocation; unsupported flag, preserved"
+    },
+    {
+      "command": [
+        "node_modules/.bin/rumdl",
+        "check",
+        "--respect-gitignore=false",
+        ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review.md"
+      ],
+      "exitCode": 0,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review-checks/markdown-qualified.log",
+      "logSha256": "688f3b60d83ddaa7a86acbded5aa603162df281a8b8fbb3a1c0e5b94f68b08f7",
+      "classification": "file filtered by existing task exclusion; not executed Markdown evidence"
+    },
+    {
+      "command": [
+        "node_modules/.bin/rumdl",
+        "check",
+        "--respect-gitignore=false",
+        "--no-exclude",
+        ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review.md"
+      ],
+      "exitCode": 1,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review-checks/markdown-scoped.log",
+      "logSha256": "78f3c6d8cc8fff3f8a4190283aceccee3f16cbf3c8ee8c66b9ca43cc02005277",
+      "classification": "new report had23 formatting issues; preserved before scoped repair"
+    },
+    {
+      "command": [
+        "node_modules/.bin/rumdl",
+        "fmt",
+        "--respect-gitignore=false",
+        "--no-exclude",
+        ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review.md"
+      ],
+      "exitCode": 0,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review-checks/markdown-format.log",
+      "logSha256": "eb430530f208444963ce18e157a1dcbd9a49e9aa6ef2cffe6982796c7b211ce4",
+      "classification": "formatted only the new report,23 issues fixed"
+    },
+    {
+      "command": [
+        "node_modules/.bin/rumdl",
+        "check",
+        "--respect-gitignore=false",
+        "--no-exclude",
+        ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review.md"
+      ],
+      "exitCode": 0,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review-checks/markdown-final.log",
+      "logSha256": "029d53aa75808a6774f4967f2d9689681730b475cf6ff7e0c261c236c94fb04a",
+      "classification": "actual scoped report check, one file passed"
+    },
+    {
+      "command": ["bun", "run", "lint"],
+      "exitCode": 0,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review-checks/lint-final.log",
+      "logSha256": "5d4775a903b629ef73d7374252d18de4f801d74b4b618ff85da5aac701f53f27",
+      "classification": "final whole lint after report and JSON formatting; two inherited informational suggestions only"
+    }
+  ],
+  "totals": {
+    "files": 5,
+    "passed": 405,
+    "failed": 0,
+    "skipped": 0,
+    "modelContext": 76,
+    "existingOtherFocused": 329,
+    "addedTests": 9,
+    "countsAreNotSummedAcrossRuns": true
+  },
+  "nativeReceipts": {
+    "file": ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review-checks/native-receipts.json",
+    "sha256": "2664c56019dcef1e59823bf08b3503a0aa4d65838e2e7399a9e2e8b25420e045",
+    "topLevelOriginalProcesses": 76,
+    "exitZero": 74,
+    "expectedGuardExit91": 2,
+    "forced": 0,
+    "workerSpawns": 0,
+    "competitor": "one separately waited original SDK process inside oauth-competing; not an additional test"
+  },
+  "evidenceClasses": [
+    "All model-context scenarios run original isolated Node children; controls are not all native SDK auth executions.",
+    "Stock SDK Radius loopback OAuth and competing shared-file client exercise genuine SDK refresh/writeback mechanics with fabricated credentials.",
+    "Every W3 accounting/flush receipt is injected; no actual journal or durable auth-crash qualification.",
+    "Five named getAuth cases remain public-boundary injections: stalled-original, late-auth-tracking, opaque-rejection, opaque-auth, literal-projection.",
+    "Abort callback, clock-at-encoder and other scheduled freshness controls are injections; not observed OS races or elapsed-hour evidence.",
+    "Node26 native startup probes: no opt-in sink1/proxy0; opt-in sink0/proxy1/fixed502. Route observation, not successful proxy auth or inference.",
+    "New read/port guard controls require actual original exit91 with no force. No fetch/TLS/dispatcher replacement."
+  ],
+  "diagnosticAttempt": {
+    "description": "Node package.json require subpath refused ERR_PACKAGE_PATH_NOT_EXPORTED; direct installed metadata-file reads subsequently supplied versions without SDK execution.",
+    "productFailure": false,
+    "outerShellExitCode": 0,
+    "innerExitCode": null,
+    "innerExitNote": "Not separately captured; do not substitute outer success for the failed metadata query."
+  },
+  "limitations": [
+    "Service-auth configured proxy startup remains refused before getAuth pending shared validated selector/CLI composition; Node22 and successful plain/compressed proxy OAuth are not qualified.",
+    "Opaque unobserved external OAuth changes conservatively require new confirmation; not inferred model replacement.",
+    "No accepting W2 launch/W3 journal/W4 admission integration or complete service CLI.",
+    "No full suite/pack/extracted service/browser/terminal cutover/paid-provider/Windows/macOS/release qualification.",
+    "POSIX mode refusal tests execute here and explicitly skip on Windows; no ACL inference."
+  ],
+  "report": {
+    "file": ".trellis/tasks/10-16-cadence-service-owner/research/w1-model-context-review.md",
+    "sha256": "ff07301d11cf1beaae5394b4b00326831677830da0a67e62bb25529e607264f9"
+  },
+  "evidenceFormatting": "All new JSON formatted before final whole lint; final lint receipt appended with the same formatter and checked without changes."
+}

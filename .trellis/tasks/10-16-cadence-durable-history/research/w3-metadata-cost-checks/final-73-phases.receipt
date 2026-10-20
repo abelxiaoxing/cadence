@@ -1,0 +1,177 @@
+{
+  "schema": "cadence-w3-metadata-cost/1",
+  "phases": [
+    {
+      "name": "setup",
+      "ms": 89.4333889999998,
+      "counts": {
+        "hash.calls": 102,
+        "hash.bytes": 24492,
+        "io.lstatSync": 10392,
+        "io.openSync": 211,
+        "io.fsyncSync": 27,
+        "io.closeSync": 211,
+        "io.fstatSync": 272,
+        "io.readSync": 192,
+        "io.readBytes": 23633,
+        "io.requestedBytes": 15101039,
+        "parse.calls": 89,
+        "parse.bytes": 4445,
+        "lease.assert": 9,
+        "lease.assert.ms": 26.7940279999998
+      }
+    },
+    {
+      "name": "append-index-82x100",
+      "ms": 34192.049458,
+      "counts": {
+        "navigation.prepare": 82,
+        "hash.calls": 61370,
+        "hash.bytes": 219777077,
+        "tree.update": 82,
+        "lease.assert": 4942,
+        "io.lstatSync": 5590350,
+        "io.openSync": 90560,
+        "io.fstatSync": 119457,
+        "io.readSync": 85784,
+        "io.readBytes": 161134706,
+        "io.requestedBytes": 5317765584,
+        "io.closeSync": 90560,
+        "parse.calls": 7462,
+        "parse.bytes": 3259567,
+        "lease.assert.ms": 14218.819471999914,
+        "io.fsyncSync": 9384,
+        "tree.update.ms": 10616.845179000025,
+        "navigation.prepare.ms": 11850.706160999995,
+        "navigation.publish": 82,
+        "navigation.publish.ms": 19824.91136999999
+      }
+    },
+    {
+      "name": "before-tree",
+      "ms": 191.06096600000456,
+      "counts": {
+        "io.readdirSync": 1676,
+        "io.readFileSync": 4469,
+        "io.readFileBytes": 3540036,
+        "hash.calls": 8938,
+        "hash.bytes": 3860257
+      }
+    },
+    {
+      "name": "events-restart-zero-result",
+      "ms": 752.3444129999989,
+      "counts": {
+        "budget.reserve": 19134,
+        "io.lstatSync": 37743,
+        "io.openSync": 508,
+        "io.fstatSync": 804,
+        "io.readSync": 508,
+        "io.readBytes": 29126364,
+        "io.requestedBytes": 29967264,
+        "io.closeSync": 508,
+        "hash.calls": 18869,
+        "hash.bytes": 8286917,
+        "parse.calls": 743,
+        "parse.bytes": 15658,
+        "navigation.snapshot": 53,
+        "navigation.batch": 27,
+        "navigation.batch.ms": 35.29013300000952,
+        "navigation.snapshot.ms": 131.9847470000459,
+        "navigation.next": 171,
+        "navigation.next.ms": 254.88731999999436
+      }
+    },
+    {
+      "name": "messages-1200",
+      "ms": 4459.375512999999,
+      "counts": {
+        "budget.reserve": 26970,
+        "io.lstatSync": 700622,
+        "io.openSync": 3835,
+        "io.fstatSync": 7350,
+        "io.readSync": 3816,
+        "io.readBytes": 52609536,
+        "io.requestedBytes": 52610138,
+        "io.closeSync": 3835,
+        "hash.calls": 31131,
+        "hash.bytes": 21433049,
+        "parse.calls": 20718,
+        "parse.bytes": 1959675,
+        "navigation.snapshot": 86,
+        "navigation.batch": 4845,
+        "navigation.batch.ms": 213.904993999844,
+        "navigation.snapshot.ms": 171.5910800000347,
+        "navigation.next": 167,
+        "navigation.next.ms": 245.9837869999683,
+        "target.entityAt": 1235,
+        "navigation.entityBatches": 1235,
+        "tree.head": 2461,
+        "tree.head.ms": 1543.3463589999956,
+        "navigation.entityBatches.ms": 3519.813287999852,
+        "sources.read": 2400,
+        "sources.read.ms": 88.08875400003308,
+        "sources.assertCurrent": 1200,
+        "sources.assertCurrent.ms": 41.93714099994395,
+        "target.entityAt.ms": 3748.264519999946
+      }
+    },
+    {
+      "name": "tasks-70",
+      "ms": 470.93877899999643,
+      "counts": {
+        "budget.reserve": 18279,
+        "io.lstatSync": 54317,
+        "io.openSync": 362,
+        "io.fstatSync": 683,
+        "io.readSync": 360,
+        "io.readBytes": 6214965,
+        "io.requestedBytes": 6344347,
+        "io.closeSync": 362,
+        "hash.calls": 11058,
+        "hash.bytes": 6629613,
+        "parse.calls": 1321,
+        "parse.bytes": 136193,
+        "navigation.snapshot": 10,
+        "navigation.batch": 286,
+        "navigation.batch.ms": 91.00468099999853,
+        "navigation.snapshot.ms": 22.60478399999556,
+        "navigation.next": 91,
+        "navigation.next.ms": 98.51125899996987,
+        "target.entityAt": 73,
+        "navigation.entityBatches": 73,
+        "tree.head": 145,
+        "tree.head.ms": 103.91942499992001,
+        "navigation.entityBatches.ms": 295.61706299999787,
+        "sources.read": 140,
+        "sources.read.ms": 4.836221999990812,
+        "sources.assertCurrent": 70,
+        "sources.assertCurrent.ms": 2.434653000032995,
+        "target.entityAt.ms": 308.32272100001865
+      }
+    },
+    {
+      "name": "after-tree",
+      "ms": 214.78868099999818,
+      "counts": {
+        "io.readdirSync": 1676,
+        "io.readFileSync": 4469,
+        "io.readFileBytes": 3540036,
+        "hash.calls": 8938,
+        "hash.bytes": 3860257
+      }
+    }
+  ],
+  "trees": [
+    {
+      "files": 4469,
+      "bytes": 3540036,
+      "sha256": "f655d624fc2ba2952863bb3415cd985868907c8cde0b2a1a0d4ecdf5ebbb1ad7"
+    },
+    {
+      "files": 4469,
+      "bytes": 3540036,
+      "sha256": "f655d624fc2ba2952863bb3415cd985868907c8cde0b2a1a0d4ecdf5ebbb1ad7"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "native": { "code": 0, "signal": null },
+  "forced": false,
+  "observed": {
+    "scenario": "oauth-refresh",
+    "passed": true,
+    "constructed": 1,
+    "authCalls": 2,
+    "contacts": 1,
+    "encoderUses": 2,
+    "nativeWorkerSpawns": 0,
+    "records": [
+      { "type": "preparation", "validityMs": 121000 },
+      { "type": "settlement", "outcome": "resolved", "admissionClosed": false },
+      { "type": "preparation", "validityMs": 121000 },
+      { "type": "settlement", "outcome": "resolved", "admissionClosed": false }
+    ],
+    "remainingFiles": ["auth.json", "models.json"]
+  }
+}

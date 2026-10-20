@@ -1,0 +1,61 @@
+{
+  "passed": true,
+  "paidProvider": false,
+  "physicalHuman": false,
+  "viewports": [
+    {
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "width": 768,
+      "height": 1024
+    },
+    {
+      "width": 390,
+      "height": 844
+    },
+    {
+      "width": 320,
+      "height": 568
+    }
+  ],
+  "downloads": [
+    {
+      "scope": "task",
+      "format": "ndjson",
+      "bytes": 345508,
+      "path": "/home/mirako/abel/cdb-uuj8Xd/task.ndjson"
+    },
+    {
+      "scope": "task",
+      "format": "markdown",
+      "bytes": 286555,
+      "path": "/home/mirako/abel/cdb-uuj8Xd/task.markdown"
+    },
+    {
+      "scope": "run",
+      "format": "ndjson",
+      "bytes": 274175,
+      "path": "/home/mirako/abel/cdb-uuj8Xd/run.ndjson"
+    },
+    {
+      "scope": "child",
+      "format": "markdown",
+      "bytes": 101757,
+      "path": "/home/mirako/abel/cdb-uuj8Xd/child.markdown"
+    }
+  ],
+  "errors": [],
+  "secondContextRunId": "dc2e6369-6a7c-4a22-b01c-0d7091bfce04",
+  "proxy": {
+    "http": 220,
+    "upgrades": 8,
+    "isolatedCa": true,
+    "tlsVerificationDisabled": false
+  },
+  "originalBrowserClose": [
+    0,
+    null
+  ]
+}

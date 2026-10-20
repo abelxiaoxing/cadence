@@ -1,0 +1,408 @@
+{
+  "pid": 2418966,
+  "waitpidReturned": true,
+  "waitStatus": 0,
+  "exitCode": 0,
+  "failure": null,
+  "observations": [
+    {
+      "pattern": "Context7",
+      "matched": true,
+      "rawStart": 0,
+      "rawEnd": 10319
+    },
+    {
+      "pattern": "Cadence service",
+      "matched": true,
+      "rawStart": 10319,
+      "rawEnd": 13334
+    },
+    {
+      "pattern": "Exact OWNER model",
+      "matched": true,
+      "rawStart": 13334,
+      "rawEnd": 21207
+    },
+    {
+      "pattern": "Exact thinking level",
+      "matched": true,
+      "rawStart": 21207,
+      "rawEnd": 28045
+    },
+    {
+      "pattern": "Select exact owner model",
+      "matched": true,
+      "rawStart": 28045,
+      "rawEnd": 35962
+    },
+    {
+      "pattern": "Cadence review",
+      "matched": true,
+      "rawStart": 35962,
+      "rawEnd": 42283
+    },
+    {
+      "pattern": "Cadence service",
+      "matched": true,
+      "rawStart": 42283,
+      "rawEnd": 50105
+    },
+    {
+      "pattern": "Task kind",
+      "matched": true,
+      "rawStart": 50105,
+      "rawEnd": 57276
+    },
+    {
+      "pattern": "Goal",
+      "matched": true,
+      "rawStart": 57276,
+      "rawEnd": 68712
+    },
+    {
+      "pattern": "Cadence review",
+      "matched": true,
+      "rawStart": 68712,
+      "rawEnd": 75067
+    },
+    {
+      "pattern": "Confirm create now",
+      "matched": true,
+      "rawStart": 75067,
+      "rawEnd": 83251
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 83251,
+      "rawEnd": 99547
+    },
+    {
+      "pattern": "Readable plan",
+      "matched": true,
+      "rawStart": 99547,
+      "rawEnd": 111036
+    },
+    {
+      "pattern": "Finite assignments",
+      "matched": true,
+      "rawStart": 111036,
+      "rawEnd": 118661
+    },
+    {
+      "pattern": "Cadence review",
+      "matched": true,
+      "rawStart": 118661,
+      "rawEnd": 126153
+    },
+    {
+      "pattern": "Confirm save-plan now",
+      "matched": true,
+      "rawStart": 126153,
+      "rawEnd": 134343
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 134343,
+      "rawEnd": 150087
+    },
+    {
+      "pattern": "Cadence review",
+      "matched": true,
+      "rawStart": 150087,
+      "rawEnd": 157281
+    },
+    {
+      "pattern": "Confirm generate-plan now",
+      "matched": true,
+      "rawStart": 157281,
+      "rawEnd": 165465
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 165465,
+      "rawEnd": 174794
+    },
+    {
+      "pattern": "Parent generate-plan: settled / completed / published\\s*Owner (?:drained \u2022 ID [0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|active/draining \u2022 ID ([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})[\\s\\S]*?Owner drained \u2022 ID \\1)",
+      "matched": true,
+      "rawStart": 174794,
+      "rawEnd": 182673
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 182673,
+      "rawEnd": 190947
+    },
+    {
+      "pattern": "Cadence review",
+      "matched": true,
+      "rawStart": 190947,
+      "rawEnd": 198474
+    },
+    {
+      "pattern": "Confirm start now",
+      "matched": true,
+      "rawStart": 198474,
+      "rawEnd": 209468
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 209468,
+      "rawEnd": 219456
+    },
+    {
+      "pattern": "Parent start: settled / completed / published\\s*Owner (?:drained \u2022 ID [0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|active/draining \u2022 ID ([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})[\\s\\S]*?Owner drained \u2022 ID \\1)",
+      "matched": true,
+      "rawStart": 219456,
+      "rawEnd": 225093
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 225093,
+      "rawEnd": 230672
+    },
+    {
+      "pattern": "Parent checks",
+      "matched": true,
+      "rawStart": 230672,
+      "rawEnd": 236759
+    },
+    {
+      "pattern": "Cadence review",
+      "matched": true,
+      "rawStart": 236759,
+      "rawEnd": 241614
+    },
+    {
+      "pattern": "Confirm check now",
+      "matched": true,
+      "rawStart": 241614,
+      "rawEnd": 247792
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 247792,
+      "rawEnd": 257808
+    },
+    {
+      "pattern": "Parent check: settled / completed / published\\s*Owner (?:drained \u2022 ID [0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|active/draining \u2022 ID ([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})[\\s\\S]*?Owner drained \u2022 ID \\1)",
+      "matched": true,
+      "rawStart": 257808,
+      "rawEnd": 263109
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 263109,
+      "rawEnd": 268631
+    },
+    {
+      "pattern": "Parent checks",
+      "matched": true,
+      "rawStart": 268631,
+      "rawEnd": 274718
+    },
+    {
+      "pattern": "Cadence review",
+      "matched": true,
+      "rawStart": 274718,
+      "rawEnd": 279828
+    },
+    {
+      "pattern": "Confirm check now",
+      "matched": true,
+      "rawStart": 279828,
+      "rawEnd": 286006
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 286006,
+      "rawEnd": 296022
+    },
+    {
+      "pattern": "Parent check: settled / failed / published\\s*Owner (?:drained \u2022 ID [0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|active/draining \u2022 ID ([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})[\\s\\S]*?Owner drained \u2022 ID \\1)",
+      "matched": true,
+      "rawStart": 296022,
+      "rawEnd": 301449
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 301449,
+      "rawEnd": 306970
+    },
+    {
+      "pattern": "Cadence review",
+      "matched": true,
+      "rawStart": 306970,
+      "rawEnd": 313304
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 313304,
+      "rawEnd": 325934
+    },
+    {
+      "pattern": "Cadence review",
+      "matched": true,
+      "rawStart": 325934,
+      "rawEnd": 333979
+    },
+    {
+      "pattern": "Select exact run for HUMAN review",
+      "matched": true,
+      "rawStart": 333979,
+      "rawEnd": 340194
+    },
+    {
+      "pattern": "Acknowledge unresolved issues",
+      "matched": true,
+      "rawStart": 340194,
+      "rawEnd": 346430
+    },
+    {
+      "pattern": "Cadence review",
+      "matched": true,
+      "rawStart": 346430,
+      "rawEnd": 352452
+    },
+    {
+      "pattern": "Confirm review now",
+      "matched": true,
+      "rawStart": 352452,
+      "rawEnd": 359476
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 359476,
+      "rawEnd": 372909
+    },
+    {
+      "pattern": "Cadence service",
+      "matched": true,
+      "rawStart": 372909,
+      "rawEnd": 379730
+    },
+    {
+      "pattern": "PTY \u4e2d\u6587",
+      "matched": true,
+      "rawStart": 379730,
+      "rawEnd": 386734
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 386734,
+      "rawEnd": 393806
+    },
+    {
+      "pattern": "Cadence review",
+      "matched": true,
+      "rawStart": 393806,
+      "rawEnd": 400483
+    },
+    {
+      "pattern": "Confirm start now",
+      "matched": true,
+      "rawStart": 400483,
+      "rawEnd": 407507
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 407507,
+      "rawEnd": 420466
+    },
+    {
+      "pattern": "Cadence owner observation",
+      "matched": true,
+      "rawStart": 420466,
+      "rawEnd": 426150
+    },
+    {
+      "pattern": "current v1 revision",
+      "matched": true,
+      "rawStart": 427314,
+      "rawEnd": 434415
+    },
+    {
+      "pattern": "Cadence service",
+      "matched": true,
+      "rawStart": 434415,
+      "rawEnd": 441236
+    },
+    {
+      "pattern": "detached locally",
+      "matched": true,
+      "rawStart": 441236,
+      "rawEnd": 450073
+    }
+  ],
+  "seconds": 59.75242605700623,
+  "physicalHuman": false,
+  "nativeExecutor": false,
+  "escapeKeys": [
+    {
+      "inputHex": "1b",
+      "minimumDelayMs": 100,
+      "elapsedMs": 100.13204603455961
+    },
+    {
+      "inputHex": "1b",
+      "minimumDelayMs": 100,
+      "elapsedMs": 100.11896502692252
+    },
+    {
+      "inputHex": "1b",
+      "minimumDelayMs": 100,
+      "elapsedMs": 100.11516499798745
+    },
+    {
+      "inputHex": "1b",
+      "minimumDelayMs": 100,
+      "elapsedMs": 100.1144660403952
+    },
+    {
+      "inputHex": "1b",
+      "minimumDelayMs": 100,
+      "elapsedMs": 100.08629597723484
+    },
+    {
+      "inputHex": "1b",
+      "minimumDelayMs": 100,
+      "elapsedMs": 100.11360596399754
+    },
+    {
+      "inputHex": "1b",
+      "minimumDelayMs": 100,
+      "elapsedMs": 100.11118499096483
+    },
+    {
+      "inputHex": "1b",
+      "minimumDelayMs": 100,
+      "elapsedMs": 100.1151060918346
+    }
+  ],
+  "barrier": {
+    "event": {
+      "event": "cancellation-http-pending",
+      "requestOrdinal": 4,
+      "editingOrdinal": 3
+    },
+    "receivedBeforeWait": false,
+    "waitStep": 53,
+    "consumed": true,
+    "escapeAfterReady": true,
+    "bytes": 76
+  }
+}

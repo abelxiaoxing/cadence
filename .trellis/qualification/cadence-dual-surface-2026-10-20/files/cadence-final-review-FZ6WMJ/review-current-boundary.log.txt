@@ -1,0 +1,10 @@
+$ vitest run --no-file-parallelism test/service-human-review.test.ts test/service-current.test.ts test/service-checks.test.ts test/service-accepted-work.test.ts test/service-stop-continuation.test.ts test/service-publication-parity-review.test.ts
+
+ RUN  v4.1.10 /home/mirako/abel/cadence
+
+
+ Test Files  6 passed (6)
+      Tests  78 passed (78)
+   Start at  03:18:32
+   Duration  497.12s (transform 1.42s, setup 0ms, import 2.59s, tests 493.56s, environment 1ms)
+

@@ -1,0 +1,10 @@
+$ vitest run --no-file-parallelism test/terminal-integration.test.mjs
+
+ RUN  v4.1.10 /home/mirako/abel/cadence
+
+
+ Test Files  1 passed (1)
+      Tests  10 passed | 27 skipped (37)
+   Start at  02:21:00
+   Duration  305.59s (transform 508ms, setup 0ms, import 660ms, tests 304.78s, environment 0ms)
+

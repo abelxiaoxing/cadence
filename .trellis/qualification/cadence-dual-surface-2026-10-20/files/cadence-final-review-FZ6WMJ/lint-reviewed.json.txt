@@ -1,0 +1,16 @@
+{
+  "command": [
+    "bun",
+    "run",
+    "lint"
+  ],
+  "cwd": "/home/mirako/abel/cadence",
+  "pid": 2359945,
+  "started": 1792434589.3771033,
+  "temporaryRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ",
+  "originalWait": true,
+  "exit": 1,
+  "elapsedSeconds": 0.768,
+  "log": "/home/mirako/abel/cadence-final-review-FZ6WMJ/lint-reviewed.log",
+  "logSha256": "c680a6b049120aab7aa91a2d8d4f8b54305c1a63bda591b1cb2dd7b139e47fb6"
+}

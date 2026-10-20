@@ -1,0 +1,10 @@
+$ vitest run --config web/browser.config.ts
+
+ RUN  v4.1.10 /home/mirako/abel/cadence
+
+
+ Test Files  3 passed (3)
+      Tests  5 passed (5)
+   Start at  04:12:57
+   Duration  179.85s (transform 1.37s, setup 0ms, import 3.08s, tests 176.32s, environment 0ms)
+

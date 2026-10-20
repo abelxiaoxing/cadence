@@ -1,0 +1,19 @@
+{
+  "selected": "/home/mirako/abel/.cadence-w3-final-review-pal2inq7",
+  "reason": "Shared /tmp inode exhaustion; preserve all old bytes without cleanup",
+  "observations": [
+    {
+      "path": "/tmp",
+      "availableBytes": 57918951424,
+      "availableInodes": 71,
+      "totalInodes": 1048576
+    },
+    {
+      "path": "/home/mirako/abel",
+      "availableBytes": 815465701376,
+      "availableInodes": 60907076,
+      "totalInodes": 62447616
+    }
+  ],
+  "namespaceENOSPCIndependent": true
+}

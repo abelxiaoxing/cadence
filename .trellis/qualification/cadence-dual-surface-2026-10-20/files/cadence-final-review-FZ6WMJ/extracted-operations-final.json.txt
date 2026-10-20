@@ -1,0 +1,19 @@
+{
+  "command": [
+    "bun",
+    "run",
+    "test",
+    "--",
+    "--config",
+    "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-matrix-final/matrix.config.ts"
+  ],
+  "cwd": "/home/mirako/abel/cadence",
+  "pid": 2448707,
+  "started": 1792441079.331618,
+  "temporaryRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ",
+  "originalWait": true,
+  "exit": 0,
+  "elapsedSeconds": 97.805,
+  "log": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-operations-final.log",
+  "logSha256": "f56fa9ec1e12850ebfaf662dca6dd8ff1f69751575b4acd5feef604364e41363"
+}

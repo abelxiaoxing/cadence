@@ -1,0 +1,49 @@
+{
+  "pid": 2420934,
+  "waitpidReturned": true,
+  "waitStatus": 0,
+  "exitCode": 0,
+  "failure": null,
+  "observations": [
+    {
+      "pattern": "CONTROL_FD_CLOSED CHILD_READY",
+      "matched": true,
+      "rawStart": 0,
+      "rawEnd": 30
+    },
+    {
+      "pattern": "FOREGROUND",
+      "matched": true,
+      "rawStart": 30,
+      "rawEnd": 41
+    },
+    {
+      "pattern": "ESC_SEEN",
+      "matched": true,
+      "rawStart": 41,
+      "rawEnd": 50
+    }
+  ],
+  "seconds": 0.3985744609963149,
+  "physicalHuman": false,
+  "nativeExecutor": false,
+  "escapeKeys": [
+    {
+      "inputHex": "1b",
+      "minimumDelayMs": 100,
+      "elapsedMs": 100.12313502375036
+    }
+  ],
+  "barrier": {
+    "event": {
+      "event": "cancellation-http-pending",
+      "requestOrdinal": 4,
+      "editingOrdinal": 3
+    },
+    "receivedBeforeWait": true,
+    "waitStep": 1,
+    "consumed": true,
+    "escapeAfterReady": true,
+    "bytes": 76
+  }
+}

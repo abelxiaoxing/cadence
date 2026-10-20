@@ -1,0 +1,57 @@
+{
+  "schema": "cadence-redesign-planning-map/1",
+  "parent": ".trellis/tasks/10-16-cadence-webui-terminal",
+  "status": "planning",
+  "productDelivery": "one-integrated-delivery",
+  "children": [
+    {
+      "id": "W1",
+      "task": ".trellis/tasks/10-16-cadence-service-owner",
+      "requirements": "R1, R4\u2013R7, R9\u2013R11, R14",
+      "acceptance": "AC5,7\u20139,14\u201316,20",
+      "prerequisites": "Final parent artifact approval; freeze shared interfaces before W2/W3/W4."
+    },
+    {
+      "id": "W2",
+      "task": ".trellis/tasks/10-16-cadence-worker-capture",
+      "requirements": "R2, R4\u2013R6, R8, R13",
+      "acceptance": "AC2,11\u201312,18,21",
+      "prerequisites": "W1 identity/error/limit contract frozen; agree W3 artifact sink and coverage before producer changes."
+    },
+    {
+      "id": "W3",
+      "task": ".trellis/tasks/10-16-cadence-durable-history",
+      "requirements": "R4\u2013R7, R12\u2013R14",
+      "acceptance": "AC4\u20135,7,9,18\u201319,21",
+      "prerequisites": "W1 persistence/admission interfaces frozen; W2 frame/coverage contract agreed. Real W2 ingestion is required before integration acceptance."
+    },
+    {
+      "id": "W4",
+      "task": ".trellis/tasks/10-16-cadence-subagent-orchestration",
+      "requirements": "R1\u2013R2, R4\u2013R8, R11\u2013R13",
+      "acceptance": "AC2,6\u201312,16\u201319",
+      "prerequisites": "W1 owner/admission, W2 real producer and W3 durable store integrated; typed-fixture development alone cannot satisfy execution acceptance."
+    },
+    {
+      "id": "W5",
+      "task": ".trellis/tasks/10-16-cadence-terminal-client",
+      "requirements": "R1\u2013R2, R4\u2013R7, R12\u2013R14",
+      "acceptance": "AC1,4\u20139,12,18\u201320,22",
+      "prerequisites": "W1 typed client available; W4 full action API integrated for real terminal qualification. UI fixtures alone are insufficient."
+    },
+    {
+      "id": "W6",
+      "task": ".trellis/tasks/10-16-cadence-complete-webui",
+      "requirements": "R1\u2013R4, R6, R8\u2013R10, R12\u2013R14",
+      "acceptance": "AC2\u20138,10,12\u201315,18\u201319,22",
+      "prerequisites": "W1 DTO/auth/action contract frozen; W2/W3 detail/cursor formats agreed; W4 real owner required for integrated acceptance. No deferred core history."
+    },
+    {
+      "id": "W7",
+      "task": ".trellis/tasks/10-16-cadence-integrated-delivery",
+      "requirements": "R1\u2013R14",
+      "acceptance": "AC1\u2013AC22",
+      "prerequisites": "All W1\u2013W6 real implementations and targeted checks. Fixture/doc preparation may precede this, but final acceptance cannot rely on absent modules."
+    }
+  ]
+}

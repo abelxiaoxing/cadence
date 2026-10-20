@@ -1,0 +1,18 @@
+{
+  "command": [
+    "bun",
+    "run",
+    "test",
+    "--",
+    "test/terminal-integration.test.mjs"
+  ],
+  "cwd": "/home/mirako/abel/cadence",
+  "pid": 2355007,
+  "started": 1792434059.722797,
+  "temporaryRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ",
+  "originalWait": true,
+  "exit": 0,
+  "elapsedSeconds": 306.11,
+  "log": "/home/mirako/abel/cadence-final-review-FZ6WMJ/terminal-reviewed.log",
+  "logSha256": "2f6abb221b3dfc0caba6a4015f02c9a621a22e9cf5745bdaca37eb9f2e0049c8"
+}

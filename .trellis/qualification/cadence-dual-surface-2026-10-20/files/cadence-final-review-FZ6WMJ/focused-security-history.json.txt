@@ -1,0 +1,25 @@
+{
+  "command": [
+    "bun",
+    "run",
+    "test",
+    "--",
+    "test/service-auth.test.ts",
+    "test/service-history-metadata-cost.test.ts",
+    "test/service-history-projection.test.ts",
+    "test/service-history-progress-review.test.ts",
+    "test/service-history-read-completion.test.ts",
+    "test/service-history-export-http.test.ts",
+    "test/service-history-proof-http.test.ts",
+    "test/service-recovery.test.ts"
+  ],
+  "cwd": "/home/mirako/abel/cadence",
+  "pid": 2357841,
+  "started": 1792434453.3460076,
+  "temporaryRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ",
+  "originalWait": true,
+  "exit": 0,
+  "elapsedSeconds": 111.234,
+  "log": "/home/mirako/abel/cadence-final-review-FZ6WMJ/focused-security-history.log",
+  "logSha256": "e1e8a84cdba44777abdfa9fc4d96d5a5b7791efede7548541bc5bcfa8f99d1ae"
+}

@@ -1,0 +1,17 @@
+{
+  "at": "2026-10-16T17:36:37.162280+00:00",
+  "existingBaselineFilesChanged": [
+    ".trellis/spec/backend/directory-structure.md",
+    ".trellis/spec/backend/index.md",
+    ".trellis/spec/backend/task-distribution-guidelines.md",
+    "bun.lock",
+    "package.json"
+  ],
+  "allChangesWithinAssignedScope": true,
+  "newFilesNotRepresentedInBaseline": "Owned service source/tests, new owner spec and task artifacts; see main source hashes and handoffs",
+  "preliminaryInspectionFailure": "The first main-session comparison mistakenly allowed only package/lock and omitted its own three planned maintained-spec edits; it raised AssertionError. Corrected exact allowlist matches actual paths. No product defect or broader exemption.",
+  "finalArtifactLintExit": 0,
+  "finalArtifactLintSha256": "a0abcb06d40c76bd3e250136e6c35c70e9b72ce123f86ba62ba3f65bf02f8f9c",
+  "w1Complete": false,
+  "parentComplete": false
+}

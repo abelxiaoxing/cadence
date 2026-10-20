@@ -1,0 +1,88 @@
+{
+  "graphBytes": 524288,
+  "graphSha256": "bb8a33344ba4f67e0088f0ce990a7079592b7c5362857352a09f454c916707b8",
+  "planBytes": 59,
+  "planSha256": "71567c24375bf66d2d6d2639da319158c9305d0b77136dd95c1c4d0e517d6328",
+  "ordinaryReplyBytes": 524616,
+  "progressReplyBytes": 2167,
+  "proofReplyBytes": 526066,
+  "proofCalls": 1,
+  "maximumHttpWriteBytes": 262144,
+  "exports": [
+    {
+      "format": "ndjson",
+      "clientFrames": 22,
+      "downloadFrames": 22,
+      "largestFrame": 524691,
+      "clientBytes": 575774,
+      "downloadBytes": 575774,
+      "clientTrailer": {
+        "kind": "trailer",
+        "complete": true,
+        "frames": 21,
+        "encodedBytes": 575450,
+        "sha256": "2b8739b21d9f0c7fe4bb9d43b41cfcc2a3b5b966fb762e27a1ae91c524a2a392",
+        "committedSeq": "5",
+        "coverage": {
+          "observed": "complete",
+          "source": "complete",
+          "redacted": false,
+          "omissions": []
+        }
+      },
+      "downloadTrailer": {
+        "kind": "trailer",
+        "complete": true,
+        "frames": 21,
+        "encodedBytes": 575450,
+        "sha256": "d08e704cdf8c52a978bcea82ed56eb4f7fbca7ac882301d73fd9fa3c24aee730",
+        "committedSeq": "5",
+        "coverage": {
+          "observed": "complete",
+          "source": "complete",
+          "redacted": false,
+          "omissions": []
+        }
+      }
+    },
+    {
+      "format": "markdown",
+      "clientFrames": 78,
+      "downloadFrames": 78,
+      "largestFrame": 63564,
+      "clientBytes": 574870,
+      "downloadBytes": 574870,
+      "clientTrailer": {
+        "kind": "trailer",
+        "complete": true,
+        "frames": 77,
+        "encodedBytes": 574532,
+        "sha256": "8eff14e5da002e3345695d1d41d3c6f585c5e1298e06a1b02c50f1795ecf3857",
+        "committedSeq": "5",
+        "coverage": {
+          "observed": "complete",
+          "source": "complete",
+          "redacted": false,
+          "omissions": []
+        }
+      },
+      "downloadTrailer": {
+        "kind": "trailer",
+        "complete": true,
+        "frames": 77,
+        "encodedBytes": 574532,
+        "sha256": "d9e7f7985413ff64a3201d5e0b7821b58d129deade9427677ff0010661c70585",
+        "committedSeq": "5",
+        "coverage": {
+          "observed": "complete",
+          "source": "complete",
+          "redacted": false,
+          "omissions": []
+        }
+      }
+    }
+  ],
+  "tmpMode": "700",
+  "unchangedHistory": true,
+  "sdkOrWorkerLaunched": false
+}

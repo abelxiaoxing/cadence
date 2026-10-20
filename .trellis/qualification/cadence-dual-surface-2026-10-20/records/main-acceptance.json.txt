@@ -1,0 +1,86 @@
+{
+  "schema": "cadence-main-delivery-acceptance/1",
+  "status": "completed-required-available-host-acceptance",
+  "requirements": [
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6",
+    "R7",
+    "R8",
+    "R9",
+    "R10",
+    "R11",
+    "R12",
+    "R13",
+    "R14"
+  ],
+  "acceptanceCriteria": [
+    "AC1",
+    "AC2",
+    "AC3",
+    "AC4",
+    "AC5",
+    "AC6",
+    "AC7",
+    "AC8",
+    "AC9",
+    "AC10",
+    "AC11",
+    "AC12",
+    "AC13",
+    "AC14",
+    "AC15",
+    "AC16",
+    "AC17",
+    "AC18",
+    "AC19",
+    "AC20",
+    "AC21",
+    "AC22"
+  ],
+  "independentReview": {
+    "path": ".trellis/tasks/10-16-cadence-integrated-delivery/research/final-review.json",
+    "sha256": "ecfd2f79bd1c3e6b536814692889887a3515b8799d7b6edff840f9c5c07ca5c0"
+  },
+  "mainChecks": {
+    "frozenInputs": 467,
+    "changedInputs": 0,
+    "reviewReferencedHashes": 58,
+    "mismatches": 0,
+    "exactArchiveMembers": 129,
+    "originalExitZeroCommands": [
+      "verify-repaired",
+      "real-pack-final",
+      "real-extract-final",
+      "extracted-browser-final",
+      "extracted-native-final",
+      "extracted-operations-final"
+    ],
+    "processInventory": "No owned agent/test/service/browser remained; only the main Pi session was observed in those process categories. No signals sent."
+  },
+  "mainEvidenceRoot": "/home/mirako/abel/cadence-main-final-eTRPmf",
+  "packageVersion": "1.8.4",
+  "archiveSha256": "0358c904827e5508ac251cb98c87149ef98e14ed0640adf5097dbb95a176c995",
+  "qualification": "Linux x86_64, Node26.7.0, Bun1.3.14, Pi0.84.3, Chromium151.0.7922.34; isolated fabricated-provider and local CA fixtures",
+  "additionalUnqualified": [
+    "Windows/macOS/ConPTY (27 existing Windows-only controls skipped on Linux)",
+    "Node22 and other runtime/Pi peer combinations",
+    "paid-provider/account OAuth and every adapter",
+    "physical phone/human/second-machine field use",
+    "package-manager installation and real deployment"
+  ],
+  "preservation": {
+    "historicalFailuresUnchanged": true,
+    "noGitCommitPushPublicationDeployment": true,
+    "dependencyPinsAndLockUnchanged": true,
+    "noRealCredentialsPersonalProfileOrOldDataCleanup": true
+  },
+  "taskAdministration": "Engineering acceptance complete; task directories remain in place/in_progress to preserve reference paths. No commit/archive requested or performed.",
+  "ledgerPreimage": {
+    "path": "/home/mirako/abel/cadence-main-final-eTRPmf/delivery-status-before-main-acceptance.md",
+    "sha256": "8ab140400630712d6084e04377a84b5a75abce93680ee7294699b53cd5b92a73"
+  }
+}

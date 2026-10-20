@@ -1,0 +1,26 @@
+{
+  "scope": "built-empty-workspace/auth/assets/CSP-only",
+  "executionWorkflow": false,
+  "physicalHuman": false,
+  "buildId": "bfdead625180691366ed454631b4b145aeb42b3a88469a5662297c2fc53c7594",
+  "browserVersion": "151.0.7922.34",
+  "passed": true,
+  "contexts": 2,
+  "fonts": [
+    "loaded",
+    "loaded",
+    "loaded"
+  ],
+  "timelineModuleImported": true,
+  "cspDirectives": [
+    "script-src-elem",
+    "style-src-elem"
+  ],
+  "returnedWithoutCancel": true,
+  "cleanup": [
+    true,
+    true,
+    true
+  ],
+  "executableSha256": "0b20b130e7edd9dd51873be867761295fe0cfad490c2b9a64f95bd3cfc08fa71"
+}

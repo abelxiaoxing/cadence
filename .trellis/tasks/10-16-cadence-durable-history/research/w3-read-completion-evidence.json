@@ -1,0 +1,1355 @@
+{
+  "schema": "cadence-w3-read-completion-evidence/1",
+  "disposition": "PARTIAL implementation; list/entity functionality and original timeout causality remain open; NOT W3/product acceptance",
+  "environment": {
+    "node": "v26.7.0",
+    "executable": "/usr/bin/node",
+    "platform": "linux",
+    "architecture": "x64",
+    "pi": "0.84.3",
+    "vitest": "4.1.10",
+    "bun": "1.3.14",
+    "diskRoot": "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN",
+    "mode": "0700",
+    "filesystem": "/dev/sda2",
+    "explicitTMPDIR_TEMP_TMP": true
+  },
+  "sourceHashes": {
+    "src/history/detail-progress.ts": "31ccc4a10a9ee53b70bb031011812f2bc0838bd32142d5de717af90cb78b24a4",
+    "src/history/reader.ts": "8d382a293c123418bd05083dab119af9a5e6e89e102feaaed5c35b2877b69892",
+    "src/history/navigation.ts": "a2b135fb0cf6a34af0118cc2e75919143a65d612216c16545338506bca380f29",
+    "src/history/read-proof.ts": "71bcd4dffc700b24779455c3366381d145a65ecc57ffc8d6d67a2c42616a9595",
+    "src/history/graph-progress.ts": "11759c15e020360325a5ff5894ca992a0be7b19c72254af7c7db7f8ff43d85f5",
+    "src/service/contracts/history.ts": "bbf40531201ad866612bb90bd6e51746e3c030b9ab5c4609adc20342a40f4021",
+    "src/service-contract.ts": "105735c2323d6741157b2ab38cac13642197a2495f0cb7f72f20dc66f37f5739",
+    "src/service-client.ts": "c7edf51b0a1e5774e2e7aa9ee4f822d2a0d1aaf9fffe4550a0eeccd5765a6bd1",
+    "src/service-wire.ts": "c4118e437478123359f58b05cbef75ae54fc4c559436240ced0ae2a3126ed870",
+    "src/service/ports.ts": "c0152f5871bc876326014b2fd1655772f03251f3ae8e4eaa39384696948ccef6",
+    "test/service-history-live-detail.test.ts": "288d02f63ab07b0c2cd053856a1842dd062cc445d7536599c04ebd4418062cee",
+    "test/service-history-validator.test.ts": "3e6579cb0b57a619b46d83ba4921b7bfd65463ba7abde0af5be871be2801bc53",
+    "test/service-history-semantics.test.ts": "4fb72c421a73363c95de95a4434a75eb4b2069fb3fff693b4e906cadcef1ece5",
+    "test/service-history-read-completion.test.ts": "26a89c5e4f05597a5f06ec56da4e88afd6a4116df4bebf5b2cfbce0875402886",
+    "test/helpers/history-progress-probe.ts": "380e7e7160a83eb9a9825d8850f88ca1a96ca34bc94e203170ad8f11d9e0b3a5",
+    "test/helpers/history-read-child.ts": "7fa05875b292ba3fd40bb46b226e8e06b75c7a8d458dead452f9bc189d729e38",
+    "test/helpers/history-phase-metrics.ts": "518390651cfae76a3d3505be30d625bce368658557a1bed9abedb15ee27f1af2",
+    "test/helpers/history-graph-fixture.ts": "d66ad3b23075739e942b269ec27e43d92d2512cc8b5d978d376dc8e033795670",
+    "test/helpers/history-point-pages.ts": "b47ff37de5037926be5a2ca415a4aebb15c3f1ce36d6ae3f19d315ceb62de4c1"
+  },
+  "unchangedClosureHashes": {
+    "src/service/http.ts": "c225248cd0c14fa8b6039bdef47e4d951f18efbf76ba6678775b3301024245ba",
+    "src/service-http-client.ts": "8be7e46fe4a19ca74dc8bb089b9318b259f36125263d3264cca0a803ba2b6d1e",
+    "src/history/writer.ts": "af3ecab4b2076ecd974dfbe3b6bb3cff0d22af8ab0de443f9cdb133e62635be9",
+    "src/history/live.ts": "4fc728699b467c82522f7e239d055c06a8dfa3b5ab3f8865a8046bbffcc8535f",
+    "src/history/validator.ts": "dd8f4f0c10b562ad2a220bdf4c73576df6302697c09a148fc0927bd22eddb3e0",
+    "src/history/projection.ts": "24a93ed2a5570d0890b3b2ecb85fe3db4dc5b62308dae57d8f7c16e2dadea39b",
+    "src/history/retained-progress.ts": "9c7be364a58a73b45228b36721c5a319194e5ddd80b550822a530a46ea07afc0",
+    "src/history/retained-traversal.ts": "4589fc78c794d1d0caa1530e8a35113d2ce013a756bf98d5d470e5050f652a6c",
+    "src/history/search.ts": "f0e1db8563f59ee127b94a97936677143f9f1be656d8cc815c34f781586bead9",
+    "src/history/export.ts": "976459f27658b59bb97825d48f354c31e039561ad4e8cd5bca7a3af37091de8f",
+    "src/worker-public.mjs": "61988435327b243b6c23bfd92328417bdff2ba715843b5283407ab48fd7484f2",
+    "src/sdk-worker.mjs": "55016e65b7b10bbf3d360ae4828fb47395972fcc062afba3018c6a2250512544",
+    "src/subagent-process.ts": "654a689c887b156be053eaf16b603b6c77eb2c17e5a7fd4058c9680508ff09d4",
+    "package.json": "2aa7fe4c464835cdebdafbed2cf5d4831cc02c753886eb6f0b42041c46f7464c",
+    "bun.lock": "cc31e7ad885c21849b38515cb47bb9913b75801a3b484bf647e11fe354f47551",
+    "provenance/auth-reuse.json": "ab86805931b3f0e81cf58911697b2ff3e1193307ef0bcbe58d7a2ad4c259c56a"
+  },
+  "broadBeforeAfterEqual": true,
+  "verification": {
+    "broad": {
+      "command": "$ vitest run --no-file-parallelism test/service-history.test.ts test/service-history-blocker-repair.test.ts test/service-history-export-http.test.ts test/service-history-final-review.test.ts test/service-history-live-detail.test.ts test/service-history-lookahead.test.ts test/service-history-progress.test.ts test/service-history-projection.test.ts test/service-history-proof-http.test.ts test/service-history-publication-recovery.test.ts test/service-history-search-export.test.ts test/service-history-search-scope.test.ts test/service-history-semantics.test.ts test/service-history-validator.test.ts test/service-history-read-completion.test.ts test/service-contract.test.ts test/service-owner.test.ts test/service-auth.test.ts test/service-model-context.test.ts test/lightweight-store-controller.test.ts test/lightweight-process-diff.test.ts test/lightweight-sdk.test.ts test/worker-public.test.ts test/worker-capture.test.ts test/worker-recording.test.ts",
+      "log": "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/broad.log",
+      "exit": 0,
+      "files": 25,
+      "passed": 1246,
+      "failed": 0,
+      "skipped": 0,
+      "durationSeconds": 799.77,
+      "newCases": 7,
+      "wholeRepository": false,
+      "oldFailureReceiptRepaired": false
+    },
+    "focusedPointTransport": {
+      "log": "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/point-transport-final.log",
+      "files": 1,
+      "passed": 6,
+      "failed": 0,
+      "durationSeconds": 28.61
+    },
+    "check": {
+      "exit": 0,
+      "log": "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/check.log"
+    },
+    "lint": {
+      "exit": 0,
+      "log": "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/lint.log",
+      "preExistingInfos": 2
+    },
+    "checkAgents": {
+      "exit": 0,
+      "log": "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/agents.log"
+    }
+  },
+  "timeoutDiagnosis": {
+    "historicalEvidence": ".trellis/tasks/10-16-cadence-durable-history/research/w3-validator-progress-evidence.json",
+    "oldResult": {
+      "passed": 1237,
+      "failed": 2,
+      "caseBudgetMs": 5000
+    },
+    "cause": "NOT established; original failure lacks phase/native-IO timing. New controlled measurements do not reproduce it.",
+    "before": [
+      {
+        "test": "check-obligations",
+        "totalMs": 741.6251560000001,
+        "phases": {
+          "setup": 85.38907600000039,
+          "commit": 156.00145199999997,
+          "admit-run": 162.97375699999975,
+          "check-start": 139.74167100000022,
+          "check-settled": 153.82445099999995,
+          "reads": 43.694748999999774
+        },
+        "calls": {
+          "setup/create": {
+            "count": 11,
+            "ms": 18.847811999999976,
+            "pending": 0
+          },
+          "setup/read": {
+            "count": 93,
+            "ms": 33.493512999998984,
+            "pending": 0
+          },
+          "setup/replace": {
+            "count": 1,
+            "ms": 4.596642999999858,
+            "pending": 0
+          },
+          "commit/read": {
+            "count": 165,
+            "ms": 81.8913420000008,
+            "pending": 0
+          },
+          "commit/create": {
+            "count": 15,
+            "ms": 43.3545180000001,
+            "pending": 0
+          },
+          "commit/prepare": {
+            "count": 1,
+            "ms": 6.709994999999708,
+            "pending": 0
+          },
+          "commit/publish": {
+            "count": 1,
+            "ms": 67.48958399999992,
+            "pending": 0
+          },
+          "admit-run/read": {
+            "count": 185,
+            "ms": 90.32384300000058,
+            "pending": 0
+          },
+          "admit-run/create": {
+            "count": 14,
+            "ms": 35.2711649999992,
+            "pending": 0
+          },
+          "admit-run/prepare": {
+            "count": 1,
+            "ms": 11.87679799999978,
+            "pending": 0
+          },
+          "admit-run/publish": {
+            "count": 1,
+            "ms": 89.71956799999998,
+            "pending": 0
+          },
+          "admit-run/replace": {
+            "count": 6,
+            "ms": 34.725034000000505,
+            "pending": 0
+          },
+          "check-start/read": {
+            "count": 166,
+            "ms": 79.35487300000023,
+            "pending": 0
+          },
+          "check-start/prepare": {
+            "count": 1,
+            "ms": 13.44546900000023,
+            "pending": 0
+          },
+          "check-start/create": {
+            "count": 12,
+            "ms": 31.569263000000774,
+            "pending": 0
+          },
+          "check-start/publish": {
+            "count": 1,
+            "ms": 85.01444600000013,
+            "pending": 0
+          },
+          "check-start/replace": {
+            "count": 5,
+            "ms": 29.38447099999985,
+            "pending": 0
+          },
+          "check-settled/read": {
+            "count": 180,
+            "ms": 91.91485199999897,
+            "pending": 0
+          },
+          "check-settled/prepare": {
+            "count": 1,
+            "ms": 12.015068000000156,
+            "pending": 0
+          },
+          "check-settled/create": {
+            "count": 13,
+            "ms": 32.51729999999998,
+            "pending": 0
+          },
+          "check-settled/publish": {
+            "count": 1,
+            "ms": 93.23227099999986,
+            "pending": 0
+          },
+          "check-settled/replace": {
+            "count": 7,
+            "ms": 40.878467,
+            "pending": 0
+          },
+          "reads/read": {
+            "count": 7,
+            "ms": 3.4344019999998636,
+            "pending": 0
+          },
+          "reads/latest": {
+            "count": 4,
+            "ms": 9.798076000000037,
+            "pending": 0
+          },
+          "reads/batch": {
+            "count": 16,
+            "ms": 7.051014999999097,
+            "pending": 0
+          },
+          "reads/entityBatches": {
+            "count": 3,
+            "ms": 23.79672699999992,
+            "pending": 0
+          },
+          "reads/snapshot": {
+            "count": 2,
+            "ms": 1.1310709999997925,
+            "pending": 0
+          }
+        },
+        "facts": {}
+      },
+      {
+        "test": "pending-observer",
+        "totalMs": 781.5985520000004,
+        "phases": {
+          "setup": 84.66780500000004,
+          "commit": 142.83839400000033,
+          "admit-run": 202.76526300000023,
+          "snapshot": 15.53591999999935,
+          "waiting-commit": 141.75902300000052,
+          "observer-notification": 48.62383199999931,
+          "held-commit": 145.1653150000002,
+          "teardown": 0.2430000000003929
+        },
+        "calls": {
+          "setup/create": {
+            "count": 11,
+            "ms": 19.65030299999944,
+            "pending": 0
+          },
+          "setup/read": {
+            "count": 87,
+            "ms": 29.30296800000042,
+            "pending": 0
+          },
+          "setup/replace": {
+            "count": 1,
+            "ms": 3.780153000000155,
+            "pending": 0
+          },
+          "commit/read": {
+            "count": 165,
+            "ms": 75.82896399999845,
+            "pending": 0
+          },
+          "commit/create": {
+            "count": 15,
+            "ms": 44.95117799999889,
+            "pending": 0
+          },
+          "commit/prepare": {
+            "count": 1,
+            "ms": 7.682804999999917,
+            "pending": 0
+          },
+          "commit/publish": {
+            "count": 1,
+            "ms": 68.37489499999992,
+            "pending": 0
+          },
+          "admit-run/read": {
+            "count": 205,
+            "ms": 126.22210700000232,
+            "pending": 0
+          },
+          "admit-run/create": {
+            "count": 16,
+            "ms": 51.72418500000094,
+            "pending": 0
+          },
+          "admit-run/prepare": {
+            "count": 1,
+            "ms": 12.006478000000243,
+            "pending": 0
+          },
+          "admit-run/publish": {
+            "count": 1,
+            "ms": 113.80632400000013,
+            "pending": 0
+          },
+          "admit-run/replace": {
+            "count": 6,
+            "ms": 46.0453290000014,
+            "pending": 0
+          },
+          "snapshot/latest": {
+            "count": 1,
+            "ms": 2.271381000000474,
+            "pending": 0
+          },
+          "snapshot/read": {
+            "count": 4,
+            "ms": 2.043731000000662,
+            "pending": 0
+          },
+          "snapshot/batch": {
+            "count": 5,
+            "ms": 1.436681000000135,
+            "pending": 0
+          },
+          "snapshot/snapshot": {
+            "count": 1,
+            "ms": 0.42831999999998516,
+            "pending": 0
+          },
+          "waiting-commit/read": {
+            "count": 149,
+            "ms": 90.68782100001317,
+            "pending": 0
+          },
+          "waiting-commit/prepare": {
+            "count": 1,
+            "ms": 11.536418000000594,
+            "pending": 0
+          },
+          "waiting-commit/create": {
+            "count": 10,
+            "ms": 29.63002900000174,
+            "pending": 0
+          },
+          "waiting-commit/publish": {
+            "count": 1,
+            "ms": 83.37709499999983,
+            "pending": 0
+          },
+          "waiting-commit/replace": {
+            "count": 5,
+            "ms": 36.82638500000121,
+            "pending": 0
+          },
+          "observer-notification/latest": {
+            "count": 1,
+            "ms": 2.480341999999837,
+            "pending": 0
+          },
+          "observer-notification/read": {
+            "count": 4,
+            "ms": 1.9163300000000163,
+            "pending": 0
+          },
+          "observer-notification/batch": {
+            "count": 7,
+            "ms": 1.7386510000005728,
+            "pending": 0
+          },
+          "observer-notification/snapshot": {
+            "count": 1,
+            "ms": 0.4272900000005393,
+            "pending": 0
+          },
+          "held-commit/read": {
+            "count": 149,
+            "ms": 93.39927100000114,
+            "pending": 0
+          },
+          "held-commit/prepare": {
+            "count": 1,
+            "ms": 10.45550699999967,
+            "pending": 0
+          },
+          "held-commit/create": {
+            "count": 10,
+            "ms": 29.714817999999468,
+            "pending": 0
+          },
+          "held-commit/publish": {
+            "count": 1,
+            "ms": 84.98450599999978,
+            "pending": 0
+          },
+          "held-commit/replace": {
+            "count": 5,
+            "ms": 38.98690600000191,
+            "pending": 0
+          }
+        },
+        "facts": {}
+      }
+    ],
+    "afterFocused": [
+      {
+        "test": "check-obligations",
+        "totalMs": 760.661419,
+        "wallMs": 761,
+        "fakeTimers": false,
+        "fakeTimersAtFinish": false,
+        "phases": {
+          "setup": 86.17423700000018,
+          "commit": 145.11646500000006,
+          "admit-run": 166.6702690000002,
+          "check-start": 142.8869539999996,
+          "check-settled": 176.40128500000037,
+          "reads": 43.41220899999962
+        },
+        "calls": {
+          "setup/create": {
+            "count": 11,
+            "ms": 19.010682000000543,
+            "pending": 0
+          },
+          "setup/read": {
+            "count": 93,
+            "ms": 30.345977000000858,
+            "pending": 0
+          },
+          "setup/replace": {
+            "count": 1,
+            "ms": 4.899413999999979,
+            "pending": 0
+          },
+          "commit/read": {
+            "count": 165,
+            "ms": 77.09056299999884,
+            "pending": 0
+          },
+          "commit/create": {
+            "count": 15,
+            "ms": 48.80514199999925,
+            "pending": 0
+          },
+          "commit/prepare": {
+            "count": 1,
+            "ms": 6.398914000000332,
+            "pending": 0
+          },
+          "commit/append": {
+            "count": 1,
+            "ms": 32.31355100000019,
+            "pending": 0
+          },
+          "commit/publish": {
+            "count": 1,
+            "ms": 73.86223900000005,
+            "pending": 0
+          },
+          "admit-run/read": {
+            "count": 185,
+            "ms": 98.14557599999989,
+            "pending": 0
+          },
+          "admit-run/create": {
+            "count": 14,
+            "ms": 36.32690400000092,
+            "pending": 0
+          },
+          "admit-run/prepare": {
+            "count": 1,
+            "ms": 11.264777999999751,
+            "pending": 0
+          },
+          "admit-run/append": {
+            "count": 1,
+            "ms": 33.72540200000003,
+            "pending": 0
+          },
+          "admit-run/publish": {
+            "count": 1,
+            "ms": 90.99007900000015,
+            "pending": 0
+          },
+          "admit-run/replace": {
+            "count": 6,
+            "ms": 38.617815000000064,
+            "pending": 0
+          },
+          "check-start/read": {
+            "count": 166,
+            "ms": 83.79145499999777,
+            "pending": 0
+          },
+          "check-start/prepare": {
+            "count": 1,
+            "ms": 11.413578000000143,
+            "pending": 0
+          },
+          "check-start/create": {
+            "count": 12,
+            "ms": 31.175281000000723,
+            "pending": 0
+          },
+          "check-start/append": {
+            "count": 1,
+            "ms": 28.350558000000092,
+            "pending": 0
+          },
+          "check-start/publish": {
+            "count": 1,
+            "ms": 90.1423990000003,
+            "pending": 0
+          },
+          "check-start/replace": {
+            "count": 5,
+            "ms": 30.102220000000216,
+            "pending": 0
+          },
+          "check-settled/read": {
+            "count": 180,
+            "ms": 106.04188600000089,
+            "pending": 0
+          },
+          "check-settled/prepare": {
+            "count": 1,
+            "ms": 17.105221999999685,
+            "pending": 0
+          },
+          "check-settled/create": {
+            "count": 13,
+            "ms": 36.89022600000044,
+            "pending": 0
+          },
+          "check-settled/append": {
+            "count": 1,
+            "ms": 28.957988999999998,
+            "pending": 0
+          },
+          "check-settled/publish": {
+            "count": 1,
+            "ms": 104.1028180000003,
+            "pending": 0
+          },
+          "check-settled/replace": {
+            "count": 7,
+            "ms": 44.200158999999985,
+            "pending": 0
+          },
+          "reads/read": {
+            "count": 7,
+            "ms": 3.2063700000003337,
+            "pending": 0
+          },
+          "reads/latest": {
+            "count": 4,
+            "ms": 9.217366000000311,
+            "pending": 0
+          },
+          "reads/batch": {
+            "count": 16,
+            "ms": 7.006134000000657,
+            "pending": 0
+          },
+          "reads/entityBatches": {
+            "count": 3,
+            "ms": 24.53461600000037,
+            "pending": 0
+          },
+          "reads/snapshot": {
+            "count": 2,
+            "ms": 0.9908199999995304,
+            "pending": 0
+          }
+        },
+        "facts": {}
+      },
+      {
+        "test": "pending-observer",
+        "totalMs": 846.8763149999995,
+        "wallMs": 847,
+        "fakeTimers": false,
+        "fakeTimersAtFinish": false,
+        "phases": {
+          "setup": 92.6952409999999,
+          "commit": 144.14987400000018,
+          "admit-run": 218.23306299999967,
+          "snapshot": 17.490512000000308,
+          "waiting-commit": 157.679893,
+          "observer-notification": 59.634638999999424,
+          "held-commit": 156.59788300000037,
+          "teardown": 0.395209999999679
+        },
+        "calls": {
+          "setup/create": {
+            "count": 11,
+            "ms": 18.47636299999931,
+            "pending": 0
+          },
+          "setup/read": {
+            "count": 87,
+            "ms": 29.605341999998473,
+            "pending": 0
+          },
+          "setup/replace": {
+            "count": 1,
+            "ms": 3.354432000000088,
+            "pending": 0
+          },
+          "commit/read": {
+            "count": 165,
+            "ms": 76.74003399999992,
+            "pending": 0
+          },
+          "commit/create": {
+            "count": 15,
+            "ms": 42.46683699999903,
+            "pending": 0
+          },
+          "commit/prepare": {
+            "count": 1,
+            "ms": 7.929915000000165,
+            "pending": 0
+          },
+          "commit/append": {
+            "count": 1,
+            "ms": 34.78834299999971,
+            "pending": 0
+          },
+          "commit/publish": {
+            "count": 1,
+            "ms": 69.00125600000001,
+            "pending": 0
+          },
+          "admit-run/read": {
+            "count": 205,
+            "ms": 132.4793290000007,
+            "pending": 0
+          },
+          "admit-run/create": {
+            "count": 16,
+            "ms": 52.35663199999908,
+            "pending": 0
+          },
+          "admit-run/prepare": {
+            "count": 1,
+            "ms": 13.781409000000167,
+            "pending": 0
+          },
+          "admit-run/append": {
+            "count": 1,
+            "ms": 41.7963279999999,
+            "pending": 0
+          },
+          "admit-run/publish": {
+            "count": 1,
+            "ms": 120.72531900000013,
+            "pending": 0
+          },
+          "admit-run/replace": {
+            "count": 6,
+            "ms": 40.67318699999987,
+            "pending": 0
+          },
+          "snapshot/latest": {
+            "count": 1,
+            "ms": 2.659381000000394,
+            "pending": 0
+          },
+          "snapshot/read": {
+            "count": 4,
+            "ms": 2.3890919999998914,
+            "pending": 0
+          },
+          "snapshot/batch": {
+            "count": 5,
+            "ms": 1.6050809999997,
+            "pending": 0
+          },
+          "snapshot/snapshot": {
+            "count": 1,
+            "ms": 0.4808509999998023,
+            "pending": 0
+          },
+          "waiting-commit/read": {
+            "count": 149,
+            "ms": 104.43215100000043,
+            "pending": 0
+          },
+          "waiting-commit/prepare": {
+            "count": 1,
+            "ms": 12.55551800000012,
+            "pending": 0
+          },
+          "waiting-commit/create": {
+            "count": 10,
+            "ms": 30.56391000000076,
+            "pending": 0
+          },
+          "waiting-commit/append": {
+            "count": 1,
+            "ms": 39.23669599999994,
+            "pending": 0
+          },
+          "waiting-commit/publish": {
+            "count": 1,
+            "ms": 93.89955099999997,
+            "pending": 0
+          },
+          "waiting-commit/replace": {
+            "count": 5,
+            "ms": 39.24153600000045,
+            "pending": 0
+          },
+          "observer-notification/latest": {
+            "count": 1,
+            "ms": 2.5114810000000034,
+            "pending": 0
+          },
+          "observer-notification/read": {
+            "count": 4,
+            "ms": 2.819981999999982,
+            "pending": 0
+          },
+          "observer-notification/batch": {
+            "count": 7,
+            "ms": 2.6784410000004755,
+            "pending": 0
+          },
+          "observer-notification/snapshot": {
+            "count": 1,
+            "ms": 0.684161000000131,
+            "pending": 0
+          },
+          "held-commit/read": {
+            "count": 149,
+            "ms": 102.95634500000233,
+            "pending": 0
+          },
+          "held-commit/prepare": {
+            "count": 1,
+            "ms": 11.400837999999567,
+            "pending": 0
+          },
+          "held-commit/create": {
+            "count": 10,
+            "ms": 30.610329999998612,
+            "pending": 0
+          },
+          "held-commit/append": {
+            "count": 1,
+            "ms": 42.80367800000022,
+            "pending": 0
+          },
+          "held-commit/publish": {
+            "count": 1,
+            "ms": 89.68373900000006,
+            "pending": 0
+          },
+          "held-commit/replace": {
+            "count": 5,
+            "ms": 40.13735699999961,
+            "pending": 0
+          }
+        },
+        "facts": {
+          "pendingWrites": 0
+        }
+      }
+    ],
+    "afterBroad": [
+      {
+        "test": "check-obligations",
+        "totalMs": 768.6568240000001,
+        "wallMs": 769,
+        "fakeTimers": false,
+        "fakeTimersAtFinish": false,
+        "phases": {
+          "setup": 88.13067799999999,
+          "commit": 147.0735169999998,
+          "admit-run": 168.17614000000003,
+          "check-start": 153.01720000000023,
+          "check-settled": 168.5699709999999,
+          "reads": 43.689318000000185
+        },
+        "calls": {
+          "setup/create": {
+            "count": 11,
+            "ms": 19.077071999999134,
+            "pending": 0
+          },
+          "setup/read": {
+            "count": 93,
+            "ms": 32.449536999999054,
+            "pending": 0
+          },
+          "setup/replace": {
+            "count": 1,
+            "ms": 4.628513000000112,
+            "pending": 0
+          },
+          "commit/read": {
+            "count": 165,
+            "ms": 79.25384900000017,
+            "pending": 0
+          },
+          "commit/create": {
+            "count": 15,
+            "ms": 49.29126300000053,
+            "pending": 0
+          },
+          "commit/prepare": {
+            "count": 1,
+            "ms": 6.180494000000181,
+            "pending": 0
+          },
+          "commit/append": {
+            "count": 1,
+            "ms": 33.63152200000013,
+            "pending": 0
+          },
+          "commit/publish": {
+            "count": 1,
+            "ms": 75.10506900000019,
+            "pending": 0
+          },
+          "admit-run/read": {
+            "count": 185,
+            "ms": 96.55532900000253,
+            "pending": 0
+          },
+          "admit-run/create": {
+            "count": 14,
+            "ms": 36.13953199999969,
+            "pending": 0
+          },
+          "admit-run/prepare": {
+            "count": 1,
+            "ms": 11.259408000000349,
+            "pending": 0
+          },
+          "admit-run/append": {
+            "count": 1,
+            "ms": 34.11766200000011,
+            "pending": 0
+          },
+          "admit-run/publish": {
+            "count": 1,
+            "ms": 92.10169000000042,
+            "pending": 0
+          },
+          "admit-run/replace": {
+            "count": 6,
+            "ms": 40.05508599999985,
+            "pending": 0
+          },
+          "check-start/read": {
+            "count": 166,
+            "ms": 89.03192299999773,
+            "pending": 0
+          },
+          "check-start/prepare": {
+            "count": 1,
+            "ms": 11.566697000000204,
+            "pending": 0
+          },
+          "check-start/create": {
+            "count": 12,
+            "ms": 38.87902500000064,
+            "pending": 0
+          },
+          "check-start/append": {
+            "count": 1,
+            "ms": 29.6581299999998,
+            "pending": 0
+          },
+          "check-start/publish": {
+            "count": 1,
+            "ms": 100.09486600000037,
+            "pending": 0
+          },
+          "check-start/replace": {
+            "count": 5,
+            "ms": 36.27875400000039,
+            "pending": 0
+          },
+          "check-settled/read": {
+            "count": 180,
+            "ms": 104.32944100000486,
+            "pending": 0
+          },
+          "check-settled/prepare": {
+            "count": 1,
+            "ms": 12.632008000000042,
+            "pending": 0
+          },
+          "check-settled/create": {
+            "count": 13,
+            "ms": 37.29350399999885,
+            "pending": 0
+          },
+          "check-settled/append": {
+            "count": 1,
+            "ms": 22.720164999999724,
+            "pending": 0
+          },
+          "check-settled/publish": {
+            "count": 1,
+            "ms": 103.11864800000012,
+            "pending": 0
+          },
+          "check-settled/replace": {
+            "count": 7,
+            "ms": 53.92154700000037,
+            "pending": 0
+          },
+          "reads/read": {
+            "count": 7,
+            "ms": 3.3314510000000155,
+            "pending": 0
+          },
+          "reads/latest": {
+            "count": 4,
+            "ms": 9.283116999999493,
+            "pending": 0
+          },
+          "reads/batch": {
+            "count": 16,
+            "ms": 7.1014570000002095,
+            "pending": 0
+          },
+          "reads/entityBatches": {
+            "count": 3,
+            "ms": 24.58835599999975,
+            "pending": 0
+          },
+          "reads/snapshot": {
+            "count": 2,
+            "ms": 1.0013300000000527,
+            "pending": 0
+          }
+        },
+        "facts": {}
+      },
+      {
+        "test": "pending-observer",
+        "totalMs": 826.385902,
+        "wallMs": 827,
+        "fakeTimers": false,
+        "fakeTimersAtFinish": false,
+        "phases": {
+          "setup": 101.2516169999999,
+          "commit": 139.8597420000001,
+          "admit-run": 200.37415099999998,
+          "snapshot": 14.80121999999983,
+          "waiting-commit": 148.4164270000001,
+          "observer-notification": 55.76897599999984,
+          "held-commit": 165.685379,
+          "teardown": 0.2283900000002177
+        },
+        "calls": {
+          "setup/create": {
+            "count": 11,
+            "ms": 20.476203999999143,
+            "pending": 0
+          },
+          "setup/read": {
+            "count": 87,
+            "ms": 32.98516300000165,
+            "pending": 0
+          },
+          "setup/replace": {
+            "count": 1,
+            "ms": 3.627712999999858,
+            "pending": 0
+          },
+          "commit/read": {
+            "count": 165,
+            "ms": 71.29872499999738,
+            "pending": 0
+          },
+          "commit/create": {
+            "count": 15,
+            "ms": 43.61499800000047,
+            "pending": 0
+          },
+          "commit/prepare": {
+            "count": 1,
+            "ms": 6.9489449999996395,
+            "pending": 0
+          },
+          "commit/append": {
+            "count": 1,
+            "ms": 25.66658600000028,
+            "pending": 0
+          },
+          "commit/publish": {
+            "count": 1,
+            "ms": 72.49611700000014,
+            "pending": 0
+          },
+          "admit-run/read": {
+            "count": 205,
+            "ms": 119.108738000004,
+            "pending": 0
+          },
+          "admit-run/create": {
+            "count": 16,
+            "ms": 50.32135099999914,
+            "pending": 0
+          },
+          "admit-run/prepare": {
+            "count": 1,
+            "ms": 12.136907999999949,
+            "pending": 0
+          },
+          "admit-run/append": {
+            "count": 1,
+            "ms": 32.116491000000224,
+            "pending": 0
+          },
+          "admit-run/publish": {
+            "count": 1,
+            "ms": 118.83580799999982,
+            "pending": 0
+          },
+          "admit-run/replace": {
+            "count": 6,
+            "ms": 46.10425000000032,
+            "pending": 0
+          },
+          "snapshot/latest": {
+            "count": 1,
+            "ms": 2.4081820000001244,
+            "pending": 0
+          },
+          "snapshot/read": {
+            "count": 4,
+            "ms": 1.8818610000007538,
+            "pending": 0
+          },
+          "snapshot/batch": {
+            "count": 5,
+            "ms": 1.4428119999997762,
+            "pending": 0
+          },
+          "snapshot/snapshot": {
+            "count": 1,
+            "ms": 0.4339399999998932,
+            "pending": 0
+          },
+          "waiting-commit/read": {
+            "count": 149,
+            "ms": 93.53854199999978,
+            "pending": 0
+          },
+          "waiting-commit/prepare": {
+            "count": 1,
+            "ms": 12.30066799999986,
+            "pending": 0
+          },
+          "waiting-commit/create": {
+            "count": 10,
+            "ms": 32.48936100000037,
+            "pending": 0
+          },
+          "waiting-commit/append": {
+            "count": 1,
+            "ms": 35.5386840000001,
+            "pending": 0
+          },
+          "waiting-commit/publish": {
+            "count": 1,
+            "ms": 86.93449699999974,
+            "pending": 0
+          },
+          "waiting-commit/replace": {
+            "count": 5,
+            "ms": 39.12923699999965,
+            "pending": 0
+          },
+          "observer-notification/latest": {
+            "count": 1,
+            "ms": 3.798131999999896,
+            "pending": 0
+          },
+          "observer-notification/read": {
+            "count": 4,
+            "ms": 2.3407399999996414,
+            "pending": 0
+          },
+          "observer-notification/batch": {
+            "count": 7,
+            "ms": 2.1163010000000213,
+            "pending": 0
+          },
+          "observer-notification/snapshot": {
+            "count": 1,
+            "ms": 0.5062600000001112,
+            "pending": 0
+          },
+          "held-commit/read": {
+            "count": 149,
+            "ms": 107.9230440000074,
+            "pending": 0
+          },
+          "held-commit/prepare": {
+            "count": 1,
+            "ms": 11.610057000000324,
+            "pending": 0
+          },
+          "held-commit/create": {
+            "count": 10,
+            "ms": 34.39809100000093,
+            "pending": 0
+          },
+          "held-commit/append": {
+            "count": 1,
+            "ms": 41.1262670000001,
+            "pending": 0
+          },
+          "held-commit/publish": {
+            "count": 1,
+            "ms": 100.69003599999996,
+            "pending": 0
+          },
+          "held-commit/replace": {
+            "count": 5,
+            "ms": 42.52097799999956,
+            "pending": 0
+          }
+        },
+        "facts": {
+          "pendingWrites": 0
+        }
+      }
+    ],
+    "fixtureCorrection": "Release the pending observer gate, unsubscribe and close HistoryLive in finally, not only after all assertions; not claimed as original timeout cause.",
+    "noDeadlineChanged": true,
+    "budgetIncreaseRecommended": false,
+    "promises": "Metric wrappers return exact originals, observe both fulfillment/rejection independently, never await/replace/refund originals."
+  },
+  "remainingFeatureProbe": {
+    "log": "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/remaining-probe.json",
+    "exit": 0,
+    "scriptExitIsFeaturePass": false,
+    "result": {
+      "classification": "actual readonly incomplete feature probe, not passing acceptance",
+      "outcomes": [
+        {
+          "mode": "discover",
+          "reader": "tasks",
+          "status": "refused",
+          "code": "receipt-inconclusive",
+          "ms": 101.44214699999999
+        },
+        {
+          "mode": "discover",
+          "reader": "runs",
+          "status": "refused",
+          "code": "receipt-inconclusive",
+          "ms": 100.454566
+        },
+        {
+          "mode": "discover",
+          "reader": "messages",
+          "status": "refused",
+          "code": "receipt-inconclusive",
+          "ms": 101.37962600000003
+        },
+        {
+          "mode": "discover",
+          "reader": "tools",
+          "status": "refused",
+          "code": "receipt-inconclusive",
+          "ms": 100.969427
+        },
+        {
+          "mode": "discover",
+          "reader": "contents",
+          "status": "refused",
+          "code": "receipt-inconclusive",
+          "ms": 100.52662499999997
+        },
+        {
+          "mode": "discover",
+          "reader": "events",
+          "status": "refused",
+          "code": "receipt-inconclusive",
+          "ms": 101.31661699999995
+        },
+        {
+          "mode": "discover",
+          "reader": "checks",
+          "status": "refused",
+          "code": "receipt-inconclusive",
+          "ms": 102.60489700000005
+        },
+        {
+          "mode": "discover",
+          "reader": "changes",
+          "status": "refused",
+          "code": "receipt-inconclusive",
+          "ms": 100.53114600000004
+        },
+        {
+          "mode": "discover",
+          "reader": "reviews",
+          "status": "refused",
+          "code": "receipt-inconclusive",
+          "ms": 84.44269499999996
+        },
+        {
+          "mode": "selected",
+          "reader": "tasks",
+          "status": "refused",
+          "code": "receipt-inconclusive",
+          "ms": 42.186188000000016
+        },
+        {
+          "mode": "selected",
+          "reader": "runs",
+          "status": "refused",
+          "code": "receipt-inconclusive",
+          "ms": 55.343565999999896
+        },
+        {
+          "mode": "selected",
+          "reader": "messages",
+          "status": "refused",
+          "code": "receipt-inconclusive",
+          "ms": 59.87028000000009
+        },
+        {
+          "mode": "selected",
+          "reader": "tools",
+          "status": "refused",
+          "code": "receipt-inconclusive",
+          "ms": 53.09813499999996
+        },
+        {
+          "mode": "selected",
+          "reader": "contents",
+          "status": "refused",
+          "code": "receipt-inconclusive",
+          "ms": 44.47314899999992
+        },
+        {
+          "mode": "selected",
+          "reader": "events",
+          "status": "refused",
+          "code": "receipt-inconclusive",
+          "ms": 46.14462000000003
+        },
+        {
+          "mode": "selected",
+          "reader": "checks",
+          "status": "refused",
+          "code": "receipt-inconclusive",
+          "ms": 47.79086099999995
+        },
+        {
+          "mode": "selected",
+          "reader": "changes",
+          "status": "refused",
+          "code": "receipt-inconclusive",
+          "ms": 37.13278500000001
+        },
+        {
+          "mode": "selected",
+          "reader": "reviews",
+          "status": "refused",
+          "code": "receipt-inconclusive",
+          "ms": 43.64219800000001
+        },
+        {
+          "reader": "entity",
+          "status": "refused",
+          "code": "receipt-inconclusive",
+          "ms": 38.61136499999998
+        }
+      ],
+      "sourceUnchanged": true
+    }
+  },
+  "classification": {
+    "nativeFilesystemProcesses": [
+      "3 cold detail tests with a new ordinary Node for every continuation",
+      "9MiB no-index graph, new native process every continuation, then real W1 HTTP/client readonlyPOST and unauthenticated denial",
+      "exact8MiB+recovery bad-head search/detail/both exports; prior repeated-recovery controls retained",
+      "existing actual W1 preparation/W2 stock SDK >2MiB real journal case in full focused run"
+    ],
+    "injected": [
+      "graph structural/client mismatch vector with injected transport",
+      "owner allocation and check-native facts in history fixtures are fabricated, even though journal IO is real",
+      "fault files deliberately modified in isolated fixtures"
+    ],
+    "notQualified": [
+      "list/entity completion",
+      "cause of historical two timeouts",
+      "independent full review",
+      "whole product/distribution/extracted service/browser/terminal",
+      "physical human/phone/paid provider",
+      "Windows/macOS/ConPTY/Node22"
+    ]
+  },
+  "preserved": {
+    "oldRootsAndReports": true,
+    "noTaskStateGitPackageDependencySpecCredentialDeploymentChanges": true,
+    "workerModelAuthExecutionUntouched": true,
+    "noConsumerCleanup": true
+  },
+  "logs": {
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/agents.log": "fc459b9f542bbe9546842994f18a74f6a80e908f467ce497916608c24531eebf",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/broad-phases.jsonl": "279395cd539f563b72c46116fed1bcd02e34b5b2b95c10960890131c0bdbb789",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/broad.log": "1814a78b6af6ed912b582a3fdfe11c23bb45a3a8f6da96d9e54f71ca11e49218",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/causal-after.jsonl": "e091d1ce42c9ecc142ecf6aee34eeab050b8affaefa497ab01a844fc9de8158b",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/causal-before.jsonl": "832cde7263431ddfcae2ca702da9213c0834a24899896572a0c95902a04c4365",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/causal-before.log": "370a4d157ad8b5ad6482541313220e10e8e9bd14eb3c86b62562d496f1cac417",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/check-before-broad.log": "d8e0559fba0bc409f2ba5d1a97a129af498576567949aee4278dd415d3d51e90",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/check.log": "d8e0559fba0bc409f2ba5d1a97a129af498576567949aee4278dd415d3d51e90",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/detail-first.log": "78c1aea64693a5b59877061b8e52dffcaef71d72a5beca1244b4950fe7920a6f",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/final-source-format.log": "0be14fb01b8b55a603b03457847e9a39447dfee825a4bc93744a5364c3676608",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/format-1.log": "178dae519bbd326ee21f537332cf53fcddd61ed52896b67cc51b31217d6165e0",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/graph-first.log": "dbf695a2ed44769030f35eeae70f6ae7c5d80b3933983c1e38b9d6576822382a",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/graph-format.log": "f1303923e76c7e8d6492d90f661db0463510bb3ce57b3a09b907366804185b7b",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/graph-types-2.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/graph-types.log": "dfa3a4c422b88a72df5c7b0e3e77c7444816d15858d5b9e3a7375c39ba23cd86",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/lint.log": "35170efa0b03b57d29aace0277ee863a2142159b8535620380b999951d4b05f5",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/point-transport-final.log": "ee168e04056c45cb71bbcbb9807e53361287ad1575e89ad9c54e0a4709e136d6",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/remaining-probe-build.log": "15dad38c5e423b99dfdb038174b4de53257f887c9ee0e4a016765f4fc8fe5b2c",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/remaining-probe.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/targeted-after.log": "8588860652f1896abb7611c3a245e827409ac5c1b02611006ffd935bd04398df",
+    "/home/mirako/abel/.cadence-w3-read-completion-GcoiqN/types-first.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "handoff": {
+    "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-read-completion-handoff.md",
+    "sha256": "daa6e4ec399344d06e8bbf8ac1ad03415135039ab93e01dc7cab5da5108525c6"
+  }
+}

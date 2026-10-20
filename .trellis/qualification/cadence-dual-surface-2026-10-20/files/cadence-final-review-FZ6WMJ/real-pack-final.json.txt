@@ -1,0 +1,18 @@
+{
+  "command": [
+    "bun",
+    "pm",
+    "pack",
+    "--destination",
+    "/home/mirako/abel/cadence-final-review-FZ6WMJ/pack-final"
+  ],
+  "cwd": "/home/mirako/abel/cadence",
+  "pid": 2444652,
+  "started": 1792440776.6843786,
+  "temporaryRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ",
+  "originalWait": true,
+  "exit": 0,
+  "elapsedSeconds": 0.206,
+  "log": "/home/mirako/abel/cadence-final-review-FZ6WMJ/real-pack-final.log",
+  "logSha256": "9b9a177597931d2480d853475411fda9afcfa05a607194eb369ae9ccdfd27a4f"
+}

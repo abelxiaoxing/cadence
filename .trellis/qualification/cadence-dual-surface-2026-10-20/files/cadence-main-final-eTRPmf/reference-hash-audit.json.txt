@@ -1,0 +1,234 @@
+[
+  {
+    "path": ".trellis/tasks/10-16-cadence-integrated-delivery/research/evidence.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/evidence-audit.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/original-receipts-audit.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/final-inputs-repaired.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/frozen-after-matrix.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/verify-repaired.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/verify-repaired.log",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/real-pack-final.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/real-pack-final.log",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/real-extract-final.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/real-extract-final.log",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-browser-final.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-browser-final.log",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-native-final.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-native-final.log",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-operations-final.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-operations-final.log",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/review-current-boundary.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/review-current-boundary.log",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/focused-security-history.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/focused-security-history.log",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/terminal-reviewed.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/terminal-reviewed.log",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/provenance-complete.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/provenance-complete.log",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/browser-review-fixed.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/browser-review-fixed.log",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/collect-final.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/collect-final.log",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/pack-final/abelxiaoxing-cadence-1.8.4.tgz",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extraction-final-audit.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/post-exercise-audit.json",
+    "match": true
+  },
+  {
+    "path": "provenance/webui-reuse.json",
+    "match": true
+  },
+  {
+    "path": "provenance/bundled-notices.json",
+    "match": true
+  },
+  {
+    "path": "licenses/bundled-web.txt",
+    "match": true
+  },
+  {
+    "path": ".trellis/tasks/10-16-cadence-integrated-delivery/research/final-review-preimages/webui-reuse.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/final-receipts.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/distribution-native.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/distribution-native.log",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/parent-drain-counterexample.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/parent-drain-counterexample.log",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/provenance-counterexample.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/provenance-counterexample.log",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/provenance-reviewed.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/provenance-reviewed.log",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/lint-reviewed.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/lint-reviewed.log",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/verify-final.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/verify-final.log",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/review-observer-counterexample.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/review-observer-counterexample.log",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-JdTXoX/pty-receipt.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-KRlEeU/receipt.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cdb-DYeST0/receipt.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/prepare-extracted-matrix-final.py",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-matrix-final-inputs.json",
+    "match": true
+  },
+  {
+    "path": ".trellis/tasks/10-16-cadence-integrated-delivery/research/final-review-preimages/acceptance-map.json",
+    "match": true
+  },
+  {
+    "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/final-process-inventory.json",
+    "match": true
+  }
+]

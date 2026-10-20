@@ -1,0 +1,21 @@
+{
+  "passed": true,
+  "lostReplies": 1,
+  "contacts": 2,
+  "manualRefused": true,
+  "buildRefused": true,
+  "compatibleCancel": true,
+  "failedReview": true,
+  "nativeObserver": {
+    "runId": "144b898f-cee6-4e7f-974e-9855998c01ba",
+    "originalDriverClose": [
+      0,
+      null
+    ],
+    "receipt": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-gI2NLC/mixed-pi/pty-receipt.json"
+  },
+  "originalBrowserClose": [
+    0,
+    null
+  ]
+}

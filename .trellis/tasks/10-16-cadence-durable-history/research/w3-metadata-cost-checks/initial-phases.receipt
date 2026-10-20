@@ -1,0 +1,135 @@
+{
+  "schema": "cadence-w3-metadata-cost/1",
+  "phases": [
+    {
+      "name": "setup",
+      "ms": 153.77127099999984,
+      "counts": {
+        "hash.calls": 102,
+        "hash.bytes": 24492,
+        "io.lstatSync": 10392,
+        "io.openSync": 211,
+        "io.fsyncSync": 27,
+        "io.closeSync": 211,
+        "io.fstatSync": 272,
+        "io.readSync": 192,
+        "io.readBytes": 23633,
+        "io.requestedBytes": 15101039,
+        "parse.calls": 89,
+        "parse.bytes": 4445
+      }
+    },
+    {
+      "name": "append-index-82x100",
+      "ms": 37619.118195,
+      "counts": {
+        "navigation.prepare": 82,
+        "tree.head": 1562,
+        "hash.calls": 66435,
+        "hash.bytes": 227148668,
+        "io.lstatSync": 6030788,
+        "io.openSync": 95473,
+        "io.fstatSync": 126893,
+        "io.readSync": 90716,
+        "io.readBytes": 164772141,
+        "io.requestedBytes": 13405071663,
+        "io.closeSync": 95473,
+        "parse.calls": 10061,
+        "parse.bytes": 6870087,
+        "io.fsyncSync": 9346,
+        "navigation.publish": 82
+      }
+    },
+    {
+      "name": "before-tree",
+      "ms": 114.68448500000522,
+      "counts": {
+        "io.readdirSync": 1676,
+        "io.readFileSync": 4450,
+        "io.readFileBytes": 3597066
+      }
+    },
+    {
+      "name": "events-restart-zero-result",
+      "ms": 720.778422000003,
+      "counts": {
+        "budget.reserve": 19134,
+        "io.lstatSync": 37743,
+        "io.openSync": 508,
+        "io.fstatSync": 804,
+        "io.readSync": 508,
+        "io.readBytes": 29126364,
+        "io.requestedBytes": 29967264,
+        "io.closeSync": 508,
+        "hash.calls": 18869,
+        "hash.bytes": 8286917,
+        "parse.calls": 743,
+        "parse.bytes": 15658,
+        "navigation.snapshot": 53,
+        "navigation.batch": 27,
+        "navigation.next": 171
+      }
+    },
+    {
+      "name": "messages-1200",
+      "ms": 3993.800439000006,
+      "counts": {
+        "budget.reserve": 25798,
+        "io.lstatSync": 673378,
+        "io.openSync": 3620,
+        "io.fstatSync": 6953,
+        "io.readSync": 3599,
+        "io.readBytes": 46770257,
+        "io.requestedBytes": 46770789,
+        "io.closeSync": 3620,
+        "hash.calls": 29880,
+        "hash.bytes": 20087117,
+        "parse.calls": 20477,
+        "parse.bytes": 1813655,
+        "navigation.snapshot": 76,
+        "navigation.batch": 4839,
+        "navigation.next": 157,
+        "target.entityAt": 1230,
+        "navigation.entityBatches": 1230,
+        "tree.head": 2443,
+        "sources.read": 2400,
+        "sources.assertCurrent": 1200
+      }
+    },
+    {
+      "name": "tasks-70",
+      "ms": 547.820878999999,
+      "counts": {
+        "budget.reserve": 18449,
+        "io.lstatSync": 56609,
+        "io.openSync": 386,
+        "io.fstatSync": 723,
+        "io.readSync": 384,
+        "io.readBytes": 6946907,
+        "io.requestedBytes": 7108631,
+        "io.closeSync": 386,
+        "hash.calls": 11106,
+        "hash.bytes": 6700224,
+        "parse.calls": 1353,
+        "parse.bytes": 142043,
+        "navigation.snapshot": 12,
+        "navigation.batch": 287,
+        "navigation.next": 93,
+        "target.entityAt": 74,
+        "navigation.entityBatches": 74,
+        "tree.head": 147,
+        "sources.read": 140,
+        "sources.assertCurrent": 70
+      }
+    },
+    {
+      "name": "after-tree",
+      "ms": 161.1461649999983,
+      "counts": {
+        "io.readdirSync": 1676,
+        "io.readFileSync": 4450,
+        "io.readFileBytes": 3597066
+      }
+    }
+  ]
+}

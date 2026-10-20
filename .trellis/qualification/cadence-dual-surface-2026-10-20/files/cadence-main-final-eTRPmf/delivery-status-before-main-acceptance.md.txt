@@ -1,0 +1,286 @@
+# Integrated Delivery — Single Remaining-work Ledger
+
+## Authority and Operating Rule
+
+The user's latest continuous authorization explicitly requires integrated completion, not repeated partial handoffs.
+Main is the execution coordinator; exactly one delegated implementation writer owns shared code at a time.
+This file is the sole forward-looking remaining-work/status ledger; old reports are preserved evidence, not competing plans.
+No commit, push, publication, real deployment, credential use, unapproved dependency installation or cleanup is authorized.
+
+Process inventory: `/home/mirako/abel/cadence-delivery-main-ghe5bA/process-inventory.json`.
+No Node/Bun/Vitest/browser or delegated implementation/check process was observed running.
+Two Pi terminal sessions and unrelated user services were observed; no ownership claim or signal was made against them.
+A future tool timeout is not process settlement: retain original runner handles and check confirmed ownership before any intervention.
+Use fresh0700 directories under `/home/mirako/abel`, with TMPDIR/TEMP/TMP explicitly set; preserve all old roots.
+
+## Current Source Truth
+
+Current task is W7 (`10-16-cadence-integrated-delivery`, in_progress); D1+D2, D3 and D4 integration reviews are complete.
+Latest current views are implemented and independently reviewed: `TaskActions.current/currentChanges/activeRuns/context/workspace/checkObligations`, nullable real choice, cold publication lineage and `proposePlan` exist.
+Do not rebuild them.
+`src/service/host.ts` now composes the real action/choice/current/check/history/live ports and package-relative assets before admission.
+Initial model choice remains null; normal mutation ingress requires independently compiled client/service/assets compatibility.
+The built WebUI now binds current plan/graph/proposal, explicit model choice, current changes and independent active-run Cancel discovery.
+The native terminal now uses the same authenticated service client/current/model/action/history ports; no terminal TaskController, SDK-auth resolution or embedded executor remains reachable.
+D3 independent native review is complete, with two product defects and one fixture defect fixed; fresh source regular/fullscreen PTYs and focused adapter/guard/capture checks pass.
+W7 now records both extracted and whole-delivery available-host qualification separately below.
+W7 now supplies the complete129-member dual-surface package, notices/docs/specs and executed available-host full verify, separate tar extraction and integrated browser/native/HTTPS/operations matrix.
+Independent full-scope review is complete: all required available-host R1–R14/AC1–AC22 lanes pass on the final repaired inputs; no known required defect remains.
+Current W7 evidence is in `../10-16-cadence-integrated-delivery/research/{acceptance-map,final-review}.json`; original `evidence.json`, candidate preimages and earlier sections retain their original boundary/evidence limits.
+This is available-host functional acceptance, not publication authority or qualification of the additional physical/platform/provider/install lanes.
+Earlier19-failure and11-failure receipts stay failed/unexplained; later changed-source complete affected passes do not establish retrospective causes.
+Current failures in integrated acceptance must be fixed; historical causal research is not a separate delivery prerequisite.
+
+## Remaining Required Work — None Known After Independent Review
+
+| ID | Capability / requirements                                   | Available-host final review                                                         | Remaining required work | External blocker |
+| -- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------- | ----------------------- | ---------------- |
+| D1 | Real accepting service; R4–8,R11; AC2,5–12,16               | PASS: actual owner/actions, original lifetimes, source/tar gates                    | None known              | None established |
+| D2 | Complete WebUI; R1–4,R6,R8–10,R13; AC2–4,6–8,10,12–15,18–19 | PASS: built controls/history, mixed clients and HTTPS/four viewports                | None known              | None established |
+| D3 | Native client; R1,R4–8,R13; AC1,4–9,12,18–20,22             | PASS: all four real source/extracted regular/fullscreen PTYs and native exports     | None known              | None established |
+| D4 | Management/proxy/recovery; R7,R9,R11,R14; AC9,14–16,20–21   | PASS: source/tar plain+gzip OAuth/worker and crash/TTY recovery/restart             | None known              | None established |
+| D5 | Complete distribution/docs; R3,R5,R12–14; AC3,5,17–22       | PASS: full verify, exact129/35 tar, complete notices/pins and source-bound evidence | None known              | None established |
+
+Every AC1–AC22 is bound in the current acceptance map; this verdict is not a sum of partial component counts.
+Additional physical/device/platform/provider/install lanes remain unqualified, not waived or assumed passed.
+
+## Complete Requirement / Acceptance Coverage
+
+| Requirement                 | Delivery owners / required acceptance |
+| --------------------------- | ------------------------------------- |
+| R1 complete dual surface    | D1–D3; AC1,6,8                        |
+| R2 truthful subagents       | D1–D3; AC2,10,12,18                   |
+| R3 substantial reuse        | D2,D5; AC3,22                         |
+| R4 shared truth             | D1–D3; AC2,4,7–8,19                   |
+| R5 preservation             | D1–D5; AC5,9,11,19,21–22              |
+| R6 explicit authority       | D1–D4; AC6–7,12,14–16                 |
+| R7 persistent lifetime      | D1,D3,D4; AC8–9,12,20                 |
+| R8 bounded collaboration    | D1–D3; AC10–12                        |
+| R9 secure personal remote   | D1,D2,D4; AC13–15                     |
+| R10 token entry             | D1,D2,D4; AC14–15                     |
+| R11 existing Pi auth        | D1,D4; AC16                           |
+| R12 integrated delivery     | D1–D5; AC17,22                        |
+| R13 complete history        | D1–D3,D5; AC18–19,21                  |
+| R14 operations/distribution | D3–D5; AC13,17,20–22                  |
+
+## Verification Cadence and Evidence
+
+During implementation run directly affected tests/typechecks/build checks only.
+Review complete capabilities/stable integration boundaries, not every small edit.
+Do not run the thousand-case backend suite after each local change.
+After integration stabilizes, execute full `verify`, separate real pack/extract and all required parent available-host browser/terminal/service/HTTPS/history scenarios.
+Record original runner exit; outer allowances cover whole suites; existing case/native/read/capture budgets and assertions remain unchanged.
+No skips, weaker assertions or unchanged retries to select a green run.
+
+Append only concise current results and exact log/receipt locations here; prefer updating this ledger over creating long new reports.
+Reviewers may write a concise finding list at the capability boundary.
+Whole-product acceptance must account for every AC1–AC22, not a sum of test counts.
+Windows/macOS/ConPTY, paid accounts, physical phone/human and second-machine field exercise remain additional unqualified lanes unless actually executed, not new authorization blockers.
+
+## Current Ownership / Next Action
+
+- Main: process/ownership coordination and this ledger.
+- D1+D2 independent review finished with three reproduced integration defects fixed and fresh focused service/built-browser checks passing; see below.
+- W5 native cutover independent review is complete; no known unfixed defect remains in the reviewed native boundary.
+  D4 independent review is complete with three defect groups fixed and fresh affected gates passing.
+  W7 independent final review and repaired-source full verify/separate extracted matrix are complete; Main communicates the integrated available-host verdict.
+  Task state remains in_progress and was not mutated by this review; no commit, publication, deployment or consumer cleanup is authorized.
+- Do not stop for routine approval or because one internal code slice ended.
+
+## D1+D2 Current Verification
+
+- Evidence: W4 [`research/d1-d2-evidence.json`](../10-16-cadence-subagent-orchestration/research/d1-d2-evidence.json); logs/frozen303-input manifest: `/home/mirako/abel/cadence-d1d2-EtIa2F/`.
+- Changed-source accepting/review/publication batch:86 passed/4files, including source and ordinary-Node generated hosts.
+  Latest built accepting-browser cases:2 passed; prior complete browser boundary:4 passed including2 readonly cases.
+  Separate affected377/4files,56/4files and108/8web-file runs overlap and are not a whole-suite total.
+- Root/web typechecks, syntax, canonical service/operator/web byte checks, Agent check and lint passed.
+  Browser originals closed0/null; latest four durable downloads verify prefix bytes/digest/trailer across task/run/child scopes.
+  No final verify, extraction, HTTPS, native cutover or physical/paid-provider claim.
+- Failed intermediate receipts remain preserved, including source review-publication uncertainty.
+  Validated per-run lookup reuse removes redundant full-history scans without changing limits; later passes do not establish an exclusive historical cause.
+  One timed-out owned fixture required verified-original-process termination; its unknown original wait and retained quarantine fences are explicitly recorded.
+  Final owned-process inventory is empty.
+
+## D1+D2 Independent Review
+
+- Reviewed accepting host/model/current/action/asset composition, independent build ingress and actual built workflows.
+  No known unfixed defect remains in this exercised boundary; this is not final D1–D5 acceptance.
+- Fixed three reproduced defects:
+  1. `web/src/client/observer.ts`: an already-attached second tab cached unavailable action capabilities after another client selected the owner model.
+     Changed model observations now refresh capabilities on the same attachment, without renewed consent or mutation replay.
+  2. `web/src/App.tsx`: a refused Cancel permanently disabled the safety button.
+     The lock now covers only the in-flight request; exact receipts remain visible and another stop requires a new explicit click.
+  3. `scripts/build-identity.mjs`: shared `src/plan-proposal.ts` bytes were missing from compatibility inputs.
+     Added the existing helper to the shared identity; canonically rebuilt service/browser outputs.
+- Fresh final gates: **37/3 service tests**, **110/8 web tests**, **4/3 actual built-browser scenarios**, all passed.
+  Root/web typechecks, syntax, canonical operator/service/web bytes and lint passed.
+  No thousand-case suite, whole verify, pack/extraction, HTTPS or terminal cutover was run.
+- Evidence/logs/original runner waits: `/home/mirako/abel/cadence-d1d2-review-9Ke2X2/review-evidence.json`; final logs `service-reviewed.log`, `browser-reviewed.log`, `web-tests.log`, `check.log`, `check-web.log`, `web-bytes.log`, `lint.log` in that root.
+  Final accepting-browser receipts: `/home/mirako/abel/cdb-njfd1y/receipt.json` and `/home/mirako/abel/cdn-MfkCnH/receipt.json`, both original browser close0/null.
+  Four durable task/run/child downloads retain exact digest/trailer checks; viewport simulation is not physical-device evidence.
+- Counterexamples remain failed in `browser-counterexamples.log` and `build-input-counterexample.log`.
+  The first post-fix browser run (`browser-final.log`) remains failed due to an unhandled lost-reply fixture race: an older Cancel error satisfied a generic UI wait before original route abort.
+  The fixture now awaits that original fetch/abort and the exact command receipt; the complete changed-fixture browser run passed.
+  The failed Cancel counterexample required the existing fixture's original-handle SIGTERM teardown after its5s Stop observation bound (`accepting-wK8y38/receipt.json`); that forced close is not clean Stop, and its retained fences remain untouched.
+  Final accepting fixtures closed normally; no owned test/service/browser process remained at final inventory.
+- Updated focused regressions, current adaptation hashes and the shared-client spec.
+  No dependency/pin/lock, task-state, credential/profile, Git mutation, deployment, installation or cleanup changes.
+  W5 native cutover, D4 proxy/recovery and D5 final distribution/whole-delivery gates remain mandatory next work.
+
+## D3 Native Cutover — Implementation Evidence
+
+- `src/task-shell.ts` now uses `NativeConnection` → real `ServiceCoordination.localAccess()` → `HttpServiceTransport`/`ServiceClient` with independently generated `src/native-build.ts` identity.
+  No terminal `TaskController`, worker launch, parent SDK-auth resolution, automatic service startup or missing-owner fallback remains reachable; `src/index.ts` is unchanged.
+- Native menus cover exact owner model/thinking, Create/Open, current plan and finite assignment/dependency editing, shared `proposePlan`/Save, advisory Generate, fresh Start, independent active-run Cancel, configured/manual parent checks, current changes/obligations and explicit human issues review.
+  Shared projection and human-paced retained readers expose messages/tool fields/timeline/history, exact literal search and full task/run/child NDJSON/Markdown exports with exclusive destination and verified count/digest/trailer/original EOF.
+  Raw Enter1500ms/paste/trust/idle/context guards remain; departure invalidates pending consent/reads and detaches, never cancels admitted work.
+- Frozen focused boundary: **297 passed /6files**, plus **2 source production PTY scenarios** (regular/fullscreen; four original Pi processes and two compiled owners).
+  Each PTY creates/selects/plans/generates/Starts, performs real passing/failing checks, pages Unicode/resizes, records issues review, reopens, then Returns/quits while parsed HTTP4 remains pending.
+  A new Pi process observes the same run ID and explicitly Cancels; actual child closure and both original Pi/owner zero closes are asserted.
+  Native adapter integration additionally executes a real local Manual check and six verified task/run/child exports; no browser is needed.
+- Root check (syntax/types/canonical operator/service/native identity), lint, canonical WebUI bytes and Agent checks passed.
+  The planned aggregate `build:check` command is absent; existing `check` and `build:web:check` passed, and W7 still owns final aggregate/package scripts.
+  No full backend suite, whole verify, pack/extraction, new browser/HTTPS matrix or physical/paid/platform qualification was run.
+- Fixed a reproduced shared Unicode sanitizer defect: its64-code-unit heuristic tail could bisect a supplementary character and fail owner recording.
+  Whole-pair retention now has per-emission/two-projection regression coverage without changing limits.
+  Self-review also fixed native Back navigation reusing an initial null-snapshot seed.
+  Fixture readiness now distinguishes exact parent settlement/owner drain from older/child completion;90s/15s budgets are unchanged.
+- Evidence, exact input hashes, assertion dispositions, original receipts and failed-run locations: W5 [`research/d3-evidence.json`](../10-16-cadence-terminal-client/research/d3-evidence.json).
+  Logs: `/home/mirako/abel/cadence-w5-FXmZhW/affected-final-frozen.log`, `pty-final-frozen.log`, `check-final.log`, `lint-final.log`, `build-web-check.log`, `check-agents.log`.
+  Final PTYs: `cadence-terminal-wGz9Fu` and `cadence-terminal-AzcWye` beneath that root; generated adapter fixture: `accepting-M0UkoQ`.
+  Failed/intermediate receipts, forced closures and two early unavailable original child waits remain failed/unknown; preserved fences were not cleaned.
+  A diagnostic patch failed before one unchanged rerun (also failed); it is recorded, not selected as green evidence.
+  Final inventory found no running owned fixture/service/SDK/PTY process; absence does not repair earlier unknown waits.
+- Independent native review is recorded below; D4 and D5 remain mandatory.
+  W7 owns extracted membership/routes, final mixed-client acceptance and deliberate replacement of still-legacy docs/specs.
+  No dependency/pin/lockfile, task-state, real credentials/profile, Git, deployment or consumer-cleanup changes.
+
+## D3 Independent Native Review
+
+- No known unfixed defect remains in the reviewed native boundary; this is not final D1–D5 acceptance.
+  Production entry has no embedded controller/worker/auth fallback or autostart; native consent, explicit model rebinding, shared history IDs, exact-hit navigation, snapshot-pinned Back, detach versus Cancel and Unicode redaction were reviewed against actual source.
+- Fixed two reproduced product defects:
+  1. `src/native-client.ts` / `src/service-http-client.ts`: a blanket10s fetch deadline cut healthy streaming exports before trailer/EOF.
+     Finite replies retain10s; export retains caller cancellation and the owner's existing download-idle policy, with no total archive deadline.
+  2. `src/task-shell.ts`: configured check names could collide with Return/paging controls, and redacted labels could select the wrong raw entry.
+     Indexed check labels and disambiguated native selection preserve exact identity.
+- Fresh gates: **411 passed /8files**, **15 passed /2web-client files**, and **2 actual source PTYs** (regular/fullscreen, four original Pi processes/two compiled owners).
+  Both PTYs preserve pending HTTP4 across first Pi quit, reattach the same run and explicitly Cancel; all four Pi waits returned exit0 and both owners closed0/null without force.
+  Generated native-client integration also performs a real Manual check with ordinary launch-environment/no-model-auth assertions and six complete task/run/child NDJSON/Markdown exports with count/digest/trailer/original-EOF verification.
+- Root/web typechecks, syntax, canonical operator/service/native/browser bytes, Agent checks and lint passed.
+  Service/native/WebUI outputs were canonically rebuilt after the shared transport change; no dependency or provenance-source family changed.
+  Existing PTY90s/interaction15s, SDK20s/child15s and read/capture budgets are unchanged.
+- Fixed a reproduced fixture defect: PTY `models.json` creation relied on umask and became0644 under the invoking shell, causing correct private-profile refusal before Pi launch.
+  Identical bytes in a fresh0600 copy passed readonly prevalidation; explicit0600 fixture creation then passed both source PTYs.
+  The first failed owners required original-handle SIGTERM teardown; their failed receipts/fences remain preserved, not clean Stop evidence.
+  Initial malformed mock-session and pager-test resize prerequisites also remain failed in their logs; no historical failure was relabeled.
+- Evidence: W5 [`research/d3-review-evidence.json`](../10-16-cadence-terminal-client/research/d3-review-evidence.json).
+  Root: `/home/mirako/abel/cadence-d3-review-LhIV3p/`; final logs `affected-final.log`, `pty-reviewed.log`, `web-client-focused.log`, `check.log`, `check-web.log`, `build-web-check.log`, `check-agents.log`, `lint.log`.
+  Original passing receipts: `cadence-terminal-3SYRZG`, `cadence-terminal-ZQrXBC`, and `accepting-Odmw0L` beneath that root; exact inputs, six export digests and failed-run dispositions are linked in the evidence.
+  Final owned-process inventory is empty; no agents, Git/task-state/dependency/credential/profile/deployment/cleanup changes.
+- D4 and D5 are still required.
+  No whole verify, pack/extraction, final HTTPS/mixed-client acceptance or physical/paid/platform qualification was performed by this review.
+
+## D4 Management, Outbound Auth and Informed Recovery — Implementation
+
+- `hostEnvironment` reuses the one strict `sdk-network` route parser; SDK-free management supplies the captured uppercase pair/opt-in and actual native flag before owner SDK imports.
+  The dedicated owner installs/verifies one owned PUBLIC Undici dispatcher after SDK imports, preserves original getAuth/refresh/writeback accounting and closes its original resource on Stop.
+  DIRECT, worker routing, literal auth, no-late-spawn and ordinary launch/check environment policy remain; no TLS/global-fetch substitution, private SDK transport, direct fallback or route persistence.
+- Real `recover inspect/resolve` composes existing `HistoryRecovery.append` with exact registration/registry/capability/owner/v1 release, v1 last.
+  Native local TTY,120s fresh typed epoch and separate process/credential/storage acknowledgments are required; no HTTP recovery or boolean/pipe/paste authority.
+  Same-host absence is necessary, not descendant/auth proof. Original append/flush/close precedes release; changing/live/remote/duplicate-epoch/old-format/partial resources refuse and preserve bytes/fences.
+  Torn/auth/launch uncertainty remains historical; recovery is operator acknowledgment, not certified closure or queue replay.
+- Fixed two reproduced integration defects: already-started publication was incorrectly treated as new work during Stop; native local-capability fetch inherited the parent provider proxy.
+  Exact publication continuations now drain without admitting post-Stop/fenced work; native uses an owned direct public dispatcher, joins its original close, and leaves the parent global dispatcher unchanged.
+  Deterministic counterexamples remain failed; extra readonly timing in one diagnostic proxy run is not a causal repair claim.
+- Frozen affected boundary: **344 passed /11files**; separate retained worker/process boundary: **416 passed /2files**.
+  Actual generated-owner plain AND gzip scenarios each observed OAuth refresh1, inference1, direct sink0, unrelated credentials preserved, route/auth redacted from retained history and original host close0/null without force.
+  Actual generated recovery CLI PTYs cover confirmed resolution, paste refusal and cancellation: all original waits observed, expected exits0/1/1, no force.
+  Current compiled-owner native integration, source/generated accepting hosts, shell guards, original auth/storage, management/token/lost-ack and worker proxy native controls remain exercised.
+- Root/web check, syntax, canonical operator/service/native/WebUI bytes, Agent checks and lint pass.
+  Operations guide: `docs/service-management.md`; narrow maintained owner/history/client contracts updated. W7 still owns full README/AGENTS/member/notice integration.
+  No whole verify, pack/extraction, new full Pi PTY/browser/HTTPS matrix, Node22/other OS/peer/physical/paid-provider claim.
+- Evidence: W1 [`research/d4-evidence.json`](../10-16-cadence-service-owner/research/d4-evidence.json); frozen221-input manifest/logs/receipts: `/home/mirako/abel/cadence-d4-cMPBSk/`.
+  Final proxy receipts: `owner-proxy-c47Lal/receipt.json`, `owner-proxy-kfNKy5/receipt.json`; recovery PTYs: `recovery-native-uUcC5v`, `recovery-native-URgoZt`, `recovery-native-jAqizo`.
+  Initial malformed receipt assertion/build fixture, native proxy counterexample, Stop counterexample and intermediate failures are preserved.
+  Two early forced proxy fixtures lost their original-wait reporting when detach teardown threw; they remain unknown, not clean Stop. Later forced receipts remain failed; final owned-process inventory is empty and does not repair those waits.
+- D4 independent review is recorded below; D5/W7 integrated qualification remains mandatory.
+  No agents, task-state, dependency/pin/lockfile, real credentials/profile, user Git/staging, deployment, installation or cleanup changes.
+
+## D4 Independent Review
+
+- No known unfixed defect remains in the reviewed D4 boundary; D5/W7 whole-delivery acceptance remains open.
+  Reviewed the single strict route selector, pre-import startup/post-import public dispatcher, original OAuth/writeback/cancel lifetimes, ordinary check environment, direct local clients, exact native recovery and Stop continuations.
+- Fixed three reproduced defect groups:
+  1. `src/service/cli.ts`: native Node environment-proxy opt-in routed management HTTP and its local-capability header through the provider proxy.
+     Management now uses a direct single-use HTTP agent; the generated-CLI regression observes local1/proxy0/no capability leakage.
+  2. `src/service/coordination.ts`, `src/history/{files,recovery}.ts`, `src/service/recovery.ts`: recovery omitted registry-format/history incarnations and adopted a fresh post-append history baseline, allowing changed orphan or replacement bridge bytes to authorize release.
+     Exact safe incarnations, original descriptor/body/commit/close checks and an original-append-bound release guard now persist through every effect; no new digest can silently replace confirmed resources.
+  3. `src/service/scheduler.ts`: Stop could record cancellation after terminal parent/check settlement while final publication still drained, quarantining known-completed work.
+     Terminal submission closes cancellation recording only; original publication/storage/accepted-flow joins and post-quiesce new-work refusal remain intact.
+- Fresh frozen gates: **414 passed /15files**, separate **416 passed /2 worker-process files**, and **257 passed /2 contract-store files**, no failures/skips in these complete selected-file runs.
+  Root/web typechecks, JS syntax, canonical operator/service/native/browser bytes, Agent checks and lint passed.
+  No existing interaction/read/SDK/worker/capture budget or assertion was weakened.
+- Both actual generated-owner plain/gzip lanes observed OAuth1/inference1/direct0, unrelated credential preservation, retained route/auth redaction and original close0/null without force.
+  Actual recovery CLI TTY resolve/paste/cancel waits returned0/1/1 without force.
+  Added generated-owner abrupt-crash → readonly status/diagnose → actual TTY recovery → new-epoch foreground restart → authenticated Stop; original injected crash is SIGKILL, restarted original close is0/null, no task/queue replay.
+- Evidence: W1 [`research/d4-review-evidence.json`](../10-16-cadence-service-owner/research/d4-review-evidence.json).
+  Root `/home/mirako/abel/cadence-d4-review-PWW97M/`; final logs `final-affected.log`, `worker-boundary.log`, `coordination-contracts.log`, `gate-*.log`;248 frozen inputs remained unchanged.
+  Final proxy receipts: `owner-proxy-8A94Rj`, `owner-proxy-oM1dok`; recovery TTYs: `recovery-native-vnEZ9n`, `recovery-native-5OUm7b`, `recovery-native-awgRYx`; restart: `cadence-host-native-CFYQX9` beneath that root.
+- Failed counterexamples and the first affected run (**361 passed/1 failed**) remain failed.
+  That plain-proxy Stop failure retained original forced SIGTERM (`owner-proxy-L9jANH/receipt.json`), not clean Stop; deterministic start/check publication counterexamples then reproduced the invalid late cancellation.
+  An initial regression-fixture detach failure masked the Stop assertion; detaching before Stop and unconditional fixture restoration exposed it without changing product behavior or budgets.
+  Final owned-process inventory is empty; this does not relabel old failed/unknown waits or establish historical causes.
+- No agents, dependency/pin/lockfile, real credential/profile, task-state, user Git/staging, deployment, installation or cleanup changes.
+  No whole verify, pack/extraction, full Pi PTY/browser/HTTPS/mixed-client matrix or Node22/other OS/physical/paid-provider qualification was performed; W7 owns those remaining gates.
+
+## W7 Integrated Candidate — Ready for Independent Final Review
+
+- W7 [`acceptance-map.json`](../10-16-cadence-integrated-delivery/research/acceptance-map.json) binds every R1–R14/AC1–AC22; [`evidence.json`](../10-16-cadence-integrated-delivery/research/evidence.json) binds commands, hashes, original receipts, changed files and assertion dispositions.
+  AC17 retains Main's independent final review; task state stays in_progress.
+- Frozen full `bun run verify` returned **exit0**: **1836 passed/69 root files**, **110 passed/8 web files**, **5 passed/3 real-browser files**, plus root/web checks, canonical generated bytes, lint, Agent pins and real pack audit.
+  The27 existing Windows-specific producer controls remain skipped/unqualified on Linux.
+- Separate real pack/extract/unrelated-cwd ordinary Node route passed: **129 members /35 runtime source files**, complete built assets and60 fonts.
+  Archive SHA-256: `e9e14a49c66ae75a88822280566803b8f043ca17bca642ec823cde8e6cfb4c3d`.
+  Post-exercise exact audit matches; no source refill, consumer compile or SDK bundle.
+- Separate extracted browser **5 passed**, distribution/native adapter **14 passed**, operations/proxy **29 passed**; overlapping boundary runs, not extra whole-suite totals.
+  External operations fixture adaptations retain every assertion and redirect runtime URLs to tar; source-injected helper controls remain explicitly separate.
+- Required actual routes passed: source/extracted regular/fullscreen PTYs (eight Pi exit0/four owners close0/null), two browsers plus a Pi observer of the same pending run, detach/quit/reattach/Cancel, cold restart/exact-hit/complete scoped exports, and CA-validated HTTPS HTTP/WSS at four viewports.
+  Source/tar plain+gzip OAuth/worker each observed refresh1/inference1/direct0 and close0/null; injected SIGKILL remains crash, followed by native TTY recovery/new epoch/Stop0 without replay.
+- Full emitted closure binds105 package families plus Vite/Rolldown helpers,295 rendered modules,129 complete notices,60 font bodies and actual embedded vis versions, including Feather/OFL reserved-family notices.
+  Version1.8.4, dependency/peer pins and bun.lock are unchanged.
+- Fixed two current product gaps: redundant mutable-head writes despite prepared journal heads, and an empty/disabled phone inspector lacking Escape focus after restart.
+  No fsync, original promise, native/check/read/capture budget or integrity assertion was weakened.
+  Obsolete package/startup/v1-worker/Stop assertions and guarded build-identity prerequisites have explicit replacement dispositions.
+- Initial verify1808/27/27, semantic-markup lint, browser/drain/drawer counterexamples and external fixture-path failures remain failed.
+  Forced browser-fixture SIGTERM receipts/fences remain preserved, never clean Stop; historical19/11 causes remain unclaimed.
+- Root: `/home/mirako/abel/cadence-w7-bUzoj2/`; `verify3.json`,467-input `final-inputs3.json`, `final-receipts.json`, real pack/extract/matrix and final process inventory are retained.
+  Executed code/tests/assets/package stayed frozen; three nonshipped stale spec sentences were corrected afterward and separately linted.
+  No owned command-path process remained; absence does not repair old forced/unknown waits.
+- Human/device/second-machine, Windows/macOS/ConPTY, Node22/other peers, paid accounts, manager installation and deployment remain additional unqualified lanes.
+  No delegated agents, Git/task-state mutation, installation, real credentials/profile use, publication or consumer/old-temp cleanup occurred.
+
+## W7 Independent Final Review — COMPLETED, Available-host PASS
+
+- Final evidence: [`research/final-review.json`](../10-16-cadence-integrated-delivery/research/final-review.json); current [`acceptance-map.json`](../10-16-cadence-integrated-delivery/research/acceptance-map.json) binds every R1–R14/AC1–AC22.
+  Root `/home/mirako/abel/cadence-final-review-FZ6WMJ/`;467 frozen inputs stayed unchanged through final verify and extracted exercises.
+  Original W7 full-verify wait/log/freeze,61 referenced hashes and137 original receipts were independently validated; original evidence/pre-review JSON bodies remain preserved.
+- Fixed one reproduced product defect: an unavailable concurrent viewer changed the shared check-review revision during pending publication, fencing unchanged accepted Review.
+  `src/service/task-actions.ts` now advances that revision only from available current context; real task/config/check/model/change guards remain.
+  Deterministic original-commit counterexample and78/6 affected tests pass; `src/service-host.mjs` was canonically rebuilt.
+- Fixed a native fixture defect: fullscreen diff output separated settlement from drain; the matcher now binds the later drain to the exact parent UUID, with child-only/earlier/unknown negatives and unchanged90s/15s budgets.
+  Fixed three stale provenance hashes/two missing integration pins, added complete destination regression, and corrected stale owner/package spec wording.
+  Rechecked prepared-index/source-proof/legacy integrity and empty phone drawer focus without relaxing bounds or original checks.
+- Final `verify-repaired.json`: **exit0**, **1839/69 root**, **110/8 web**, **5/3 real browser**, plus types/syntax/canonical bytes/lint/Agents/real pack.
+  The27 existing Windows-only controls remain skipped/unqualified on Linux; no required available-host lane was skipped.
+- Separate final tar: **129 members/35 runtime sources**, ordinary Node/unrelated cwd, exact before/after/post-exercise audits.
+  SHA-256 `0358c904827e5508ac251cb98c87149ef98e14ed0640adf5097dbb95a176c995`.
+  Final extracted browser5, native/distribution14 and operations/proxy29 passed; overlapping runs, not added whole-suite totals.
+- Final receipts retain four source/extracted regular/fullscreen production PTYs: eight original Pi exit0/four owner close0/null; source/tar mixed two-browser+Pi, cold exact-hit/scoped exports, CA-validated HTTPS/WSS/four viewports and plain+gzip OAuth1/inference1/direct0.
+  Injected SIGKILL stays crash; actual TTY recovery/new epoch/Stop0 is separate.
+- Initial native matcher failure, provenance counterexamples and first full verify (**1838 root/110 web passed,4 browser passed/1 failed**) stay failed.
+  Its forced owner SIGTERM and the failed PTY's termination-request receipt/fences are preserved, not clean Stop/quit; no historical19/11 cause is claimed.
+  A read-only diagnostic collector timeout has unknown original wait; bounded replacement collection waited0 and final owned-process inventory is empty, which does not repair any earlier unknown wait.
+- No known required defect remains on Linux x86_64/Node26.7/Pi0.84.3/Chromium151.
+  Windows/macOS/ConPTY, Node22/other peers, physical phone/human/second machine, paid accounts, manager installation and real deployment remain additional unqualified lanes.
+  No agents, dependency/lock/pin-version, task-state, Git, real credential/profile, installation, publication or cleanup changes.

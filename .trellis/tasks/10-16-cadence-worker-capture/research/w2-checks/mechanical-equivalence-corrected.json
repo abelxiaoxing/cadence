@@ -1,0 +1,12 @@
+{
+  "comparison": "TypeScript forEachChild AST, ignores comments/formatting and nonsemantic list punctuation; literal and identifier text retained",
+  "codec": {
+    "equal": true,
+    "sha256": "e30b16eae4997cd633b025f81382772dcf79689440af5b44cf4c3232f4708eef"
+  },
+  "network": {
+    "equal": true,
+    "sha256": "c6aa20dc12be58c4facf44ee099d4e64da62076b01a14d45e0164e15a9db9513",
+    "permittedChanges": "Import removed for comparison; four existing function exports added; WorkerRequest parameter widened to object (erased only)"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "mode": "generated",
+  "packageRoot": "source generated",
+  "contacts": 3,
+  "maxActive": 2,
+  "observations": [
+    {
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ],
+      "mode": "single"
+    },
+    {
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ],
+      "mode": "parallel"
+    },
+    {
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ],
+      "mode": "parallel"
+    }
+  ],
+  "stopped": [
+    0,
+    null
+  ],
+  "restartedCloses": [],
+  "stdout": "{\"status\":\"ready\",\"epoch\":\"2a1c5d22-b92c-4736-ac7d-9aa14abfaebb\"}\n",
+  "stderr": "",
+  "sdk": "actual installed public SDK",
+  "paidProvider": false,
+  "physicalHuman": false
+}

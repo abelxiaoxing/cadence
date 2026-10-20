@@ -1,0 +1,14 @@
+export default {
+  "cacheDir": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-matrix-final/cache",
+  "test": {
+    "include": [
+      "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-matrix-final/*.test.ts"
+    ],
+    "environment": "node",
+    "fileParallelism": false,
+    "env": {
+      "HOME": "/home/mirako/abel/cadence-final-review-FZ6WMJ/home",
+      "USERPROFILE": "/home/mirako/abel/cadence-final-review-FZ6WMJ/home"
+    }
+  }
+};

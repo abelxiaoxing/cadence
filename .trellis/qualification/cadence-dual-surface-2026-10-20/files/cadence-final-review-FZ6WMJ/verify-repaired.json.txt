@@ -1,0 +1,19 @@
+{
+  "command": [
+    "env",
+    "HOME=/home/mirako/abel/cadence-final-review-FZ6WMJ/home",
+    "USERPROFILE=/home/mirako/abel/cadence-final-review-FZ6WMJ/home",
+    "bun",
+    "run",
+    "verify"
+  ],
+  "cwd": "/home/mirako/abel/cadence",
+  "pid": 2407496,
+  "started": 1792438215.8276012,
+  "temporaryRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ",
+  "originalWait": true,
+  "exit": 0,
+  "elapsedSeconds": 2535.079,
+  "log": "/home/mirako/abel/cadence-final-review-FZ6WMJ/verify-repaired.log",
+  "logSha256": "cae1835d2ee2e6f19366ca4ccacbb7b3f6b12f93d1fecc1becc595215f719c35"
+}

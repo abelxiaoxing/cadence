@@ -1,0 +1,23 @@
+{
+  "command": [
+    "bun",
+    "run",
+    "test",
+    "--",
+    "test/service-human-review.test.ts",
+    "test/service-current.test.ts",
+    "test/service-checks.test.ts",
+    "test/service-accepted-work.test.ts",
+    "test/service-stop-continuation.test.ts",
+    "test/service-publication-parity-review.test.ts"
+  ],
+  "cwd": "/home/mirako/abel/cadence",
+  "pid": 2399441,
+  "started": 1792437511.8295774,
+  "temporaryRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ",
+  "originalWait": true,
+  "exit": 0,
+  "elapsedSeconds": 497.653,
+  "log": "/home/mirako/abel/cadence-final-review-FZ6WMJ/review-current-boundary.log",
+  "logSha256": "624a6fbf462e76c500d6bcd95027ea8b182ddd0efb9ca95bdc91c366ce4a5ed1"
+}

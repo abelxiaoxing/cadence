@@ -1,0 +1,233 @@
+{
+  "schema": "cadence-w3-metadata-cost-review-evidence/1",
+  "disposition": "no remaining in-scope blocking issue; main consolidated checks and W4 composition pending; historical timeouts unexplained, not repaired",
+  "scope": "final metadata-cost production guard/memo revision and corresponding test-only diagnostics",
+  "evidenceRoot": "/home/mirako/abel/.cadence-w3-metadata-review-177OEInW",
+  "directoryMode": "0o700",
+  "filesystem": "ext4",
+  "tempEnvironment": {
+    "TMPDIR": "/home/mirako/abel/.cadence-w3-metadata-review-177OEInW",
+    "TEMP": "/home/mirako/abel/.cadence-w3-metadata-review-177OEInW",
+    "TMP": "/home/mirako/abel/.cadence-w3-metadata-review-177OEInW"
+  },
+  "availableAfter": {
+    "bytes": 809682952192,
+    "inodes": 60253370
+  },
+  "identity": {
+    "executable": "/usr/bin/node",
+    "node": "26.7.0",
+    "platform": "linux",
+    "arch": "x64",
+    "bun": "1.3.14",
+    "pi": "0.84.3",
+    "vitest": "4.1.10"
+  },
+  "reviewedHandoff": {
+    "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-handoff.md",
+    "sha256": "462be5abeb32c88af066c78fe886704d9c53d52841f5e9f6590efd5398e66002"
+  },
+  "priorEvidence": {
+    "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/evidence.json",
+    "sha256": "70ae70f0c3e97484139d56786c3f7ec2037d9a4fba6c01029c1b9e008994e97d"
+  },
+  "reviewChanges": [
+    "test/helpers/history-metadata-cost.ts",
+    "test/service-history-metadata-cost.test.ts"
+  ],
+  "productionChanges": [],
+  "finalSource": {
+    "src/history/index-tree.ts": "612b52be2ee91a2e1e911aa05402592b66b63a76a32f64afe67406d68e71ca05",
+    "src/history/navigation.ts": "545a0c68cbaa3c33fc644aace8bcadd6c1d974861454859ca555fa657357d07f",
+    "src/service/private-files.ts": "a0275cb8132d83a1614990a50485d9beeffcc1b3bc59262907790e734082f8a6",
+    "src/service/coordination.ts": "47b7e3f615b177d74bc7fa71655028808bd24ede16c2e9ea1a64571ac20fc7e7",
+    "src/history/read-io.ts": "e2efb3661897c32788f2bb74cca760a2000faa164ed01a6e860853821fbf3d3d",
+    "test/service-history-projection.test.ts": "6816c07360cb5192870cdc3d760cef268f87d59c498ebe4837f8cc57c2e58e39",
+    "test/service-history.test.ts": "f244cb439f18dfbf727341a5f1a6997285f9a486eb49e60bcfa9da2389ca55f6",
+    "test/service-history-graph-boundary.test.ts": "604ed21a54bbac17e7e4780005962581d455fa84ba899defd0931f88b49b8d68",
+    "test/helpers/history-metadata-counters.ts": "23f34b6efb285a0c88401a284afea899127e9b16da8c0c076cfa48e449dbf4f9",
+    "test/helpers/history-metadata-cost.ts": "edf6a8a586912e945d186f106e2f6e1f0ca2165460158d48c7b6e81ce07f6ea1",
+    "test/service-history-metadata-cost.test.ts": "e8c530248c0403369ab34392e3c8badc9948790aaaad3cd34fa5c4dc7b9112c8",
+    "package.json": "2aa7fe4c464835cdebdafbed2cf5d4831cc02c753886eb6f0b42041c46f7464c",
+    "bun.lock": "cc31e7ad885c21849b38515cb47bb9913b75801a3b484bf647e11fe354f47551"
+  },
+  "inputManifests": {
+    "inputs-before.json": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-review-checks/inputs-before.json",
+      "sha256": "621b0c12813d5a8be1848ff2e5f1167dceb9e5f30a079a0d8f3dd4e5134e384c"
+    },
+    "inputs-final.json": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-review-checks/inputs-final.json",
+      "sha256": "edfd270ebb389305315655c5696fecdcea424dac1eda1fb1279159fb8e1398da"
+    }
+  },
+  "patch": {
+    "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-review-checks/review-changes.patch",
+    "sha256": "51bb8c49c9f7be04e0259347afd90fec855a90dcb2368a83325de86bf0838a28"
+  },
+  "historicalFailure": {
+    "caseMs": 50018,
+    "budgetMs": 45000,
+    "passed": 1234,
+    "failed": 1,
+    "cause": "unexplained; event35 and two historical5s failures not attributed",
+    "receipt": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-checks/original-failed-22-files.log",
+      "sha256": "dc8dba5fb84ceaa680a1e49adb4495e60d1494f1654d449e2212df915ee524d2"
+    }
+  },
+  "logs": {
+    "01-observer-counterexample.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-review-checks/01-observer-counterexample.log",
+      "sha256": "8746a6ec8dffcc3ff410102d23e8e26be757088a75755269e76118cb5f69d0c3"
+    },
+    "02-format.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-review-checks/02-format.log",
+      "sha256": "87033bd637e2c716fcfb7da9b1df1483492c43dd4819f68b27e273119e588182"
+    },
+    "03-check.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-review-checks/03-check.log",
+      "sha256": "d8e0559fba0bc409f2ba5d1a97a129af498576567949aee4278dd415d3d51e90"
+    },
+    "04-final-set.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-review-checks/04-final-set.log",
+      "sha256": "1f5a803f416e5da3ac3eebfde35517c326667300dae784bf388f8601ad16596c"
+    },
+    "05-check-agents.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-review-checks/05-check-agents.log",
+      "sha256": "fc459b9f542bbe9546842994f18a74f6a80e908f467ce497916608c24531eebf"
+    },
+    "06-report-format.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-review-checks/06-report-format.log",
+      "sha256": "1bd4238c99587629a2d8d6abf18dbf521a9b8e1f05a4e65611acf4bca9f95e39"
+    },
+    "07-evidence-format.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-review-checks/07-evidence-format.log",
+      "sha256": "bac6feefb976b736b6ff56b585ab843f75ed9a1311c9b898699aa2c860a692eb"
+    },
+    "08-report-check.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-review-checks/08-report-check.log",
+      "sha256": "56a74604d2c3d37e7ca10b8081bf097f38007d5507b6e80585fce2612e6d9d54"
+    },
+    "09-lint.log": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-review-checks/09-lint.log",
+      "sha256": "5d50f46be14f7b2a6184869e42898e799f42bc0428caa6cb8e4a7b26876900da"
+    }
+  },
+  "phaseReceipts": {
+    "final-archive-phases.receipt": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-review-checks/final-archive-phases.receipt",
+      "sha256": "cb24a136f7d488daeec5414bae653d8733361668886c073c058cdcaa01d3f8e5"
+    },
+    "metadata-cost-kOC2F8.receipt": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-review-checks/metadata-cost-kOC2F8.receipt",
+      "sha256": "2170200346753cfc015db9fec54c913a464645401c5be92c0371914c5e65ac8e"
+    },
+    "metadata-cost-q3oFEs.receipt": {
+      "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-review-checks/metadata-cost-q3oFEs.receipt",
+      "sha256": "1b586f46ca3d9387928fccfb1e920c597f3d90cdf328d3e0bb211b92d1903abc"
+    }
+  },
+  "runs": [
+    {
+      "id": "00",
+      "command": "initial native identity metadata lookup",
+      "exit": 1,
+      "kind": "unexported package.json require; corrected to filesystem-only metadata read, no SDK construction",
+      "note": {
+        "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-review-checks/00-identity-bootstrap.txt",
+        "sha256": "b64ab798755c965375f839131642d802dca33af58fa89813a2702d6230052b8e"
+      }
+    },
+    {
+      "id": "01",
+      "command": "bun run test -- test/service-history-metadata-cost.test.ts -t 'review: aggregate observer'",
+      "exit": 1,
+      "passed": 0,
+      "failed": 1,
+      "filtered": 3,
+      "kind": "intentional pre-fix diagnostic observer counterexample"
+    },
+    {
+      "id": "02",
+      "command": "node_modules/.bin/biome check --write test/helpers/history-metadata-cost.ts test/service-history-metadata-cost.test.ts",
+      "exit": 1,
+      "kind": "one new test nested-assignment lint failure; fixed before final source freeze"
+    },
+    {
+      "id": "03",
+      "command": "bun run check",
+      "exit": 0,
+      "kind": "final-source full syntax/generated operator/typecheck"
+    },
+    {
+      "id": "04",
+      "command": "bun run test -- test/service-history-metadata-cost.test.ts test/service-history-projection.test.ts test/service-history.test.ts test/service-history-graph-boundary.test.ts",
+      "exit": 0,
+      "passed": 78,
+      "failed": 0,
+      "skipped": 0,
+      "files": 4,
+      "seconds": 122.45,
+      "kind": "original73 cases plus five review controls; one final execution"
+    },
+    {
+      "id": "05",
+      "command": "bun run check:agents",
+      "exit": 0
+    },
+    {
+      "id": "06",
+      "command": "node_modules/.bin/rumdl check --fix --no-exclude .trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-review.md",
+      "exit": 1,
+      "kind": "new report table formatting fixed; evidence link destination not yet created at this formatting step"
+    },
+    {
+      "id": "07",
+      "command": "node_modules/.bin/biome format --write <new review evidence JSON files>",
+      "exit": 0
+    },
+    {
+      "id": "08",
+      "command": "node_modules/.bin/rumdl check --no-exclude .trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-review.md",
+      "exit": 0
+    },
+    {
+      "id": "09",
+      "command": "bun run lint",
+      "exit": 0
+    }
+  ],
+  "classification": {
+    "memoReadback": "native filesystem fixtures",
+    "leaseLoss": "explicit pre-effect method fault injection",
+    "observer": "method/primitive counterexample, not history corruption",
+    "original73": "existing structural/portable/native SDK/filesystem/crash/HTTP/graph cases retained; not full product acceptance"
+  },
+  "limitations": [
+    "No reproduction or causal repair of historical50018ms, event35 or historical5s failures",
+    "Prior41.31s to40.00s gain modest, random UUID tree shapes vary",
+    "No runtime upper-bound guarantee or archive repair",
+    "No shared source/native consolidated main acceptance, W4 or full repository/package/client acceptance",
+    "No physical-human/device, paid-provider, Node22/Pi1.2, Windows/macOS/ConPTY qualification",
+    "No tmpfs, alternate namespace qualification substitute, cleanup or retiming"
+  ],
+  "lintNote": "exit0; two pre-existing informational useTemplate notices in test/package-audit.test.mjs; no fixes",
+  "review": {
+    "path": ".trellis/tasks/10-16-cadence-durable-history/research/w3-metadata-cost-review.md",
+    "sha256": "7a36d9bc0a0d5eb1fc4808c6ff451ad389d86a0bf9af28ded421b25775974dd6"
+  },
+  "finalInputsUnchangedAfterVerification": true,
+  "archiveScenario": {
+    "rows": 8200,
+    "messages": 1200,
+    "tasks": 70,
+    "budgetMs": 45000,
+    "phaseMs": 38183.020715,
+    "preservedTree": {
+      "files": 4443,
+      "bytes": 3565722,
+      "sha256": "d5891f22d7b5f0557135b4cf23895817ede1751486f34c3d8d2a9bbc82146fb3"
+    }
+  }
+}

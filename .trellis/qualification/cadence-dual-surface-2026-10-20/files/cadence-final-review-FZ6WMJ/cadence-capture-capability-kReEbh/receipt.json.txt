@@ -1,0 +1,98 @@
+{
+  "mode": "parallel",
+  "cleanupFault": "none",
+  "boundary": "native-public-sdk-with-controlled-listeners-tools",
+  "executable": "/usr/bin/node",
+  "node": "v26.7.0",
+  "platform": "linux",
+  "arch": "x64",
+  "peers": {
+    "pi-coding-agent": "0.84.3",
+    "pi-agent-core": "0.84.3",
+    "pi-ai": "0.84.3"
+  },
+  "helperSha256": "91020d75486750635633ddce1436adf39421946f160cdbc94c9212f364f9a221",
+  "pid": 2440857,
+  "native": {
+    "code": 0,
+    "signal": null
+  },
+  "waits": [
+    {
+      "event": "exit",
+      "code": 0,
+      "signal": null
+    },
+    {
+      "event": "close",
+      "code": 0,
+      "signal": null
+    }
+  ],
+  "forced": false,
+  "stdoutEOF": true,
+  "stderrEOF": true,
+  "stdin": "ignored",
+  "processFailed": false,
+  "serverFailed": false,
+  "requests": 2,
+  "workingFiles": [],
+  "homeFiles": [],
+  "observation": {
+    "mode": "parallel",
+    "cleanupFault": "none",
+    "cleanupAttempted": 15,
+    "cleanupSettled": 15,
+    "cleanupFailures": 0,
+    "toolExecution": "parallel",
+    "preflight": true,
+    "listenerSignal": true,
+    "assistantBlocked": true,
+    "endBlocked": true,
+    "secondListenerEnd": true,
+    "updateCalls": 3,
+    "updateCallbacks": 3,
+    "immediateCallbacks": 0,
+    "retained": 0,
+    "highWater": 3,
+    "refused": 0,
+    "copies": 3,
+    "abortRequested": false,
+    "activeTools": 0,
+    "maxActiveTools": 2,
+    "starts": [
+      "capture_1",
+      "capture_2"
+    ],
+    "executions": [
+      1,
+      2
+    ],
+    "ends": [
+      {
+        "id": "capture_2",
+        "isError": false
+      },
+      {
+        "id": "capture_1",
+        "isError": false
+      }
+    ],
+    "order": [
+      "start:capture_1",
+      "start:capture_2",
+      "end:capture_2",
+      "end:capture_1"
+    ],
+    "resultMessages": [
+      "capture_1",
+      "capture_2"
+    ],
+    "finalStop": "stop",
+    "finalText": "CAPABILITY_OK"
+  },
+  "failure": "",
+  "paidProvider": false,
+  "productionCapture": false,
+  "durableSink": false
+}

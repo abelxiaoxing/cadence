@@ -1,0 +1,27 @@
+{
+  "mode": "generated",
+  "packageRoot": "source generated",
+  "contacts": 1,
+  "maxActive": 1,
+  "observations": [
+    {
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ],
+      "mode": "single"
+    }
+  ],
+  "stopped": [
+    0,
+    null
+  ],
+  "restartedCloses": [],
+  "stdout": "{\"status\":\"ready\",\"epoch\":\"11c1c810-1778-445a-9401-9fbec1bcc756\"}\n",
+  "stderr": "",
+  "sdk": "actual installed public SDK",
+  "paidProvider": false,
+  "physicalHuman": false
+}

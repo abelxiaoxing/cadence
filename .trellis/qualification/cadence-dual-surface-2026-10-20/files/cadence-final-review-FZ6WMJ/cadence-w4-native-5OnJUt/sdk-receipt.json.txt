@@ -1,0 +1,23 @@
+{
+  "schema": "cadence-w4-fixture-native/1",
+  "node": "v26.7.0",
+  "executable": "/usr/bin/node",
+  "platform": "linux",
+  "arch": "x64",
+  "fabricatedProvider": true,
+  "physicalHuman": false,
+  "paidProvider": false,
+  "hostActions": false,
+  "originals": [
+    {
+      "start": 41969.492807,
+      "end": 43889.623996,
+      "exit": 0
+    },
+    {
+      "start": 46455.171068,
+      "end": 47657.126967,
+      "exit": 0
+    }
+  ]
+}

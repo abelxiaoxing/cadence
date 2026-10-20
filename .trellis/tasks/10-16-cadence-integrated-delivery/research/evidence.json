@@ -1,0 +1,622 @@
+{
+  "schema": "cadence-integrated-delivery-evidence/1",
+  "status": "candidate-ready-for-independent-final-review",
+  "scope": "Available-host integrated implementation and qualification. Not publication, final independent acceptance or qualification of additional platforms/providers/humans.",
+  "temporaryRoot": "/home/mirako/abel/cadence-w7-bUzoj2",
+  "runtime": {
+    "node": "v26.7.0",
+    "bun": "1.3.14",
+    "platform": "Linux",
+    "architecture": "x86_64",
+    "pi": "0.84.3",
+    "browser": {
+      "executable": "/home/mirako/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome",
+      "observedVersion": "151.0.7922.34",
+      "versionReceipt": {
+        "path": "/home/mirako/abel/cadence-w7-bUzoj2/b-XOX22V/receipt.json",
+        "sha256": "33e2f16a99eac122fade61f944492e395ee6173afeb94098bb480f9704a49a76"
+      }
+    },
+    "installedPublicPackages": {
+      "@earendil-works/pi-coding-agent": {
+        "version": "0.84.3",
+        "manifestSha256": "6c0bfa4558a0de32fb54fa97ca73397753ec7d4ad7d0ba607790920168de751f"
+      },
+      "@earendil-works/pi-ai": {
+        "version": "0.84.3",
+        "manifestSha256": "ed696e001e0154b2095f5c5d9153cb61a68a1ba850cc324d704ed87ae505ce4c"
+      },
+      "@earendil-works/pi-tui": {
+        "version": "0.84.3",
+        "manifestSha256": "34328ac63bcee5d56abafbc1530eb70f91a18a0a8317434426b4fb9029e410f5"
+      },
+      "@earendil-works/pi-agent-core": {
+        "version": "0.84.3",
+        "manifestSha256": "0e7eefd61b30a31832263ad7ba758516f5ecd96a0f231a7fa3dc6a93305e6997"
+      },
+      "typebox": {
+        "version": "1.3.7",
+        "manifestSha256": "0d54851ecbd094c1e0ea211e53d097eea3b1f9f05c7d895f072587c84d6131ed"
+      },
+      "undici": {
+        "version": "8.9.0",
+        "manifestSha256": "7f3ceff33b99699c2c63574d9368f84035b1a11fa33a7d14e8184498eb19dd5b"
+      },
+      "ws": {
+        "version": "8.21.3",
+        "manifestSha256": "a56a3fd55945a3ce177e3ca165dafae6f7eb03b7aefd58c092ac723d5741a6fb"
+      }
+    }
+  },
+  "frozenInputs": {
+    "path": "/home/mirako/abel/cadence-w7-bUzoj2/final-inputs3.json",
+    "bytes": 68113,
+    "sha256": "51347d787a68bf909174f3018dadf878527893a52ec336a5d70a650a7ce6cf59"
+  },
+  "stableBytes": {
+    "executedSourceTestsAssetsPackageUnchangedSinceVerify3": true,
+    "postVerifySpecWordingOnly": [
+      {
+        "file": ".trellis/spec/backend/directory-structure.md",
+        "before": "a9906c83f6bfb6ef9cd27cd8cdd915a30f4e2a4a618da663772d2715df44545f",
+        "after": "860a2a83910dd817dd00b8d5c28b72d74cfd4de731e7a70e510b0b99a4a2b4be"
+      },
+      {
+        "file": ".trellis/spec/backend/task-distribution-guidelines.md",
+        "before": "dd7192cb1ba0935609e188a0543fbd1f21ac9d405d17950fbcc4eb8894fc1f98",
+        "after": "685add2e897b9be93dd405c628c1dcd642e7cbe2d92447b9d6595cf16e7fae10"
+      },
+      {
+        "file": ".trellis/spec/frontend/directory-structure.md",
+        "before": "d019383e693d9a0bf3025e863b0f56e498896e0031a11ed1204df1705870afd4",
+        "after": "f049cbe9100e95d690c6c22e07455453c1efdb47bdbfccd12f5c0ff6abacb764"
+      }
+    ],
+    "postVerifyDocumentationGate": "final-spec-lint",
+    "explanation": "Three nonshipped spec sentences corrected stale foreground/owner-proxy wording after verify; no executed code, fixture, shipped body or dependency changed."
+  },
+  "commands": {
+    "verify3": {
+      "path": "/home/mirako/abel/cadence-w7-bUzoj2/verify3.json",
+      "sha256": "d01debb18e5c03e98c2d9ccb06b38d0aa75b5832337f462be5a134e2bb9e614c",
+      "exit": 0,
+      "log": {
+        "path": "/home/mirako/abel/cadence-w7-bUzoj2/verify3.log",
+        "sha256": "5627a8a2aab75f376799698ff404be2d61aa928689367b0f79f3048e586562f0"
+      }
+    },
+    "real-pack": {
+      "path": "/home/mirako/abel/cadence-w7-bUzoj2/real-pack.json",
+      "sha256": "169d6959e2dbdef17fa1accfa318ed56d0851bf48a93c4f916506b05b5671c67",
+      "exit": 0,
+      "log": {
+        "path": "/home/mirako/abel/cadence-w7-bUzoj2/real-pack.log",
+        "sha256": "6636ced9c962fb2afd3c87202a727a7de3439cdddf90bf4ec0c8ae157968857f"
+      }
+    },
+    "real-extract": {
+      "path": "/home/mirako/abel/cadence-w7-bUzoj2/real-extract.json",
+      "sha256": "c5236d60b02d3ac93de88e8c1279cbfda6717ee876347a071bb90765299fda2d",
+      "exit": 0,
+      "log": {
+        "path": "/home/mirako/abel/cadence-w7-bUzoj2/real-extract.log",
+        "sha256": "babf0503a100a691e165e67f204f7b4694ef39a5147c7e1aae4e08e7f09df62d"
+      }
+    },
+    "extracted-browser": {
+      "path": "/home/mirako/abel/cadence-w7-bUzoj2/extracted-browser.json",
+      "sha256": "c7bf512fe6c04b27eac693502629853b0ec52736ee88ad2d5340b2c7a82aca16",
+      "exit": 0,
+      "log": {
+        "path": "/home/mirako/abel/cadence-w7-bUzoj2/extracted-browser.log",
+        "sha256": "d81cb4b39d666bc7831d7f13292553a0da02350184f215ee5a16455fd11f13b8"
+      }
+    },
+    "extracted-distribution-native": {
+      "path": "/home/mirako/abel/cadence-w7-bUzoj2/extracted-distribution-native.json",
+      "sha256": "0222bed8ac9b32b74fdc8ebac6e8a2ef49407189b02119c0ec466a5896260ec5",
+      "exit": 0,
+      "log": {
+        "path": "/home/mirako/abel/cadence-w7-bUzoj2/extracted-distribution-native.log",
+        "sha256": "51c86b294c73eb65de7ca1124628df60f2ba36545d7873cc714a3a83aa77e61b"
+      }
+    },
+    "extracted-operations3": {
+      "path": "/home/mirako/abel/cadence-w7-bUzoj2/extracted-operations3.json",
+      "sha256": "d612da0d5149c468eef2ca3df2f2696e57458ef6dfb2ee9d4810096b799e3685",
+      "exit": 0,
+      "log": {
+        "path": "/home/mirako/abel/cadence-w7-bUzoj2/extracted-operations3.log",
+        "sha256": "52e7937e7f933cb84ea0d0fc5836c5f164cff3197f1e97aa5a0a892a2fb2da6f"
+      }
+    },
+    "build-check-route": {
+      "path": "/home/mirako/abel/cadence-w7-bUzoj2/build-check-route.json",
+      "sha256": "4c69be71cfb28503e4930a5ca82e877ae6e4351704c380a91012de8180a4ba82",
+      "exit": 0,
+      "log": {
+        "path": "/home/mirako/abel/cadence-w7-bUzoj2/build-check-route.log",
+        "sha256": "ca885e8737888fab3622022cb20c413e6a017239591f269c60e8a4af4c2d5ddb"
+      }
+    },
+    "service-route": {
+      "path": "/home/mirako/abel/cadence-w7-bUzoj2/service-route.json",
+      "sha256": "9ef10e4a72a03072e48ddb3487484798b86762b30ed1cd405f15336676d9414c",
+      "exit": 0,
+      "log": {
+        "path": "/home/mirako/abel/cadence-w7-bUzoj2/service-route.log",
+        "sha256": "5838f2111f6cbfbba119283d797ae546f1e61c25ad730c4d75b2e5ec27fdeb0e"
+      }
+    },
+    "final-spec-lint": {
+      "path": "/home/mirako/abel/cadence-w7-bUzoj2/final-spec-lint.json",
+      "sha256": "b378951a00de46282beab880342b6b3617972ded683587b1d3287cd20fdd9c65",
+      "exit": 0,
+      "log": {
+        "path": "/home/mirako/abel/cadence-w7-bUzoj2/final-spec-lint.log",
+        "sha256": "e01d0f23aee0ff01bfcefb1d40adb0c4f88b6261de64094cc8afddd85274dee5"
+      }
+    },
+    "notices-final": {
+      "path": "/home/mirako/abel/cadence-w7-bUzoj2/notices-final.json",
+      "sha256": "b80b9de245ba6e9a9f7f7b07ec7c384856d28698862437c8ef822d6f06e99104",
+      "exit": 0,
+      "log": {
+        "path": "/home/mirako/abel/cadence-w7-bUzoj2/notices-final.log",
+        "sha256": "17c187d6243f597fc55247a1c56812dd70823d71ec2cfa29fbd9449c88592c1c"
+      }
+    }
+  },
+  "results": {
+    "verify3": {
+      "exit": 0,
+      "root": {
+        "files": 69,
+        "passed": 1836,
+        "failed": 0,
+        "skipped": 27
+      },
+      "web": {
+        "files": 8,
+        "passed": 110,
+        "failed": 0,
+        "skipped": 0
+      },
+      "browser": {
+        "files": 3,
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0
+      },
+      "includes": [
+        "root/web types",
+        "syntax",
+        "canonical operator/service/native/browser bytes",
+        "lint",
+        "Agent pins",
+        "native/unit tests",
+        "web tests",
+        "dedicated required real browsers",
+        "real pack audit"
+      ]
+    },
+    "separateExtracted": {
+      "browser": {
+        "files": 3,
+        "passed": 5
+      },
+      "distributionAndNativeAdapter": {
+        "files": 3,
+        "passed": 14
+      },
+      "operationsAndProxy": {
+        "files": 2,
+        "passed": 29
+      },
+      "note": "Separate/overlapping boundary runs, not additional whole-suite totals. Operations fixture copies preserve assertions and redirect only runtime URLs to the tar; source-injected timing/storage controls remain labeled as such."
+    },
+    "pack": {
+      "members": 129,
+      "runtimeSourceFiles": 35,
+      "archive": {
+        "path": "/home/mirako/abel/cadence-w7-bUzoj2/real-pack/abelxiaoxing-cadence-1.8.4.tgz",
+        "sha256": "e9e14a49c66ae75a88822280566803b8f043ca17bca642ec823cde8e6cfb4c3d"
+      },
+      "audit": {
+        "path": "/home/mirako/abel/cadence-w7-bUzoj2/extraction-audit.json",
+        "sha256": "e78b5421a5692d1018db9b5075bd75fbbef0faa88394e4b3c997eca0e82e0743"
+      },
+      "postExerciseAudit": {
+        "path": "/home/mirako/abel/cadence-w7-bUzoj2/final-extracted-audit.json",
+        "sha256": "57380f6aa3c4fcfa084f09bba435a5b44c95c8c829bf954b6a8d194e7b66df44"
+      },
+      "packageBodies": "tar-only; before-extract and after-extract/body/pin/font/notice audits; only explicit existing Pi/Typebox/Undici/ws host links outside package; no source refill",
+      "unrelatedCwdOrdinaryNode": true
+    },
+    "licenses": {
+      "renderedPackageFamilies": 105,
+      "renderedModulesIncludingHelpers": 295,
+      "noticeBodies": 129,
+      "fonts": 60,
+      "embeddedVisFamilies": 13,
+      "policy": {
+        "path": "provenance/bundled-notices.json",
+        "sha256": "3ea1ecb0324fd1fe3c2d2fc3ddad0cb9697fbd625518ca981d965ee996f52636"
+      },
+      "sourceAndAdaptation": {
+        "path": "provenance/webui-reuse.json",
+        "sha256": "bedd1bfcf892dd2153e65a09b997da4318897ae282d933b2b34c9a2857669ed5"
+      },
+      "fullBody": {
+        "path": "licenses/bundled-web.txt",
+        "sha256": "a54614b6e451c5e3d4ba3f14697692d8528bae06db1275cdb11cb5edf0b6e60e"
+      }
+    }
+  },
+  "receipts": {
+    "index": {
+      "path": "/home/mirako/abel/cadence-w7-bUzoj2/final-receipts.json",
+      "sha256": "104fff288b0f67670a414ab0170f771e85adeed10555806403978b13b97be939"
+    },
+    "representativeCurrent": {
+      "verify3": [
+        {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/cadence-distribution-0ozvUv/distribution-diagnostics.json",
+          "sha256": "9dfc96a761cac90f0da12224a51cf1174f30ddbf48252751a24e7872a57e6f22"
+        },
+        {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/cadence-host-native-X6dQMl/recovery-restart-receipt.json",
+          "sha256": "ddc5aff9fa3f21d9f3d85a5c9012247ad5b6a456ccec8298c8038e3861568729"
+        },
+        {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/cadence-terminal-FbOZbs/owner-receipt.json",
+          "sha256": "bc6e313512c04ff1e04985bc37fbf61ee347108d3960c38583bbde8f87b3d784"
+        },
+        {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/cadence-terminal-IngeZv/owner-receipt.json",
+          "sha256": "3509da172e03022ac7dade9429fc0ccbeb8a9fbaea41db28f8758913c04dfb50"
+        },
+        {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/cadence-terminal-LdHruo/owner-receipt.json",
+          "sha256": "a0129a216beaee490b1c890d974bacf1fbb99bf7c3893b8e4e2d41f3a01c1424"
+        },
+        {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/cadence-terminal-mmgOuQ/owner-receipt.json",
+          "sha256": "c60533a2bd4363ee69a3040617cafd603e25bebd12ef410f4f35db4daa2414e3"
+        },
+        {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/owner-proxy-2bhyGQ/receipt.json",
+          "sha256": "0ee896ec891742a839af7b1bc0aabb3bf3db6909e0fe50714d82bf382341d483"
+        },
+        {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/owner-proxy-It87Ff/receipt.json",
+          "sha256": "bbb9f46e8610d9e45e6582b4f3a8eb85c8c87de99395a9a4e715a454abca6ecd"
+        },
+        {
+          "path": "/home/mirako/abel/cdb-MEKNAZ/receipt.json",
+          "sha256": "31b4773dca42373416a87fa62cd9da783db98e1f9a5c3110e04dddadd2561a17"
+        },
+        {
+          "path": "/home/mirako/abel/cdb-wtRSGU/receipt.json",
+          "sha256": "be56cd221cbd1d0f55c4ebeff026d022ee9a15be93ce90ab198d3d5d4eb3fb3e"
+        },
+        {
+          "path": "/home/mirako/abel/cdn-wVtQY2/receipt.json",
+          "sha256": "6e7648ed18face595875c4951a673076f7565a9e714b378d6b13d2b2e0e71b2e"
+        }
+      ],
+      "extracted-browser": [
+        {
+          "path": "/home/mirako/abel/cdb-PugY9H/receipt.json",
+          "sha256": "0a5abdf70342e8c26c8858deb538dcb58290ded6de2c9a514a5efa968286c00e"
+        },
+        {
+          "path": "/home/mirako/abel/cdb-lDb66z/receipt.json",
+          "sha256": "ca5cd09f8a9f429e632f5249ea7f7dfc1756b7a3648922d5f26d5544c61f8d45"
+        },
+        {
+          "path": "/home/mirako/abel/cdn-rpgbz8/receipt.json",
+          "sha256": "92cfb9fe161f85f4cb4ea84e91c4868e7224e782107f2084ca2a246a0ea215c2"
+        }
+      ],
+      "extracted-distribution-native": [
+        {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/cadence-distribution-KvxiS1/distribution-diagnostics.json",
+          "sha256": "e2e37fe003b7e1ff3265d6d66207cdfa446f7337e8048a52ef95b7147b876763"
+        }
+      ],
+      "extracted-operations3": [
+        {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/cadence-host-native-veXlwK/recovery-restart-receipt.json",
+          "sha256": "2fc08cac79121dc2c0014bdd8b0d1e22d3c088eb1d267fb96feaaf2bee6b5ed3"
+        },
+        {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/owner-proxy-3VBX5E/receipt.json",
+          "sha256": "cff2c4058675651b86e80df3753d22b21713e1be81c27dbfb97847bac670a26a"
+        },
+        {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/owner-proxy-WoJ6R0/receipt.json",
+          "sha256": "f7d41085833a811a5f079267122ad5846c84e019cb58f909a931d0737d892e21"
+        }
+      ]
+    },
+    "native": "Four source/extracted regular/fullscreen PTYs: eight original Pi exit0 and four owner close0/null without force. An additional real Pi observer shares a pending run with two browser contexts in source and extracted browser lanes.",
+    "browser": "Three actual accepting scenarios (loopback cold restart, CA-validated HTTPS, safety/mixed clients) plus two explicitly readonly built-renderer scenarios per full browser run. Every original browser close is retained; viewport is not device evidence.",
+    "history": "Actual retained producer/read boundaries and >ring/>8MiB cold traversal are in the full source suite. Cold generated/extracted browser restart separately proves exact retained hit and task/run/child downloads; these evidence scopes are not conflated.",
+    "proxy": "Source and tar ordinary-Node owners: plain AND gzip each refresh1/inference1/direct0, unrelated credentials preserved, original owner close0/null.",
+    "crash": "Actual generated source and tar owner injected SIGKILL, readonly diagnosis, native TTY recovery, new epoch foreground restart and authenticated Stop0; crash is not clean Stop."
+  },
+  "extractedOperationsFixture": {
+    "inputs": {
+      "path": "/home/mirako/abel/cadence-w7-bUzoj2/extracted-matrix3-inputs.json",
+      "sha256": "2641951e428606bf7889749953cbe8166922004004d0c33136b3f942cd2a32eb"
+    },
+    "generator": {
+      "path": "/home/mirako/abel/cadence-w7-bUzoj2/prepare-extracted-matrix.py",
+      "sha256": "8cc42a8a41820805a9d0c416a32247caa89fe44a131442abe4b0e277f9d18e3d"
+    },
+    "qualification": "Existing service-auth-proxy and service-cli tests, unchanged assertions. Static runtime host/CLI URLs target audited tar. Remaining fixture imports/import.meta paths name original test helpers; source-only injected-helper lanes are not called tar execution."
+  },
+  "repairs": [
+    {
+      "kind": "product",
+      "files": ["src/history/navigation.ts"],
+      "finding": "Journal-root-prepared publication redundantly rewrote legacy mutable entity/roster heads that no current reader uses.",
+      "repair": "Omit only those duplicate writes when a prepared anchored head exists; preserve old bytes/no-root path, original immutable links, all fsync/commit/read-budget/limit checks.",
+      "counterexample": "redundant-head-counterexample",
+      "affected": "navigation-affected.json",
+      "limits": "CPU profile observed fsync cost in this current failed fixture; no exclusive cause is inferred for old failures or all elapsed-time variance."
+    },
+    {
+      "kind": "product",
+      "files": ["web/src/App.tsx", "web/src/layout/use-drawer-focus.ts"],
+      "finding": "After owner restart with null model, a phone inspector could contain no enabled focus target; Escape never reached its panel handler.",
+      "repair": "Labeled section drawers have tabIndex=-1 and receive focus when no enabled descendant exists. Actual cold browser checks focus, Escape closure and trigger restoration at four viewports.",
+      "counterexample": "browser-navigation"
+    },
+    {
+      "kind": "fixture",
+      "files": [
+        "test/helpers/source-build.ts",
+        "test/service-model-choice.test.ts",
+        "test/helpers/service-model-choice-child.ts"
+      ],
+      "finding": "Guarded native fixture attempted checkout reads for build identity and expected the obsolete missing-build error.",
+      "repair": "Freeze independently computed identity into its bundle; copy built fixture assets under the already-permitted fixture root; keep guard unchanged and assert unsupported-context."
+    }
+  ],
+  "assertionDispositions": [
+    {
+      "old": "34 archive members / 16 source files",
+      "new": "129 independently selected members / 35 runtime source files; exact every-body/pin/font/license/import closure",
+      "tests": [
+        "test/distribution.test.mjs",
+        "test/package-audit.test.mjs",
+        "test/service-package.test.ts"
+      ]
+    },
+    {
+      "old": "no production dependencies / Node>=22.13 metadata",
+      "new": "Already-approved exact ws8.21.3 / Node>=22.19 metadata, unchanged peer/dev pins; no upstream/Trellis runtime dependency",
+      "tests": ["test/package-contract.test.mjs", "test/independence.test.ts"]
+    },
+    {
+      "old": "one foreground terminal worker / departure cancels",
+      "new": "sole inert native registrar and shared accepting owner; departure detaches and explicit Cancel stops",
+      "tests": [
+        "test/startup-card.test.ts",
+        "test/lightweight-shell.test.ts",
+        "test/terminal-integration.test.mjs",
+        "test/web/accepting-browser-negative.e2e.mjs"
+      ]
+    },
+    {
+      "old": "extracted SDK fixture v1 envelope",
+      "new": "strict v2 request plus same real write/tool-result/auth/EOF/native-close assertions",
+      "tests": ["test/distribution.test.mjs"]
+    },
+    {
+      "old": "all post-Stop publication saves prohibited",
+      "new": "exact pre-Stop original publication drains; new post-Stop work still refuses, pending originals/quarantine/fences remain",
+      "tests": [
+        "test/service-accepted-work.test.ts",
+        "test/service-stop-continuation.test.ts"
+      ]
+    },
+    {
+      "old": "mutable-head corruption fixture assumes duplicate current hint exists",
+      "new": "explicitly fabricate stale legacy hint, preserve skipped-predecessor/original-source negative; current writer proves it does not create/rewrite redundant hints",
+      "tests": [
+        "test/service-history-projection.test.ts",
+        "test/service-history-metadata-cost.test.ts"
+      ]
+    },
+    {
+      "old": "click delivery implies drawer focus",
+      "new": "actual activeElement focus, Escape closure and restored trigger asserted, including empty/disabled null-model inspector",
+      "tests": ["test/web/accepting-browser.e2e.mjs"]
+    },
+    {
+      "old": "fixed64-member diagnostic slice",
+      "new": "all129 member/body diagnostics within a1MiB test-receipt cap; product read/capture limits unchanged",
+      "tests": ["test/distribution.test.mjs"]
+    }
+  ],
+  "failedEvidencePreserved": {
+    "commands": [
+      {
+        "command": "verify",
+        "receipt": {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/verify.json",
+          "sha256": "d077c43683c9a0e13c53075ed388c000947c0319cf9708f840410aaa061c7683"
+        },
+        "exit": 1
+      },
+      {
+        "command": "verify2",
+        "receipt": {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/verify2.json",
+          "sha256": "8c8a1053e773f5e465b4deaab79edfbb33645862c6bf17a2f761037967fd050d"
+        },
+        "exit": 1
+      },
+      {
+        "command": "verify-failures-affected",
+        "receipt": {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/verify-failures-affected.json",
+          "sha256": "020af3db6777e761e2ddeef6ef3546a5e2c3ffdb439381486fbb3c4afd3146fd"
+        },
+        "exit": 1
+      },
+      {
+        "command": "browser-cold",
+        "receipt": {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/browser-cold.json",
+          "sha256": "9822f2739b378f23ea69192320f50d7998dc1d1a4b56eebc5da206cb189bd3c5"
+        },
+        "exit": 1
+      },
+      {
+        "command": "browser-cold-focused",
+        "receipt": {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/browser-cold-focused.json",
+          "sha256": "888e947b9c5cfef5b92aa264a4dd64a6ea75ad6d0c2dc0752de076fa5968c3b2"
+        },
+        "exit": 1
+      },
+      {
+        "command": "browser-profile-diagnostic",
+        "receipt": {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/browser-profile-diagnostic.json",
+          "sha256": "4c3714a43d847c140fc397d2c68b5c20b0e2b74749b493de2935f10495b403b6"
+        },
+        "exit": 1
+      },
+      {
+        "command": "redundant-head-counterexample",
+        "receipt": {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/redundant-head-counterexample.json",
+          "sha256": "a41293fa58a350cd4941c44a83c948ec7e3db85dee1d2f23f23ccd162094a14f"
+        },
+        "exit": 1
+      },
+      {
+        "command": "browser-navigation",
+        "receipt": {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/browser-navigation.json",
+          "sha256": "2d035652d477fb8c8901f46c0e2b7d4d3c47d8902ad6ecfb15e7dc0efd77300c"
+        },
+        "exit": 1
+      },
+      {
+        "command": "extracted-operations",
+        "receipt": {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/extracted-operations.json",
+          "sha256": "f721ed5af4ad10a3e024b31ca37678e5f510f05ee05de7f1fab7be08909f3095"
+        },
+        "exit": 1
+      },
+      {
+        "command": "extracted-operations2",
+        "receipt": {
+          "path": "/home/mirako/abel/cadence-w7-bUzoj2/extracted-operations2.json",
+          "sha256": "f8f38f8050a97e40dd678a82f4e6ab36c6ab3465c03bafa881351fbfce134fc4"
+        },
+        "exit": 1
+      }
+    ],
+    "additionalLogs": [
+      "/home/mirako/abel/cadence-w7-bUzoj2/pack-focused.log",
+      "/home/mirako/abel/cadence-w7-bUzoj2/check-affected.log"
+    ],
+    "disposition": "All failures remain failed. Initial verify was1808 pass/27 fail/27 platform skips; verify2 stopped at semantic-markup lint. Current changed-input final verify3 passed. Browser drain failures include retained original-handle SIGTERM teardown, not clean Stop. The two external matrix adaptation failures retain their missing template-helper path; third adapter preserves helper locations. Historical19/11 and older receipts were not relabeled or causally reconstructed."
+  },
+  "preservation": {
+    "lockUnchanged": true,
+    "dependencyPinsUnchanged": true,
+    "versionUnchanged": "1.8.4",
+    "noCommitPushPublishInstallDeploymentCredentialOrTaskStateChanges": true,
+    "noConsumerMigrationResetCleanup": true,
+    "processInventory": {
+      "path": "/home/mirako/abel/cadence-w7-bUzoj2/final-process-inventory.json",
+      "bytes": 206,
+      "sha256": "2f9799ab1b9a3de02dbe30489fc0097ef9078621f7623d8da7fa0899511acbe8"
+    },
+    "finalCwdAndArgumentInventory": {
+      "path": "/home/mirako/abel/cadence-w7-bUzoj2/final-process-inventory-cwd.json",
+      "sha256": "ce9f4b66fa0eee7587ee7922cc340d26ad23a646f36f4780ffd5c3aef117719e"
+    },
+    "noDelegatedAgentsSpawned": true
+  },
+  "changedFiles": [
+    ".trellis/spec/backend/database-guidelines.md",
+    ".trellis/spec/backend/directory-structure.md",
+    ".trellis/spec/backend/error-handling.md",
+    ".trellis/spec/backend/index.md",
+    ".trellis/spec/backend/lightweight-workflow-guidelines.md",
+    ".trellis/spec/backend/logging-guidelines.md",
+    ".trellis/spec/backend/quality-guidelines.md",
+    ".trellis/spec/backend/service-history-capture-guidelines.md",
+    ".trellis/spec/backend/service-orchestration-guidelines.md",
+    ".trellis/spec/backend/task-distribution-guidelines.md",
+    ".trellis/spec/frontend/component-guidelines.md",
+    ".trellis/spec/frontend/directory-structure.md",
+    ".trellis/spec/frontend/hook-guidelines.md",
+    ".trellis/spec/frontend/index.md",
+    ".trellis/spec/frontend/quality-guidelines.md",
+    ".trellis/spec/frontend/service-client-guidelines.md",
+    ".trellis/spec/frontend/state-management.md",
+    ".trellis/spec/frontend/type-safety.md",
+    "AGENTS.md",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md",
+    "docs/remote-access.md",
+    "docs/reuse-and-distribution.md",
+    "licenses/bundled-web.txt",
+    "licenses/pi-web-ui-reuse.md",
+    "package.json",
+    "provenance/bundled-notices.json",
+    "provenance/package-members.json",
+    "provenance/webui-reuse.json",
+    "scripts/audit-notices.d.mts",
+    "scripts/audit-notices.mjs",
+    "scripts/build-identity.mjs",
+    "scripts/build-operator.mjs",
+    "scripts/build-web.mjs",
+    "scripts/package-audit.mjs",
+    "src/history/navigation.ts",
+    "src/service-host.mjs",
+    "test/distribution.test.mjs",
+    "test/helpers/accepting-fixture.ts",
+    "test/helpers/native-observer.mjs",
+    "test/helpers/secure-accepting.ts",
+    "test/helpers/service-model-choice-child.ts",
+    "test/helpers/source-build.ts",
+    "test/helpers/task-shell-pty.py",
+    "test/independence.test.ts",
+    "test/package-audit.test.mjs",
+    "test/package-contract.test.mjs",
+    "test/service-accepted-work.test.ts",
+    "test/service-history-metadata-cost.test.ts",
+    "test/service-history-projection.test.ts",
+    "test/service-model-choice.test.ts",
+    "test/service-package.test.ts",
+    "test/service.config.ts",
+    "test/startup-card.test.ts",
+    "test/terminal-integration.test.mjs",
+    "test/web/accepting-browser-negative.e2e.mjs",
+    "test/web/accepting-browser.e2e.mjs",
+    "web/dist/assets/cadence.js",
+    "web/dist/manifest.json",
+    "web/src/App.tsx",
+    "web/src/layout/use-drawer-focus.ts"
+  ],
+  "additionalUnqualified": [
+    "native Windows/macOS and ConPTY (27 existing Windows-only producer controls skipped on Linux)",
+    "Node22/other Pi or Node identities",
+    "physical phone/human and second-machine field exercise",
+    "paid-provider/account OAuth or every adapter",
+    "package-manager installation and real deployment"
+  ],
+  "remaining": "Main performs independent final review; no known available-host required execution gate remains unrun. This writer does not mark task status complete or authorize publication."
+}

@@ -1,0 +1,66 @@
+--- before/src/service-wire.ts
++++ after/src/service-wire.ts
+@@ -73,6 +73,30 @@
+   "changes",
+   "reviews",
+ ] as const;
++/** Encoded HTTP Reply category, including wire whitespace/escaping. Graph data
++ * is a control document; only its proof-only branch shares the page ceiling. */
++export function httpOutputLimit(
++  operation: HttpOperation,
++  reply?: unknown,
++): number {
++  if (
++    (pageReaders as readonly string[]).includes(operation) ||
++    operation === "detail" ||
++    operation === "search" ||
++    operation === "entity"
++  )
++    return LIMITS.pageBytes;
++  if (operation === "graph") {
++    const kind = Object.getOwnPropertyDescriptor(reply ?? {}, "kind")?.value,
++      value = Object.getOwnPropertyDescriptor(reply ?? {}, "value")?.value;
++    if (
++      kind === "ok" &&
++      Object.getOwnPropertyDescriptor(value ?? {}, "kind")?.value === "progress"
++    )
++      return LIMITS.pageBytes;
++  }
++  return LIMITS.controlBytes;
++}
+ export function mutation(operation: HttpOperation): boolean {
+   return ["preflight", "command", "cancel", "detach"].includes(operation);
+ }
+--- before/src/service-http-client.ts
++++ after/src/service-http-client.ts
+@@ -25,12 +25,14 @@
+   parseWireJson,
+   type ReadCursor,
+   type Scope,
++  utf8Bytes,
+ } from "./service-contract.ts";
+ import {
+   decodeHttpInput,
+   decodeHttpOutput,
+   decodeSocketOutput,
+   type HttpOperation,
++  httpOutputLimit,
+   type SocketOutput,
+   WS_PATH,
+   wireRequest,
+@@ -101,9 +103,12 @@
+       redirect: "error",
+       ...(write ? { body: wire.body } : {}),
+     });
+-    const parsed = parseWireJson(
+-      await boundedText(response, LIMITS.controlBytes),
+-    );
++    const source = await boundedText(response, httpOutputLimit(operation)),
++      parsed = parseWireJson(source);
++    // Graph's category is known only after parsing. Count ORIGINAL wire bytes,
++    // not a canonical re-encoding which discards padding or alternate escapes.
++    if (utf8Bytes(source) > httpOutputLimit(operation, parsed))
++      throw new ContractError("oversize");
+     const result = decodeHttpOutput(operation, parsed);
+     if (operation === "session") {
+       const reply = decodeReply(result, decodeSessionBootstrap);

@@ -1,0 +1,15 @@
+{
+  "native": { "code": 0, "signal": null },
+  "forced": false,
+  "observed": {
+    "scenario": "stale-key",
+    "passed": true,
+    "constructed": 1,
+    "authCalls": 0,
+    "contacts": 0,
+    "encoderUses": 0,
+    "nativeWorkerSpawns": 0,
+    "records": [],
+    "remainingFiles": ["auth.json", "models.json"]
+  }
+}

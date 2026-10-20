@@ -1,0 +1,15 @@
+{
+  "command": [
+    "node",
+    "/home/mirako/abel/cadence-final-review-FZ6WMJ/extract-final.mjs"
+  ],
+  "cwd": "/home/mirako/abel/cadence",
+  "pid": 2444655,
+  "started": 1792440776.9306872,
+  "temporaryRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ",
+  "originalWait": true,
+  "exit": 0,
+  "elapsedSeconds": 0.307,
+  "log": "/home/mirako/abel/cadence-final-review-FZ6WMJ/real-extract-final.log",
+  "logSha256": "323cff0e7cfca14ccb2e93bbc35e54651ea04b389399ee0ed820f65710078448"
+}

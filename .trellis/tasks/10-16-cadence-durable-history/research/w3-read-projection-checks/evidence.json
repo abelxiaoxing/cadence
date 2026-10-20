@@ -1,0 +1,102 @@
+{
+  "schema": "cadence-w3-read-projection-evidence/1",
+  "scope": "W3 read/index/projection/live implementation; not W3/product acceptance",
+  "independentReview": "pending",
+  "inputs": {
+    "file": ".trellis/tasks/10-16-cadence-durable-history/research/w3-read-projection-checks/handoff-inputs.json",
+    "sha256": "6478f0408a0ba61338a35f78e1f2fe58cd74a7278df0dc0bd169a5dc08bf3bfe",
+    "unchangedAfterTests": true,
+    "files": 61,
+    "unchangedAfterCheckAndLint": true
+  },
+  "identity": {
+    "nodeExecutable": "/usr/bin/node",
+    "node": "v26.7.0",
+    "bun": "1.3.14",
+    "os": "Linux",
+    "architecture": "x86_64",
+    "peers": {
+      "pi-coding-agent": "0.84.3",
+      "pi-ai": "0.84.3",
+      "pi-agent-core": "0.84.3"
+    }
+  },
+  "tests": {
+    "command": "bun run test -- test/service-contract.test.ts test/service-owner.test.ts test/service-auth.test.ts test/service-model-context.test.ts test/lightweight-store-controller.test.ts test/lightweight-process-diff.test.ts test/lightweight-sdk.test.ts test/worker-public.test.ts test/worker-capture.test.ts test/worker-recording.test.ts test/service-history.test.ts test/service-history-semantics.test.ts test/service-history-projection.test.ts test/service-history-live-detail.test.ts",
+    "exitCode": 0,
+    "passed": 1088,
+    "failed": 0,
+    "skipped": 0,
+    "files": 14,
+    "durationSeconds": 367.29,
+    "priorCases": 1059,
+    "newCases": 29,
+    "log": "handoff-tests.log",
+    "sha256": "6e738732b2a32ae3e4b9b877a5e69d508206426d415f9ec2c9a3d1cc0756450a",
+    "expandedCommand": "vitest run --no-file-parallelism test/service-contract.test.ts test/service-owner.test.ts test/service-auth.test.ts test/service-model-context.test.ts test/lightweight-store-controller.test.ts test/lightweight-process-diff.test.ts test/lightweight-sdk.test.ts test/worker-public.test.ts test/worker-capture.test.ts test/worker-recording.test.ts test/service-history.test.ts test/service-history-semantics.test.ts test/service-history-projection.test.ts test/service-history-live-detail.test.ts"
+  },
+  "gates": [
+    {
+      "command": "bun run check",
+      "exitCode": 0,
+      "log": "handoff-check.log",
+      "sha256": "d8e0559fba0bc409f2ba5d1a97a129af498576567949aee4278dd415d3d51e90"
+    },
+    {
+      "command": "bun run check:agents",
+      "exitCode": 0,
+      "log": "handoff-agents.log",
+      "sha256": "fc459b9f542bbe9546842994f18a74f6a80e908f467ce497916608c24531eebf"
+    },
+    {
+      "command": "bun run lint",
+      "exitCode": 0,
+      "log": "lint.log",
+      "sha256": "06fa72b066c250120a8a496389009be20e2e8a0562cbc8c85aff84eb0ab295e5",
+      "notes": "Two pre-existing informational template-literal suggestions in test/package-audit.test.mjs; no new warning/error or ignore change."
+    }
+  ],
+  "preservedPriorFiles": {
+    "src/history/admission.ts": true,
+    "test/service-history.test.ts": true,
+    "test/service-history-semantics.test.ts": true,
+    "test/helpers/history-crash.ts": true,
+    "test/helpers/history-fixture.ts": true
+  },
+  "evidenceKinds": {
+    "nativeExisting": "Unchanged real W1 preparation + W2/stock SDK + W3 >2MiB capture; original 20s test/15s child bounds and waited crash/native/auth cases retained.",
+    "nativeNew": "Actual private files/journal/index/UTF8 pages and actual W1 HTTP/WS reads, snapshot race and heartbeat recovery over this writer/projection.",
+    "structuralNew": "8200 actual journal rows, 1200 message occurrences, 70 Create-shaped records; fabricated public/owner/native facts, not extra SDK or W1 admission effects.",
+    "injectedNew": "Read-budget exhaustion, observer delay, lost notification, fabricated check/review/handoff/unknown-native facts; no additional provider/shell qualification.",
+    "cacheAndQuota": "Original-byte checks continue; copied decoded metadata bounded to active+preceding segments; quota stat does not replace ledger/artifact integrity validation."
+  },
+  "remaining": [
+    "literal-search",
+    "streaming-ndjson-markdown-export",
+    "strict-v1-publication",
+    "guarded-recovery",
+    "full-owner-scheduler-client-package-composition",
+    "independent-review"
+  ],
+  "notRun": [
+    "full-repository-suite",
+    "pack-extracted-product",
+    "browser-terminal-cutover",
+    "physical-human-device",
+    "paid-provider",
+    "Node22",
+    "Pi1.2",
+    "native-Windows-macOS-ConPTY"
+  ],
+  "historicalResults": "All other logs/input maps in this directory are preserved development or earlier overlapping runs. Failed native/time-budget experiments remain failed; do not aggregate reruns.",
+  "reportCheck": {
+    "command": "node_modules/.bin/rumdl check --no-exclude .trellis/tasks/10-16-cadence-durable-history/research/w3-read-projection-handoff.md",
+    "exitCode": 0,
+    "log": "report-markdown-final.log",
+    "sha256": "ab5e22dadc433aee561554dabc44577758298dcc42b625c9554e0d707c77f22f"
+  },
+  "handoff": {
+    "file": ".trellis/tasks/10-16-cadence-durable-history/research/w3-read-projection-handoff.md",
+    "sha256": "6a7d8568295fe28d7126e2a3509a199d2f2947abc59df91030cefe928a9680cb"
+  }
+}

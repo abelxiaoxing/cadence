@@ -1,0 +1,85 @@
+{
+  "at": "2026-10-17T02:34:21.404817+00:00",
+  "results": [
+    {
+      "command": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-contract.test.ts",
+        "test/service-owner.test.ts",
+        "test/service-auth.test.ts",
+        "test/service-model-context.test.ts",
+        "test/lightweight-store-controller.test.ts"
+      ],
+      "exitCode": 0,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/parent-transport-model-checks/targeted.log",
+      "sha256": "4ebe0d6098e73734f53c4d235ebf003319a2f178f6d64ae38274edd8880780a1"
+    },
+    {
+      "command": ["bun", "run", "check"],
+      "exitCode": 0,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/parent-transport-model-checks/check.log",
+      "sha256": "d8e0559fba0bc409f2ba5d1a97a129af498576567949aee4278dd415d3d51e90"
+    },
+    {
+      "command": ["bun", "run", "lint"],
+      "exitCode": 0,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/parent-transport-model-checks/lint.log",
+      "sha256": "f3c279eba588a1fe64dc81a2e4809d40bb4d39e4220ecf2d6588c9c066ac703b"
+    },
+    {
+      "command": ["bun", "run", "check:agents"],
+      "exitCode": 0,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/parent-transport-model-checks/agents.log",
+      "sha256": "fc459b9f542bbe9546842994f18a74f6a80e908f467ce497916608c24531eebf"
+    }
+  ],
+  "sources": {
+    "src/agent-registry.ts": "ff91cc7ac91e1407c7da1a93be9dcf13f1ce8948c0f7a7b6b8bcc48514899434",
+    "src/index.ts": "96fe0fb28733617aecb980e65549a52a940ad4958d10668f2389627f6a9f9066",
+    "src/install-config.d.mts": "18715ca0ca818463891a3e22f631a1d53d97c487cbcc7a187c1fcf3be061f572",
+    "src/install-config.mjs": "d40abd4a42a9ff82376abdd176819674a35d0f3e13128c5776bc055884c2538b",
+    "src/operator-cli-entry.mjs": "4cf6f6bc82db7d725c984f04c9b6c58c75c26395013273d81f7c120b15fbec8f",
+    "src/operator-cli.mjs": "0bb6120b422ef93a1e02e1ca2aa30943464d34060202bcf81f817800dffd4f7a",
+    "src/operator-tools.ts": "bd099e9ab3c796f9e7936b5df983d961a6760beb9fe00ddfbe1a6d6d7b3fe9b1",
+    "src/sdk-worker.mjs": "12fff81671cc0bd1d3011f43f9364531bba0a08007dd1abe728de00a676022f3",
+    "src/service/admission.ts": "c44a27cfe505bb6ac524928a4682a157b291fe777ed5b8979f3f07c0cde78cbd",
+    "src/service/auth.ts": "ddc66aa77eac77877c66067157bb8cc801233fc340f04d0e261d88c5e622e437",
+    "src/service/config.ts": "d1c9598ab4c026d419ff621ae894f618961e2b5acdf2c16b45ff84b8d50830f8",
+    "src/service/contracts/budget.ts": "968c85e35fb1e34c8e77ded90e29c41535728077a07be041b014068362a5463d",
+    "src/service/contracts/capture.ts": "1063989d0b7ae4b6a982243da272e3f01905013ba79bb145362fde1f15deddb7",
+    "src/service/contracts/core.ts": "c0872f2f0dce34c5ebfb73827b5200675b4d8ecfa312b2bb722c8e4bb51afb41",
+    "src/service/contracts/domain.ts": "f24eb52dafd058614828209135a3f9ac372232a74bcbf06c20c79ec05057b32a",
+    "src/service/contracts/history.ts": "07810b6052e3a5c012a62388c4b77ddd24121be753294c4f63bde2c0ee48bf82",
+    "src/service/coordination.ts": "47b7e3f615b177d74bc7fa71655028808bd24ede16c2e9ea1a64571ac20fc7e7",
+    "src/service/http.ts": "5a09abed7628af7dd553e61b130fd7149f21422efde37d2d82779eaf4483ac9e",
+    "src/service/model-config.ts": "2d131e01667e0f82f074952a6fb50836099a34c2fb76f0583068609230f96661",
+    "src/service/model-context.ts": "2a92b40db9eaa35ddc5ea8e1fecea1945b6fccf39117cfcbf7207b1b18275964",
+    "src/service/owner.ts": "d62e35cdd7be3d26cc9827d00ea52f4cd4ea4f40b04324f4137993790825602c",
+    "src/service/ports.ts": "7134c4576caa55718d8ba914bb4c4f19f2dbeed4317eba041e53614e3e6c028e",
+    "src/service/private-files.ts": "a0275cb8132d83a1614990a50485d9beeffcc1b3bc59262907790e734082f8a6",
+    "src/service/recovery.ts": "fdc239b4b6947abe28599a961000cdda11b22c619bdb83d1deda256d99d36a26",
+    "src/service-client.ts": "a61ae7f04a6b3665b077b550193f24dc3134ee39d4645d86f7f0e52dc7e63c79",
+    "src/service-contract.ts": "7d166451e88e89b9ef86b3e48c38716324637dd736b89d5ab679cde5b8acebff",
+    "src/service-http-client.ts": "e5ef7007be7815f60ebeeaebebe4091d1e7aa5ddb3123cec88bb1e9ed210c3b2",
+    "src/service-wire.ts": "96af240b17bfa8d6cbe0f2285a332544df91e710ee836aa224fa1a52daca4bb1",
+    "src/startup-card.ts": "d94ae8a1e123475925809b25e69cba8b20e428a732138001e49828ae935e7388",
+    "src/subagent-process.ts": "c357e4033e50767a6e5935231411e5b55f03f2f3ff70d8483099ca07d7b10ce9",
+    "src/task-controller.ts": "0e1d540f6a4c8c1c74680ad9e6cb2eab86bea8d0a69beaa02bab66dcac37d05c",
+    "src/task-diff.ts": "c343c3e2145dce795a4f1f3362e45a1ba3016628b4f813f41fe04df7270a2426",
+    "src/task-shell.ts": "1d7d96e3968ea8672065bbccc33d818bfed495847a4c0ff075cf6d618d42f456",
+    "src/task-store.ts": "b80e61d5ec4845f9d857db9da89ecde607c2727e1c6c5abf5e239c69ee6bd73e",
+    "src/task-types.ts": "58f59f20ef2201d5f471dca1ea26b2c9d0a17a21e33b1f64ee7d8af107db1973",
+    "src/verification-diagnostics.ts": "45767df1951f186bc14a68983cbdc9d7c369ab50a6aa7f092fd71311bfab8dc1",
+    "package.json": "2aa7fe4c464835cdebdafbed2cf5d4831cc02c753886eb6f0b42041c46f7464c",
+    "bun.lock": "cc31e7ad885c21849b38515cb47bb9913b75801a3b484bf647e11fe354f47551",
+    "test/service-auth.test.ts": "decce47dc2954a4bb2701a87cf4381683ab2249b37707861eb8709f1d00f96af",
+    "test/service-model-context.test.ts": "9442f56d263133a79f4d04980589f3b921d49200abbcf23cc071127293a25728",
+    "provenance/auth-reuse.json": "693333da4398ef7a5f7c31f219a014aaed48bed149385506fd37c9eca31fe167"
+  },
+  "scope": "405 focused portable/native owner/HTTP/TLS/SDK-auth tests; injected W3/W4 ports; not product integration or working proxy-refresh acceptance",
+  "w1Complete": false,
+  "parentComplete": false
+}

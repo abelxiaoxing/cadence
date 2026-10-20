@@ -1,0 +1,95 @@
+{
+  "schema": "cadence-w1-owner-parent-check/1",
+  "at": "2026-10-16T17:34:52.429896+00:00",
+  "scope": "232 tests:114 portable,93 owner mixed filesystem/native/injected,25 existing legacy store/controller; not product/HTTP/SDK/history/browser/package qualification",
+  "results": [
+    {
+      "command": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-contract.test.ts",
+        "test/service-owner.test.ts",
+        "test/lightweight-store-controller.test.ts"
+      ],
+      "exitCode": 0,
+      "seconds": 12.892,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/parent-owner-checks/targeted.log",
+      "sha256": "119b7839eda01efa592c74273935cdb3becebd528cb5100ec2e8085acd07af42"
+    },
+    {
+      "command": ["bun", "run", "check"],
+      "exitCode": 0,
+      "seconds": 5.276,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/parent-owner-checks/check.log",
+      "sha256": "d8e0559fba0bc409f2ba5d1a97a129af498576567949aee4278dd415d3d51e90"
+    },
+    {
+      "command": ["bun", "run", "lint"],
+      "exitCode": 0,
+      "seconds": 0.566,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/parent-owner-checks/lint.log",
+      "sha256": "88f96a889623fa086e679e5b123b1245dae8271f42ec458d85558af6aef503e3"
+    },
+    {
+      "command": ["bun", "run", "check:agents"],
+      "exitCode": 0,
+      "seconds": 0.064,
+      "log": ".trellis/tasks/10-16-cadence-service-owner/research/parent-owner-checks/agents.log",
+      "sha256": "fc459b9f542bbe9546842994f18a74f6a80e908f467ce497916608c24531eebf"
+    }
+  ],
+  "preSources": {
+    "package.json": "2aa7fe4c464835cdebdafbed2cf5d4831cc02c753886eb6f0b42041c46f7464c",
+    "bun.lock": "cc31e7ad885c21849b38515cb47bb9913b75801a3b484bf647e11fe354f47551",
+    "src/service/admission.ts": "c44a27cfe505bb6ac524928a4682a157b291fe777ed5b8979f3f07c0cde78cbd",
+    "src/service/contracts/budget.ts": "968c85e35fb1e34c8e77ded90e29c41535728077a07be041b014068362a5463d",
+    "src/service/contracts/capture.ts": "1063989d0b7ae4b6a982243da272e3f01905013ba79bb145362fde1f15deddb7",
+    "src/service/contracts/core.ts": "c0872f2f0dce34c5ebfb73827b5200675b4d8ecfa312b2bb722c8e4bb51afb41",
+    "src/service/contracts/domain.ts": "f24eb52dafd058614828209135a3f9ac372232a74bcbf06c20c79ec05057b32a",
+    "src/service/contracts/history.ts": "07810b6052e3a5c012a62388c4b77ddd24121be753294c4f63bde2c0ee48bf82",
+    "src/service/coordination.ts": "1158e74ee8b054383fba4bb7c778d06e4b5f85fee738052eb013b7ab929e7109",
+    "src/service/owner.ts": "d62e35cdd7be3d26cc9827d00ea52f4cd4ea4f40b04324f4137993790825602c",
+    "src/service/ports.ts": "7134c4576caa55718d8ba914bb4c4f19f2dbeed4317eba041e53614e3e6c028e",
+    "src/service/private-files.ts": "a0275cb8132d83a1614990a50485d9beeffcc1b3bc59262907790e734082f8a6",
+    "src/service/recovery.ts": "fdc239b4b6947abe28599a961000cdda11b22c619bdb83d1deda256d99d36a26",
+    "src/service-contract.ts": "7d166451e88e89b9ef86b3e48c38716324637dd736b89d5ab679cde5b8acebff",
+    "src/service-client.ts": "a61ae7f04a6b3665b077b550193f24dc3134ee39d4645d86f7f0e52dc7e63c79",
+    "test/service-owner.test.ts": "c005cc1a4f83d2d7dbde985f873a0085b3ca6f7c5ce2247ddae01388e57b2d91",
+    "test/service-contract.test.ts": "4f5cf173e61219912e814ae8ae5e20ea052f15b4cb9c17f60d8a197a727f545e",
+    "test/helpers/service-owner-child.mjs": "c7b3c6203d516f577062cb73722fd00beeb6547caf53abcb64639945d79261a0"
+  },
+  "postSources": {
+    "package.json": "2aa7fe4c464835cdebdafbed2cf5d4831cc02c753886eb6f0b42041c46f7464c",
+    "bun.lock": "cc31e7ad885c21849b38515cb47bb9913b75801a3b484bf647e11fe354f47551",
+    "src/service/admission.ts": "c44a27cfe505bb6ac524928a4682a157b291fe777ed5b8979f3f07c0cde78cbd",
+    "src/service/contracts/budget.ts": "968c85e35fb1e34c8e77ded90e29c41535728077a07be041b014068362a5463d",
+    "src/service/contracts/capture.ts": "1063989d0b7ae4b6a982243da272e3f01905013ba79bb145362fde1f15deddb7",
+    "src/service/contracts/core.ts": "c0872f2f0dce34c5ebfb73827b5200675b4d8ecfa312b2bb722c8e4bb51afb41",
+    "src/service/contracts/domain.ts": "f24eb52dafd058614828209135a3f9ac372232a74bcbf06c20c79ec05057b32a",
+    "src/service/contracts/history.ts": "07810b6052e3a5c012a62388c4b77ddd24121be753294c4f63bde2c0ee48bf82",
+    "src/service/coordination.ts": "1158e74ee8b054383fba4bb7c778d06e4b5f85fee738052eb013b7ab929e7109",
+    "src/service/owner.ts": "d62e35cdd7be3d26cc9827d00ea52f4cd4ea4f40b04324f4137993790825602c",
+    "src/service/ports.ts": "7134c4576caa55718d8ba914bb4c4f19f2dbeed4317eba041e53614e3e6c028e",
+    "src/service/private-files.ts": "a0275cb8132d83a1614990a50485d9beeffcc1b3bc59262907790e734082f8a6",
+    "src/service/recovery.ts": "fdc239b4b6947abe28599a961000cdda11b22c619bdb83d1deda256d99d36a26",
+    "src/service-contract.ts": "7d166451e88e89b9ef86b3e48c38716324637dd736b89d5ab679cde5b8acebff",
+    "src/service-client.ts": "a61ae7f04a6b3665b077b550193f24dc3134ee39d4645d86f7f0e52dc7e63c79",
+    "test/service-owner.test.ts": "c005cc1a4f83d2d7dbde985f873a0085b3ca6f7c5ce2247ddae01388e57b2d91",
+    "test/service-contract.test.ts": "4f5cf173e61219912e814ae8ae5e20ea052f15b4cb9c17f60d8a197a727f545e",
+    "test/helpers/service-owner-child.mjs": "c7b3c6203d516f577062cb73722fd00beeb6547caf53abcb64639945d79261a0"
+  },
+  "sharedFreezeUnchanged": true,
+  "preexistingStatusRowsPreserved": 690,
+  "receiptFormattingCorrection": {
+    "original": ".trellis/tasks/10-16-cadence-service-owner/research/w1-owner-core-checks.preformat.txt",
+    "originalSha256": "715ce16757a2841b07b461c7d78f2b267b89dfafd04b7a03860f667005059607",
+    "formatted": ".trellis/tasks/10-16-cadence-service-owner/research/w1-owner-core-checks.json",
+    "formattedSha256": "2234e3a4dfe746ea606267178476830dcef4cf50a2b0f66f6be55c687178b58c",
+    "semanticChange": false,
+    "previousReviewerWholeLintRemainsHistoricalFailure": true
+  },
+  "w1Complete": false,
+  "parentComplete": false
+}

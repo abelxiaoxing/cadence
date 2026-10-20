@@ -1,0 +1,306 @@
+{
+  "schema": "cadence-d3-implementation-evidence/1",
+  "status": "ready-for-independent-native-review; not parent completion",
+  "root": "/home/mirako/abel/cadence-w5-FXmZhW",
+  "identity": {
+    "node": "v26.7.0",
+    "executable": "/usr/bin/node",
+    "bun": "1.3.14",
+    "pi": "0.84.3",
+    "platform": "linux",
+    "arch": "x64"
+  },
+  "inputs": [
+    {
+      "file": "src/task-shell.ts",
+      "sha256": "2d958ef4fdbbec16e2c8e5b057f2067c3ce39c3ec3299088c961421c36963176"
+    },
+    {
+      "file": "src/native-client.ts",
+      "sha256": "70958ecc6d385d6a987b024675b33c5e5239cc167dfe76eca6063f68192a9951"
+    },
+    {
+      "file": "src/native-history.ts",
+      "sha256": "093f53ee19e609900d8c023174077aac9aa49f0bc90fa39bd67dbd61a4a631d0"
+    },
+    {
+      "file": "src/native-export.ts",
+      "sha256": "bae779158714136e54cbce876dc4d91a7a24c3b9765c3c049d2be52367b67678"
+    },
+    {
+      "file": "src/native-build.ts",
+      "sha256": "2d550244a37efb8e5e5b5e70bf99e22c3a41bc06461b9cf3887af2e5fb72cb62"
+    },
+    {
+      "file": "src/worker-redaction.mjs",
+      "sha256": "7e3c72e04647d7070fa0a69004eeebf8cbba2597a2f314496b87131b92e11872"
+    },
+    {
+      "file": "src/service-host.mjs",
+      "sha256": "76d638c3dbd99fd5391f2903cc534ef1bdea60e2933ae1cb78b3b1e14193e8b5"
+    },
+    {
+      "file": "src/service-cli.mjs",
+      "sha256": "f7f2db44ff51e27e0f9c2e96e329586e0a99f271f54081f45429185cd71d8460"
+    },
+    {
+      "file": "scripts/build-service.mjs",
+      "sha256": "f3b78b505703843a60845a59ab0b9d0c40bd93f38a16ede39c7dbc7ebf5753a1"
+    },
+    {
+      "file": "test/lightweight-shell.test.ts",
+      "sha256": "e95eca7d82caadc273a5546cc865e6485684f7f5633bf5e2986dcc2fd9ccf868"
+    },
+    {
+      "file": "test/native-client.test.ts",
+      "sha256": "5cb3b5ab277eb21845004d9f86922f7b8be63329e14c289d9080288e95245794"
+    },
+    {
+      "file": "test/native-history.test.ts",
+      "sha256": "6a4c65ea67bd11fa158ddbfcd4fee16b2e819ab7d26165dd3fe0001073a8bda7"
+    },
+    {
+      "file": "test/terminal-integration.test.mjs",
+      "sha256": "40bb655fdb0230a5e923f2185880a3b30db01e075b49b7de0eccc0f37ae4a60b"
+    },
+    {
+      "file": "test/worker-capture.test.ts",
+      "sha256": "9c67b4e4f760b24b511eb0142f2cc4c6991dd723cd987d68e878a74206a09313"
+    }
+  ],
+  "gates": [
+    {
+      "command": "bun run test -- test/native-client.test.ts test/native-history.test.ts test/lightweight-shell.test.ts test/worker-capture.test.ts test/service-check-recording.test.ts test/service-contract.test.ts",
+      "log": "/home/mirako/abel/cadence-w5-FXmZhW/affected-final-frozen.log",
+      "exit": 0,
+      "files": 6,
+      "passed": 297
+    },
+    {
+      "command": "bun run test -- test/terminal-integration.test.mjs -t 'source (regular|fullscreen) production'",
+      "log": "/home/mirako/abel/cadence-w5-FXmZhW/pty-final-frozen.log",
+      "exit": 0,
+      "passed": 2,
+      "unselected": 34,
+      "note": "Unselected extracted/platform/helper cases are not passing qualification; budgets remain 90s/scenario and 15s/interaction."
+    },
+    {
+      "command": "bun run check",
+      "log": "/home/mirako/abel/cadence-w5-FXmZhW/check-final.log",
+      "exit": 0
+    },
+    {
+      "command": "bun run lint",
+      "log": "/home/mirako/abel/cadence-w5-FXmZhW/lint-final.log",
+      "exit": 0
+    },
+    {
+      "command": "bun run build:web:check",
+      "log": "/home/mirako/abel/cadence-w5-FXmZhW/build-web-check.log",
+      "exit": 0
+    },
+    {
+      "command": "bun run check:agents",
+      "log": "/home/mirako/abel/cadence-w5-FXmZhW/check-agents.log",
+      "exit": 0
+    }
+  ],
+  "nativeScenarios": [
+    {
+      "mode": "regular",
+      "root": "/home/mirako/abel/cadence-w5-FXmZhW/cadence-terminal-wGz9Fu",
+      "ownerReceipt": "/home/mirako/abel/cadence-w5-FXmZhW/cadence-terminal-wGz9Fu/owner-receipt.json",
+      "firstPiReceipt": "/home/mirako/abel/cadence-w5-FXmZhW/cadence-terminal-wGz9Fu/pty-receipt.json",
+      "reattachedPiReceipt": "/home/mirako/abel/cadence-w5-FXmZhW/cadence-terminal-wGz9Fu/reattach/pty-receipt.json",
+      "sameRunId": "607b08e7-4191-41ee-bd91-50e49b920065",
+      "requestCount": 4,
+      "originalPiWaits": [
+        {
+          "pid": 2167430,
+          "exitCode": 0,
+          "failure": null,
+          "seconds": 60.03784151398577
+        },
+        {
+          "pid": 2167873,
+          "exitCode": 0,
+          "failure": null,
+          "seconds": 6.806149012991227
+        }
+      ],
+      "ownerClose": {
+        "code": 0,
+        "signal": null,
+        "forced": false
+      },
+      "barrier": "original parsed HTTP4/editing3 remains pending after first original Pi exit; second original Pi attaches same run and explicitly Cancels; original child direct close asserted"
+    },
+    {
+      "mode": "fullscreen",
+      "root": "/home/mirako/abel/cadence-w5-FXmZhW/cadence-terminal-AzcWye",
+      "ownerReceipt": "/home/mirako/abel/cadence-w5-FXmZhW/cadence-terminal-AzcWye/owner-receipt.json",
+      "firstPiReceipt": "/home/mirako/abel/cadence-w5-FXmZhW/cadence-terminal-AzcWye/pty-receipt.json",
+      "reattachedPiReceipt": "/home/mirako/abel/cadence-w5-FXmZhW/cadence-terminal-AzcWye/reattach/pty-receipt.json",
+      "sameRunId": "1be1d876-564e-4973-83a5-e4e5c3080972",
+      "requestCount": 4,
+      "originalPiWaits": [
+        {
+          "pid": 2167928,
+          "exitCode": 0,
+          "failure": null,
+          "seconds": 60.538743201992474
+        },
+        {
+          "pid": 2168373,
+          "exitCode": 0,
+          "failure": null,
+          "seconds": 6.561089231981896
+        }
+      ],
+      "ownerClose": {
+        "code": 0,
+        "signal": null,
+        "forced": false
+      },
+      "barrier": "original parsed HTTP4/editing3 remains pending after first original Pi exit; second original Pi attaches same run and explicitly Cancels; original child direct close asserted"
+    }
+  ],
+  "compiledClientFixture": {
+    "root": "/home/mirako/abel/cadence-w5-FXmZhW/accepting-M0UkoQ",
+    "receipt": "/home/mirako/abel/cadence-w5-FXmZhW/accepting-M0UkoQ/receipt.json",
+    "originalHostClose": [0, null],
+    "checks": "actual native-local Manual command with fixed 120000ms policy; completed/direct-child-closed/exit0",
+    "exports": [
+      {
+        "path": "/home/mirako/abel/cadence-w5-FXmZhW/accepting-M0UkoQ/child-markdown.txt",
+        "bytes": 31985,
+        "sha256": "81776e300ffcc67d545fdea895b7d154d1d4f67887230b45d3a3a2e0cf34f59f",
+        "prefixBytes": 31645,
+        "trailerDigest": "93533e51575999473cd7b3082243283fd73388853cfbd7f4da47031a623aa549",
+        "trailerComplete": true
+      },
+      {
+        "path": "/home/mirako/abel/cadence-w5-FXmZhW/accepting-M0UkoQ/child-ndjson.txt",
+        "bytes": 42569,
+        "sha256": "a5e02d30d1286bd7a0b85776338023182ccfd0a59e8fb6cf19a4ceb401aedc26",
+        "prefixBytes": 42245,
+        "trailerDigest": "f894c01791e201fefc0f467ca85c607d71f8bff727897714def99622ad1cffa3",
+        "trailerComplete": true
+      },
+      {
+        "path": "/home/mirako/abel/cadence-w5-FXmZhW/accepting-M0UkoQ/run-markdown.txt",
+        "bytes": 46516,
+        "sha256": "a99d03bb84334e8c8d5eb6e29d1ac308ca69c15a1a57ff9581369845df233c04",
+        "prefixBytes": 46176,
+        "trailerDigest": "799023f2da3a6b356eb6278cf2975539cca42e07881b7d9692ab74e10f2ae82b",
+        "trailerComplete": true
+      },
+      {
+        "path": "/home/mirako/abel/cadence-w5-FXmZhW/accepting-M0UkoQ/run-ndjson.txt",
+        "bytes": 58508,
+        "sha256": "ae5d160741444dc413db7be4b1e8191b2e39caca425b797e1737bbc2102e53f6",
+        "prefixBytes": 58184,
+        "trailerDigest": "faeb18f226a5753505574f1293cf4f3e69a5b414614fc61178b9d036ccb7581c",
+        "trailerComplete": true
+      },
+      {
+        "path": "/home/mirako/abel/cadence-w5-FXmZhW/accepting-M0UkoQ/task-markdown.txt",
+        "bytes": 47954,
+        "sha256": "662dda012529ea1b53656f2fd5da0d8fd1fe944d16d74545da1ca7672676b6ef",
+        "prefixBytes": 47614,
+        "trailerDigest": "8b58f894986b1bad2d3a9d830592e2986848030791cb551c6234e1b6fd2b43ce",
+        "trailerComplete": true
+      },
+      {
+        "path": "/home/mirako/abel/cadence-w5-FXmZhW/accepting-M0UkoQ/task-ndjson.txt",
+        "bytes": 60005,
+        "sha256": "f60aa1b4b49023a3c03a9f0d4a46f1880e11ca87be9448e1500ffad66a0f8f17",
+        "prefixBytes": 59681,
+        "trailerDigest": "48d1827ef684ea08f8a2061cc70d62903d69163e36af0ec25b32969279069809",
+        "trailerComplete": true
+      }
+    ]
+  },
+  "assertionDispositions": [
+    {
+      "old": "terminal-local exact auth forwarding",
+      "replacement": "native OWNER choice; parent getApiKeyAndHeaders never called; actual generated host uses fabricated existing Pi profile",
+      "test": "test/lightweight-shell.test.ts; test/native-client.test.ts"
+    },
+    {
+      "old": "foreground navigation/quit cancels and blocks host navigation",
+      "replacement": "dialog guards remain; navigation invalidates pending consent; Return/quit detach admitted work; only explicit Cancel targets actual run IDs",
+      "test": "test/lightweight-shell.test.ts; test/terminal-integration.test.mjs (shared source/extracted fixture)"
+    },
+    {
+      "old": "prelaunch progress Escape prevents late spawn",
+      "replacement": "No/Escape before fresh confirmation and departure during preflight never submit a command",
+      "test": "test/lightweight-shell.test.ts"
+    },
+    {
+      "old": "one-task local plan/controller execution",
+      "replacement": "proposePlan + owner roles/model + finite assignment/dependency JSON; exact-byte current checks around awaits; generated output never Save/Start",
+      "test": "test/lightweight-shell.test.ts; source regular/fullscreen production cases"
+    },
+    {
+      "old": "256KiB terminal rendering preview and local v1 History",
+      "replacement": "full bounded service pages, explicit proof continuations/back navigation, exact hit cursors, same retained IDs, complete verified exports",
+      "test": "test/native-history.test.ts; test/native-client.test.ts; pager test in test/lightweight-shell.test.ts"
+    }
+  ],
+  "corrections": [
+    {
+      "file": "src/worker-redaction.mjs",
+      "cause": "Native long Unicode advisory reproduced heuristic tail splitting a surrogate pair; generated diagnostic recorded WorkerRecording detail-chunk sequence32 invalid scalar text. Keep whole pair at suffix cut; no limit change.",
+      "regression": "test/worker-capture.test.ts: heuristic suffix never emits a split Unicode pair through worker and owner projections",
+      "diagnostic": "/home/mirako/abel/cadence-w5-FXmZhW/cadence-terminal-gljVBR/owner-receipt.json"
+    },
+    {
+      "file": "src/native-history.ts",
+      "cause": "Self-review found Back/record reopening could repeat a null-snapshot list seed. Pin first returned concrete request; never retain null seed as prior page.",
+      "regression": "test/native-history.test.ts: Back from a later data page never reuses the initial null-snapshot list seed"
+    },
+    {
+      "file": "test/terminal-integration.test.mjs",
+      "cause": "Legacy fixture needed private owner profile, accepted-publication observation, exact parent outcome plus owner drain (not older/child completion), and same pending HTTP barrier for second Pi. Original budgets retained; teardown now preserves first failure and joins original handles."
+    }
+  ],
+  "preservedFailures": {
+    "logs": [
+      "/home/mirako/abel/cadence-w5-FXmZhW/affected-final.log",
+      "/home/mirako/abel/cadence-w5-FXmZhW/build-check.log",
+      "/home/mirako/abel/cadence-w5-FXmZhW/native-client-drain.log",
+      "/home/mirako/abel/cadence-w5-FXmZhW/native-review-flow.log",
+      "/home/mirako/abel/cadence-w5-FXmZhW/pty-capture-diagnostic.log",
+      "/home/mirako/abel/cadence-w5-FXmZhW/pty-capture-diagnostic2.log",
+      "/home/mirako/abel/cadence-w5-FXmZhW/pty-diagnostic.log",
+      "/home/mirako/abel/cadence-w5-FXmZhW/pty-exact-run.log",
+      "/home/mirako/abel/cadence-w5-FXmZhW/pty-initial.log",
+      "/home/mirako/abel/cadence-w5-FXmZhW/pty-private-fixture.log",
+      "/home/mirako/abel/cadence-w5-FXmZhW/pty-publication.log",
+      "/home/mirako/abel/cadence-w5-FXmZhW/pty-unicode.log",
+      "/home/mirako/abel/cadence-w5-FXmZhW/shell-initial.log"
+    ],
+    "notes": [
+      "Initial private-profile admission failure exposed fixture teardown without an allocated coordination handle; one later detach failure also bypassed teardown. Exact known fixture PID/cwd/cmd verified before SIGTERM; original child waits unavailable, never clean Stop. See pty-initial-owned-process.json and pty-publication-owned-process.json.",
+      "One diagnostic patch assertion failed before an unchanged test rerun (also failed): pty-capture-diagnostic.log. No failed result is reclassified by later passes. Generated diagnostic instrumentation was removed by canonical rebuild.",
+      "Other forced fixture stops have original handle/close facts and retained fences in owner-receipt.json; they are not clean service stops.",
+      "The planned aggregate build:check script is absent (build-check.log, exit1). Executed existing check and build:web:check routes passed; final aggregate scripts are W7."
+    ]
+  },
+  "finalProcessInventory": {
+    "runningOwnedMatches": "/home/mirako/abel/cadence-w5-FXmZhW/owned-process-final.txt",
+    "earlyOwnedPids": "/home/mirako/abel/cadence-w5-FXmZhW/early-orphans-final.txt",
+    "observed": "no running owned fixture/service/SDK/PTY process; early orphan PIDs no longer present, but original waits remain unavailable"
+  },
+  "unqualified": [
+    "independent native review",
+    "W7 extracted regular/fullscreen actual pack routes",
+    "final whole verify and AC1-AC22 integration",
+    "new native/browser/HTTPS mixed acceptance",
+    "Windows/macOS/ConPTY",
+    "physical human/device and paid-provider/accounts",
+    "installation/deployment/publication"
+  ],
+  "preservation": "No Git/task-state/dependency-pin/bun.lock/real-profile/real-credential/deployment/consumer-cleanup changes. Isolated fixture state and uncertain fences retained. src/index.ts unchanged; ordinary startup/conversation/skills remain nonactivating."
+}

@@ -1,0 +1,26 @@
+{
+  "at": "2026-10-17T02:35:16.055146+00:00",
+  "from": ".trellis/tasks/10-16-cadence-service-owner",
+  "to": ".trellis/tasks/10-16-cadence-worker-capture",
+  "authority": "Approved full design + latest continuous implementation authorization",
+  "prerequisites": "W1 joint-interface-freeze.json plus reciprocal W2/W3 acceptance",
+  "sharedEditor": "One W2 implementer, followed by one W2 checker; no concurrent checkout edits",
+  "assigned": [
+    "src/worker-public.mjs",
+    "src/worker-public.d.mts",
+    "src/service/contracts/core.ts",
+    "src/service/contracts/domain.ts",
+    "src/service/contracts/capture.ts",
+    "src/service-contract.ts",
+    "src/service/contracts/history.ts and budget.ts import-only if needed",
+    "test/service-contract.test.ts",
+    "src/sdk-network.ts (reuse extraction)",
+    "src/subagent-process.ts (network extraction then actual v2 runner)",
+    "src/sdk-worker.mjs and narrow worker helpers",
+    "native process/SDK tests and own fixtures"
+  ],
+  "constraint": "Single executable codec/route owner; preserve semantics/negative vectors, no duplicate validators, no protocol fallback or hidden accepting persistence. W1 HTTP/model/owner unchanged unless exact main-assigned integration change.",
+  "preFreezeSha256": "f7a948cc16b898af9f93ce655984f809a2a65507f11a860f9d2b0c46344c93be",
+  "w1Complete": false,
+  "parentComplete": false
+}

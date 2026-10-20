@@ -1,0 +1,15 @@
+{
+  "command": [
+    "python3",
+    "/home/mirako/abel/cadence-final-review-FZ6WMJ/collect-final.py"
+  ],
+  "cwd": "/home/mirako/abel/cadence",
+  "pid": 2450705,
+  "started": 1792441323.4079628,
+  "temporaryRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ",
+  "originalWait": true,
+  "exit": 0,
+  "elapsedSeconds": 0.748,
+  "log": "/home/mirako/abel/cadence-final-review-FZ6WMJ/collect-final.log",
+  "logSha256": "2019768b424dd305669f5c4e8eb48ca3ac760a3da659c7b9cd09df2ec8085f22"
+}

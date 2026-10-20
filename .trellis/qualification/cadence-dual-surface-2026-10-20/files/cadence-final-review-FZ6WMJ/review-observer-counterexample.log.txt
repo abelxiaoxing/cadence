@@ -1,0 +1,33 @@
+$ vitest run --no-file-parallelism test/service-human-review.test.ts -t "concurrent unavailable viewer"
+
+ RUN  v4.1.10 /home/mirako/abel/cadence
+
+ ❯ test/service-human-review.test.ts (20 tests | 1 failed | 19 skipped) 10292ms
+   × a concurrent unavailable viewer cannot stale an accepted review of unchanged checks 10289ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/service-human-review.test.ts > a concurrent unavailable viewer cannot stale an accepted review of unchanged checks
+AssertionError: expected 'error' to be 'ok' // Object.is equality
+
+Expected: "ok"
+Received: "error"
+
+ ❯ Object.submit test/helpers/service-check-fixture.ts:229:20
+    227|       caller,
+    228|     );
+    229|     expect(r.kind).toBe("ok");
+       |                    ^
+    230|     if (r.kind !== "ok") throw Error(JSON.stringify(r));
+    231|     return r.value;
+ ❯ test/service-human-review.test.ts:159:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 19 skipped (20)
+   Start at  03:16:39
+   Duration  11.89s (transform 1.04s, setup 0ms, import 1.42s, tests 10.29s, environment 0ms)
+
+error: script "test" exited with code 1

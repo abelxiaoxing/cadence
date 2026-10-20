@@ -1,0 +1,16 @@
+{
+  "command": [
+    "bun",
+    "run",
+    "test:browser"
+  ],
+  "cwd": "/home/mirako/abel/cadence",
+  "pid": 2404654,
+  "started": 1792438024.1107183,
+  "temporaryRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ",
+  "originalWait": true,
+  "exit": 0,
+  "elapsedSeconds": 177.19,
+  "log": "/home/mirako/abel/cadence-final-review-FZ6WMJ/browser-review-fixed.log",
+  "logSha256": "0593a3acce84c429a1e511040266dd59b63867be3becfd3c9061529d58e07cbb"
+}

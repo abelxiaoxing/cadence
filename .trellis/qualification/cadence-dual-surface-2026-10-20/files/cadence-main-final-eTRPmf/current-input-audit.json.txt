@@ -1,0 +1,8 @@
+{
+  "checkedInputs": 467,
+  "mismatches": [],
+  "acceptanceCriteria": 22,
+  "requirements": 14,
+  "mapStatus": "available-host-independent-review-complete",
+  "reviewSha256": "ecfd2f79bd1c3e6b536814692889887a3515b8799d7b6edff840f9c5c07ca5c0"
+}

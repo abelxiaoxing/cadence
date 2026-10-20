@@ -1,0 +1,62 @@
+{
+  "pid": 2447150,
+  "waitpidReturned": true,
+  "waitStatus": 0,
+  "exitCode": 0,
+  "failure": null,
+  "observations": [
+    {
+      "pattern": "Context7",
+      "matched": true,
+      "rawStart": 0,
+      "rawEnd": 9176
+    },
+    {
+      "pattern": "Cadence service",
+      "matched": true,
+      "rawStart": 9176,
+      "rawEnd": 16340
+    },
+    {
+      "pattern": "144b898f-cee6-4e7f-974e-9855998c01ba",
+      "matched": true,
+      "rawStart": 16340,
+      "rawEnd": 24386
+    },
+    {
+      "pattern": "Cadence service",
+      "matched": true,
+      "rawStart": 24386,
+      "rawEnd": 32123
+    },
+    {
+      "pattern": "detached locally",
+      "matched": true,
+      "rawStart": 32123,
+      "rawEnd": 37441
+    }
+  ],
+  "seconds": 3.1798433050280437,
+  "physicalHuman": false,
+  "nativeExecutor": false,
+  "escapeKeys": [
+    {
+      "inputHex": "1b",
+      "minimumDelayMs": 100,
+      "elapsedMs": 100.12486600317061
+    },
+    {
+      "inputHex": "1b",
+      "minimumDelayMs": 100,
+      "elapsedMs": 100.10925505775958
+    }
+  ],
+  "barrier": {
+    "event": null,
+    "receivedBeforeWait": null,
+    "waitStep": null,
+    "consumed": false,
+    "escapeAfterReady": false,
+    "bytes": 0
+  }
+}

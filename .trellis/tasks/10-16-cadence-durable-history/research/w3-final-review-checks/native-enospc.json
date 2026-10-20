@@ -1,0 +1,22 @@
+{
+  "native": true,
+  "node": "v26.7.0",
+  "platform": "linux",
+  "sizeBytes": 16777216,
+  "admissionFloorRefused": true,
+  "parts": 63,
+  "artifactCode": "ENOSPC",
+  "appendCode": "ENOSPC",
+  "writeCode": "ENOSPC",
+  "opened": 1,
+  "closed": 1,
+  "prefixPreserved": true,
+  "locksPreserved": true,
+  "coldRead": {
+    "seq": "1",
+    "tail": true,
+    "exitCode": 0,
+    "signal": null,
+    "stderr": ""
+  }
+}

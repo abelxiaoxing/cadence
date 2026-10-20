@@ -1,0 +1,363 @@
+{
+  "schema": "cadence-integrated-acceptance/1",
+  "status": "available-host-independent-review-complete",
+  "evidence": {
+    "path": ".trellis/tasks/10-16-cadence-integrated-delivery/research/final-review.json",
+    "sha256": "ecfd2f79bd1c3e6b536814692889887a3515b8799d7b6edff840f9c5c07ca5c0"
+  },
+  "lanes": {
+    "verify": {
+      "commands": ["verify-repaired"],
+      "tests": [],
+      "evidence": "final-review.json#commands; current467-input freeze, original runner exits/log hashes and original process/download receipts"
+    },
+    "native": {
+      "commands": [
+        "verify-repaired",
+        "extracted-native-final",
+        "extracted-browser-final"
+      ],
+      "tests": [
+        "test/lightweight-shell.test.ts",
+        "test/native-client.test.ts",
+        "test/terminal-integration.test.mjs",
+        "test/web/accepting-browser-negative.e2e.mjs"
+      ],
+      "evidence": "final-review.json#commands; current467-input freeze, original runner exits/log hashes and original process/download receipts"
+    },
+    "browser": {
+      "commands": ["verify-repaired", "extracted-browser-final"],
+      "tests": [
+        "test/web/accepting-browser.e2e.mjs",
+        "test/web/accepting-browser-negative.e2e.mjs",
+        "test/web/assets-browser.e2e.mjs"
+      ],
+      "evidence": "final-review.json#commands; current467-input freeze, original runner exits/log hashes and original process/download receipts"
+    },
+    "package": {
+      "commands": [
+        "verify-repaired",
+        "real-pack-final",
+        "real-extract-final",
+        "extracted-native-final"
+      ],
+      "tests": [
+        "test/distribution.test.mjs",
+        "test/package-audit.test.mjs",
+        "test/package-contract.test.mjs",
+        "test/service-package.test.ts",
+        "test/independence.test.ts"
+      ],
+      "evidence": "final-review.json#commands; current467-input freeze, original runner exits/log hashes and original process/download receipts"
+    },
+    "reuse": {
+      "commands": ["verify-repaired"],
+      "tests": ["test/service-package.test.ts", "test/web/assets.test.tsx"],
+      "evidence": "final-review.json#commands; current467-input freeze, original runner exits/log hashes and original process/download receipts"
+    },
+    "scheduler": {
+      "commands": ["verify-repaired", "extracted-native-final"],
+      "tests": [
+        "test/service-scheduler.test.ts",
+        "test/service-scheduler-facts.test.ts",
+        "test/service-accepted-work.test.ts",
+        "test/service-accepting-host.test.ts",
+        "test/service-owner.test.ts"
+      ],
+      "evidence": "final-review.json#commands; current467-input freeze, original runner exits/log hashes and original process/download receipts"
+    },
+    "capture": {
+      "commands": ["verify-repaired"],
+      "tests": [
+        "test/lightweight-sdk.test.ts",
+        "test/lightweight-process-diff.test.ts",
+        "test/worker-capture.test.ts",
+        "test/worker-canonical-budget.test.ts",
+        "test/worker-recording.test.ts",
+        "test/service-history.test.ts"
+      ],
+      "evidence": "final-review.json#commands; current467-input freeze, original runner exits/log hashes and original process/download receipts"
+    },
+    "history": {
+      "commands": [
+        "verify-repaired",
+        "extracted-browser-final",
+        "extracted-native-final"
+      ],
+      "tests": [
+        "test/service-history-projection.test.ts",
+        "test/service-history-progress.test.ts",
+        "test/service-history-read-completion.test.ts",
+        "test/service-history-search-export.test.ts",
+        "test/service-history-search-scope.test.ts",
+        "test/service-history-export-http.test.ts",
+        "test/service-cli.test.ts"
+      ],
+      "evidence": "final-review.json#commands; current467-input freeze, original runner exits/log hashes and original process/download receipts"
+    },
+    "storage": {
+      "commands": ["verify-repaired"],
+      "tests": [
+        "test/lightweight-store-controller.test.ts",
+        "test/service-owner.test.ts",
+        "test/service-history-blocker-repair.test.ts",
+        "test/service-history-publication-recovery.test.ts",
+        "test/service-history-final-review.test.ts",
+        "test/service-recovery.test.ts"
+      ],
+      "evidence": "final-review.json#commands; current467-input freeze, original runner exits/log hashes and original process/download receipts"
+    },
+    "review": {
+      "commands": [
+        "verify-repaired",
+        "extracted-browser-final",
+        "extracted-native-final"
+      ],
+      "tests": [
+        "test/service-checks.test.ts",
+        "test/service-check-recording.test.ts",
+        "test/service-human-review.test.ts",
+        "test/service-publication-parity-review.test.ts"
+      ],
+      "evidence": "final-review.json#commands; current467-input freeze, original runner exits/log hashes and original process/download receipts"
+    },
+    "admission": {
+      "commands": ["verify-repaired", "extracted-browser-final"],
+      "tests": [
+        "test/service-contract.test.ts",
+        "test/service-auth.test.ts",
+        "test/service-model-choice.test.ts",
+        "test/service-model-choice-review.test.ts",
+        "test/service-current.test.ts"
+      ],
+      "evidence": "final-review.json#commands; current467-input freeze, original runner exits/log hashes and original process/download receipts"
+    },
+    "operations": {
+      "commands": ["verify-repaired", "extracted-operations-final"],
+      "tests": [
+        "test/service-cli.test.ts",
+        "test/service-recovery.test.ts",
+        "test/service-stop-continuation.test.ts"
+      ],
+      "evidence": "final-review.json#commands; current467-input freeze, original runner exits/log hashes and original process/download receipts"
+    },
+    "https": {
+      "commands": ["verify-repaired", "extracted-browser-final"],
+      "tests": [
+        "test/service-auth.test.ts",
+        "test/service-history-export-http.test.ts",
+        "test/web/accepting-browser.e2e.mjs"
+      ],
+      "evidence": "final-review.json#commands; current467-input freeze, original runner exits/log hashes and original process/download receipts"
+    },
+    "auth": {
+      "commands": ["verify-repaired", "extracted-operations-final"],
+      "tests": [
+        "test/service-model-context.test.ts",
+        "test/service-auth-proxy.test.ts",
+        "test/service-auth-network.test.ts",
+        "test/lightweight-sdk.test.ts"
+      ],
+      "evidence": "final-review.json#commands; current467-input freeze, original runner exits/log hashes and original process/download receipts"
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "requirements": ["R1", "R7"],
+      "lanes": ["native", "package"],
+      "observed": "Source/extracted regular/fullscreen real Pi plan/Start/check/change/issues review without browser.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC2",
+      "requirements": ["R2", "R4"],
+      "lanes": ["native", "browser", "scheduler", "capture"],
+      "observed": "Shared real run/child facts, mixed Pi/two-context IDs, distinct failed/canceled/timeout/unknown/native closure.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC3",
+      "requirements": ["R3"],
+      "lanes": ["reuse", "package"],
+      "observed": "Pinned coherent adapted families, actual rendered modules/vendors/fonts and full original notices.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC4",
+      "requirements": ["R4", "R5"],
+      "lanes": ["browser", "history", "native"],
+      "observed": "Detach/reconnect, duplicate/gap/lost-final reconciliation, exact lost receipt observation without replay.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC5",
+      "requirements": ["R5", "R6"],
+      "lanes": ["package", "storage", "native"],
+      "observed": "Actual source/extracted inert entry/operators; absent/corrupt/trap/legacy bytes and unrelated dirt preserved.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC6",
+      "requirements": ["R1", "R4", "R6"],
+      "lanes": ["browser", "review"],
+      "observed": "Actual browser create/save/advisory/Start/Cancel/configured check/current changes/review; failed facts survive issues review.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC7",
+      "requirements": ["R4", "R6"],
+      "lanes": ["admission", "browser", "native"],
+      "observed": "Single-use context-bound grants, raw-byte/model/plan/cwd stale refusal and command identity/lost acknowledgment.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC8",
+      "requirements": ["R1", "R7"],
+      "lanes": ["browser", "native"],
+      "observed": "Browser runs without Pi; actual Pi and browser departure preserve admitted IDs; reconnect is observation.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC9",
+      "requirements": ["R5", "R6", "R7"],
+      "lanes": ["operations", "storage"],
+      "observed": "Orderly Stop versus injected crash; native informed recovery/new epoch; no queue/auth replay and unknown fences.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC10",
+      "requirements": ["R2", "R4", "R8"],
+      "lanes": ["browser", "scheduler"],
+      "observed": "Two genuine overlapping readonly SDK requests and visible parent/child identities/dependencies/results.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC11",
+      "requirements": ["R5", "R8"],
+      "lanes": ["scheduler", "review"],
+      "observed": "Real cross-task checkout reader/writer/check exclusion and alias coordination; readonly child tool authority.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC12",
+      "requirements": ["R4", "R6", "R8"],
+      "lanes": ["scheduler", "browser", "operations"],
+      "observed": "Parent Cancel closes queue and requests all originals; partial/failure/unknown retained, no all-success inference.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC13",
+      "requirements": ["R1", "R6", "R9", "R14"],
+      "lanes": ["browser", "https"],
+      "observed": "Actual generated/extracted HTTPS browser controls and four phone/desktop viewports; physical devices unqualified.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC14",
+      "requirements": ["R6", "R9"],
+      "lanes": ["https", "admission", "history"],
+      "observed": "Actual HTTP/WSS Host/Origin/auth/CSRF/native boundaries, detail/export revocation and secret-free projections.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC15",
+      "requirements": ["R6", "R9", "R10"],
+      "lanes": ["https", "browser", "operations"],
+      "observed": "Token303 cookie bootstrap, wrong/missing/rotated access, no query reuse or secret health/errors; rotation invalidates live access.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC16",
+      "requirements": ["R3", "R5", "R11"],
+      "lanes": ["auth", "operations"],
+      "observed": "Existing fabricated Pi profile, public SDK key/OAuth refresh/writeback, plain/gzip proxy, unrelated entries and no late auth launch.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC17",
+      "requirements": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9",
+        "R10",
+        "R11",
+        "R12",
+        "R13",
+        "R14"
+      ],
+      "lanes": ["verify", "package"],
+      "observed": "Independent full-scope review complete; repaired-source full verify exit0 and separate129-member/35-source tar matrix passed. Every R1-R14/AC1-AC22 required available-host lane is exercised; additional qualification remains explicit.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC18",
+      "requirements": ["R2", "R13"],
+      "lanes": ["capture", "history", "browser", "native"],
+      "observed": "Actual SDK retained fields beyond old caps/ring, paged tool/message association and explicit omissions/coverage; both clients inspect.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC19",
+      "requirements": ["R4", "R5", "R13"],
+      "lanes": ["history", "browser", "native", "operations"],
+      "observed": "Cold/restarted exact-hit and complete task/run/child NDJSON/Markdown exports with count/digest/trailer/EOF; no worker or byte repair on read.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC20",
+      "requirements": ["R7", "R14"],
+      "lanes": ["operations", "package", "native"],
+      "observed": "Explicit management start/status/diagnose/Stop/recovery exercised source/tar; nonactivating import/postinstall/entry preserved.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC21",
+      "requirements": ["R5", "R13"],
+      "lanes": ["storage", "capture", "history"],
+      "observed": "Quota/ENOSPC/corruption/denied detail and torn/auth/native uncertainty remain explicit and preserved; no eviction/cleanup.",
+      "status": "available-host-reviewed-pass"
+    },
+    {
+      "id": "AC22",
+      "requirements": ["R3", "R12", "R14"],
+      "lanes": ["package", "reuse", "native", "browser"],
+      "observed": "Actual tar-only complete server/worker/client/fonts/notices, ordinary Node unrelated cwd, four PTYs and extracted real browser.",
+      "status": "available-host-reviewed-pass"
+    }
+  ],
+  "requirements": {
+    "R1": ["AC1", "AC6", "AC8", "AC13", "AC17"],
+    "R2": ["AC2", "AC10", "AC17", "AC18"],
+    "R3": ["AC3", "AC16", "AC17", "AC22"],
+    "R4": ["AC2", "AC4", "AC6", "AC7", "AC10", "AC12", "AC17", "AC19"],
+    "R5": ["AC4", "AC5", "AC9", "AC11", "AC16", "AC17", "AC19", "AC21"],
+    "R6": ["AC5", "AC6", "AC7", "AC9", "AC12", "AC13", "AC14", "AC15", "AC17"],
+    "R7": ["AC1", "AC8", "AC9", "AC17", "AC20"],
+    "R8": ["AC10", "AC11", "AC12", "AC17"],
+    "R9": ["AC13", "AC14", "AC15", "AC17"],
+    "R10": ["AC15", "AC17"],
+    "R11": ["AC16", "AC17"],
+    "R12": ["AC17", "AC22"],
+    "R13": ["AC17", "AC18", "AC19", "AC21"],
+    "R14": ["AC13", "AC17", "AC20", "AC22"]
+  },
+  "qualificationLimits": [
+    "native Windows/macOS and ConPTY (27 existing Windows-only producer controls skipped on Linux)",
+    "Node22/other Pi or Node identities",
+    "physical phone/human and second-machine field exercise",
+    "paid-provider/account OAuth or every adapter",
+    "package-manager installation and real deployment"
+  ],
+  "reviewBoundary": "Independent final review and required available-host functional acceptance complete. Real SDK/PTY/browser/CA-validated HTTPS/tar/operations/history receipts are distinct from pure/injected controls. No known required defect remains. Task state unchanged; no commit/publication authority. Prior candidate map/evidence and every failed receipt remain preserved.",
+  "candidateEvidence": {
+    "path": ".trellis/tasks/10-16-cadence-integrated-delivery/research/evidence.json",
+    "sha256": "66e6ea3779607a80f191a59a26c14c97ab45a617677cc24731346c6a92be15cc"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "schema": "cadence-provisioning-authorization/1",
+  "userMessage": "允许",
+  "scope": "Official public fixed packages, required transitive/platform artifacts and full official license bodies into isolated cache, lifecycle-disabled; standard externally-offline Bun lock generation; no real credentials/global environment/version substitution or feature cuts.",
+  "authorizationAppliesTo": "Current isolated dependency provisioning and local project dependency setup for approved implementation; no deployment/real-provider calls, commit or publication.",
+  "evidence": "dependency-provisioning.md",
+  "review": "dependency-provisioning-review.md"
+}

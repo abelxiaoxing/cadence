@@ -1,0 +1,225 @@
+{
+  "schema": "cadence-w3-sealed-progress-checks/1",
+  "disposition": "partial-implementation-not-feature-acceptance",
+  "complete": false,
+  "evidenceRoot": "/home/mirako/abel/.cadence-w3-sealed-progress-blJlHLn5",
+  "runtime": {
+    "node": "v26.7.0",
+    "executable": "/usr/bin/node",
+    "platform": "linux",
+    "arch": "x64",
+    "pi": "0.84.3",
+    "bun": "1.3.14",
+    "vitest": "4.1.10"
+  },
+  "sourceSha256": {
+    "src/history/files.ts": "38c3923fdff51f39006a4770c9a5be93222f1563618aa3676e0816e2d7498355",
+    "src/history/types.ts": "e52203a1d89e7f58460361c33321c070d751956ed3ef6d8b2d1317d8c1765ce0",
+    "src/history/writer.ts": "af3ecab4b2076ecd974dfbe3b6bb3cff0d22af8ab0de443f9cdb133e62635be9",
+    "src/history/recovery.ts": "379e72bd2dd19bb309ab36f414879230587326260909c8a68a03788ad34bcc84",
+    "src/history/reader.ts": "8c6237093078eb193c62e032265ef868913baad48b6db3270db071d08ebfde32",
+    "src/history/projection.ts": "04e93687ea1a369eeaa8bbaf585693922b05ea2134c46fc579be4b69d882a6c6",
+    "src/history/search.ts": "a1cf152051572a43446ae4adbce973bfa8f190339987a6224421d287171de22f",
+    "src/history/read-proof.ts": "91f5c07aca196815dbd2929114044de6d7b52caa4735280e2e12199e6002af40",
+    "src/history/sha256-state.ts": "38d88f1885d68f59584b73047305b2b2b75145341d6e328aee9a96ae434522a7",
+    "src/worker-public.mjs": "61988435327b243b6c23bfd92328417bdff2ba715843b5283407ab48fd7484f2",
+    "src/worker-public.d.mts": "2e7e8e601e70ae67e2be15a156ccad3488700dd9e5c3069728855cad9d03df3f",
+    "src/service/contracts/domain.ts": "647aa01235df5aac982423b8deb489ed9502b449d101155979e7b58dc7db559d",
+    "src/service/contracts/history.ts": "30efe15044b2903128b9e10a8bba7fb28ede9fd3e33320191668f0f3951277c5",
+    "src/service-contract.ts": "d63e1e5e981f94de95ffc06823a23145d36ce3ecaacb50e98bd2d7da894bfec2",
+    "src/service-client.ts": "fe10d86662d47977d4c4d0cfe3c70a7ce0b877dcbcd68f96db1b9656caa971bc",
+    "src/service/ports.ts": "fef2f8306da1379a67135375110f86ca12a4ae80c7193cef2a767e824c471785",
+    "src/service-wire.ts": "17f565872f45330b377a4bca2b6eb0426892b4990ae1aa7b206b73ecb380f834",
+    "src/service/http.ts": "c225248cd0c14fa8b6039bdef47e4d951f18efbf76ba6678775b3301024245ba",
+    "src/service-http-client.ts": "8be7e46fe4a19ca74dc8bb089b9318b259f36125263d3264cca0a803ba2b6d1e",
+    "test/service-history-progress.test.ts": "269329865cc66d22757ac3674247f94ddc924e83b55d3eef3d10b7eaa86ca947",
+    "provenance/auth-reuse.json": "ab86805931b3f0e81cf58911697b2ff3e1193307ef0bcbe58d7a2ad4c259c56a",
+    "src/history/read-io.ts": "e7e809a545fbc521878c1106ad5d8d1c801f3e83d16f04512e3fb9d7c169689b"
+  },
+  "sourceUnchangedAcrossFinalSuite": true,
+  "logsSha256": {
+    "01-transport-red.log": "7e85629f388b91e2696fbd816b65d3cb345b3d9469d3d36ff975504fc9a9af2c",
+    "02-transport-green.log": "6763bcfcffa4900cb6c5fa6450ffa2a253493a582c2d49642c147bbb8b3e17bc",
+    "03-check.log": "350296e4147f242095c6077b0b458c9907cc644986b509cda3e3740820f49509",
+    "04-check.log": "bc7e58baf4189b8bdb45a0ca3657728cff6e7bc202a68c7c12b5cce4aa9551fa",
+    "05-primitives.log": "6d2dbcece34baec85b3a22437a8ab9f23b1cb491d176a9ee196bdc8e9eaf665f",
+    "06-primitives-green.log": "b25dbedd69c3712ceb55d4ebfbe931abe54c30c78e6ce3f6f5e105eb93679dea",
+    "07-check.log": "e4c7708df8d3c949684df160bf9a447808344fc8c1a8ebeb06189506cd95a72a",
+    "08-check.log": "d8e0559fba0bc409f2ba5d1a97a129af498576567949aee4278dd415d3d51e90",
+    "09-all-history-prior-ten.log": "aa30813e7476a2ba89c81d9c13f038aa2b6e59ee04ca486c2d64e14ffbb90700",
+    "10-focused-repair.log": "f36251c7c01c51e81152030baf117bb5f92968fabe1b1684926727c88e3b09c5",
+    "11-native-capture-diagnostic.log": "b5f2ad88695095159508ec0ecebbf6094ea49c560b60dee943e3c558313a8f73",
+    "12-format.log": "8d3ba2c3afad9d10a0ae223cb859cd4b912dacdc8546bb5822e24d41a6c2b0c2",
+    "13-format.log": "f393d100bd4e9ef71f03615bd757dcaa0f5350a901da2e97104bfad40a5282fa",
+    "14-check.log": "d8e0559fba0bc409f2ba5d1a97a129af498576567949aee4278dd415d3d51e90",
+    "15-test-format.log": "d93f248440831475a794c1e30ff292184438fbe174ddb16aabe98df5c74fa028",
+    "16-primitives-final.log": "a405acb7d481eae7f302330f08ae3e93fbda516208b51c36a227581b96841f71",
+    "17-wire-format.log": "c79c25037777747d07362f2656e16a6e23d4ef5e8b4a482a685c2dd4729f70d0",
+    "18-final-history-prior-ten.log": "59665b88dc84902eaa83fa7b2771a12e6cf05c905f0460daf04c327555308dc4",
+    "19-native-history-diagnostic.log": "987b2e414c21b0ecfee07dae343b078366a59b880f946263b7ee8a9884a9c47a",
+    "20-native-profile-before.log": "f1fdcf03766d727edb8878b90dd85941094aaa555dc6128010ebe4cc77095927",
+    "21-key-guard-format.log": "0cbf58c78b3a2031cd94baa28390045e48e71c168c05446f7954ab4dad1acd72",
+    "22-native-profile-after.log": "7c9071da19ce0ebb26467118e1054c05d5dd1d2192d5a2fbc4dcebfa8edfa499",
+    "23-native-and-key-regressions.log": "884306920c0832c8b15d98fb1b4883ddcb7ad5f73cb06b14681745bf261923ca",
+    "24-check.log": "d8e0559fba0bc409f2ba5d1a97a129af498576567949aee4278dd415d3d51e90",
+    "25-lint.log": "135a6297c544f8a6a8b3567e330b8d2dae9aa3687ad0bbc46d96897ae4b1ac43",
+    "26-agents.log": "fc459b9f542bbe9546842994f18a74f6a80e908f467ce497916608c24531eebf",
+    "27-final-repaired-history-prior-ten.log": "ad2da80535a2d12787e3be2050058521200b3a17cca181bb9c524aaa46153290",
+    "28-evidence-format.log": "fd06ed1906864d862af1b302e14f95710bd4ba5d86680bb0976e34e5bf20f03a",
+    "29-handoff-markdown.log": "9bb6bec2e96e893d86b9a276daec637b72abe9d6272b01f6e65f7eca8de561e5",
+    "30-handoff-format.log": "811b6de01a722208d5f828e2a8dc7b25ca06ab717b27069cde5c7e0292fafb7f",
+    "31-handoff-check.log": "56a74604d2c3d37e7ca10b8081bf097f38007d5507b6e80585fce2612e6d9d54"
+  },
+  "commands": [
+    {
+      "log": "01-transport-red.log",
+      "exit": 1,
+      "passed": 0,
+      "failed": 3,
+      "skipped": 0,
+      "classification": "before-repair actual HTTP with injected projections and portable decoding"
+    },
+    {
+      "log": "02-transport-green.log",
+      "exit": 0,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "log": "05-primitives.log",
+      "exit": 1,
+      "passed": 13,
+      "failed": 4,
+      "skipped": 0,
+      "classification": "development fixture corrections retained; URL constructor removed empty question mark and three assertions incorrectly expected fresh selection to know prior incarnations"
+    },
+    {
+      "log": "09-all-history-prior-ten.log",
+      "exit": 1,
+      "passed": 1209,
+      "failed": 2,
+      "skipped": 0,
+      "classification": "shim closure regression and native bash event-projection failure"
+    },
+    {
+      "log": "11-native-capture-diagnostic.log",
+      "exit": 0,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 27,
+      "classification": "filtered diagnostic; unchanged native case, not whole suite"
+    },
+    {
+      "log": "16-primitives-final.log",
+      "exit": 0,
+      "passed": 21,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "log": "18-final-history-prior-ten.log",
+      "exit": 1,
+      "passed": 1214,
+      "failed": 1,
+      "skipped": 0,
+      "classification": "native SDK-to-durable-writer timeout before guard repair"
+    },
+    {
+      "log": "19-native-history-diagnostic.log",
+      "exit": 1,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 41,
+      "classification": "reproduced original15s timeout; no timeout increase"
+    },
+    {
+      "log": "20-native-profile-before.log",
+      "exit": 0,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 41,
+      "classification": "aggregate profile before guard repair; counts overlap, not benchmark guarantee"
+    },
+    {
+      "log": "22-native-profile-after.log",
+      "exit": 0,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 41,
+      "classification": "aggregate profile after removal of redundant full per-frame key reads"
+    },
+    {
+      "log": "23-native-and-key-regressions.log",
+      "exit": 0,
+      "passed": 14,
+      "failed": 0,
+      "skipped": 49,
+      "classification": "filtered native and key regression controls"
+    },
+    {
+      "log": "24-check.log",
+      "command": "bun run check",
+      "exit": 0
+    },
+    {
+      "log": "25-lint.log",
+      "command": "bun run lint",
+      "exit": 0,
+      "notes": "two pre-existing informational template-literal notices; no fixes"
+    },
+    {
+      "log": "26-agents.log",
+      "command": "bun run check:agents",
+      "exit": 0
+    },
+    {
+      "log": "27-final-repaired-history-prior-ten.log",
+      "command": "vitest run --no-file-parallelism test/service-history-blocker-repair.test.ts test/service-history-export-http.test.ts test/service-history-final-review.test.ts test/service-history-live-detail.test.ts test/service-history-progress.test.ts test/service-history-projection.test.ts test/service-history-publication-recovery.test.ts test/service-history-search-export.test.ts test/service-history-search-scope.test.ts test/service-history-semantics.test.ts test/service-history.test.ts test/service-contract.test.ts test/service-owner.test.ts test/service-auth.test.ts test/service-model-context.test.ts test/lightweight-store-controller.test.ts test/lightweight-process-diff.test.ts test/lightweight-sdk.test.ts test/worker-public.test.ts test/worker-capture.test.ts test/worker-recording.test.ts",
+      "exit": 0,
+      "passed": 1215,
+      "failed": 0,
+      "skipped": 0,
+      "files": 21,
+      "durationSeconds": 555.99,
+      "classification": "all history plus prior ten files; includes old LIMITATION refusal, NOT complete read-progress feature"
+    }
+  ],
+  "requiredPositiveGates": {
+    "exact8MiBPredecessorColdSearch": false,
+    "exact8MiBPredecessorFullExports": false,
+    "repeatedRecoveryForwardProof": false,
+    "resumableEndAndOverlap": false,
+    "coldExactHitDetailProgress": false,
+    "maximalFiniteCheckpointStates": false,
+    "realIssuedProofHttp": false,
+    "independentReview": false
+  },
+  "implementedPrimitives": {
+    "format3NewOnlyKey": true,
+    "format2ReadonlyGuards": true,
+    "nativeAeadContextAndIncarnationBinding": true,
+    "nativeSha256DifferentialFull8MiB": true,
+    "sharedDetailAndListProgressResults": true,
+    "readonlyPostAndClientSelection": true
+  },
+  "profileSha256": {
+    "native-profile-after/native.json": "7218bd476ce56c2d433d94fe66cb3e67a89de8d9d7bda6c4c983622f686aec3e",
+    "native-profile-before/native.json": "c2f41884e3749597d9fd234d476e4ffead42431498d84710be64c5decb6c5aef"
+  },
+  "historicalBeforeRepairSourceSha256": {
+    "before-writer-key-guard/files.ts": "73171cf0df18e31fefd01c10bb3e2469b559bdc86b5d3c1a95ea63de7dcf2e9a",
+    "before-writer-key-guard/read-io.ts": "3f0d9255b7d8547ae778b13960d5202cc83b12035af9b81140ef1dbbbdfc150f"
+  },
+  "consumerMigration": false,
+  "gitOperations": false,
+  "realCredentials": false,
+  "deployment": false,
+  "existingBudgetsChanged": false,
+  "handoffSha256": "07724b9987054d213842d8e339e0b111bfee41d9137c11f1eb1bdf5c821941cb",
+  "artifactCheck": {
+    "log": "31-handoff-check.log",
+    "command": "rumdl check --no-exclude .trellis/tasks/10-16-cadence-durable-history/research/w3-sealed-progress-handoff.md",
+    "exit": 0
+  }
+}

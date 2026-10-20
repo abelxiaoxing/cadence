@@ -1,0 +1,1813 @@
+{
+  "verify-repaired": [
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepted-work-7D1Hrx/lifetime-receipt.json",
+      "bytes": 386,
+      "sha256": "521e5aadace481b0738e0effd0414ad1ee8a31aec8bae06db7bcbcb8ea6b7e1f"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepted-work-AaZyXy/lifetime-receipt.json",
+      "bytes": 425,
+      "sha256": "91806d226b7e941615209dfab8e730559a7c881e7b2211b6ba78758901910a40"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepted-work-D898iK/lifetime-receipt.json",
+      "bytes": 425,
+      "sha256": "0cc38872780047863a355d916233fad03daa4cad5e21531f8699a5f572e7ed21"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepted-work-IuM1QE/lifetime-receipt.json",
+      "bytes": 370,
+      "sha256": "5c699017ee3404257c863f0d54fe3e482772a803c583308ddcdf2aa16972adce"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepted-work-R3ASfS/lifetime-receipt.json",
+      "bytes": 432,
+      "sha256": "881c6b67c6de4ea5fa739e84d4b48d24b7c06d81bdba3e496483c86ad71cf154"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepted-work-i8w36H/lifetime-receipt.json",
+      "bytes": 479,
+      "sha256": "a61b462063db65dff9a47416633edeec9d923c911cc97df94178e2d0869846a2"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepted-work-jCDAxv/lifetime-receipt.json",
+      "bytes": 381,
+      "sha256": "819819cf38a39f512e9d983f53148feb3f2c76dbaac6ddb842c6a773573a213c"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepted-work-lFWJMr/lifetime-receipt.json",
+      "bytes": 381,
+      "sha256": "e2d34b6f4b8a0f1b33b1f4b549981ab4f765cd281341075feabddc53cdf29f19"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepted-work-nxkKXh/lifetime-receipt.json",
+      "bytes": 378,
+      "sha256": "95fe9600f82857a0d689f58642f04496000174ceb80d6b22b3b0efffc646c30d"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepted-work-pLIIlo/lifetime-receipt.json",
+      "bytes": 381,
+      "sha256": "819819cf38a39f512e9d983f53148feb3f2c76dbaac6ddb842c6a773573a213c"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepted-work-trhvhN/lifetime-receipt.json",
+      "bytes": 387,
+      "sha256": "989ce2e733aed13c9127bd47602aaafb6f708ad430e1b1f2c638b3dd8a1a74f5"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-4jpU5o/receipt.json",
+      "bytes": 753,
+      "sha256": "b40f0000774f90972404809be4f98a624d83741bd34da1a5d1279b02d0feefa5",
+      "mode": "generated",
+      "packageRoot": "source generated",
+      "stopped": [
+        0,
+        null
+      ],
+      "restartedCloses": [],
+      "contacts": 3,
+      "maxActive": 2,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-NiabUS/receipt.json",
+      "bytes": 806,
+      "sha256": "afa0200d73c9cfc99c156511381121112dfff1ffa0158d47643e8b4466c7e8c7",
+      "mode": "source",
+      "packageRoot": "source generated",
+      "stopped": {
+        "state": "stopped",
+        "pending": {
+          "process": 0,
+          "auth": 0,
+          "storage": 0,
+          "work": 0
+        },
+        "settlement": "known"
+      },
+      "restartedCloses": [],
+      "contacts": 3,
+      "maxActive": 2,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-PboMom/receipt.json",
+      "bytes": 503,
+      "sha256": "025ff6f8c544558d9c52bd0fdacdea3bf921024d8456e6afdda5fcca8728374c",
+      "mode": "generated",
+      "packageRoot": "source generated",
+      "stopped": [
+        0,
+        null
+      ],
+      "restartedCloses": [],
+      "contacts": 1,
+      "maxActive": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-SH9Jbi/receipt.json",
+      "bytes": 556,
+      "sha256": "a2da2b3160f139641965a255e9db03c9024b0d8335c91c61bc521f3c96c6773e",
+      "mode": "source",
+      "packageRoot": "source generated",
+      "stopped": {
+        "state": "stopped",
+        "pending": {
+          "process": 0,
+          "auth": 0,
+          "storage": 0,
+          "work": 0
+        },
+        "settlement": "known"
+      },
+      "restartedCloses": [],
+      "contacts": 1,
+      "maxActive": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-ZVpCtt/receipt.json",
+      "bytes": 788,
+      "sha256": "60872f8be39748cc70f52da8757e1f8fc6534fc5ac721d26e1b4151d11d14c77",
+      "mode": "generated",
+      "packageRoot": "source generated",
+      "stopped": [
+        0,
+        null
+      ],
+      "restartedCloses": [
+        [
+          0,
+          null
+        ]
+      ],
+      "contacts": 3,
+      "maxActive": 2,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-dHisbE/receipt.json",
+      "bytes": 753,
+      "sha256": "0ee9b334d8c5ea5a5f43bd31bb15af125252c30ddae811a20e5b41466579ecbd",
+      "mode": "generated",
+      "packageRoot": "source generated",
+      "stopped": [
+        0,
+        null
+      ],
+      "restartedCloses": [],
+      "contacts": 3,
+      "maxActive": 2,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-geLjY6/receipt.json",
+      "bytes": 431,
+      "sha256": "cb80fbe102efab1348c5ce7b132071eb4bcfa5ddd9ba93c03d286a21f4619e8b",
+      "mode": "source",
+      "packageRoot": "source generated",
+      "stopped": {
+        "state": "stopped",
+        "pending": {
+          "process": 0,
+          "auth": 0,
+          "storage": 0,
+          "work": 0
+        },
+        "settlement": "known"
+      },
+      "restartedCloses": [],
+      "contacts": 0,
+      "maxActive": 0,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-oaJGcx/receipt.json",
+      "bytes": 378,
+      "sha256": "89e16aec106692e88db09f66c178a7692e9d94820a47f0a9b0258cca97d9babe",
+      "mode": "generated",
+      "packageRoot": "source generated",
+      "stopped": [
+        0,
+        null
+      ],
+      "restartedCloses": [],
+      "contacts": 0,
+      "maxActive": 0,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-zycMjp/mixed-pi/pty-receipt.json",
+      "bytes": 1208,
+      "sha256": "e7d63c2f3ae3006f0762258b6e70183a23289f4bcba5b793ff00d238241c0918",
+      "waitpidReturned": true,
+      "exitCode": 0,
+      "failure": null,
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-zycMjp/receipt.json",
+      "bytes": 628,
+      "sha256": "ff80c2b4d2b891131ded56c6e9f61768ca9b660caa034d4e7ab1b4377607d89d",
+      "mode": "generated",
+      "packageRoot": "source generated",
+      "stopped": [
+        0,
+        null
+      ],
+      "restartedCloses": [],
+      "contacts": 2,
+      "maxActive": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/b-gun6uC/receipt.json",
+      "bytes": 604,
+      "sha256": "33e2f16a99eac122fade61f944492e395ee6173afeb94098bb480f9704a49a76",
+      "passed": true,
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-capture-capability-6UK9nO/receipt.json",
+      "bytes": 1990,
+      "sha256": "5fa4bf397f2a42210474d1725a586a21afc11d566f6eae6e640beb9eef0d8197",
+      "mode": "sequential",
+      "forced": false,
+      "failure": "",
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-capture-capability-9CU7TF/receipt.json",
+      "bytes": 1825,
+      "sha256": "323b5c25c2d864172aad6cad9870ec2928524c22995bf85553f4c938cedcc68f",
+      "mode": "capture-overflow",
+      "forced": false,
+      "failure": "",
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-capture-capability-IS3l4M/receipt.json",
+      "bytes": 2031,
+      "sha256": "995b210b6f7c0e11c817f81a69c2180e3f637644c0214af1fe859b88148a6fc1",
+      "mode": "sequential",
+      "forced": false,
+      "failure": "capability-fixture-failed:cleanup\n",
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-capture-capability-kReEbh/receipt.json",
+      "bytes": 1984,
+      "sha256": "6e7a34dc028c7541436dbf5f8228752b27c0e36a1e123c4be6f2296921957e50",
+      "mode": "parallel",
+      "forced": false,
+      "failure": "",
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-capture-capability-tYVVSe/receipt.json",
+      "bytes": 2039,
+      "sha256": "cd3169e624bb19743547954a4f57bff2fb3a6f4c498784240cf47f2d306f3357",
+      "mode": "sequential",
+      "forced": false,
+      "failure": "capability-fixture-failed:cleanup\n",
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-capture-capability-vL11c5/receipt.json",
+      "bytes": 2027,
+      "sha256": "945cd55f961b02c1940d1bb48094d0cbdd86edc20f77a7faa46a627ec94a5fb0",
+      "mode": "sequential",
+      "forced": false,
+      "failure": "capability-fixture-failed:cleanup\n",
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-distribution-RZXuik/distribution-diagnostics.json",
+      "bytes": 763844,
+      "sha256": "030282d6a505f3a56fd7bb253911875249b42e6e1d99cbda69dfc391485f990b"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-host-native-UZDOf6/pty-receipt.json",
+      "bytes": 72,
+      "sha256": "48f30eebf1b4116db915c78739cb00ccba4563b4a0a8f7d904aa3368ba31d5cb",
+      "forced": false,
+      "waitpidReturned": true,
+      "exitCode": 0
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-host-native-UZDOf6/recovery-restart-receipt.json",
+      "bytes": 222,
+      "sha256": "329facedf037465b3ac36ae60434b1b8082218a4e7e0f15e7d709382d02dfe4d"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-2x3Xhz/receipt.json",
+      "bytes": 250,
+      "sha256": "3260b13d8c86d3eb883f8f51660b513f97687251fdba565a703161a05b840488",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-41samk/receipt.json",
+      "bytes": 247,
+      "sha256": "7126650f8aef4d3dc4b445cc4b9ddfb9e104b074f656cd0ab219ad315b634808",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-7LrxMW/receipt.json",
+      "bytes": 243,
+      "sha256": "2d6cc155b937eedbe31f772db48e506c1de99f391d435a54bcb9c380afd0d2cd",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-8Dafnu/receipt.json",
+      "bytes": 238,
+      "sha256": "cb420580593cbcab153d3b5b728ac411a66436430c448d01fe45a2c37b437e3c",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-DhOlqx/receipt.json",
+      "bytes": 253,
+      "sha256": "4861f9d5d78ad2ba4de2d72e70d2cd25b60051a8d9d892849bc0a7a959a136d0",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-Ef57s5/receipt.json",
+      "bytes": 259,
+      "sha256": "43ae4ad248a4b34c0bf897d84f86cbda99afc1342a59308c186883e406593348",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-H2WurO/receipt.json",
+      "bytes": 252,
+      "sha256": "9a4c5dd39ebf45986802cc711a2fbb57565c1ae9aa9904cf52ebd6fa51e5da5d",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-Iy3SBQ/receipt.json",
+      "bytes": 240,
+      "sha256": "d66839c1001575dbd0d3c909e5cc38ec2cec81d37bbce684c31b82de67078527",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-L3m8KR/receipt.json",
+      "bytes": 243,
+      "sha256": "d249b2c9337e1634a54c2df8858354d36b2f6a8e37cc3421b864e614636e1ba5",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-ORrtur/receipt.json",
+      "bytes": 252,
+      "sha256": "12f8cf952202fbdc5c86642a33ed40fe6cf243f24d03dd3dca09a805f02c29d2",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-c8MWg3/receipt.json",
+      "bytes": 247,
+      "sha256": "e2807629c229a37ce6f4745442e23e1b3e066fd99a13ed645607642bb97a79d5",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-eJvese/receipt.json",
+      "bytes": 256,
+      "sha256": "da71ae97223edefe87273b545f2e035ab1e900110cbaf70ce1225e78513e6278",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-kkbUnP/receipt.json",
+      "bytes": 250,
+      "sha256": "75e28e796007026be60977a048f926928375c36fbb67152d737f028080601e3f",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-lmWygL/receipt.json",
+      "bytes": 248,
+      "sha256": "584c562c1a71afeb334933091d7d363fe4a1015d34b0d9111c8e021245ad68ba",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-p8pONO/receipt.json",
+      "bytes": 242,
+      "sha256": "c0cf0611d4fdc57ccab7421538b04ebf8de4d78d21279245bef17eee0fad9567",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-suEskf/receipt.json",
+      "bytes": 243,
+      "sha256": "ee6a07f556e4b394a05479a0d1d5d040f7d5d5e20995af52cd3192c1700d6183",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-tVhDhe/receipt.json",
+      "bytes": 250,
+      "sha256": "caca9690301e14160cd5895d1d291b148bc0486781848b26e0dd575b04ab366b",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-wtXKDj/receipt.json",
+      "bytes": 246,
+      "sha256": "b14114597bcd3362b474a1437dce2fcb15c7028f230799d146eea5895a0f3ef9",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-y4ZdMG/receipt.json",
+      "bytes": 242,
+      "sha256": "bd6abbd72a888bab28683762856f355cf13ea6358b4cc8e8911f0e1253de447e",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-z8qNGs/receipt.json",
+      "bytes": 241,
+      "sha256": "ce449f7bd1eb2bda968f52396b0aa86106f6337a244f71bfd930bbeb96f1156f",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-model-choice-native-znPSWq/receipt.json",
+      "bytes": 238,
+      "sha256": "c48fef85a16898f382f91dc4eb6163d5dfba757e7ca1f1f58d5fab522b750e0a",
+      "passed": true
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-0b382V/pty-receipt.json",
+      "bytes": 653,
+      "sha256": "d3fb5f0f887809da7dd5da73c9055b39d5477ddd2080339fae9dd7f1d4a33814",
+      "waitpidReturned": true,
+      "exitCode": -15,
+      "failure": "terminal-event-step-deadline",
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-1wnyqI/pty-receipt.json",
+      "bytes": 414,
+      "sha256": "b2c588990e3d865a8a40ed1b8c6150bdbe35e3f98c5faa87421d76a63abd161e",
+      "waitpidReturned": true,
+      "exitCode": -15,
+      "failure": "control-event-eof",
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-20TBnA/owner-receipt.json",
+      "bytes": 7384,
+      "sha256": "7072a6d31b5d1dc4023eed82b493b3ee543b37ad4b5d69b08db5f26488d68678",
+      "forced": false,
+      "code": 0,
+      "signal": null,
+      "physicalHuman": false,
+      "paidProvider": false,
+      "originalPiWaits": [
+        {
+          "pid": 2419466,
+          "waitpidReturned": true,
+          "exitCode": 0,
+          "failure": null
+        },
+        {
+          "pid": 2419891,
+          "waitpidReturned": true,
+          "exitCode": 0,
+          "failure": null
+        }
+      ]
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-20TBnA/pty-receipt.json",
+      "bytes": 9162,
+      "sha256": "436526df3d47a9acb656bd8dab5425cd1e795e83ca803ca1ffe552ffef870b9e",
+      "waitpidReturned": true,
+      "exitCode": 0,
+      "failure": null,
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-20TBnA/reattach/pty-receipt.json",
+      "bytes": 1318,
+      "sha256": "8f9d2c366cb1c8cd3d1242bb999a495d54a7a5cea9cc391a885cfbcb0495a423",
+      "waitpidReturned": true,
+      "exitCode": 0,
+      "failure": null,
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-Fbwtyy/pty-receipt.json",
+      "bytes": 936,
+      "sha256": "2724931cf168fdf9e53afcb04ce6c3459fe1df2e7f0055eaadcda13432f97a26",
+      "waitpidReturned": true,
+      "exitCode": 0,
+      "failure": null,
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-GKdNCd/pty-receipt.json",
+      "bytes": 647,
+      "sha256": "603741723710dc66cf0bdfe2f94f2c9e3aba2ab9f9bf72b5ca4d3ea3c3f9f350",
+      "waitpidReturned": true,
+      "exitCode": -15,
+      "failure": "terminal-event-step-deadline",
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-L3QqmC/pty-receipt.json",
+      "bytes": 936,
+      "sha256": "003c7717b048a706cb0529326f5c90775d2537da9e8b66454bc4ed344cfb1931",
+      "waitpidReturned": true,
+      "exitCode": 0,
+      "failure": null,
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-PCYiwp/pty-receipt.json",
+      "bytes": 417,
+      "sha256": "11083cda835a910f934c123db3fc014871a7733709b962f136ecead20c7c8c6e",
+      "waitpidReturned": true,
+      "exitCode": -15,
+      "failure": "control-event-invalid",
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-UmIAb1/pty-receipt.json",
+      "bytes": 420,
+      "sha256": "ba24526fdcf211a9cb5d366d1b55b1c6ef990c157f801fef41567a090eb6b4e8",
+      "waitpidReturned": true,
+      "exitCode": -15,
+      "failure": "control-event-overflow",
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-adWwMY/pty-receipt.json",
+      "bytes": 419,
+      "sha256": "61aaea1edc329dcfdc31a079a948255dfd9306589d623baa23b30b440d8448fd",
+      "waitpidReturned": true,
+      "exitCode": -15,
+      "failure": "control-event-unexpected",
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-bGhCkB/pty-receipt.json",
+      "bytes": 563,
+      "sha256": "813764eba6999d96451b29fdfba52c472fd75015f9dfffafc674556863a4d332",
+      "waitpidReturned": true,
+      "exitCode": 0,
+      "failure": "child-exited-before-expected-terminal-or-event",
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-ho5bI8/pty-receipt.json",
+      "bytes": 521,
+      "sha256": "7834008b024b427deff7fce3b36f85b49f2a6bd757bfd96855db42479bc8da4c",
+      "waitpidReturned": true,
+      "exitCode": -15,
+      "failure": "control-event-duplicate",
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-lstVWn/owner-receipt.json",
+      "bytes": 7386,
+      "sha256": "fbbc61ad12e0e3e735cd3c30a9aef5a54d9a69a781b65690db67cbaa816dd0d4",
+      "forced": false,
+      "code": 0,
+      "signal": null,
+      "physicalHuman": false,
+      "paidProvider": false,
+      "originalPiWaits": [
+        {
+          "pid": 2419964,
+          "waitpidReturned": true,
+          "exitCode": 0,
+          "failure": null
+        },
+        {
+          "pid": 2420391,
+          "waitpidReturned": true,
+          "exitCode": 0,
+          "failure": null
+        }
+      ]
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-lstVWn/pty-receipt.json",
+      "bytes": 9164,
+      "sha256": "bb98e53c5265a697847314f4580fa920926b45e3dcd6a20b026538636a4ce448",
+      "waitpidReturned": true,
+      "exitCode": 0,
+      "failure": null,
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-lstVWn/reattach/pty-receipt.json",
+      "bytes": 1318,
+      "sha256": "2c46b5de29bdc963a07bbbe6ac293bb9e6f3b8287bab9bb45acc459cde343d22",
+      "waitpidReturned": true,
+      "exitCode": 0,
+      "failure": null,
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-pS2rsC/owner-receipt.json",
+      "bytes": 7383,
+      "sha256": "015f5e9ebb774a3245a8de2b444a0c4c7ede2cce96204cd71e5330a30da74d96",
+      "forced": false,
+      "code": 0,
+      "signal": null,
+      "physicalHuman": false,
+      "paidProvider": false,
+      "originalPiWaits": [
+        {
+          "pid": 2420465,
+          "waitpidReturned": true,
+          "exitCode": 0,
+          "failure": null
+        },
+        {
+          "pid": 2420895,
+          "waitpidReturned": true,
+          "exitCode": 0,
+          "failure": null
+        }
+      ]
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-pS2rsC/pty-receipt.json",
+      "bytes": 9161,
+      "sha256": "872081fa9529a8c32af847b3bc1ea6147ca66b5d25c19881cd7591beb60f87e1",
+      "waitpidReturned": true,
+      "exitCode": 0,
+      "failure": null,
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-pS2rsC/reattach/pty-receipt.json",
+      "bytes": 1318,
+      "sha256": "49c22eee5e97d05ed889fc375a4ae3b83bab7dc6cf0f1c47367e952b896edf2e",
+      "waitpidReturned": true,
+      "exitCode": 0,
+      "failure": null,
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-rHkUct/pty-receipt.json",
+      "bytes": 413,
+      "sha256": "ecd42a3a3f919e35ff8ddcfdfa9b465e22264cd9e99e421a802e8f1cf0008a50",
+      "waitpidReturned": true,
+      "exitCode": -15,
+      "failure": "control-event-eof",
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-vpGshT/owner-receipt.json",
+      "bytes": 7386,
+      "sha256": "538e6fd4e8561b04bdf850d74a2170426c47ab6c8e7788df2b0b2db47f69da6c",
+      "forced": false,
+      "code": 0,
+      "signal": null,
+      "physicalHuman": false,
+      "paidProvider": false,
+      "originalPiWaits": [
+        {
+          "pid": 2418966,
+          "waitpidReturned": true,
+          "exitCode": 0,
+          "failure": null
+        },
+        {
+          "pid": 2419395,
+          "waitpidReturned": true,
+          "exitCode": 0,
+          "failure": null
+        }
+      ]
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-vpGshT/pty-receipt.json",
+      "bytes": 9164,
+      "sha256": "2aaf940fca8008aad1c6c2b46af12856d334bad1deb5b539683d9990f3356e12",
+      "waitpidReturned": true,
+      "exitCode": 0,
+      "failure": null,
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-terminal-vpGshT/reattach/pty-receipt.json",
+      "bytes": 1318,
+      "sha256": "4b474174e510252131f21f46df375fece890ff01802ea4d0d20dc30c7fc44901",
+      "waitpidReturned": true,
+      "exitCode": 0,
+      "failure": null,
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-timing-685Awj/receipt.json",
+      "bytes": 533,
+      "sha256": "57863bfa33c0ee25e7e715ad20e34c9327141647e5c3d6fea2f1729530b93b52"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-timing-nVwG2r/receipt.json",
+      "bytes": 216178,
+      "sha256": "783d1fffcb83483c7b94b70e3518b4b2088aa530ab3f095bdfac95dd313061da"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-0541x0/sdk-receipt.json",
+      "bytes": 442,
+      "sha256": "f9559046c24b8d02ba2ad8ca24f8254c24d3725d5a884187bb72c8b0b95eb6f5",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-2bT1BO/sdk-receipt.json",
+      "bytes": 264,
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-5OnJUt/sdk-receipt.json",
+      "bytes": 436,
+      "sha256": "6c3ee639567298146bcfda53b040ee5c3bfb4f91cc9c984d21ee478eee85c0e3",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-8Dg9Eb/sdk-receipt.json",
+      "bytes": 353,
+      "sha256": "9c3e98c62239e734a8d17cb575b46c070d6801d2e9066f6a2708c529f7712642",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-97b6FQ/sdk-receipt.json",
+      "bytes": 431,
+      "sha256": "40fa96ed176922c2ada1097fdbb1f0d2060a58018c46e9b8519ea6e5bcc6dde2",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-MAiowx/sdk-receipt.json",
+      "bytes": 353,
+      "sha256": "04fe1f877070d33e660500560f834c6869d2e1b105b49635795f733fdbb09ead",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-MnVt6P/sdk-receipt.json",
+      "bytes": 436,
+      "sha256": "8deb7fdf2d3af4c009a87817d01872a32ad372ea1958b309e1d938153080ccdd",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-MuUeZc/sdk-receipt.json",
+      "bytes": 351,
+      "sha256": "8a3c3102ccce86e34931953391d79e2f3aa65ed3b5d4761818421bbf4f236ea0",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-PhWtTt/sdk-receipt.json",
+      "bytes": 436,
+      "sha256": "56e78323e3d4ce8f86fe8cd0b478fffe8bce7038746de56bab9d967555a6174e",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-QjQVGx/sdk-receipt.json",
+      "bytes": 436,
+      "sha256": "908bce079f59e664a734130535fc26767f970c6671bcb1688d54c8b1034a2b62",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-SgW5xZ/sdk-receipt.json",
+      "bytes": 350,
+      "sha256": "1cba17faa989d5fbd101ca9bc718c6835d0d9c506c9366b885cadf65d022261a",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-VaC2mk/sdk-receipt.json",
+      "bytes": 442,
+      "sha256": "cecc4a2e5e32e8f6119561fd5b86a8185f3bd70c6888a7937766b7184c8936db",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-YggYn3/sdk-receipt.json",
+      "bytes": 264,
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-bCdnmW/sdk-receipt.json",
+      "bytes": 264,
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-bJCmrZ/sdk-receipt.json",
+      "bytes": 353,
+      "sha256": "a9f1be41a60c5b685d039e0d1eb1e71bb354c9d767465c96065cd66d4a137f58",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-bJoLxx/sdk-receipt.json",
+      "bytes": 264,
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-d0DCUz/sdk-receipt.json",
+      "bytes": 264,
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-ejU9V5/sdk-receipt.json",
+      "bytes": 264,
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-eujHzu/sdk-receipt.json",
+      "bytes": 264,
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-fCODWR/sdk-receipt.json",
+      "bytes": 264,
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-gtuLAv/sdk-receipt.json",
+      "bytes": 350,
+      "sha256": "1f4e3ff97b95fc4c2621888e93e9e476ebe699531f2814ff8d15fc8a4baf342c",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-i5kbNl/sdk-receipt.json",
+      "bytes": 350,
+      "sha256": "f7083d351f8f2db46cb8f8165608be4156d7288a14d901eadf11379a1f03962b",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-kTeAdP/sdk-receipt.json",
+      "bytes": 353,
+      "sha256": "408d2d84c2b7eebadffd4480c1faa743dd7cfb873ea87ed92436e8bd348f1b72",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-mRtwB5/sdk-receipt.json",
+      "bytes": 439,
+      "sha256": "9f8ab4986f7c605f4e129f0f0476cde6fbc991498cf73f842d420e99ef9085bd",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-nvNjjI/sdk-receipt.json",
+      "bytes": 439,
+      "sha256": "26a1ce70e7447bd83d415a58a2780e2107c0abbcc740b102d3b1ae4e79c613e6",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-qIeYiI/sdk-receipt.json",
+      "bytes": 264,
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-tEZr1f/sdk-receipt.json",
+      "bytes": 264,
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-u1w0mD/sdk-receipt.json",
+      "bytes": 264,
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-xkRJrJ/sdk-receipt.json",
+      "bytes": 355,
+      "sha256": "1e638dfa654dc31fa4ba9adbcbac224bdf2c156db7e7eedeafd96cfe8df061ca",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-yHKfST/sdk-receipt.json",
+      "bytes": 442,
+      "sha256": "1e59682a993e64478ea40c1f2890e834a5fe1fdb4251a129892b4379ef883ad1",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-w4-native-za11LB/sdk-receipt.json",
+      "bytes": 264,
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d",
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/owner-proxy-GIeopm/receipt.json",
+      "bytes": 647,
+      "sha256": "9774469196781410ded0d0b6a412f97f233ca4731e5f101b0dccc6d1c041d897",
+      "encoding": "identity",
+      "original": [
+        0,
+        null
+      ],
+      "forced": false,
+      "refresh": 1,
+      "inference": 1,
+      "direct": 0
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/owner-proxy-VW0qSP/receipt.json",
+      "bytes": 643,
+      "sha256": "163ca570eccf8a8144b21d7ca181a49c630577678d8316b1b08b2a4180facea4",
+      "encoding": "gzip",
+      "original": [
+        0,
+        null
+      ],
+      "forced": false,
+      "refresh": 1,
+      "inference": 1,
+      "direct": 0
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/r-Q7moeH/receipt.json",
+      "bytes": 1372,
+      "sha256": "591f224f329a1360240cda940e47cb976ea634bb47c854e9a07932d870078761",
+      "passed": true,
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/recovery-native-K85Psk/pty-receipt.json",
+      "bytes": 72,
+      "sha256": "48f30eebf1b4116db915c78739cb00ccba4563b4a0a8f7d904aa3368ba31d5cb",
+      "forced": false,
+      "waitpidReturned": true,
+      "exitCode": 0
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/recovery-native-UuNgE1/pty-receipt.json",
+      "bytes": 72,
+      "sha256": "7a4ec2e34892e0b9f1b83774fda877e94db93cac10b6fb52fb15375c2d4203b9",
+      "forced": false,
+      "waitpidReturned": true,
+      "exitCode": 1
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/recovery-native-aWParm/pty-receipt.json",
+      "bytes": 72,
+      "sha256": "7a4ec2e34892e0b9f1b83774fda877e94db93cac10b6fb52fb15375c2d4203b9",
+      "forced": false,
+      "waitpidReturned": true,
+      "exitCode": 1
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-11HOGj/check-receipt.json",
+      "bytes": 344,
+      "sha256": "d07b8d8d5bca317fdd29f92176eecd94a7688dfcdb592841638e911a6a41bd37",
+      "contacts": 0,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-1iSAYt/check-receipt.json",
+      "bytes": 350,
+      "sha256": "065ed8565281e7fb9ac1d20306d7a2d5f756b934707094491e283999802745e4",
+      "contacts": 0,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-82R0df/check-receipt.json",
+      "bytes": 343,
+      "sha256": "409c35317a152a5a1a0ff6ee8ca468558d346eb04a5c67e6c53b29778cfeb58a",
+      "contacts": 0,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-89DTeA/check-receipt.json",
+      "bytes": 345,
+      "sha256": "a33ecd5197e7cec1651b323013da4b1d1a05bdd9dd1793c0b85a4919dc1baa88",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-DTkgrj/check-receipt.json",
+      "bytes": 352,
+      "sha256": "9e1b6e47ae68413835be72bd9ac4e69f5b5aade1be67e2417c8f277d20f7bdbb",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-IJsHTC/check-receipt.json",
+      "bytes": 352,
+      "sha256": "3dfa991b6db5bc337ceb02356f8087056aa5fa91e6c3cd3636541966e351b9bf",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-IWUGJ1/check-receipt.json",
+      "bytes": 428,
+      "sha256": "8904e9626ba02939461182b2a96d257887e2a6a1d6e436a53c9e140e31cb3785",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-KNj3qb/check-receipt.json",
+      "bytes": 351,
+      "sha256": "12680099084c92b368a7419b391203f8a1553b15ffa6610536803585b4c5918e",
+      "contacts": 0,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-KkU7yy/check-receipt.json",
+      "bytes": 344,
+      "sha256": "4fc29e770a2daaf6dd8912be28814e4ac135829a79c9b5c0181fde25d60697e5",
+      "contacts": 0,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-Kq7ZdC/check-receipt.json",
+      "bytes": 425,
+      "sha256": "2d60d663f450e980800244d5c181b40a203ed7622c98a011cd26ac8a43a29261",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-MhPUgY/check-receipt.json",
+      "bytes": 351,
+      "sha256": "e6c68f8a34184e8aafc27dd070282980bfdfe22798e6b67a1b808851b38a5cdc",
+      "contacts": 0,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-Q1KaGQ/check-receipt.json",
+      "bytes": 428,
+      "sha256": "ed99c0efbda5513686219f7a5c4f703db13dd217c60ff049897ba2a054b9c2a7",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-SVsGS9/check-receipt.json",
+      "bytes": 523,
+      "sha256": "c29584037ac2c53f438e3e2d322c5bc3d82c7fe4028576c5f5872b0390093387",
+      "contacts": 0,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-TJCmD3/check-receipt.json",
+      "bytes": 433,
+      "sha256": "66c4a59b5ee71ff759291550296ee896ef53086d576c3d4d955e4b7a2f55cbcf",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-UrRvhl/check-receipt.json",
+      "bytes": 513,
+      "sha256": "86cd567d3e886c474c440fa975cb8bb9700454c815c00822c9cce14788d4b371",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-Vm2xLQ/check-receipt.json",
+      "bytes": 344,
+      "sha256": "ce7694046a35df20f6cb1ebf675dc4f68fe88ed89749f078318f8e2a05d843e2",
+      "contacts": 0,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-WAZ64y/check-receipt.json",
+      "bytes": 340,
+      "sha256": "396f6ec75f1409258aa7743e9271f84734a89a6cfd735d9b35288f386a7aa3e8",
+      "contacts": 0,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-YGGGan/check-receipt.json",
+      "bytes": 345,
+      "sha256": "35ea3f45237b8334937a5165705803622e1fd5755708de2c6c31428d6e5e27f6",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-YYCWxO/check-receipt.json",
+      "bytes": 428,
+      "sha256": "542790b0d754d9c3b2347ef4b06c719c0caba045ccdcb021332d12a8a71797db",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-ahzhiQ/check-receipt.json",
+      "bytes": 344,
+      "sha256": "42ea28201efe8d12ea98c602174b77adff62860f10337bc2a35c721f86ff03e6",
+      "contacts": 0,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-ccdRlz/check-receipt.json",
+      "bytes": 432,
+      "sha256": "d6b6e1f33c3f3d03805cce0fa71a08910a6bf105d711418067632e028d966920",
+      "contacts": 2,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-dFvRcF/check-receipt.json",
+      "bytes": 344,
+      "sha256": "feb748e901b9872f79966325b6233e937ec348303c2643056a568f81a4c3e146",
+      "contacts": 0,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-ddZSi4/check-receipt.json",
+      "bytes": 345,
+      "sha256": "fab398426a4716a35515558842131cc3cc53aa9f687afcfdc6f97053cd4fa71e",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-fog151/check-receipt.json",
+      "bytes": 429,
+      "sha256": "722f2cda86ba9599675b2e9e5987aae0e1419c9baa03cb6f42b23c76b8437ce3",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-gm4IwG/check-receipt.json",
+      "bytes": 347,
+      "sha256": "66efbf2e1a1b623e91e398b1b89113c055b39d3fbb7fc917861380eb1a16ce5d",
+      "contacts": 0,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-gytO2d/check-receipt.json",
+      "bytes": 511,
+      "sha256": "974499c16098374f7798edfacd1adf4790d718ad13de48314986df4d1af93aa1",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-igSIMW/check-receipt.json",
+      "bytes": 343,
+      "sha256": "c035c471c7a5b98216674234c229b6a84e5145fedc7d857a4a566d1f1c0e6b99",
+      "contacts": 0,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-itCObS/check-receipt.json",
+      "bytes": 347,
+      "sha256": "25922996f2cf4fac6001a648a40f66da585571785ad9ceb447c1b16cb61f6476",
+      "contacts": 0,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-k1hVID/check-receipt.json",
+      "bytes": 344,
+      "sha256": "c53a191887c16ca3576e4614286eafdb86dadeecf9edf17edf7e16d01b5ec468",
+      "contacts": 0,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-kqE78D/check-receipt.json",
+      "bytes": 352,
+      "sha256": "89888d4f26458c420a5bf807cecd746d480bf3398e84aec1eda0672955f225d2",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-lFmyQx/check-receipt.json",
+      "bytes": 429,
+      "sha256": "327f8e22203db08cd82e91d7e94ac4f990244fa61969edcc65c56d851fc42948",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-ll0rFq/check-receipt.json",
+      "bytes": 352,
+      "sha256": "2b23bca9ea0b4b52135b3a42cd49eff70919339a7274376e81111da209a719fe",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-mQH8Eu/check-receipt.json",
+      "bytes": 432,
+      "sha256": "e6a406fcdb42c9c718f7f28eb060c5dd88377396e185e952b9744664f8a9831b",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-qIaFMa/check-receipt.json",
+      "bytes": 440,
+      "sha256": "ad321e3eab5f7d3061032a7d32e488aa545b4dc85d397d6a09ae80e208cdd501",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-rymSgR/check-receipt.json",
+      "bytes": 344,
+      "sha256": "7c20eca0be41d9655e20ec6ec21144502dbf3548cb0d54734d0d7b770246a133",
+      "contacts": 0,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-txz6aV/check-receipt.json",
+      "bytes": 352,
+      "sha256": "03088290210a998c25f38e16e0f430a85268e0d23501cd1c0a2697c415d5f9e8",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-uMM6az/check-receipt.json",
+      "bytes": 345,
+      "sha256": "a73775a9064b539f7832ec9c333ea01082edda47c15f3a8413cd507c643103d4",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-xSt3In/check-receipt.json",
+      "bytes": 343,
+      "sha256": "6b3d5ab3ab1e20d7e5bf87fdd662aa8118b66dc147f65b054fbdd7dbd2d6e8a7",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/service-checks-yxQeeC/check-receipt.json",
+      "bytes": 352,
+      "sha256": "96458fe3796206364d0881fe8ec1a0bffb7d57576f679496419c84ea6ae17148",
+      "contacts": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cdb-DS8899/receipt.json",
+      "bytes": 1336,
+      "sha256": "d52f694ebb87bb9536d628505147c044c5e8f6cd1f406ee3fa808ac659c1faae",
+      "passed": true,
+      "originalBrowserClose": [
+        0,
+        null
+      ],
+      "physicalHuman": false,
+      "paidProvider": false,
+      "viewports": [
+        {
+          "width": 1440,
+          "height": 900
+        },
+        {
+          "width": 768,
+          "height": 1024
+        },
+        {
+          "width": 390,
+          "height": 844
+        },
+        {
+          "width": 320,
+          "height": 568
+        }
+      ],
+      "coldRestart": {
+        "priorEpoch": "347da01a-8efa-4f7e-b5b6-9c4258a701fb",
+        "epoch": "c08c8e59-3176-482d-a547-d5b750d17c8c",
+        "taskId": "c76907fa-1108-40fc-a329-5d7164e23e1f",
+        "runId": "5c0621f9-5c4c-4152-af0c-00498266d9f7",
+        "exactHit": "END-RETAINED",
+        "contactsUnchanged": true
+      },
+      "downloads": [
+        {
+          "path": "/home/mirako/abel/cdb-DS8899/task.ndjson",
+          "bytes": 346105,
+          "sha256": "f1845abe16636c3d5c455f65c58e6f52a5fff32173d4762866ec236dae5a603c",
+          "scope": "task",
+          "format": "ndjson"
+        },
+        {
+          "path": "/home/mirako/abel/cdb-DS8899/task.markdown",
+          "bytes": 286555,
+          "sha256": "0c08531c315a1c8da1a6a1cf26d720017b4765e49c1c8fa64f4dff21457b9df4",
+          "scope": "task",
+          "format": "markdown"
+        },
+        {
+          "path": "/home/mirako/abel/cdb-DS8899/run.ndjson",
+          "bytes": 274175,
+          "sha256": "8583065621303765190751e95fae05f4940b91a7e04469ea97ff52b5c30b8b92",
+          "scope": "run",
+          "format": "ndjson"
+        },
+        {
+          "path": "/home/mirako/abel/cdb-DS8899/child.markdown",
+          "bytes": 101757,
+          "sha256": "f1cb4c521abe9c22a82b7753ec02dbc81653213f6e2810b26981d1e37688ee0b",
+          "scope": "child",
+          "format": "markdown"
+        }
+      ]
+    },
+    {
+      "path": "/home/mirako/abel/cdb-uuj8Xd/receipt.json",
+      "bytes": 1147,
+      "sha256": "22e5914a3bd924a1838774122c2ea8263f263486cfafa0712b01d0ed0d44f7df",
+      "passed": true,
+      "originalBrowserClose": [
+        0,
+        null
+      ],
+      "physicalHuman": false,
+      "paidProvider": false,
+      "viewports": [
+        {
+          "width": 1440,
+          "height": 900
+        },
+        {
+          "width": 768,
+          "height": 1024
+        },
+        {
+          "width": 390,
+          "height": 844
+        },
+        {
+          "width": 320,
+          "height": 568
+        }
+      ],
+      "proxy": {
+        "http": 220,
+        "upgrades": 8,
+        "isolatedCa": true,
+        "tlsVerificationDisabled": false
+      },
+      "downloads": [
+        {
+          "path": "/home/mirako/abel/cdb-uuj8Xd/task.ndjson",
+          "bytes": 345508,
+          "sha256": "004e46faac41e791c0ff3dcaa531b270baf9516cad2a6a87611f81662b09baed",
+          "scope": "task",
+          "format": "ndjson"
+        },
+        {
+          "path": "/home/mirako/abel/cdb-uuj8Xd/task.markdown",
+          "bytes": 286555,
+          "sha256": "83532ccfd1314bf9231e6eb01e27b431157c9f81530da687a2e4f502118fd0b6",
+          "scope": "task",
+          "format": "markdown"
+        },
+        {
+          "path": "/home/mirako/abel/cdb-uuj8Xd/run.ndjson",
+          "bytes": 274175,
+          "sha256": "7ba6c0ccc8433133a223394aa6ac8ec93651b15861142c058bbdf1aea8ca1056",
+          "scope": "run",
+          "format": "ndjson"
+        },
+        {
+          "path": "/home/mirako/abel/cdb-uuj8Xd/child.markdown",
+          "bytes": 101757,
+          "sha256": "d408ccb5d135aa2305fe81906895aab3a371e25584e5867c484dae01d97a78e2",
+          "scope": "child",
+          "format": "markdown"
+        }
+      ]
+    },
+    {
+      "path": "/home/mirako/abel/cdn-H8bZuN/receipt.json",
+      "bytes": 449,
+      "sha256": "f6d5498c48a6e4b10c535519b697d81dd8018ccc01049b61f87ca6205d890a83",
+      "passed": true,
+      "originalBrowserClose": [
+        0,
+        null
+      ],
+      "contacts": 2,
+      "nativeObserver": {
+        "runId": "3117fb94-ba5c-4667-a949-a9b6ad37fd2d",
+        "originalDriverClose": [
+          0,
+          null
+        ],
+        "receipt": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-zycMjp/mixed-pi/pty-receipt.json"
+      },
+      "downloads": []
+    }
+  ],
+  "real-pack-final": [],
+  "real-extract-final": [],
+  "extracted-browser-final": [
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-UBRs2J/receipt.json",
+      "bytes": 806,
+      "sha256": "2b68c843de91114e33a531ee35971b79168b962de65eab55e4c746d36bddefb5",
+      "mode": "generated",
+      "packageRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-final/package",
+      "stopped": [
+        0,
+        null
+      ],
+      "restartedCloses": [],
+      "contacts": 3,
+      "maxActive": 2,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-gI2NLC/mixed-pi/pty-receipt.json",
+      "bytes": 1208,
+      "sha256": "22e6746b7af65007ba01f4937b78d86f2cba44403fa69b7f9e10c4f318c047c6",
+      "waitpidReturned": true,
+      "exitCode": 0,
+      "failure": null,
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-gI2NLC/receipt.json",
+      "bytes": 681,
+      "sha256": "469dbaadf9bcb144186cdfb3929828eba35ad726b2be287e7915615ff19271d5",
+      "mode": "generated",
+      "packageRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-final/package",
+      "stopped": [
+        0,
+        null
+      ],
+      "restartedCloses": [],
+      "contacts": 2,
+      "maxActive": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-usKWaI/receipt.json",
+      "bytes": 841,
+      "sha256": "eaac055d345d98d64112c986afc59a850e1b5cb56779fc2f0a58bbb408634bfe",
+      "mode": "generated",
+      "packageRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-final/package",
+      "stopped": [
+        0,
+        null
+      ],
+      "restartedCloses": [
+        [
+          0,
+          null
+        ]
+      ],
+      "contacts": 3,
+      "maxActive": 2,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/b-ofAfLV/receipt.json",
+      "bytes": 604,
+      "sha256": "33e2f16a99eac122fade61f944492e395ee6173afeb94098bb480f9704a49a76",
+      "passed": true,
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/r-csxL9n/receipt.json",
+      "bytes": 1372,
+      "sha256": "36b9c7929c93b1ae7128dc1723b613425856f1ad2592cfc0fe81d168f68810e2",
+      "passed": true,
+      "physicalHuman": false
+    },
+    {
+      "path": "/home/mirako/abel/cdb-foOW0V/receipt.json",
+      "bytes": 1336,
+      "sha256": "1655a61c9a01c64c6c3fe6dd7b52ef1292b41d240aeb38eb0da5c9711dc65d52",
+      "passed": true,
+      "originalBrowserClose": [
+        0,
+        null
+      ],
+      "physicalHuman": false,
+      "paidProvider": false,
+      "viewports": [
+        {
+          "width": 1440,
+          "height": 900
+        },
+        {
+          "width": 768,
+          "height": 1024
+        },
+        {
+          "width": 390,
+          "height": 844
+        },
+        {
+          "width": 320,
+          "height": 568
+        }
+      ],
+      "coldRestart": {
+        "priorEpoch": "3146e1c5-b416-42e8-93d5-966597c90d7d",
+        "epoch": "16be1039-3275-44b3-ae47-f403c145c0b4",
+        "taskId": "06a9dfba-2cf4-4c8c-8f92-137248395617",
+        "runId": "e941bcd6-4722-497c-8ff8-ecc87d960ad7",
+        "exactHit": "END-RETAINED",
+        "contactsUnchanged": true
+      },
+      "downloads": [
+        {
+          "path": "/home/mirako/abel/cdb-foOW0V/task.ndjson",
+          "bytes": 346107,
+          "sha256": "7e60518ca7bd6bc16f8aa1040c2622514a5d696aed523cc873d3b1e2e0c04933",
+          "scope": "task",
+          "format": "ndjson"
+        },
+        {
+          "path": "/home/mirako/abel/cdb-foOW0V/task.markdown",
+          "bytes": 286557,
+          "sha256": "a1a29f18a4d1639a8a8352e4d9703b70b7ee941432729da9165405eb6124e810",
+          "scope": "task",
+          "format": "markdown"
+        },
+        {
+          "path": "/home/mirako/abel/cdb-foOW0V/run.ndjson",
+          "bytes": 274175,
+          "sha256": "0fad5e38d06e17e768bb2f005bac1ead3f0fd1c6a174e9cd92e440c4d9b5413b",
+          "scope": "run",
+          "format": "ndjson"
+        },
+        {
+          "path": "/home/mirako/abel/cdb-foOW0V/child.markdown",
+          "bytes": 101757,
+          "sha256": "b73d1928335ae2c2496fc81694d2b276668623f5114930c21a9062a3b9e16796",
+          "scope": "child",
+          "format": "markdown"
+        }
+      ]
+    },
+    {
+      "path": "/home/mirako/abel/cdb-uvywdx/receipt.json",
+      "bytes": 1147,
+      "sha256": "644a28ac1f6cbc3b715df54d16d18f8503157946bbd2e76dbdd0b4bb308f1e9e",
+      "passed": true,
+      "originalBrowserClose": [
+        0,
+        null
+      ],
+      "physicalHuman": false,
+      "paidProvider": false,
+      "viewports": [
+        {
+          "width": 1440,
+          "height": 900
+        },
+        {
+          "width": 768,
+          "height": 1024
+        },
+        {
+          "width": 390,
+          "height": 844
+        },
+        {
+          "width": 320,
+          "height": 568
+        }
+      ],
+      "proxy": {
+        "http": 197,
+        "upgrades": 3,
+        "isolatedCa": true,
+        "tlsVerificationDisabled": false
+      },
+      "downloads": [
+        {
+          "path": "/home/mirako/abel/cdb-uvywdx/task.ndjson",
+          "bytes": 349408,
+          "sha256": "dc33b49a565f7d1902d8e293ea37adfb78bf2aa148ad4fb373300c9116ed12ef",
+          "scope": "task",
+          "format": "ndjson"
+        },
+        {
+          "path": "/home/mirako/abel/cdb-uvywdx/task.markdown",
+          "bytes": 288061,
+          "sha256": "000d0a3c2d4d4cc35797e5f0440cf58c0eebca7a11b5d8e6d11464f65e8e59b9",
+          "scope": "task",
+          "format": "markdown"
+        },
+        {
+          "path": "/home/mirako/abel/cdb-uvywdx/run.ndjson",
+          "bytes": 278075,
+          "sha256": "a06d53b52fc5dc2239a1c6b92aa7c07c40a5ad3dbe2f575baaac37955e4c27b1",
+          "scope": "run",
+          "format": "ndjson"
+        },
+        {
+          "path": "/home/mirako/abel/cdb-uvywdx/child.markdown",
+          "bytes": 102513,
+          "sha256": "4cd779a8956003b4ebd238d00870a84b8c4a46722fa19db4c221dce1cce03c10",
+          "scope": "child",
+          "format": "markdown"
+        }
+      ]
+    },
+    {
+      "path": "/home/mirako/abel/cdn-5zZb7f/receipt.json",
+      "bytes": 449,
+      "sha256": "aeab32202257a6991706c80daeba8084ee3ea16ec159d6aa7cd1e46b09599296",
+      "passed": true,
+      "originalBrowserClose": [
+        0,
+        null
+      ],
+      "contacts": 2,
+      "nativeObserver": {
+        "runId": "144b898f-cee6-4e7f-974e-9855998c01ba",
+        "originalDriverClose": [
+          0,
+          null
+        ],
+        "receipt": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-gI2NLC/mixed-pi/pty-receipt.json"
+      },
+      "downloads": []
+    }
+  ],
+  "extracted-native-final": [
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-GPzp35/receipt.json",
+      "bytes": 431,
+      "sha256": "21d36508d05e2c1cf25fc3c1ac5ccc767f631e2a1431d1b21e2654595c5f621d",
+      "mode": "generated",
+      "packageRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-final/package",
+      "stopped": [
+        0,
+        null
+      ],
+      "restartedCloses": [],
+      "contacts": 0,
+      "maxActive": 0,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-NDdtGK/receipt.json",
+      "bytes": 556,
+      "sha256": "36402dd8c21a305873f8621fc44fd4ea3e745f61ea915c26ff46cf2b4160d8cc",
+      "mode": "generated",
+      "packageRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-final/package",
+      "stopped": [
+        0,
+        null
+      ],
+      "restartedCloses": [],
+      "contacts": 1,
+      "maxActive": 1,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-bAKcIk/receipt.json",
+      "bytes": 806,
+      "sha256": "0dc9e683d3cbe4bc108f48bfe94414879a67cb6e8d099697edfdf7593a3575f4",
+      "mode": "generated",
+      "packageRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-final/package",
+      "stopped": [
+        0,
+        null
+      ],
+      "restartedCloses": [],
+      "contacts": 3,
+      "maxActive": 2,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/accepting-jFCK6q/receipt.json",
+      "bytes": 859,
+      "sha256": "535646b8358e59b53a863b85a75e1c95d37786961b349ea7e84f3afaf9f39b83",
+      "mode": "source",
+      "packageRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-final/package",
+      "stopped": {
+        "state": "stopped",
+        "pending": {
+          "process": 0,
+          "auth": 0,
+          "storage": 0,
+          "work": 0
+        },
+        "settlement": "known"
+      },
+      "restartedCloses": [],
+      "contacts": 3,
+      "maxActive": 2,
+      "physicalHuman": false,
+      "paidProvider": false
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-distribution-98iL9W/distribution-diagnostics.json",
+      "bytes": 763844,
+      "sha256": "527102efb80477311f92e4f74244faee48532b536c7376eb8346406e4d84170a"
+    }
+  ],
+  "extracted-operations-final": [
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-host-native-48XCyI/pty-receipt.json",
+      "bytes": 72,
+      "sha256": "48f30eebf1b4116db915c78739cb00ccba4563b4a0a8f7d904aa3368ba31d5cb",
+      "forced": false,
+      "waitpidReturned": true,
+      "exitCode": 0
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/cadence-host-native-48XCyI/recovery-restart-receipt.json",
+      "bytes": 222,
+      "sha256": "16ec24c004848791c611bb5b4447e636d9228690c753f51e2c73ec8819222509"
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/owner-proxy-TsORSw/receipt.json",
+      "bytes": 647,
+      "sha256": "6f15dbd8238921e0144a4604891f418b89203795931eefb92f6a55883543baa2",
+      "encoding": "identity",
+      "original": [
+        0,
+        null
+      ],
+      "forced": false,
+      "refresh": 1,
+      "inference": 1,
+      "direct": 0
+    },
+    {
+      "path": "/home/mirako/abel/cadence-final-review-FZ6WMJ/owner-proxy-X23C29/receipt.json",
+      "bytes": 643,
+      "sha256": "844eabc14d5daa70e6b0823e33e4caf8505f2760bac667bb633d01c92d0966dc",
+      "encoding": "gzip",
+      "original": [
+        0,
+        null
+      ],
+      "forced": false,
+      "refresh": 1,
+      "inference": 1,
+      "direct": 0
+    }
+  ]
+}

@@ -1,0 +1,154 @@
+{
+  "schema": "cadence-archive-preparation-review/1",
+  "verdict": "PASS_WITH_METADATA_NOTE",
+  "scope": "Readonly finite archival-custody review, not new product qualification or commit/archive authorization.",
+  "state": {
+    "currentEvidencePreserved": true,
+    "taskArchived": false,
+    "commitConsent": "pending",
+    "readyToDraftConsentPlan": true,
+    "necessaryFinalEvidenceMissing": [],
+    "productTestsExecuted": false,
+    "fixturesExecuted": false,
+    "agentsSpawned": false,
+    "gitOrTaskMutations": false
+  },
+  "reviewedInputs": [
+    {
+      "path": ".trellis/qualification/cadence-dual-surface-2026-10-20/README.md",
+      "bytes": 3954,
+      "sha256": "aee7bfefcec749bb27e5edffa817234b3bc0310e278446eb513c5f3227afce78"
+    },
+    {
+      "path": ".trellis/qualification/cadence-dual-surface-2026-10-20/index.json",
+      "bytes": 152507,
+      "sha256": "4f0708911d5beb016cda1467ccb3c800c407409f9a23b3454799500969135ca0"
+    },
+    {
+      "path": ".trellis/tasks/10-16-cadence-integrated-delivery/research/archive-preflight.md",
+      "bytes": 10812,
+      "sha256": "c9cd7787acd90eeec58bc5705d773dba7014bf9681fde24fea12f8a118c86f3d"
+    },
+    {
+      "path": ".trellis/tasks/10-16-cadence-integrated-delivery/research/archive-preflight.json",
+      "bytes": 348850,
+      "sha256": "498da6c20fd5cc2c4892da44fcb8c43be44f13237cbc8ee14086739541846712"
+    }
+  ],
+  "custody": {
+    "retainedFiles": 258,
+    "externalWhitelist": 254,
+    "repositoryFinalRecords": 4,
+    "bytes": 8196173,
+    "sourceDestinationByteHashMismatches": 0,
+    "duplicateSourcesOrDestinations": 0,
+    "unlistedFilesUnderFilesAndRecords": 0,
+    "safeFiles": "All source/destination ancestors checked as directories; selected files regular, single-link, descriptor identity checked with O_NOFOLLOW. All retained copies mode0600 with inert .txt/.bin suffixes.",
+    "contentClasses": {
+      "receipt": 174,
+      "audit": 37,
+      "test-log": 19,
+      "export": 16,
+      "fixture-source": 7,
+      "final-repository-record": 4,
+      "package": 1
+    },
+    "contentReview": "Exact whitelist and representative receipt/audit/log/export/source bodies inspected; bounded pattern screening of every nonpackage copy. No profile/auth/private-key tree or unknown temporary tree copied. Fabricated export context, END-RETAINED and ACTUAL-PARENT-CHECK match repository fixtures. The Bearer match is the explicit fabricated-new-access test assertion; provider-key-pattern matches are substrings of task-*.md filenames. No private-key marker found. This is not universal secret detection.",
+    "archiveSha256": "0358c904827e5508ac251cb98c87149ef98e14ed0640adf5097dbb95a176c995",
+    "scopeLimit": "Preserves the selected final chain and its explicitly named failed receipts, not every temporary artifact. Raw PTY transcripts, fixture homes/profiles, duplicated fixture archives, extracted trees and older candidate dependencies are not all retained. No claim that arbitrary embedded temporary paths are durable; no additional unbounded collection requested. Nothing was executed or extracted."
+  },
+  "finalChain": {
+    "finalReviewHashReferences": 58,
+    "directExternalReferencesResolvedThroughRetainedMap": 52,
+    "mainAcceptanceDirectHashReferences": 2,
+    "finalReceiptAndExportHashReferences": 190,
+    "originalReceipts": 174,
+    "publicExports": 16,
+    "hashMismatchesOrUnresolvedRequiredReferences": 0,
+    "originalWaitExitZeroCommandReceipts": 6,
+    "interpretation": "Independent byte/reference checks of existing receipts only; original pass/failure and platform/provider/human limits remain unchanged. Remaining embedded packageRoot/treeRoot paths identify observation subjects, not missing required receipt bodies."
+  },
+  "preservation": {
+    "frozenInputs": 467,
+    "frozenMismatches": 0,
+    "ownedRows": 963,
+    "ownedHashSizeStatusMismatches": 0,
+    "frozenDirtyOwned": 404,
+    "existingTaskNonignoredFiles": 559,
+    "excludedBaselinePaths": 685,
+    "excludedStatusMismatches": 0,
+    "excludedContentQualification": "No baseline content hashes exist; status equality does not prove unchanged pre-existing bytes.",
+    "existingTaskFiles": 1148,
+    "ignoredTaskLogs": 589,
+    "ignoredTaskLogBytes": 984566,
+    "existingTaskTreeDigest": "3bafc0316b24578d182ca9b9e8db66500276055617800b89e43f9b25c6be7986",
+    "treeDigestMethod": "SHA256 of UTF-8 json.dumps(sorted((repositoryPath,sha256,bytes)),separators=(',',':')) over all eight task trees, excluding only the two archive-preflight files.",
+    "ignoredLogQualification": "Counts/size agree with preflight; full-tree digest binds this review observation. No earlier per-file hashes were supplied for all ignored logs, so no earlier-byte equality is inferred from their counts.",
+    "taskMetadataHashesMatched": 8,
+    "activeTask": ".trellis/tasks/10-16-cadence-integrated-delivery",
+    "activeTaskSource": "session:pi_01a1434b-d5a8-75bd-a752-9b20360b70f8",
+    "head": "9bd8a8925bb64d3195af6055075c2ed943613fe7",
+    "stagedPaths": 0,
+    "gitIndexSha256": "135078747258b7eb07eaffe1afcf02df63b83a4944608078e232c95b42300c85",
+    "dirtyPathsBeforeReviewReports": 1910,
+    "newPreparationPathsBeforeReviewReports": 262,
+    "unexpectedDirtyPaths": 0,
+    "note": "963 owned + 685 excluded + 260 stable preservation files + 2 preflight files. This review adds only its two reports."
+  },
+  "navigation": {
+    "taskRoots": 8,
+    "sourceRootsPresent": 8,
+    "prospectiveDestinationCollisions": 0,
+    "historicalRootReferenceFiles": 121,
+    "historicalManifests": 16,
+    "manifestEntries": 266,
+    "derivedMovingEntries": 120,
+    "selfEntries": 22,
+    "crossTaskEntries": 98,
+    "manifestHashOrDerivedMappingMismatches": 0,
+    "movingTargetsCurrentlyExistAtOriginalPaths": true,
+    "relativeInternalLinksPreservedByProspectiveMove": 139,
+    "relativeSpecExceptionsResolved": 2,
+    "liveSpecLinksPending": 4,
+    "historicalProvenancePreimageResolved": true,
+    "interpretation": "Index explicitly marks archived destinations prospective. Ordinary archived task validation remaps only self references, not the 98 cross-task entries. Four live spec links need a later administrative update; preserve the hash-bound provenance preimage reference and resolve it through the index."
+  },
+  "archiveControls": {
+    "order": "Seven children first; coordination parent last. All seven parent/child relationships intact.",
+    "noCommitMandatory": true,
+    "autoCommitDefault": true,
+    "skipBranchValidation": "Only the branchless coordination parent, never all children; no invented branch.",
+    "activeLifecycleHooksNow": false,
+    "recheckBeforeMove": "Month, collisions, exact bodies, hooks/config and source metadata. Archive mutates status/completedAt, clears pointers, moves files and can run hooks even with --no-commit. Work commits need separate consent and precede archive/journal bookkeeping.",
+    "noFrameworkPatchNeeded": true
+  },
+  "findings": [
+    {
+      "id": "AR-1",
+      "severity": "low",
+      "path": ".trellis/tasks/10-16-cadence-integrated-delivery/research/archive-preflight.json",
+      "field": "newArtifacts.markdown",
+      "finding": "Embedded Markdown metadata is stale: recorded10745 bytes / 1ec9481860b57aff42c43ab40b318df697dd458f42c3ce9591db8926a887a407; current10812 bytes / c9cd7787acd90eeec58bc5705d773dba7014bf9681fde24fea12f8a118c86f3d.",
+      "recommendation": "Main must bind the fresh current hash/size in its final commit manifest and explicitly supersede this stale preparation metadata, or correct the new preparation record before freezing that plan. Do not rewrite historical product evidence. The current values are recorded above.",
+      "blocksCustodyAcceptance": false,
+      "fixedHere": false
+    }
+  ],
+  "verification": [
+    "Inline readonly Python: exact whitelist/member/copy/descriptor/hash audits;467-input freeze;963 owned rows;685 excluded statuses; task metadata/tree digests; explicit final-chain references; prospective navigation and relative-link derivation.",
+    "GIT_OPTIONAL_LOCKS=0 git status/diff/rev-parse/check-ignore: no staged paths or unexpected preparation paths; all260 stable files nonignored; no ignore-rule edits.",
+    "Source inspection only: archive ordering, active-only child lookup, self-only archived validator mapping, no-commit/default auto-commit, branch guard, lifecycle hooks and Phase3.4 consent.",
+    "Biome check index.json and archive-preflight.json: exit0, two files, no fixes.",
+    "rumdl check README.md and archive-preflight.md: exit0, one file; historical task path excluded by existing policy. No new exemption."
+  ],
+  "temporaryEnvironment": {
+    "TMPDIR": "/home/mirako/abel/cadence-archive-review-6YWfND",
+    "TEMP": "/home/mirako/abel/cadence-archive-review-6YWfND",
+    "TMP": "/home/mirako/abel/cadence-archive-review-6YWfND",
+    "mode": "0700"
+  },
+  "filesWritten": [
+    ".trellis/qualification/cadence-dual-surface-2026-10-20/review.json",
+    ".trellis/qualification/cadence-dual-surface-2026-10-20/review.md"
+  ]
+}

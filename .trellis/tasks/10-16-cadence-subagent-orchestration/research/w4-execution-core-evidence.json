@@ -1,0 +1,449 @@
+{
+  "schema": "cadence-w4-execution-core-evidence/1",
+  "disposition": "component milestone; production host actions closed; W4 and parent incomplete",
+  "root": "/home/mirako/abel/w4-core-jOR5tzlJ",
+  "identity": {
+    "node": "v26.7.0",
+    "execPath": "/usr/bin/node",
+    "platform": "linux",
+    "arch": "x64",
+    "bun": "1.3.14",
+    "peers": {
+      "@earendil-works/pi-coding-agent": "0.84.3",
+      "@earendil-works/pi-ai": "0.84.3",
+      "ws": "8.21.3",
+      "vitest": "4.1.10"
+    }
+  },
+  "sourceHashes": {
+    "src/service/graph.ts": "97c0a01630d5a9b57eb6f0d7676c1e7e3e30920279f796c731e94aab35fdd332",
+    "src/service/scheduler.ts": "94f85adb2cfada36d2b34077cb7c8d98e3f9aaac73a138a8a147bf6b4c1fe8b9",
+    "src/service/task-actions.ts": "99f8b02abc7e80350f59a56d932ef4a158e5e13c26cb7b5581727bb91d42c4af",
+    "src/service/admission.ts": "eb9ea36084b316a5e2265a9654fd0df79d7ee119b49234ebbb380ea4e86d935e",
+    "src/service/model-context.ts": "d631150f37e109a37b8ec3a2855d31f69e8935e94d3ab0340a666b71ab0a6b89",
+    "src/service/owner.ts": "f3e3f28ebc646d1d3d1fc5e424d146f442e17c7b1088c51704ebc34054eb93b5",
+    "src/service/contracts/history.ts": "7133717efcdc32f450148cbbba1f5a08ccfbc07bbe9a6d0762f5fd357f3ef0fe",
+    "src/service-contract.ts": "a0a71d9571f230ac28566a06582f0b22d5aa23aea377ea55aa889cccb3590687",
+    "src/history/plans.ts": "dbc64d48a6b2ddedee053a4a676265760052326f622ee35507f106e83d312570",
+    "src/history/reader.ts": "269f826f27f471a5f59b19b247db996df6a9d60d76ec760f844bcedc40d60922",
+    "src/history/writer.ts": "2473d0161d214a2e248cd0f93b3c7441e1dbc8876fefae51974439baaadeb4ac",
+    "src/history/types.ts": "36e5faf9be280363941de014027f8b23342115d6b3458088d79213ce6cc0b50a",
+    "src/history/run-state.ts": "f21ffbf3c385b7b3681c5ebba28ae4994d28c9b7910e36b48b317f547438629f",
+    "src/history/run-progress-state.ts": "f2c4cfa71bd3c3d7b1cea23ec850966e03d0d8ad017712f30b488d40667d3910",
+    "src/history/graph-progress.ts": "e9afbfa8a7d7678df26a0736b09a45a83fc00207ec17c53ce6eb09501f7af52b",
+    "src/history/saved-graph-state.ts": "70e508b2c8d29811a02b410a931e0ab947a36c69e64b08d75e0c222f1b9293b4",
+    "src/history/search.ts": "b1b1f7ba74e57e518a90e1efe564155ba0d236443cc5b484620ab127039d3f72",
+    "src/service-host.mjs": "e97f93009125fc3da4747d1a3a939f8160be3586a0291b341787e92d5e4764fb",
+    "test/service-scheduler.test.ts": "23a5529de095d3ecb59749ab8308bca7ee46496912baa114a1e23bf59eca0764",
+    "test/service-scheduler-facts.test.ts": "af1f8dccd129c83e06ba9fc27581fa118f027f3bcda447a94495aa4c04ef0890",
+    "test/service-history-plans.test.ts": "cd922fe6850767dd41a8408caa5cf8fd6e17a63785b9be188a5a81ad2b2663a5",
+    "test/service-history.test.ts": "f48675bcbbd1d6eca25f19337dd6fe4243f52def65f11c4ce0a78e0e79088f10",
+    "test/service-contract.test.ts": "f4a54d7553654ab69268f165b27e3f02af9073279b4524a609f451df548dbc92"
+  },
+  "documentationHashes": {
+    ".trellis/spec/backend/service-history-capture-guidelines.md": "3299138444f102fc02e69ab8ebfc049caf90f5dccb0ec68d0d9bb1116949ffd0",
+    ".trellis/tasks/10-16-cadence-subagent-orchestration/research/w4-execution-core-handoff.md": "3125135d901f81775bac95540a84554b0151e748dec9eed37811bd3b6940b389"
+  },
+  "broadFreeze": {
+    "path": "/home/mirako/abel/w4-core-jOR5tzlJ/final-inputs-before.json",
+    "sha256": "c617c38420bd86615e9f36937da59a4cf41c1241b7a956e039e6fa33d0dee49e",
+    "sourceCount": 189,
+    "lateChanges": [
+      "src/service/scheduler.ts",
+      "src/service/task-actions.ts",
+      "test/service-scheduler.test.ts"
+    ],
+    "lateChangesVerification": "final-core-eleven-2 plus final check/scoped lint; unrelated changing web sources excluded"
+  },
+  "finalManifest": {
+    "path": "/home/mirako/abel/w4-core-jOR5tzlJ/final-inputs-current.json",
+    "sha256": "628a362c40301cc9ff42bbbf584dae0c848f434fb0af5a665a4150b4259369f0"
+  },
+  "successfulBatches": [
+    {
+      "invoked": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-history.test.ts",
+        "test/service-scheduler.test.ts",
+        "test/service-contract.test.ts"
+      ],
+      "nativeCommand": [
+        "vitest",
+        "run",
+        "--no-file-parallelism",
+        "test/service-history.test.ts",
+        "test/service-scheduler.test.ts",
+        "test/service-contract.test.ts"
+      ],
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/lookup-core-regressions.log",
+      "sha256": "2063de9a45d69a799484ccaf3b6a53bf56ab614b083a5d7583c38d79a4f3540e",
+      "exit": 0,
+      "passedTests": 279,
+      "passedFiles": 3,
+      "summary": "Test Files  3 passed (3)\n      Tests  279 passed (279)\n   Start at  08:26:49\n   Duration  140.07s (transform 1.37s, setup 0ms, import 1.88s, tests 137.73s, environment 0ms)"
+    },
+    {
+      "invoked": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-history-plans.test.ts",
+        "test/service-history-graph-boundary.test.ts",
+        "test/service-history-graph-boundary-review.test.ts",
+        "test/service-history-final-review.test.ts",
+        "--reporter=verbose"
+      ],
+      "nativeCommand": [
+        "vitest",
+        "run",
+        "--no-file-parallelism",
+        "test/service-history-plans.test.ts",
+        "test/service-history-graph-boundary.test.ts",
+        "test/service-history-graph-boundary-review.test.ts",
+        "test/service-history-final-review.test.ts",
+        "--reporter=verbose"
+      ],
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/history-four.log",
+      "sha256": "eeeb3ca100e07d49a965937d4f16f1cb2a57fc7d4fe595058aa9eb272582b8ed",
+      "exit": 0,
+      "passedTests": 41,
+      "passedFiles": 4,
+      "summary": "Test Files  4 passed (4)\n      Tests  41 passed (41)\n   Start at  08:45:07\n   Duration  31.52s (transform 863ms, setup 0ms, import 1.35s, tests 29.54s, environment 0ms)"
+    },
+    {
+      "invoked": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-history-progress.test.ts",
+        "test/service-history-progress-review.test.ts",
+        "test/service-history-read-completion.test.ts",
+        "test/service-history-lookahead.test.ts",
+        "test/service-history-validator.test.ts",
+        "test/service-history-metadata-cost.test.ts",
+        "--reporter=verbose"
+      ],
+      "nativeCommand": [
+        "vitest",
+        "run",
+        "--no-file-parallelism",
+        "test/service-history-progress.test.ts",
+        "test/service-history-progress-review.test.ts",
+        "test/service-history-read-completion.test.ts",
+        "test/service-history-lookahead.test.ts",
+        "test/service-history-validator.test.ts",
+        "test/service-history-metadata-cost.test.ts",
+        "--reporter=verbose"
+      ],
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/history-progress-six.log",
+      "sha256": "5e58f89818a4de96d414b139ce9b105da209922b7e1679a98ddc1b60a05fc2b1",
+      "exit": 0,
+      "passedTests": 53,
+      "passedFiles": 6,
+      "summary": "Test Files  6 passed (6)\n      Tests  53 passed (53)\n   Start at  08:45:48\n   Duration  250.95s (transform 1.10s, setup 0ms, import 1.56s, tests 248.47s, environment 1ms)"
+    },
+    {
+      "invoked": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-history-projection.test.ts",
+        "test/service-history-live-detail.test.ts",
+        "test/service-history-list-contract.test.ts",
+        "test/service-history-list-entity.test.ts",
+        "test/service-history-search-export.test.ts",
+        "test/service-history-search-scope.test.ts",
+        "--reporter=verbose"
+      ],
+      "nativeCommand": [
+        "vitest",
+        "run",
+        "--no-file-parallelism",
+        "test/service-history-projection.test.ts",
+        "test/service-history-live-detail.test.ts",
+        "test/service-history-list-contract.test.ts",
+        "test/service-history-list-entity.test.ts",
+        "test/service-history-search-export.test.ts",
+        "test/service-history-search-scope.test.ts",
+        "--reporter=verbose"
+      ],
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/history-read-six.log",
+      "sha256": "7f0bddfc5d203658973e2afb7d404ac8cad6b82cb0df10b98b0a8ee916539a6f",
+      "exit": 0,
+      "passedTests": 80,
+      "passedFiles": 6,
+      "summary": "Test Files  6 passed (6)\n      Tests  80 passed (80)\n   Start at  08:50:06\n   Duration  558.73s (transform 1.18s, setup 0ms, import 1.85s, tests 555.88s, environment 1ms)"
+    },
+    {
+      "invoked": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-history-blocker-repair.test.ts",
+        "test/service-history-export-http.test.ts",
+        "test/service-history-proof-http.test.ts",
+        "test/service-history-publication-recovery.test.ts",
+        "test/service-history-semantics.test.ts",
+        "test/service-scheduler-facts.test.ts",
+        "--reporter=verbose"
+      ],
+      "nativeCommand": [
+        "vitest",
+        "run",
+        "--no-file-parallelism",
+        "test/service-history-blocker-repair.test.ts",
+        "test/service-history-export-http.test.ts",
+        "test/service-history-proof-http.test.ts",
+        "test/service-history-publication-recovery.test.ts",
+        "test/service-history-semantics.test.ts",
+        "test/service-scheduler-facts.test.ts",
+        "--reporter=verbose"
+      ],
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/history-boundary-six.log",
+      "sha256": "be52a8ae40d3a6d9a907a10b93a49680a354dfa9beb277eb83b718d98c135195",
+      "exit": 0,
+      "passedTests": 113,
+      "passedFiles": 6,
+      "summary": "Test Files  6 passed (6)\n      Tests  113 passed (113)\n   Start at  08:59:38\n   Duration  93.28s (transform 981ms, setup 0ms, import 1.70s, tests 90.64s, environment 1ms)"
+    },
+    {
+      "invoked": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-owner.test.ts",
+        "test/service-auth.test.ts",
+        "test/service-model-context.test.ts",
+        "test/service-cli.test.ts",
+        "--reporter=verbose"
+      ],
+      "nativeCommand": [
+        "vitest",
+        "run",
+        "--no-file-parallelism",
+        "test/service-owner.test.ts",
+        "test/service-auth.test.ts",
+        "test/service-model-context.test.ts",
+        "test/service-cli.test.ts",
+        "--reporter=verbose"
+      ],
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/owner-four.log",
+      "sha256": "77873768f668edb9ea04bb660e0cadf30dd8da6773abda4cd68c7141eed54eeb",
+      "exit": 0,
+      "passedTests": 297,
+      "passedFiles": 4,
+      "summary": "Test Files  4 passed (4)\n      Tests  297 passed (297)\n   Start at  09:01:16\n   Duration  212.53s (transform 998ms, setup 0ms, import 1.41s, tests 210.50s, environment 0ms)"
+    },
+    {
+      "invoked": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/lightweight-process-diff.test.ts",
+        "test/lightweight-sdk.test.ts",
+        "test/lightweight-store-controller.test.ts",
+        "test/worker-public.test.ts",
+        "test/worker-recording.test.ts",
+        "test/worker-capture.test.ts",
+        "test/worker-canonical-budget.test.ts",
+        "--reporter=verbose"
+      ],
+      "nativeCommand": [
+        "vitest",
+        "run",
+        "--no-file-parallelism",
+        "test/lightweight-process-diff.test.ts",
+        "test/lightweight-sdk.test.ts",
+        "test/lightweight-store-controller.test.ts",
+        "test/worker-public.test.ts",
+        "test/worker-recording.test.ts",
+        "test/worker-capture.test.ts",
+        "test/worker-canonical-budget.test.ts",
+        "--reporter=verbose"
+      ],
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/native-guards-seven.log",
+      "sha256": "6e72ad3a49cec4b705fe9d8b8541db0cfe1362b1c05647091feb58eaef618db4",
+      "exit": 0,
+      "passedTests": 504,
+      "passedFiles": 7,
+      "summary": "Test Files  7 passed (7)\n      Tests  504 passed (504)\n   Start at  09:04:55\n   Duration  128.35s (transform 1.02s, setup 0ms, import 2.36s, tests 124.85s, environment 1ms)"
+    },
+    {
+      "invoked": [
+        "bun",
+        "run",
+        "test",
+        "--",
+        "test/service-scheduler.test.ts",
+        "test/service-scheduler-facts.test.ts",
+        "--reporter=verbose"
+      ],
+      "nativeCommand": [
+        "vitest",
+        "run",
+        "--no-file-parallelism",
+        "test/service-scheduler.test.ts",
+        "test/service-scheduler-facts.test.ts",
+        "--reporter=verbose"
+      ],
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/final-core-eleven-2.log",
+      "sha256": "d8f3e3936d952f66b8292be362cd230099420c387faf5a85163a9c2cc0a23d53",
+      "exit": 0,
+      "passedTests": 11,
+      "passedFiles": 2,
+      "summary": "Test Files  2 passed (2)\n      Tests  11 passed (11)\n   Start at  09:14:50\n   Duration  115.30s (transform 1.05s, setup 0ms, import 1.41s, tests 113.56s, environment 0ms)"
+    }
+  ],
+  "checks": [
+    {
+      "command": ["bun", "run", "check"],
+      "exit": 0,
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/final-check-2.log",
+      "sha256": "6de17e4bf4234c4eecf065c2988d1bb9bee715f226572eaefab255ca433b46cc"
+    },
+    {
+      "command": ["bun", "run", "check:agents"],
+      "exit": 0,
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/final-agents-2.log",
+      "sha256": "fc459b9f542bbe9546842994f18a74f6a80e908f467ce497916608c24531eebf"
+    },
+    {
+      "command": [
+        "node_modules/.bin/rumdl",
+        "check",
+        "--no-exclude",
+        ".trellis/spec/backend/service-history-capture-guidelines.md",
+        ".trellis/tasks/10-16-cadence-subagent-orchestration/research/w4-execution-core-handoff.md"
+      ],
+      "exit": 0,
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/final-markdown.log",
+      "sha256": "471532c8a35d7ff3b0b5eabaea8f587ddbfa834cba2855345a5a9d0904e2a855"
+    },
+    {
+      "command": [
+        "node_modules/.bin/biome",
+        "check",
+        "src/service/graph.ts",
+        "src/service/scheduler.ts",
+        "src/service/task-actions.ts",
+        "src/service/admission.ts",
+        "src/service/model-context.ts",
+        "src/service/owner.ts",
+        "src/service/contracts/history.ts",
+        "src/service-contract.ts",
+        "src/history/plans.ts",
+        "src/history/reader.ts",
+        "src/history/writer.ts",
+        "src/history/types.ts",
+        "src/history/run-state.ts",
+        "src/history/run-progress-state.ts",
+        "src/history/graph-progress.ts",
+        "src/history/saved-graph-state.ts",
+        "src/history/search.ts",
+        "test/service-scheduler.test.ts",
+        "test/service-scheduler-facts.test.ts",
+        "test/service-history-plans.test.ts",
+        "test/service-history.test.ts",
+        "test/service-contract.test.ts"
+      ],
+      "exit": 0,
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/final-scoped-lint-2.log",
+      "sha256": "86507896cf50a269f3f0099d590877ea29572a1d5af2ee816386b23c6239b8bb"
+    }
+  ],
+  "nativeReceipts": [
+    {
+      "path": "/home/mirako/abel/w4-core-jOR5tzlJ/cadence-w4-native-0QaHDQ/sdk-receipt.json",
+      "sha256": "53e4bed2c9f805ce7c7ab2339f34e9478e0baea0c4c78b567eaa5c59e67c9f8b"
+    },
+    {
+      "path": "/home/mirako/abel/w4-core-jOR5tzlJ/cadence-w4-native-1J5wbh/sdk-receipt.json",
+      "sha256": "cf42026398ac5d1834de8de97b8447fcb92b0df5a3b8360853a7b0b46ae27e77"
+    },
+    {
+      "path": "/home/mirako/abel/w4-core-jOR5tzlJ/cadence-w4-native-JN53TU/sdk-receipt.json",
+      "sha256": "84bfdf127bca6a20c42aabdd0e5169cfcb78680c284ac81f1a68841402e6d231"
+    },
+    {
+      "path": "/home/mirako/abel/w4-core-jOR5tzlJ/cadence-w4-native-K0vdSX/sdk-receipt.json",
+      "sha256": "d71151022c072ce5ad41d9ddc0957f952f6309217f973dda6166f7d99deb7a59"
+    },
+    {
+      "path": "/home/mirako/abel/w4-core-jOR5tzlJ/cadence-w4-native-M160Bi/sdk-receipt.json",
+      "sha256": "cf229f5a8d8eaa7ecfbb32f7ddad5e302ba65f8e7dc3d4dcbeb87399e2219d42"
+    },
+    {
+      "path": "/home/mirako/abel/w4-core-jOR5tzlJ/cadence-w4-native-ROftuB/sdk-receipt.json",
+      "sha256": "19c5a3225a0b9723a3d2063f6ac31d163c4617a7b75d8078f58ace09085ae1b0"
+    },
+    {
+      "path": "/home/mirako/abel/w4-core-jOR5tzlJ/cadence-w4-native-ShU2RM/sdk-receipt.json",
+      "sha256": "2526683d0e490c95032e5d2dc610a39b97035847125c360977df03d380ae386d"
+    },
+    {
+      "path": "/home/mirako/abel/w4-core-jOR5tzlJ/cadence-w4-native-k6kkiB/sdk-receipt.json",
+      "sha256": "9978c613440a7af46f4c3a6ee7eb64aa182e304cac9191b8e6a22e409d5600ff"
+    },
+    {
+      "path": "/home/mirako/abel/w4-core-jOR5tzlJ/cadence-w4-native-n8Ovrp/sdk-receipt.json",
+      "sha256": "b62b946af12efdcd7d7dd0c90f06a3e97e8eed31b7a818f1029d4ecbc8a4334f"
+    }
+  ],
+  "preservedFailures": [
+    {
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/max-graph-before.log",
+      "sha256": "40b4117af2178806b590b71bdf8d9f1fe27a4e3efad20c31120b62ad5b57ebce",
+      "disposition": "Reproduced combined legal graph/plan duplicate identity encoding failure."
+    },
+    {
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/policy-1.log",
+      "sha256": "f9c5a709cb9507f77f5c403ca34b39f14f70ce8d965d1f08cec81b2ea6093f2a",
+      "disposition": "Two old Cancel-order expectations failed; explicit authority-before-journal correction and new preauthorization rotation negative replaced that assertion."
+    },
+    {
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/cancel-1.log",
+      "sha256": "ed5b475bc0b2d40b1b100c5a9d6a661cbd6d8633a8791b6cf2aff656d611448e",
+      "disposition": "Native Cancel first exposed receipt-inconclusive while original capture publication was pending."
+    },
+    {
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/cancel-2.log",
+      "sha256": "9a750e4cff7939f9591fca91b15961f3639754f77b1ecdb5df519b8a43f343cd",
+      "disposition": "Native canceled/no-selected-final results were incorrectly treated as pending-result durability uncertainty."
+    },
+    {
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/backend-tests.log",
+      "sha256": "298d1e85c2a31ec0da22651b1db4c7f09af41c8bdad9dbead161edb252e13b7e",
+      "disposition": "Tool aggregate1200s deadline; no final suite exit receipt; also logs passive lookup regression."
+    },
+    {
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/history-tests.log",
+      "sha256": "1afb2ec06f0ccfcee22113901a6e4a81523a557304d32d8aa208174a594eac1f",
+      "disposition": "Tool aggregate900s deadline; no final suite exit receipt; not passing evidence."
+    },
+    {
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/final-core-eleven.log",
+      "sha256": "b0dd2a6df0c26945c31d56d9703b759bfbc25a58fc8a2a0a142ae5ccad25e6ab",
+      "disposition": "Missing decodeGraph import produced9 failed new-core tests; preserved, fixed import, reran11."
+    },
+    {
+      "log": "/home/mirako/abel/w4-core-jOR5tzlJ/tsc-15.log",
+      "sha256": "c3402a0c8b4b99bb31b50cc3df909de1cbf9fb38e402addd966d9ed170e28f98",
+      "disposition": "Missing decodeGraph import compiler failure; fixed without suppressing checks."
+    }
+  ],
+  "limitations": [
+    "Not a whole-tree lint/test/pack gate.",
+    "The final11-case core batch overlaps earlier scheduler/fact cases; do not sum reruns.",
+    "Clock and preparation-continuation barriers are injections; native processes/disk/HTTP/SDK are real.",
+    "No accepting host actions, configured/manual service check/review/generate-plan, current-view client cutover, browser, terminal, extraction, proxy auth, informed recovery, physical human, paid provider or other platform qualification."
+  ]
+}

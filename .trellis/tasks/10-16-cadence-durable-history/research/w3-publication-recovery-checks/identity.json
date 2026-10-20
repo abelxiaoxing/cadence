@@ -1,0 +1,9 @@
+{
+  "nodeExecutable": "/usr/bin/node",
+  "node": "v26.7.0",
+  "bun": "1.3.14",
+  "os": "Linux",
+  "architecture": "x86_64",
+  "piCodingAgent": "0.84.3",
+  "piAI": "0.84.3"
+}

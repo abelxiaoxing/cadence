@@ -1,0 +1,63 @@
+{
+  "schema": "cadence-w2-relocation-identities/1",
+  "scope": "Single executable core/domain/capture relocation and exact network-policy extraction; no producer cutover",
+  "historicalFreeze": "../10-16-cadence-service-owner/research/joint-interface-freeze.json (preserved, not rebound)",
+  "before": {
+    "src/service/contracts/core.ts": "c0872f2f0dce34c5ebfb73827b5200675b4d8ecfa312b2bb722c8e4bb51afb41",
+    "src/service/contracts/domain.ts": "f24eb52dafd058614828209135a3f9ac372232a74bcbf06c20c79ec05057b32a",
+    "src/service/contracts/capture.ts": "1063989d0b7ae4b6a982243da272e3f01905013ba79bb145362fde1f15deddb7",
+    "src/service-contract.ts": "7d166451e88e89b9ef86b3e48c38716324637dd736b89d5ab679cde5b8acebff",
+    "src/service/contracts/history.ts": "07810b6052e3a5c012a62388c4b77ddd24121be753294c4f63bde2c0ee48bf82",
+    "src/service/contracts/budget.ts": "968c85e35fb1e34c8e77ded90e29c41535728077a07be041b014068362a5463d",
+    "src/service/ports.ts": "7134c4576caa55718d8ba914bb4c4f19f2dbeed4317eba041e53614e3e6c028e",
+    "src/subagent-process.ts": "c357e4033e50767a6e5935231411e5b55f03f2f3ff70d8483099ca07d7b10ce9",
+    "test/service-contract.test.ts": "4f5cf173e61219912e814ae8ae5e20ea052f15b4cb9c17f60d8a197a727f545e",
+    "src/sdk-worker.mjs": "12fff81671cc0bd1d3011f43f9364531bba0a08007dd1abe728de00a676022f3"
+  },
+  "after": {
+    "src/service/contracts/core.ts": "40e0653703f764227eaa1bb71a0e732452b0feeedbc6e7c532a376affc20f14b",
+    "src/service/contracts/domain.ts": "0c1f0ff9d156add1869d4d12717b5f2a94239b033345cf6bb384071066a90bc1",
+    "src/service/contracts/capture.ts": "4f595019e758b28b9e8affba3ecc0b494c1defc679fe1c40e4e428f8e63bc0ac",
+    "src/service-contract.ts": "ca33c5d963cc2513199138c77f51b02885aa89f6998d9386c82d95fb3594ff9a",
+    "src/service/contracts/history.ts": "07810b6052e3a5c012a62388c4b77ddd24121be753294c4f63bde2c0ee48bf82",
+    "src/service/contracts/budget.ts": "968c85e35fb1e34c8e77ded90e29c41535728077a07be041b014068362a5463d",
+    "src/service/ports.ts": "7134c4576caa55718d8ba914bb4c4f19f2dbeed4317eba041e53614e3e6c028e",
+    "src/subagent-process.ts": "dd79396eef36d2f621fc5e19b183bdd974a9e300d536da01920de94fee81d984",
+    "test/service-contract.test.ts": "b64ad03461e5ebec8edd0902d55a4095200336bc64472620b8d97172df085c6d",
+    "src/sdk-worker.mjs": "12fff81671cc0bd1d3011f43f9364531bba0a08007dd1abe728de00a676022f3",
+    "src/worker-public.mjs": "7b9db72f4ec299d339bd84b68f16b2c5c31ff0596d567c752d5a9c3fe2680ca3",
+    "src/worker-public.d.mts": "bbf12619e4984fa0d4de830c0a89504c512cfa2b309f239bb83635a2fd19346e",
+    "src/sdk-network.ts": "8284b710cd419d0d87639bcb4931a989dde06a797aea5405e2a2994f61ef9468",
+    "test/worker-public.test.ts": "a7ab2451e95a2b9fecad342fa7a8579847557634588dad84d28eff65b3db462a",
+    "test/helpers/worker-capability-child.mjs": "3bd00dc7197e84e4bbc0838f6ae22c16dc10cb4927f622445c4e603d795daa7c"
+  },
+  "unchanged": [
+    "src/service/contracts/history.ts",
+    "src/service/contracts/budget.ts",
+    "src/service/ports.ts",
+    "src/sdk-worker.mjs"
+  ],
+  "declarationOwner": "src/worker-public.d.mts",
+  "executableOwner": "src/worker-public.mjs",
+  "compatibilityShims": [
+    "src/service/contracts/core.ts",
+    "src/service/contracts/domain.ts",
+    "src/service/contracts/capture.ts"
+  ],
+  "networkOwner": "src/sdk-network.ts",
+  "networkExports": [
+    "safeChildEnv",
+    "networkSnapshot",
+    "scopedNetwork",
+    "sameNetwork",
+    "sdkNetworkEnvironment",
+    "NetworkSnapshot (type only)"
+  ],
+  "qualification": {
+    "fullSuite": false,
+    "pack": false,
+    "v2Producer": false,
+    "serviceProxyStartup": false,
+    "durableSink": false
+  }
+}

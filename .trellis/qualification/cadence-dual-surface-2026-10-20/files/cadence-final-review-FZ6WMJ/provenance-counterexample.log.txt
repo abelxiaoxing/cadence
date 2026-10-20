@@ -1,0 +1,32 @@
+$ vitest run --no-file-parallelism test/service-package.test.ts
+
+ RUN  v4.1.10 /home/mirako/abel/cadence
+
+ ❯ test/service-package.test.ts (4 tests | 1 failed) 295ms
+   × reuse provenance pins every current adaptation and integration body, including builders and tests 12ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/service-package.test.ts > reuse provenance pins every current adaptation and integration body, including builders and tests
+AssertionError: scripts/build-web.mjs: expected '0334c888aa4c915df9e18cf6e9d62ac939412…' to be 'f0f0ac9b213975515d70bd065a25d7c76aa2b…' // Object.is equality
+
+Expected: "f0f0ac9b213975515d70bd065a25d7c76aa2b5c9487cf6c9f62b1e9923465f3d"
+Received: "0334c888aa4c915df9e18cf6e9d62ac939412091d6751754d623201c2f2b9e85"
+
+ ❯ test/service-package.test.ts:104:26
+    102|       .update(readFileSync(join(root, name)))
+    103|       .digest("hex");
+    104|     expect(actual, name).toBe(expected);
+       |                          ^
+    105|   }
+    106|   for (const group of policy.groups) {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 passed (4)
+   Start at  02:30:46
+   Duration  980ms (transform 185ms, setup 0ms, import 491ms, tests 295ms, environment 0ms)
+
+error: script "test" exited with code 1

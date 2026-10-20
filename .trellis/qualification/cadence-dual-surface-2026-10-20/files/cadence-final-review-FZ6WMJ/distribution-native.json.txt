@@ -1,0 +1,23 @@
+{
+  "command": [
+    "env",
+    "CADENCE_TEST_PACKAGE_ROOT=/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted/package",
+    "bun",
+    "run",
+    "test",
+    "--",
+    "test/distribution.test.mjs",
+    "test/service-accepting-host.test.ts",
+    "test/native-client.test.ts",
+    "test/terminal-integration.test.mjs"
+  ],
+  "cwd": "/home/mirako/abel/cadence",
+  "pid": 2351343,
+  "started": 1792433537.8665166,
+  "temporaryRoot": "/home/mirako/abel/cadence-final-review-FZ6WMJ",
+  "originalWait": true,
+  "exit": 1,
+  "elapsedSeconds": 390.993,
+  "log": "/home/mirako/abel/cadence-final-review-FZ6WMJ/distribution-native.log",
+  "logSha256": "0c9da33a3e44e2168b936d0447db973fbcb3e0c26736a4ff8f7a1e2c1034bcdc"
+}

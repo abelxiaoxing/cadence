@@ -1,0 +1,1 @@
+{"crashedOriginal":[null,"SIGKILL"],"restartedOriginal":[0,null],"stop":{"code":0,"signal":null,"stdout":"{\"status\":\"stopped\",\"epoch\":\"96cc0073-4178-4d4c-944c-cd3bf8fc482f\"}\n","stderr":""},"stderr":"","errors":""}

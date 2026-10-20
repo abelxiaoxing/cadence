@@ -1,0 +1,18 @@
+{
+  "native": { "code": 0, "signal": null },
+  "forced": false,
+  "observed": {
+    "scenario": "env-scoped",
+    "passed": true,
+    "constructed": 1,
+    "authCalls": 1,
+    "contacts": 0,
+    "encoderUses": 1,
+    "nativeWorkerSpawns": 0,
+    "records": [
+      { "type": "preparation", "validityMs": 121000 },
+      { "type": "settlement", "outcome": "resolved", "admissionClosed": false }
+    ],
+    "remainingFiles": ["auth.json", "models.json"]
+  }
+}

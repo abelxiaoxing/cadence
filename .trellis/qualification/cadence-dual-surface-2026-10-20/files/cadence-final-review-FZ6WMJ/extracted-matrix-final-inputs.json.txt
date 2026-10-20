@@ -1,0 +1,76 @@
+[
+  {
+    "source": "/home/mirako/abel/cadence/test/service-auth-proxy.test.ts",
+    "sourceSha256": "cad2cdc0f4cee0fe840a10d91672851dda694c54534edbf0660dd229c1ad1a0f",
+    "fixture": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-matrix-final/service-auth-proxy.test.ts",
+    "fixtureSha256": "f0b6de953aee26999e4f5e5520933edf23c1b648d2702ee17f121e75d9217910",
+    "runtimeAndFixtureUrlReplacements": [
+      {
+        "before": "new URL(\"../src/service-host.mjs\", import.meta.url)",
+        "after": "new URL(\"file:///home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-final/package/src/service-host.mjs\")"
+      }
+    ],
+    "importAdaptation": "relative test imports made absolute to unchanged source test/client helpers; no assertion changes; service-host/cli launch URLs point only into audited tar"
+  },
+  {
+    "source": "/home/mirako/abel/cadence/test/service-cli.test.ts",
+    "sourceSha256": "8dcf8dcee47b10ca29bfeaf233e5aeaaf854c49ac29fbaf685b583b8a829509f",
+    "fixture": "/home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-matrix-final/service-cli.test.ts",
+    "fixtureSha256": "b70199e9f2b6cedc4ad97700be21bfc431bc40e8ac1d34907987810c44c02e52",
+    "runtimeAndFixtureUrlReplacements": [
+      {
+        "before": "new URL(\"../src/service-cli.mjs\", import.meta.url)",
+        "after": "new URL(\"file:///home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-final/package/src/service-cli.mjs\")"
+      },
+      {
+        "before": "new URL(\"../src/service-host.mjs\", import.meta.url)",
+        "after": "new URL(\"file:///home/mirako/abel/cadence-final-review-FZ6WMJ/extracted-final/package/src/service-host.mjs\")"
+      },
+      {
+        "before": "new URL(\"../node_modules\", import.meta.url)",
+        "after": "new URL(\"file:///home/mirako/abel/cadence/node_modules\")"
+      },
+      {
+        "before": "new URL(\"../\", import.meta.url)",
+        "after": "new URL(\"file:///home/mirako/abel/cadence\")"
+      },
+      {
+        "before": "new URL(\"../src/service/cli.ts\", import.meta.url)",
+        "after": "new URL(\"file:///home/mirako/abel/cadence/src/service/cli.ts\")"
+      },
+      {
+        "before": "new URL(\"./foreground-host.mjs\", import.meta.url)",
+        "after": "new URL(\"file:///home/mirako/abel/cadence/test/foreground-host.mjs\")"
+      },
+      {
+        "before": "new URL(\"../\", import.meta.url)",
+        "after": "new URL(\"file:///home/mirako/abel/cadence\")"
+      },
+      {
+        "before": "new URL(\"../node_modules\", import.meta.url)",
+        "after": "new URL(\"file:///home/mirako/abel/cadence/node_modules\")"
+      },
+      {
+        "before": "new URL(\"./helpers/service-host-lifetime.ts\", import.meta.url)",
+        "after": "new URL(\"file:///home/mirako/abel/cadence/test/helpers/service-host-lifetime.ts\")"
+      },
+      {
+        "before": "new URL(\"../\", import.meta.url)",
+        "after": "new URL(\"file:///home/mirako/abel/cadence\")"
+      },
+      {
+        "before": "new URL(\"../node_modules\", import.meta.url)",
+        "after": "new URL(\"file:///home/mirako/abel/cadence/node_modules\")"
+      },
+      {
+        "before": "new URL(\"./helpers/service-host-fixture.ts\", import.meta.url)",
+        "after": "new URL(\"file:///home/mirako/abel/cadence/test/helpers/service-host-fixture.ts\")"
+      },
+      {
+        "before": "new URL(\"../\", import.meta.url)",
+        "after": "new URL(\"file:///home/mirako/abel/cadence\")"
+      }
+    ],
+    "importAdaptation": "relative test imports made absolute to unchanged source test/client helpers; no assertion changes; service-host/cli launch URLs point only into audited tar"
+  }
+]
