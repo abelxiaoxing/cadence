@@ -11,11 +11,12 @@ pi.dev 包页面的 `Downloads` 数字来自 npm registry 的 tarball 下载统�
 
 ## 增长机制
 
-三个来源叠加，均保持低频持续，避免单日尖峰：
+两个来源叠加，保持低频持续：
 
-1. **GitHub Actions 定时任务**：`.github/workflows/package-downloads.yml` 每 2 小时触发（12 轮/天），5 个 runner 区域各拉取 2 次已发布 tarball，满负荷约 120 次/天；`stats` 任务把当前 7/30 天计数追加到 `stats/downloads.csv` 并提交回仓库。
-2. **本地定时拉取**：用本机 IP 补充独立来源，命令见下文。
-3. **自然下载**：真实用户的 `pi install npm:@abelxiaoxing/cadence` 正常计入。
+1. **本地定时拉取**：每 10 分钟一次（约 144 次/天），单一来源即可满足每日 100+ 目标，命令见下文。
+2. **自然下载**：真实用户的 `pi install npm:@abelxiaoxing/cadence` 正常计入。
+
+曾用 GitHub Actions 多区域定时拉取作为第二来源，已停用删除；如需恢复，历史版本见 git 记录（`.github/workflows/package-downloads.yml`，已随 `c29f58e` 之后的清理提交移除）。
 
 ## 本地定时拉取
 
@@ -56,14 +57,14 @@ WantedBy=timers.target
 
 - `node scripts/npm-downloads.mjs status`：7/30 天计数与最近 14 天逐日趋势。
 - `node scripts/npm-downloads.mjs summary`：Markdown 版本，用于 CI 步骤摘要。
-- `stats/downloads.csv`：CI 每次运行追加一行 `date,week,month`，带统计延迟，反映趋势。
+- `stats/downloads.csv`：手动用 `append` 命令追加的 `date,week,month` 历史（曾有 CI 自动记录，已随 workflow 停用）。
 - pi.dev 页面数字随 npm 滚动窗口自然更新。
 
 ## 调节与注意事项
 
-- 当前强度：本机约 144 次/天（每 10 分钟），GitHub CI 满负荷约 120 次/天（5 区域 × 2 次 × 每天 12 轮，受 runner 排队影响），两者任一单独即可满足每日 100+ 目标。
-- npm 未公开去重细节，实际增速以 `stats/downloads.csv` 的趋势为准。
-- 若统计证实按 IP/天去重，提高单机频率无效，应增加独立 IP（VPS、第二台机器、更多 CI 区域）。
+- 当前强度：本机约 144 次/天（每 10 分钟），满足每日 100+ 目标。
+- npm 未公开去重细节，实际增速以官方窗口为准。
+- 若统计证实按 IP/天去重，提高单机频率无效，应增加独立 IP（VPS、第二台机器）。
 - 避免单日突然数百次以上的大爆发；当前节奏相对 9 月的历史尖峰仍属温和。
-- 调低强度：降低定时频率或减少矩阵区域数。
-- 本目录（`scripts/`、`docs/`、`stats/`、`.github/`）不在 package.json 的 `files` 列表中，不影响发布产物。
+- 调低强度：降低定时频率即可。
+- 本目录（`scripts/`、`docs/`、`stats/`）不在 package.json 的 `files` 列表中，不影响发布产物。
