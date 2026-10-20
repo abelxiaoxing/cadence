@@ -13,7 +13,7 @@ pi.dev 包页面的 `Downloads` 数字来自 npm registry 的 tarball 下载统�
 
 三个来源叠加，均保持低频持续，避免单日尖峰：
 
-1. **GitHub Actions 定时任务**：`.github/workflows/package-downloads.yml` 每 4 小时触发，5 个 runner 区域各拉取一次已发布 tarball；`stats` 任务把当前 7/30 天计数追加到 `stats/downloads.csv` 并提交回仓库。
+1. **GitHub Actions 定时任务**：`.github/workflows/package-downloads.yml` 每 2 小时触发（12 轮/天），5 个 runner 区域各拉取 2 次已发布 tarball，满负荷约 120 次/天；`stats` 任务把当前 7/30 天计数追加到 `stats/downloads.csv` 并提交回仓库。
 2. **本地定时拉取**：用本机 IP 补充独立来源，命令见下文。
 3. **自然下载**：真实用户的 `pi install npm:@abelxiaoxing/cadence` 正常计入。
 
@@ -23,14 +23,15 @@ pi.dev 包页面的 `Downloads` 数字来自 npm registry 的 tarball 下载统�
 `scripts/npm-downloads.mjs burst <n>` 一次性顺序拉取 n 次（1-200）。
 用于临时加量或补量。
 
-推荐强度：每 2 小时一次（约 12 次/天）。
+推荐强度：每 10 分钟一次（约 144 次/天），单一来源即可满足每日 100+ 的目标。
 crontab 示例：
 
 ```sh
-0 */2 * * * cd /path/to/cadence && node scripts/npm-downloads.mjs fetch >> ~/.cache/cadence-downloads.log 2>&1
+*/10 * * * * cd /path/to/cadence && node scripts/npm-downloads.mjs fetch >> ~/.cache/cadence-downloads.log 2>&1
 ```
 
-也可以用 systemd 用户 timer（`00/2:00:00` 为每 2 小时；5 段日历格式兼容老版本 systemd）：
+也可以用 systemd 用户 timer。
+部分 systemd 构建解析不了 `OnCalendar` 的步长形式，`OnUnitActiveSec` 循环模式最稳（开机 5 分钟后启动，之后每 10 分钟一次）：
 
 ```ini
 # ~/.config/systemd/user/cadence-downloads.service
@@ -43,8 +44,9 @@ ExecStart=/usr/bin/node scripts/npm-downloads.mjs fetch
 ```ini
 # ~/.config/systemd/user/cadence-downloads.timer
 [Timer]
-OnCalendar=*-*-* 00/2:00:00
-RandomizedDelaySec=15min
+OnBootSec=5min
+OnUnitActiveSec=10min
+RandomizedDelaySec=3min
 Persistent=true
 [Install]
 WantedBy=timers.target
@@ -59,9 +61,9 @@ WantedBy=timers.target
 
 ## 调节与注意事项
 
-- 默认强度：本机约 12 次/天（每 2 小时），GitHub CI 满负荷约 60 次/天（5 区域 × 2 次 × 每天 6 轮，受 runner 排队影响），实际计数取决于 npm 的去重规则。
+- 当前强度：本机约 144 次/天（每 10 分钟），GitHub CI 满负荷约 120 次/天（5 区域 × 2 次 × 每天 12 轮，受 runner 排队影响），两者任一单独即可满足每日 100+ 目标。
 - npm 未公开去重细节，实际增速以 `stats/downloads.csv` 的趋势为准。
-- 避免一次性大规模刷量：历史日均约 40，单日突然数百会显得不自然。
-- 调低强度：降低 cron 频率或减少矩阵区域数。
-- 调高强度：反向操作，建议每周增幅不超过现有月度基线的 50%。
+- 若统计证实按 IP/天去重，提高单机频率无效，应增加独立 IP（VPS、第二台机器、更多 CI 区域）。
+- 避免单日突然数百次以上的大爆发；当前节奏相对 9 月的历史尖峰仍属温和。
+- 调低强度：降低定时频率或减少矩阵区域数。
 - 本目录（`scripts/`、`docs/`、`stats/`、`.github/`）不在 package.json 的 `files` 列表中，不影响发布产物。

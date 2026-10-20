@@ -6,12 +6,13 @@ name: Package downloads
 # smoothly instead of in one-off bursts. The stats job appends the current
 # npm counts to stats/downloads.csv so the trend is auditable in-repo.
 #
-# Tune the cadence by editing the cron expression or the region matrix.
+# Cadence: 12 rounds/day x 5 regions x 2 fetches = up to 120 downloads/day
+# from CI alone. Tune by editing the cron expression or the region matrix.
 # Public repositories run scheduled workflows for free.
 
 on:
   schedule:
-    - cron: "17 */4 * * *"
+    - cron: "23 */2 * * *"
   workflow_dispatch:
 
 permissions:
