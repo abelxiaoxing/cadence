@@ -15,8 +15,9 @@ The result is byte-bounded UTF-8 with a visible `[truncated]` marker (or dots fo
 Do not promise detection of every business secret, encoded secret or user-authored sensitive sentence.
 
 `src/subagent-process.ts` buffers bounded complete output before sanitizing, so split UTF-8 and split known-secret chunks are not exposed through streaming output.
-Progress contains only ready/tool-name notices, including known-secret redaction even in tool names.
-`src/sdk-worker.mjs` emits no raw tool payloads, thinking, provider errors or credentials.
+Legacy diagnostic progress remains bounded ready/tool-name text.
+Service worker v2 emits sanitized correlated messages/tool args/results and coverage through the shared capture codecs; never raw provider envelopes, hidden thinking or credentials.
+See [capture/history](./service-history-capture-guidelines.md) for the authoritative rich recording contract.
 
 ## Durable context versus diagnostics
 

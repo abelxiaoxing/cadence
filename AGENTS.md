@@ -1,8 +1,11 @@
 ## Cadence
 
-`@abelxiaoxing/cadence` is a Pi extension with one explicit terminal-only `/cadence` task workflow.
-Ordinary engineering and resource discovery never activate it.
-Code tasks require a readable plan and fresh native terminal Start consent, then direct host-tool edits, real parent checks and human review.
+`@abelxiaoxing/cadence` is a dual-surface task workspace: native `/cadence` and built WebUI share one explicitly started persistent service.
+Ordinary engineering, resource discovery and installation never activate execution or start a service.
+Code tasks require a readable plan and fresh context-bound Start consent, then direct host-tool edits, real parent checks and human review.
+Native entry retains raw-terminal guards; browser access authentication is not action consent.
+Client departure detaches, never cancels admitted work; explicit Cancel/Stop preserve actual closure and unknown fences.
+No terminal embedded executor, automatic replay, profile copying or recovery by deleting uncertain locks is allowed.
 This is not a sandbox, certified executor or transactional application system.
 Research/diagnosis are readonly; ordinary conversations remain independent.
 New human-readable records live under `.cadence/assistant/tasks`; private diagnostics and coordination use `cadence-assistant-v1`.
@@ -10,15 +13,16 @@ Old history and uncertain resources are never imported, reset or cleaned.
 The package ships three pinned professional Agents (`agents/`), independent research and commit skills (`skills/`), and optional check configuration (`config/`).
 
 Project-specific development guidelines live in `.trellis/spec/`.
-The backend layer covers `src/`, `scripts/`, record storage, foreground execution, checks and operator tooling.
-The frontend layer is Presentation & Content: native TUI projection plus shipped Agents/skills/config.
-This repository has no web frontend.
+The backend layer covers `src/`, `scripts/`, record storage, service-owned execution, checks and operator tooling.
+The frontend layer is Presentation & Content: shared native TUI and `web/` clients plus shipped Agents/skills/config.
+Private rich history, literal search and complete verified exports remain independent of the live ring and never execute or repair work.
 
 ## Distribution routes
 
 - Target test: `bun run test -- test/distribution.test.mjs`.
 - Real pack route: from this package directory, run `bun pm pack --destination <tmp>`.
-- Distribution suite: `bun run verify` (check && lint && test && pack:check).
+- Distribution suite: `CADENCE_BROWSER_PATH=<existing-browser> bun run verify` (root/web checks, deterministic assets, lint, Agents, native/unit/web/browser tests and real pack audit).
+- Set `TMPDIR`, `TEMP` and `TMP` to one fresh private directory; no browser/dependency auto-download or source refill.
 - Traceability: `bun run traceability:check --map <repository-relative-map.json>`; valid references are not executed evidence.
 
 <!-- ABEL:AGENTS-INDEX:START -->

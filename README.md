@@ -1,105 +1,131 @@
 # Cadence
 
-An MIT-licensed, Pi-only terminal workflow assistant: **plan → one agent → checks → changes → human review**.
-Ordinary engineering conversations and independent research skills do not activate the workflow.
-The lightweight replacement is unreleased pending independent qualification; local tests are not release or human/provider evidence.
+`@abelxiaoxing/cadence` is a shared Pi task workspace with two independently usable clients: native `/cadence` and a browser WebUI.
+One explicitly started service owns tasks, bounded subagent collaboration, real parent checks and retained history.
+Ordinary conversations, resource discovery, installation and opening history never start work or a service.
 
-Load the local package by absolute path or a relative path such as `./cadence`, or use an extracted tarball with existing trusted Pi peers.
-Cadence does not impose a Pi version range; missing capabilities refuse explicitly.
+This is a trusted workflow assistant, **not a sandbox, certified executor or transactional application system**.
+Code workers edit the chosen working copy directly; recovery can require human work.
+Model prose, tool results and human Done do not certify checks or code.
 
-## Explicit workflow
+## Load and start explicitly
 
-Open `/cadence` in a trusted, idle interactive Pi terminal.
-`/cadence <request>` only prefills a new goal; it never starts work.
-Choose New or Open/history, then code, research or diagnosis.
-Opening a task restores context, not execution or approval.
-Quoted, replayed, model-generated, nonterminal and child invocations cannot start tasks.
+The package can be loaded as a reviewed local package, extracted tarball or installed npm package through Pi's package mechanism.
+For a local checkout, add its absolute or relative path to Pi's `packages` setting, or try `pi -e ./cadence`.
+Pi loads `src/index.ts`; the service, worker and readonly operator are ordinary JavaScript with no TypeScript/source-tree fallback.
+The manifest does not impose a Pi version range; public Pi peers stay external.
+Development pins, declared Node baseline (`>=22.19.0`) and actual tested runtime identities are separate facts, not universal compatibility promises.
+Required installed peers include public Pi packages, Typebox and Undici; `ws` is the sole production dependency.
+Browser assets are prebuilt, not compiled by consumer postinstall.
 
-For code, write/edit a readable plan or explicitly request a readonly advisory plan.
-Review the plan and working-copy changes, then confirm **Start** in the current terminal.
-One agent uses the current Pi model/provider and publicly resolved request authentication to edit the chosen working copy.
-Unsupported model transport/auth capabilities refuse rather than silently falling back.
-Research and diagnosis use readonly tools and human review of conclusions; they cannot escalate into editing or shell checks.
-
-Edits are ordinary trusted host-tool operations, **not a sandbox, certified future-code approval or transactional application**.
-There is no automatic rollback, retry, Git mutation, software installation, cleanup or publication.
-Stop older Cadence sessions first; external editors and older runtimes are outside the new checkout coordination guarantee.
-
-Progress is foreground and cancellable with Escape.
-Navigation/shutdown requests bounded cancellation and waits; an unconfirmed stop remains interrupted/unknown and keeps the new lock.
-POSIX group signaling is operational cancellation, not proof that escaped descendants stopped.
-Windows direct-child cancellation is weaker; no Job or ConPTY guarantee is claimed.
-Continue after interruption/failure requires a new explicit terminal choice and current plan review.
-Only explicit informed recovery of an unchanged stale **new** lock can permit another supported writer; old runtime resources are never reset.
-
-## Checks and review
-
-Optionally copy `config/workflow-task.example.json` to `.cadence/assistant/config.json` and edit its named command/timeout definitions (`cadence-assistant-checks/1`).
-Missing configuration means no configured checks, never a pass.
-Code tasks can also use a manually entered check.
-Each parent-run command requires terminal confirmation of the actual command, cwd and timeout.
-The parent records exit status, duration and bounded sanitized output; agent prose or exit zero is not a passing check.
-Commands are user-approved shell input, not automatically executed model suggestions.
-They inherit the parent project environment (including any ambient credentials); resolved SDK request credentials are never added.
-The child guard prevents nested Cadence activation.
-Configured checks that have not run remain visibly not-run, even when another check passes.
-
-Review includes staged/unstaged changes, untracked/binary/deleted files and baseline dirt, without claiming all changes belong to Cadence.
-Non-Git inventory and any unreadable, ignored or truncated coverage are explicitly limited.
-Later edits invalidate check/review freshness.
-Human Done may record **reviewed-with-issues** when checks are failed, stale, unrun or coverage incomplete; it never converts those outcomes into passed or certified.
-
-## Storage and privacy
-
-- Human-readable bounded records: `.cadence/assistant/tasks/<uuid>/task.json`.
-- Private bounded sanitized diagnostics and coordination: `<state-home>/cadence-assistant-v1/<checkout-hash>/`, outside the checkout.
-- Authentication is resolved by the parent and sent through anonymous stdin, not argv, project records or credential files.
-- Unknown, corrupt, linked or oversized state refuses without reset.
-- Missing state stays absent on list/open/doctor.
-- Old SQLite/history/checkpoints/candidates, sessions, OpenSpec and uncertain resources are not read as approval, migrated or cleaned.
-
-The SDK child has in-memory settings/session/model/auth stores and explicit resources; it is not Pi CLI startup.
-Redaction is bounded best effort for known secrets, not universal secret discovery.
-Do not put credentials into goals/plans or approved check commands.
-
-## Independent skills and configuration
-
-The shipped `context7-auto-research`, `grok-search` and `git-commit` skills remain independent of `/cadence`.
-The commit skill requires an explicit user commit request; Cadence itself never commits.
-Three package-owned Agents provide planning/research, implementation and diagnosis instructions; they are not extra Pi-discovered workflows.
-
-The missing-only installer offers the user configuration template at `~/.pi/agent/cadence/.env`; it never overwrites an existing file.
-See `config/.env.example` for Context7/Grok/Tavily settings.
-Trusted project overrides may use `.pi/cadence/.env`.
-Startup displays configuration status without showing secrets or activating a task.
-MIT and pi-subagents attribution are in `LICENSE`, `THIRD_PARTY_NOTICES.md` and `licenses/`.
-No Trellis runtime dependency or AGPL source/templates are included.
-
-## Readonly operators
+Before using the shared owner, stop older Cadence sessions and choose one coordination state-home for the checkout.
+No old records, databases, credentials or uncertain locks are imported, reset or cleaned.
 
 ```sh
-node /path/to/cadence/src/operator-cli.mjs doctor /path/to/workspace
-node /path/to/cadence/src/operator-cli.mjs runs /path/to/workspace
+cadence-service start --workspace /absolute/project
+cadence-service status --workspace /absolute/project
+cadence-service token-link --workspace /absolute/project --reveal
 ```
 
-These observe only the new records/configuration/lock; they never create missing state, launch work, recover locks or execute checks.
-History outcomes are historical, not fresh verification of current files.
+Use the installed `cadence-service` bin, or `node /absolute/cadence/src/service-cli.mjs` followed by those arguments.
+Default binding is numeric loopback `127.0.0.1:17423`; `--foreground` is available for an explicitly configured supervisor.
+Start reads the existing Pi agent directory (or an explicit private configuration), never creates another login/profile.
+See [service management](docs/service-management.md) for configuration, model/auth policy, Stop, diagnosis and informed recovery.
 
-## Development and qualification
+### Native terminal
+
+In a trusted, idle Pi TUI, type `/cadence [goal]` using fresh native Enter.
+The optional goal does not Start; pasted/replayed/nonterminal command dispatch cannot grant native entry.
+The client attaches to the existing owner and never falls back to a local executor or starts one implicitly.
+Choose the exact owner model/API/thinking level explicitly: initial selection is absent.
+Create or open a task, edit a readable plan and finite assignments/dependencies, preview and confirm Start.
+Readonly Generate is advisory and requires a separate Save/Start.
+Native menus expose child messages/tools/timeline, checks, current changes, review, retained history/search/export and independent active-run Cancel.
+
+Return, session departure and Pi quit **detach; admitted work continues** while the service is alive.
+Reattach to observe the same IDs without replay.
+Explicit Cancel requests bounded stop; it is not proof that every escaped descendant stopped.
+
+### Browser
+
+Open the locally revealed token link.
+Valid bootstrap redirects to a token-free URL and uses an HttpOnly SameSite cookie for subsequent HTTP/WebSocket access; no localStorage token copy.
+The browser can create/plan/Start/Cancel, run exact configured checks and record human review without a live Pi terminal.
+A token grants workspace access, not action consent.
+Every mutation needs its own context-bound preview/confirmation; stale/duplicate/lost replies do not silently replay work.
+The WebUI provides task/run/assignment navigation, long retained messages and tool detail, exact literal search, timeline and complete scoped NDJSON/Markdown downloads.
+Desktop panes and phone drawers retain cancellation and keyboard controls.
+
+## Execution, checks and review
+
+- Graphs contain 1–16 required assignments with explicit purposes/dependencies and exact model choice; no recursive spawning or autonomous retry.
+- Two readonly children may overlap; checkout editing and parent checks serialize across tasks and aliases against readers/writers.
+- Research/diagnosis never gain editing or parent-shell authority through a plan or child prompt.
+- Configured checks are available on both clients.
+  Manual shell checks require the native local capability and fresh command/cwd/timeout confirmation.
+- Checks use the service launch's ordinary project environment, never resolved model auth or a browser environment overlay.
+- Changes are bounded observations including pre-existing dirt, not proof of causation or a complete filesystem snapshot.
+- Failed, canceled, timeout, unknown, blocked, stale and not-run remain distinct.
+  Done-with-issues preserves all execution/check facts.
+
+## History and preservation
+
+Human-readable summaries remain `.cadence/assistant/tasks/<id>/task.json`; optional checks remain `.cadence/assistant/config.json`.
+Private coordination/history use `<state-home>/cadence-assistant-v1/<checkout-hash>/service-v1/`.
+Rich `history-v2` is independent of the recent live buffer; new stores use private format3 and authenticated bounded navigation.
+Legacy/unknown formats remain preserved, never auto-migrated.
+View/search/export are readonly and cannot resume work or repair history.
+Exact task/run/child exports require the completion trailer, counts, digest and original EOF; a short preview or revoked download is not a complete archive.
+Capture reports redaction, omitted binary/hidden data, source truncation and incomplete recording explicitly.
+Known-secret redaction is not universal detection of business secrets.
+Storage exhaustion refuses new work rather than silently evicting history.
+
+Service restart never resumes the old queue.
+Uncertain process/auth/storage settlement keeps fences; use documented local informed recovery, not PID-only deletion or automatic cleanup.
+
+## Personal remote access
+
+Keep the backend on loopback and configure one explicit HTTPS origin and trusted immediate reverse proxy.
+See [the Caddy example](docs/remote-access.md); it installs or deploys nothing.
+Host/Origin/CSRF and pre-upgrade WebSocket checks apply in addition to authentication.
+Do not expose credential-bearing plain public HTTP.
+Token links may remain in clipboard/history or external logs; redirection cannot retract disclosure.
+Local token rotation invalidates old cookies/grants/sockets/downloads, not admitted tasks.
+Provider credentials remain server-side; browser tokens and model credentials are separate.
+Outbound provider proxy policy is independent of inbound HTTPS and refuses unsupported routes instead of falling back direct.
+
+## Independent shipped content
+
+- `skills/context7-auto-research` and `skills/grok-search` remain independent research tools.
+- `skills/git-commit` requires an explicit commit request and deterministic audit; task review never commits.
+- Three pinned professional profiles in `agents/` provide readonly design/diagnosis and direct-edit implementation instructions, not execution authority.
+- `config/` contains optional research/check examples.
+  Missing-only user `.env` template creation is the sole postinstall behavior; no service/build/Git/provider operation runs.
+- `node /absolute/cadence/src/operator-cli.mjs doctor|runs [workspace]` remains readonly and independent of service startup.
+
+## Development and evidence
 
 ```sh
-bun run build:operator
 bun run check
+bun run check:web
+bun run build:check
 bun run lint
-bun run test
 bun run check:agents
-bun run pack:check
-bun pm pack --destination /private/temporary/directory
+bun run test:service
+bun run test:web
+CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run test:browser
+CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify
+bun pm pack --destination /absolute/private-temp
 ```
 
-`test/distribution.test.mjs` exercises real archive members/bodies/pins and extracted consumers.
-The reviewed manifest is `provenance/package-members.json`, not derived from the archive under test.
-Tests distinguish controller logic from real filesystem/process/SDK/package/terminal integration and use explicit integration budgets.
-Synthetic loopback models and trusted existing peer links do not prove paid-provider, manager-install or physical-human qualification.
-Record actual Node/Pi/platform identities without release version predicates; unexecuted Windows/macOS/human lanes remain missing.
-Historical certified-runtime failures are preserved as failed/superseded evidence, not relabeled passes.
+Build/verification use a fresh private directory with `TMPDIR`, `TEMP` and `TMP` set explicitly.
+`verify` includes native/unit tests, web tests, required real-browser scenarios and exact real-pack auditing; missing required browser is non-green, never an automatic download.
+Source/extracted PTYs, fabricated loopback providers and isolated HTTPS are distinct from physical humans/devices, paid accounts, package-manager installation and native Windows/macOS/ConPTY qualification.
+Those additional lanes remain unqualified unless their own receipts exist.
+No passing gate authorizes commit, push, publication, installation, deployment or cleanup.
+
+## Licenses and reuse
+
+Cadence is MIT.
+The substantial pinned pi-web-ui adaptations, original notices, emitted dependencies, Feather icons, KaTeX OFL fonts and vis embedded vendors are documented in [reuse and distribution](docs/reuse-and-distribution.md) and [third-party notices](THIRD_PARTY_NOTICES.md).
+Not all bundled material is covered by Cadence's MIT license.

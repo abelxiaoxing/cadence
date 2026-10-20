@@ -2,7 +2,7 @@
 
 ## Refuse without substitution
 
-Current owners are `src/task-types.ts`, `task-store.ts`, `task-controller.ts`, `subagent-process.ts`, `sdk-worker.mjs` and `task-shell.ts`.
+Current owners are `src/task-types.ts`, `task-store.ts`, `service/task-actions.ts`, `subagent-process.ts`, `sdk-worker.mjs` and `task-shell.ts`.
 Use their existing decoders and bounded result vocabulary, not a new error registry or retired certification framework.
 [Workflow](./lightweight-workflow-guidelines.md) owns exact signatures and limits.
 
@@ -31,7 +31,7 @@ Continue is a new explicit action; direct edits may need manual recovery.
 ## Host and auth boundaries
 
 `awaitWithAbort(work, signal, timeoutMs = 30000)` bounds waiting even when host auth itself is not cancelable.
-The shell/controller recheck signal/current context/persisted record before launch so late resolution cannot restart work.
+The client/admission/scheduler recheck signal/current context/persisted record before launch so late resolution cannot restart work.
 Missing supported public APIs, unsupported adapters, custom function transports and ambient-file auth refuse visibly with no model fallback.
 Do not copy global-doc-only APIs into installed-peer code without checking declarations.
 

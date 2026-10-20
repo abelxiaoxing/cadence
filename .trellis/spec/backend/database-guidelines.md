@@ -4,7 +4,7 @@
 
 The historical filename remains for discoverability; current storage is plain JSON, not a database.
 `src/task-store.ts#TaskStore` and `src/task-types.ts#decodeTask` own it.
-See the [workflow contract](./lightweight-workflow-guidelines.md) for controller choices and outcomes.
+See the [workflow contract](./lightweight-workflow-guidelines.md) for shared client/action authority and outcomes.
 Never open, migrate, reset or clean legacy SQLite/checkpoints/locks/session stores.
 
 ## Paths and identities
@@ -53,7 +53,7 @@ Updates use the caller's loaded identity (or the known canonical saved identity)
 
 Save holds/acquires the checkout lock, writes an exclusive 0600 temporary, fsyncs/closes it, rechecks ownership and observed target bytes, then renames that single file.
 Conflicts preserve external bytes and failed temporary data; unknown task-directory siblings refuse rather than being removed.
-Same-revision manual edits invalidate native choices and final-save attempts.
+Same-revision manual edits invalidate action grants and selected contexts and final-save attempts.
 This is optimistic metadata concurrency, not multi-file transaction, hostile-writer CAS or crash-proof durable publication.
 Missing list/load/config/lock observation creates nothing.
 
@@ -68,6 +68,14 @@ No historical all-log scan gates acquisition or release: validate the selected l
 `recover(expected, acknowledgeEscapedProcesses)` requires informed terminal confirmation, same host, exact unchanged lock and a PID probe failing specifically with `ESRCH`; lock identity is checked again before unlink.
 Live/ambiguous/remote owners refuse; recovery clears only this new coordination file, never kills processes or claims escaped descendants stopped.
 Other editors and older Cadence sessions are outside coordination; users must stop older sessions themselves.
+
+## Shared service ownership
+
+The service holds the unchanged v1 lock for its entire lifetime, including idle, and publishes v1 summaries under expected-byte checks.
+Rich graph/messages/tools/receipts stay in separate private `service-v1/history-v2`, never unknown siblings beside task.json.
+Production informed recovery is `cadence-service recover inspect|resolve`, binding exact registry/registration/history incarnations, original durable append and v1-last release.
+The legacy `TaskStore.recover` API remains a regression primitive, not a reachable terminal fallback or a way to bypass service fences.
+See [owner](./service-owner-guidelines.md) and [capture/history](./service-history-capture-guidelines.md).
 
 ## Regression anchors
 

@@ -2,16 +2,17 @@
 
 ## Owners, not a second state machine
 
-`src/task-controller.ts#TaskController` owns actions and freshness; `src/task-store.ts` persists one bounded plain record.
+`src/service/task-actions.ts#TaskActions` owns actions/current freshness; `src/task-store.ts` persists bounded v1 summaries and the private history writer owns rich committed facts.
+Both clients use ServiceClient decoders/projection IDs; TaskController is not a production execution path.
 `src/task-shell.ts` owns only native interaction and transient display.
 Use the [workflow contract](../backend/lightweight-workflow-guidelines.md) for full signatures and [storage](../backend/database-guidelines.md) for validation/locks.
-There is no SQLite workflow journal, graph queue, sealed candidate, certified Completion or automatic continuation driver.
+There is no SQLite store, sealed candidate, certified Completion or restart continuation driver; the finite service graph queue is explicitly admitted and never replayed.
 
 - Raw Enter latch, epoch, modal flag, dialog abort/dismiss: Shell memory for the current host session/interaction.
 - Pager offset/rows, progress/canceled/disposed flags: One `ctx.ui.custom` instance; never restored from task records.
-- Selected task, generation, persisted identity, active abort/settled promise, unknown-stop flag: Controller memory; cannot grant authority across reopen.
+- Selected task/command IDs and read cursors: Client memory; grants/active episodes/original promises belong to the owner, not restored consent.
 - Goal/plan/result/baseline, check metadata, review and bounded activity: Project `.cadence/assistant/tasks/<uuid>/task.json`.
-- Checkout lock and selected sanitized logs: Private `cadence-assistant-v1` namespace; not transcript or credentials.
+- Checkout/service locks and rich committed history: Private `cadence-assistant-v1` namespace; no credential envelope or hidden thinking.
 
 ## Phases and action results
 
@@ -21,16 +22,16 @@ Agent/check intent is saved before launch; a completed agent moves to review, fa
 Successful Generate plan instead stores an advisory draft and returns to planning; another native Start is required to edit.
 Goal-only research/diagnosis use readonly tools and human review, not a manufactured code plan or shell-check obligation.
 
-Open projects a persisted `running` record as interrupted in memory without rewriting it or launching work.
+The live owner distinguishes active work from historical uncertainty; the independent legacy readonly operator projects stored running as interrupted without rewriting bytes.
 It restores useful context, not exact execution, old consent or an automatic retry.
 Continue uses current files and fresh native consent/auth.
 Selected state that is unknown/corrupt/linked/oversized refuses without reset; missing state remains absent.
 No historical all-log scan or old consumer-store import belongs on this path.
 
-`CurrentChoice.identity` is the raw selected record's SHA-256 alongside generation/ID/revision.
+Shared ContextVersion includes the selected record's raw-byte identity/revision and exact current plan/model context.
 Even same-revision content or formatting changes invalidate the choice and final save; external bytes must survive conflicts.
 This is ordinary optimistic single-record replacement, not atomic filesystem CAS against arbitrary editors.
-Cancel invalidates choices and awaits the owned operation; unknown stop or release failure retains blocking state/new lock.
+Explicit run-ID Cancel closes owner admission and requests concurrent bounded stop; unknown stop/release retains blocking fences.
 Direct-child close does not certify escaped descendants stopped.
 
 ## Checks and human review are separate facts
@@ -47,7 +48,7 @@ Gitlinks/submodule internals, ignored/unreadable/oversized/linked content and tr
 Filesystem identifiers preserve whitespace; escape only their display, never `trim()` operational roots.
 Own task metadata is excluded from business freshness, but check configuration is not.
 
-`done(choice, reviewed, acceptIssues)` re-observes the fingerprint and refuses changed inputs.
+The owner review action binds run/change/check revisions and re-observes the fingerprint under its barrier, refusing changed inputs.
 Incomplete coverage, non-review phase, missing code checks, unrun configured definitions or non-passed runs require explicit issues acknowledgment.
 Persist `review.outcome` as `reviewed` or `reviewed-with-issues`; neither is certified completion and neither changes failed/unrun checks to passed.
 The UI must keep prior review visibly stale after later edits.

@@ -28,9 +28,10 @@ Agent prose cannot report parent PASS or authorize another run.
 
 Run `bun run check:agents` for managed AGENTS routes and all three exact Agent provenance pins.
 `test/package-contract.test.mjs`, `test/package-audit.test.mjs` and `test/independence.test.mjs` cover package policy, content/licensing, malicious archive rejection and separation from workflow activation.
-The reviewed `provenance/package-members.json` explicitly enumerates 34 regular members / 16 source files; never derive expected members from the archive under test.
+The reviewed `provenance/package-members.json` explicitly enumerates 129 regular members / 35 runtime source files; never derive expected members from the archive under test.
 Review every body and Agent pin in a real pack, not just counts.
-Only the operator bundle is generated; use `scripts/build-operator.mjs`, never an old workspace-worker builder.
+Operator, service management/host, native identity and WebUI outputs are generated through their canonical builders; worker capture JS remains maintained.
+Run the dedicated `test:browser` route against actual assets; never silently exclude it from verify.
 [Distribution](../backend/task-distribution-guidelines.md) owns the exact route and retirement ledger.
 
 ## Scoped gates and maintained writing

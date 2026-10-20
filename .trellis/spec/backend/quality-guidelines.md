@@ -15,8 +15,10 @@ bun pm pack --destination <private-temp>
 bun run traceability:check --map <repository-relative-map.json>
 ```
 
-`bun run verify` is check + lint + test + pack:check; check:agents is also a separately named gate.
-`check` runs JS syntax validation, canonical operator byte comparison and TypeScript no-emit.
+`bun run verify` requires root/web checks, generated operator/service/native/browser bytes, lint, Agent checks, all native/unit/web tests, dedicated real-browser tests and real pack audit.
+`CADENCE_BROWSER_PATH` must select an existing isolated browser; no download or missing-browser skip.
+`test:service`, `test:web`, `test:browser` and `build:check` are explicit aggregate routes; browser `.e2e.mjs` files run only in their dedicated configuration.
+`check` runs JS syntax validation, canonical operator/service/native byte comparison and TypeScript no-emit.
 A targeted test or temporary partial typecheck is not whole-package verification.
 For documentation-only changes, run scoped `node_modules/.bin/rumdl check <paths>`; historical task copies use the existing tasks exclusion, not a new broad ignore.
 Biome formats/checks JavaScript/TypeScript/JSON; do not hand-edit the generated operator.
@@ -87,6 +89,9 @@ Run `38223395036` on `7db986a` had real Windows/macOS failures; keep it failed e
 
 The terminal case matches its foreground view and readiness event within one shared 15-second interaction deadline, preserving the 90-second production-case budget and exact four requests.
 A progress heading, worker-ready frame, timer or model prose is not HTTP readiness.
+Pi fullscreen may emit only changed rows: parent settlement and owner drain need not be adjacent in the raw stream.
+`settledParent(kind,outcome)` in `test/terminal-integration.test.mjs` requires the exact published parent outcome plus either its adjacent drained row or a later drained row with the same captured parent UUID.
+A child-only drain, earlier drain or unknown outcome must not advance the fixture; the separate parsed HTTP4 barrier and original wait remain mandatory.
 The driver buffers split/early events, caps event input at 512 bytes and preserves original waited quit/exit facts.
 Readiness is a fixture prerequisite, never user consent or descendant settlement.
 
@@ -124,7 +129,7 @@ Its stdin regressions distinguish absent, explicit empty and payload demands; co
 No-input uses ignored EOF; required payload remains pipe-based and fail-closed.
 `test/distribution.test.mjs` audits extracted/copied trees, root/ancestor link refusal and fixed application-error JSON.
 `test/terminal-integration.test.mjs` keeps all four shared production scenarios, POSIX real barrier/error/exec-fd controls, and distinct Windows-native console/control/startup fixtures.
-The excluded ConPTY helper is not an SDK worker, production executor or member of the 34-file package.
+The excluded ConPTY helper is not an SDK worker, production executor or member of the distributable package.
 A repaired Linux pass is not repaired native Windows/macOS qualification; rerun the new reviewed commit on those actual runners.
 
 ### 7. Wrong vs Correct

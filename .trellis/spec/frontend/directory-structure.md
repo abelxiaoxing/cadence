@@ -3,10 +3,10 @@
 ## Native presentation owners
 
 - `src/index.ts`: sole Pi extension entry, child guard and independent startup notification.
-- `src/task-shell.ts`: `/cadence [request]`, native menu/editor/confirm, review pager and foreground progress component.
+- `src/task-shell.ts`: `/cadence [request]`, native service menu/editor/confirm, retained pager and owner observation; no foreground executor.
 - `src/startup-card.ts`: pure bounded research-configuration summary, not task activation or a persistent widget.
 - `src/verification-diagnostics.ts`: shared sanitized/byte-bounded display projection.
-- `src/task-controller.ts`, `task-types.ts`, `task-store.ts`: backend action/state/validation owners; UI must use them rather than invent durable state.
+- `src/service-client.ts` and `service-contract.ts`: both UIs consume shared typed actions/current/history, never a terminal-local TaskController.
 
 There is no `subagent-activity.ts`, task-session adapter, task-review-ui owner, web frontend or shipped workflow prompt directory.
 [Backend directory structure](../backend/directory-structure.md) lists the complete 16-source closure.
@@ -47,5 +47,5 @@ This independent loader is not the task store's no-link policy.
 `src/install-config.mjs` creates only a missing user research template using exclusive creation; existing paths are preserved.
 Startup never runs that installer or creates task/check configuration.
 
-[Distribution](../backend/task-distribution-guidelines.md) owns the manually reviewed 34-member policy, every-body/pin audit and excluded development assets.
+[Distribution](../backend/task-distribution-guidelines.md) owns the manually reviewed 129-member candidate policy, every-body/pin audit and excluded development assets.
 Old prompts, examples and consumer copies are neither current aliases nor cleanup targets.

@@ -5,26 +5,10 @@
 `src/task-types.ts` owns `TaskKind`, `TaskPhase`, `TaskRecord`, `CheckDefinition`, `CheckRecord`, `RunResult` and `ChangeView`.
 Import those types and shared decoders; do not cast arbitrary JSON in the shell or resurrect retired TypeBox packet/tool schemas.
 Cadence registers no model-callable workflow tool, even though host peer metadata still includes TypeBox.
-`CurrentChoice` belongs to the controller, `WorkerRequest`/`RequestAuth` to the process owner, and `CheckoutLock` to storage.
-The [workflow contract](../backend/lightweight-workflow-guidelines.md) is the single detailed API/field/environment/bounds reference.
-
-```ts
-// src/task-types.ts: decode at the data boundary, then project in the shell.
-decodeCheck(value: unknown): CheckDefinition;
-decodeTask(value: unknown): TaskRecord;
-// src/task-controller.ts: selected record identity is not future-code approval.
-interface CurrentChoice {
-  generation: number;
-  id: string;
-  revision: number;
-  identity: string;
-}
-```
-
-`decodeTask` checks schema, UUID-v4 ID, positive safe revision, known kind/phase, bounded UTF-8 strings, check/activity/review fields and top-level key allowlist.
-Do not claim all nested objects have closed key sets.
-`TaskStore.loadSnapshot()` adds raw-byte identity; `save()` checks revision and expected identity before replacing one record.
-No canonical approval hash, revision-only permission or trusted model-echoed identity replaces this observed conflict check.
+`service-contract.ts` is the portable facade for closed request/reply/current/action/history types.
+`service-client.ts` owns typed transport correlation and reconciliation; `worker-public.mjs` owns shared runtime capture codecs.
+No UI-local casts or duplicated lifecycle/check reducers may replace them.
+Task raw-byte identity is a freshness input, not future-code approval.
 
 ## Executable command versus display text
 
@@ -41,8 +25,8 @@ Quote operational cwd for presentation without changing spaces/tabs/newlines in 
 ## Host and auth types
 
 Use installed `ExtensionAPI`, `ExtensionContext` and `ExtensionCommandContext` declarations in the shell, and public Pi TUI helpers for rendering.
-The controller has no Pi imports; serializable request data, not host callbacks or registry internals, crosses stdin to the SDK child.
-`modelRegistry.getApiKeyAndHeaders(model)` must resolve the exact current model or refuse.
+The portable contract/client has no Pi imports; serializable request data, not host callbacks or registry internals, crosses stdin to the SDK child.
+Owner-side public `ModelRuntime.getAuth(model, overrides)` resolves the exact selected model or refuses; native/WebUI clients never resolve credentials.
 Null header values retain suppression semantics, resolved base URL overrides the model URL, and provider-scoped env stays in the auth resolver.
 No `!`/`$` interpolation of already-resolved auth, credential files/argv/logs, CLI startup migrations, model/API fallback or function-transport substitution is permitted.
 SDK environment is narrow; explicitly approved parent checks inherit ordinary project environment, never injected resolved SDK auth.
@@ -61,4 +45,4 @@ It supplies no workflow permission and no worker model selection/auth fallback.
 `test/lightweight-sdk.test.ts` verifies literal auth/baseURL/null headers/provider env using actual SDK loopback requests, not every allowlisted API or paid service.
 `test/config-context7.test.mjs` and `test/grok-search.test.mjs` exercise the independent configuration boundary.
 Wrong: duplicate JSON field casts in UI, trim a path, or treat a stored `passed` label as present freshness.
-Correct: decode with the owning module, preserve operational bytes, and derive display from current controller observations.
+Correct: decode with the owning module, preserve operational bytes, and derive display from current shared-owner observations.
