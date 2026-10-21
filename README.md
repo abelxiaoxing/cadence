@@ -1,8 +1,9 @@
 # Cadence
 
 `@abelxiaoxing/cadence` is a shared Pi task workspace with two independently usable clients: native `/cadence` and a browser WebUI.
-One explicitly started service owns tasks, bounded subagent collaboration, real parent checks and retained history.
-Ordinary conversations, resource discovery, installation and opening history never start work or a service.
+One persistent service owns tasks, bounded subagent collaboration, real parent checks and retained history.
+Ordinary conversations, resource discovery and opening history never start work or a service.
+On Linux, Pi's user-scope install registers that service as a systemd user unit and starts its WebUI on the default address.
 
 This is a trusted workflow assistant, **not a sandbox, certified executor or transactional application system**.
 Code workers edit the chosen working copy directly; recovery can require human work.
@@ -32,6 +33,18 @@ Use the installed `cadence-service` bin, or `node /absolute/cadence/src/service-
 Default binding is numeric loopback `127.0.0.1:17423`; `--foreground` is available for an explicitly configured supervisor.
 Start reads the existing Pi agent directory (or an explicit private configuration), never creates another login/profile.
 See [service management](docs/service-management.md) for configuration, model/auth policy, Stop, diagnosis and informed recovery.
+
+### Linux autostart after `pi install`
+
+`pi install npm:@abelxiaoxing/cadence` (user scope) writes `~/.local/share/systemd/user/cadence.service`, enables it and starts the owner for `~/cadence` on `http://127.0.0.1:17423`.
+Set an existing absolute `CADENCE_WORKSPACE` at install to choose another workspace, or `CADENCE_AUTOSTART=0` to skip registration.
+Enter the WebUI once with the link from `cadence-service token-link --workspace ~/cadence --reveal`; installation prints that command, not the token.
+Each `pi update` restarts the unit through orderly Stop, so running work is stopped rather than detached; `systemctl --user disable --now cadence` or `mask` is kept across upgrades.
+Run `cadence-service autostart remove` before `pi remove`.
+The npm client hides dependency install-script output, and with `strict-allow-scripts` it skips those scripts entirely.
+Approve Cadence once with `npm install-scripts approve @abelxiaoxing/cadence` inside `~/.pi/agent/npm` (or `npm config set allow-scripts=@abelxiaoxing/cadence --location=user`), or run `cadence-service autostart install`; `/cadence` names that command while no unit is registered.
+The standalone owner needs the Pi SDK peers resolvable beside the package and Pi's `auth.json`; without them registration or start waits instead of quarantining an owner.
+See [the systemd user unit](docs/service-management.md#linux-systemd-user-unit) for exact behavior and limits.
 
 ### Native terminal
 
@@ -138,7 +151,7 @@ Historical logs are not runtime dependencies, and removing development tooling m
 | Owner                                                                                                  | Responsibility                                                                                                            |
 | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
 | `src/index.ts`, `src/task-shell.ts`, `src/native-*.ts`                                                 | Nonactivating Pi entry, raw native consent, typed service attachment, paging and verified export; no embedded executor    |
-| `src/service/host.ts`, `src/service/cli.ts`                                                            | Real single-owner composition and explicit management; generated management entry stays SDK-free                          |
+| `src/service/host.ts`, `src/service/cli.ts`, `src/service/autostart.ts`                                | Real single-owner composition, explicit management and the generated Linux user unit; management entry stays SDK-free     |
 | `src/service/{coordination,private-files,owner,recovery}.ts`                                           | Canonical overlap exclusion, exact locks, original-operation lifetime and informed local recovery                         |
 | `src/service/{admission,task-actions,graph,scheduler}.ts`                                              | Context-bound actions, actual current views, finite graph scheduling, check/review barriers                               |
 | `src/service/{model-config,model-context,model-choice,auth-network}.ts`, `src/sdk-network.ts`          | Existing Pi sources, explicit exact model/thinking, original OAuth writeback and strict shared network policy             |
@@ -276,6 +289,8 @@ Byte values are UTF-8/encoded bounds where specified; they are not targets to si
 | Invalid read proof or changed source/key                       | Refuse; never rebase or interpret budget exhaustion as absence                    |
 | Dirty/partial/extra compiled assets or unsafe archive          | Refuse in place; no source refill, wildcard serving or fallback build             |
 | Extension import outside Pi aliases declared only as a peer    | Exact production dependency; Pi's install omits peers and Pi fails to start       |
+| Pi user install lacking SDK peers or `auth.json`               | No unit registration or start; a first owner without them quarantines             |
+| Upgrade changes the unit workspace or Node path                | Stop with the loaded unit definition before rewriting, not only SIGTERM           |
 
 Good: current context → explicit grant → durable acceptance → genuine original native/storage settlement → exact retained dependency → real checks → human review.
 Base: a client leaves and another reattaches to the same accepted run without launching it again.
@@ -305,7 +320,8 @@ Regression owners:
 - `service-history-*`: durable ordering, cold/no-index/restarted proof/search/export, corruption/torn/quota and expected-byte publication.
 - `lightweight-shell`, `native-client`, `native-history`, `terminal-integration`: native consent, shared service, Unicode/paging, detach/cancel and actual source/extracted PTYs.
 - `test/web/`: adapted pure/SSR tests separately from actual built-browser contexts, HTTPS, mixed clients, focus/viewports and complete downloads.
-- `package-*`, `distribution`, `service-package`, `independence`: exact tar/member/body/import/notice closure and nonactivating installation/discovery.
+- `package-*`, `distribution`, `service-package`, `independence`: exact tar/member/body/import/notice closure and nonactivating discovery.
+- `service-autostart`, `install-config`: Pi user-scope gating, unit escaping, upgrade/disable/mask/foreign handling and orderly removal.
 
 Regenerate operator/service/native/browser outputs only through their canonical builders; `--check` variants compare new private output without overwriting canonical bytes.
 Review the independently enumerated package member list and every emitted body, not a count or an expected list generated from the tar under test.

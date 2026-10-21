@@ -9,7 +9,11 @@ import {
   truncateToWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import { MANAGEMENT_GUIDANCE, NativeConnection } from "./native-client.ts";
+import {
+  autostartHint,
+  MANAGEMENT_GUIDANCE,
+  NativeConnection,
+} from "./native-client.ts";
 import {
   NativeHistory,
   type NativeViews,
@@ -1019,7 +1023,7 @@ export function registerTaskShell(pi: ExtensionAPI): void {
         }
       } catch (error) {
         ctx.ui.notify(
-          `${error instanceof ContractError ? error.code : "unavailable"}: Cadence refused or observation unavailable. No automatic action replay.\n${attached ? "Reopen /cadence for a fresh observation and confirmation. Accepted work may continue. For quarantined/unavailable ownership use cadence-service diagnose --workspace <path>; no locks were cleared." : MANAGEMENT_GUIDANCE}`,
+          `${error instanceof ContractError ? error.code : "unavailable"}: Cadence refused or observation unavailable. No automatic action replay.\n${attached ? "Reopen /cadence for a fresh observation and confirmation. Accepted work may continue. For quarantined/unavailable ownership use cadence-service diagnose --workspace <path>; no locks were cleared." : `${MANAGEMENT_GUIDANCE}${autostartHint()}`}`,
           "error",
         );
       } finally {

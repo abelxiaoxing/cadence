@@ -1,7 +1,7 @@
 # Explicit service management
 
-The native `/cadence` view and browser are clients of the same explicitly started owner.
-Opening either view, extension discovery, installation and login do not start it.
+The native `/cadence` view and browser are clients of the same owner, started explicitly or by the [Linux systemd user unit](#linux-systemd-user-unit).
+Opening either view, extension discovery and login do not start it.
 Use one coordination state-home for the checkout; a different state-home is not a recovery route.
 Stop older Cadence sessions before starting the shared service.
 
@@ -20,7 +20,43 @@ The equivalent package-relative command is `node <cadence>/src/service-cli.mjs .
 Defaults are loopback `127.0.0.1:17423`, normal Pi agent configuration, and detached service lifetime.
 An explicit port0 selects and persists a positive port once; restart uses the selected configuration, not a fallback endpoint.
 Missing/corrupt existing setup is preserved, not filled in or reset.
-There is no login autostart, supervisor installation, provider login or credential migration.
+Apart from the Linux user unit below, there is no supervisor installation, provider login or credential migration.
+
+## Linux systemd user unit
+
+On Linux, Pi's user-scope install (`pi install npm:@abelxiaoxing/cadence`, npm in `<agent-dir>/npm`) and every `pi update` run the package postinstall, which calls `cadence-service autostart refresh`.
+Refresh acts only when the package is exactly Pi's managed user copy; checkouts, project (`-l`), temporary and global installs, other platforms and `CADENCE_AUTOSTART=0` are left alone.
+
+The first refresh writes `~/.local/share/systemd/user/cadence.service`, enables it for `default.target` and starts it.
+The workspace is `~/cadence` (created if missing) or an existing absolute `CADENCE_WORKSPACE`; later refreshes keep the unit's workspace unless that variable is set again.
+The unit runs `start --foreground --workspace` without `--port`, so a new workspace selects `http://127.0.0.1:17423`.
+A port saved by an earlier start of that workspace still wins, and an occupied endpoint fails the unit instead of falling back.
+It bakes the installer's PATH (minus npm lifecycle entries), LANG/LC_ALL, an absolute XDG_STATE_HOME and a custom PI_CODING_AGENT_DIR, so shell management sees the same state home and Pi sources.
+Proxy variables are not baked; add a validated pair with `systemctl --user edit cadence`.
+Browser entry still requires the explicitly revealed token link; installation prints the `token-link --reveal` command, never the token.
+
+An upgrade refresh stops an active unit with its loaded definition, rewrites the file and starts it again.
+`ExecStop` is the authenticated orderly Stop, so admitted work is stopped, not detached.
+A disabled unit is refreshed but not re-enabled, and restarted only if it was running; a masked unit is never enabled or started; a unit file Cadence did not generate is left unchanged.
+`KillMode=mixed` sends systemd's SIGTERM only to the management client.
+An owner still settling after `TimeoutStopSec=90` (for example a quarantined one) is SIGKILLed, which is not orderly Stop and can leave recovery fences.
+`Restart=on-failure` is bounded to three starts in five minutes; a restart never removes fences, so a crashed owner keeps refusing until informed recovery.
+
+Pi's installer omits peers, so the standalone owner and workers can load the Pi SDK (`pi-coding-agent`, `pi-ai`) only when another package in the same tree provides it.
+A new owner without the SDK or Pi's `auth.json` quarantines.
+Refresh therefore does not register the unit while the SDK is unresolvable, and enables without starting it while `auth.json` is missing; the unit carries `ConditionPathExists=` for all three files.
+After logging in to Pi, start it with `systemctl --user start cadence`.
+Without linger, user units start at login and stop at logout through the same Stop; `loginctl enable-linger` keeps the owner running and starts it at boot.
+
+```sh
+cadence-service autostart install [--workspace /absolute/project]
+cadence-service autostart status
+cadence-service autostart remove
+```
+
+`install` registers, enables and starts the unit from any package location unless it is masked.
+`remove` disables it through `ExecStop` and deletes only the generated file; workspace, state home, history and Pi sources stay.
+Because npm runs no uninstall script, run `remove` before `pi remove`; a left-behind unit skips start once its CLI path disappears.
 
 ## Status, departure and Stop
 
