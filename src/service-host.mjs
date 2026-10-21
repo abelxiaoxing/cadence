@@ -4,7 +4,7 @@ var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // src/service/host.ts
 import { lstatSync as lstatSync10, opendirSync as opendirSync3 } from "node:fs";
-import { join as join16 } from "node:path";
+import { join as join17 } from "node:path";
 
 // src/history/files.ts
 import { createHash as createHash5, randomBytes, randomUUID as randomUUID3 } from "node:crypto";
@@ -19048,6 +19048,7 @@ import { randomUUID as randomUUID14 } from "node:crypto";
 
 // src/subagent-process.ts
 import { spawn } from "node:child_process";
+import { join as join16 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 // src/worker-capture.mjs
@@ -19630,6 +19631,15 @@ class WorkerRecording {
 }
 
 // src/subagent-process.ts
+function terminateWindowsTree(pid, fallback) {
+  const root = process.env.SystemRoot;
+  const taskkill = spawn(root ? join16(root, "System32", "taskkill.exe") : "taskkill.exe", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
+  taskkill.once("error", fallback);
+  taskkill.once("close", (code) => {
+    if (code !== 0)
+      fallback();
+  });
+}
 function runProcess(spec) {
   const started = Date.now();
   const early = (outcome, text2) => ({
@@ -19747,6 +19757,8 @@ function runProcess(spec) {
           return;
         if (process.platform !== "win32" && child.pid)
           process.kill(-child.pid, signal);
+        else if (child.pid && child.exitCode === null && child.signalCode === null)
+          terminateWindowsTree(child.pid, () => child.kill(signal));
         else
           child.kill(signal);
       } catch {}
@@ -22085,7 +22097,7 @@ function legacy(store, budget, reader) {
       decodeId(entry.name);
       if (created.has(entry.name))
         continue;
-      const path = join16(store.tasks, entry.name, "task.json");
+      const path = join17(store.tasks, entry.name, "task.json");
       const size = lstatSync10(path).size;
       if (size > 128 * 1024)
         throw new ContractError("corrupt-selected");
