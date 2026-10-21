@@ -13,7 +13,20 @@ const shells =
         .filter(Boolean)
         .map((dir) => `${dir}\\Git\\bin\\bash.exe`)
     : ["/bin/bash", "/usr/bin/bash"];
+// On Windows the SDK's own abort/timeout path ends a bash child it launched
+// with taskkill /F /T; allow exactly that, for children this guard allowed.
+const launched = new Set();
 cp.spawn = function (command, args, options) {
+  if (
+    process.platform === "win32" &&
+    command === "taskkill" &&
+    args.length === 4 &&
+    args[0] === "/F" &&
+    args[1] === "/T" &&
+    args[2] === "/PID" &&
+    launched.has(args[3])
+  )
+    return spawn.call(this, command, args, options);
   if (
     shells.includes(command) &&
     args.length === 2 &&
@@ -23,8 +36,11 @@ cp.spawn = function (command, args, options) {
       "printf 'fabricated-capture-canary'; i=0; while [ \"$i\" -lt 4096 ]; do printf 'bash-public-output\\n'; i=$((i+1)); done",
     ].includes(args[1]) &&
     options.cwd === process.cwd()
-  )
-    return spawn.call(this, command, args, options);
+  ) {
+    const child = spawn.call(this, command, args, options);
+    if (child.pid) launched.add(String(child.pid));
+    return child;
+  }
   return refused.call(this, command, args, options);
 };
 syncBuiltinESMExports();
