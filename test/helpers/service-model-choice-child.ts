@@ -344,13 +344,27 @@ try {
     const original = runtime.getProvider("fixture");
     assert.ok(original);
     let invoked = 0;
-    runtime.registerNativeProvider({
-      ...original,
-      getModels: () => {
-        invoked++;
-        return original.getModels();
-      },
-    });
+    // Registration starts its own unawaited SDK refresh; capture that genuine
+    // promise and let it settle so its getModels calls are not counted below.
+    const refresh = runtime.refresh;
+    const settling: Promise<unknown>[] = [];
+    runtime.refresh = (options) => {
+      const pending = refresh.call(runtime, options);
+      settling.push(pending);
+      return pending;
+    };
+    try {
+      runtime.registerNativeProvider({
+        ...original,
+        getModels: () => {
+          invoked++;
+          return original.getModels();
+        },
+      });
+    } finally {
+      runtime.refresh = refresh;
+    }
+    await Promise.allSettled(settling);
     invoked = 0; // Registration's SDK snapshot is setup, not a Cadence read.
     failed(await client.models(), "unsupported-context");
     assert.equal(invoked, 0);

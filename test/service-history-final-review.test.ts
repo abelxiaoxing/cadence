@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { HistoryRecovery } from "../src/history/recovery.ts";
 import { inspectRecovery } from "../src/service/recovery.ts";
@@ -173,9 +173,13 @@ it.skipIf(process.platform !== "linux" || !existsSync("/usr/bin/bwrap"))(
       { encoding: "utf8", timeout: 10000 },
     );
     expect(built.status, built.stderr).toBe(0);
-    const mounts = ["/usr", "/lib", "/lib64"]
-      .filter(existsSync)
-      .flatMap((path) => ["--ro-bind", path, path]);
+    const roots = ["/usr", "/lib", "/lib64"].filter(existsSync);
+    // The running Node may live outside /usr (nvm, a downloaded release).
+    const node = realpathSync(process.execPath);
+    const prefix = dirname(dirname(node));
+    if (!roots.some((root) => prefix === root || prefix.startsWith(`${root}/`)))
+      roots.push(prefix);
+    const mounts = roots.flatMap((path) => ["--ro-bind", path, path]);
     const native = spawnSync(
       "/usr/bin/bwrap",
       [
@@ -205,7 +209,7 @@ it.skipIf(process.platform !== "linux" || !existsSync("/usr/bin/bwrap"))(
         "/tmp",
         "--chdir",
         "/tmp",
-        process.execPath,
+        node,
         "/fixture.mjs",
       ],
       { encoding: "utf8", timeout: 15000, maxBuffer: 65536 },
