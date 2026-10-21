@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import ts from "typescript";
 import { expect, it } from "vitest";
 import { auditNotices } from "../scripts/audit-notices.mjs";
@@ -23,9 +23,10 @@ it("reviewed package closes native and maintained worker imports without a termi
     );
     const next = (specifier: string) => {
       if (!specifier.startsWith(".")) return;
-      const path = resolve(root, dirname(name), specifier);
-      expect(path.startsWith(`${root}/`)).toBe(true);
-      visit(path.slice(root.length + 1));
+      // Reviewed members use "/"; Windows resolves with "\\".
+      const path = relative(root, resolve(root, dirname(name), specifier));
+      expect(path && !path.startsWith("..") && !isAbsolute(path)).toBe(true);
+      visit(path.split(sep).join("/"));
     };
     source.forEachChild((node) => {
       if (

@@ -68,6 +68,7 @@ it("async observation returns exact original promises and late work retains its 
 });
 
 it("native file/directory calls and original FileHandle returns are observed without extra IO", async () => {
+  const directorySync = process.platform !== "win32";
   const d = new SchedulerIoDiagnostics(true),
     measured = d.fs(fs);
   const path = join(
@@ -80,12 +81,15 @@ it("native file/directory calls and original FileHandle returns are observed wit
     measured.writeSync(fd, buffer);
     measured.fsyncSync(fd);
     measured.closeSync(fd);
-    const dir = measured.openSync(
-      join(path, ".."),
-      fs.constants.O_RDONLY | fs.constants.O_DIRECTORY,
-    );
-    measured.fsyncSync(dir);
-    measured.closeSync(dir);
+    // Windows rejects directory fsync (EPERM); product code skips it there too.
+    if (directorySync) {
+      const dir = measured.openSync(
+        join(path, ".."),
+        fs.constants.O_RDONLY | fs.constants.O_DIRECTORY,
+      );
+      measured.fsyncSync(dir);
+      measured.closeSync(dir);
+    }
     expect(measured.readFileSync(path)).toEqual(buffer);
     const m = d.promises(promises);
     const handle = await m.open(path, "r+");
@@ -98,7 +102,7 @@ it("native file/directory calls and original FileHandle returns are observed wit
   };
   const totals = receipt.cases[0].totals;
   expect(totals["fsyncSync:file"].count).toBe(1);
-  expect(totals["fsyncSync:directory"].count).toBe(1);
+  expect(totals["fsyncSync:directory"]?.count ?? 0).toBe(directorySync ? 1 : 0);
   expect(totals["async:sync"].count).toBe(1);
   expect(totals["async:close"].count).toBe(1);
   expect(totals.readFileSync.count).toBe(1);

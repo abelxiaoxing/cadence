@@ -418,20 +418,25 @@ it.each(["outer-open", "inner-open", "after-read", "final-stat"])(
   },
 );
 
-it("inner bounded reader independently rewalks ancestors after outer selected-file open", () => {
-  const f = fixture();
-  reset();
-  io.after = (op, path) => {
-    if (op === "open" && path === f.path && io.opens === 1) {
-      renameSync(f.directory, `${f.directory}.preserved`);
-      symlinkSync(`${f.directory}.preserved`, f.directory, "junction");
-    }
-  };
-  expect(() => f.files.read(f.path)).toThrow();
-  io.after = undefined;
-  expect(io.opens).toBe(1);
-  expect(io.closes).toBe(1);
-});
+// Windows refuses to rename a directory holding an open file, so this ancestor
+// swap after the selected-file open cannot occur there.
+it.skipIf(process.platform === "win32")(
+  "inner bounded reader independently rewalks ancestors after outer selected-file open",
+  () => {
+    const f = fixture();
+    reset();
+    io.after = (op, path) => {
+      if (op === "open" && path === f.path && io.opens === 1) {
+        renameSync(f.directory, `${f.directory}.preserved`);
+        symlinkSync(`${f.directory}.preserved`, f.directory, "junction");
+      }
+    };
+    expect(() => f.files.read(f.path)).toThrow();
+    io.after = undefined;
+    expect(io.opens).toBe(1);
+    expect(io.closes).toBe(1);
+  },
+);
 
 it("default safeDirectory/readBounded retain legacy mode policy and stepwise creation", () => {
   const f = fixture();

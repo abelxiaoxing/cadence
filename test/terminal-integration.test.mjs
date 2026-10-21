@@ -24,6 +24,7 @@ import { ServiceCoordination } from "../src/service/coordination.ts";
 import { ServiceClient } from "../src/service-client.ts";
 import { HttpServiceTransport } from "../src/service-http-client.ts";
 import { diagnosticText } from "../src/verification-diagnostics.ts";
+import { WINDOWS_SYSTEM_KEYS } from "./helpers/windows-environment.ts";
 
 const repo = path.resolve(import.meta.dirname, "..");
 const cli = path.join(
@@ -104,7 +105,7 @@ function terminalEnvironment(
     TMP: root,
   };
   if (nativeWindows) {
-    for (const key of ["SystemRoot", "WINDIR", "COMSPEC", "PATHEXT"])
+    for (const key of WINDOWS_SYSTEM_KEYS)
       if (system[key] !== undefined) env[key] = system[key];
     Object.assign(env, {
       USERPROFILE: env.HOME,
@@ -1122,7 +1123,7 @@ it("Windows terminal environment is an isolated whitelist, not inherited user st
   expect(env.APPDATA).toBe(path.join(root, "appdata"));
   for (const key of ["TMP", "TEMP", "TMPDIR"])
     expect(env[key]).toBe(path.join(root, "temp"));
-  for (const key of ["PATH", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT"])
+  for (const key of ["PATH", ...WINDOWS_SYSTEM_KEYS])
     expect(env[key]).toBe(system[key]);
   expect(env).not.toHaveProperty("OPENAI_API_KEY");
   expect(env).not.toHaveProperty("NODE_OPTIONS");

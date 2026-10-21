@@ -342,7 +342,9 @@ it.each(["registration", "capability", "owner"])(
     expect(f.c.inspect().status).toBe("unavailable");
   },
 );
-it.each(["resolve", "paste", "cancel"])(
+// Driven through a POSIX pty (recovery-pty.py); Windows has no pty module and
+// no ConPTY recovery driver yet, so Windows recovery TTY is unqualified here.
+it.skipIf(process.platform === "win32").each(["resolve", "paste", "cancel"])(
   "generated management actual native TTY %s with exact fresh confirmations",
   (mode) => {
     const f = crash("auth");
