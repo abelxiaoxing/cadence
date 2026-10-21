@@ -1,6 +1,6 @@
 /** Native attachment only. No SDK/auth resolution, worker or storage mutation. */
 
-import { Agent } from "undici";
+import { Agent, Dispatcher1Wrapper } from "undici";
 import { nativeBuild } from "./native-build.ts";
 import { ServiceCoordination } from "./service/coordination.ts";
 import { ServiceClient } from "./service-client.ts";
@@ -32,6 +32,9 @@ export class NativeConnection {
     this.epoch = access.epoch;
     const network = new Agent();
     this.network = network;
+    // Node 22/24 built-in fetch bundles undici 6/7, whose legacy handlers an
+    // undici 8 Agent rejects. The public wrapper adapts them on every line.
+    const dispatcher = new Dispatcher1Wrapper(network);
     this.transport = new HttpServiceTransport({
       origin: access.endpoint,
       localCapability: access.capability,
@@ -43,7 +46,7 @@ export class NativeConnection {
       // process routes provider auth through a proxy. Public per-request Node
       // dispatcher only: never replace/restore the parent's global dispatcher.
       fetch: (url, init) =>
-        globalThis.fetch(url, Object.assign({}, init, { dispatcher: network })),
+        globalThis.fetch(url, Object.assign({}, init, { dispatcher })),
     });
     const client = new ServiceClient(this.transport);
     this.client = client;
