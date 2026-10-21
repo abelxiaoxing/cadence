@@ -104,6 +104,33 @@ export function safeDirectory(
   }
   return true;
 }
+const transientWindows = new Set(["EPERM", "EACCES", "EBUSY"]);
+/** Windows refuses to replace, remove or recreate a path while another process
+ * holds it (a polling reader, antivirus, a delete still pending), which POSIX
+ * never does. Retry the same operation briefly; `recheck` reasserts the
+ * caller's expected bytes before every retry, so a retry never overwrites a
+ * change. Other errors, including EEXIST and ENOENT, keep their meaning. */
+export function retryWindowsFileOperation<T>(
+  operation: () => T,
+  recheck?: () => void,
+): T {
+  if (process.platform !== "win32") return operation();
+  const deadline = performance.now() + 2000;
+  for (let delay = 2; ; delay = Math.min(delay * 2, 50)) {
+    try {
+      return operation();
+    } catch (error) {
+      if (
+        !object(error) ||
+        !transientWindows.has(String(error.code)) ||
+        performance.now() >= deadline
+      )
+        throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+      recheck?.();
+    }
+  }
+}
 export function readBounded(path: string, max: number): Buffer | undefined {
   if (!safeDirectory(dirname(path))) return undefined;
   let fd: number;
@@ -338,7 +365,9 @@ export class TaskStore {
     };
     let fd: number;
     try {
-      fd = openSync(this.lockPath, "wx", 0o600);
+      fd = retryWindowsFileOperation(() =>
+        openSync(this.lockPath, "wx", 0o600),
+      );
     } catch {
       throw new Error(
         "Checkout busy or unresolved lock; inspect and explicitly recover only a dead owner",
@@ -360,7 +389,10 @@ export class TaskStore {
     if (lock.pid !== process.pid || lock.host !== hostname())
       throw new Error("Only the owning process may release a lock");
     this.assertOwner(lock);
-    unlinkSync(this.lockPath);
+    retryWindowsFileOperation(
+      () => unlinkSync(this.lockPath),
+      () => this.assertOwner(lock),
+    );
   }
   recover(expected: CheckoutLock, acknowledgeEscapedProcesses: boolean): void {
     if (!acknowledgeEscapedProcesses || expected.host !== hostname())
@@ -454,7 +486,17 @@ export class TaskStore {
         throw new Error(
           "Task content changed; replacement preserved without overwrite",
         );
-      renameSync(temporary, join(dir, "task.json"));
+      retryWindowsFileOperation(
+        () => renameSync(temporary, join(dir, "task.json")),
+        () => {
+          this.assertOwner(lock);
+          const now = readBounded(join(dir, "task.json"), MAX_RECORD_BYTES);
+          if ((now ? contentIdentity(now) : undefined) !== expectedIdentity)
+            throw new Error(
+              "Task content changed; replacement preserved without overwrite",
+            );
+        },
+      );
       return next;
     } finally {
       if (!held) this.release(lock);

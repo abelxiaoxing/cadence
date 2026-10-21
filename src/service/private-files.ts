@@ -12,7 +12,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { readBounded, safeDirectory } from "../task-store.ts";
+import {
+  readBounded,
+  retryWindowsFileOperation,
+  safeDirectory,
+} from "../task-store.ts";
 import { ContractError, parseWireJson } from "./contracts/core.ts";
 
 export const METADATA_BYTES = 16 * 1024;
@@ -124,7 +128,7 @@ export class PrivateFiles {
   create(path: string, bytes: string, maximum = METADATA_BYTES): FileSnapshot {
     if (Buffer.byteLength(bytes) > maximum) throw new ContractError("oversize");
     this.directory(dirname(path), true);
-    const fd = openSync(path, "wx", 0o600);
+    const fd = retryWindowsFileOperation(() => openSync(path, "wx", 0o600));
     try {
       writeFileSync(fd, bytes);
       fsyncSync(fd);
@@ -146,7 +150,10 @@ export class PrivateFiles {
     const temporary = join(dirname(path), `pending-${randomUUID()}.json`);
     this.create(temporary, bytes, maximum);
     this.assert(path, expected, maximum);
-    renameSync(temporary, path);
+    retryWindowsFileOperation(
+      () => renameSync(temporary, path),
+      () => this.assert(path, expected, maximum),
+    );
     this.syncDirectory(dirname(path));
     const result = this.read(path, maximum);
     if (!result || result.identity !== hash(bytes)) refused();
@@ -154,7 +161,10 @@ export class PrivateFiles {
   }
   remove(path: string, expected: FileSnapshot, maximum = METADATA_BYTES): void {
     this.assert(path, expected, maximum);
-    unlinkSync(path);
+    retryWindowsFileOperation(
+      () => unlinkSync(path),
+      () => this.assert(path, expected, maximum),
+    );
     this.syncDirectory(dirname(path));
   }
   private syncDirectory(path: string): void {
