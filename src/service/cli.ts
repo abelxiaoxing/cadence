@@ -1,5 +1,6 @@
 /** SDK-free native management client. No task-action or provider API imports. */
 import { spawn } from "node:child_process";
+import { existsSync, mkdirSync } from "node:fs";
 import { request } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +11,7 @@ import {
   LIMITS,
   parseWireJson,
 } from "../service-contract.ts";
+import { effectiveWorkspace } from "../task-store.ts";
 import {
   type AutostartResult,
   type AutostartSystem,
@@ -341,6 +343,21 @@ function autostartGuidance(
   const cli = JSON.stringify(join(s.root, "src", "service-cli.mjs"));
   const workspace = JSON.stringify(result.workspace ?? "");
   const manage = `Manage: systemctl --user status|restart|stop ${name}; logs: journalctl --user -u ${name}; opt out: systemctl --user disable --now ${name}`;
+  const note = result.redirectedFrom
+    ? `Cadence workspace: ${result.workspace} (${result.redirectedFrom} contains Cadence's private state)\n`
+    : "";
+  return (
+    note + autostartStatusGuidance(s, result, name, cli, workspace, manage)
+  );
+}
+function autostartStatusGuidance(
+  s: AutostartSystem,
+  result: AutostartResult & { service?: string; endpoint?: string },
+  name: string,
+  cli: string,
+  workspace: string,
+  manage: string,
+): string {
   switch (result.status) {
     case "started": {
       if (result.service !== "alive")
@@ -472,10 +489,27 @@ export async function managementMain(
         options.host = value;
       else throw new ContractError("invalid");
     }
+    // A directory containing the private state home (the home directory and
+    // its ancestors) can never be a workspace; land on ~/cadence instead of
+    // refusing. Only start creates it; observation creates nothing.
+    const landing = effectiveWorkspace(options.workspace, options.stateHome);
+    if (landing.redirected) {
+      if (seen.has("--workspace"))
+        process.stderr.write(
+          `Cadence workspace: ${landing.workspace} (${options.workspace} contains Cadence's private state)\n`,
+        );
+      options.workspace = landing.workspace;
+      if (command === "start")
+        mkdirSync(landing.workspace, { recursive: true });
+    }
     let result: unknown;
     if (command === "start")
       result = await startService(options, foreground, hostUrl);
-    else {
+    else if (landing.redirected && !existsSync(landing.workspace)) {
+      if (command !== "status" && command !== "diagnose")
+        throw new ContractError("unavailable");
+      result = { status: "absent" };
+    } else {
       const c = new ServiceCoordination(options.workspace, options.stateHome);
       if (command === "recover" && recovery)
         result = await localRecovery(c, recovery);
@@ -490,6 +524,10 @@ export async function managementMain(
         result = await nativeCall(c, command);
       else throw new ContractError("invalid");
     }
+    // Name the effective workspace only when it differs from the request, so
+    // every existing output stays byte-identical.
+    if (landing.redirected && result && typeof result === "object")
+      result = { ...result, workspace: landing.workspace };
     if (result !== null) process.stdout.write(`${JSON.stringify(result)}\n`);
     if (failedStatus(result)) process.exitCode = 1;
   } catch {

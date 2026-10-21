@@ -32,6 +32,7 @@ cadence-service token-link --workspace /absolute/project --reveal
 Use the installed `cadence-service` bin, or `node /absolute/cadence/src/service-cli.mjs` followed by those arguments.
 Default binding is numeric loopback `127.0.0.1:17423`; `--foreground` is available for an explicitly configured supervisor.
 Start reads the existing Pi agent directory (or an explicit private configuration), never creates another login/profile.
+A directory that contains the private state home (the home directory and its ancestors, such as `C:\Users\<you>`) cannot be a workspace, so commands there use `~/cadence` instead of refusing; only `start` creates it, and `/cadence` started there attaches to that owner.
 See [service management](docs/service-management.md) for configuration, model/auth policy, Stop, diagnosis and informed recovery.
 
 ### Linux autostart after `pi install`
@@ -278,19 +279,20 @@ Byte values are UTF-8/encoded bounds where specified; they are not targets to si
 
 ### Validation and regression lessons
 
-| Condition                                                      | Required behavior                                                                 |
-| -------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Missing/unsafe/corrupt/partial selected state                  | Absent or fixed refusal; no bootstrap, adoption, repair or cleanup on observation |
-| Native exit0 with recording/stdin/final/cleanup failure        | Preserve native zero independently; no workflow success                           |
-| Stale grant, selected task bytes or model/source identity      | Refuse and require fresh observation/confirmation                                 |
-| Unknown original stop/auth/storage or changed lease            | Retain fences/charges; no guessed process signaling or automatic release          |
-| Failed/unrun/stale check, partial child or incomplete coverage | Explicit issues review; preserve independent recorded outcomes                    |
-| Lost reply or detached view                                    | Observe original receipt/run; no mutation replay or implicit Cancel               |
-| Invalid read proof or changed source/key                       | Refuse; never rebase or interpret budget exhaustion as absence                    |
-| Dirty/partial/extra compiled assets or unsafe archive          | Refuse in place; no source refill, wildcard serving or fallback build             |
-| Extension import outside Pi aliases declared only as a peer    | Exact production dependency; Pi's install omits peers and Pi fails to start       |
-| Pi user install lacking SDK peers or `auth.json`               | No unit registration or start; a first owner without them quarantines             |
-| Upgrade changes the unit workspace or Node path                | Stop with the loaded unit definition before rewriting, not only SIGTERM           |
+| Condition                                                      | Required behavior                                                                   |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Missing/unsafe/corrupt/partial selected state                  | Absent or fixed refusal; no bootstrap, adoption, repair or cleanup on observation   |
+| Native exit0 with recording/stdin/final/cleanup failure        | Preserve native zero independently; no workflow success                             |
+| Stale grant, selected task bytes or model/source identity      | Refuse and require fresh observation/confirmation                                   |
+| Unknown original stop/auth/storage or changed lease            | Retain fences/charges; no guessed process signaling or automatic release            |
+| Failed/unrun/stale check, partial child or incomplete coverage | Explicit issues review; preserve independent recorded outcomes                      |
+| Lost reply or detached view                                    | Observe original receipt/run; no mutation replay or implicit Cancel                 |
+| Invalid read proof or changed source/key                       | Refuse; never rebase or interpret budget exhaustion as absence                      |
+| Dirty/partial/extra compiled assets or unsafe archive          | Refuse in place; no source refill, wildcard serving or fallback build               |
+| Extension import outside Pi aliases declared only as a peer    | Exact production dependency; Pi's install omits peers and Pi fails to start         |
+| Pi user install lacking SDK peers or `auth.json`               | No unit registration or start; a first owner without them quarantines               |
+| Workspace containing the private state home                    | Land on `~/cadence` (only start creates it); never move state into the working copy |
+| Upgrade changes the unit workspace or Node path                | Stop with the loaded unit definition before rewriting, not only SIGTERM             |
 
 Good: current context → explicit grant → durable acceptance → genuine original native/storage settlement → exact retained dependency → real checks → human review.
 Base: a client leaves and another reattaches to the same accepted run without launching it again.
@@ -322,6 +324,7 @@ Regression owners:
 - `test/web/`: adapted pure/SSR tests separately from actual built-browser contexts, HTTPS, mixed clients, focus/viewports and complete downloads.
 - `package-*`, `distribution`, `service-package`, `independence`: exact tar/member/body/import/notice closure and nonactivating discovery.
 - `service-autostart`, `install-config`: Pi user-scope gating, unit escaping, upgrade/disable/mask/foreign handling and orderly removal.
+- `workspace-landing`: home-directory redirection to `~/cadence` across management, native attach and observation.
 
 Regenerate operator/service/native/browser outputs only through their canonical builders; `--check` variants compare new private output without overwriting canonical bytes.
 Review the independently enumerated package member list and every emitted body, not a count or an expected list generated from the tar under test.

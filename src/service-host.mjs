@@ -293,7 +293,13 @@ function canonicalAmbientRoot(path) {
     return join(canonicalAmbientRoot(parent), full.slice(parent.length));
   }
 }
-
+function privateRootFor(canonicalRoot, stateHome) {
+  return join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1", createHash("sha256").update(canonicalRoot).digest("hex"));
+}
+function contains(root, path) {
+  const within = relative(root, resolve(path));
+  return !within || !within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within);
+}
 class TaskStore {
   root;
   tasks;
@@ -301,9 +307,8 @@ class TaskStore {
   constructor(root, stateHome = defaultStateHome()) {
     this.root = realpathSync(root);
     this.tasks = join(this.root, ".cadence", "assistant", "tasks");
-    this.privateRoot = join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1", createHash("sha256").update(this.root).digest("hex"));
-    const within = relative(this.root, resolve(this.privateRoot));
-    if (!within || !within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within))
+    this.privateRoot = privateRootFor(this.root, stateHome);
+    if (contains(this.root, this.privateRoot))
       throw new Error("Private state home must be outside the working copy");
   }
   get lockPath() {

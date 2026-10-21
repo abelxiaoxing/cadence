@@ -1,9 +1,18 @@
-import { resolveWorkspace, TaskStore } from "./task-store.ts";
+import {
+  effectiveWorkspace,
+  resolveWorkspace,
+  TaskStore,
+} from "./task-store.ts";
 import { diagnosticText } from "./verification-diagnostics.ts";
+
+/** The home directory and its ancestors observe the ~/cadence landing, like
+ * the management client; a missing landing is refused, never created. */
+const observed = (cwd: string) =>
+  resolveWorkspace(effectiveWorkspace(cwd).workspace);
 
 /** Readonly observations: no controller, runner, migration or recovery imports. */
 export function inspectConsumer(cwd: string) {
-  const workspace = resolveWorkspace(cwd);
+  const workspace = observed(cwd);
   const store = new TaskStore(workspace.root);
   const tasks = store.list();
   const checks = store.checks();
@@ -27,7 +36,7 @@ export function inspectConsumer(cwd: string) {
 }
 
 export function inspectRuns(cwd: string) {
-  const workspace = resolveWorkspace(cwd);
+  const workspace = observed(cwd);
   const store = new TaskStore(workspace.root);
   return {
     ok: true,

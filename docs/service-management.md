@@ -20,6 +20,9 @@ The equivalent package-relative command is `node <cadence>/src/service-cli.mjs .
 Defaults are loopback `127.0.0.1:17423`, normal Pi agent configuration, and detached service lifetime.
 An explicit port0 selects and persists a positive port once; restart uses the selected configuration, not a fallback endpoint.
 Missing/corrupt existing setup is preserved, not filled in or reset.
+A workspace that contains the private state home (the home directory and its ancestors, such as `C:\Users\<you>` with `%LOCALAPPDATA%` or `~` with `~/.local/state`) would expose private history and locks to change observation, so every command there uses `~/cadence` (`%USERPROFILE%\cadence`) instead of refusing.
+Only `start` creates it; `status` reports `absent` without creating it, an explicit `--workspace` adds one informational line, and JSON output names the effective `workspace` only when it differs.
+`/cadence` started in such a directory attaches to the same owner, and real project directories are never redirected.
 Apart from the Linux user unit below, there is no supervisor installation, provider login or credential migration.
 
 ## Linux systemd user unit
@@ -28,7 +31,7 @@ On Linux, Pi's user-scope install (`pi install npm:@abelxiaoxing/cadence`, npm i
 Refresh acts only when the package is exactly Pi's managed user copy; checkouts, project (`-l`), temporary and global installs, other platforms and `CADENCE_AUTOSTART=0` are left alone.
 
 The first refresh writes `~/.local/share/systemd/user/cadence.service`, enables it for `default.target` and starts it.
-The workspace is `~/cadence` (created if missing) or an existing absolute `CADENCE_WORKSPACE`; later refreshes keep the unit's workspace unless that variable is set again.
+The workspace is `~/cadence` (created if missing) or an existing absolute `CADENCE_WORKSPACE`, which lands on `~/cadence` with a note when it contains the unit's state home; later refreshes keep the unit's workspace unless that variable is set again.
 The unit runs `start --foreground --workspace` without `--port`, so a new workspace selects `http://127.0.0.1:17423`.
 A port saved by an earlier start of that workspace still wins, and an occupied endpoint fails the unit instead of falling back.
 It bakes the installer's PATH (minus npm lifecycle entries), LANG/LC_ALL, an absolute XDG_STATE_HOME and a custom PI_CODING_AGENT_DIR, so shell management sees the same state home and Pi sources.

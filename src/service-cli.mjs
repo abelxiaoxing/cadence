@@ -3,6 +3,7 @@
 
 // src/service/cli.ts
 import { spawn } from "node:child_process";
+import { existsSync, mkdirSync as mkdirSync3 } from "node:fs";
 import { request } from "node:http";
 import { dirname as dirname8, join as join8, resolve as resolve5 } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -2040,25 +2041,432 @@ class CaptureBudgetLease {
     this.forget();
   }
 }
-// src/service/autostart.ts
+// src/task-store.ts
 import { spawnSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import {
+  closeSync,
+  constants,
+  fstatSync,
+  fsyncSync,
   lstatSync,
   mkdirSync,
-  readFileSync,
+  openSync,
+  readdirSync,
+  readSync,
   realpathSync,
   renameSync,
-  rmSync,
-  statSync,
+  unlinkSync,
   writeFileSync
 } from "node:fs";
-import { homedir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { homedir, hostname } from "node:os";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  parse,
+  relative,
+  resolve,
+  sep
+} from "node:path";
+
+// src/verification-diagnostics.ts
+function diagnosticText(value, maximum = 4096, secrets = []) {
+  maximum = Math.max(0, Math.floor(maximum));
+  let clean = value;
+  for (const secret of [...new Set(secrets)].filter(Boolean).sort((a, b) => b.length - a.length))
+    clean = clean.split(secret).join("[redacted]");
+  clean = clean.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, "").replace(/(Bearer\s+)\S+/gi, "$1[redacted]").replace(/((?:api[_-]?key|token|password|secret)\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]").replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[redacted]@");
+  if (Buffer.byteLength(clean) <= maximum)
+    return clean;
+  const marker = maximum >= 12 ? `
+[truncated]` : ".".repeat(maximum);
+  const bytes = Buffer.from(clean).subarray(0, Math.max(0, maximum - Buffer.byteLength(marker)));
+  return bytes.toString("utf8").replace(/\ufffd$/, "") + marker;
+}
+
+// src/task-store.ts
+function parseRecord(data) {
+  try {
+    return JSON.parse(data.toString("utf8"));
+  } catch {
+    throw new Error("Corrupt JSON state; preserved without reset");
+  }
+}
+function absent(error) {
+  return object(error) && error.code === "ENOENT";
+}
+function safeDirectory(path, create = false, inspectExisting) {
+  const full = resolve(path);
+  const root = parse(full).root;
+  if (inspectExisting) {
+    const st = lstatSync(root);
+    if (!st.isDirectory() || st.isSymbolicLink())
+      throw new Error("Unsafe directory");
+    inspectExisting(root, st);
+  }
+  let at = root;
+  for (const part of full.slice(root.length).split(sep).filter(Boolean)) {
+    at = join(at, part);
+    let existing;
+    try {
+      const st = lstatSync(at);
+      if (!st.isDirectory())
+        throw new Error("Unsafe directory");
+      const checked = lstatSync(at);
+      if (checked.isSymbolicLink() || inspectExisting && !checked.isDirectory())
+        throw new Error("Unsafe directory");
+      existing = checked;
+    } catch (error) {
+      if (!absent(error))
+        throw error;
+      if (!create)
+        return false;
+      try {
+        mkdirSync(at, { mode: 448 });
+      } catch (mkdirError) {
+        if (!object(mkdirError) || mkdirError.code !== "EEXIST")
+          throw mkdirError;
+      }
+      if (!lstatSync(at).isDirectory() || lstatSync(at).isSymbolicLink())
+        throw new Error("Unsafe directory");
+    }
+    if (existing)
+      inspectExisting?.(at, existing);
+  }
+  return true;
+}
+function readBounded(path, max) {
+  if (!safeDirectory(dirname(path)))
+    return;
+  let fd;
+  try {
+    const st = lstatSync(path);
+    if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size > max)
+      throw new Error("Unsafe or oversized file");
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  } catch (error) {
+    if (absent(error))
+      return;
+    throw error;
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.nlink !== 1 || st.size > max)
+      throw new Error("Unsafe or oversized file");
+    const buffer = Buffer.alloc(max + 1);
+    let size = 0;
+    while (size < buffer.length) {
+      const n = readSync(fd, buffer, size, buffer.length - size, null);
+      if (!n)
+        break;
+      size += n;
+    }
+    if (size > max)
+      throw new Error("Oversized file");
+    return buffer.subarray(0, size);
+  } finally {
+    closeSync(fd);
+  }
+}
+function gitEnvironment() {
+  return {
+    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))),
+    GIT_OPTIONAL_LOCKS: "0",
+    LC_ALL: "C"
+  };
+}
+function resolveWorkspace(cwd) {
+  const actual = realpathSync(cwd);
+  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+    cwd: actual,
+    env: gitEnvironment(),
+    encoding: "utf8",
+    timeout: 3000,
+    maxBuffer: 8192,
+    windowsHide: true
+  });
+  const topLevel = result.stdout?.replace(process.platform === "win32" ? /\r?\n$/ : /\n$/, "");
+  if (result.status === 0 && topLevel)
+    return { root: realpathSync(topLevel), cwd: actual };
+  if (result.error && !object(result.error))
+    throw new Error("Cannot resolve workspace");
+  if (result.error && object(result.error) && result.error.code !== "ENOENT")
+    throw new Error("Workspace lookup failed");
+  if (!result.error && !result.stderr.includes("not a git repository"))
+    throw new Error("Git workspace lookup refused");
+  return { root: actual, cwd: actual };
+}
+function defaultStateHome() {
+  const candidate = process.platform === "win32" ? process.env.LOCALAPPDATA : process.env.XDG_STATE_HOME;
+  if (candidate && !isAbsolute(candidate))
+    throw new Error("State home must be absolute");
+  return candidate ?? join(homedir(), process.platform === "win32" ? "AppData/Local" : ".local/state");
+}
+function recordText(record) {
+  return `${JSON.stringify(record, null, 2)}
+`;
+}
+function contentIdentity(text2) {
+  return createHash("sha256").update(text2).digest("hex");
+}
+function canonicalAmbientRoot(path) {
+  const full = resolve(path);
+  try {
+    return realpathSync(full);
+  } catch (error) {
+    if (!absent(error))
+      throw error;
+    try {
+      lstatSync(full);
+      throw new Error("Dangling ambient root");
+    } catch (statError) {
+      if (!absent(statError))
+        throw statError;
+    }
+    const parent = dirname(full);
+    if (parent === full)
+      throw error;
+    return join(canonicalAmbientRoot(parent), full.slice(parent.length));
+  }
+}
+function privateRootFor(canonicalRoot, stateHome) {
+  return join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1", createHash("sha256").update(canonicalRoot).digest("hex"));
+}
+function contains(root, path) {
+  const within = relative(root, resolve(path));
+  return !within || !within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within);
+}
+function stateHomeInside(root, stateHome = defaultStateHome()) {
+  const canonical = realpathSync(root);
+  return contains(canonical, privateRootFor(canonical, stateHome));
+}
+var LANDING_WORKSPACE = "cadence";
+function effectiveWorkspace(requested, stateHome, home = homedir()) {
+  if (!stateHomeInside(resolveWorkspace(requested).root, stateHome))
+    return { workspace: requested, redirected: false };
+  return { workspace: join(home, LANDING_WORKSPACE), redirected: true };
+}
+
+class TaskStore {
+  root;
+  tasks;
+  privateRoot;
+  constructor(root, stateHome = defaultStateHome()) {
+    this.root = realpathSync(root);
+    this.tasks = join(this.root, ".cadence", "assistant", "tasks");
+    this.privateRoot = privateRootFor(this.root, stateHome);
+    if (contains(this.root, this.privateRoot))
+      throw new Error("Private state home must be outside the working copy");
+  }
+  get lockPath() {
+    return join(this.privateRoot, "checkout.lock");
+  }
+  inspectPrivate() {
+    const namespace = dirname(this.privateRoot);
+    for (const path of [namespace, this.privateRoot]) {
+      if (!safeDirectory(path))
+        continue;
+      const st = lstatSync(path);
+      if (process.platform !== "win32" && ((st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
+        throw new Error("Private state permissions refused");
+    }
+  }
+  inspectPrivateFile(path, max) {
+    this.inspectPrivate();
+    if (!safeDirectory(this.privateRoot))
+      return;
+    try {
+      const st = lstatSync(path);
+      if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size > max || process.platform !== "win32" && ((st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
+        throw new Error("Unsafe private state file");
+    } catch (error) {
+      if (!absent(error))
+        throw error;
+    }
+  }
+  inspectLock() {
+    this.inspectPrivateFile(this.lockPath, 8192);
+    const data = readBounded(this.lockPath, 8192);
+    if (!data)
+      return;
+    const lock = parseRecord(data);
+    if (!object(lock) || lock.schema !== "cadence-assistant-lock/1" || lock.root !== this.root || typeof lock.token !== "string" || !validId(lock.token) || typeof lock.runId !== "string" || !validId(lock.runId) || typeof lock.host !== "string" || !Number.isInteger(lock.pid) || Number(lock.pid) < 1)
+      throw new Error("Unknown or corrupt coordination lock");
+    return lock;
+  }
+  acquire() {
+    this.inspectPrivate();
+    safeDirectory(this.privateRoot, true);
+    const lock = {
+      schema: "cadence-assistant-lock/1",
+      token: randomUUID(),
+      runId: randomUUID(),
+      pid: process.pid,
+      host: hostname(),
+      root: this.root
+    };
+    let fd;
+    try {
+      fd = openSync(this.lockPath, "wx", 384);
+    } catch {
+      throw new Error("Checkout busy or unresolved lock; inspect and explicitly recover only a dead owner");
+    }
+    try {
+      writeFileSync(fd, JSON.stringify(lock));
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    return lock;
+  }
+  assertOwner(lock) {
+    if (JSON.stringify(this.inspectLock()) !== JSON.stringify(lock))
+      throw new Error("Coordination lock changed");
+  }
+  release(lock) {
+    if (lock.pid !== process.pid || lock.host !== hostname())
+      throw new Error("Only the owning process may release a lock");
+    this.assertOwner(lock);
+    unlinkSync(this.lockPath);
+  }
+  recover(expected, acknowledgeEscapedProcesses) {
+    if (!acknowledgeEscapedProcesses || expected.host !== hostname())
+      throw new Error("Recovery requires informed local-owner confirmation");
+    this.assertOwner(expected);
+    try {
+      process.kill(expected.pid, 0);
+    } catch (error) {
+      if (!object(error) || error.code !== "ESRCH")
+        throw new Error("Owner status unknown");
+      this.assertOwner(expected);
+      unlinkSync(this.lockPath);
+      return;
+    }
+    throw new Error("Owner is live; stop it first");
+  }
+  load(id) {
+    return this.loadSnapshot(id)?.record;
+  }
+  loadSnapshot(id) {
+    if (!validId(id))
+      throw new Error("Invalid task id");
+    const directory = join(this.tasks, id);
+    if (safeDirectory(directory) && readdirSync(directory).some((name) => name !== "task.json"))
+      throw new Error("Unknown task directory content; preserved without reset");
+    const data = readBounded(join(this.tasks, id, "task.json"), MAX_RECORD_BYTES);
+    if (!data)
+      return;
+    const record = decodeTask(parseRecord(data));
+    if (record.id !== id)
+      throw new Error("Task identity mismatch");
+    return { record, identity: contentIdentity(data) };
+  }
+  list() {
+    if (!safeDirectory(this.tasks))
+      return [];
+    const entries = readdirSync(this.tasks);
+    if (entries.length > 1000)
+      throw new Error("Task listing limit exceeded");
+    return entries.map((id) => {
+      const task = this.load(id);
+      if (!task)
+        throw new Error("Unknown task directory");
+      return task;
+    });
+  }
+  save(record, expectedRevision, held, expectedIdentity) {
+    const next = decodeTask(record);
+    if (next.revision !== expectedRevision + 1)
+      throw new Error("Revision conflict");
+    const text2 = recordText(next);
+    if (Buffer.byteLength(text2) > MAX_RECORD_BYTES)
+      throw new Error("Task record limit");
+    const lock = held ?? this.acquire();
+    if (lock.pid !== process.pid || lock.host !== hostname())
+      throw new Error("Not the lock owner");
+    try {
+      this.assertOwner(lock);
+      const current = this.loadSnapshot(next.id);
+      if ((current?.record.revision ?? 0) !== expectedRevision)
+        throw new Error("Revision conflict");
+      if (current?.identity !== expectedIdentity)
+        throw new Error("Task content changed; reopen it");
+      const dir = join(this.tasks, next.id);
+      safeDirectory(dir, true);
+      if (!current && readdirSync(dir).length)
+        throw new Error("Unknown task directory");
+      const temporary = join(dir, `task.${randomUUID()}.tmp`);
+      const fd = openSync(temporary, "wx", 384);
+      try {
+        writeFileSync(fd, text2);
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      this.assertOwner(lock);
+      const latest = readBounded(join(dir, "task.json"), MAX_RECORD_BYTES);
+      if ((latest ? contentIdentity(latest) : undefined) !== expectedIdentity)
+        throw new Error("Task content changed; replacement preserved without overwrite");
+      renameSync(temporary, join(dir, "task.json"));
+      return next;
+    } finally {
+      if (!held)
+        this.release(lock);
+    }
+  }
+  checks() {
+    const data = readBounded(join(this.root, ".cadence", "assistant", "config.json"), 32768);
+    if (!data)
+      return [];
+    const value = parseRecord(data);
+    if (!object(value) || value.schema !== TASK_CONFIG_SCHEMA || !Array.isArray(value.checks) || value.checks.length > 32 || Object.keys(value).some((key) => !["schema", "checks"].includes(key)))
+      throw new Error("Unknown check configuration");
+    const checks = value.checks.map(decodeCheck);
+    if (new Set(checks.map((check) => check.name)).size !== checks.length || checks.some((check) => check.name === "Manual command"))
+      throw new Error("Duplicate or reserved check name");
+    return checks;
+  }
+  readLog(name) {
+    if (!/^[a-f0-9-]{36}\.log$/.test(name))
+      throw new Error("Invalid diagnostic name");
+    this.inspectPrivateFile(join(this.privateRoot, name), 65536);
+    const data = readBounded(join(this.privateRoot, name), 65536);
+    return data ? diagnosticText(data.toString("utf8"), 65536) : "Private diagnostic unavailable";
+  }
+  writeLog(lock, output) {
+    if (lock.pid !== process.pid || lock.host !== hostname())
+      throw new Error("Not the lock owner");
+    this.assertOwner(lock);
+    const name = `${randomUUID()}.log`;
+    writeFileSync(join(this.privateRoot, name), diagnosticText(output, 65536), {
+      flag: "wx",
+      mode: 384
+    });
+    return name;
+  }
+}
+var TASK_CONFIG_SCHEMA = "cadence-assistant-checks/1";
+
+// src/service/autostart.ts
+import { spawnSync as spawnSync2 } from "node:child_process";
+import {
+  lstatSync as lstatSync2,
+  mkdirSync as mkdirSync2,
+  readFileSync,
+  realpathSync as realpathSync2,
+  renameSync as renameSync2,
+  rmSync,
+  statSync,
+  writeFileSync as writeFileSync2
+} from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { delimiter, dirname as dirname2, isAbsolute as isAbsolute2, join as join2, resolve as resolve2, sep as sep2 } from "node:path";
 var UNIT = "cadence.service";
 var MARKER = "# Generated by @abelxiaoxing/cadence";
 function hostSystem(root) {
   const run = (command, args) => {
-    const r = spawnSync(command, args, {
+    const r = spawnSync2(command, args, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"]
     });
@@ -2067,7 +2475,7 @@ function hostSystem(root) {
   return {
     platform: process.platform,
     env: process.env,
-    home: homedir(),
+    home: homedir2(),
     node: process.execPath,
     root,
     unit: UNIT,
@@ -2086,16 +2494,16 @@ function hostSystem(root) {
 function expandHome(value, home) {
   if (value === "~")
     return home;
-  return value.startsWith("~/") ? join(home, value.slice(2)) : value;
+  return value.startsWith("~/") ? join2(home, value.slice(2)) : value;
 }
 function agentDirectory(s) {
   const selected = s.env.PI_CODING_AGENT_DIR;
-  return resolve(selected ? expandHome(selected, s.home) : join(s.home, ".pi", "agent"));
+  return resolve2(selected ? expandHome(selected, s.home) : join2(s.home, ".pi", "agent"));
 }
 function piUserInstall(s) {
   try {
-    const managed = join(agentDirectory(s), "npm", "node_modules", "@abelxiaoxing", "cadence");
-    return realpathSync(managed) === realpathSync(s.root);
+    const managed = join2(agentDirectory(s), "npm", "node_modules", "@abelxiaoxing", "cadence");
+    return realpathSync2(managed) === realpathSync2(s.root);
   } catch {
     return false;
   }
@@ -2103,18 +2511,18 @@ function piUserInstall(s) {
 function sdkPackages(root) {
   let start;
   try {
-    start = realpathSync(join(root, "src"));
+    start = realpathSync2(join2(root, "src"));
   } catch {
     return;
   }
   const found = [];
   for (const name of ["pi-coding-agent", "pi-ai"]) {
     let hit;
-    for (let dir = start;!hit; dir = dirname(dir)) {
-      const candidate = join(dir, "node_modules", "@earendil-works", name, "package.json");
+    for (let dir = start;!hit; dir = dirname2(dir)) {
+      const candidate = join2(dir, "node_modules", "@earendil-works", name, "package.json");
       if (regularFile(candidate))
         hit = candidate;
-      else if (dirname(dir) === dir)
+      else if (dirname2(dir) === dir)
         return;
     }
     found.push(hit);
@@ -2123,10 +2531,10 @@ function sdkPackages(root) {
 }
 function unitPath(s) {
   const data = s.env.XDG_DATA_HOME;
-  return join(data && isAbsolute(data) ? data : join(s.home, ".local", "share"), "systemd", "user", s.unit);
+  return join2(data && isAbsolute2(data) ? data : join2(s.home, ".local", "share"), "systemd", "user", s.unit);
 }
 function servicePath(value) {
-  const kept = (value ?? "").split(delimiter).filter((entry) => isAbsolute(entry) && !entry.endsWith(`${sep}node_modules${sep}.bin`) && !entry.includes(`${sep}node-gyp-bin`));
+  const kept = (value ?? "").split(delimiter).filter((entry) => isAbsolute2(entry) && !entry.endsWith(`${sep2}node_modules${sep2}.bin`) && !entry.includes(`${sep2}node-gyp-bin`));
   return kept.length ? [...new Set(kept)].join(delimiter) : "/usr/local/bin:/usr/bin:/bin";
 }
 function serviceEnvironment(s) {
@@ -2137,7 +2545,7 @@ function serviceEnvironment(s) {
       out.push([key, value]);
   }
   const state = s.env.XDG_STATE_HOME;
-  if (state && isAbsolute(state))
+  if (state && isAbsolute2(state))
     out.push(["XDG_STATE_HOME", state]);
   if (s.env.PI_CODING_AGENT_DIR)
     out.push(["PI_CODING_AGENT_DIR", agentDirectory(s)]);
@@ -2160,7 +2568,7 @@ function buildUnit(u) {
     "Description=Cadence shared task service and WebUI",
     "Documentation=https://github.com/abelxiaoxing/cadence/blob/main/docs/service-management.md",
     `ConditionPathExists=${specifiers(u.cli)}`,
-    `ConditionPathExists=${specifiers(join(u.agentDir, "auth.json"))}`,
+    `ConditionPathExists=${specifiers(join2(u.agentDir, "auth.json"))}`,
     ...u.sdk.map((path) => `ConditionPathExists=${specifiers(path)}`),
     "StartLimitIntervalSec=300",
     "StartLimitBurst=3",
@@ -2184,7 +2592,7 @@ function buildUnit(u) {
 }
 function readGenerated(path) {
   try {
-    if (!lstatSync(path).isFile())
+    if (!lstatSync2(path).isFile())
       return null;
     const text2 = readFileSync(path, "utf8");
     return text2.startsWith(MARKER) ? text2 : null;
@@ -2197,30 +2605,40 @@ function readGenerated(path) {
 function generatedWorkspace(text2) {
   return text2?.match(/^WorkingDirectory=(.+)$/m)?.[1].replaceAll("%%", "%");
 }
-function selectWorkspace(s, requested, previous) {
-  if (requested) {
-    const path2 = expandHome(requested, s.home);
-    let directory = false;
-    try {
-      directory = isAbsolute(path2) && statSync(path2).isDirectory();
-    } catch {}
-    if (!directory)
-      throw new ContractError("invalid");
-    return resolve(path2);
+function directory(path) {
+  try {
+    return isAbsolute2(path) && statSync(path).isDirectory();
+  } catch {
+    return false;
   }
-  const kept = generatedWorkspace(previous);
-  if (kept)
-    return kept;
-  const path = join(s.home, "cadence");
-  mkdirSync(path, { recursive: true });
-  return path;
+}
+function unitStateHome(s) {
+  const state = s.env.XDG_STATE_HOME;
+  return state && isAbsolute2(state) ? state : join2(s.home, ".local", "state");
+}
+function selectWorkspace(s, requested, previous) {
+  let chosen;
+  if (requested) {
+    chosen = expandHome(requested, s.home);
+    if (!directory(chosen))
+      throw new ContractError("invalid");
+    chosen = resolve2(chosen);
+  } else {
+    const kept = generatedWorkspace(previous);
+    if (kept && directory(kept))
+      chosen = kept;
+  }
+  const landing = chosen ? effectiveWorkspace(chosen, unitStateHome(s), s.home) : { workspace: join2(s.home, LANDING_WORKSPACE), redirected: false };
+  if (landing.workspace !== chosen)
+    mkdirSync2(landing.workspace, { recursive: true });
+  return landing.redirected ? { workspace: landing.workspace, redirectedFrom: chosen } : { workspace: landing.workspace };
 }
 function write(path, content) {
-  mkdirSync(dirname(path), { recursive: true });
+  mkdirSync2(dirname2(path), { recursive: true });
   const temporary = `${path}.${process.pid}.tmp`;
   try {
-    writeFileSync(temporary, content, { mode: 420, flag: "wx" });
-    renameSync(temporary, path);
+    writeFileSync2(temporary, content, { mode: 420, flag: "wx" });
+    renameSync2(temporary, path);
   } finally {
     rmSync(temporary, { force: true });
   }
@@ -2246,11 +2664,11 @@ function configureAutostart(s, mode, requested) {
   const sdk = sdkPackages(s.root);
   if (!sdk)
     return { status: "missing-pi-sdk" };
-  const workspace = selectWorkspace(s, requested ?? s.env.CADENCE_WORKSPACE, previous);
+  const { workspace, redirectedFrom } = selectWorkspace(s, requested ?? s.env.CADENCE_WORKSPACE, previous);
   const agentDir = agentDirectory(s);
   const content = buildUnit({
     node: s.node,
-    cli: join(s.root, "src", "service-cli.mjs"),
+    cli: join2(s.root, "src", "service-cli.mjs"),
     workspace,
     agentDir,
     sdk,
@@ -2262,7 +2680,11 @@ function configureAutostart(s, mode, requested) {
     s.systemctl(["stop", s.unit]);
   write(path, content);
   s.systemctl(["daemon-reload"]);
-  const result = { unit: path, workspace };
+  const result = {
+    unit: path,
+    workspace,
+    ...redirectedFrom ? { redirectedFrom } : {}
+  };
   if (enabled.startsWith("masked"))
     return { status: "masked", ...result };
   const wanted = mode === "install" || previous === undefined || enabled === "enabled";
@@ -2270,7 +2692,7 @@ function configureAutostart(s, mode, requested) {
     return { status: "failed", ...result };
   if (!wanted && !active)
     return { status: "disabled", ...result };
-  if (!regularFile(join(agentDir, "auth.json")))
+  if (!regularFile(join2(agentDir, "auth.json")))
     return { status: "waiting-for-pi-login", ...result };
   s.systemctl(["reset-failed", s.unit]);
   const started = s.systemctl(["start", s.unit]).status === 0;
@@ -2316,397 +2738,6 @@ import { randomBytes, randomUUID as randomUUID3 } from "node:crypto";
 import { opendirSync, realpathSync as realpathSync3 } from "node:fs";
 import { hostname as hostname2 } from "node:os";
 import { dirname as dirname4, isAbsolute as isAbsolute4, join as join4, relative as relative3, sep as sep4 } from "node:path";
-
-// src/task-store.ts
-import { spawnSync as spawnSync2 } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
-import {
-  closeSync,
-  constants,
-  fstatSync,
-  fsyncSync,
-  lstatSync as lstatSync2,
-  mkdirSync as mkdirSync2,
-  openSync,
-  readdirSync,
-  readSync,
-  realpathSync as realpathSync2,
-  renameSync as renameSync2,
-  unlinkSync,
-  writeFileSync as writeFileSync2
-} from "node:fs";
-import { homedir as homedir2, hostname } from "node:os";
-import {
-  dirname as dirname2,
-  isAbsolute as isAbsolute2,
-  join as join2,
-  parse,
-  relative,
-  resolve as resolve2,
-  sep as sep2
-} from "node:path";
-
-// src/verification-diagnostics.ts
-function diagnosticText(value, maximum = 4096, secrets = []) {
-  maximum = Math.max(0, Math.floor(maximum));
-  let clean = value;
-  for (const secret of [...new Set(secrets)].filter(Boolean).sort((a, b) => b.length - a.length))
-    clean = clean.split(secret).join("[redacted]");
-  clean = clean.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, "").replace(/(Bearer\s+)\S+/gi, "$1[redacted]").replace(/((?:api[_-]?key|token|password|secret)\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]").replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[redacted]@");
-  if (Buffer.byteLength(clean) <= maximum)
-    return clean;
-  const marker = maximum >= 12 ? `
-[truncated]` : ".".repeat(maximum);
-  const bytes = Buffer.from(clean).subarray(0, Math.max(0, maximum - Buffer.byteLength(marker)));
-  return bytes.toString("utf8").replace(/\ufffd$/, "") + marker;
-}
-
-// src/task-store.ts
-function parseRecord(data) {
-  try {
-    return JSON.parse(data.toString("utf8"));
-  } catch {
-    throw new Error("Corrupt JSON state; preserved without reset");
-  }
-}
-function absent(error) {
-  return object(error) && error.code === "ENOENT";
-}
-function safeDirectory(path, create = false, inspectExisting) {
-  const full = resolve2(path);
-  const root = parse(full).root;
-  if (inspectExisting) {
-    const st = lstatSync2(root);
-    if (!st.isDirectory() || st.isSymbolicLink())
-      throw new Error("Unsafe directory");
-    inspectExisting(root, st);
-  }
-  let at = root;
-  for (const part of full.slice(root.length).split(sep2).filter(Boolean)) {
-    at = join2(at, part);
-    let existing;
-    try {
-      const st = lstatSync2(at);
-      if (!st.isDirectory())
-        throw new Error("Unsafe directory");
-      const checked2 = lstatSync2(at);
-      if (checked2.isSymbolicLink() || inspectExisting && !checked2.isDirectory())
-        throw new Error("Unsafe directory");
-      existing = checked2;
-    } catch (error) {
-      if (!absent(error))
-        throw error;
-      if (!create)
-        return false;
-      try {
-        mkdirSync2(at, { mode: 448 });
-      } catch (mkdirError) {
-        if (!object(mkdirError) || mkdirError.code !== "EEXIST")
-          throw mkdirError;
-      }
-      if (!lstatSync2(at).isDirectory() || lstatSync2(at).isSymbolicLink())
-        throw new Error("Unsafe directory");
-    }
-    if (existing)
-      inspectExisting?.(at, existing);
-  }
-  return true;
-}
-function readBounded(path, max) {
-  if (!safeDirectory(dirname2(path)))
-    return;
-  let fd;
-  try {
-    const st = lstatSync2(path);
-    if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size > max)
-      throw new Error("Unsafe or oversized file");
-    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-  } catch (error) {
-    if (absent(error))
-      return;
-    throw error;
-  }
-  try {
-    const st = fstatSync(fd);
-    if (!st.isFile() || st.nlink !== 1 || st.size > max)
-      throw new Error("Unsafe or oversized file");
-    const buffer = Buffer.alloc(max + 1);
-    let size = 0;
-    while (size < buffer.length) {
-      const n = readSync(fd, buffer, size, buffer.length - size, null);
-      if (!n)
-        break;
-      size += n;
-    }
-    if (size > max)
-      throw new Error("Oversized file");
-    return buffer.subarray(0, size);
-  } finally {
-    closeSync(fd);
-  }
-}
-function gitEnvironment() {
-  return {
-    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))),
-    GIT_OPTIONAL_LOCKS: "0",
-    LC_ALL: "C"
-  };
-}
-function resolveWorkspace(cwd) {
-  const actual = realpathSync2(cwd);
-  const result = spawnSync2("git", ["rev-parse", "--show-toplevel"], {
-    cwd: actual,
-    env: gitEnvironment(),
-    encoding: "utf8",
-    timeout: 3000,
-    maxBuffer: 8192,
-    windowsHide: true
-  });
-  const topLevel = result.stdout?.replace(process.platform === "win32" ? /\r?\n$/ : /\n$/, "");
-  if (result.status === 0 && topLevel)
-    return { root: realpathSync2(topLevel), cwd: actual };
-  if (result.error && !object(result.error))
-    throw new Error("Cannot resolve workspace");
-  if (result.error && object(result.error) && result.error.code !== "ENOENT")
-    throw new Error("Workspace lookup failed");
-  if (!result.error && !result.stderr.includes("not a git repository"))
-    throw new Error("Git workspace lookup refused");
-  return { root: actual, cwd: actual };
-}
-function defaultStateHome() {
-  const candidate = process.platform === "win32" ? process.env.LOCALAPPDATA : process.env.XDG_STATE_HOME;
-  if (candidate && !isAbsolute2(candidate))
-    throw new Error("State home must be absolute");
-  return candidate ?? join2(homedir2(), process.platform === "win32" ? "AppData/Local" : ".local/state");
-}
-function recordText(record) {
-  return `${JSON.stringify(record, null, 2)}
-`;
-}
-function contentIdentity(text2) {
-  return createHash("sha256").update(text2).digest("hex");
-}
-function canonicalAmbientRoot(path) {
-  const full = resolve2(path);
-  try {
-    return realpathSync2(full);
-  } catch (error) {
-    if (!absent(error))
-      throw error;
-    try {
-      lstatSync2(full);
-      throw new Error("Dangling ambient root");
-    } catch (statError) {
-      if (!absent(statError))
-        throw statError;
-    }
-    const parent = dirname2(full);
-    if (parent === full)
-      throw error;
-    return join2(canonicalAmbientRoot(parent), full.slice(parent.length));
-  }
-}
-
-class TaskStore {
-  root;
-  tasks;
-  privateRoot;
-  constructor(root, stateHome = defaultStateHome()) {
-    this.root = realpathSync2(root);
-    this.tasks = join2(this.root, ".cadence", "assistant", "tasks");
-    this.privateRoot = join2(canonicalAmbientRoot(stateHome), "cadence-assistant-v1", createHash("sha256").update(this.root).digest("hex"));
-    const within = relative(this.root, resolve2(this.privateRoot));
-    if (!within || !within.startsWith(`..${sep2}`) && within !== ".." && !isAbsolute2(within))
-      throw new Error("Private state home must be outside the working copy");
-  }
-  get lockPath() {
-    return join2(this.privateRoot, "checkout.lock");
-  }
-  inspectPrivate() {
-    const namespace = dirname2(this.privateRoot);
-    for (const path of [namespace, this.privateRoot]) {
-      if (!safeDirectory(path))
-        continue;
-      const st = lstatSync2(path);
-      if (process.platform !== "win32" && ((st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
-        throw new Error("Private state permissions refused");
-    }
-  }
-  inspectPrivateFile(path, max) {
-    this.inspectPrivate();
-    if (!safeDirectory(this.privateRoot))
-      return;
-    try {
-      const st = lstatSync2(path);
-      if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size > max || process.platform !== "win32" && ((st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
-        throw new Error("Unsafe private state file");
-    } catch (error) {
-      if (!absent(error))
-        throw error;
-    }
-  }
-  inspectLock() {
-    this.inspectPrivateFile(this.lockPath, 8192);
-    const data = readBounded(this.lockPath, 8192);
-    if (!data)
-      return;
-    const lock = parseRecord(data);
-    if (!object(lock) || lock.schema !== "cadence-assistant-lock/1" || lock.root !== this.root || typeof lock.token !== "string" || !validId(lock.token) || typeof lock.runId !== "string" || !validId(lock.runId) || typeof lock.host !== "string" || !Number.isInteger(lock.pid) || Number(lock.pid) < 1)
-      throw new Error("Unknown or corrupt coordination lock");
-    return lock;
-  }
-  acquire() {
-    this.inspectPrivate();
-    safeDirectory(this.privateRoot, true);
-    const lock = {
-      schema: "cadence-assistant-lock/1",
-      token: randomUUID(),
-      runId: randomUUID(),
-      pid: process.pid,
-      host: hostname(),
-      root: this.root
-    };
-    let fd;
-    try {
-      fd = openSync(this.lockPath, "wx", 384);
-    } catch {
-      throw new Error("Checkout busy or unresolved lock; inspect and explicitly recover only a dead owner");
-    }
-    try {
-      writeFileSync2(fd, JSON.stringify(lock));
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-    return lock;
-  }
-  assertOwner(lock) {
-    if (JSON.stringify(this.inspectLock()) !== JSON.stringify(lock))
-      throw new Error("Coordination lock changed");
-  }
-  release(lock) {
-    if (lock.pid !== process.pid || lock.host !== hostname())
-      throw new Error("Only the owning process may release a lock");
-    this.assertOwner(lock);
-    unlinkSync(this.lockPath);
-  }
-  recover(expected, acknowledgeEscapedProcesses) {
-    if (!acknowledgeEscapedProcesses || expected.host !== hostname())
-      throw new Error("Recovery requires informed local-owner confirmation");
-    this.assertOwner(expected);
-    try {
-      process.kill(expected.pid, 0);
-    } catch (error) {
-      if (!object(error) || error.code !== "ESRCH")
-        throw new Error("Owner status unknown");
-      this.assertOwner(expected);
-      unlinkSync(this.lockPath);
-      return;
-    }
-    throw new Error("Owner is live; stop it first");
-  }
-  load(id) {
-    return this.loadSnapshot(id)?.record;
-  }
-  loadSnapshot(id) {
-    if (!validId(id))
-      throw new Error("Invalid task id");
-    const directory = join2(this.tasks, id);
-    if (safeDirectory(directory) && readdirSync(directory).some((name) => name !== "task.json"))
-      throw new Error("Unknown task directory content; preserved without reset");
-    const data = readBounded(join2(this.tasks, id, "task.json"), MAX_RECORD_BYTES);
-    if (!data)
-      return;
-    const record = decodeTask(parseRecord(data));
-    if (record.id !== id)
-      throw new Error("Task identity mismatch");
-    return { record, identity: contentIdentity(data) };
-  }
-  list() {
-    if (!safeDirectory(this.tasks))
-      return [];
-    const entries = readdirSync(this.tasks);
-    if (entries.length > 1000)
-      throw new Error("Task listing limit exceeded");
-    return entries.map((id) => {
-      const task = this.load(id);
-      if (!task)
-        throw new Error("Unknown task directory");
-      return task;
-    });
-  }
-  save(record, expectedRevision, held, expectedIdentity) {
-    const next = decodeTask(record);
-    if (next.revision !== expectedRevision + 1)
-      throw new Error("Revision conflict");
-    const text2 = recordText(next);
-    if (Buffer.byteLength(text2) > MAX_RECORD_BYTES)
-      throw new Error("Task record limit");
-    const lock = held ?? this.acquire();
-    if (lock.pid !== process.pid || lock.host !== hostname())
-      throw new Error("Not the lock owner");
-    try {
-      this.assertOwner(lock);
-      const current = this.loadSnapshot(next.id);
-      if ((current?.record.revision ?? 0) !== expectedRevision)
-        throw new Error("Revision conflict");
-      if (current?.identity !== expectedIdentity)
-        throw new Error("Task content changed; reopen it");
-      const dir = join2(this.tasks, next.id);
-      safeDirectory(dir, true);
-      if (!current && readdirSync(dir).length)
-        throw new Error("Unknown task directory");
-      const temporary = join2(dir, `task.${randomUUID()}.tmp`);
-      const fd = openSync(temporary, "wx", 384);
-      try {
-        writeFileSync2(fd, text2);
-        fsyncSync(fd);
-      } finally {
-        closeSync(fd);
-      }
-      this.assertOwner(lock);
-      const latest = readBounded(join2(dir, "task.json"), MAX_RECORD_BYTES);
-      if ((latest ? contentIdentity(latest) : undefined) !== expectedIdentity)
-        throw new Error("Task content changed; replacement preserved without overwrite");
-      renameSync2(temporary, join2(dir, "task.json"));
-      return next;
-    } finally {
-      if (!held)
-        this.release(lock);
-    }
-  }
-  checks() {
-    const data = readBounded(join2(this.root, ".cadence", "assistant", "config.json"), 32768);
-    if (!data)
-      return [];
-    const value = parseRecord(data);
-    if (!object(value) || value.schema !== TASK_CONFIG_SCHEMA || !Array.isArray(value.checks) || value.checks.length > 32 || Object.keys(value).some((key) => !["schema", "checks"].includes(key)))
-      throw new Error("Unknown check configuration");
-    const checks = value.checks.map(decodeCheck);
-    if (new Set(checks.map((check) => check.name)).size !== checks.length || checks.some((check) => check.name === "Manual command"))
-      throw new Error("Duplicate or reserved check name");
-    return checks;
-  }
-  readLog(name) {
-    if (!/^[a-f0-9-]{36}\.log$/.test(name))
-      throw new Error("Invalid diagnostic name");
-    this.inspectPrivateFile(join2(this.privateRoot, name), 65536);
-    const data = readBounded(join2(this.privateRoot, name), 65536);
-    return data ? diagnosticText(data.toString("utf8"), 65536) : "Private diagnostic unavailable";
-  }
-  writeLog(lock, output) {
-    if (lock.pid !== process.pid || lock.host !== hostname())
-      throw new Error("Not the lock owner");
-    this.assertOwner(lock);
-    const name = `${randomUUID()}.log`;
-    writeFileSync2(join2(this.privateRoot, name), diagnosticText(output, 65536), {
-      flag: "wx",
-      mode: 384
-    });
-    return name;
-  }
-}
-var TASK_CONFIG_SCHEMA = "cadence-assistant-checks/1";
 
 // src/service/private-files.ts
 import { createHash as createHash2, randomUUID as randomUUID2 } from "node:crypto";
@@ -5055,8 +5086,8 @@ function digestHistory(files, exclude) {
   const walk = (path, depth) => {
     if (depth > 8 || !files.files.directory(path))
       throw new ContractError("corrupt-selected");
-    const directory = lstatSync6(path);
-    digest.update(`incarnation:${directory.dev}:${directory.ino}
+    const directory2 = lstatSync6(path);
+    digest.update(`incarnation:${directory2.dev}:${directory2.ino}
 `);
     const dir = opendirSync3(path), names2 = [];
     try {
@@ -5780,6 +5811,11 @@ function autostartGuidance(s, result) {
   const cli = JSON.stringify(join8(s.root, "src", "service-cli.mjs"));
   const workspace = JSON.stringify(result.workspace ?? "");
   const manage = `Manage: systemctl --user status|restart|stop ${name}; logs: journalctl --user -u ${name}; opt out: systemctl --user disable --now ${name}`;
+  const note = result.redirectedFrom ? `Cadence workspace: ${result.workspace} (${result.redirectedFrom} contains Cadence's private state)
+` : "";
+  return note + autostartStatusGuidance(s, result, name, cli, workspace, manage);
+}
+function autostartStatusGuidance(s, result, name, cli, workspace, manage) {
   switch (result.status) {
     case "started": {
       if (result.service !== "alive")
@@ -5925,10 +5961,23 @@ Recovery resolve requires this local native terminal, exact unchanged dead-owner
       else
         throw new ContractError("invalid");
     }
+    const landing = effectiveWorkspace(options.workspace, options.stateHome);
+    if (landing.redirected) {
+      if (seen.has("--workspace"))
+        process.stderr.write(`Cadence workspace: ${landing.workspace} (${options.workspace} contains Cadence's private state)
+`);
+      options.workspace = landing.workspace;
+      if (command === "start")
+        mkdirSync3(landing.workspace, { recursive: true });
+    }
     let result;
     if (command === "start")
       result = await startService(options, foreground, hostUrl);
-    else {
+    else if (landing.redirected && !existsSync(landing.workspace)) {
+      if (command !== "status" && command !== "diagnose")
+        throw new ContractError("unavailable");
+      result = { status: "absent" };
+    } else {
       const c = new ServiceCoordination(options.workspace, options.stateHome);
       if (command === "recover" && recovery)
         result = await localRecovery(c, recovery);
@@ -5946,6 +5995,8 @@ Recovery resolve requires this local native terminal, exact unchanged dead-owner
       else
         throw new ContractError("invalid");
     }
+    if (landing.redirected && result && typeof result === "object")
+      result = { ...result, workspace: landing.workspace };
     if (result !== null)
       process.stdout.write(`${JSON.stringify(result)}
 `);

@@ -256,6 +256,23 @@ function canonicalAmbientRoot(path) {
     return join(canonicalAmbientRoot(parent), full.slice(parent.length));
   }
 }
+function privateRootFor(canonicalRoot, stateHome) {
+  return join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1", createHash("sha256").update(canonicalRoot).digest("hex"));
+}
+function contains(root, path) {
+  const within = relative(root, resolve(path));
+  return !within || !within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within);
+}
+function stateHomeInside(root, stateHome = defaultStateHome()) {
+  const canonical = realpathSync(root);
+  return contains(canonical, privateRootFor(canonical, stateHome));
+}
+var LANDING_WORKSPACE = "cadence";
+function effectiveWorkspace(requested, stateHome, home = homedir()) {
+  if (!stateHomeInside(resolveWorkspace(requested).root, stateHome))
+    return { workspace: requested, redirected: false };
+  return { workspace: join(home, LANDING_WORKSPACE), redirected: true };
+}
 
 class TaskStore {
   root;
@@ -264,9 +281,8 @@ class TaskStore {
   constructor(root, stateHome = defaultStateHome()) {
     this.root = realpathSync(root);
     this.tasks = join(this.root, ".cadence", "assistant", "tasks");
-    this.privateRoot = join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1", createHash("sha256").update(this.root).digest("hex"));
-    const within = relative(this.root, resolve(this.privateRoot));
-    if (!within || !within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within))
+    this.privateRoot = privateRootFor(this.root, stateHome);
+    if (contains(this.root, this.privateRoot))
       throw new Error("Private state home must be outside the working copy");
   }
   get lockPath() {
@@ -459,8 +475,9 @@ class TaskStore {
 var TASK_CONFIG_SCHEMA = "cadence-assistant-checks/1";
 
 // src/operator-tools.ts
+var observed = (cwd) => resolveWorkspace(effectiveWorkspace(cwd).workspace);
 function inspectConsumer(cwd) {
-  const workspace = resolveWorkspace(cwd);
+  const workspace = observed(cwd);
   const store = new TaskStore(workspace.root);
   const tasks = store.list();
   const checks = store.checks();
@@ -481,7 +498,7 @@ function inspectConsumer(cwd) {
   };
 }
 function inspectRuns(cwd) {
-  const workspace = resolveWorkspace(cwd);
+  const workspace = observed(cwd);
   const store = new TaskStore(workspace.root);
   return {
     ok: true,
