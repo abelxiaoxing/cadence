@@ -95,8 +95,7 @@
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
     "typebox": "*",
-    "@earendil-works/pi-ai": "*",
-    "undici": "^8.9.0"
+    "@earendil-works/pi-ai": "*"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
@@ -107,7 +106,6 @@
     "typescript": "^6.0.3",
     "vitest": "^4.1.8",
     "@earendil-works/pi-ai": "0.84.3",
-    "undici": "8.9.0",
     "@types/ws": "8.18.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
@@ -143,6 +141,7 @@
     "url": "https://github.com/abelxiaoxing/cadence/issues"
   },
   "dependencies": {
+    "undici": "8.9.0",
     "ws": "8.21.3"
   },
   "bin": {
