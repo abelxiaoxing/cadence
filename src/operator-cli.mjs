@@ -162,6 +162,22 @@ function safeDirectory(path, create = false, inspectExisting) {
   }
   return true;
 }
+var transientWindows = new Set(["EPERM", "EACCES", "EBUSY"]);
+function retryWindowsFileOperation(operation, recheck) {
+  if (process.platform !== "win32")
+    return operation();
+  const deadline = performance.now() + 2000;
+  for (let delay = 2;; delay = Math.min(delay * 2, 50)) {
+    try {
+      return operation();
+    } catch (error) {
+      if (!object(error) || !transientWindows.has(String(error.code)) || performance.now() >= deadline)
+        throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+      recheck?.();
+    }
+  }
+}
 function readBounded(path, max) {
   if (!safeDirectory(dirname(path)))
     return;
@@ -334,7 +350,7 @@ class TaskStore {
     };
     let fd;
     try {
-      fd = openSync(this.lockPath, "wx", 384);
+      fd = retryWindowsFileOperation(() => openSync(this.lockPath, "wx", 384));
     } catch {
       throw new Error("Checkout busy or unresolved lock; inspect and explicitly recover only a dead owner");
     }
@@ -354,7 +370,7 @@ class TaskStore {
     if (lock.pid !== process.pid || lock.host !== hostname())
       throw new Error("Only the owning process may release a lock");
     this.assertOwner(lock);
-    unlinkSync(this.lockPath);
+    retryWindowsFileOperation(() => unlinkSync(this.lockPath), () => this.assertOwner(lock));
   }
   recover(expected, acknowledgeEscapedProcesses) {
     if (!acknowledgeEscapedProcesses || expected.host !== hostname())
@@ -434,7 +450,12 @@ class TaskStore {
       const latest = readBounded(join(dir, "task.json"), MAX_RECORD_BYTES);
       if ((latest ? contentIdentity(latest) : undefined) !== expectedIdentity)
         throw new Error("Task content changed; replacement preserved without overwrite");
-      renameSync(temporary, join(dir, "task.json"));
+      retryWindowsFileOperation(() => renameSync(temporary, join(dir, "task.json")), () => {
+        this.assertOwner(lock);
+        const now = readBounded(join(dir, "task.json"), MAX_RECORD_BYTES);
+        if ((now ? contentIdentity(now) : undefined) !== expectedIdentity)
+          throw new Error("Task content changed; replacement preserved without overwrite");
+      });
       return next;
     } finally {
       if (!held)
