@@ -1,5 +1,9 @@
 /** Native attachment only. No SDK/auth resolution, worker or storage mutation. */
 
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Agent, Dispatcher1Wrapper } from "undici";
 import { nativeBuild } from "./native-build.ts";
 import { ServiceCoordination } from "./service/coordination.ts";
@@ -13,6 +17,22 @@ import { HttpServiceTransport } from "./service-http-client.ts";
 
 export const MANAGEMENT_GUIDANCE =
   "Cadence owner absent, unavailable or incompatible. Explicitly run cadence-service status --workspace <path>, cadence-service diagnose --workspace <path>, or cadence-service start --workspace <path>. Stop older Cadence sessions first. For retained fences use cadence-service recover inspect; resolve requires a local terminal and separate process, credential and storage acknowledgments. Never treat unavailable/quarantined as stopped. No service was started and no embedded executor is available.";
+
+/** Linux: npm may skip or hide the Pi install hook that registers the user
+ * unit, so name the explicit command when it is absent. Reads one path only. */
+export function autostartHint(): string {
+  if (process.platform !== "linux") return "";
+  const data = process.env.XDG_DATA_HOME;
+  const unit = join(
+    data && isAbsolute(data) ? data : join(homedir(), ".local", "share"),
+    "systemd",
+    "user",
+    "cadence.service",
+  );
+  if (existsSync(unit)) return "";
+  const cli = fileURLToPath(new URL("./service-cli.mjs", import.meta.url));
+  return `\nTo run the shared service and WebUI (default http://127.0.0.1:17423) at login: node ${JSON.stringify(cli)} autostart install`;
+}
 
 export class NativeConnection {
   private transport?: HttpServiceTransport;

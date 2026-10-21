@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { closeSync, constants, mkdirSync, openSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -40,6 +41,22 @@ export function ensureUserConfig(home = homedir()) {
   }
 }
 
+/** Pi install/update hook. The management client decides whether this is Pi's
+ * Linux user-scope install and refreshes the systemd user unit; only its human
+ * guidance (stderr) reaches the installer. */
+export function refreshAutostart(run = spawnSync) {
+  if (process.platform !== "linux" || process.versions.bun) return;
+  run(
+    process.execPath,
+    [
+      fileURLToPath(new URL("./service-cli.mjs", import.meta.url)),
+      "autostart",
+      "refresh",
+    ],
+    { stdio: ["ignore", "ignore", "inherit"] },
+  );
+}
+
 if (
   process.argv[1] &&
   path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))
@@ -51,6 +68,14 @@ if (
   } catch (error) {
     process.stderr.write(
       `Cadence could not create the user configuration template: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    process.exitCode = 0;
+  }
+  try {
+    refreshAutostart();
+  } catch (error) {
+    process.stderr.write(
+      `Cadence could not refresh its systemd user unit: ${error instanceof Error ? error.message : String(error)}\n`,
     );
     process.exitCode = 0;
   }
