@@ -17,6 +17,10 @@ export function safeChildEnv(): NodeJS.ProcessEnv {
     "LANG",
     "LC_ALL",
     "PATHEXT",
+    // The SDK's Windows bash tool finds Git Bash under these system paths.
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432",
   ])
     if (process.env[key] !== undefined) env[key] = process.env[key];
   return {
