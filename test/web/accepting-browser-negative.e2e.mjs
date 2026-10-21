@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { it } from "vitest";
@@ -11,7 +12,7 @@ import { browserBuild } from "../helpers/source-build.ts";
 
 it("built browser safety: old task active Cancel, bad/missing builds, manual refusal, lost receipt observation and failed human review", async () => {
   const f = await acceptingFixture("generated"),
-    root = mkdtempSync("/home/mirako/abel/cdn-");
+    root = mkdtempSync(join(tmpdir(), "cdn-"));
   let launcher, browser, original, failure, page;
   const receipt = {
     passed: false,
