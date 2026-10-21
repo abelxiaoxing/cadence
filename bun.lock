@@ -10,8 +10,6 @@
       },
       "devDependencies": {
         "@biomejs/biome": "^2.4.16",
-        "@earendil-works/pi-ai": "0.84.3",
-        "@earendil-works/pi-coding-agent": "0.84.3",
         "@earendil-works/pi-tui": "0.84.3",
         "@types/node": "^22.15.3",
         "@types/react": "19.3.0",
@@ -42,6 +40,10 @@
         "vis-timeline": "8.5.4",
         "vite": "8.3.0",
         "vitest": "^4.1.8",
+      },
+      "optionalDependencies": {
+        "@earendil-works/pi-ai": "0.84.3",
+        "@earendil-works/pi-coding-agent": "0.84.3",
       },
       "peerDependencies": {
         "@earendil-works/pi-ai": "*",

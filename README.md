@@ -14,10 +14,11 @@ Model prose, tool results and human Done do not certify checks or code.
 The package can be loaded as a reviewed local package, extracted tarball or installed npm package through Pi's package mechanism.
 For a local checkout, add its absolute or relative path to Pi's `packages` setting, or try `pi -e ./cadence`.
 Pi loads `src/index.ts`; the service, worker and readonly operator are ordinary JavaScript with no TypeScript/source-tree fallback.
-The manifest does not impose a Pi version range; public Pi peers stay external.
+The manifest does not impose a Pi version range; inside Pi the extension uses Pi's own public packages.
 Development pins, declared Node baseline (`>=22.19.0`) and actual tested runtime identities are separate facts, not universal compatibility promises.
 Required installed peers are public Pi packages and Typebox; `undici` and `ws` are exact production dependencies.
 Pi's package installer omits peers and supplies only its own packages and Typebox to the extension, so any other extension import must be a production dependency.
+The standalone owner and workers run outside Pi and import `pi-coding-agent`/`pi-ai` by bare name, so they load the exact tested copy (0.84.3) from optional dependencies; an install that omits optional dependencies cannot start an owner.
 Browser assets are prebuilt, not compiled by consumer postinstall.
 
 Before using the shared owner, stop older Cadence sessions and choose one coordination state-home for the checkout.
@@ -44,7 +45,7 @@ Each `pi update` restarts the unit through orderly Stop, so running work is stop
 Run `cadence-service autostart remove` before `pi remove`.
 The npm client hides dependency install-script output, and with `strict-allow-scripts` it skips those scripts entirely.
 Approve Cadence once with `npm install-scripts approve @abelxiaoxing/cadence` inside `~/.pi/agent/npm` (or `npm config set allow-scripts=@abelxiaoxing/cadence --location=user`), or run `cadence-service autostart install`; `/cadence` names that command while no unit is registered.
-The standalone owner needs the Pi SDK peers resolvable beside the package and Pi's `auth.json`; without them registration or start waits instead of quarantining an owner.
+Until the optional SDK and Pi's `auth.json` exist, registration or start waits instead of quarantining an owner.
 See [the systemd user unit](docs/service-management.md#linux-systemd-user-unit) for exact behavior and limits.
 
 ### Native terminal
@@ -290,7 +291,7 @@ Byte values are UTF-8/encoded bounds where specified; they are not targets to si
 | Invalid read proof or changed source/key                       | Refuse; never rebase or interpret budget exhaustion as absence                      |
 | Dirty/partial/extra compiled assets or unsafe archive          | Refuse in place; no source refill, wildcard serving or fallback build               |
 | Extension import outside Pi aliases declared only as a peer    | Exact production dependency; Pi's install omits peers and Pi fails to start         |
-| Pi user install lacking SDK peers or `auth.json`               | No unit registration or start; a first owner without them quarantines               |
+| Install without the optional SDK or Pi `auth.json`             | No unit registration or start; a first owner without them quarantines               |
 | Workspace containing the private state home                    | Land on `~/cadence` (only start creates it); never move state into the working copy |
 | Upgrade changes the unit workspace or Node path                | Stop with the loaded unit definition before rewriting, not only SIGTERM             |
 
@@ -328,7 +329,7 @@ Regression owners:
 
 Regenerate operator/service/native/browser outputs only through their canonical builders; `--check` variants compare new private output without overwriting canonical bytes.
 Review the independently enumerated package member list and every emitted body, not a count or an expected list generated from the tar under test.
-Keep public Pi peers external, the exact Undici/ws runtime edges and all upstream/font/vendor notices.
+Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
 
 ### Prior integrated acceptance snapshot

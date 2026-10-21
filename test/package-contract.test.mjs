@@ -61,6 +61,14 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     expect(pkg.peerDependencies?.undici).toBeUndefined();
     expect(pkg.devDependencies?.undici).toBeUndefined();
     expect(pkg.dependencies).toEqual({ undici: "8.9.0", ws: "8.21.3" });
+    // The standalone owner and workers import the SDK by bare name outside Pi,
+    // so they load the exact tested copy from optional dependencies.
+    expect(pkg.optionalDependencies).toEqual({
+      "@earendil-works/pi-ai": "0.84.3",
+      "@earendil-works/pi-coding-agent": "0.84.3",
+    });
+    for (const name of Object.keys(pkg.optionalDependencies))
+      expect(pkg.devDependencies?.[name]).toBeUndefined();
     expect(pkg.bin).toEqual({ "cadence-service": "./src/service-cli.mjs" });
     expect(pkg.workspaces).toBeUndefined();
     expect(pkg.exports).toBeUndefined();
