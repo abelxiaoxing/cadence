@@ -397,6 +397,9 @@ it("Stop retains the original preparing continuation and prevents late native la
   expect(f.h.owner.state).toBe("quarantined");
 }, 20000);
 
+// POSIX stops the process group with SIGTERM; Windows terminates the tree
+// (taskkill /F), which Node reports as exit code 1 with no signal.
+const stopSignal = process.platform === "win32" ? null : "SIGTERM";
 it.each([false, true])(
   "Stop during native activity joins original close and never signals after ownership loss: %s",
   async (lost) => {
@@ -414,7 +417,7 @@ it.each([false, true])(
     await f.actions.settledAll();
     expect(natives).toHaveLength(1);
     expect(natives[0].closed).toBe(true);
-    expect(natives[0].signal).toBe(lost ? null : "SIGTERM");
+    expect(natives[0].signal).toBe(lost ? null : stopSignal);
     if (lost) expect(natives[0].code).toBe(0);
     else {
       const state = readRunState(f.h.reader.files, receipt.runId!);
@@ -605,7 +608,7 @@ it("Stop closes queued work and requests BOTH real native stops before joining e
   expect((await stopping).state).toBe("quarantined");
   expect(f.responses).toHaveLength(2);
   expect(natives).toHaveLength(2);
-  expect(natives.every((n) => n.closed && n.signal === "SIGTERM")).toBe(true);
+  expect(natives.every((n) => n.closed && n.signal === stopSignal)).toBe(true);
   const state = readRunState(f.h.reader.files, receipt.runId!);
   expect(state.children.size).toBe(2);
   expect(state.settlement).toMatchObject({ outcome: "canceled" });
