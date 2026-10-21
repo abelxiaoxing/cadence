@@ -99,13 +99,11 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
-    "@earendil-works/pi-coding-agent": "0.84.3",
     "@earendil-works/pi-tui": "0.84.3",
     "@types/node": "^22.15.3",
     "rumdl": "^0.2.10",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8",
-    "@earendil-works/pi-ai": "0.84.3",
     "@types/ws": "8.18.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
@@ -143,6 +141,10 @@
   "dependencies": {
     "undici": "8.9.0",
     "ws": "8.21.3"
+  },
+  "optionalDependencies": {
+    "@earendil-works/pi-ai": "0.84.3",
+    "@earendil-works/pi-coding-agent": "0.84.3"
   },
   "bin": {
     "cadence-service": "./src/service-cli.mjs"

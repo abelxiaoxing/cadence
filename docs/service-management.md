@@ -45,9 +45,9 @@ A disabled unit is refreshed but not re-enabled, and restarted only if it was ru
 An owner still settling after `TimeoutStopSec=90` (for example a quarantined one) is SIGKILLed, which is not orderly Stop and can leave recovery fences.
 `Restart=on-failure` is bounded to three starts in five minutes; a restart never removes fences, so a crashed owner keeps refusing until informed recovery.
 
-Pi's installer omits peers, so the standalone owner and workers can load the Pi SDK (`pi-coding-agent`, `pi-ai`) only when another package in the same tree provides it.
+Pi's installer omits peers, so the standalone owner and workers load the Pi SDK (`pi-coding-agent`, `pi-ai`) from exact 0.84.3 optional dependencies.
 A new owner without the SDK or Pi's `auth.json` quarantines.
-Refresh therefore does not register the unit while the SDK is unresolvable, and enables without starting it while `auth.json` is missing; the unit carries `ConditionPathExists=` for all three files.
+Refresh therefore does not register the unit while the SDK is unresolvable (for example, optional dependencies omitted), and enables without starting it while `auth.json` is missing; the unit carries `ConditionPathExists=` for all three files.
 After logging in to Pi, start it with `systemctl --user start cadence`.
 Without linger, user units start at login and stop at logout through the same Stop; `loginctl enable-linger` keeps the owner running and starts it at boot.
 
