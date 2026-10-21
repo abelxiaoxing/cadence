@@ -16,6 +16,34 @@ function walkTs(dir) {
   return out;
 }
 
+// Pi installs packages with peers omitted (npm --legacy-peer-deps, bun
+// --omit=peer, pnpm auto-install-peers=false) and aliases only its own modules.
+const PI_PROVIDED =
+  /^(?:typebox|@earendil-works\/pi-(?:coding-agent|tui|ai|agent-core))(?:\/|$)/;
+const IMPORT_SPEC =
+  /\b(?:import|export)\s+(type\s+)?(?:[^"';]*?\sfrom\s*)?["']([^"']+)["']|\bimport\(\s*["']([^"']+)["']\s*\)/g;
+
+function extensionImports(entry) {
+  const files = new Set();
+  const bare = new Map();
+  const visit = (file) => {
+    if (files.has(file)) return;
+    files.add(file);
+    for (const m of read(file).matchAll(IMPORT_SPEC)) {
+      const spec = m[2] ?? m[3];
+      if (spec.startsWith(".")) {
+        const next = path.resolve(path.dirname(file), spec);
+        expect(existsSync(next), `${file} -> ${spec}`).toBe(true);
+        visit(next);
+      } else if (!spec.startsWith("node:")) {
+        bare.set(spec, (bare.get(spec) ?? true) && Boolean(m[1]));
+      }
+    }
+  };
+  visit(entry);
+  return { files, bare };
+}
+
 describe("@abelxiaoxing/cadence standalone package contract", () => {
   it("declares the standalone manifest without a workspace or reference dependency", () => {
     const pkg = JSON.parse(read(path.join(root, "package.json")));
@@ -29,16 +57,31 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     expect(pkg.peerDependencies?.["@earendil-works/pi-tui"]).toBe("*");
     expect(pkg.peerDependencies?.["@earendil-works/pi-ai"]).toBe("*");
     expect(pkg.peerDependencies?.typebox).toBe("*");
-    expect(pkg.peerDependencies?.undici).toBe("^8.9.0");
-    expect(pkg.peerDependenciesMeta?.undici?.optional).not.toBe(true);
-    expect(pkg.devDependencies?.undici).toBe("8.9.0");
-    expect(pkg.dependencies).toEqual({ ws: "8.21.3" });
+    // Pi's managed install omits peers; Undici must ship as a dependency.
+    expect(pkg.peerDependencies?.undici).toBeUndefined();
+    expect(pkg.devDependencies?.undici).toBeUndefined();
+    expect(pkg.dependencies).toEqual({ undici: "8.9.0", ws: "8.21.3" });
     expect(pkg.bin).toEqual({ "cadence-service": "./src/service-cli.mjs" });
     expect(pkg.workspaces).toBeUndefined();
     expect(pkg.exports).toBeUndefined();
     const all = JSON.stringify(pkg);
     expect(all).not.toMatch(/@gotgenes/);
     expect(all).not.toMatch(/pi-subagents/);
+  });
+
+  it("resolves every extension runtime import from Pi or a production dependency", () => {
+    const pkg = JSON.parse(read(path.join(root, "package.json")));
+    const { files, bare } = extensionImports(path.join(root, "src/index.ts"));
+    expect(files).toContain(path.join(root, "src/native-client.ts"));
+    expect(bare.size).toBeGreaterThan(0);
+    for (const [spec, typeOnly] of bare) {
+      if (typeOnly || PI_PROVIDED.test(spec)) continue;
+      const name = spec
+        .split("/")
+        .slice(0, spec.startsWith("@") ? 2 : 1)
+        .join("/");
+      expect(pkg.dependencies?.[name], spec).toBeDefined();
+    }
   });
 
   it("registers the sole task extension and independent skills without prompt aliases", () => {

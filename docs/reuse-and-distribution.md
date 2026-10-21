@@ -35,7 +35,8 @@ Provisioned official notice bodies were reused locally; builds never download li
 ## Runtime/package closure
 
 Only the native extension's explicit import closure, maintained SDK worker/shared JS capture modules, generated management/host/operator executables, Agents, independent skills/configuration, documentation, notices and complete built assets ship.
-Service/worker execution uses ordinary Node with declared external Pi/Typebox/Undici peers and exact production `ws`; no source-tree or TypeScript fallback, SDK bundle or consumer compilation.
+Service/worker execution uses ordinary Node with declared external Pi/Typebox peers and exact production `undici` and `ws`; no source-tree or TypeScript fallback, SDK bundle or consumer compilation.
+Pi's package installer omits peers and aliases only its own packages and Typebox, so every other runtime import reachable from `src/index.ts` must be a production dependency; otherwise Pi fails to load the extension at startup.
 The retired shell-local controller is not a shipped competing executor.
 
 `provenance/package-members.json` is a reviewed source/import/asset policy, not generated from the archive being tested.

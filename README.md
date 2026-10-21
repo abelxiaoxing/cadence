@@ -15,7 +15,8 @@ For a local checkout, add its absolute or relative path to Pi's `packages` setti
 Pi loads `src/index.ts`; the service, worker and readonly operator are ordinary JavaScript with no TypeScript/source-tree fallback.
 The manifest does not impose a Pi version range; public Pi peers stay external.
 Development pins, declared Node baseline (`>=22.19.0`) and actual tested runtime identities are separate facts, not universal compatibility promises.
-Required installed peers include public Pi packages, Typebox and Undici; `ws` is the sole production dependency.
+Required installed peers are public Pi packages and Typebox; `undici` and `ws` are exact production dependencies.
+Pi's package installer omits peers and supplies only its own packages and Typebox to the extension, so any other extension import must be a production dependency.
 Browser assets are prebuilt, not compiled by consumer postinstall.
 
 Before using the shared owner, stop older Cadence sessions and choose one coordination state-home for the checkout.
@@ -274,6 +275,7 @@ Byte values are UTF-8/encoded bounds where specified; they are not targets to si
 | Lost reply or detached view                                    | Observe original receipt/run; no mutation replay or implicit Cancel               |
 | Invalid read proof or changed source/key                       | Refuse; never rebase or interpret budget exhaustion as absence                    |
 | Dirty/partial/extra compiled assets or unsafe archive          | Refuse in place; no source refill, wildcard serving or fallback build             |
+| Extension import outside Pi aliases declared only as a peer    | Exact production dependency; Pi's install omits peers and Pi fails to start       |
 
 Good: current context → explicit grant → durable acceptance → genuine original native/storage settlement → exact retained dependency → real checks → human review.
 Base: a client leaves and another reattaches to the same accepted run without launching it again.
@@ -307,7 +309,7 @@ Regression owners:
 
 Regenerate operator/service/native/browser outputs only through their canonical builders; `--check` variants compare new private output without overwriting canonical bytes.
 Review the independently enumerated package member list and every emitted body, not a count or an expected list generated from the tar under test.
-Keep public Pi peers external, the exact ws runtime edge and all upstream/font/vendor notices.
+Keep public Pi peers external, the exact Undici/ws runtime edges and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
 
 ### Prior integrated acceptance snapshot

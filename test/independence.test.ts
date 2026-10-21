@@ -119,7 +119,7 @@ describe("standalone independence", () => {
       expect(f).not.toMatch(/pi-autoformat/);
     }
     const pkg = JSON.parse(read(path.join(root, "package.json")));
-    expect(pkg.dependencies).toEqual({ ws: "8.21.3" });
+    expect(pkg.dependencies).toEqual({ undici: "8.9.0", ws: "8.21.3" });
     expect(JSON.stringify(pkg)).not.toMatch(/pi-web-ui|pi-subagents|trellis/i);
     expect(pkg.workspaces).toBeUndefined();
   });
