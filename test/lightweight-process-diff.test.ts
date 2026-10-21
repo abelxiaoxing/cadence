@@ -25,6 +25,16 @@ import { resolveWorkspace, TaskStore } from "../src/task-store.ts";
 import { diagnosticText } from "../src/verification-diagnostics.ts";
 import { v2Frames } from "./helpers/worker-v2.ts";
 
+/** The child launch itself: on Windows a stop also spawns taskkill /T. */
+const launchIndex = () =>
+  vi
+    .mocked(spawn)
+    .mock.calls.findLastIndex(
+      ([command]) => !/taskkill(\.exe)?$/i.test(String(command)),
+    );
+const launchCall = () => vi.mocked(spawn).mock.calls[launchIndex()];
+const launchedChild = () => vi.mocked(spawn).mock.results[launchIndex()]?.value;
+
 // Observe actual launch arguments without replacing native execution.
 vi.mock("node:child_process", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:child_process")>();
@@ -129,8 +139,8 @@ describe("demand-based stdin transport", () => {
       `let text='';process.stdin.setEncoding('utf8');process.stdin.on('data',part=>text+=part);process.stdin.on('end',()=>{process.stdout.write(JSON.stringify(text));process.stderr.write('stderr-pipe')});process.stdin.resume();`,
       { input },
     );
-    const launch = vi.mocked(spawn).mock.lastCall;
-    const child = vi.mocked(spawn).mock.results.at(-1)?.value;
+    const launch = launchCall();
+    const child = launchedChild();
     expect(launch?.[2]?.stdio).toEqual([stdin, "pipe", "pipe"]);
     expect(launch?.[2]?.detached).toBe(process.platform !== "win32");
     expect(launch?.[2]?.windowsHide).toBe(true);
@@ -158,11 +168,7 @@ describe("demand-based stdin transport", () => {
         temporary(),
         new AbortController().signal,
       );
-      expect(vi.mocked(spawn).mock.lastCall?.[2]?.stdio).toEqual([
-        "ignore",
-        "pipe",
-        "pipe",
-      ]);
+      expect(launchCall()?.[2]?.stdio).toEqual(["ignore", "pipe", "pipe"]);
       expect(result).toMatchObject({
         outcome: exitCode === 0 ? "completed" : "failed",
         closed: true,
@@ -245,8 +251,8 @@ describe("demand-based stdin transport", () => {
           `const fs=require('node:fs');const gate=${JSON.stringify(gate)};const watcher=fs.watch(${JSON.stringify(cwd)},()=>{if(fs.existsSync(gate)){watcher.close();console.log('WORK_AFTER_EOF')}});process.stdin.on('end',()=>console.log('NATIVE_EOF'));process.stdin.resume();console.log('NATIVE_READY');`,
           { cwd, input, signal: abort.signal },
         );
-        const child = vi.mocked(spawn).mock.results.at(-1)?.value;
-        expect(vi.mocked(spawn).mock.lastCall?.[2]?.stdio).toEqual([
+        const child = launchedChild();
+        expect(launchCall()?.[2]?.stdio).toEqual([
           input === undefined ? "ignore" : "pipe",
           "pipe",
           "pipe",
@@ -356,11 +362,7 @@ describe("demand-based stdin transport", () => {
       const input = JSON.stringify(request);
       const child = lifecycleChild(input);
       const run = runWorker(request, new AbortController().signal);
-      expect(vi.mocked(spawn).mock.lastCall?.[2]?.stdio).toEqual([
-        "pipe",
-        "pipe",
-        "pipe",
-      ]);
+      expect(launchCall()?.[2]?.stdio).toEqual(["pipe", "pipe", "pipe"]);
       expect(child.stdin?.end).toHaveBeenCalledTimes(1);
       const actualInput = child.stdin!.end.mock.calls[0][0];
       expect(JSON.parse(actualInput)).toMatchObject({
@@ -438,11 +440,7 @@ describe("demand-based stdin transport", () => {
       const abort = new AbortController();
       const run = node("synthetic no-close only", { signal: abort.signal });
       expect(child.stdin).toBeNull();
-      expect(vi.mocked(spawn).mock.lastCall?.[2]?.stdio).toEqual([
-        "ignore",
-        "pipe",
-        "pipe",
-      ]);
+      expect(launchCall()?.[2]?.stdio).toEqual(["ignore", "pipe", "pipe"]);
       abort.abort();
       await vi.advanceTimersByTimeAsync(3000);
       const result = await run;
@@ -548,7 +546,7 @@ describe("SDK-only validated egress (labelled lifecycle mocks, not native waits)
     const calls = vi.mocked(spawn).mock.calls.length;
     const run = runWorker(wire, new AbortController().signal);
     expect(vi.mocked(spawn).mock.calls).toHaveLength(calls + 1);
-    const launch = vi.mocked(spawn).mock.lastCall!;
+    const launch = launchCall()!;
     expect(launch[0]).toBe(process.execPath);
     expect(launch[1]).toEqual([
       fileURLToPath(new URL("../src/sdk-worker.mjs", import.meta.url)),
@@ -1221,7 +1219,7 @@ describe("bounded real process owner", () => {
       expect(check.output, diagnostics).toContain("environment-ok");
       expect(check.closed, diagnostics).toBe(true);
       expect(check.truncated, diagnostics).toBe(false);
-      const launch = vi.mocked(spawn).mock.lastCall;
+      const launch = launchCall();
       // Project before asserting, so a failing diff cannot print ambient auth.
       expect({
         command: launch?.[0],
@@ -1246,9 +1244,7 @@ describe("bounded real process owner", () => {
         "process.stdout.write(process.env.CADENCE_PROJECT_SETTING ?? 'absent')",
       );
       expect(workerEnvironment.output).toBe("absent");
-      expect(
-        vi.mocked(spawn).mock.lastCall?.[2]?.windowsVerbatimArguments,
-      ).toBeUndefined();
+      expect(launchCall()?.[2]?.windowsVerbatimArguments).toBeUndefined();
       expect(safeChildEnv()).not.toHaveProperty("CADENCE_PROJECT_SETTING");
     } finally {
       vi.unstubAllEnvs();
@@ -1331,11 +1327,7 @@ describe("bounded real process owner", () => {
     const complete = await node(frames, { protocol: true });
     expect(complete.outcome).toBe("completed");
     expect(complete).toMatchObject({ closed: true, exitCode: 0, text: "Done" });
-    expect(vi.mocked(spawn).mock.lastCall?.[2]?.stdio).toEqual([
-      "ignore",
-      "pipe",
-      "pipe",
-    ]);
+    expect(launchCall()?.[2]?.stdio).toEqual(["ignore", "pipe", "pipe"]);
     for (const code of [
       "",
       "console.log('broken')",
