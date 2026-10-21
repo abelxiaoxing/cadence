@@ -10,6 +10,7 @@ import { HttpServiceTransport } from "../src/service-http-client.ts";
 import { confirm, prepare } from "../web/src/client/actions.ts";
 import { acceptingFixture } from "./helpers/accepting-fixture.ts";
 import { nativeBuild } from "./helpers/source-build.ts";
+import { keepOnlyEnvironment } from "./helpers/windows-environment.ts";
 
 function ok<T>(reply: Reply<T>): T {
   expect(reply.kind, JSON.stringify(reply)).toBe("ok");
@@ -19,8 +20,8 @@ function ok<T>(reply: Reply<T>): T {
 for (const mode of ["source", "generated"] as const)
   it(`actual ${mode} accepting host: explicit choice, saved graph, advisory, overlapping SDK children, real check/review, cancel and compatibility`, async () => {
     const f = await acceptingFixture(mode, (env) => {
-      for (const k of Object.keys(process.env))
-        if (!(k in env)) vi.stubEnv(k, undefined);
+      // Case-insensitive on Windows: never stub one variable under two spellings.
+      keepOnlyEnvironment(Object.keys(env));
       for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v);
     });
     const c = f.client;

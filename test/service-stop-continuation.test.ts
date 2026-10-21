@@ -3,6 +3,7 @@ import { readRunState } from "../src/history/run-state.ts";
 import type { Action, Receipt, Reply } from "../src/service-contract.ts";
 import { confirm, prepare } from "../web/src/client/actions.ts";
 import { acceptingFixture } from "./helpers/accepting-fixture.ts";
+import { keepOnlyEnvironment } from "./helpers/windows-environment.ts";
 
 function ok<T>(reply: Reply<T>): T {
   if (reply.kind !== "ok") throw Error(JSON.stringify(reply));
@@ -11,8 +12,8 @@ function ok<T>(reply: Reply<T>): T {
 for (const kind of ["start", "check"] as const)
   it(`Stop joins original ${kind} final publication without recording cancellation after terminal settlement`, async () => {
     const f = await acceptingFixture("source", (env) => {
-      for (const key of Object.keys(process.env))
-        if (!(key in env)) vi.stubEnv(key, undefined);
+      // Case-insensitive on Windows: never stub one variable under two spellings.
+      keepOnlyEnvironment(Object.keys(env));
       for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
     });
     const host = f.host!;
