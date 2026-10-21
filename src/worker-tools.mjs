@@ -8,6 +8,9 @@ import {
   TextSanitizer,
 } from "./worker-redaction.mjs";
 
+/** Matches the stock bash renderer's update throttle. */
+const UPDATE_INTERVAL_MS = 100;
+
 /** No stock bash definition/OutputAccumulator: raw output is never spilled. */
 export function captureBash(
   cwd,
@@ -57,6 +60,39 @@ export function captureBash(
         prefix.grow(Buffer.byteLength(text));
         output += text;
       };
+      const refuse = () => {
+        failed = true;
+        local.abort();
+        fail();
+      };
+      // Previews only: the final result carries every byte. Windows pipes
+      // deliver chatty output as thousands of small chunks, and each update is
+      // a durable capture detail, so throttle like the stock bash renderer.
+      let lastUpdate = Number.NEGATIVE_INFINITY;
+      let pending;
+      const publish = () => {
+        pending = undefined;
+        if (failed) return;
+        lastUpdate = performance.now();
+        try {
+          let tail = output.slice(-4096);
+          if (/^[\uDC00-\uDFFF]/.test(tail)) tail = tail.slice(1);
+          onUpdate?.({
+            content: [{ type: "text", text: tail }],
+            details:
+              output.length > tail.length
+                ? {
+                    truncation: {
+                      observedBytes: Buffer.byteLength(output),
+                      updatePreview: true,
+                    },
+                  }
+                : {},
+          });
+        } catch {
+          refuse();
+        }
+      };
       try {
         const result = await createLocalBashOperations().exec(command, cwd, {
           signal: local.signal,
@@ -74,24 +110,11 @@ export function captureBash(
               )
                 throw new ContractError("oversize");
               append(sanitizer.write(decoder.decode(data, { stream: true })));
-              let tail = output.slice(-4096);
-              if (/^[\uDC00-\uDFFF]/.test(tail)) tail = tail.slice(1);
-              onUpdate?.({
-                content: [{ type: "text", text: tail }],
-                details:
-                  output.length > tail.length
-                    ? {
-                        truncation: {
-                          observedBytes: Buffer.byteLength(output),
-                          updatePreview: true,
-                        },
-                      }
-                    : {},
-              });
+              const since = performance.now() - lastUpdate;
+              if (since >= UPDATE_INTERVAL_MS) publish();
+              else pending ??= setTimeout(publish, UPDATE_INTERVAL_MS - since);
             } catch {
-              failed = true;
-              local.abort();
-              fail();
+              refuse();
             } finally {
               raw?.release();
             }
@@ -117,6 +140,8 @@ export function captureBash(
           details: {},
         };
       } finally {
+        // No preview may follow the result.
+        clearTimeout(pending);
         prefix.release();
         signal?.removeEventListener("abort", abort);
       }
