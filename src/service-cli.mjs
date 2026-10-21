@@ -88,7 +88,10 @@ function safeChildEnv() {
     "TMPDIR",
     "LANG",
     "LC_ALL",
-    "PATHEXT"
+    "PATHEXT",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432"
   ])
     if (process.env[key] !== undefined)
       env[key] = process.env[key];
