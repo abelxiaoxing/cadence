@@ -299,7 +299,28 @@ describe.skipIf(process.platform !== "linux")("systemd user autostart", () => {
       configureAutostart(f.s, "install", join(f.home, "missing")),
     ).toThrow();
     expect(existsSync(f.unit)).toBe(false);
-    expect(configureAutostart(f.s, "install", "~").workspace).toBe(f.home);
+  });
+
+  it("a home-directory workspace lands on ~/cadence, which upgrades then keep", () => {
+    const f = fake();
+    // ~/.local/state (the unit's default state home) is inside ~.
+    expect(configureAutostart(f.s, "install", "~")).toMatchObject({
+      status: "started",
+      workspace: join(f.home, "cadence"),
+      redirectedFrom: f.home,
+    });
+    expect(readFileSync(f.unit, "utf8")).toContain(
+      `WorkingDirectory=${join(f.home, "cadence")}\n`,
+    );
+    const upgrade = configureAutostart(f.s, "refresh");
+    expect(upgrade).toMatchObject({ workspace: join(f.home, "cadence") });
+    expect(upgrade.redirectedFrom).toBeUndefined();
+    // With the state home moved outside, home is used as given.
+    const g = fake();
+    g.s.env.XDG_STATE_HOME = join(g.home, "..", "state");
+    expect(configureAutostart(g.s, "install", "~")).toMatchObject({
+      workspace: g.home,
+    });
   });
 
   it("escapes systemd specifiers, variables and quotes; refuses control characters", () => {

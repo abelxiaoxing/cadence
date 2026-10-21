@@ -215,6 +215,42 @@ function canonicalAmbientRoot(path: string): string {
     return join(canonicalAmbientRoot(parent), full.slice(parent.length));
   }
 }
+function privateRootFor(canonicalRoot: string, stateHome: string): string {
+  return join(
+    canonicalAmbientRoot(stateHome),
+    "cadence-assistant-v1",
+    createHash("sha256").update(canonicalRoot).digest("hex"),
+  );
+}
+function contains(root: string, path: string): boolean {
+  const within = relative(root, resolve(path));
+  return (
+    !within ||
+    (!within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within))
+  );
+}
+/** Private history, locks and access material must stay outside the working
+ * copy, or change observation, check freshness and review would see them. */
+export function stateHomeInside(
+  root: string,
+  stateHome = defaultStateHome(),
+): boolean {
+  const canonical = realpathSync(root);
+  return contains(canonical, privateRootFor(canonical, stateHome));
+}
+export const LANDING_WORKSPACE = "cadence";
+/** A directory that contains the private state home (the home directory and
+ * its ancestors) can never be a workspace; use ~/cadence instead of refusing.
+ * Observation only: the caller decides whether the landing may be created. */
+export function effectiveWorkspace(
+  requested: string,
+  stateHome?: string,
+  home = homedir(),
+): { workspace: string; redirected: boolean } {
+  if (!stateHomeInside(resolveWorkspace(requested).root, stateHome))
+    return { workspace: requested, redirected: false };
+  return { workspace: join(home, LANDING_WORKSPACE), redirected: true };
+}
 export interface CheckoutLock {
   schema: "cadence-assistant-lock/1";
   token: string;
@@ -230,16 +266,8 @@ export class TaskStore {
   constructor(root: string, stateHome = defaultStateHome()) {
     this.root = realpathSync(root);
     this.tasks = join(this.root, ".cadence", "assistant", "tasks");
-    this.privateRoot = join(
-      canonicalAmbientRoot(stateHome),
-      "cadence-assistant-v1",
-      createHash("sha256").update(this.root).digest("hex"),
-    );
-    const within = relative(this.root, resolve(this.privateRoot));
-    if (
-      !within ||
-      (!within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within))
-    )
+    this.privateRoot = privateRootFor(this.root, stateHome);
+    if (contains(this.root, this.privateRoot))
       throw new Error("Private state home must be outside the working copy");
   }
   get lockPath(): string {

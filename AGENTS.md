@@ -10,6 +10,7 @@ No terminal embedded executor, automatic replay, profile copying or recovery by 
 This is not a sandbox, certified executor or transactional application system.
 Research/diagnosis are readonly; ordinary conversations remain independent.
 Human-readable task summaries live under `.cadence/assistant/tasks`; private history and coordination use `cadence-assistant-v1` outside the working copy.
+A directory containing that state home (home and its ancestors) lands on `~/cadence` instead of refusing; only `start` creates it.
 Consumer data and uncertain resources must never be imported, reset or cleaned incidentally.
 
 ## Development
