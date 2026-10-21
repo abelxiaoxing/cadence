@@ -19,8 +19,14 @@ const cli = fileURLToPath(new URL("../src/service-cli.mjs", import.meta.url));
 const roots: string[] = [];
 afterEach(() => {
   vi.unstubAllEnvs();
+  // A just-stopped Windows service can still hold its directory briefly.
   for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 20,
+      retryDelay: 100,
+    });
 });
 
 /** A home directory whose default private state home (~/.local/state) is
