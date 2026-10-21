@@ -6,9 +6,16 @@ import { syncBuiltinESMExports } from "node:module";
 const spawn = cp.spawn;
 await import("./lightweight-sdk-guard.mjs");
 const refused = cp.spawn;
+// The shells the SDK itself selects: Git Bash under ProgramFiles on Windows.
+const shells =
+  process.platform === "win32"
+    ? [process.env.ProgramFiles, process.env["ProgramFiles(x86)"]]
+        .filter(Boolean)
+        .map((dir) => `${dir}\\Git\\bin\\bash.exe`)
+    : ["/bin/bash", "/usr/bin/bash"];
 cp.spawn = function (command, args, options) {
   if (
-    ["/bin/bash", "/usr/bin/bash"].includes(command) &&
+    shells.includes(command) &&
     args.length === 2 &&
     args[0] === "-c" &&
     [
