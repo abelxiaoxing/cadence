@@ -21,6 +21,7 @@ import { readHostConfig } from "../src/service/runtime.ts";
 import { ServiceClient } from "../src/service-client.ts";
 import { HttpServiceTransport } from "../src/service-http-client.ts";
 import { historyFixture } from "./helpers/history-fixture.ts";
+import { withoutNodeProxyNotice } from "./helpers/node-notices.ts";
 
 const cli = fileURLToPath(new URL("../src/service-cli.mjs", import.meta.url));
 const host = fileURLToPath(new URL("../src/service-host.mjs", import.meta.url));
@@ -220,7 +221,11 @@ it("native-proxy-enabled management keeps local capability direct without changi
   });
   try {
     const result = await run(f, "status"); // real generated SDK-free CLI, actual native proxy opt-in
-    expect([result.code, result.signal, result.stderr]).toEqual([0, null, ""]);
+    expect([
+      result.code,
+      result.signal,
+      withoutNodeProxyNotice(result.stderr),
+    ]).toEqual([0, null, ""]);
     expect(JSON.parse(result.stdout)).toEqual({ status: "alive", epoch });
     expect({ localHits, proxyHits, leakedCapability }).toEqual({
       localHits: 1,
