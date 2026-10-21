@@ -28,6 +28,7 @@ import {
 } from "../src/service-wire.ts";
 
 import { sourceBuild } from "./helpers/source-build.ts";
+import { windowsSystemEnvironment } from "./helpers/windows-environment.ts";
 
 const selector = {
   provider: "fixture",
@@ -242,8 +243,7 @@ for (const scenario of [
       PI_OFFLINE: "1",
       NO_COLOR: "1",
     };
-    for (const key of ["SystemRoot", "WINDIR", "COMSPEC", "PATHEXT"])
-      if (process.env[key]) env[key] = process.env[key];
+    Object.assign(env, windowsSystemEnvironment());
     const child = spawn(
       process.execPath,
       ["--import", guard.href, join(bundle, "choice.mjs"), scenario, root],

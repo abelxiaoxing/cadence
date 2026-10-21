@@ -86,6 +86,7 @@ import type {
 import { HttpServiceTransport } from "../src/service-http-client.ts";
 import { SchedulerDiagnostics } from "./helpers/scheduler-diagnostics.ts";
 import { createServiceHost } from "./helpers/source-host.ts";
+import { keepOnlyEnvironment } from "./helpers/windows-environment.ts";
 
 const diagnostics: {
   d: SchedulerDiagnostics;
@@ -220,8 +221,7 @@ async function fixture(
     "VITEST_POOL_ID",
     "VITEST_WORKER_ID",
   ]);
-  for (const key of Object.keys(process.env))
-    if (!allowed.has(key)) vi.stubEnv(key, undefined);
+  keepOnlyEnvironment(allowed);
   vi.stubEnv("HOME", home);
   vi.stubEnv("USERPROFILE", home);
   const h = await createServiceHost({

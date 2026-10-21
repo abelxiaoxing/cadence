@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import { NativeConnection } from "../src/native-client.ts";
 import { effectiveWorkspace, stateHomeInside } from "../src/task-store.ts";
+import { windowsSystemEnvironment } from "./helpers/windows-environment.ts";
 
 const cli = fileURLToPath(new URL("../src/service-cli.mjs", import.meta.url));
 const roots: string[] = [];
@@ -42,8 +43,7 @@ function fakeHome() {
     TMP: join(dir, "tmp"),
     NO_COLOR: "1",
   };
-  for (const key of ["SystemRoot", "WINDIR", "COMSPEC", "PATHEXT"])
-    if (process.env[key]) env[key] = process.env[key];
+  Object.assign(env, windowsSystemEnvironment());
   return { dir, home, env, landing: join(home, "cadence") };
 }
 function run(

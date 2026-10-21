@@ -229,6 +229,10 @@ async function childOwner(
   };
 }
 
+// POSIX permission modes and UIDs: Windows ACLs are not modes, and private
+// files deliberately skip mode checks there (task-store/private-files).
+const posix = process.platform !== "win32";
+const posixModes = posix ? (["mode"] as const) : [];
 describe("service coordination: actual isolated filesystem", () => {
   it("readonly discovery/diagnosis preserves absence, old logs and consumer bytes", async () => {
     const { c, dir, root } = fixture();
@@ -374,13 +378,15 @@ describe("service coordination: actual isolated filesystem", () => {
   });
   it("literal whitespace path bytes survive workspace/state aliases and release", () => {
     const { dir } = fixture();
-    const root = join(dir, " project \t");
+    // Windows forbids tabs and trailing spaces in names; keep the legal bytes.
+    const root = join(dir, posix ? " project \t" : " pro ject");
+    const state = join(dir, posix ? " state " : " st ate");
     mkdirSync(root);
     git(root, "init", "-q");
-    const c = new ServiceCoordination(root, join(dir, " state "));
+    const c = new ServiceCoordination(root, state);
     const lease = c.acquire(config());
     expect(lease.registration.root).toBe(root);
-    expect(lease.registration.stateHome).toBe(join(dir, " state "));
+    expect(lease.registration.stateHome).toBe(state);
     lease.release();
   });
   for (const name of [
@@ -390,50 +396,57 @@ describe("service coordination: actual isolated filesystem", () => {
     "owner.lock",
     "local-capability.json",
   ] as const) {
-    it.each(["corrupt", "schema", "oversize", "symlink", "hardlink", "mode"])(
-      `${name}: selected %s bytes are refused/preserved`,
-      (kind) => {
-        const { c, dir } = fixture();
-        const lease = c.acquire(config());
-        const path = c.path(name);
-        if (kind === "corrupt") writeFileSync(path, "{bad");
-        if (kind === "schema") writeFileSync(path, '{"schema":"future/99"}');
-        if (kind === "oversize") writeFileSync(path, "x".repeat(16385));
-        if (kind === "symlink") {
-          renameSync(path, join(dir, "saved"));
-          symlinkSync(join(dir, "saved"), path);
-        }
-        if (kind === "hardlink") linkSync(path, join(dir, "linked"));
-        if (kind === "mode") chmodSync(path, 0o644);
-        const original = bytes(path);
-        expect(c.inspect().status).toBe("unavailable");
-        expect(() => lease.release()).toThrow();
-        expect(() => c.acquire(config())).toThrow();
-        expect(bytes(path)).toEqual(original);
-        held(lease);
-      },
-    );
-  }
-  it("private directory link/mode and injected foreign UID refuse without repair", () => {
-    const { c, dir } = fixture();
-    const lease = c.acquire(config());
-    chmodSync(c.directory, 0o755);
-    expect(c.inspect().status).toBe("unavailable");
-    expect(() => lease.release()).toThrow();
-    chmodSync(c.directory, 0o700);
-    const uid = process.getuid!();
-    const getuid = vi.spyOn(process, "getuid").mockReturnValue(uid + 1);
-    try {
+    it.each([
+      "corrupt",
+      "schema",
+      "oversize",
+      "symlink",
+      "hardlink",
+      ...posixModes,
+    ])(`${name}: selected %s bytes are refused/preserved`, (kind) => {
+      const { c, dir } = fixture();
+      const lease = c.acquire(config());
+      const path = c.path(name);
+      if (kind === "corrupt") writeFileSync(path, "{bad");
+      if (kind === "schema") writeFileSync(path, '{"schema":"future/99"}');
+      if (kind === "oversize") writeFileSync(path, "x".repeat(16385));
+      if (kind === "symlink") {
+        renameSync(path, join(dir, "saved"));
+        symlinkSync(join(dir, "saved"), path);
+      }
+      if (kind === "hardlink") linkSync(path, join(dir, "linked"));
+      if (kind === "mode") chmodSync(path, 0o644);
+      const original = bytes(path);
       expect(c.inspect().status).toBe("unavailable");
       expect(() => lease.release()).toThrow();
-    } finally {
-      getuid.mockRestore();
-    }
-    renameSync(c.directory, join(dir, "saved-service"));
-    symlinkSync(join(dir, "saved-service"), c.directory, "dir");
-    expect(c.inspect().status).toBe("unavailable");
-    expect(() => lease.release()).toThrow();
-  });
+      expect(() => c.acquire(config())).toThrow();
+      expect(bytes(path)).toEqual(original);
+      held(lease);
+    });
+  }
+  it.skipIf(!posix)(
+    "private directory link/mode and injected foreign UID refuse without repair",
+    () => {
+      const { c, dir } = fixture();
+      const lease = c.acquire(config());
+      chmodSync(c.directory, 0o755);
+      expect(c.inspect().status).toBe("unavailable");
+      expect(() => lease.release()).toThrow();
+      chmodSync(c.directory, 0o700);
+      const uid = process.getuid!();
+      const getuid = vi.spyOn(process, "getuid").mockReturnValue(uid + 1);
+      try {
+        expect(c.inspect().status).toBe("unavailable");
+        expect(() => lease.release()).toThrow();
+      } finally {
+        getuid.mockRestore();
+      }
+      renameSync(c.directory, join(dir, "saved-service"));
+      symlinkSync(join(dir, "saved-service"), c.directory, "dir");
+      expect(c.inspect().status).toBe("unavailable");
+      expect(() => lease.release()).toThrow();
+    },
+  );
   it.each(["registration.json", "owner.lock", "checkout.lock"])(
     "whitespace-only external %s modification prevents every release",
     (name) => {
@@ -454,7 +467,7 @@ describe("service coordination: actual isolated filesystem", () => {
     "oversize",
     "duplicate",
     "wrong-root",
-    "mode",
+    ...posixModes,
     "hardlink",
     "symlink",
     "lock",
@@ -488,18 +501,22 @@ describe("service coordination: actual isolated filesystem", () => {
     if (kind === "lock")
       expect(readFileSync(registryLock(c), "utf8")).toBe("uncertain");
   });
-  it("actual denied persistence retains original owner/v1 bytes and reservation", async () => {
-    const { c } = fixture();
-    const lease = c.acquire(config());
-    const before = bytes(c.store.lockPath);
-    chmodSync(c.directory, 0o500);
-    const owner = new ServiceOwner(lease, ports());
-    expect((await owner.stop(100)).state).toBe("quarantined");
-    expect(bytes(c.store.lockPath)).toEqual(before);
-    held(lease);
-    expect(() => c.acquire(config())).toThrow();
-    chmodSync(c.directory, 0o700); // Restore only this fixture's mode; no fence cleanup.
-  });
+  // chmod 0o500 does not deny writes on Windows.
+  it.skipIf(!posix)(
+    "actual denied persistence retains original owner/v1 bytes and reservation",
+    async () => {
+      const { c } = fixture();
+      const lease = c.acquire(config());
+      const before = bytes(c.store.lockPath);
+      chmodSync(c.directory, 0o500);
+      const owner = new ServiceOwner(lease, ports());
+      expect((await owner.stop(100)).state).toBe("quarantined");
+      expect(bytes(c.store.lockPath)).toEqual(before);
+      held(lease);
+      expect(() => c.acquire(config())).toThrow();
+      chmodSync(c.directory, 0o700); // Restore only this fixture's mode; no fence cleanup.
+    },
+  );
   it("partial initialization and pending temporaries are never adopted or removed", () => {
     const { c } = fixture();
     c.files.directory(c.directory, true);

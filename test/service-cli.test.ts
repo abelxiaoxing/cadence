@@ -22,6 +22,7 @@ import { ServiceClient } from "../src/service-client.ts";
 import { HttpServiceTransport } from "../src/service-http-client.ts";
 import { historyFixture } from "./helpers/history-fixture.ts";
 import { withoutNodeProxyNotice } from "./helpers/node-notices.ts";
+import { windowsSystemEnvironment } from "./helpers/windows-environment.ts";
 
 const cli = fileURLToPath(new URL("../src/service-cli.mjs", import.meta.url));
 const host = fileURLToPath(new URL("../src/service-host.mjs", import.meta.url));
@@ -43,8 +44,7 @@ function fixture() {
     PATH: process.env.PATH,
     NO_COLOR: "1",
   };
-  for (const key of ["SystemRoot", "WINDIR", "COMSPEC", "PATHEXT"])
-    if (process.env[key]) env[key] = process.env[key];
+  Object.assign(env, windowsSystemEnvironment());
   const root = join(dir, "workspace"),
     state = join(dir, "state");
   return { dir, root, state, env, c: new ServiceCoordination(root, state) };
@@ -730,169 +730,174 @@ it("ordinary Node foreground management waits original host close after authenti
   expect(signal).toBeNull();
 }, 30000);
 
-it("generated owner crash, native recovery, readonly diagnosis and fresh foreground restart never replay", async () => {
-  const f = fixture();
-  const child = spawn(process.execPath, [host], {
-    cwd: f.root,
-    env: f.env,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  const closed = once(child, "close");
-  let stdout = "",
-    stderr = "",
-    original: unknown;
-  child.stdout.on("data", (b) => {
-    stdout += b;
-  });
-  child.stderr.on("data", (b) => {
-    stderr += b;
-  });
-  child.stdin.end(
-    JSON.stringify({
-      workspace: f.root,
-      stateHome: f.state,
-      environmentToken: null,
-      config: {
-        schema: "cadence-service-host/1",
-        cwd: f.root,
-        agentDir: join(f.dir, "agent"),
-        tokenSource: "generated",
-        tokenFile: null,
-        http: {
-          schema: "cadence-service-http/1",
-          host: "127.0.0.1",
-          port: 0,
-          proxy: null,
-        },
-      },
-    }),
-  );
-  try {
-    await expect
-      .poll(() => stdout.includes("\n"), { timeout: 10000 })
-      .toBe(true);
-    expect(JSON.parse(stdout).status).toBe("ready");
-    const first = f.c.localAccess();
-    child.kill("SIGKILL"); // explicit abrupt-crash injection to this original fixture handle only
-    original = await closed;
-    expect(original).toEqual([null, "SIGKILL"]);
-    const before = tree(f.state);
-    for (const command of ["status", "diagnose", "status"])
-      expect(JSON.parse((await run(f, command)).stdout).status).toBe(
-        "unavailable",
-      );
-    expect(tree(f.state)).toEqual(before);
-    const config = join(f.dir, "recovery-pty.json"),
-      receipt = join(f.dir, "pty-receipt.json");
-    writeFileSync(
-      config,
+// Recovery is driven through a POSIX pty (recovery-pty.py); see service-recovery.
+it.skipIf(process.platform === "win32")(
+  "generated owner crash, native recovery, readonly diagnosis and fresh foreground restart never replay",
+  async () => {
+    const f = fixture();
+    const child = spawn(process.execPath, [host], {
+      cwd: f.root,
+      env: f.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const closed = once(child, "close");
+    let stdout = "",
+      stderr = "",
+      original: unknown;
+    child.stdout.on("data", (b) => {
+      stdout += b;
+    });
+    child.stderr.on("data", (b) => {
+      stderr += b;
+    });
+    child.stdin.end(
       JSON.stringify({
-        mode: "resolve",
+        workspace: f.root,
+        stateHome: f.state,
+        environmentToken: null,
+        config: {
+          schema: "cadence-service-host/1",
+          cwd: f.root,
+          agentDir: join(f.dir, "agent"),
+          tokenSource: "generated",
+          tokenFile: null,
+          http: {
+            schema: "cadence-service-http/1",
+            host: "127.0.0.1",
+            port: 0,
+            proxy: null,
+          },
+        },
+      }),
+    );
+    try {
+      await expect
+        .poll(() => stdout.includes("\n"), { timeout: 10000 })
+        .toBe(true);
+      expect(JSON.parse(stdout).status).toBe("ready");
+      const first = f.c.localAccess();
+      child.kill("SIGKILL"); // explicit abrupt-crash injection to this original fixture handle only
+      original = await closed;
+      expect(original).toEqual([null, "SIGKILL"]);
+      const before = tree(f.state);
+      for (const command of ["status", "diagnose", "status"])
+        expect(JSON.parse((await run(f, command)).stdout).status).toBe(
+          "unavailable",
+        );
+      expect(tree(f.state)).toEqual(before);
+      const config = join(f.dir, "recovery-pty.json"),
+        receipt = join(f.dir, "pty-receipt.json");
+      writeFileSync(
+        config,
+        JSON.stringify({
+          mode: "resolve",
+          epoch: first.epoch,
+          receipt,
+          cwd: f.root,
+          env: f.env,
+          argv: [
+            process.execPath,
+            cli,
+            "recover",
+            "resolve",
+            "--workspace",
+            f.root,
+            "--state-home",
+            f.state,
+          ],
+        }),
+        { mode: 0o600 },
+      );
+      const recovery = spawnSync(
+        "python3",
+        ["test/helpers/recovery-pty.py", config],
+        { env: f.env, encoding: "utf8", timeout: 90000 },
+      );
+      expect(recovery.error).toBeUndefined();
+      expect(recovery.status, recovery.stderr).toBe(0);
+      expect(JSON.parse(readFileSync(receipt, "utf8"))).toEqual({
+        waitpidReturned: true,
+        exitCode: 0,
+        forced: false,
+        fault: null,
+      });
+      expect(JSON.parse((await run(f, "status")).stdout)).toEqual({
+        status: "stopped",
         epoch: first.epoch,
-        receipt,
-        cwd: f.root,
-        env: f.env,
-        argv: [
-          process.execPath,
+      });
+      const next = spawn(
+        process.execPath,
+        [
           cli,
-          "recover",
-          "resolve",
+          "start",
+          "--foreground",
           "--workspace",
           f.root,
           "--state-home",
           f.state,
         ],
-      }),
-      { mode: 0o600 },
-    );
-    const recovery = spawnSync(
-      "python3",
-      ["test/helpers/recovery-pty.py", config],
-      { env: f.env, encoding: "utf8", timeout: 90000 },
-    );
-    expect(recovery.error).toBeUndefined();
-    expect(recovery.status, recovery.stderr).toBe(0);
-    expect(JSON.parse(readFileSync(receipt, "utf8"))).toEqual({
-      waitpidReturned: true,
-      exitCode: 0,
-      forced: false,
-      fault: null,
-    });
-    expect(JSON.parse((await run(f, "status")).stdout)).toEqual({
-      status: "stopped",
-      epoch: first.epoch,
-    });
-    const next = spawn(
-      process.execPath,
-      [
-        cli,
-        "start",
-        "--foreground",
-        "--workspace",
-        f.root,
-        "--state-home",
-        f.state,
-      ],
-      { cwd: f.root, env: f.env, stdio: ["ignore", "pipe", "pipe"] },
-    );
-    const nextClosed = once(next, "close");
-    let ready = "",
-      errors = "",
-      stopped: unknown;
-    next.stdout.on("data", (b) => {
-      ready += b;
-    });
-    next.stderr.on("data", (b) => {
-      errors += b;
-    });
-    try {
-      await expect
-        .poll(() => ready.includes("\n"), { timeout: 10000 })
-        .toBe(true);
-      expect(JSON.parse(ready)).toMatchObject({
-        status: "alive",
-        actions: false,
+        { cwd: f.root, env: f.env, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const nextClosed = once(next, "close");
+      let ready = "",
+        errors = "",
+        stopped: unknown;
+      next.stdout.on("data", (b) => {
+        ready += b;
       });
-      const second = f.c.localAccess();
-      expect(second.epoch).not.toBe(first.epoch);
-      expect(second.capability).not.toBe(first.capability);
-      expect(second.endpoint).toBe(first.endpoint);
-      expect(JSON.parse((await run(f, "diagnose")).stdout)).toMatchObject({
-        status: "alive",
-        pendingWrites: 0,
-        pendingPreparations: 0,
+      next.stderr.on("data", (b) => {
+        errors += b;
       });
-      expect(f.c.store.list()).toEqual([]); // no recovery/task/queue replay
+      try {
+        await expect
+          .poll(() => ready.includes("\n"), { timeout: 10000 })
+          .toBe(true);
+        expect(JSON.parse(ready)).toMatchObject({
+          status: "alive",
+          actions: false,
+        });
+        const second = f.c.localAccess();
+        expect(second.epoch).not.toBe(first.epoch);
+        expect(second.capability).not.toBe(first.capability);
+        expect(second.endpoint).toBe(first.endpoint);
+        expect(JSON.parse((await run(f, "diagnose")).stdout)).toMatchObject({
+          status: "alive",
+          pendingWrites: 0,
+          pendingPreparations: 0,
+        });
+        expect(f.c.store.list()).toEqual([]); // no recovery/task/queue replay
+      } finally {
+        stopped = await run(f, "stop");
+        const restartedClose = await nextClosed;
+        writeFileSync(
+          join(f.dir, "recovery-restart-receipt.json"),
+          JSON.stringify({
+            crashedOriginal: original,
+            restartedOriginal: restartedClose,
+            stop: stopped,
+            stderr,
+            errors,
+          }),
+          { mode: 0o600 },
+        );
+        expect(restartedClose).toEqual([0, null]);
+        expect(stopped).toMatchObject({ code: 0, signal: null, stderr: "" });
+        expect(errors).toBe("");
+      }
     } finally {
-      stopped = await run(f, "stop");
-      const restartedClose = await nextClosed;
+      if (!original) {
+        child.kill("SIGTERM");
+        original = await closed;
+      }
       writeFileSync(
-        join(f.dir, "recovery-restart-receipt.json"),
-        JSON.stringify({
-          crashedOriginal: original,
-          restartedOriginal: restartedClose,
-          stop: stopped,
-          stderr,
-          errors,
-        }),
+        join(f.dir, "crash-original-receipt.json"),
+        JSON.stringify({ original, stderr }),
         { mode: 0o600 },
       );
-      expect(restartedClose).toEqual([0, null]);
-      expect(stopped).toMatchObject({ code: 0, signal: null, stderr: "" });
-      expect(errors).toBe("");
     }
-  } finally {
-    if (!original) {
-      child.kill("SIGTERM");
-      original = await closed;
-    }
-    writeFileSync(
-      join(f.dir, "crash-original-receipt.json"),
-      JSON.stringify({ original, stderr }),
-      { mode: 0o600 },
-    );
-  }
-}, 90000);
+  },
+  90000,
+);
 it.each([0, 7])(
   "foreground unconfirmed readiness remains CLI failure after fixture child exit %s",
   async (code) => {
