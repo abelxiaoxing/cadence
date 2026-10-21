@@ -206,7 +206,9 @@ export async function acceptingFixture(
     )
       await new Promise((r) => setTimeout(r, 20));
     if (!stdout.includes('"ready"'))
-      throw Error(`native host readiness unavailable: ${stderr}`);
+      throw Error(
+        `native host readiness unavailable (env names: ${Object.keys(env).join(",")}): ${stderr}`,
+      );
   }
   if (mode === "source") {
     if (!environment)
