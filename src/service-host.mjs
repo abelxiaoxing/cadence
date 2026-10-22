@@ -21228,6 +21228,14 @@ class TaskScheduler {
 
 // src/service/task-actions.ts
 var actionOwners = new WeakSet;
+function snapshotReads() {
+  const kept = new Map;
+  return (key2, read2) => {
+    if (!kept.has(key2))
+      kept.set(key2, read2());
+    return kept.get(key2);
+  };
+}
 
 class TaskActions {
   options;
@@ -21707,14 +21715,16 @@ class TaskActions {
     assertCurrent();
     return checks;
   }
-  obligations(version, snapshot) {
+  obligations(version, snapshot, reads) {
     if (!version.task)
       throw new ContractError("stale");
-    return this.obligationsFor(version.task.id, version.task.kind, { status: "available", version }, snapshot);
+    return this.obligationsFor(version.task.id, version.task.kind, { status: "available", version }, snapshot, reads);
   }
-  obligationsFor(taskId, kind, context, snapshot) {
+  obligationsFor(taskId, kind, context, snapshot, reads) {
     const configured = this.checks(taskId);
-    const state = currentChecks(this.options.host.reader.files, taskId, kind === "code" ? configured : { revision: configured.revision, selections: [] }, context, snapshot);
+    const selections = kind === "code" ? configured : { revision: configured.revision, selections: [] };
+    const fold = () => currentChecks(this.options.host.reader.files, taskId, selections, context, snapshot);
+    const state = reads ? reads(`checks:${canonicalJson({ taskId, selections, context, snapshot })}`, fold) : fold();
     if (canonicalJson(configured) !== canonicalJson(this.checks(taskId)))
       throw new ContractError("stale");
     if (context.status !== "available")
@@ -21952,13 +21962,14 @@ class TaskActions {
     });
     accepted2.activate(work);
   }
-  reviewObservation(runId, version, snapshot = this.options.host.writer.committedSeq) {
+  reviewObservation(runId, version, snapshot = this.options.host.writer.committedSeq, reads) {
     if (!version.task)
       throw new ContractError("stale");
     const h = this.options.host, taskId = version.task.id;
-    const selection = h.reader.reviewSelection(taskId, runId, snapshot);
+    const select = () => h.reader.reviewSelection(taskId, runId, snapshot);
+    const selection = reads ? reads(`selection:${taskId}:${runId}:${snapshot}`, select) : select();
     const { run } = selection;
-    const state = this.obligations(version, snapshot);
+    const state = this.obligations(version, snapshot, reads);
     const current2 = {
       ...state,
       checks: state.checks,
@@ -21990,6 +22001,7 @@ class TaskActions {
       const currentGraph = graph?.graph ?? (this.options.choice ? this.defaultGraph(selected2.record, selected2.identity, expected.model) : null);
       if ((currentGraph ? hash(canonicalJson(currentGraph)) : null) !== task.graphIdentity || (currentGraph?.revision ?? null) !== task.graphRevision)
         throw new ContractError("stale");
+      const reads = snapshotReads();
       const validate = (published) => {
         this.assertChoice(expected);
         held.assertHeld();
@@ -21999,14 +22011,14 @@ class TaskActions {
         const changes2 = captureChanges(h.coordination.store.root);
         if (changes2.fingerprint !== expected.observation.identity || changes2.complete !== expected.observation.complete)
           throw new ContractError("stale");
-        const proven = h.reader.publishedPlan(task.id, snapshot, {
+        const proven = reads(`plan:${task.id}:${snapshot}`, () => h.reader.publishedPlan(task.id, snapshot, {
           revision: selected2.record.revision,
           identity: selected2.identity,
           plan: selected2.record.plan
-        });
+        }));
         if ((proven?.reference.sha256 ?? (currentGraph ? hash(canonicalJson(currentGraph)) : null)) !== task.graphIdentity)
           throw new ContractError("stale");
-        const current3 = this.reviewObservation(action.runId, expected, snapshot);
+        const current3 = this.reviewObservation(action.runId, expected, snapshot, reads);
         if (current3.checks.revision !== action.checksRevision || current3.issues.length && !action.acceptIssues)
           throw new ContractError("stale");
         return current3;
