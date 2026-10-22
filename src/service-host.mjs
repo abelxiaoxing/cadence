@@ -29,7 +29,9 @@ import {
   fstatSync as fstatSync2,
   fsyncSync as fsyncSync2,
   lstatSync as lstatSync2,
+  mkdirSync as mkdirSync2,
   openSync as openSync2,
+  readSync as readSync2,
   renameSync as renameSync2,
   unlinkSync as unlinkSync2,
   writeFileSync as writeFileSync2
@@ -170,11 +172,8 @@ function safeDirectory(path, create = false, inspectExisting) {
     at = join(at, part);
     let existing;
     try {
-      const st = lstatSync(at);
-      if (!st.isDirectory())
-        throw new Error("Unsafe directory");
       const checked = lstatSync(at);
-      if (checked.isSymbolicLink() || inspectExisting && !checked.isDirectory())
+      if (!checked.isDirectory() || checked.isSymbolicLink())
         throw new Error("Unsafe directory");
       existing = checked;
     } catch (error) {
@@ -188,7 +187,8 @@ function safeDirectory(path, create = false, inspectExisting) {
         if (!object(mkdirError) || mkdirError.code !== "EEXIST")
           throw mkdirError;
       }
-      if (!lstatSync(at).isDirectory() || lstatSync(at).isSymbolicLink())
+      const created = lstatSync(at);
+      if (!created.isDirectory() || created.isSymbolicLink())
         throw new Error("Unsafe directory");
     }
     if (existing)
@@ -2137,13 +2137,29 @@ class PrivateFiles {
           privateMode(st);
       });
     }
+    if (!safeDirectory(this.namespace, true))
+      return false;
+    privateMode(lstatSync2(this.namespace));
     let at = this.namespace;
-    for (const part of ["", ...tail.split(sep2).filter(Boolean)]) {
-      if (part)
-        at = join2(at, part);
-      if (!safeDirectory(at, create))
-        return false;
-      privateMode(lstatSync2(at));
+    for (const part of tail.split(sep2).filter(Boolean)) {
+      at = join2(at, part);
+      let st;
+      try {
+        st = lstatSync2(at);
+      } catch (error) {
+        if (!missing(error))
+          throw error;
+        try {
+          mkdirSync2(at, { mode: 448 });
+        } catch (mkdirError) {
+          if (!(mkdirError instanceof Error && ("code" in mkdirError) && mkdirError.code === "EEXIST"))
+            throw mkdirError;
+        }
+        st = lstatSync2(at);
+      }
+      if (!st.isDirectory() || st.isSymbolicLink())
+        throw new Error("Unsafe directory");
+      privateMode(st);
     }
     return true;
   }
@@ -2166,8 +2182,16 @@ class PrivateFiles {
       const opened = fstatSync2(fd);
       if (!same(before, opened))
         refused();
-      const bytes = readBounded(path, opened.size);
-      if (!bytes || bytes.length !== opened.size || !same(opened, fstatSync2(fd)) || !same(opened, lstatSync2(path)))
+      const buffer = Buffer.alloc(opened.size + 1);
+      let size = 0;
+      while (size < buffer.length) {
+        const n = readSync2(fd, buffer, size, buffer.length - size, null);
+        if (!n)
+          break;
+        size += n;
+      }
+      const bytes = buffer.subarray(0, size);
+      if (size !== opened.size || !same(opened, fstatSync2(fd)) || !same(opened, lstatSync2(path)))
         refused();
       return { bytes, identity: hash(bytes), stamp: stamp(opened) };
     } finally {
@@ -3948,7 +3972,7 @@ import {
   fstatSync as fstatSync3,
   lstatSync as lstatSync3,
   openSync as openSync3,
-  readSync as readSync2
+  readSync as readSync3
 } from "node:fs";
 import { dirname as dirname3 } from "node:path";
 function bad() {
@@ -4015,7 +4039,7 @@ function readRange(files, path, offset, length, budget) {
     let n = 0;
     while (n < length) {
       budget.reserve(0);
-      const got = readSync2(fd, out, n, length - n, offset + n);
+      const got = readSync3(fd, out, n, length - n, offset + n);
       if (!got)
         bad();
       n += got;

@@ -136,11 +136,8 @@ function safeDirectory(path, create = false, inspectExisting) {
     at = join(at, part);
     let existing;
     try {
-      const st = lstatSync(at);
-      if (!st.isDirectory())
-        throw new Error("Unsafe directory");
       const checked = lstatSync(at);
-      if (checked.isSymbolicLink() || inspectExisting && !checked.isDirectory())
+      if (!checked.isDirectory() || checked.isSymbolicLink())
         throw new Error("Unsafe directory");
       existing = checked;
     } catch (error) {
@@ -154,7 +151,8 @@ function safeDirectory(path, create = false, inspectExisting) {
         if (!object(mkdirError) || mkdirError.code !== "EEXIST")
           throw mkdirError;
       }
-      if (!lstatSync(at).isDirectory() || lstatSync(at).isSymbolicLink())
+      const created = lstatSync(at);
+      if (!created.isDirectory() || created.isSymbolicLink())
         throw new Error("Unsafe directory");
     }
     if (existing)

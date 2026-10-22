@@ -75,16 +75,11 @@ export function safeDirectory(
     at = join(at, part);
     let existing: Stats | undefined;
     try {
-      const st = lstatSync(at);
-      if (!st.isDirectory()) throw new Error("Unsafe directory");
+      // One no-follow observation per component: a link is never reported as
+      // a directory, and the inspection sees this same, latest observation.
       const checked = lstatSync(at);
-      if (
-        checked.isSymbolicLink() ||
-        (inspectExisting && !checked.isDirectory())
-      )
+      if (!checked.isDirectory() || checked.isSymbolicLink())
         throw new Error("Unsafe directory");
-      // Inspect the latest observation, not an earlier stat whose mode/uid
-      // may already have changed. No extra IO or cross-call authority cache.
       existing = checked;
     } catch (error) {
       if (!absent(error)) throw error;
@@ -95,7 +90,8 @@ export function safeDirectory(
         if (!object(mkdirError) || mkdirError.code !== "EEXIST")
           throw mkdirError;
       }
-      if (!lstatSync(at).isDirectory() || lstatSync(at).isSymbolicLink())
+      const created = lstatSync(at);
+      if (!created.isDirectory() || created.isSymbolicLink())
         throw new Error("Unsafe directory");
     }
     // Outside the ENOENT handler: an inspection refusal is never absence and
