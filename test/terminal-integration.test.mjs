@@ -16,7 +16,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runInNewContext } from "node:vm";
-import { expect, it, vi } from "vitest";
+import { beforeAll, expect, it, vi } from "vitest";
 import { auditPackage } from "../scripts/package-audit.mjs";
 import { nativeBuild } from "../src/native-build.ts";
 import { nativeCall } from "../src/service/cli.ts";
@@ -118,6 +118,38 @@ function terminalEnvironment(
   }
   return env;
 }
+
+// A fresh Windows runner's first pwsh/.NET compiler load once took ~30s instead
+// of 4-8s, inside the first scenario's own PTY budget. Warm the same in-memory
+// compile once, untimed; the wrapper, its per-launch compile and every
+// scenario/interaction budget are unchanged. Best-effort: the scenarios still
+// report their own setup failure.
+beforeAll(async () => {
+  if (!windows) return;
+  const started = performance.now();
+  const source = path.join(repo, "test/helpers/task-shell-conpty.cs");
+  const status = await new Promise((resolve) => {
+    const child = spawn(
+      "pwsh",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `Add-Type -LiteralPath '${source.replaceAll("'", "''")}' -ErrorAction Stop`,
+      ],
+      { stdio: "ignore", timeout: 150000 },
+    );
+    child.on("error", () => resolve(null));
+    child.on("close", (code) => resolve(code));
+  });
+  console.log(
+    JSON.stringify({
+      conptyWarmup: status,
+      ms: Math.round(performance.now() - started),
+    }),
+  );
+}, 180000);
 
 function startDriver(config) {
   const child = spawn(
