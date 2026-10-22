@@ -242,6 +242,8 @@ Quota/exhaustion/refusal stops unsafe work without eviction; torn tails retain a
 Derived indexes are optional accelerators: readers validate original batches/artifacts, use bounded fallback and never repair on view.
 Current/plan/review reads replay a task's batches inside the100ms read quantum, so per-file cost bounds correctness: a slow host (Windows Node 22) once exceeded it after review, leaving the task `unavailable`.
 `PrivateFiles` reuses a directory walk only within one synchronous `DirectoryWalks` scope (a read budget or lease check), after re-observing that directory's identity; an await or later call walks again, and the quantum is never raised instead.
+Each batch settling a task's publication also writes an authenticated per-task fold checkpoint (check facts, latest run, plan/lineage progress with original admission locators), anchored to that task's chain head and keyed from the private read-proof key.
+Readers resume from the newest valid checkpoint at or before the snapshot and fold only newer original batches; the checkpoint attests the prefix's continuity proof, and a missing, foreign, moved or unauthenticated one falls back to the original chain without repair.
 Prepared journal heads avoid redundant mutable legacy hints; no-root compatibility and its original integrity checks remain.
 
 New history uses private format3 at `service-v1/history-v2/`, with exclusive private read-proof key creation before the final format marker.

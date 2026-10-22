@@ -57,6 +57,9 @@ const stamp = (s: Stats) =>
   [s.dev, s.ino, s.size, s.ctimeMs, s.mtimeMs, s.mode, s.uid, s.nlink].join(
     ":",
   );
+export function decodeBatchPointer(v: unknown): Pointer {
+  return pointer(v);
+}
 function pointer(v: unknown): Pointer {
   const o = closed(v, ["segment", "offset", "bytes", "seq"]);
   return {
@@ -989,36 +992,103 @@ export class HistoryNavigation {
     if (expected === undefined) throw new ContractError("receipt-inconclusive");
     let head: IndexHead | null = expected;
     while (head) {
-      const value = this.index(
+      const link = this.link(
         roster ? "roster-links" : "entity-links",
-        `${id}/${head.seq}`,
+        id,
+        head,
         budget,
       );
-      if (!value) throw new ContractError("receipt-inconclusive");
-      const o = closed(value, ["pointer", "previous", "previousHash", "hash"]),
-        p = pointer(o.pointer);
-      const previous = o.previous === null ? null : decodeSequence(o.previous),
-        previousHash =
-          o.previousHash === null
-            ? null
-            : typeof o.previousHash === "string"
-              ? o.previousHash
-              : undefined;
-      if (
-        previousHash === undefined ||
-        (previous === null) !== (previousHash === null) ||
-        p.seq !== head.seq ||
-        o.hash !== head.hash ||
-        chainHash(p.seq, previous, previousHash) !== head.hash ||
-        (previous !== null && BigInt(previous) >= BigInt(p.seq))
-      )
-        throw new ContractError("receipt-inconclusive");
-      yield this.batch(p, budget);
-      head =
+      yield this.batch(link.pointer, budget);
+      head = link.previous;
+    }
+  }
+  /** The validated link at `head` and its predecessor; throws unless it chains. */
+  private link(
+    group: string,
+    id: string,
+    head: IndexHead,
+    budget: HistoryReadBudget,
+  ): { pointer: ReturnType<typeof pointer>; previous: IndexHead | null } {
+    const value = this.index(group, `${id}/${head.seq}`, budget);
+    if (!value) throw new ContractError("receipt-inconclusive");
+    const o = closed(value, ["pointer", "previous", "previousHash", "hash"]),
+      p = pointer(o.pointer);
+    const previous = o.previous === null ? null : decodeSequence(o.previous),
+      previousHash =
+        o.previousHash === null
+          ? null
+          : typeof o.previousHash === "string"
+            ? o.previousHash
+            : undefined;
+    if (
+      previousHash === undefined ||
+      (previous === null) !== (previousHash === null) ||
+      p.seq !== head.seq ||
+      o.hash !== head.hash ||
+      chainHash(p.seq, previous, previousHash) !== head.hash ||
+      (previous !== null && BigInt(previous) >= BigInt(p.seq))
+    )
+      throw new ContractError("receipt-inconclusive");
+    return {
+      pointer: p,
+      previous:
         previous !== null && previousHash !== null
           ? { seq: previous, hash: previousHash }
-          : null;
+          : null,
+    };
+  }
+  /** A task's original batches newer than its newest accepted fold checkpoint
+   * at or before `snapshot`, in commit order, with that checkpoint's state.
+   * Undefined (no checkpoint, none accepted, any index fault) means fold the
+   * original chain instead; exhaustion still propagates. */
+  taskSuffix<T>(
+    taskId: string,
+    snapshot: string,
+    budget: HistoryReadBudget,
+    accept: (value: unknown, head: IndexHead) => T | undefined,
+  ): { base: T; batches: LocatedBatch[] } | undefined {
+    decodeId(taskId);
+    try {
+      // A task without any checkpoint costs one directory observation here,
+      // not a probe per batch.
+      if (
+        !this.files.files.directory(
+          dirname(this.indexPath("task-folds", `${taskId}/0`)),
+          false,
+          budget.walks,
+        )
+      )
+        return;
+      let head = this.anchoredHead(taskId, snapshot, budget) ?? null;
+      const newer: LocatedBatch[] = [];
+      while (head) {
+        const value = this.index("task-folds", `${taskId}/${head.seq}`, budget);
+        const base = value === undefined ? undefined : accept(value, head);
+        if (base !== undefined) return { base, batches: newer.reverse() };
+        const link = this.link("entity-links", taskId, head, budget);
+        newer.push(this.batch(link.pointer, budget));
+        head = link.previous;
+      }
+    } catch {
+      budget.reserve(0);
     }
+    return;
+  }
+  /** Writer only, after original durability: an accelerator, never authority. */
+  writeTaskFold(
+    lease: OwnerLease,
+    taskId: string,
+    seq: string,
+    value: unknown,
+    charge: (bytes: number) => void,
+  ): void {
+    this.write(
+      lease,
+      "task-folds",
+      `${decodeId(taskId)}/${decodeSequence(seq)}`,
+      value,
+      charge,
+    );
   }
   runBatches(
     id: string,
