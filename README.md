@@ -213,6 +213,7 @@ A fresh check may account for exactly one owned generation advance bound to its 
 Do not replace this proof with a general before≤after comparison.
 Changes to files, definitions, epoch/cwd/environment or a foreign generation stale the current obligation without rewriting historical native exit or PASS.
 Human Review binds exact selected run/graph/check/change identities and recaptures under a short exclusive barrier only after confirmation, not throughout the human modal.
+One accepted Review folds its fixed committed snapshot (plan proof, selected run, check results) once; every barrier validation still rechecks raw task bytes, changes, configuration, choice and active work.
 Acknowledgment permits reviewed-with-issues, never changes failed/partial/canceled/native/recording/check facts or revives blocked execution.
 Unavailable concurrent views may display conservative stale status but cannot advance authoritative review revisions and invalidate an otherwise unchanged accepted Review.
 
