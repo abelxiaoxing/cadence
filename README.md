@@ -239,6 +239,8 @@ Only the serialized history writer assigns committed sequence and persisted cont
 Commit actual admission/auth/launch/result facts in order; an index, observer callback or candidate reducer cannot authorize effects.
 Quota/exhaustion/refusal stops unsafe work without eviction; torn tails retain a verified prefix and visible gaps, while interior corruption refuses affected ranges.
 Derived indexes are optional accelerators: readers validate original batches/artifacts, use bounded fallback and never repair on view.
+Current/plan/review reads replay a task's batches inside the100ms read quantum, so per-file cost bounds correctness: a slow host (Windows Node 22) once exceeded it after review, leaving the task `unavailable`.
+`PrivateFiles` reuses a directory walk only within one synchronous `DirectoryWalks` scope (a read budget or lease check), after re-observing that directory's identity; an await or later call walks again, and the quantum is never raised instead.
 Prepared journal heads avoid redundant mutable legacy hints; no-root compatibility and its original integrity checks remain.
 
 New history uses private format3 at `service-v1/history-v2/`, with exclusive private read-proof key creation before the final format marker.

@@ -9,6 +9,7 @@ import {
   type Stats,
 } from "node:fs";
 import { dirname } from "node:path";
+import type { DirectoryWalks } from "../service/private-files.ts";
 import { ContractError } from "../service-contract.ts";
 import type { HistoryFiles, HistoryReadBudget } from "./files.ts";
 
@@ -25,8 +26,9 @@ function selected<T>(
   files: HistoryFiles,
   path: string,
   read: (fd: number, size: number, stamp: string) => T,
+  walks?: DirectoryWalks,
 ): T {
-  if (!files.files.directory(dirname(path))) bad();
+  if (!files.files.directory(dirname(path), false, walks)) bad();
   const before = lstatSync(path);
   if (
     !before.isFile() ||
@@ -118,17 +120,22 @@ export function readRange(
   budget: HistoryReadBudget,
 ): Buffer {
   budget.reserve(0);
-  return selected(files, path, (fd, size) => {
-    if (offset < 0 || length < 0 || offset + length > size) bad();
-    budget.reserve(length);
-    const out = Buffer.alloc(length);
-    let n = 0;
-    while (n < length) {
-      budget.reserve(0);
-      const got = readSync(fd, out, n, length - n, offset + n);
-      if (!got) bad();
-      n += got;
-    }
-    return out;
-  });
+  return selected(
+    files,
+    path,
+    (fd, size) => {
+      if (offset < 0 || length < 0 || offset + length > size) bad();
+      budget.reserve(length);
+      const out = Buffer.alloc(length);
+      let n = 0;
+      while (n < length) {
+        budget.reserve(0);
+        const got = readSync(fd, out, n, length - n, offset + n);
+        if (!got) bad();
+        n += got;
+      }
+      return out;
+    },
+    budget.walks,
+  );
 }

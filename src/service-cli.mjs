@@ -2796,25 +2796,79 @@ function same(a, b) {
 function missing(error) {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
+var job = 0;
+var advancing = false;
+function currentJob() {
+  if (!advancing) {
+    advancing = true;
+    queueMicrotask(() => {
+      job++;
+      advancing = false;
+    });
+  }
+  return job;
+}
+
+class DirectoryWalks {
+  job = currentJob();
+  walked = new Map;
+  open() {
+    if (this.job === job)
+      return true;
+    this.walked.clear();
+    return false;
+  }
+  remember(path, st) {
+    if (this.open())
+      this.walked.set(path, { dev: st.dev, ino: st.ino });
+  }
+  reuse(path) {
+    const walked = this.open() ? this.walked.get(path) : undefined;
+    if (!walked)
+      return false;
+    let st;
+    try {
+      st = lstatSync3(path);
+    } catch (error) {
+      if (!missing(error))
+        throw error;
+      this.walked.delete(path);
+      return false;
+    }
+    if (!st.isDirectory() || st.isSymbolicLink() || st.dev !== walked.dev || st.ino !== walked.ino) {
+      this.walked.delete(path);
+      return false;
+    }
+    privateMode(st);
+    return true;
+  }
+}
 
 class PrivateFiles {
   namespace;
   constructor(namespace) {
     this.namespace = namespace;
   }
-  directory(path, create = false) {
+  directory(path, create = false, walks) {
     const tail = relative2(this.namespace, path);
     if (isAbsolute3(tail) || tail === ".." || tail.startsWith(`..${sep3}`))
       refused();
     if (!create) {
+      const full = resolve3(path);
+      if (walks?.reuse(full))
+        return true;
       const namespace = resolve3(this.namespace);
-      let inside = false;
-      return safeDirectory(path, false, (at2, st) => {
+      let inside = false, last;
+      const found = safeDirectory(path, false, (at2, st) => {
         if (at2 === namespace)
           inside = true;
         if (inside)
           privateMode(st);
+        last = st;
       });
+      if (found && last)
+        walks?.remember(full, last);
+      return found;
     }
     if (!safeDirectory(this.namespace, true))
       return false;
@@ -2842,8 +2896,8 @@ class PrivateFiles {
     }
     return true;
   }
-  read(path, maximum = METADATA_BYTES) {
-    if (!this.directory(dirname3(path)))
+  read(path, maximum = METADATA_BYTES, walks) {
+    if (!this.directory(dirname3(path), false, walks))
       return;
     let before;
     try {
@@ -2877,8 +2931,8 @@ class PrivateFiles {
       closeSync2(fd);
     }
   }
-  assert(path, expected, maximum = METADATA_BYTES) {
-    const current = this.read(path, maximum);
+  assert(path, expected, maximum = METADATA_BYTES, walks) {
+    const current = this.read(path, maximum, walks);
     if (current?.identity !== expected?.identity || current?.stamp !== expected?.stamp)
       throw new ContractError("conflict");
   }
@@ -3121,8 +3175,8 @@ class ServiceCoordination {
       }
     };
   }
-  assertNamespace() {
-    if (!this.files.directory(this.directory))
+  assertNamespace(walks) {
+    if (!this.files.directory(this.directory, false, walks))
       refused();
     names(this.directory, [
       "format.json",
@@ -3135,14 +3189,15 @@ class ServiceCoordination {
       "host-config.json",
       "history-v2"
     ]);
-    this.files.directory(join4(this.directory, "history-v2"));
+    this.files.directory(join4(this.directory, "history-v2"), false, walks);
   }
   selected() {
-    if (!this.files.directory(this.directory))
+    const walks = new DirectoryWalks;
+    if (!this.files.directory(this.directory, false, walks))
       return;
-    this.assertNamespace();
-    const manifest = this.files.read(this.path("format.json"));
-    const config = this.files.read(this.path("config.json"));
+    this.assertNamespace(walks);
+    const manifest = this.files.read(this.path("format.json"), undefined, walks);
+    const config = this.files.read(this.path("config.json"), undefined, walks);
     if (!manifest || !config)
       refused();
     const f = closed(json(manifest), [
@@ -3156,13 +3211,13 @@ class ServiceCoordination {
     literal(f.stateHome, this.stateHome);
     literal(f.configIdentity, config.identity);
     const c = decodeOwnerConfig(json(config));
-    const hostConfig = this.files.read(this.path("host-config.json"));
+    const hostConfig = this.files.read(this.path("host-config.json"), undefined, walks);
     if (hostConfig && hostConfig.identity !== c.policyIdentity)
       refused();
-    const registration = this.files.read(this.path("registration.json"));
-    const owner = this.files.read(this.path("owner.lock"));
-    const capability = this.files.read(this.path("local-capability.json"));
-    const checkout = this.files.read(this.store.lockPath, 8192);
+    const registration = this.files.read(this.path("registration.json"), undefined, walks);
+    const owner = this.files.read(this.path("owner.lock"), undefined, walks);
+    const capability = this.files.read(this.path("local-capability.json"), undefined, walks);
+    const checkout = this.files.read(this.store.lockPath, 8192, walks);
     const value = registration ? decodeRegistration(json(registration)) : undefined;
     if (value && (value.root !== this.store.root || value.stateHome !== this.stateHome || value.configIdentity !== config.identity || !endpointMatches(c.endpoint, value.endpoint)))
       refused();
@@ -3509,8 +3564,8 @@ class OwnerLease {
   assert() {
     if (this.released || this.selected.value.pid !== process.pid || this.selected.value.host !== hostname2())
       throw new ContractError("conflict");
-    const c = this.coordination;
-    c.assertNamespace();
+    const c = this.coordination, walks = new DirectoryWalks;
+    c.assertNamespace(walks);
     for (const [name, snapshot] of [
       ["config.json", this.selected.config],
       ["host-config.json", this.selected.hostConfig],
@@ -3519,8 +3574,8 @@ class OwnerLease {
       ["owner.lock", this.selected.owner],
       ["local-capability.json", this.selected.capability]
     ])
-      c.files.assert(c.path(name), snapshot);
-    c.files.assert(c.store.lockPath, this.selected.checkout, 8192);
+      c.files.assert(c.path(name), snapshot, undefined, walks);
+    c.files.assert(c.store.lockPath, this.selected.checkout, 8192, walks);
     c.store.assertOwner(this.checkout);
   }
   phase(phase) {
@@ -3653,8 +3708,8 @@ function bad() {
   throw new ContractError("corrupt-selected");
 }
 var stamp2 = (s) => [s.dev, s.ino, s.size, s.mode, s.uid, s.nlink, s.ctimeMs, s.mtimeMs].join(":");
-function selected(files, path, read) {
-  if (!files.files.directory(dirname5(path)))
+function selected(files, path, read, walks) {
+  if (!files.files.directory(dirname5(path), false, walks))
     bad();
   const before = lstatSync4(path);
   if (!before.isFile() || before.nlink !== 1 || process.platform !== "win32" && (before.mode & 63 || process.getuid && before.uid !== process.getuid()))
@@ -4117,6 +4172,7 @@ function decodeJournalText(line) {
 class HistoryReadBudget {
   started = performance.now();
   bytes = 0;
+  walks = new DirectoryWalks;
   reserve(bytes) {
     if (!Number.isSafeInteger(bytes) || bytes < 0 || this.bytes + bytes > LIMITS.searchBytes || performance.now() - this.started >= LIMITS.searchMs)
       throw new ContractError("receipt-inconclusive");
@@ -4283,12 +4339,12 @@ class HistoryFiles {
     try {
       size = lstatSync5(path).size;
     } catch {
-      return this.files.read(path, 0);
+      return this.files.read(path, 0, budget.walks);
     }
     if (size > maximum)
       corrupt();
     budget.reserve(size);
-    return this.files.read(path, size);
+    return this.files.read(path, size, budget.walks);
   }
   readCommand(commandId, budget) {
     decodeId(commandId);

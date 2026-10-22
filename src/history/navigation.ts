@@ -291,7 +291,7 @@ export class HistoryNavigation {
       return structuredClone(source.value);
     }
     try {
-      if (!this.files.files.directory(dirname(path)))
+      if (!this.files.files.directory(dirname(path), false, budget.walks))
         return source ? structuredClone(source.value) : undefined;
       const size = lstatSync(path).size;
       if (size > RECORD_BYTES)

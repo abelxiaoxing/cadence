@@ -19,6 +19,7 @@ import {
   text,
 } from "./contracts/core.ts";
 import {
+  DirectoryWalks,
   encoded,
   type FileSnapshot,
   hash,
@@ -282,8 +283,8 @@ export class ServiceCoordination {
       },
     };
   }
-  assertNamespace(): void {
-    if (!this.files.directory(this.directory)) refused();
+  assertNamespace(walks?: DirectoryWalks): void {
+    if (!this.files.directory(this.directory, false, walks)) refused();
     names(this.directory, [
       "format.json",
       "config.json",
@@ -295,13 +296,18 @@ export class ServiceCoordination {
       "host-config.json",
       "history-v2",
     ]);
-    this.files.directory(join(this.directory, "history-v2"));
+    this.files.directory(join(this.directory, "history-v2"), false, walks);
   }
   private selected(): Selected | undefined {
-    if (!this.files.directory(this.directory)) return undefined;
-    this.assertNamespace();
-    const manifest = this.files.read(this.path("format.json"));
-    const config = this.files.read(this.path("config.json"));
+    const walks = new DirectoryWalks();
+    if (!this.files.directory(this.directory, false, walks)) return undefined;
+    this.assertNamespace(walks);
+    const manifest = this.files.read(
+      this.path("format.json"),
+      undefined,
+      walks,
+    );
+    const config = this.files.read(this.path("config.json"), undefined, walks);
     if (!manifest || !config) refused();
     const f = closed(json(manifest), [
       "schema",
@@ -314,12 +320,24 @@ export class ServiceCoordination {
     literal(f.stateHome, this.stateHome);
     literal(f.configIdentity, config.identity);
     const c = decodeOwnerConfig(json(config));
-    const hostConfig = this.files.read(this.path("host-config.json"));
+    const hostConfig = this.files.read(
+      this.path("host-config.json"),
+      undefined,
+      walks,
+    );
     if (hostConfig && hostConfig.identity !== c.policyIdentity) refused();
-    const registration = this.files.read(this.path("registration.json"));
-    const owner = this.files.read(this.path("owner.lock"));
-    const capability = this.files.read(this.path("local-capability.json"));
-    const checkout = this.files.read(this.store.lockPath, 8192);
+    const registration = this.files.read(
+      this.path("registration.json"),
+      undefined,
+      walks,
+    );
+    const owner = this.files.read(this.path("owner.lock"), undefined, walks);
+    const capability = this.files.read(
+      this.path("local-capability.json"),
+      undefined,
+      walks,
+    );
+    const checkout = this.files.read(this.store.lockPath, 8192, walks);
     const value = registration
       ? decodeRegistration(json(registration))
       : undefined;
@@ -808,8 +826,9 @@ export class OwnerLease {
       this.selected.value.host !== hostname()
     )
       throw new ContractError("conflict");
-    const c = this.coordination;
-    c.assertNamespace();
+    const c = this.coordination,
+      walks = new DirectoryWalks();
+    c.assertNamespace(walks);
     for (const [name, snapshot] of [
       ["config.json", this.selected.config],
       ["host-config.json", this.selected.hostConfig],
@@ -818,8 +837,8 @@ export class OwnerLease {
       ["owner.lock", this.selected.owner],
       ["local-capability.json", this.selected.capability],
     ] as const)
-      c.files.assert(c.path(name), snapshot);
-    c.files.assert(c.store.lockPath, this.selected.checkout, 8192);
+      c.files.assert(c.path(name), snapshot, undefined, walks);
+    c.files.assert(c.store.lockPath, this.selected.checkout, 8192, walks);
     c.store.assertOwner(this.checkout);
   }
   phase(phase: OwnerPhase): void {

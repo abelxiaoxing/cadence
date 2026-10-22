@@ -2117,25 +2117,79 @@ function same(a, b) {
 function missing(error) {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
+var job = 0;
+var advancing = false;
+function currentJob() {
+  if (!advancing) {
+    advancing = true;
+    queueMicrotask(() => {
+      job++;
+      advancing = false;
+    });
+  }
+  return job;
+}
+
+class DirectoryWalks {
+  job = currentJob();
+  walked = new Map;
+  open() {
+    if (this.job === job)
+      return true;
+    this.walked.clear();
+    return false;
+  }
+  remember(path, st) {
+    if (this.open())
+      this.walked.set(path, { dev: st.dev, ino: st.ino });
+  }
+  reuse(path) {
+    const walked = this.open() ? this.walked.get(path) : undefined;
+    if (!walked)
+      return false;
+    let st;
+    try {
+      st = lstatSync2(path);
+    } catch (error) {
+      if (!missing(error))
+        throw error;
+      this.walked.delete(path);
+      return false;
+    }
+    if (!st.isDirectory() || st.isSymbolicLink() || st.dev !== walked.dev || st.ino !== walked.ino) {
+      this.walked.delete(path);
+      return false;
+    }
+    privateMode(st);
+    return true;
+  }
+}
 
 class PrivateFiles {
   namespace;
   constructor(namespace) {
     this.namespace = namespace;
   }
-  directory(path, create = false) {
+  directory(path, create = false, walks) {
     const tail = relative2(this.namespace, path);
     if (isAbsolute2(tail) || tail === ".." || tail.startsWith(`..${sep2}`))
       refused();
     if (!create) {
+      const full = resolve2(path);
+      if (walks?.reuse(full))
+        return true;
       const namespace = resolve2(this.namespace);
-      let inside = false;
-      return safeDirectory(path, false, (at2, st) => {
+      let inside = false, last;
+      const found = safeDirectory(path, false, (at2, st) => {
         if (at2 === namespace)
           inside = true;
         if (inside)
           privateMode(st);
+        last = st;
       });
+      if (found && last)
+        walks?.remember(full, last);
+      return found;
     }
     if (!safeDirectory(this.namespace, true))
       return false;
@@ -2163,8 +2217,8 @@ class PrivateFiles {
     }
     return true;
   }
-  read(path, maximum = METADATA_BYTES) {
-    if (!this.directory(dirname2(path)))
+  read(path, maximum = METADATA_BYTES, walks) {
+    if (!this.directory(dirname2(path), false, walks))
       return;
     let before;
     try {
@@ -2198,8 +2252,8 @@ class PrivateFiles {
       closeSync2(fd);
     }
   }
-  assert(path, expected, maximum = METADATA_BYTES) {
-    const current = this.read(path, maximum);
+  assert(path, expected, maximum = METADATA_BYTES, walks) {
+    const current = this.read(path, maximum, walks);
     if (current?.identity !== expected?.identity || current?.stamp !== expected?.stamp)
       throw new ContractError("conflict");
   }
@@ -3979,8 +4033,8 @@ function bad() {
   throw new ContractError("corrupt-selected");
 }
 var stamp2 = (s) => [s.dev, s.ino, s.size, s.mode, s.uid, s.nlink, s.ctimeMs, s.mtimeMs].join(":");
-function selected(files, path, read) {
-  if (!files.files.directory(dirname3(path)))
+function selected(files, path, read, walks) {
+  if (!files.files.directory(dirname3(path), false, walks))
     bad();
   const before = lstatSync3(path);
   if (!before.isFile() || before.nlink !== 1 || process.platform !== "win32" && (before.mode & 63 || process.getuid && before.uid !== process.getuid()))
@@ -4045,7 +4099,7 @@ function readRange(files, path, offset, length, budget) {
       n += got;
     }
     return out;
-  });
+  }, budget.walks);
 }
 
 // src/history/types.ts
@@ -4480,6 +4534,7 @@ function decodeJournalText(line) {
 class HistoryReadBudget {
   started = performance.now();
   bytes = 0;
+  walks = new DirectoryWalks;
   reserve(bytes) {
     if (!Number.isSafeInteger(bytes) || bytes < 0 || this.bytes + bytes > LIMITS.searchBytes || performance.now() - this.started >= LIMITS.searchMs)
       throw new ContractError("receipt-inconclusive");
@@ -4646,12 +4701,12 @@ class HistoryFiles {
     try {
       size = lstatSync4(path).size;
     } catch {
-      return this.files.read(path, 0);
+      return this.files.read(path, 0, budget.walks);
     }
     if (size > maximum)
       corrupt();
     budget.reserve(size);
-    return this.files.read(path, size);
+    return this.files.read(path, size, budget.walks);
   }
   readCommand(commandId, budget) {
     decodeId(commandId);
@@ -6297,7 +6352,7 @@ class HistoryNavigation {
       return structuredClone(source.value);
     }
     try {
-      if (!this.files.files.directory(dirname5(path)))
+      if (!this.files.files.directory(dirname5(path), false, budget.walks))
         return source ? structuredClone(source.value) : undefined;
       const size = lstatSync6(path).size;
       if (size > RECORD_BYTES)
@@ -12883,9 +12938,9 @@ class HistoryWriter {
       const continuation = jobs.every((j) => j.safety || j.continuation);
       try {
         this.assertWritable(safety, continuation);
-        for (const job of jobs) {
+        for (const job2 of jobs) {
           const seq2 = String(BigInt(this.state.committedSeq) + BigInt(rows.length) + 1n);
-          const value = await job.build(seq2);
+          const value = await job2.build(seq2);
           if (value) {
             const row = {
               kind: "record",
@@ -12894,7 +12949,7 @@ class HistoryWriter {
               value
             };
             rows.push(row);
-            ownRows.set(job, row);
+            ownRows.set(job2, row);
           }
         }
         if (rows.length) {
@@ -12950,8 +13005,8 @@ class HistoryWriter {
             this.assertReviews(rows);
           }, preparedIndex?.root, (encodedBatch) => {
             let markerBytes = encodedBatch.trailerBytes, index = 0;
-            for (const [job, row] of ownRows) {
-              this.charge(encodedBatch.rowBytes[index++] + markerBytes, this.rowRunId(row.value), job.control);
+            for (const [job2, row] of ownRows) {
+              this.charge(encodedBatch.rowBytes[index++] + markerBytes, this.rowRunId(row.value), job2.control);
               markerBytes = 0;
             }
           }, () => this.assertReviews(rows));
@@ -13090,14 +13145,14 @@ class HistoryWriter {
         this.fence();
         result = failure(true);
       }
-      for (const job of jobs) {
+      for (const job2 of jobs) {
         if (result.status !== "committed") {
-          job.resolve(result);
+          job2.resolve(result);
           continue;
         }
-        const v = ownRows.get(job)?.value;
+        const v = ownRows.get(job2)?.value;
         const ends = v?.kind === "capture" || v?.kind === "owner" ? v.events.flatMap((e) => e.kind === "end" ? [e.detail] : []) : [];
-        job.resolve({
+        job2.resolve({
           status: "committed",
           batch: {
             ...result.batch,
@@ -15067,8 +15122,8 @@ class ServiceCoordination {
       }
     };
   }
-  assertNamespace() {
-    if (!this.files.directory(this.directory))
+  assertNamespace(walks) {
+    if (!this.files.directory(this.directory, false, walks))
       refused();
     names(this.directory, [
       "format.json",
@@ -15081,14 +15136,15 @@ class ServiceCoordination {
       "host-config.json",
       "history-v2"
     ]);
-    this.files.directory(join11(this.directory, "history-v2"));
+    this.files.directory(join11(this.directory, "history-v2"), false, walks);
   }
   selected() {
-    if (!this.files.directory(this.directory))
+    const walks = new DirectoryWalks;
+    if (!this.files.directory(this.directory, false, walks))
       return;
-    this.assertNamespace();
-    const manifest = this.files.read(this.path("format.json"));
-    const config = this.files.read(this.path("config.json"));
+    this.assertNamespace(walks);
+    const manifest = this.files.read(this.path("format.json"), undefined, walks);
+    const config = this.files.read(this.path("config.json"), undefined, walks);
     if (!manifest || !config)
       refused();
     const f = closed(json(manifest), [
@@ -15102,13 +15158,13 @@ class ServiceCoordination {
     literal(f.stateHome, this.stateHome);
     literal(f.configIdentity, config.identity);
     const c = decodeOwnerConfig(json(config));
-    const hostConfig = this.files.read(this.path("host-config.json"));
+    const hostConfig = this.files.read(this.path("host-config.json"), undefined, walks);
     if (hostConfig && hostConfig.identity !== c.policyIdentity)
       refused();
-    const registration = this.files.read(this.path("registration.json"));
-    const owner = this.files.read(this.path("owner.lock"));
-    const capability = this.files.read(this.path("local-capability.json"));
-    const checkout = this.files.read(this.store.lockPath, 8192);
+    const registration = this.files.read(this.path("registration.json"), undefined, walks);
+    const owner = this.files.read(this.path("owner.lock"), undefined, walks);
+    const capability = this.files.read(this.path("local-capability.json"), undefined, walks);
+    const checkout = this.files.read(this.store.lockPath, 8192, walks);
     const value = registration ? decodeRegistration(json(registration)) : undefined;
     if (value && (value.root !== this.store.root || value.stateHome !== this.stateHome || value.configIdentity !== config.identity || !endpointMatches(c.endpoint, value.endpoint)))
       refused();
@@ -15455,8 +15511,8 @@ class OwnerLease {
   assert() {
     if (this.released || this.selected.value.pid !== process.pid || this.selected.value.host !== hostname2())
       throw new ContractError("conflict");
-    const c = this.coordination;
-    c.assertNamespace();
+    const c = this.coordination, walks = new DirectoryWalks;
+    c.assertNamespace(walks);
     for (const [name, snapshot] of [
       ["config.json", this.selected.config],
       ["host-config.json", this.selected.hostConfig],
@@ -15465,8 +15521,8 @@ class OwnerLease {
       ["owner.lock", this.selected.owner],
       ["local-capability.json", this.selected.capability]
     ])
-      c.files.assert(c.path(name), snapshot);
-    c.files.assert(c.store.lockPath, this.selected.checkout, 8192);
+      c.files.assert(c.path(name), snapshot, undefined, walks);
+    c.files.assert(c.store.lockPath, this.selected.checkout, 8192, walks);
     c.store.assertOwner(this.checkout);
   }
   phase(phase) {
