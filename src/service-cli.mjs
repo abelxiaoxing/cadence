@@ -3,7 +3,7 @@
 
 // src/service/cli.ts
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync as mkdirSync3 } from "node:fs";
+import { existsSync, mkdirSync as mkdirSync4 } from "node:fs";
 import { request } from "node:http";
 import { dirname as dirname8, join as join8, resolve as resolve5 } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -2113,11 +2113,8 @@ function safeDirectory(path, create = false, inspectExisting) {
     at = join(at, part);
     let existing;
     try {
-      const st = lstatSync(at);
-      if (!st.isDirectory())
-        throw new Error("Unsafe directory");
       const checked = lstatSync(at);
-      if (checked.isSymbolicLink() || inspectExisting && !checked.isDirectory())
+      if (!checked.isDirectory() || checked.isSymbolicLink())
         throw new Error("Unsafe directory");
       existing = checked;
     } catch (error) {
@@ -2131,7 +2128,8 @@ function safeDirectory(path, create = false, inspectExisting) {
         if (!object(mkdirError) || mkdirError.code !== "EEXIST")
           throw mkdirError;
       }
-      if (!lstatSync(at).isDirectory() || lstatSync(at).isSymbolicLink())
+      const created = lstatSync(at);
+      if (!created.isDirectory() || created.isSymbolicLink())
         throw new Error("Unsafe directory");
     }
     if (existing)
@@ -2771,7 +2769,9 @@ import {
   fstatSync as fstatSync2,
   fsyncSync as fsyncSync2,
   lstatSync as lstatSync3,
+  mkdirSync as mkdirSync3,
   openSync as openSync2,
+  readSync as readSync2,
   renameSync as renameSync3,
   unlinkSync as unlinkSync2,
   writeFileSync as writeFileSync3
@@ -2816,13 +2816,29 @@ class PrivateFiles {
           privateMode(st);
       });
     }
+    if (!safeDirectory(this.namespace, true))
+      return false;
+    privateMode(lstatSync3(this.namespace));
     let at = this.namespace;
-    for (const part of ["", ...tail.split(sep3).filter(Boolean)]) {
-      if (part)
-        at = join3(at, part);
-      if (!safeDirectory(at, create))
-        return false;
-      privateMode(lstatSync3(at));
+    for (const part of tail.split(sep3).filter(Boolean)) {
+      at = join3(at, part);
+      let st;
+      try {
+        st = lstatSync3(at);
+      } catch (error) {
+        if (!missing(error))
+          throw error;
+        try {
+          mkdirSync3(at, { mode: 448 });
+        } catch (mkdirError) {
+          if (!(mkdirError instanceof Error && ("code" in mkdirError) && mkdirError.code === "EEXIST"))
+            throw mkdirError;
+        }
+        st = lstatSync3(at);
+      }
+      if (!st.isDirectory() || st.isSymbolicLink())
+        throw new Error("Unsafe directory");
+      privateMode(st);
     }
     return true;
   }
@@ -2845,8 +2861,16 @@ class PrivateFiles {
       const opened = fstatSync2(fd);
       if (!same(before, opened))
         refused();
-      const bytes = readBounded(path, opened.size);
-      if (!bytes || bytes.length !== opened.size || !same(opened, fstatSync2(fd)) || !same(opened, lstatSync3(path)))
+      const buffer = Buffer.alloc(opened.size + 1);
+      let size = 0;
+      while (size < buffer.length) {
+        const n = readSync2(fd, buffer, size, buffer.length - size, null);
+        if (!n)
+          break;
+        size += n;
+      }
+      const bytes = buffer.subarray(0, size);
+      if (size !== opened.size || !same(opened, fstatSync2(fd)) || !same(opened, lstatSync3(path)))
         refused();
       return { bytes, identity: hash(bytes), stamp: stamp(opened) };
     } finally {
@@ -3622,7 +3646,7 @@ import {
   fstatSync as fstatSync3,
   lstatSync as lstatSync4,
   openSync as openSync3,
-  readSync as readSync2
+  readSync as readSync3
 } from "node:fs";
 import { dirname as dirname5 } from "node:path";
 function bad() {
@@ -5992,7 +6016,7 @@ Recovery resolve requires this local native terminal, exact unchanged dead-owner
 `);
       options.workspace = landing.workspace;
       if (command === "start")
-        mkdirSync3(landing.workspace, { recursive: true });
+        mkdirSync4(landing.workspace, { recursive: true });
     }
     let result;
     if (command === "start")

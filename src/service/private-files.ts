@@ -5,18 +5,16 @@ import {
   fstatSync,
   fsyncSync,
   lstatSync,
+  mkdirSync,
   openSync,
+  readSync,
   renameSync,
   type Stats,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import {
-  readBounded,
-  retryWindowsFileOperation,
-  safeDirectory,
-} from "../task-store.ts";
+import { retryWindowsFileOperation, safeDirectory } from "../task-store.ts";
 import { ContractError, parseWireJson } from "./contracts/core.ts";
 
 export const METADATA_BYTES = 16 * 1024;
@@ -71,11 +69,35 @@ export class PrivateFiles {
         if (inside) privateMode(st);
       });
     }
+    // Walk the namespace and its ambient ancestors once, then check each
+    // private segment exactly once, creating a missing one privately.
+    if (!safeDirectory(this.namespace, true)) return false;
+    privateMode(lstatSync(this.namespace));
     let at = this.namespace;
-    for (const part of ["", ...tail.split(sep).filter(Boolean)]) {
-      if (part) at = join(at, part);
-      if (!safeDirectory(at, create)) return false;
-      privateMode(lstatSync(at));
+    for (const part of tail.split(sep).filter(Boolean)) {
+      at = join(at, part);
+      let st: Stats;
+      try {
+        st = lstatSync(at);
+      } catch (error) {
+        if (!missing(error)) throw error;
+        try {
+          mkdirSync(at, { mode: 0o700 });
+        } catch (mkdirError) {
+          if (
+            !(
+              mkdirError instanceof Error &&
+              "code" in mkdirError &&
+              mkdirError.code === "EEXIST"
+            )
+          )
+            throw mkdirError;
+        }
+        st = lstatSync(at);
+      }
+      if (!st.isDirectory() || st.isSymbolicLink())
+        throw new Error("Unsafe directory");
+      privateMode(st);
     }
     return true;
   }
@@ -95,15 +117,20 @@ export class PrivateFiles {
     try {
       const opened = fstatSync(fd);
       if (!same(before, opened)) refused();
-      // Reuse the bounded no-follow reader; surround its read with descriptor and
-      // selected-path identity checks rather than weakening legacy behavior.
-      // The caller's independent maximum was already checked above. Bound the
-      // inner allocation to this exact selected size (+1 growth sentinel); keep
-      // its full ancestor/open checks and our final descriptor/path checks.
-      const bytes = readBounded(path, opened.size);
+      // Read this already opened, no-follow, identity-checked descriptor: its
+      // parents were walked just above, so a second walk and open add nothing.
+      // Bound the read to the selected size (+1 growth sentinel) and keep the
+      // final descriptor/path identity checks.
+      const buffer = Buffer.alloc(opened.size + 1);
+      let size = 0;
+      while (size < buffer.length) {
+        const n = readSync(fd, buffer, size, buffer.length - size, null);
+        if (!n) break;
+        size += n;
+      }
+      const bytes = buffer.subarray(0, size);
       if (
-        !bytes ||
-        bytes.length !== opened.size ||
+        size !== opened.size ||
         !same(opened, fstatSync(fd)) ||
         !same(opened, lstatSync(path))
       )
