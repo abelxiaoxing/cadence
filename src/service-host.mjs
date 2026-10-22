@@ -5591,6 +5591,17 @@ function requireFact(condition) {
   if (!condition)
     throw new ContractError("corrupt-selected");
 }
+function decodePublicationState(v) {
+  const o = closed(v, ["intent", "status", "seq"]);
+  const intent = o.intent === null ? null : decodeOwnerFact(o.intent);
+  if (intent !== null && intent.kind !== "publication-intent")
+    throw new ContractError("invalid");
+  return {
+    intent,
+    status: oneOf(o.status, ["pending", "published", "conflict", "uncertain"]),
+    seq: o.seq === null ? null : decodeSequence(o.seq)
+  };
+}
 function publicationTransition(state, initial, fact, seq) {
   if (fact.kind === "publication-intent") {
     requireFact(!state.intent && state.status === "pending" || state.status === "published");
@@ -5648,6 +5659,27 @@ class TaskPublicationLineage {
         };
     }
   }
+  get operationId() {
+    return this.operation?.operationId ?? null;
+  }
+  progress() {
+    return {
+      operationId: this.operation?.operationId ?? null,
+      state: structuredClone(this.state),
+      endpoint: this.endpoint && { ...this.endpoint },
+      graphIdentity: this.graphIdentity
+    };
+  }
+  static resumed(operation, progress) {
+    if ((operation?.operationId ?? null) !== progress.operationId)
+      throw new ContractError("invalid");
+    const lineage = new TaskPublicationLineage;
+    lineage.operation = operation;
+    lineage.state = structuredClone(progress.state);
+    lineage.endpoint = progress.endpoint && { ...progress.endpoint };
+    lineage.graphIdentity = progress.graphIdentity;
+    return lineage;
+  }
   current() {
     requireFact(this.operation && this.state.status === "published" && this.endpoint?.identity);
     return {
@@ -5700,6 +5732,21 @@ class OperationState {
         identity: expected.task?.identity ?? null
       }, fact, seq);
     }
+  }
+  progress() {
+    return {
+      reviewed: this.reviewed,
+      publication: structuredClone(this.publication)
+    };
+  }
+  static resumed(operationId, command, progress) {
+    if (command.intent.operationId !== operationId)
+      throw new ContractError("invalid");
+    const state = new OperationState(operationId);
+    state.command = command;
+    state.reviewed = progress.reviewed;
+    state.publication = structuredClone(progress.publication);
+    return state;
   }
   publicationExpected() {
     const identity = this.command?.intent.identity;
@@ -6194,6 +6241,9 @@ function bad2() {
   throw new ContractError("corrupt-selected");
 }
 var stamp3 = (s) => [s.dev, s.ino, s.size, s.ctimeMs, s.mtimeMs, s.mode, s.uid, s.nlink].join(":");
+function decodeBatchPointer(v) {
+  return pointer(v);
+}
 function pointer(v) {
   const o = closed(v, ["segment", "offset", "bytes", "seq"]);
   return {
@@ -6863,16 +6913,47 @@ class HistoryNavigation {
       throw new ContractError("receipt-inconclusive");
     let head = expected;
     while (head) {
-      const value = this.index(roster ? "roster-links" : "entity-links", `${id}/${head.seq}`, budget);
-      if (!value)
-        throw new ContractError("receipt-inconclusive");
-      const o = closed(value, ["pointer", "previous", "previousHash", "hash"]), p = pointer(o.pointer);
-      const previous = o.previous === null ? null : decodeSequence(o.previous), previousHash = o.previousHash === null ? null : typeof o.previousHash === "string" ? o.previousHash : undefined;
-      if (previousHash === undefined || previous === null !== (previousHash === null) || p.seq !== head.seq || o.hash !== head.hash || chainHash(p.seq, previous, previousHash) !== head.hash || previous !== null && BigInt(previous) >= BigInt(p.seq))
-        throw new ContractError("receipt-inconclusive");
-      yield this.batch(p, budget);
-      head = previous !== null && previousHash !== null ? { seq: previous, hash: previousHash } : null;
+      const link = this.link(roster ? "roster-links" : "entity-links", id, head, budget);
+      yield this.batch(link.pointer, budget);
+      head = link.previous;
     }
+  }
+  link(group, id, head, budget) {
+    const value = this.index(group, `${id}/${head.seq}`, budget);
+    if (!value)
+      throw new ContractError("receipt-inconclusive");
+    const o = closed(value, ["pointer", "previous", "previousHash", "hash"]), p = pointer(o.pointer);
+    const previous = o.previous === null ? null : decodeSequence(o.previous), previousHash = o.previousHash === null ? null : typeof o.previousHash === "string" ? o.previousHash : undefined;
+    if (previousHash === undefined || previous === null !== (previousHash === null) || p.seq !== head.seq || o.hash !== head.hash || chainHash(p.seq, previous, previousHash) !== head.hash || previous !== null && BigInt(previous) >= BigInt(p.seq))
+      throw new ContractError("receipt-inconclusive");
+    return {
+      pointer: p,
+      previous: previous !== null && previousHash !== null ? { seq: previous, hash: previousHash } : null
+    };
+  }
+  taskSuffix(taskId, snapshot, budget, accept) {
+    decodeId(taskId);
+    try {
+      if (!this.files.files.directory(dirname5(this.indexPath("task-folds", `${taskId}/0`)), false, budget.walks))
+        return;
+      let head = this.anchoredHead(taskId, snapshot, budget) ?? null;
+      const newer = [];
+      while (head) {
+        const value = this.index("task-folds", `${taskId}/${head.seq}`, budget);
+        const base = value === undefined ? undefined : accept(value, head);
+        if (base !== undefined)
+          return { base, batches: newer.reverse() };
+        const link = this.link("entity-links", taskId, head, budget);
+        newer.push(this.batch(link.pointer, budget));
+        head = link.previous;
+      }
+    } catch {
+      budget.reserve(0);
+    }
+    return;
+  }
+  writeTaskFold(lease, taskId, seq, value, charge) {
+    this.write(lease, "task-folds", `${decodeId(taskId)}/${decodeSequence(seq)}`, value, charge);
   }
   runBatches(id, snapshot, budget) {
     const expected = this.anchoredHead(id, snapshot, budget);
@@ -7059,17 +7140,89 @@ function navigationKeys(row) {
 // src/history/projection.ts
 import { createHash as createHash12 } from "node:crypto";
 
+// src/history/task-folds.ts
+import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
+var SCHEMA = "cadence-task-fold/1";
+function sign(files, record, budget) {
+  const material = files.readProofMaterial(budget);
+  const key = Buffer.from(hkdfSync("sha256", material.key, Buffer.from(files.format.storeId, "utf8"), Buffer.from(SCHEMA, "utf8"), 32));
+  return createHmac("sha256", key).update(canonicalJson(record)).digest();
+}
+function sealTaskFold(files, taskId, anchor, body) {
+  const record = {
+    schema: SCHEMA,
+    storeId: files.format.storeId,
+    taskId: decodeId(taskId),
+    seq: decodeSequence(anchor.seq),
+    hash: decodeHash(anchor.hash),
+    body
+  };
+  return { ...record, mac: sign(files, record).toString("base64url") };
+}
+function openTaskFold(files, value, taskId, anchor, budget) {
+  try {
+    const o = closed(value, [
+      "schema",
+      "storeId",
+      "taskId",
+      "seq",
+      "hash",
+      "body",
+      "mac"
+    ]);
+    literal(o.schema, SCHEMA);
+    if (decodeId(o.storeId) !== files.format.storeId || decodeId(o.taskId) !== taskId || decodeSequence(o.seq) !== anchor.seq || decodeHash(o.hash) !== anchor.hash)
+      return;
+    const part = closed(o.body, ["checks", "run", "plan"]), body = {
+      checks: part.checks,
+      run: part.run,
+      plan: part.plan
+    };
+    const given = Buffer.from(text(o.mac, 43, true), "base64url");
+    const expected = sign(files, {
+      schema: SCHEMA,
+      storeId: o.storeId,
+      taskId: o.taskId,
+      seq: o.seq,
+      hash: o.hash,
+      body
+    }, budget);
+    if (given.length !== expected.length || !timingSafeEqual(given, expected))
+      return;
+    return body;
+  } catch {
+    budget.reserve(0);
+    return;
+  }
+}
+function resumeTaskFold(files, navigation, taskId, snapshot, budget, decode) {
+  const suffix = navigation.taskSuffix(taskId, snapshot, budget, (value, head) => {
+    const body = openTaskFold(files, value, taskId, head, budget);
+    if (!body)
+      return;
+    try {
+      return decode(body);
+    } catch {
+      budget.reserve(0);
+      return;
+    }
+  });
+  return suffix ?? {
+    base: undefined,
+    batches: navigation.entityBatches(taskId, snapshot, budget) ?? navigation.scanSnapshot(snapshot, budget)
+  };
+}
+
 // src/history/checks.ts
-function currentChecks(files, taskId, configured, current, snapshotSeq) {
-  const budget = new HistoryReadBudget, navigation = new HistoryNavigation(files);
-  const snapshot = snapshotSeq ?? navigation.latest(budget);
-  navigation.snapshot(snapshot, budget);
-  const starts = new Map;
-  const results = new Map;
-  const incomplete = new Map;
-  const batches = navigation.entityBatches(taskId, snapshot, budget) ?? navigation.scanSnapshot(snapshot, budget);
-  for (const b of batches)
-    for (const row of b.rows) {
+class CheckFold {
+  starts;
+  settled;
+  constructor(state) {
+    this.starts = new Map(state?.starts);
+    this.settled = new Map(state?.settled);
+  }
+  apply(batch, taskId) {
+    for (const row of batch.rows) {
       const v = row.value;
       if (v.kind !== "owner" || v.link.taskId !== taskId)
         continue;
@@ -7078,44 +7231,154 @@ function currentChecks(files, taskId, configured, current, snapshotSeq) {
           continue;
         const f = e.value.fact;
         if (f.kind === "check-start")
-          starts.set(f.checkId, {
+          this.starts.set(f.checkId, {
             selection: f.selection,
             epoch: v.link.epoch,
             cwdId: f.cwdId,
             checkEnvGeneration: f.checkEnvGeneration
           });
         if (f.kind === "check-settled") {
-          const s = starts.get(f.checkId);
+          const s = this.starts.get(f.checkId);
           if (!s)
             throw new ContractError("corrupt-selected");
-          if (s.selection.kind === "manual" || configured.selections.some((c) => canonicalJson(c) === canonicalJson(s.selection))) {
-            const fresh = current.status === "available" && current.version.epoch === s.epoch && current.version.cwdId === s.cwdId && current.version.checkEnvGeneration === s.checkEnvGeneration && current.version.observation.identity === f.after.identity && current.version.observation.complete === f.after.complete && current.version.checkoutGeneration === f.after.checkoutGeneration;
-            incomplete.set(canonicalJson(s.selection), f.output === null || f.coverage.observed !== "complete" || f.coverage.source !== "complete" || f.coverage.omissions.length > 0);
-            results.set(canonicalJson(s.selection), {
-              selection: s.selection,
-              status: f.status === "passed" && !fresh ? "stale" : f.status,
-              checkId: f.checkId
-            });
-          }
-          starts.delete(f.checkId);
+          this.settled.set(canonicalJson(s.selection), {
+            ...s,
+            checkId: f.checkId,
+            status: f.status,
+            after: {
+              identity: f.after.identity,
+              complete: f.after.complete,
+              checkoutGeneration: f.after.checkoutGeneration
+            },
+            incomplete: f.output === null || f.coverage.observed !== "complete" || f.coverage.source !== "complete" || f.coverage.omissions.length > 0
+          });
+          this.starts.delete(f.checkId);
         }
-        if (starts.size > LIMITS.childReservations || results.size > 32)
+        if (this.starts.size > LIMITS.childReservations)
           throw new ContractError("receipt-inconclusive");
       }
     }
+  }
+  state() {
+    return {
+      starts: [...this.starts],
+      settled: [...this.settled]
+    };
+  }
+  evaluate(taskId, configured, current) {
+    const results = new Map;
+    const incomplete = new Map;
+    for (const [key, s] of this.settled) {
+      if (s.selection.kind !== "manual" && !configured.selections.some((c) => canonicalJson(c) === key))
+        continue;
+      const fresh = current.status === "available" && current.version.epoch === s.epoch && current.version.cwdId === s.cwdId && current.version.checkEnvGeneration === s.checkEnvGeneration && current.version.observation.identity === s.after.identity && current.version.observation.complete === s.after.complete && current.version.checkoutGeneration === s.after.checkoutGeneration;
+      incomplete.set(key, s.incomplete);
+      results.set(key, {
+        selection: s.selection,
+        status: s.status === "passed" && !fresh ? "stale" : s.status,
+        checkId: s.checkId
+      });
+    }
+    if (results.size > 32)
+      throw new ContractError("receipt-inconclusive");
+    return {
+      checks: decodeCheckObligations({
+        taskId,
+        revision: configured.revision,
+        definitions: configured.selections.map((selection) => results.get(canonicalJson(selection)) ?? {
+          selection,
+          status: "not-run",
+          checkId: null
+        })
+      }),
+      recorded: [...results.values()],
+      recordingIncomplete: [...incomplete.values()].some(Boolean)
+    };
+  }
+}
+function checkStart(v, keys = []) {
+  const o = closed(v, [
+    "selection",
+    "epoch",
+    "cwdId",
+    "checkEnvGeneration",
+    ...keys
+  ]);
   return {
-    checks: decodeCheckObligations({
-      taskId,
-      revision: configured.revision,
-      definitions: configured.selections.map((selection) => results.get(canonicalJson(selection)) ?? {
-        selection,
-        status: "not-run",
-        checkId: null
-      })
-    }),
-    recorded: [...results.values()],
-    recordingIncomplete: [...incomplete.values()].some(Boolean)
+    selection: checkSelection(o.selection),
+    epoch: decodeId(o.epoch),
+    cwdId: decodeId(o.cwdId),
+    checkEnvGeneration: integer(o.checkEnvGeneration, 1)
   };
+}
+function decodeCheckFoldState(v) {
+  const o = closed(v, ["starts", "settled"]);
+  if (!Array.isArray(o.starts) || !Array.isArray(o.settled))
+    throw new ContractError("invalid");
+  if (o.starts.length > LIMITS.childReservations || o.settled.length > 64)
+    throw new ContractError("invalid");
+  const starts = o.starts.map((entry) => {
+    if (!Array.isArray(entry) || entry.length !== 2)
+      throw new ContractError("invalid");
+    return [decodeId(entry[0]), checkStart(entry[1])];
+  });
+  const settled = o.settled.map((entry) => {
+    if (!Array.isArray(entry) || entry.length !== 2)
+      throw new ContractError("invalid");
+    const s = closed(entry[1], [
+      "selection",
+      "epoch",
+      "cwdId",
+      "checkEnvGeneration",
+      "checkId",
+      "status",
+      "after",
+      "incomplete"
+    ]);
+    const start = checkStart({
+      selection: s.selection,
+      epoch: s.epoch,
+      cwdId: s.cwdId,
+      checkEnvGeneration: s.checkEnvGeneration
+    }, []);
+    if (canonicalJson(start.selection) !== entry[0])
+      throw new ContractError("invalid");
+    const after = closed(s.after, [
+      "identity",
+      "complete",
+      "checkoutGeneration"
+    ]);
+    return [
+      entry[0],
+      {
+        ...start,
+        checkId: decodeId(s.checkId),
+        status: oneOf(s.status, ["passed", "failed", "canceled", "stale"]),
+        after: {
+          identity: decodeHash(after.identity),
+          complete: bool(after.complete),
+          checkoutGeneration: integer(after.checkoutGeneration)
+        },
+        incomplete: bool(s.incomplete)
+      }
+    ];
+  });
+  if (new Set(starts.map(([k]) => k)).size !== starts.length || new Set(settled.map(([k]) => k)).size !== settled.length)
+    throw new ContractError("invalid");
+  return { starts, settled };
+}
+function checkFold(files, taskId, snapshot, budget, navigation = new HistoryNavigation(files)) {
+  navigation.snapshot(snapshot, budget);
+  const { base, batches } = resumeTaskFold(files, navigation, taskId, snapshot, budget, (body) => decodeCheckFoldState(body.checks));
+  const fold = new CheckFold(base);
+  for (const b of batches)
+    fold.apply(b, taskId);
+  return fold;
+}
+function currentChecks(files, taskId, configured, current, snapshotSeq) {
+  const budget = new HistoryReadBudget, navigation = new HistoryNavigation(files);
+  const snapshot = snapshotSeq ?? navigation.latest(budget);
+  return checkFold(files, taskId, snapshot, budget, navigation).evaluate(taskId, configured, current);
 }
 
 // src/history/entity-state.ts
@@ -11194,6 +11457,136 @@ async function readRetainedGraph(reader, request) {
 }
 
 // src/history/reader.ts
+class PlanFold {
+  lineage;
+  operation = null;
+  graphIdentity = "";
+  savePlanAt = null;
+  lineageAt = null;
+  constructor(lineage) {
+    this.lineage = lineage;
+  }
+  apply(batch, taskId) {
+    batch.rows.forEach((row, index) => {
+      const value = row.value;
+      if (value.kind === "admission" && value.intent.identity.kind === "action" && value.intent.identity.action.kind === "save-plan" && value.intent.identity.action.taskId === taskId) {
+        if (value.intent.runId !== null)
+          throw new ContractError("corrupt-selected");
+        this.operation = new OperationState(value.intent.operationId);
+        this.graphIdentity = hash(canonicalJson(value.intent.identity.action.graph));
+        this.savePlanAt = { pointer: batch.pointer, row: index };
+      }
+      this.operation?.apply(row, batch.pointer.seq);
+      if (!this.lineage)
+        return;
+      this.lineage.apply(row, batch.pointer.seq, taskId, this.graphIdentity);
+      if (value.kind === "admission" && this.lineage.operationId === value.intent.operationId)
+        this.lineageAt = { pointer: batch.pointer, row: index };
+    });
+  }
+  state() {
+    if (!this.lineage)
+      throw new ContractError("invalid");
+    return {
+      savePlan: this.operation && this.savePlanAt ? { at: this.savePlanAt, ...this.operation.progress() } : null,
+      graphIdentity: this.graphIdentity,
+      lineage: { at: this.lineageAt, progress: this.lineage.progress() }
+    };
+  }
+  static resumed(state, withLineage, read2) {
+    let lineage = null;
+    if (withLineage) {
+      const row = state.lineage.at && read2(state.lineage.at).value;
+      if (row && row.kind !== "admission")
+        throw new ContractError("invalid");
+      lineage = TaskPublicationLineage.resumed(row ? row.intent : null, state.lineage.progress);
+    }
+    const fold = new PlanFold(lineage);
+    fold.lineageAt = state.lineage.at;
+    fold.graphIdentity = state.graphIdentity;
+    if (!state.savePlan) {
+      if (state.graphIdentity !== "")
+        throw new ContractError("invalid");
+      return fold;
+    }
+    const v = read2(state.savePlan.at).value;
+    if (v.kind !== "admission" || v.intent.identity.kind !== "action" || v.intent.identity.action.kind !== "save-plan" || hash(canonicalJson(v.intent.identity.action.graph)) !== state.graphIdentity)
+      throw new ContractError("invalid");
+    fold.operation = OperationState.resumed(v.intent.operationId, { intent: v.intent, record: v.record }, state.savePlan);
+    fold.savePlanAt = state.savePlan.at;
+    return fold;
+  }
+}
+function rowAt(v) {
+  const o = closed(v, ["pointer", "row"]);
+  return { pointer: decodeBatchPointer(o.pointer), row: integer(o.row) };
+}
+function decodePlanFoldState(v) {
+  const o = closed(v, ["savePlan", "graphIdentity", "lineage"]);
+  const lineage = closed(o.lineage, ["at", "progress"]), progress = closed(lineage.progress, [
+    "operationId",
+    "state",
+    "endpoint",
+    "graphIdentity"
+  ]);
+  const endpoint = progress.endpoint === null ? null : closed(progress.endpoint, ["revision", "identity"]);
+  let savePlan = null;
+  if (o.savePlan !== null) {
+    const s = closed(o.savePlan, ["at", "reviewed", "publication"]);
+    if (typeof s.reviewed !== "boolean")
+      throw new ContractError("invalid");
+    savePlan = {
+      at: rowAt(s.at),
+      reviewed: s.reviewed,
+      publication: decodePublicationState(s.publication)
+    };
+  }
+  return {
+    savePlan,
+    graphIdentity: o.graphIdentity === "" ? "" : decodeHash(o.graphIdentity),
+    lineage: {
+      at: lineage.at === null ? null : rowAt(lineage.at),
+      progress: {
+        operationId: progress.operationId === null ? null : decodeId(progress.operationId),
+        state: decodePublicationState(progress.state),
+        endpoint: endpoint && {
+          revision: integer(endpoint.revision),
+          identity: endpoint.identity === null ? null : decodeHash(endpoint.identity)
+        },
+        graphIdentity: progress.graphIdentity === null ? null : decodeHash(progress.graphIdentity)
+      }
+    }
+  };
+}
+function planFold(files, taskId, snapshot, budget, navigation, withLineage) {
+  navigation.snapshot(snapshot, budget);
+  const read2 = (at) => {
+    if (BigInt(at.pointer.seq) > BigInt(snapshot))
+      throw new ContractError("invalid");
+    const row = navigation.batch(at.pointer, budget).rows[at.row];
+    if (!row)
+      throw new ContractError("invalid");
+    return row;
+  };
+  const { base, batches } = resumeTaskFold(files, navigation, taskId, snapshot, budget, (body) => PlanFold.resumed(decodePlanFoldState(body.plan), withLineage, read2));
+  const fold = base ?? new PlanFold(withLineage ? new TaskPublicationLineage : null);
+  for (const batch of batches)
+    fold.apply(batch, taskId);
+  return fold;
+}
+function latestTaskRun(files, taskId, snapshot, budget, navigation = new HistoryNavigation(files)) {
+  navigation.snapshot(snapshot, budget);
+  const { base, batches } = resumeTaskFold(files, navigation, taskId, snapshot, budget, (body) => body.run === null ? null : decodeId(body.run));
+  let latest = base ?? null;
+  for (const batch of batches)
+    for (const row of batch.rows) {
+      const v = row.value;
+      if (v.kind === "admission" && v.intent.identity.kind === "action" && v.intent.identity.expected.task?.id === taskId && (v.intent.identity.action.kind === "start" || v.intent.identity.action.kind === "generate-plan"))
+        latest = v.intent.runId;
+    }
+  return latest;
+}
+
 class HistoryReader {
   files;
   cached;
@@ -11225,25 +11618,8 @@ class HistoryReader {
     decodeId(taskId);
     decodeSequence(snapshotSeq);
     const budget = new HistoryReadBudget;
-    this.navigation.snapshot(snapshotSeq, budget);
-    const batches = this.navigation.entityBatches(taskId, snapshotSeq, budget) ?? this.navigation.scanSnapshot(snapshotSeq, budget);
-    let operation = null;
-    const lineage = new TaskPublicationLineage;
-    let graphIdentity = "";
-    for (const batch of batches) {
-      for (const row of batch.rows) {
-        const value = row.value;
-        if (value.kind === "admission" && value.intent.identity.kind === "action" && value.intent.identity.action.kind === "save-plan" && value.intent.identity.action.taskId === taskId) {
-          if (value.intent.runId !== null)
-            throw new ContractError("corrupt-selected");
-          operation = new OperationState(value.intent.operationId);
-          graphIdentity = hash(canonicalJson(value.intent.identity.action.graph));
-        }
-        operation?.apply(row, batch.pointer.seq);
-        if (current2)
-          lineage.apply(row, batch.pointer.seq, taskId, graphIdentity);
-      }
-    }
+    const fold = planFold(this.files, taskId, snapshotSeq, budget, this.navigation, !!current2);
+    const { operation, lineage } = fold;
     if (!operation)
       return null;
     const command = operation.command;
@@ -11271,8 +11647,8 @@ class HistoryReader {
       chunks.push(part.bytes);
     if (Buffer.concat(chunks).toString("utf8") !== plan)
       throw new ContractError("corrupt-selected");
-    const publication = current2 ? lineage.current() : operation.publicationExpected();
-    if (!publication.identity)
+    const publication = current2 ? lineage?.current() : operation.publicationExpected();
+    if (!publication?.identity)
       throw new ContractError("corrupt-selected");
     if (current2 && (current2.identity !== publication.identity || current2.revision !== publication.revision || current2.plan !== plan))
       throw new ContractError("stale");
@@ -11295,15 +11671,7 @@ class HistoryReader {
     decodeId(taskId);
     decodeId(runId);
     decodeSequence(snapshotSeq);
-    this.navigation.snapshot(snapshotSeq, budget);
-    const batches = () => this.navigation.entityBatches(taskId, snapshotSeq, budget) ?? this.navigation.scanSnapshot(snapshotSeq, budget);
-    let latest = null;
-    for (const batch of batches())
-      for (const row of batch.rows) {
-        const v = row.value;
-        if (v.kind === "admission" && v.intent.identity.kind === "action" && v.intent.identity.expected.task?.id === taskId && (v.intent.identity.action.kind === "start" || v.intent.identity.action.kind === "generate-plan"))
-          latest = v.intent.runId;
-      }
+    const latest = latestTaskRun(this.files, taskId, snapshotSeq, budget, this.navigation);
     if (latest !== runId)
       throw new ContractError("stale");
     const state = new RunState(runId);
@@ -13021,6 +13389,7 @@ class HistoryWriter {
               seq: this.state.committedSeq
             }, rows, (bytes) => this.charge(bytes, null, true), preparedIndex);
           } catch {}
+          this.checkpointTasks(rows, preparedIndex);
         }
         const batch = {
           committedSeq: this.state.committedSeq,
@@ -13485,6 +13854,27 @@ class HistoryWriter {
       begun = true;
       return this.ownerValue(input, null, selected2.plan);
     }, lease.budget.retainedBytes + lease.budget.outputBytes, true, () => begun ? lease.settled() : lease.release());
+  }
+  checkpointTasks(rows, prepared) {
+    if (!prepared)
+      return;
+    const tasks = new Set;
+    for (const { value: v } of rows)
+      if (v.kind === "owner" && v.events.some((e) => e.kind === "owner" && e.value.kind === "fact" && e.value.fact.kind === "publication-settled"))
+        tasks.add(v.link.taskId);
+    for (const taskId of tasks) {
+      const head = prepared.heads.get(taskId);
+      if (!head || head.seq !== this.state.committedSeq)
+        continue;
+      try {
+        const checks = checkFold(this.files, taskId, head.seq, new HistoryReadBudget).state();
+        if (checks.settled.length > 64)
+          continue;
+        const run = latestTaskRun(this.files, taskId, head.seq, new HistoryReadBudget);
+        const plan = planFold(this.files, taskId, head.seq, new HistoryReadBudget, new HistoryNavigation(this.files), true).state();
+        this.navigation.writeTaskFold(this.lease, taskId, head.seq, sealTaskFold(this.files, taskId, head, { checks, run, plan }), (bytes) => this.charge(bytes, null, true));
+      } catch {}
+    }
   }
   async publishTask(request) {
     request = structuredClone(request);
@@ -14375,7 +14765,7 @@ import {
   createHash as createHash17,
   randomBytes as randomBytes3,
   randomUUID as randomUUID7,
-  timingSafeEqual
+  timingSafeEqual as timingSafeEqual2
 } from "node:crypto";
 import { dirname as dirname7, isAbsolute as isAbsolute4, join as join10 } from "node:path";
 
@@ -14438,7 +14828,7 @@ function token(value) {
 function sameSecret(candidate, expected) {
   const a = createHash17("sha256").update(candidate).digest();
   const b = createHash17("sha256").update(expected).digest();
-  return timingSafeEqual(a, b);
+  return timingSafeEqual2(a, b);
 }
 function buildTokenCookie(name, encodedValue, maxAge, secure) {
   return `${name}=${encodedValue}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;
