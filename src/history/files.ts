@@ -16,6 +16,7 @@ import type {
   ServiceCoordination,
 } from "../service/coordination.ts";
 import {
+  DirectoryWalks,
   encoded,
   type FileSnapshot,
   hash,
@@ -81,6 +82,8 @@ export interface JournalBatch {
 export class HistoryReadBudget {
   private readonly started = performance.now();
   bytes = 0;
+  /** This call's synchronous directory walks; never outlives an await. */
+  readonly walks = new DirectoryWalks();
   reserve(bytes: number): void {
     if (
       !Number.isSafeInteger(bytes) ||
@@ -310,11 +313,11 @@ export class HistoryFiles {
     try {
       size = lstatSync(path).size;
     } catch {
-      return this.files.read(path, 0);
+      return this.files.read(path, 0, budget.walks);
     } // Absence still validated by PrivateFiles; any existing payload refuses.
     if (size > maximum) corrupt();
     budget.reserve(size);
-    return this.files.read(path, size);
+    return this.files.read(path, size, budget.walks);
   }
   readCommand(
     commandId: string,

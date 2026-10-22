@@ -14,7 +14,11 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, parse, relative, resolve, sep } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { PrivateFiles, REGISTRY_BYTES } from "../src/service/private-files.ts";
+import {
+  DirectoryWalks,
+  PrivateFiles,
+  REGISTRY_BYTES,
+} from "../src/service/private-files.ts";
 import { readBounded, safeDirectory } from "../src/task-store.ts";
 
 // Fixed counters only: never retain buffer arguments, Stats, call traces or
@@ -540,6 +544,124 @@ it("changed private modes are rechecked on the next call and after an await (no 
   chmodSync(f.namespace, 0o755);
   expect(() => f.files.read(f.path)).toThrow();
   expect(() => f.files.directory(f.directory)).toThrow();
+});
+
+it("one synchronous operation re-observes only a walked directory, not its ancestors", () => {
+  const f = fixture();
+  const second = join(f.directory, "second.json");
+  writeFileSync(second, "second bytes\n", { mode: 0o600 });
+  const walks = new DirectoryWalks();
+  reset(f.directory);
+  expect(f.files.read(f.path, undefined, walks)?.bytes.toString()).toBe(f.body);
+  // The first read walks root and every component once, then the file.
+  expect(io.stats).toBe(1 + depth(f.directory) + 2);
+  reset(f.directory);
+  expect(f.files.read(second, undefined, walks)?.bytes.toString()).toBe(
+    "second bytes\n",
+  );
+  // The directory itself once, then the file's selection and final stats.
+  expect(io.selectedStats).toBe(1);
+  expect(io.stats).toBe(3);
+  expect(io.opens).toBe(1);
+  expect(io.closes).toBe(1);
+  // Without walks every call still walks in full.
+  reset();
+  expect(f.files.read(second)?.bytes.toString()).toBe("second bytes\n");
+  expect(io.stats).toBe(1 + depth(f.directory) + 2);
+});
+
+it.each(["ancestor", "leaf"])(
+  "a walked %s substituted for other content refuses inside the same operation",
+  (location) => {
+    const f = fixture();
+    const walks = new DirectoryWalks();
+    expect(f.files.read(f.path, undefined, walks)?.bytes.toString()).toBe(
+      f.body,
+    );
+    const selected =
+      location === "ancestor" ? dirname(f.directory) : f.directory;
+    // Another directory tree with other bytes at the same relative path.
+    const attacker = join(f.root, "attacker");
+    const copy = join(attacker, relative(selected, f.path));
+    mkdirSync(dirname(copy), { recursive: true, mode: 0o700 });
+    writeFileSync(copy, "attacker bytes\n", { mode: 0o600 });
+    renameSync(selected, `${selected}.preserved`);
+    symlinkSync(attacker, selected, "junction");
+    expect(() => f.files.read(f.path, undefined, walks)).toThrow();
+    expect(() => f.files.directory(f.directory, false, walks)).toThrow();
+    expect(readFileSync(copy, "utf8")).toBe("attacker bytes\n");
+  },
+);
+
+it("an ancestor linked back to the same directory yields only genuine bytes, and the next operation refuses", () => {
+  const f = fixture();
+  const walks = new DirectoryWalks();
+  expect(f.files.read(f.path, undefined, walks)?.bytes.toString()).toBe(f.body);
+  const ancestor = dirname(f.directory);
+  renameSync(ancestor, `${ancestor}.preserved`);
+  symlinkSync(`${ancestor}.preserved`, ancestor, "junction");
+  // Same resolved directory identity: the walked directory's own bytes.
+  expect(f.files.read(f.path, undefined, walks)?.bytes.toString()).toBe(f.body);
+  expect(() => f.files.read(f.path, undefined, new DirectoryWalks())).toThrow();
+  expect(() => f.files.read(f.path)).toThrow();
+});
+
+it("a walked directory that disappears is absent again, not reused", () => {
+  const f = fixture();
+  const walks = new DirectoryWalks();
+  expect(f.files.read(f.path, undefined, walks)).toBeDefined();
+  renameSync(f.directory, `${f.directory}.preserved`);
+  expect(f.files.read(f.path, undefined, walks)).toBeUndefined();
+  expect(f.files.directory(f.directory, false, walks)).toBe(false);
+});
+
+it("an await closes the walks: the next read walks every ancestor again", async () => {
+  const f = fixture();
+  const walks = new DirectoryWalks();
+  expect(f.files.read(f.path, undefined, walks)).toBeDefined();
+  await Promise.resolve();
+  reset();
+  expect(f.files.read(f.path, undefined, walks)).toBeDefined();
+  expect(io.stats).toBe(1 + depth(f.directory) + 2);
+  // A later macrotask job: still stale, and a scope made there starts empty.
+  const later = new DirectoryWalks();
+  expect(f.files.read(f.path, undefined, later)).toBeDefined();
+  await new Promise((resolve) => setImmediate(resolve));
+  reset();
+  expect(f.files.read(f.path, undefined, later)).toBeDefined();
+  expect(io.stats).toBe(1 + depth(f.directory) + 2);
+  reset();
+  const fresh = new DirectoryWalks();
+  expect(f.files.read(f.path, undefined, fresh)).toBeDefined();
+  expect(io.stats).toBe(1 + depth(f.directory) + 2);
+  if (process.platform === "win32") return;
+  chmodSync(f.namespace, 0o755);
+  expect(() => f.files.read(f.path, undefined, walks)).toThrow();
+  expect(() => f.files.read(f.path, undefined, later)).toThrow();
+});
+
+it("inside one operation the walked directory's own mode is rechecked; an ancestor's is seen by the next operation", () => {
+  if (process.platform === "win32") return;
+  {
+    const f = fixture();
+    const walks = new DirectoryWalks();
+    expect(f.files.read(f.path, undefined, walks)).toBeDefined();
+    chmodSync(f.directory, 0o755);
+    expect(() => f.files.read(f.path, undefined, walks)).toThrow();
+  }
+  {
+    const f = fixture();
+    const walks = new DirectoryWalks();
+    expect(f.files.read(f.path, undefined, walks)).toBeDefined();
+    chmodSync(f.namespace, 0o755);
+    expect(f.files.read(f.path, undefined, walks)?.bytes.toString()).toBe(
+      f.body,
+    );
+    expect(() =>
+      f.files.read(f.path, undefined, new DirectoryWalks()),
+    ).toThrow();
+    expect(() => f.files.read(f.path)).toThrow();
+  }
 });
 
 it("foreign ownership refuses (injected uid observation, not a foreign-user execution)", () => {

@@ -48,26 +48,89 @@ function same(a: Stats, b: Stats): boolean {
 function missing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
+// Advances once per job, at its first microtask checkpoint. Nothing queued
+// retains a scope, so a dropped read budget is collected as usual.
+let job = 0,
+  advancing = false;
+function currentJob(): number {
+  if (!advancing) {
+    advancing = true;
+    queueMicrotask(() => {
+      job++;
+      advancing = false;
+    });
+  }
+  return job;
+}
+/** Directories that ONE synchronous operation already walked. Reuse re-observes
+ * the directory itself, no-follow, with the walked dev/ino and private mode: an
+ * ancestor substituted for other content resolves elsewhere and walks again. It
+ * goes stale at the next microtask checkpoint, so an await or a later call
+ * always walks; an ancestor's mode change inside one operation is seen by the
+ * next. Absence, refusal and any changed identity fall back to the full walk.
+ */
+export class DirectoryWalks {
+  private readonly job = currentJob();
+  private readonly walked = new Map<string, { dev: number; ino: number }>();
+  private open(): boolean {
+    if (this.job === job) return true;
+    this.walked.clear();
+    return false;
+  }
+  remember(path: string, st: Stats): void {
+    if (this.open()) this.walked.set(path, { dev: st.dev, ino: st.ino });
+  }
+  reuse(path: string): boolean {
+    const walked = this.open() ? this.walked.get(path) : undefined;
+    if (!walked) return false;
+    let st: Stats;
+    try {
+      st = lstatSync(path);
+    } catch (error) {
+      if (!missing(error)) throw error;
+      this.walked.delete(path);
+      return false;
+    }
+    if (
+      !st.isDirectory() ||
+      st.isSymbolicLink() ||
+      st.dev !== walked.dev ||
+      st.ino !== walked.ino
+    ) {
+      this.walked.delete(path);
+      return false;
+    }
+    privateMode(st);
+    return true;
+  }
+}
 /** Strengthens the existing helpers only inside the owned private namespace.
  * Ambient ancestors retain TaskStore's canonicalization policy. No directory CAS
  * or hostile-same-user guarantee; failed temporaries are deliberately preserved.
  */
 export class PrivateFiles {
   constructor(readonly namespace: string) {}
-  directory(path: string, create = false): boolean {
+  directory(path: string, create = false, walks?: DirectoryWalks): boolean {
     const tail = relative(this.namespace, path);
     if (isAbsolute(tail) || tail === ".." || tail.startsWith(`..${sep}`))
       refused();
     if (!create) {
+      const full = resolve(path);
+      if (walks?.reuse(full)) return true;
       const namespace = resolve(this.namespace);
-      let inside = false;
-      return safeDirectory(path, false, (at, st) => {
+      let inside = false,
+        last: Stats | undefined;
+      const found = safeDirectory(path, false, (at, st) => {
         // Exact segment boundary, not a textual prefix. One synchronous walk
         // checks every ambient ancestor and each existing private ancestor,
-        // including an unsafe parent before a missing child. Nothing is cached.
+        // including an unsafe parent before a missing child. Only the caller's
+        // DirectoryWalks keeps the result, for that same synchronous operation.
         if (at === namespace) inside = true;
         if (inside) privateMode(st);
+        last = st;
       });
+      if (found && last) walks?.remember(full, last);
+      return found;
     }
     // Walk the namespace and its ambient ancestors once, then check each
     // private segment exactly once, creating a missing one privately.
@@ -101,8 +164,12 @@ export class PrivateFiles {
     }
     return true;
   }
-  read(path: string, maximum = METADATA_BYTES): FileSnapshot | undefined {
-    if (!this.directory(dirname(path))) return undefined;
+  read(
+    path: string,
+    maximum = METADATA_BYTES,
+    walks?: DirectoryWalks,
+  ): FileSnapshot | undefined {
+    if (!this.directory(dirname(path), false, walks)) return undefined;
     let before: Stats;
     try {
       before = lstatSync(path);
@@ -144,8 +211,9 @@ export class PrivateFiles {
     path: string,
     expected: FileSnapshot | undefined,
     maximum = METADATA_BYTES,
+    walks?: DirectoryWalks,
   ): void {
-    const current = this.read(path, maximum);
+    const current = this.read(path, maximum, walks);
     if (
       current?.identity !== expected?.identity ||
       current?.stamp !== expected?.stamp
