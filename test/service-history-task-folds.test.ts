@@ -1,5 +1,7 @@
 /** The owner-process memory of task fold states is an accelerator: resumed
- * folds must equal the original chain fold, and any miss folds that chain. */
+ * folds must equal the original chain fold, and any miss folds that chain.
+ * Folds are owner-internal reads, so they use the bytes-only authority budget
+ * like their production callers; only the exhaustion case uses the clock. */
 import { expect, it, vi } from "vitest";
 import { loadAgentDefinitions } from "../src/agent-registry.ts";
 import { CheckFold, checkFold } from "../src/history/checks.ts";
@@ -20,7 +22,7 @@ const unavailable = (f: Fixture, taskId: string): ControlContext => ({
 });
 /** The original chain fold, never consulting the memory. */
 function original(f: Fixture, taskId: string, snapshot: string): CheckFold {
-  const budget = new HistoryReadBudget(),
+  const budget = HistoryReadBudget.authority(),
     navigation = new HistoryNavigation(f.h.reader.files);
   navigation.snapshot(snapshot, budget);
   const fold = new CheckFold();
@@ -30,7 +32,7 @@ function original(f: Fixture, taskId: string, snapshot: string): CheckFold {
 }
 function suffix(f: Fixture, taskId: string, snapshot: string) {
   const files = f.h.reader.files,
-    budget = new HistoryReadBudget(),
+    budget = HistoryReadBudget.authority(),
     navigation = new HistoryNavigation(files);
   navigation.snapshot(snapshot, budget);
   return navigation.taskSuffix(
@@ -42,7 +44,7 @@ function suffix(f: Fixture, taskId: string, snapshot: string) {
 }
 /** The task's chain links at `snapshot`, newest first. */
 function heads(f: Fixture, taskId: string, snapshot: string) {
-  const budget = new HistoryReadBudget(),
+  const budget = HistoryReadBudget.authority(),
     navigation = new HistoryNavigation(f.h.reader.files),
     links: { seq: string; hash: string }[] = [];
   navigation.snapshot(snapshot, budget);
@@ -85,7 +87,7 @@ it("a resumed check fold equals the original chain fold at every snapshot, readi
       f.h.reader.files,
       taskId,
       snapshot,
-      new HistoryReadBudget(),
+      HistoryReadBudget.authority(),
     );
     const full = original(f, taskId, snapshot);
     expect(resumed.state()).toEqual(full.state());
@@ -96,7 +98,7 @@ it("a resumed check fold equals the original chain fold at every snapshot, readi
   const last = snapshots.at(-1)!;
   const tail = suffix(f, taskId, last);
   expect(tail?.base).toBeDefined();
-  const budget = new HistoryReadBudget(),
+  const budget = HistoryReadBudget.authority(),
     navigation = new HistoryNavigation(f.h.reader.files);
   navigation.snapshot(last, budget);
   const chain = navigation.entityBatches(taskId, last, budget) ?? [];
@@ -114,7 +116,12 @@ it("a remembered state is used only under its exact chain link; a miss folds the
   const [, , last] = await checked(f, taskId, 3);
   const expected = original(f, taskId, last).state();
   const resumed = () =>
-    checkFold(f.h.reader.files, taskId, last, new HistoryReadBudget()).state();
+    checkFold(
+      f.h.reader.files,
+      taskId,
+      last,
+      HistoryReadBudget.authority(),
+    ).state();
   expect(resumed()).toEqual(expected);
   const memory = taskFoldMemory(f.h.reader.files),
     [head] = heads(f, taskId, last),
@@ -146,7 +153,12 @@ it("an older snapshot resumes from an older remembered state, never a newer one"
   for (const b of tail?.batches ?? [])
     expect(BigInt(b.pointer.seq)).toBeLessThanOrEqual(BigInt(first));
   expect(
-    checkFold(f.h.reader.files, taskId, first, new HistoryReadBudget()).state(),
+    checkFold(
+      f.h.reader.files,
+      taskId,
+      first,
+      HistoryReadBudget.authority(),
+    ).state(),
   ).toEqual(original(f, taskId, first).state());
 }, 120000);
 
@@ -211,7 +223,7 @@ it("a resumed latest-run fold equals the original chain at every snapshot across
     snapshots.push(...(await checked(f, taskId, 1)));
   }
   const originalLatest = (snapshot: string) => {
-    const budget = new HistoryReadBudget(),
+    const budget = HistoryReadBudget.authority(),
       navigation = new HistoryNavigation(f.h.reader.files);
     navigation.snapshot(snapshot, budget);
     let latest: string | null = null;
@@ -235,7 +247,7 @@ it("a resumed latest-run fold equals the original chain at every snapshot across
         f.h.reader.files,
         taskId,
         snapshot,
-        new HistoryReadBudget(),
+        HistoryReadBudget.authority(),
       ),
     ).toBe(originalLatest(snapshot));
   expect(
@@ -243,7 +255,7 @@ it("a resumed latest-run fold equals the original chain at every snapshot across
       f.h.reader.files,
       taskId,
       snapshots.at(-1)!,
-      new HistoryReadBudget(),
+      HistoryReadBudget.authority(),
     ),
   ).toBe(runs.at(-1));
   // The newest remembered state carries the run part, so the suffix stays short.

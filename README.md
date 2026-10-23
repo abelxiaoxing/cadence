@@ -320,7 +320,7 @@ Correct: expose bounded continuations/full exports and report the exact executed
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.
 Use ordinary source editing and directly affected checks while developing; independently review complete capabilities and run full `verify` at stable integration boundaries.
 Do not run the entire suite after every local edit, but do not replace final integration with unit mocks or citation counts.
-`bun run test` runs unit files in parallel, then `serialFiles` in `vitest.config.ts` (real PTY flows, overlapping SDK children and >8MiB cold scans) one at a time; a file belongs there only when it measurably exceeds its own waits under shared CPU.
+`bun run test` runs unit files in parallel, then `serialProcessFiles` (real PTY/SDK process flows) and `serialScanFiles` (>8MiB cold scans) from `vitest.config.ts` one at a time; a file belongs there only when it measurably exceeds its own waits under shared CPU.
 On this development host create fresh0700 disk roots under `/home/mirako/abel` and explicitly set TMPDIR/TEMP/TMP; `/tmp` is inode-exhausted.
 Use fabricated credentials, isolated browser/profile/state roots and local fixtures; never personal credentials, automatic downloads or unknown process cleanup.
 Outer command budgets must cover whole suites and preserve original runner waits; existing SDK20s/child15s, PTY90s/interaction15s and browser120s/action15s fixture budgets are not increased to obtain green.
