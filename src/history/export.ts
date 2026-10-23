@@ -16,7 +16,7 @@ import {
   type HistoryRecord,
   LIMITS,
 } from "../service-contract.ts";
-import { HistoryReadBudget } from "./files.ts";
+import { HistoryReadBudget, STALL_RETRIES } from "./files.ts";
 import type { HistoryProjection } from "./projection.ts";
 import { RunState } from "./run-state.ts";
 import { type RetainedItem, RetainedScan, type ScanPoint } from "./search.ts";
@@ -130,7 +130,7 @@ export async function* exportHistory(
   );
   // Snapshot proof can exceed one window with no indexes. Yield to cancellation
   // between windows; never label a future/missing snapshot a complete archive.
-  for (;;) {
+  for (let stalls = 0; ; ) {
     aborted(signal);
     const before = canonicalJson({ point, state: scan.checkpoint() });
     scan.renew(new HistoryReadBudget());
@@ -140,10 +140,13 @@ export async function* exportHistory(
     } catch (error) {
       if (
         !(error instanceof ContractError) ||
-        error.code !== "receipt-inconclusive" ||
-        before === canonicalJson({ point, state: scan.checkpoint() })
+        error.code !== "receipt-inconclusive"
       )
         throw error;
+      // No progress refuses, except a bounded number of pure time stalls.
+      if (before === canonicalJson({ point, state: scan.checkpoint() })) {
+        if (!scan.budget.elapsed || ++stalls > STALL_RETRIES) throw error;
+      } else stalls = 0;
       await yieldTurn();
     }
   }
@@ -262,7 +265,8 @@ export async function* exportHistory(
       },
     ];
   };
-  let finished = false;
+  let finished = false,
+    stalls = 0;
   while (!finished) {
     aborted(signal);
     const before = canonicalJson({ point, state: scan.checkpoint() });
@@ -333,10 +337,13 @@ export async function* exportHistory(
     } catch (error) {
       if (
         !(error instanceof ContractError) ||
-        error.code !== "receipt-inconclusive" ||
-        before === canonicalJson({ point, state: scan.checkpoint() })
+        error.code !== "receipt-inconclusive"
       )
         throw error;
+      // No progress refuses, except a bounded number of pure time stalls.
+      if (before === canonicalJson({ point, state: scan.checkpoint() })) {
+        if (!scan.budget.elapsed || ++stalls > STALL_RETRIES) throw error;
+      } else stalls = 0;
       finished = false;
     }
     coverage = combineCoverage(coverage, scan.coverage);

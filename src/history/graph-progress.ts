@@ -13,7 +13,7 @@ import {
 } from "../service-contract.ts";
 import { closed } from "../worker-public.mjs";
 import { decodeScanPoint } from "./detail-progress.ts";
-import { HistoryReadBudget } from "./files.ts";
+import { HistoryReadBudget, noProgress, retryStalled } from "./files.ts";
 import { HistoryReadProof } from "./read-proof.ts";
 import type { HistoryReader } from "./reader.ts";
 import { decodeRetainedProgress, freshProgress } from "./retained-progress.ts";
@@ -56,6 +56,12 @@ export function graphPreparation(
   });
 }
 export async function readRetainedGraph(
+  reader: HistoryReader,
+  request: GraphReadRequest,
+): Promise<GraphReadResult> {
+  return retryStalled(() => graphQuantum(reader, request));
+}
+async function graphQuantum(
   reader: HistoryReader,
   request: GraphReadRequest,
 ): Promise<GraphReadResult> {
@@ -162,10 +168,10 @@ export async function readRetainedGraph(
   } catch (error) {
     if (
       !(error instanceof ContractError) ||
-      error.code !== "receipt-inconclusive" ||
-      coordinate() === before
+      error.code !== "receipt-inconclusive"
     )
       throw error;
+    if (coordinate() === before) noProgress(budget);
     traversal.assertCurrent();
     const next = {
       ...readIdentity(request),

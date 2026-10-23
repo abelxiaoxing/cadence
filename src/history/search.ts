@@ -20,7 +20,7 @@ import {
   readIdentity,
   type SearchPage,
 } from "../service-contract.ts";
-import { HistoryReadBudget } from "./files.ts";
+import { HistoryReadBudget, noProgress, retryStalled } from "./files.ts";
 import {
   HistoryNavigation,
   type LocatedBatch,
@@ -838,6 +838,13 @@ export async function searchHistory(
   value: ReadCursor,
   limit: number = LIMITS.pageEntries,
 ): Promise<SearchPage> {
+  return retryStalled(() => searchQuantum(reader, value, limit));
+}
+async function searchQuantum(
+  reader: HistoryReader,
+  value: ReadCursor,
+  limit: number = LIMITS.pageEntries,
+): Promise<SearchPage> {
   const cursor = decodeCursor(value);
 
   if (
@@ -978,7 +985,7 @@ export async function searchHistory(
       error.code !== "receipt-inconclusive"
     )
       throw error;
-    if (!hits.length && before === coordinate()) throw error;
+    if (!hits.length && before === coordinate()) noProgress(originalBudget);
     done = false;
   }
   scan.traversal?.assertCurrent();

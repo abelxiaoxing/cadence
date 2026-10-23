@@ -4178,6 +4178,9 @@ class HistoryReadBudget {
       throw new ContractError("receipt-inconclusive");
     this.bytes += bytes;
   }
+  get elapsed() {
+    return performance.now() - this.started >= LIMITS.searchMs;
+  }
 }
 function corrupt() {
   throw new ContractError("corrupt-selected");

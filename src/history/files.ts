@@ -94,6 +94,40 @@ export class HistoryReadBudget {
       throw new ContractError("receipt-inconclusive");
     this.bytes += bytes;
   }
+  /** This quantum's wall-clock time ran out, whatever it was spent on. */
+  get elapsed(): boolean {
+    return performance.now() - this.started >= LIMITS.searchMs;
+  }
+}
+/** A quantum that made no semantic progress because its wall-clock time, not
+ * its byte limit, ran out: possibly a host stall (GC, scheduling, scanning).
+ * Same refusal code; only the read's own entry may repeat it afresh. */
+export class StalledQuantum extends ContractError {
+  constructor() {
+    super("receipt-inconclusive");
+  }
+}
+/** Refuse a quantum that made no semantic progress. Nothing is faked: a pure
+ * time stall is only marked repeatable; byte exhaustion is final. */
+export function noProgress(budget: HistoryReadBudget): never {
+  throw budget.elapsed
+    ? new StalledQuantum()
+    : new ContractError("receipt-inconclusive");
+}
+/** Fresh quanta that may repeat one stalled quantum before its refusal stands. */
+export const STALL_RETRIES = 2;
+/** Repeat a whole read whose quantum stalled, with a fresh budget, at most
+ * STALL_RETRIES times after yielding a turn. A stalled quantum left no state. */
+export async function retryStalled<T>(read: () => Promise<T>): Promise<T> {
+  for (let retry = 0; ; retry++) {
+    try {
+      return await read();
+    } catch (error) {
+      if (!(error instanceof StalledQuantum) || retry >= STALL_RETRIES)
+        throw error;
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  }
 }
 function corrupt(): never {
   throw new ContractError("corrupt-selected");
