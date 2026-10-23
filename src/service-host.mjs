@@ -21313,8 +21313,8 @@ class TaskScheduler {
       this.pumping = false;
     }
   }
-  current(e, n) {
-    return !this.closed && !e.reason && !n.abort.signal.aborted && this.options.owner.state === "idle" && this.owned() && e.input.current() && e.input.sources.current() && canonicalJson(e.input.observe(false).observation) === canonicalJson(e.expectedObservation);
+  current(e, n, changes = false) {
+    return !this.closed && !e.reason && !n.abort.signal.aborted && this.options.owner.state === "idle" && this.owned() && e.input.current() && e.input.sources.current() && (!changes || canonicalJson(e.input.observe(false).observation) === canonicalJson(e.expectedObservation));
   }
   async execute(e, n) {
     if (!n.assignment || !n.result || e.input.kind === "check")
@@ -21341,7 +21341,7 @@ class TaskScheduler {
         reservationId: n.childRunId,
         lane,
         state: "held",
-        checkoutGeneration: e.input.observe(false).observation.checkoutGeneration
+        checkoutGeneration: e.input.generation()
       });
       held = true;
       if (!this.current(e, n)) {
@@ -21351,7 +21351,7 @@ class TaskScheduler {
       const observed = e.input.observe(false), before = observed.observation;
       const baseline = await this.changes(e, "before", observed);
       e.baseline ??= baseline;
-      if (!this.current(e, n)) {
+      if (!this.current(e, n) || canonicalJson(before) !== canonicalJson(e.expectedObservation)) {
         await this.close(e, e.reason ?? "stale-dependency");
         return;
       }
@@ -21397,7 +21397,7 @@ class TaskScheduler {
       });
       originalAuth = auth.settled;
       const prepared = await auth.result;
-      if (prepared.status !== "prepared" || !this.current(e, n)) {
+      if (prepared.status !== "prepared" || !this.current(e, n, true)) {
         await this.close(e, e.reason ?? "failed");
         await this.fact(e, {
           kind: "assignment-state",
@@ -21467,7 +21467,7 @@ class TaskScheduler {
             reservationId: n.childRunId,
             lane,
             state: "released",
-            checkoutGeneration: e.input.observe(false).observation.checkoutGeneration
+            checkoutGeneration: e.input.generation()
           });
         this.holders.delete(n.childRunId);
         n.state = "done";
@@ -21515,7 +21515,7 @@ class TaskScheduler {
           if (this.current(e, n) && input.definitionCurrent()) {
             const output = recording;
             const original = Promise.resolve().then(async () => {
-              if (!this.current(e, n) || !input.definitionCurrent())
+              if (!this.current(e, n, true) || !input.definitionCurrent())
                 return native;
               await runCheck(input.check, input.cwd, n.abort.signal, {
                 environment: input.environment,
@@ -21547,7 +21547,7 @@ class TaskScheduler {
         }
       };
       const observed = input.observe(false).observation;
-      const after = held ? input.observe(true).observation : observed;
+      const after = held ? { ...observed, checkoutGeneration: input.advance() } : observed;
       const ownAdvance = held && observed.checkoutGeneration === before.checkoutGeneration ? {
         operationId: e.link.operationId,
         reservationId: checkId,
@@ -22422,6 +22422,8 @@ class TaskActions {
           return false;
         }
       },
+      generation: () => this.generation,
+      advance: () => ++this.generation,
       observe: (advance) => {
         if (advance)
           this.generation++;

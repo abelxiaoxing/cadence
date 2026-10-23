@@ -1044,6 +1044,8 @@ export class TaskActions implements AdmissionOwner {
           return false;
         }
       },
+      generation: () => this.generation,
+      advance: () => ++this.generation,
       observe: (advance) => {
         if (advance) this.generation++;
         const view = captureChanges(h.coordination.store.root);
