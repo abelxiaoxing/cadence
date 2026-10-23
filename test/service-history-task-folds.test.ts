@@ -1,25 +1,13 @@
-/** Writer-issued task fold checkpoints are an accelerator: resumed folds must
- * equal the original chain fold, and any untrusted checkpoint is ignored. */
-import {
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
-import { join } from "node:path";
+/** The owner-process memory of task fold states is an accelerator: resumed
+ * folds must equal the original chain fold, and any miss folds that chain. */
 import { expect, it, vi } from "vitest";
 import { loadAgentDefinitions } from "../src/agent-registry.ts";
-import {
-  CheckFold,
-  checkFold,
-  decodeCheckFoldState,
-} from "../src/history/checks.ts";
+import { CheckFold, checkFold } from "../src/history/checks.ts";
 import { HistoryReadBudget } from "../src/history/files.ts";
 import { HistoryNavigation } from "../src/history/navigation.ts";
 import { proposePlanContent } from "../src/history/plans.ts";
 import { latestTaskRun } from "../src/history/reader.ts";
-import { openTaskFold } from "../src/history/task-folds.ts";
+import { taskFoldMemory } from "../src/history/task-folds.ts";
 import { type ControlContext, publicError } from "../src/service-contract.ts";
 import { fixture } from "./helpers/service-check-fixture.ts";
 
@@ -30,7 +18,7 @@ const unavailable = (f: Fixture, taskId: string): ControlContext => ({
   taskId,
   error: publicError("unavailable"),
 });
-/** The original chain fold, never consulting a checkpoint. */
+/** The original chain fold, never consulting the memory. */
 function original(f: Fixture, taskId: string, snapshot: string): CheckFold {
   const budget = new HistoryReadBudget(),
     navigation = new HistoryNavigation(f.h.reader.files);
@@ -45,13 +33,35 @@ function suffix(f: Fixture, taskId: string, snapshot: string) {
     budget = new HistoryReadBudget(),
     navigation = new HistoryNavigation(files);
   navigation.snapshot(snapshot, budget);
-  return navigation.taskSuffix(taskId, snapshot, budget, (value, head) => {
-    const body = openTaskFold(files, value, taskId, head, budget);
-    return body && decodeCheckFoldState(body.checks);
-  });
+  return navigation.taskSuffix(
+    taskId,
+    snapshot,
+    budget,
+    (head) => taskFoldMemory(files).recall(taskId, head)?.checks,
+  );
 }
-const folds = (f: Fixture, taskId: string) =>
-  join(f.h.reader.files.directory, "indexes", "task-folds", taskId);
+/** The task's chain links at `snapshot`, newest first. */
+function heads(f: Fixture, taskId: string, snapshot: string) {
+  const budget = new HistoryReadBudget(),
+    navigation = new HistoryNavigation(f.h.reader.files),
+    links: { seq: string; hash: string }[] = [];
+  navigation.snapshot(snapshot, budget);
+  navigation.taskSuffix(taskId, snapshot, budget, (head) => {
+    links.push(head);
+    return undefined;
+  });
+  return links;
+}
+/** Push every remembered state of the task out of its bounded memory. */
+function evict(f: Fixture, taskId: string, state: object) {
+  const memory = taskFoldMemory(f.h.reader.files);
+  for (let i = 0; i < 8; i++)
+    memory.remember(
+      taskId,
+      { seq: String(9_000_000_000 + i), hash: "0".repeat(64) },
+      state as never,
+    );
+}
 async function checked(f: Fixture, taskId: string, times: number) {
   const snapshots: string[] = [];
   for (let i = 0; i < times; i++) {
@@ -68,7 +78,7 @@ it("a resumed check fold equals the original chain fold at every snapshot, readi
   f.configure([f.check]);
   const taskId = await f.create();
   const snapshots = await checked(f, taskId, 3);
-  expect(readdirSync(folds(f, taskId)).length).toBeGreaterThan(0);
+  expect(taskFoldMemory(f.h.reader.files).has(taskId)).toBe(true);
   const configured = { revision: 1, selections: [f.check] };
   for (const snapshot of snapshots) {
     const resumed = checkFold(
@@ -90,103 +100,43 @@ it("a resumed check fold equals the original chain fold at every snapshot, readi
     navigation = new HistoryNavigation(f.h.reader.files);
   navigation.snapshot(last, budget);
   const chain = navigation.entityBatches(taskId, last, budget) ?? [];
-  // Only batches after the newest checkpoint, not the task's whole history.
+  // Only batches after the newest remembered state, not the whole history.
   expect(tail!.batches.length).toBeLessThan(chain.length / 2);
   expect(tail!.batches.map((b) => b.pointer.seq)).toEqual(
     chain.slice(chain.length - tail!.batches.length).map((b) => b.pointer.seq),
   );
 }, 120000);
 
-it("a changed, unauthenticated, moved or foreign checkpoint is ignored and the original fold answers", async () => {
+it("a remembered state is used only under its exact chain link; a miss folds the original chain", async () => {
   const f = await fixture();
   f.configure([f.check]);
-  const taskId = await f.create(),
-    other = await f.create();
+  const taskId = await f.create();
   const [, , last] = await checked(f, taskId, 3);
-  const dir = folds(f, taskId);
-  const names = readdirSync(dir).sort((a, b) =>
-    Number(BigInt(a.slice(0, -5)) - BigInt(b.slice(0, -5))),
-  );
-  const newest = join(dir, names.at(-1)!),
-    bytes = readFileSync(newest);
   const expected = original(f, taskId, last).state();
-  const resumedEquals = () =>
-    expect(
-      checkFold(
-        f.h.reader.files,
-        taskId,
-        last,
-        new HistoryReadBudget(),
-      ).state(),
-    ).toEqual(expected);
-  const record = JSON.parse(bytes.toString("utf8"));
-  const tamper = (change: (r: typeof record) => void) => {
-    const copy = structuredClone(record);
-    change(copy);
-    writeFileSync(newest, `${JSON.stringify(copy)}\n`);
-  };
-  // Changed state under the original MAC.
-  tamper((r) => {
-    r.body.checks.settled[0][1].status = "failed";
-  });
-  resumedEquals();
-  // The walk passed the rejected checkpoint's own batch.
-  const past = suffix(f, taskId, last);
-  expect(
-    past === undefined ||
-      past.batches.some((b) => b.pointer.seq === record.seq),
-  ).toBe(true);
-  // An unauthenticated MAC.
-  tamper((r) => {
-    r.mac = Buffer.alloc(32, 1).toString("base64url");
-  });
-  resumedEquals();
-  writeFileSync(newest, bytes);
-  resumedEquals();
-  const seqs = (id: string, snapshot: string) => {
-    const budget = new HistoryReadBudget(),
-      navigation = new HistoryNavigation(f.h.reader.files);
-    navigation.snapshot(snapshot, budget);
-    return (navigation.entityBatches(id, snapshot, budget) ?? []).map(
-      (b) => b.pointer.seq,
-    );
-  };
-  // Moved within the task: placed at an older checkpoint-free seq, read there.
-  const have = new Set(names.map((n) => n.slice(0, -5)));
-  const older = seqs(taskId, last)
-    .reverse()
-    .find((s) => !have.has(s) && BigInt(s) < BigInt(record.seq));
-  expect(older).toBeDefined();
-  writeFileSync(join(dir, `${older}.json`), bytes, { mode: 0o600, flag: "wx" });
-  expect(
-    checkFold(
-      f.h.reader.files,
-      taskId,
-      older!,
-      new HistoryReadBudget(),
-    ).state(),
-  ).toEqual(original(f, taskId, older!).state());
-  const moved = suffix(f, taskId, older!);
-  expect(
-    moved === undefined || moved.batches.some((b) => b.pointer.seq === older),
-  ).toBe(true);
-  // Copied to another task at that task's own head: foreign, so ignored there.
-  const head = seqs(other, last).at(-1)!;
-  mkdirSync(folds(f, other), { recursive: true, mode: 0o700 });
-  writeFileSync(join(folds(f, other), `${head}.json`), bytes, {
-    mode: 0o600,
-  });
-  expect(
-    checkFold(f.h.reader.files, other, last, new HistoryReadBudget()).state(),
-  ).toEqual(original(f, other, last).state());
-  const foreign = suffix(f, other, last);
-  expect(
-    foreign === undefined ||
-      foreign.batches.some((b) => b.pointer.seq === head),
-  ).toBe(true);
+  const resumed = () =>
+    checkFold(f.h.reader.files, taskId, last, new HistoryReadBudget()).state();
+  expect(resumed()).toEqual(expected);
+  const memory = taskFoldMemory(f.h.reader.files),
+    [head] = heads(f, taskId, last),
+    real = memory.recall(taskId, head)!;
+  expect(real).toBeDefined();
+  const wrong = { ...real, checks: { starts: [], settled: [] } };
+  // Same seq, another chain hash (a diverged chain): ignored.
+  memory.remember(taskId, { seq: head.seq, hash: "f".repeat(64) }, wrong);
+  expect(resumed()).toEqual(expected);
+  // Positive control: under its exact link the memory really is consulted,
+  // which is why only the owner's own writer remembers states.
+  memory.remember(taskId, head, wrong);
+  expect(resumed()).not.toEqual(expected);
+  memory.remember(taskId, head, real);
+  expect(resumed()).toEqual(expected);
+  // Evicted past its bound: the original chain answers.
+  evict(f, taskId, real);
+  expect(suffix(f, taskId, last)).toBeUndefined();
+  expect(resumed()).toEqual(expected);
 }, 120000);
 
-it("an older snapshot resumes from an older checkpoint, never a newer one", async () => {
+it("an older snapshot resumes from an older remembered state, never a newer one", async () => {
   const f = await fixture();
   f.configure([f.check]);
   const taskId = await f.create();
@@ -200,7 +150,7 @@ it("an older snapshot resumes from an older checkpoint, never a newer one", asyn
   ).toEqual(original(f, taskId, first).state());
 }, 120000);
 
-it("exhaustion while reading a checkpoint stays inconclusive, never a silent fold", async () => {
+it("exhaustion while resuming stays inconclusive, never a silent fold", async () => {
   const f = await fixture();
   f.configure([f.check]);
   const taskId = await f.create();
@@ -296,7 +246,7 @@ it("a resumed latest-run fold equals the original chain at every snapshot across
       new HistoryReadBudget(),
     ),
   ).toBe(runs.at(-1));
-  // The newest checkpoint carries the run part, so the suffix stays short.
+  // The newest remembered state carries the run part, so the suffix stays short.
   const tail = suffix(f, taskId, snapshots.at(-1)!);
   expect(tail?.base).toBeDefined();
 }, 180000);
@@ -378,16 +328,12 @@ it("a resumed plan fold proves the same published plan as the original chain, wi
     }
   };
   const resumedReads = reads();
-  // Hide every checkpoint: the original chain fold must agree exactly.
-  const dir = folds(f, taskId);
-  renameSync(dir, `${dir}.hidden`);
-  try {
-    expect(
-      points.map((p) => [outcome(p.snapshot), outcome(p.snapshot, p.current)]),
-    ).toEqual(resumed);
-    // The checkpointed proof really resumed: far fewer original batch reads.
-    expect(resumedReads * 2).toBeLessThan(reads());
-  } finally {
-    renameSync(`${dir}.hidden`, dir);
-  }
+  // Evict every remembered state: the original chain fold must agree exactly.
+  const memory = taskFoldMemory(f.h.reader.files);
+  evict(f, taskId, memory.recall(taskId, heads(f, taskId, last.snapshot)[0])!);
+  expect(
+    points.map((p) => [outcome(p.snapshot), outcome(p.snapshot, p.current)]),
+  ).toEqual(resumed);
+  // The remembered proof really resumed: far fewer original batch reads.
+  expect(resumedReads * 2).toBeLessThan(reads());
 }, 180000);

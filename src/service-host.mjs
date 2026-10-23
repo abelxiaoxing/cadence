@@ -5622,17 +5622,6 @@ function requireFact(condition) {
   if (!condition)
     throw new ContractError("corrupt-selected");
 }
-function decodePublicationState(v) {
-  const o = closed(v, ["intent", "status", "seq"]);
-  const intent = o.intent === null ? null : decodeOwnerFact(o.intent);
-  if (intent !== null && intent.kind !== "publication-intent")
-    throw new ContractError("invalid");
-  return {
-    intent,
-    status: oneOf(o.status, ["pending", "published", "conflict", "uncertain"]),
-    seq: o.seq === null ? null : decodeSequence(o.seq)
-  };
-}
 function publicationTransition(state, initial, fact, seq) {
   if (fact.kind === "publication-intent") {
     requireFact(!state.intent && state.status === "pending" || state.status === "published");
@@ -6272,9 +6261,6 @@ function bad2() {
   throw new ContractError("corrupt-selected");
 }
 var stamp3 = (s) => [s.dev, s.ino, s.size, s.ctimeMs, s.mtimeMs, s.mode, s.uid, s.nlink].join(":");
-function decodeBatchPointer(v) {
-  return pointer(v);
-}
 function pointer(v) {
   const o = closed(v, ["segment", "offset", "bytes", "seq"]);
   return {
@@ -6965,13 +6951,10 @@ class HistoryNavigation {
   taskSuffix(taskId, snapshot, budget, accept) {
     decodeId(taskId);
     try {
-      if (!this.files.files.directory(dirname5(this.indexPath("task-folds", `${taskId}/0`)), false, budget.walks))
-        return;
       let head = this.anchoredHead(taskId, snapshot, budget) ?? null;
       const newer = [];
       while (head) {
-        const value = this.index("task-folds", `${taskId}/${head.seq}`, budget);
-        const base = value === undefined ? undefined : accept(value, head);
+        const base = accept(head);
         if (base !== undefined)
           return { base, batches: newer.reverse() };
         const link = this.link("entity-links", taskId, head, budget);
@@ -6982,9 +6965,6 @@ class HistoryNavigation {
       budget.reserve(0);
     }
     return;
-  }
-  writeTaskFold(lease, taskId, seq, value, charge) {
-    this.write(lease, "task-folds", `${decodeId(taskId)}/${decodeSequence(seq)}`, value, charge);
   }
   runBatches(id, snapshot, budget) {
     const expected = this.anchoredHead(id, snapshot, budget);
@@ -7172,72 +7152,58 @@ function navigationKeys(row) {
 import { createHash as createHash12 } from "node:crypto";
 
 // src/history/task-folds.ts
-import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
-var SCHEMA = "cadence-task-fold/1";
-function sign(files, record, budget) {
-  const material = files.readProofMaterial(budget);
-  const key = Buffer.from(hkdfSync("sha256", material.key, Buffer.from(files.format.storeId, "utf8"), Buffer.from(SCHEMA, "utf8"), 32));
-  return createHmac("sha256", key).update(canonicalJson(record)).digest();
-}
-function sealTaskFold(files, taskId, anchor, body) {
-  const record = {
-    schema: SCHEMA,
-    storeId: files.format.storeId,
-    taskId: decodeId(taskId),
-    seq: decodeSequence(anchor.seq),
-    hash: decodeHash(anchor.hash),
-    body
-  };
-  return { ...record, mac: sign(files, record).toString("base64url") };
-}
-function openTaskFold(files, value, taskId, anchor, budget) {
-  try {
-    const o = closed(value, [
-      "schema",
-      "storeId",
-      "taskId",
-      "seq",
-      "hash",
-      "body",
-      "mac"
-    ]);
-    literal(o.schema, SCHEMA);
-    if (decodeId(o.storeId) !== files.format.storeId || decodeId(o.taskId) !== taskId || decodeSequence(o.seq) !== anchor.seq || decodeHash(o.hash) !== anchor.hash)
-      return;
-    const part = closed(o.body, ["checks", "run", "plan"]), body = {
-      checks: part.checks,
-      run: part.run,
-      plan: part.plan
-    };
-    const given = Buffer.from(text(o.mac, 43, true), "base64url");
-    const expected = sign(files, {
-      schema: SCHEMA,
-      storeId: o.storeId,
-      taskId: o.taskId,
-      seq: o.seq,
-      hash: o.hash,
-      body
-    }, budget);
-    if (given.length !== expected.length || !timingSafeEqual(given, expected))
-      return;
-    return body;
-  } catch {
-    budget.reserve(0);
-    return;
+var TASKS = 1024;
+var STATES = 8;
+
+class TaskFoldMemory {
+  tasks = new Map;
+  has(taskId) {
+    return this.tasks.has(taskId);
+  }
+  remember(taskId, anchor, state) {
+    let states = this.tasks.get(taskId);
+    if (!states) {
+      if (this.tasks.size >= TASKS)
+        this.tasks.delete(this.tasks.keys().next().value ?? "");
+      states = new Map;
+      this.tasks.set(taskId, states);
+    }
+    states.delete(anchor.seq);
+    states.set(anchor.seq, {
+      hash: anchor.hash,
+      state: structuredClone(state)
+    });
+    if (states.size > STATES)
+      states.delete(states.keys().next().value ?? "");
+  }
+  recall(taskId, anchor) {
+    const entry = this.tasks.get(taskId)?.get(anchor.seq);
+    return entry?.hash === anchor.hash ? structuredClone(entry.state) : undefined;
   }
 }
-function resumeTaskFold(files, navigation, taskId, snapshot, budget, decode) {
-  const suffix = navigation.taskSuffix(taskId, snapshot, budget, (value, head) => {
-    const body = openTaskFold(files, value, taskId, head, budget);
-    if (!body)
+var memories = new Map;
+function taskFoldMemory(files) {
+  const key = `${files.directory}\x00${files.format.storeId}`;
+  let memory = memories.get(key);
+  if (!memory) {
+    memory = new TaskFoldMemory;
+    memories.set(key, memory);
+  }
+  return memory;
+}
+function resumeTaskFold(files, navigation, taskId, snapshot, budget, resume) {
+  const memory = taskFoldMemory(files);
+  const suffix = memory.has(taskId) ? navigation.taskSuffix(taskId, snapshot, budget, (head) => {
+    const state = memory.recall(taskId, head);
+    if (!state)
       return;
     try {
-      return decode(body);
+      return resume(state);
     } catch {
       budget.reserve(0);
       return;
     }
-  });
+  }) : undefined;
   return suffix ?? {
     base: undefined,
     batches: navigation.entityBatches(taskId, snapshot, budget) ?? navigation.scanSnapshot(snapshot, budget)
@@ -7327,80 +7293,9 @@ class CheckFold {
     };
   }
 }
-function checkStart(v, keys = []) {
-  const o = closed(v, [
-    "selection",
-    "epoch",
-    "cwdId",
-    "checkEnvGeneration",
-    ...keys
-  ]);
-  return {
-    selection: checkSelection(o.selection),
-    epoch: decodeId(o.epoch),
-    cwdId: decodeId(o.cwdId),
-    checkEnvGeneration: integer(o.checkEnvGeneration, 1)
-  };
-}
-function decodeCheckFoldState(v) {
-  const o = closed(v, ["starts", "settled"]);
-  if (!Array.isArray(o.starts) || !Array.isArray(o.settled))
-    throw new ContractError("invalid");
-  if (o.starts.length > LIMITS.childReservations || o.settled.length > 64)
-    throw new ContractError("invalid");
-  const starts = o.starts.map((entry) => {
-    if (!Array.isArray(entry) || entry.length !== 2)
-      throw new ContractError("invalid");
-    return [decodeId(entry[0]), checkStart(entry[1])];
-  });
-  const settled = o.settled.map((entry) => {
-    if (!Array.isArray(entry) || entry.length !== 2)
-      throw new ContractError("invalid");
-    const s = closed(entry[1], [
-      "selection",
-      "epoch",
-      "cwdId",
-      "checkEnvGeneration",
-      "checkId",
-      "status",
-      "after",
-      "incomplete"
-    ]);
-    const start = checkStart({
-      selection: s.selection,
-      epoch: s.epoch,
-      cwdId: s.cwdId,
-      checkEnvGeneration: s.checkEnvGeneration
-    }, []);
-    if (canonicalJson(start.selection) !== entry[0])
-      throw new ContractError("invalid");
-    const after = closed(s.after, [
-      "identity",
-      "complete",
-      "checkoutGeneration"
-    ]);
-    return [
-      entry[0],
-      {
-        ...start,
-        checkId: decodeId(s.checkId),
-        status: oneOf(s.status, ["passed", "failed", "canceled", "stale"]),
-        after: {
-          identity: decodeHash(after.identity),
-          complete: bool(after.complete),
-          checkoutGeneration: integer(after.checkoutGeneration)
-        },
-        incomplete: bool(s.incomplete)
-      }
-    ];
-  });
-  if (new Set(starts.map(([k]) => k)).size !== starts.length || new Set(settled.map(([k]) => k)).size !== settled.length)
-    throw new ContractError("invalid");
-  return { starts, settled };
-}
 function checkFold(files, taskId, snapshot, budget, navigation = new HistoryNavigation(files)) {
   navigation.snapshot(snapshot, budget);
-  const { base, batches } = resumeTaskFold(files, navigation, taskId, snapshot, budget, (body) => decodeCheckFoldState(body.checks));
+  const { base, batches } = resumeTaskFold(files, navigation, taskId, snapshot, budget, (state) => state.checks);
   const fold = new CheckFold(base);
   for (const b of batches)
     fold.apply(b, taskId);
@@ -11571,47 +11466,6 @@ class PlanFold {
     return fold;
   }
 }
-function rowAt(v) {
-  const o = closed(v, ["pointer", "row"]);
-  return { pointer: decodeBatchPointer(o.pointer), row: integer(o.row) };
-}
-function decodePlanFoldState(v) {
-  const o = closed(v, ["savePlan", "graphIdentity", "lineage"]);
-  const lineage = closed(o.lineage, ["at", "progress"]), progress = closed(lineage.progress, [
-    "operationId",
-    "state",
-    "endpoint",
-    "graphIdentity"
-  ]);
-  const endpoint = progress.endpoint === null ? null : closed(progress.endpoint, ["revision", "identity"]);
-  let savePlan = null;
-  if (o.savePlan !== null) {
-    const s = closed(o.savePlan, ["at", "reviewed", "publication"]);
-    if (typeof s.reviewed !== "boolean")
-      throw new ContractError("invalid");
-    savePlan = {
-      at: rowAt(s.at),
-      reviewed: s.reviewed,
-      publication: decodePublicationState(s.publication)
-    };
-  }
-  return {
-    savePlan,
-    graphIdentity: o.graphIdentity === "" ? "" : decodeHash(o.graphIdentity),
-    lineage: {
-      at: lineage.at === null ? null : rowAt(lineage.at),
-      progress: {
-        operationId: progress.operationId === null ? null : decodeId(progress.operationId),
-        state: decodePublicationState(progress.state),
-        endpoint: endpoint && {
-          revision: integer(endpoint.revision),
-          identity: endpoint.identity === null ? null : decodeHash(endpoint.identity)
-        },
-        graphIdentity: progress.graphIdentity === null ? null : decodeHash(progress.graphIdentity)
-      }
-    }
-  };
-}
 function planFold(files, taskId, snapshot, budget, navigation, withLineage) {
   navigation.snapshot(snapshot, budget);
   const read2 = (at) => {
@@ -11622,7 +11476,7 @@ function planFold(files, taskId, snapshot, budget, navigation, withLineage) {
       throw new ContractError("invalid");
     return row;
   };
-  const { base, batches } = resumeTaskFold(files, navigation, taskId, snapshot, budget, (body) => PlanFold.resumed(decodePlanFoldState(body.plan), withLineage, read2));
+  const { base, batches } = resumeTaskFold(files, navigation, taskId, snapshot, budget, (state) => PlanFold.resumed(state.plan, withLineage, read2));
   const fold = base ?? new PlanFold(withLineage ? new TaskPublicationLineage : null);
   for (const batch of batches)
     fold.apply(batch, taskId);
@@ -11630,7 +11484,7 @@ function planFold(files, taskId, snapshot, budget, navigation, withLineage) {
 }
 function latestTaskRun(files, taskId, snapshot, budget, navigation = new HistoryNavigation(files)) {
   navigation.snapshot(snapshot, budget);
-  const { base, batches } = resumeTaskFold(files, navigation, taskId, snapshot, budget, (body) => body.run === null ? null : decodeId(body.run));
+  const { base, batches } = resumeTaskFold(files, navigation, taskId, snapshot, budget, (state) => state.run);
   let latest = base ?? null;
   for (const batch of batches)
     for (const row of batch.rows) {
@@ -13485,7 +13339,7 @@ class HistoryWriter {
               seq: this.state.committedSeq
             }, rows, (bytes) => this.charge(bytes, null, true), preparedIndex);
           } catch {}
-          this.checkpointTasks(rows, preparedIndex);
+          this.rememberTaskFolds(rows, preparedIndex);
         }
         const batch = {
           committedSeq: this.state.committedSeq,
@@ -13951,7 +13805,7 @@ class HistoryWriter {
       return this.ownerValue(input, null, selected2.plan);
     }, lease.budget.retainedBytes + lease.budget.outputBytes, true, () => begun ? lease.settled() : lease.release());
   }
-  checkpointTasks(rows, prepared) {
+  rememberTaskFolds(rows, prepared) {
     if (!prepared)
       return;
     const tasks = new Set;
@@ -13964,11 +13818,13 @@ class HistoryWriter {
         continue;
       try {
         const checks = checkFold(this.files, taskId, head.seq, HistoryReadBudget.authority()).state();
-        if (checks.settled.length > 64)
-          continue;
         const run = latestTaskRun(this.files, taskId, head.seq, HistoryReadBudget.authority());
         const plan = planFold(this.files, taskId, head.seq, HistoryReadBudget.authority(), new HistoryNavigation(this.files), true).state();
-        this.navigation.writeTaskFold(this.lease, taskId, head.seq, sealTaskFold(this.files, taskId, head, { checks, run, plan }), (bytes) => this.charge(bytes, null, true));
+        taskFoldMemory(this.files).remember(taskId, head, {
+          checks,
+          run,
+          plan
+        });
       } catch {}
     }
   }
@@ -14861,7 +14717,7 @@ import {
   createHash as createHash17,
   randomBytes as randomBytes3,
   randomUUID as randomUUID7,
-  timingSafeEqual as timingSafeEqual2
+  timingSafeEqual
 } from "node:crypto";
 import { dirname as dirname7, isAbsolute as isAbsolute4, join as join10 } from "node:path";
 
@@ -14924,7 +14780,7 @@ function token(value) {
 function sameSecret(candidate, expected) {
   const a = createHash17("sha256").update(candidate).digest();
   const b = createHash17("sha256").update(expected).digest();
-  return timingSafeEqual2(a, b);
+  return timingSafeEqual(a, b);
 }
 function buildTokenCookie(name, encodedValue, maxAge, secure) {
   return `${name}=${encodedValue}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;

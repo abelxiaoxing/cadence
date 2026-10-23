@@ -75,7 +75,7 @@ import {
   readRunState,
   uncertainSettlement,
 } from "./run-state.ts";
-import { sealTaskFold } from "./task-folds.ts";
+import { taskFoldMemory } from "./task-folds.ts";
 import {
   type Artifact,
   COMPLETE,
@@ -894,7 +894,7 @@ export class HistoryWriter implements AdmissionPersistence {
           } catch {
             /* Never turn an accelerator into acceptance authority. */
           }
-          this.checkpointTasks(rows, preparedIndex);
+          this.rememberTaskFolds(rows, preparedIndex);
         }
         const batch: CommittedBatch = {
           committedSeq: this.state.committedSeq,
@@ -1663,11 +1663,11 @@ export class HistoryWriter implements AdmissionPersistence {
   }
   /** Actual v1 side effect: committed expected-byte intent -> held save -> observed
    * identity -> committed outcome, all serialized by this original writer. */
-  /** After original durability and its derived hints: one authenticated fold
-   * checkpoint per task whose publication settled in this batch, anchored at
-   * that task's prepared chain head. An accelerator only; any failure (format2
-   * store, exhaustion, quota, oversize) leaves the original chain to be folded. */
-  private checkpointTasks(
+  /** After original durability and its derived hints: remember, in this
+   * process only, each task's fold state at its prepared chain head when this
+   * batch settles its publication. An accelerator only; any failure (format2
+   * store, exhaustion) leaves the original chain to be folded. */
+  private rememberTaskFolds(
     rows: JournalRow[],
     prepared: import("./navigation.ts").PreparedIndex | undefined,
   ): void {
@@ -1694,7 +1694,6 @@ export class HistoryWriter implements AdmissionPersistence {
           head.seq,
           HistoryReadBudget.authority(),
         ).state();
-        if (checks.settled.length > 64) continue;
         const run = latestTaskRun(
           this.files,
           taskId,
@@ -1709,13 +1708,11 @@ export class HistoryWriter implements AdmissionPersistence {
           new HistoryNavigation(this.files),
           true,
         ).state();
-        this.navigation.writeTaskFold(
-          this.lease,
-          taskId,
-          head.seq,
-          sealTaskFold(this.files, taskId, head, { checks, run, plan }),
-          (bytes) => this.charge(bytes, null, true),
-        );
+        taskFoldMemory(this.files).remember(taskId, head, {
+          checks,
+          run,
+          plan,
+        });
       } catch {
         /* Never turn an accelerator into acceptance authority. */
       }

@@ -10,7 +10,6 @@ import {
   ContractError,
   canonicalJson,
   compareSequence,
-  decodeOwnerFact,
   type OwnerFact,
   type OwnerLink,
   type RecordingLink,
@@ -21,7 +20,6 @@ import {
   settlementOutcome,
   type WorkerCompletion,
 } from "../service-contract.ts";
-import { closed, decodeSequence, oneOf } from "../worker-public.mjs";
 import { emptyScan, type HistoryFiles, HistoryReadBudget } from "./files.ts";
 import {
   COMPLETE,
@@ -72,18 +70,6 @@ export interface PublicationState {
   intent: Extract<OwnerFact, { kind: "publication-intent" }> | null;
   status: StoredCommand["receipt"]["publication"];
   seq: string | null;
-}
-/** Closed decoding of a checkpointed publication transition state. */
-export function decodePublicationState(v: unknown): PublicationState {
-  const o = closed(v, ["intent", "status", "seq"]);
-  const intent = o.intent === null ? null : decodeOwnerFact(o.intent);
-  if (intent !== null && intent.kind !== "publication-intent")
-    throw new ContractError("invalid");
-  return {
-    intent,
-    status: oneOf(o.status, ["pending", "published", "conflict", "uncertain"]),
-    seq: o.seq === null ? null : decodeSequence(o.seq),
-  };
 }
 /** The same publication transition validates run and metadata-only operations. */
 function publicationTransition(
@@ -140,7 +126,7 @@ export interface LineageProgress {
 }
 /** Bounded current-plan lineage, sharing the exact publication transition with
  * run/operation receipts. One task operation at a time; its progress may resume
- * only from a writer-issued authenticated task fold checkpoint, whose operation
+ * only from the owner writer's remembered task fold state, whose operation
  * admission is re-read from the original journal. */
 export class TaskPublicationLineage {
   private operation: AdmissionIntent | null = null;
@@ -257,7 +243,7 @@ export class TaskPublicationLineage {
 
 /** Metadata receipts are not execution receipts. Reduce their own accepted operation,
  * including publication, with no all-history operation cache or current authority;
- * only a task fold checkpoint resumes it, from its re-read original admission. */
+ * only a remembered task fold state resumes it, from its re-read original admission. */
 export class OperationState {
   command: { intent: AdmissionIntent; record: StoredCommand } | null = null;
   private reviewed = false;

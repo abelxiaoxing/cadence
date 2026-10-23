@@ -9,15 +9,6 @@ import {
   decodeCheckObligations,
   LIMITS,
 } from "../service-contract.ts";
-import {
-  bool,
-  checkSelection,
-  closed,
-  decodeHash,
-  decodeId,
-  integer,
-  oneOf,
-} from "../worker-public.mjs";
 import type { HistoryFiles } from "./files.ts";
 import { HistoryReadBudget } from "./files.ts";
 import { HistoryNavigation, type LocatedBatch } from "./navigation.ts";
@@ -147,86 +138,8 @@ export class CheckFold {
     };
   }
 }
-function checkStart(v: unknown, keys: string[] = []): CheckStart {
-  const o = closed(v, [
-    "selection",
-    "epoch",
-    "cwdId",
-    "checkEnvGeneration",
-    ...keys,
-  ]);
-  return {
-    selection: checkSelection(o.selection),
-    epoch: decodeId(o.epoch),
-    cwdId: decodeId(o.cwdId),
-    checkEnvGeneration: integer(o.checkEnvGeneration, 1),
-  };
-}
-/** Closed decoding of an authenticated checkpoint's check state. */
-export function decodeCheckFoldState(v: unknown): CheckFoldState {
-  const o = closed(v, ["starts", "settled"]);
-  if (!Array.isArray(o.starts) || !Array.isArray(o.settled))
-    throw new ContractError("invalid");
-  if (o.starts.length > LIMITS.childReservations || o.settled.length > 64)
-    throw new ContractError("invalid");
-  const starts = o.starts.map((entry): [string, CheckStart] => {
-    if (!Array.isArray(entry) || entry.length !== 2)
-      throw new ContractError("invalid");
-    return [decodeId(entry[0]), checkStart(entry[1])];
-  });
-  const settled = o.settled.map((entry): [string, CheckSettled] => {
-    if (!Array.isArray(entry) || entry.length !== 2)
-      throw new ContractError("invalid");
-    const s = closed(entry[1], [
-      "selection",
-      "epoch",
-      "cwdId",
-      "checkEnvGeneration",
-      "checkId",
-      "status",
-      "after",
-      "incomplete",
-    ]);
-    const start = checkStart(
-      {
-        selection: s.selection,
-        epoch: s.epoch,
-        cwdId: s.cwdId,
-        checkEnvGeneration: s.checkEnvGeneration,
-      },
-      [],
-    );
-    if (canonicalJson(start.selection) !== entry[0])
-      throw new ContractError("invalid");
-    const after = closed(s.after, [
-      "identity",
-      "complete",
-      "checkoutGeneration",
-    ]);
-    return [
-      entry[0],
-      {
-        ...start,
-        checkId: decodeId(s.checkId),
-        status: oneOf(s.status, ["passed", "failed", "canceled", "stale"]),
-        after: {
-          identity: decodeHash(after.identity),
-          complete: bool(after.complete),
-          checkoutGeneration: integer(after.checkoutGeneration),
-        },
-        incomplete: bool(s.incomplete),
-      },
-    ];
-  });
-  if (
-    new Set(starts.map(([k]) => k)).size !== starts.length ||
-    new Set(settled.map(([k]) => k)).size !== settled.length
-  )
-    throw new ContractError("invalid");
-  return { starts, settled };
-}
 /** The task's check facts through `snapshot`, resumed from its newest valid
- * checkpoint when one exists; otherwise the original chain or snapshot scan. */
+ * remembered state when one exists; otherwise the original chain or snapshot scan. */
 export function checkFold(
   files: HistoryFiles,
   taskId: string,
@@ -241,7 +154,7 @@ export function checkFold(
     taskId,
     snapshot,
     budget,
-    (body) => decodeCheckFoldState(body.checks),
+    (state) => state.checks,
   );
   const fold = new CheckFold(base);
   for (const b of batches) fold.apply(b, taskId);

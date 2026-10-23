@@ -1067,9 +1067,8 @@ export class TaskActions implements AdmissionOwner {
         if (publication.status !== "published" || !publication.observed)
           throw new ContractError("conflict");
         own = publication.observed;
-        // Cold current-graph continuity is proven by original publication facts
-        // (a prefix attested by an authenticated task fold checkpoint), not an
-        // evictable RAM approval/lineage cache.
+        // Cold current-graph continuity is proven by original publication facts;
+        // the owner's remembered fold of them only saves refolding its prefix.
       },
     });
     accepted.activate(work);

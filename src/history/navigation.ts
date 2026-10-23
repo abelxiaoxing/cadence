@@ -57,9 +57,6 @@ const stamp = (s: Stats) =>
   [s.dev, s.ino, s.size, s.ctimeMs, s.mtimeMs, s.mode, s.uid, s.nlink].join(
     ":",
   );
-export function decodeBatchPointer(v: unknown): Pointer {
-  return pointer(v);
-}
 function pointer(v: unknown): Pointer {
   const o = closed(v, ["segment", "offset", "bytes", "seq"]);
   return {
@@ -1037,33 +1034,22 @@ export class HistoryNavigation {
           : null,
     };
   }
-  /** A task's original batches newer than its newest accepted fold checkpoint
-   * at or before `snapshot`, in commit order, with that checkpoint's state.
-   * Undefined (no checkpoint, none accepted, any index fault) means fold the
-   * original chain instead; exhaustion still propagates. */
+  /** A task's original batches newer than the newest chain link at or before
+   * `snapshot` that `accept` resumes (an in-process remembered state), in
+   * commit order, with that state. Undefined (none accepted, any index fault)
+   * means fold the original chain instead; exhaustion still propagates. */
   taskSuffix<T>(
     taskId: string,
     snapshot: string,
     budget: HistoryReadBudget,
-    accept: (value: unknown, head: IndexHead) => T | undefined,
+    accept: (head: IndexHead) => T | undefined,
   ): { base: T; batches: LocatedBatch[] } | undefined {
     decodeId(taskId);
     try {
-      // A task without any checkpoint costs one directory observation here,
-      // not a probe per batch.
-      if (
-        !this.files.files.directory(
-          dirname(this.indexPath("task-folds", `${taskId}/0`)),
-          false,
-          budget.walks,
-        )
-      )
-        return;
       let head = this.anchoredHead(taskId, snapshot, budget) ?? null;
       const newer: LocatedBatch[] = [];
       while (head) {
-        const value = this.index("task-folds", `${taskId}/${head.seq}`, budget);
-        const base = value === undefined ? undefined : accept(value, head);
+        const base = accept(head);
         if (base !== undefined) return { base, batches: newer.reverse() };
         const link = this.link("entity-links", taskId, head, budget);
         newer.push(this.batch(link.pointer, budget));
@@ -1073,22 +1059,6 @@ export class HistoryNavigation {
       budget.reserve(0);
     }
     return;
-  }
-  /** Writer only, after original durability: an accelerator, never authority. */
-  writeTaskFold(
-    lease: OwnerLease,
-    taskId: string,
-    seq: string,
-    value: unknown,
-    charge: (bytes: number) => void,
-  ): void {
-    this.write(
-      lease,
-      "task-folds",
-      `${decodeId(taskId)}/${decodeSequence(seq)}`,
-      value,
-      charge,
-    );
   }
   runBatches(
     id: string,
