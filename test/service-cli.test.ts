@@ -2,12 +2,16 @@ import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import {
+  chmodSync,
+  cpSync,
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createServer, request } from "node:http";
@@ -17,7 +21,12 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, expect, it } from "vitest";
 import { nativeCall } from "../src/service/cli.ts";
 import { ServiceCoordination } from "../src/service/coordination.ts";
-import { readHostConfig } from "../src/service/runtime.ts";
+import {
+  decodeStartupReport,
+  readHostConfig,
+  StartupRefusal,
+  startupReport,
+} from "../src/service/runtime.ts";
 import { ServiceClient } from "../src/service-client.ts";
 import { HttpServiceTransport } from "../src/service-http-client.ts";
 import { historyFixture } from "./helpers/history-fixture.ts";
@@ -543,6 +552,133 @@ it("startup outbound proxy/preload requests refuse without spawning or direct fa
     ).toBe(1);
     expect(tree(f.dir)).toEqual(before);
   }
+});
+// POSIX mode bits are not a Windows ACL premise.
+for (const [stage, select] of [
+  ["pi-agent-directory", (agent: string) => chmodSync(agent, 0o755)],
+  ["pi-auth", (agent: string) => unlinkSync(join(agent, "auth.json"))],
+] as const)
+  it.skipIf(process.platform === "win32" && stage === "pi-agent-directory")(
+    `unusable ${stage} refuses with its stage before registering an owner`,
+    async () => {
+      const f = fixture();
+      select(join(f.dir, "agent"));
+      const before = tree(f.dir),
+        began = performance.now();
+      const result = await run(f, "start", [
+        "--port",
+        "0",
+        "--agent-dir",
+        join(f.dir, "agent"),
+      ]);
+      expect(result.code).toBe(1);
+      expect(JSON.parse(result.stdout)).toEqual({
+        status: "refused",
+        error: "corrupt-selected",
+        stage,
+      });
+      expect(result.stderr).toContain(join(f.dir, "agent"));
+      // A known refusal, not the 10s unconfirmed reporting bound.
+      expect(performance.now() - began).toBeLessThan(10000);
+      expect(tree(f.dir)).toEqual(before);
+      expect(f.c.inspect().status).toBe("absent");
+    },
+    30000,
+  );
+it("a compat flag inert on the pinned SDK starts; an unknown one refuses at pi-models before registering", async () => {
+  const f = fixture();
+  pending.push(f);
+  const agent = join(f.dir, "agent"),
+    models = (compat: Record<string, boolean>) =>
+      writeFileSync(
+        join(agent, "models.json"),
+        JSON.stringify({
+          providers: {
+            fixture: {
+              baseUrl: "http://127.0.0.1:9",
+              apiKey: "fixture",
+              api: "openai-responses",
+              models: [{ id: "m", compat }],
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+  models({ supportsFutureFlag: true });
+  const before = tree(f.dir);
+  const refused = await run(f, "start", ["--port", "0", "--agent-dir", agent]);
+  expect(refused.code).toBe(1);
+  expect(JSON.parse(refused.stdout)).toEqual({
+    status: "refused",
+    error: "corrupt-selected",
+    stage: "pi-models",
+  });
+  expect(refused.stderr).toContain(join(agent, "models.json"));
+  expect(tree(f.dir)).toEqual(before);
+  expect(f.c.inspect().status).toBe("absent");
+  // Newer Pi writes this; the pinned SDK has no system-role message to collapse.
+  models({ supportsMidConvoSystemMessages: false });
+  const started = await run(f, "start", ["--port", "0", "--agent-dir", agent]);
+  expect(started.code, started.stderr).toBe(0);
+  expect(JSON.parse(started.stdout)).toMatchObject({ status: "alive" });
+}, 30000);
+it("a package hard-linked into its package manager's store (Bun's default install) starts", async () => {
+  const f = fixture();
+  pending.push(f);
+  const pkg = join(f.dir, "package"),
+    store = join(f.dir, "store");
+  for (const name of ["src", "agents", "web/dist", "package.json"])
+    cpSync(
+      fileURLToPath(new URL(`../${name}`, import.meta.url)),
+      join(pkg, name),
+      { recursive: true },
+    );
+  // Every package file gets a second link, like Bun's hardlink backend.
+  const link = (from: string, to: string) => {
+    mkdirSync(to, { recursive: true });
+    for (const e of readdirSync(from, { withFileTypes: true }))
+      if (e.isDirectory()) link(join(from, e.name), join(to, e.name));
+      else linkSync(join(from, e.name), join(to, e.name));
+  };
+  link(pkg, store);
+  symlinkSync(
+    fileURLToPath(new URL("../node_modules", import.meta.url)),
+    join(pkg, "node_modules"),
+    "junction",
+  );
+  const result = await run(
+    f,
+    "start",
+    ["--port", "0", "--agent-dir", join(f.dir, "agent")],
+    join(pkg, "src", "service-cli.mjs"),
+  );
+  expect(result.code, result.stdout).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({ status: "alive" });
+}, 30000);
+it("startup refusal report carries only a fixed code and stage", () => {
+  expect(
+    startupReport(new StartupRefusal("corrupt-selected", "pi-runtime", true)),
+  ).toEqual({
+    status: "quarantined",
+    error: "corrupt-selected",
+    stage: "pi-runtime",
+  });
+  const opaque = startupReport(new Error(`/private/${randomUUID()}`));
+  expect(opaque).toEqual({
+    status: "refused",
+    error: "unavailable",
+    stage: "service",
+  });
+  expect(decodeStartupReport(JSON.parse(JSON.stringify(opaque)))).toEqual(
+    opaque,
+  );
+  for (const bad of [
+    { ...opaque, detail: "x" },
+    { ...opaque, stage: "elsewhere" },
+    { ...opaque, error: "ENOENT" },
+    { ...opaque, status: "ready" },
+  ])
+    expect(() => decodeStartupReport(bad)).toThrow();
 });
 it("explicit management starts configured owner routing before SDK imports and cleanly stops the owned dispatcher", async () => {
   let contacts = 0;

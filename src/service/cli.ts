@@ -26,10 +26,13 @@ import { ServiceCoordination } from "./coordination.ts";
 import { localRecovery } from "./recovery-cli.ts";
 import {
   decodeHostInput,
+  decodeStartupReport,
+  type HostInput,
   hostEnvironment,
   portValue,
   STARTUP_INPUT_BYTES,
   type StartOptions,
+  type StartupReport,
   selectStart,
 } from "./runtime.ts";
 
@@ -194,10 +197,37 @@ function failedStatus(result: unknown): boolean {
     result &&
     typeof result === "object" &&
     "status" in result &&
-    ["unconfirmed", "unavailable", "quarantined"].includes(
+    ["unconfirmed", "unavailable", "quarantined", "refused"].includes(
       String(result.status),
     )
   );
+}
+/** One fixed hint per refused startup stage, naming only the selected sources. */
+function startupGuidance(result: unknown, input: HostInput): string {
+  let report: StartupReport;
+  try {
+    report = decodeStartupReport(result);
+  } catch {
+    return "";
+  }
+  const agent = input.config.agentDir;
+  const inspect = `Inspect: cadence-service diagnose|recover inspect --workspace ${JSON.stringify(input.workspace)}\n`;
+  switch (report.stage) {
+    case "package":
+      return "Cadence refused its installed package files (web/dist or agents); reinstall the package rather than editing it.\n";
+    case "pi-agent-directory":
+      return `Pi's agent directory ${agent} must be an existing real directory owned by you with mode 0700 (chmod 700).\n`;
+    case "pi-auth":
+      return `${join(agent, "auth.json")} must be your own single-link regular file with mode 0600 holding valid Pi credentials; log in to Pi first.\n`;
+    case "pi-models":
+      return `${join(agent, "models.json")} must be your own single-link regular file with mode 0600, using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.\n`;
+    case "pi-runtime":
+      return `Loading Pi's SDK model runtime failed after the owner registered (optional SDK packages missing, or sources the SDK refuses); it stays quarantined.\n${inspect}`;
+    default:
+      return report.status === "quarantined"
+        ? `The owner registered, then refused; it stays quarantined.\n${inspect}`
+        : "";
+  }
 }
 export async function startService(
   options: StartOptions,
@@ -267,7 +297,18 @@ export async function startService(
       bytes += chunk.toString("utf8");
       if (!bytes.endsWith("\n")) return;
       try {
-        const ready = closed(parseWireJson(bytes, 4096), ["status", "epoch"]);
+        const line = parseWireJson(bytes, 4096);
+        // The host's own fixed refusal: a code and stage, never paths or text.
+        if (
+          line &&
+          typeof line === "object" &&
+          "status" in line &&
+          line.status !== "ready"
+        ) {
+          finish(decodeStartupReport(line));
+          return;
+        }
+        const ready = closed(line, ["status", "epoch"]);
         if (ready.status !== "ready") throw new ContractError("unavailable");
         const epoch = decodeId(ready.epoch);
         void nativeCall(c, "status")
@@ -300,6 +341,8 @@ export async function startService(
     }),
   ]);
   clearTimeout(timer);
+  const guidance = startupGuidance(result, input);
+  if (guidance) process.stderr.write(guidance);
   // A reporting bound/client departure never sends a signal or restarts a child.
   child.stdout.destroy();
   child.stdin.destroy();

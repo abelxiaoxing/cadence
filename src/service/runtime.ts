@@ -7,7 +7,11 @@ import {
   sameNetwork,
   sdkNetworkEnvironment,
 } from "../sdk-network.ts";
-import { ContractError } from "../service-contract.ts";
+import {
+  ContractError,
+  ERROR_CODES,
+  type ErrorCode,
+} from "../service-contract.ts";
 import { resolveWorkspace } from "../task-store.ts";
 import { decodeHttpPolicy, type HttpPolicy, localOrigin } from "./config.ts";
 import { closed, integer, literal, oneOf, text } from "./contracts/core.ts";
@@ -207,4 +211,51 @@ export function decodeHostInput(value: unknown): HostInput {
 export function portValue(value: string): number {
   if (!/^(0|[1-9][0-9]{0,4})$/.test(value)) throw new ContractError("invalid");
   return integer(Number(value), 0, 65535);
+}
+/** Where a host refused: fixed labels, never paths, configuration bytes or OS text. */
+export const STARTUP_STAGES = [
+  "package",
+  "pi-agent-directory",
+  "pi-auth",
+  "pi-models",
+  "pi-runtime",
+  "service",
+] as const;
+export type StartupStage = (typeof STARTUP_STAGES)[number];
+/** `quarantined`: an owner registration was acquired first and stays fenced
+ * for informed recovery; otherwise nothing was registered. */
+export class StartupRefusal extends ContractError {
+  constructor(
+    code: ErrorCode,
+    readonly stage: StartupStage,
+    readonly quarantined = false,
+  ) {
+    super(code);
+  }
+}
+export interface StartupReport {
+  status: "refused" | "quarantined";
+  error: ErrorCode;
+  stage: StartupStage;
+}
+export function startupReport(error: unknown): StartupReport {
+  if (error instanceof StartupRefusal)
+    return {
+      status: error.quarantined ? "quarantined" : "refused",
+      error: error.code,
+      stage: error.stage,
+    };
+  return {
+    status: "refused",
+    error: error instanceof ContractError ? error.code : "unavailable",
+    stage: "service",
+  };
+}
+export function decodeStartupReport(value: unknown): StartupReport {
+  const o = closed(value, ["status", "error", "stage"]);
+  return {
+    status: oneOf(o.status, ["refused", "quarantined"]),
+    error: oneOf(o.error, ERROR_CODES),
+    stage: oneOf(o.stage, STARTUP_STAGES),
+  };
 }
