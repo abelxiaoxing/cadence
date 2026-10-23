@@ -12,7 +12,7 @@ export function loadAgentDefinitions() {
     const path = fileURLToPath(
       new URL(`../agents/${fileName}`, import.meta.url),
     );
-    const data = readBounded(path, 32768);
+    const data = readBounded(path, 32768, true);
     if (!data) throw new Error("Missing package Agent");
     return {
       role: fileName.replace(/\.md$/, ""),

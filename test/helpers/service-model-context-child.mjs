@@ -447,6 +447,7 @@ try {
         supportsStore: false,
         supportsToolSearch: true,
         supportsTemperature: false,
+        supportsMidConvoSystemMessages: false,
         maxTokensField: "max_tokens",
         thinkingFormat: "chat-template",
         chatTemplateKwargs: {
