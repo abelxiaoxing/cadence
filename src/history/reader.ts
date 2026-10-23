@@ -28,13 +28,11 @@ import {
   type ReadCursor,
   type Scope,
 } from "../service-contract.ts";
-import { closed, decodeHash, integer } from "../worker-public.mjs";
 import type { RunAdmission } from "./admission.ts";
 import { detailPreparation, readRetainedDetail } from "./detail-progress.ts";
 import { emptyScan, HistoryFiles, HistoryReadBudget } from "./files.ts";
 import { graphPreparation, readRetainedGraph } from "./graph-progress.ts";
 import {
-  decodeBatchPointer,
   HistoryNavigation,
   type LocatedBatch,
   type Pointer,
@@ -44,7 +42,6 @@ import { HistoryProjection } from "./projection.ts";
 import { readRange } from "./read-io.ts";
 import { HistoryReadProof } from "./read-proof.ts";
 import {
-  decodePublicationState,
   type LineageProgress,
   OperationState,
   type PublicationState,
@@ -121,7 +118,7 @@ export class PlanFold {
         this.lineageAt = { pointer: batch.pointer, row: index };
     });
   }
-  /** Only a fold that also reduced the lineage can be checkpointed. */
+  /** Only a fold that also reduced the lineage can be remembered. */
   state(): PlanFoldState {
     if (!this.lineage) throw new ContractError("invalid");
     return {
@@ -133,7 +130,7 @@ export class PlanFold {
       lineage: { at: this.lineageAt, progress: this.lineage.progress() },
     };
   }
-  /** `read` returns the original row at a locator within the checkpoint prefix. */
+  /** `read` returns the original row at a locator within the remembered prefix. */
   static resumed(
     state: PlanFoldState,
     withLineage: boolean,
@@ -173,58 +170,8 @@ export class PlanFold {
     return fold;
   }
 }
-function rowAt(v: unknown): RowAt {
-  const o = closed(v, ["pointer", "row"]);
-  return { pointer: decodeBatchPointer(o.pointer), row: integer(o.row) };
-}
-/** Closed decoding of an authenticated checkpoint's plan state. */
-export function decodePlanFoldState(v: unknown): PlanFoldState {
-  const o = closed(v, ["savePlan", "graphIdentity", "lineage"]);
-  const lineage = closed(o.lineage, ["at", "progress"]),
-    progress = closed(lineage.progress, [
-      "operationId",
-      "state",
-      "endpoint",
-      "graphIdentity",
-    ]);
-  const endpoint =
-    progress.endpoint === null
-      ? null
-      : closed(progress.endpoint, ["revision", "identity"]);
-  let savePlan: PlanFoldState["savePlan"] = null;
-  if (o.savePlan !== null) {
-    const s = closed(o.savePlan, ["at", "reviewed", "publication"]);
-    if (typeof s.reviewed !== "boolean") throw new ContractError("invalid");
-    savePlan = {
-      at: rowAt(s.at),
-      reviewed: s.reviewed,
-      publication: decodePublicationState(s.publication),
-    };
-  }
-  return {
-    savePlan,
-    graphIdentity: o.graphIdentity === "" ? "" : decodeHash(o.graphIdentity),
-    lineage: {
-      at: lineage.at === null ? null : rowAt(lineage.at),
-      progress: {
-        operationId:
-          progress.operationId === null ? null : decodeId(progress.operationId),
-        state: decodePublicationState(progress.state),
-        endpoint: endpoint && {
-          revision: integer(endpoint.revision),
-          identity:
-            endpoint.identity === null ? null : decodeHash(endpoint.identity),
-        },
-        graphIdentity:
-          progress.graphIdentity === null
-            ? null
-            : decodeHash(progress.graphIdentity),
-      },
-    },
-  };
-}
 /** The task's plan fold through `snapshot`, resumed from its newest valid
- * checkpoint (re-reading its admission locators) or folded from the original
+ * remembered state (re-reading its admission locators) or folded from the original
  * chain. The lineage is reduced only when a current plan is being proven. */
 export function planFold(
   files: HistoryFiles,
@@ -248,8 +195,7 @@ export function planFold(
     taskId,
     snapshot,
     budget,
-    (body) =>
-      PlanFold.resumed(decodePlanFoldState(body.plan), withLineage, read),
+    (state) => PlanFold.resumed(state.plan, withLineage, read),
   );
   const fold =
     base ?? new PlanFold(withLineage ? new TaskPublicationLineage() : null);
@@ -257,7 +203,7 @@ export function planFold(
   return fold;
 }
 /** The task's latest actual Start/Generate run through `snapshot`, resumed from
- * its newest valid fold checkpoint; never an old RAM target. */
+ * its newest remembered fold state; never an old RAM target. */
 export function latestTaskRun(
   files: HistoryFiles,
   taskId: string,
@@ -272,7 +218,7 @@ export function latestTaskRun(
     taskId,
     snapshot,
     budget,
-    (body) => (body.run === null ? null : decodeId(body.run)),
+    (state) => state.run,
   );
   let latest = base ?? null;
   for (const batch of batches)
