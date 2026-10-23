@@ -1146,7 +1146,10 @@ export class HistoryWriter implements AdmissionPersistence {
   reservedIdentity(commandId: string): AdmissionIntent["identity"] | null {
     decodeId(commandId);
     try {
-      const bytes = this.files.readCommand(commandId, new HistoryReadBudget());
+      const bytes = this.files.readCommand(
+        commandId,
+        HistoryReadBudget.authority(),
+      );
       return bytes
         ? decodeAdmissionIntent(json(bytes, RECORD_BYTES)).identity
         : null;
@@ -1174,7 +1177,7 @@ export class HistoryWriter implements AdmissionPersistence {
   private async lookupCommitted(commandId: string): Promise<StoredLookup> {
     decodeId(commandId);
     try {
-      const budget = new HistoryReadBudget();
+      const budget = HistoryReadBudget.authority();
       const intent = this.files.readCommand(commandId, budget);
       const directoryExists = this.files.files.directory(
         join(this.files.directory, "commands", commandId),
@@ -1689,20 +1692,20 @@ export class HistoryWriter implements AdmissionPersistence {
           this.files,
           taskId,
           head.seq,
-          new HistoryReadBudget(),
+          HistoryReadBudget.authority(),
         ).state();
         if (checks.settled.length > 64) continue;
         const run = latestTaskRun(
           this.files,
           taskId,
           head.seq,
-          new HistoryReadBudget(),
+          HistoryReadBudget.authority(),
         );
         const plan = planFold(
           this.files,
           taskId,
           head.seq,
-          new HistoryReadBudget(),
+          HistoryReadBudget.authority(),
           new HistoryNavigation(this.files),
           true,
         ).state();
@@ -1997,7 +2000,7 @@ export class HistoryWriter implements AdmissionPersistence {
    * No cache crosses an await. Missing/invalid acceleration uses the SAME bounded
    * original scan, never renewed budgets, an empty-success default or index authority. */
   private retainedRun(runId: string): RunState {
-    const budget = new HistoryReadBudget();
+    const budget = HistoryReadBudget.authority();
     const snapshot = this.state.committedSeq;
     this.navigation.snapshot(snapshot, budget);
     const batches = this.navigation.runBatches(runId, snapshot, budget);
@@ -2011,7 +2014,7 @@ export class HistoryWriter implements AdmissionPersistence {
     for (const batch of this.files.scan(
       emptyScan(),
       false,
-      new HistoryReadBudget(),
+      HistoryReadBudget.authority(),
     )) {
       if (batch.rows.some((row) => matches(row.value))) return true;
     }
@@ -2633,7 +2636,7 @@ export class HistoryWriter implements AdmissionPersistence {
     for (const batch of this.files.scan(
       emptyScan(),
       false,
-      new HistoryReadBudget(),
+      HistoryReadBudget.authority(),
     ))
       for (const row of batch.rows) {
         const v = row.value;
@@ -2966,7 +2969,11 @@ function readOperationStateForPublication(
   > | null = null;
   const state = new OperationState(operationId);
   const facts: { link: OwnerLink; fact: OwnerFact }[] = [];
-  for (const batch of files.scan(emptyScan(), false, new HistoryReadBudget()))
+  for (const batch of files.scan(
+    emptyScan(),
+    false,
+    HistoryReadBudget.authority(),
+  ))
     for (const row of batch.rows) {
       const v = row.value;
       if (v.kind === "recovery" && intent) recovered = true;

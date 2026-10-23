@@ -84,19 +84,27 @@ export class HistoryReadBudget {
   bytes = 0;
   /** This call's synchronous directory walks; never outlives an await. */
   readonly walks = new DirectoryWalks();
+  /** `clock` false: an owner-internal authority read (current view, admission,
+   * publication, review or receipt facts) bounded by bytes only, so a slow or
+   * stalled host never turns its own decision into a refusal. Client-facing
+   * cooperative reads keep the wall-clock quantum and resumable progress. */
+  constructor(private readonly clock = true) {}
+  static authority(): HistoryReadBudget {
+    return new HistoryReadBudget(false);
+  }
   reserve(bytes: number): void {
     if (
       !Number.isSafeInteger(bytes) ||
       bytes < 0 ||
       this.bytes + bytes > LIMITS.searchBytes ||
-      performance.now() - this.started >= LIMITS.searchMs
+      this.elapsed
     )
       throw new ContractError("receipt-inconclusive");
     this.bytes += bytes;
   }
   /** This quantum's wall-clock time ran out, whatever it was spent on. */
   get elapsed(): boolean {
-    return performance.now() - this.started >= LIMITS.searchMs;
+    return this.clock && performance.now() - this.started >= LIMITS.searchMs;
   }
 }
 /** A quantum that made no semantic progress because its wall-clock time, not
@@ -126,25 +134,6 @@ export async function retryStalled<T>(read: () => Promise<T>): Promise<T> {
       if (!(error instanceof StalledQuantum) || retry >= STALL_RETRIES)
         throw error;
       await new Promise((resolve) => setImmediate(resolve));
-    }
-  }
-}
-/** Repeat a whole single-quantum read, with a fresh budget, when it refused
- * only because that budget's wall-clock time ran out (a host stall), at most
- * STALL_RETRIES times; byte exhaustion and every other refusal stay final. */
-export function stallTolerant<T>(read: (budget: HistoryReadBudget) => T): T {
-  for (let retry = 0; ; retry++) {
-    const budget = new HistoryReadBudget();
-    try {
-      return read(budget);
-    } catch (error) {
-      if (
-        !(error instanceof ContractError) ||
-        error.code !== "receipt-inconclusive" ||
-        !budget.elapsed ||
-        retry >= STALL_RETRIES
-      )
-        throw error;
     }
   }
 }

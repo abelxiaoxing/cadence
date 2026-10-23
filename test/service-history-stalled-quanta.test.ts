@@ -8,7 +8,6 @@ import {
   retryStalled,
   STALL_RETRIES,
   StalledQuantum,
-  stallTolerant,
 } from "../src/history/files.ts";
 import { RetainedScan } from "../src/history/search.ts";
 import {
@@ -150,39 +149,21 @@ it("a read that never progresses still refuses after bounded fresh quanta", asyn
   }
 }, 30000);
 
-it("a single-quantum read repeats only a pure time stall, with a fresh budget", () => {
-  let calls = 0;
-  const budgets = new Set<HistoryReadBudget>();
-  // Every attempt stalls past its quantum: two fresh repeats, then the refusal.
-  expect(() =>
-    stallTolerant((budget) => {
-      calls++;
-      budgets.add(budget);
-      stall();
-      throw new ContractError("receipt-inconclusive");
-    }),
-  ).toThrow("receipt-inconclusive");
-  expect(calls).toBe(STALL_RETRIES + 1);
-  expect(budgets.size).toBe(STALL_RETRIES + 1);
-  // A refusal within its time (byte exhaustion, bad index) is final.
-  calls = 0;
-  expect(() =>
-    stallTolerant(() => {
-      calls++;
-      throw new ContractError("receipt-inconclusive");
-    }),
-  ).toThrow("receipt-inconclusive");
-  expect(calls).toBe(1);
-  // One stall, then the fresh budget completes.
-  calls = 0;
-  expect(
-    stallTolerant(() => {
-      if (++calls === 1) {
-        stall();
-        throw new ContractError("receipt-inconclusive");
-      }
-      return "read";
-    }),
-  ).toBe("read");
-  expect(calls).toBe(2);
+it("owner-internal authority reads are bounded by bytes, never by a stalled clock", () => {
+  const cooperative = new HistoryReadBudget(),
+    authority = HistoryReadBudget.authority();
+  const now = performance.now(),
+    clock = vi.spyOn(performance, "now").mockReturnValue(now + 60_000);
+  try {
+    expect(cooperative.elapsed).toBe(true);
+    expect(() => cooperative.reserve(0)).toThrow("receipt-inconclusive");
+    expect(authority.elapsed).toBe(false);
+    expect(() => authority.reserve(1024)).not.toThrow();
+    // Bytes remain a deterministic bound.
+    expect(() => authority.reserve(LIMITS.searchBytes)).toThrow(
+      "receipt-inconclusive",
+    );
+  } finally {
+    clock.mockRestore();
+  }
 });

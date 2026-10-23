@@ -79,6 +79,24 @@ it("plan and review texts come from indexes, equal to the full-prefix scan", asy
   }
   expect(indexed.review.readablePlan).toBe(plan);
   expect(indexed.proven?.publication.identity).toBe(raw.identity);
+  // A host stall far beyond the 100ms quantum inside every snapshot
+  // validation: owner-internal reads are bounded by bytes, so nothing refuses.
+  const snapshotOf = HistoryNavigation.prototype.snapshot;
+  const stalled = vi
+    .spyOn(HistoryNavigation.prototype, "snapshot")
+    .mockImplementation(function (this: HistoryNavigation, ...args) {
+      const until = performance.now() + 150;
+      while (performance.now() < until);
+      return Reflect.apply(snapshotOf, this, args);
+    });
+  try {
+    const slow = reads();
+    expect(slow.plan).toEqual(indexed.plan);
+    expect(slow.proven).toEqual(indexed.proven);
+    expect(slow.review.readablePlan).toBe(indexed.review.readablePlan);
+  } finally {
+    stalled.mockRestore();
+  }
   // Without a content index (absent, or in-process hints disregarded), the
   // complete validated-prefix scan must answer identically.
   const absent = vi
