@@ -129,6 +129,25 @@ export async function retryStalled<T>(read: () => Promise<T>): Promise<T> {
     }
   }
 }
+/** Repeat a whole single-quantum read, with a fresh budget, when it refused
+ * only because that budget's wall-clock time ran out (a host stall), at most
+ * STALL_RETRIES times; byte exhaustion and every other refusal stay final. */
+export function stallTolerant<T>(read: (budget: HistoryReadBudget) => T): T {
+  for (let retry = 0; ; retry++) {
+    const budget = new HistoryReadBudget();
+    try {
+      return read(budget);
+    } catch (error) {
+      if (
+        !(error instanceof ContractError) ||
+        error.code !== "receipt-inconclusive" ||
+        !budget.elapsed ||
+        retry >= STALL_RETRIES
+      )
+        throw error;
+    }
+  }
+}
 function corrupt(): never {
   throw new ContractError("corrupt-selected");
 }

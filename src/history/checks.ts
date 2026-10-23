@@ -19,7 +19,7 @@ import {
   oneOf,
 } from "../worker-public.mjs";
 import type { HistoryFiles } from "./files.ts";
-import { HistoryReadBudget } from "./files.ts";
+import { type HistoryReadBudget, stallTolerant } from "./files.ts";
 import { HistoryNavigation, type LocatedBatch } from "./navigation.ts";
 import { resumeTaskFold } from "./task-folds.ts";
 
@@ -254,12 +254,13 @@ export function currentChecks(
   current: ControlContext,
   snapshotSeq?: string,
 ): CurrentChecks {
-  const budget = new HistoryReadBudget(),
-    navigation = new HistoryNavigation(files);
-  const snapshot = snapshotSeq ?? navigation.latest(budget);
-  return checkFold(files, taskId, snapshot, budget, navigation).evaluate(
-    taskId,
-    configured,
-    current,
-  );
+  return stallTolerant((budget) => {
+    const navigation = new HistoryNavigation(files);
+    const snapshot = snapshotSeq ?? navigation.latest(budget);
+    return checkFold(files, taskId, snapshot, budget, navigation).evaluate(
+      taskId,
+      configured,
+      current,
+    );
+  });
 }
