@@ -74,7 +74,7 @@
     "verify": "bun run check && bun run check:web && bun run build:web:check && bun run lint && bun run check:agents && bun run test && bun run test:web && bun run test:browser && bun run pack:check",
     "check": "node scripts/check-syntax.mjs && bun scripts/build-operator.mjs --check && bun scripts/build-service.mjs --check && tsc --noEmit",
     "lint": "biome check . && rumdl check .",
-    "test": "vitest run --no-file-parallelism",
+    "test": "vitest run",
     "test:target": "vitest run",
     "check:agents": "node scripts/check-agents.mjs",
     "doctor": "node src/operator-cli.mjs doctor",
