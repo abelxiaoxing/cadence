@@ -184,14 +184,20 @@ export function registerTaskShell(pi: ExtensionAPI): void {
         const clean = diagnosticText(text, Number.MAX_SAFE_INTEGER);
         await ctx.ui.custom<void>((tui, _theme, _keys, done) => {
           let offset = 0,
-            rows: string[] = [];
+            rows: string[] = [],
+            wrapped: number | undefined;
           const close = () => done();
           dismiss = close;
           return {
             render(width) {
-              rows = clean
-                .split("\n")
-                .flatMap((line) => wrapTextWithAnsi(line, Math.max(1, width)));
+              // Wrap the whole text once per width; paging only moves the window.
+              const columns = Math.max(1, width);
+              if (columns !== wrapped) {
+                rows = clean
+                  .split("\n")
+                  .flatMap((line) => wrapTextWithAnsi(line, columns));
+                wrapped = columns;
+              }
               const height = Math.max(1, Math.min(24, tui.terminal.rows - 4));
               offset = Math.max(
                 0,
