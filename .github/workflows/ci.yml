@@ -1,0 +1,60 @@
+name: Verify
+
+# CI branch only: main deliberately carries no workflow (see d9187f7).
+on:
+  push:
+    branches: [ci/windows]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    # The parallel and serial test projects (vitest.config.ts) run on separate
+    # runners; the serial one is the longest, so it carries no other step.
+    name: Verify / ${{ matrix.os }} / Node ${{ matrix.node }} / ${{ matrix.part }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        node: ['22', '24']
+        part: [parallel, serial]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Fresh owned canonical temporary directory
+        run: node scripts/ci-temp.mjs
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - run: bun install --frozen-lockfile
+      - if: matrix.part == 'parallel'
+        run: bun run check
+      - if: matrix.part == 'parallel'
+        run: bun run lint
+      - run: bun run test --project ${{ matrix.part }}
+      - if: matrix.part == 'parallel'
+        run: bun run test:web
+      - if: matrix.part == 'parallel'
+        run: bun run check:agents
+      - if: matrix.part == 'parallel'
+        run: bun run pack:check
+      - if: matrix.part == 'parallel'
+        run: bun run check:notices
+      - name: Keep PTY and accepting-host receipts of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-${{ matrix.os }}-node${{ matrix.node }}-${{ matrix.part }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.TMPDIR }}/cadence-terminal-*/pty-receipt.json
+            ${{ env.TMPDIR }}/cadence-terminal-*/terminal.bin
+            ${{ env.TMPDIR }}/cadence-terminal-*/identity.json
+            ${{ env.TMPDIR }}/accepting-*/receipt.json
+          if-no-files-found: ignore
+          retention-days: 7
