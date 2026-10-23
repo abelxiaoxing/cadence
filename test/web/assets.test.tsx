@@ -284,13 +284,24 @@ it("refuses leaf/ancestor/hard links, query names, and an inconsistent build ide
   ).toThrow();
   expect(() => assetMime("assets/cadence.js?extra")).toThrow();
 });
+it("loads exact bodies hard-linked into a package manager's store (Bun's default install)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "web-store-")),
+    target = join(dir, "dist"),
+    store = join(dir, "store");
+  cpSync(source, target, { recursive: true });
+  mkdirSync(join(store, "assets"), { recursive: true });
+  const { manifest, identity } = loadWebAssets(source);
+  for (const name of ["manifest.json", ...manifest.assets.map((a) => a.name)])
+    linkSync(join(target, name), join(store, name));
+  expect(loadWebAssets(target).identity).toBe(identity);
+});
 it("detects ordinary read-time replacement, not just matching returned body hashes (injected interleaving)", () => {
   const dir = mkdtempSync(join(tmpdir(), "web-read-change-")),
     target = join(dir, "dist");
   cpSync(source, target, { recursive: true });
   const original = store.readBounded;
-  vi.spyOn(store, "readBounded").mockImplementation((path, bound) => {
-    const bytes = original(path, bound);
+  vi.spyOn(store, "readBounded").mockImplementation((path, bound, packaged) => {
+    const bytes = original(path, bound, packaged);
     if (path === join(target, "assets/cadence.js")) {
       unlinkSync(path);
       writeFileSync(path, bytes ?? ""); // identical returned bytes, different selected incarnation

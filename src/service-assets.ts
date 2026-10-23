@@ -143,7 +143,7 @@ export function loadWebAssets(
     observed.set(path, incarnation(lstatSync(path)));
   const read = (path: string, limit: number) => {
     const before = incarnation(lstatSync(path));
-    const body = readBounded(path, limit);
+    const body = readBounded(path, limit, true);
     if (!body || before !== incarnation(lstatSync(path)))
       throw new Error("asset-read-changed");
     observed.set(path, before);

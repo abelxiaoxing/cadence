@@ -127,12 +127,25 @@ export function retryWindowsFileOperation<T>(
     }
   }
 }
-export function readBounded(path: string, max: number): Buffer | undefined {
+/** `packaged` reads the installed package's own files (web assets, Agent
+ * profiles). A package manager may hard-link them into its store (Bun's default
+ * backend), so a second link is not an alias of workspace or task state; their
+ * callers bind content instead. Every other read stays single-link. */
+export function readBounded(
+  path: string,
+  max: number,
+  packaged = false,
+): Buffer | undefined {
   if (!safeDirectory(dirname(path))) return undefined;
   let fd: number;
   try {
     const st = lstatSync(path);
-    if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size > max)
+    if (
+      !st.isFile() ||
+      st.isSymbolicLink() ||
+      (!packaged && st.nlink !== 1) ||
+      st.size > max
+    )
       throw new Error("Unsafe or oversized file");
     fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   } catch (error) {
@@ -141,7 +154,7 @@ export function readBounded(path: string, max: number): Buffer | undefined {
   }
   try {
     const st = fstatSync(fd);
-    if (!st.isFile() || st.nlink !== 1 || st.size > max)
+    if (!st.isFile() || (!packaged && st.nlink !== 1) || st.size > max)
       throw new Error("Unsafe or oversized file");
     // Read at most max+1 even if another editor grows the file after stat.
     const buffer = Buffer.alloc(max + 1);

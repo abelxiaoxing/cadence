@@ -305,9 +305,9 @@
     "web/tsconfig.json": "147c75adcc96ca3fec938036e0c1e4aa97d1b32eb59096cdcfba8341bac8dd1a",
     "web/vite.config.ts": "4f372e948d2261f408232612c451a37b3393d3b0d2a14b53984cb04efcd1e5d5",
     "scripts/build-web.mjs": "0334c888aa4c915df9e18cf6e9d62ac939412091d6751754d623201c2f2b9e85",
-    "src/service-assets.ts": "eab134aff1798aebe0b176fc6d725d781647dbf5da75a9622dd1d324f9e056be",
+    "src/service-assets.ts": "ebf42142a64d7c4f00147c19a6e3e05bf4b7a287c68c081695ff0fbb7356ecd5",
     "test/web/assets-browser.e2e.mjs": "a533e08b14ab25d16cc62b3da840bd8d65cbe8b6e1e46c3fa0afc7bb390a3227",
-    "test/web/assets.test.tsx": "029f576fb1f1202dda8f35a877421e5655b39ab69e309e054e712b7a7ccf0b8a",
+    "test/web/assets.test.tsx": "0a817c01d89e12e778dbcf6452727c951d81f44ac2dbc87488f384dbafabfdd4",
     "test/web/fixtures.tsx": "2224fa5c37c5ba352476e96a35170f4d7c5d8c62399418a1a192c6c30f1b3f20",
     "test/web/history-timeline.test.tsx": "dcc99efe7f6f7d9ed72f167c89fc1177f0b4506218fe147c5cd1f2e0d2914851",
     "test/web/lazy-window.test.tsx": "96f1519b79b504e44e7b97a5595783006d463c3dee35877eece5a193c346573c",
@@ -473,6 +473,22 @@
         "sha256": "bedd1bfcf892dd2153e65a09b997da4318897ae282d933b2b34c9a2857669ed5",
         "bytes": 31556
       }
+    },
+    {
+      "stage": "Package store hard links",
+      "files": [
+        {
+          "path": "src/service-assets.ts",
+          "before": "eab134aff1798aebe0b176fc6d725d781647dbf5da75a9622dd1d324f9e056be",
+          "after": "ebf42142a64d7c4f00147c19a6e3e05bf4b7a287c68c081695ff0fbb7356ecd5"
+        },
+        {
+          "path": "test/web/assets.test.tsx",
+          "before": "029f576fb1f1202dda8f35a877421e5655b39ab69e309e054e712b7a7ccf0b8a",
+          "after": "0a817c01d89e12e778dbcf6452727c951d81f44ac2dbc87488f384dbafabfdd4"
+        }
+      ],
+      "reason": "Asset bodies are read as packaged files: a package manager's store hard link (Bun's default install backend) no longer refuses an exact, hash-bound closure. A hard-linked different member still refuses on its size or body; no adapted upstream bytes changed."
     }
   ],
   "testAdaptations": [

@@ -46,7 +46,8 @@ An owner still settling after `TimeoutStopSec=90` (for example a quarantined one
 `Restart=on-failure` is bounded to three starts in five minutes; a restart never removes fences, so a crashed owner keeps refusing until informed recovery.
 
 Pi's installer omits peers, so the standalone owner and workers load the Pi SDK (`pi-coding-agent`, `pi-ai`) from exact 0.84.3 optional dependencies.
-A new owner without the SDK or Pi's `auth.json` quarantines.
+Package files may be hard links into the package manager's store (Bun's default install); Cadence binds their exact content, not their link count.
+Missing or unusable Pi sources refuse before an owner registers; a new owner without the SDK quarantines.
 Refresh therefore does not register the unit while the SDK is unresolvable (for example, optional dependencies omitted), and enables without starting it while `auth.json` is missing; the unit carries `ConditionPathExists=` for all three files.
 After logging in to Pi, start it with `systemctl --user start cadence`.
 Without linger, user units start at login and stop at logout through the same Stop; `loginctl enable-linger` keeps the owner running and starts it at boot.
@@ -73,6 +74,13 @@ Because npm runs no uninstall script, run `remove` before `pi remove`; a left-be
 - `unconfirmed` means startup/Stop acknowledgment or settlement was not established within its reporting bound.
   It is not permission to restart, kill a guessed PID or remove a lock.
   `quarantined` preserves uncertain process/auth/storage work and prevents unsafe writers.
+- A host that refuses during `start` reports `{"status":"refused","error":<code>,"stage":<stage>}` and exits without registering an owner.
+  Stages are `package` (installed web assets or Agent profiles), `pi-agent-directory`, `pi-auth`, `pi-models` and `service`; stderr names the selected Pi source to fix.
+  `quarantined` with stage `pi-runtime` or `service` means the owner registered first; it keeps its fences for informed recovery.
+  Reports carry fixed codes and stages only, never paths, configuration bytes or OS error text.
+- The selected Pi agent directory must be a real directory owned by you with mode 0700; `auth.json` and `models.json` must be your own single-link regular files with mode 0600.
+  `models.json` may use only fields the pinned SDK supports.
+  `supportsMidConvoSystemMessages` from newer Pi is accepted because the pinned SDK has no system-role conversation message; other unknown fields refuse rather than being silently ignored.
 - A foreground owner can be managed from another terminal.
   Ctrl-C, SIGTERM, machine crash or terminal destruction is **not** the authenticated orderly Stop route and can leave recovery fences.
   A recovered `stopped` registration means acknowledged fence release, not retroactive native closure certification.

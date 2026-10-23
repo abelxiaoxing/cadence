@@ -2153,13 +2153,13 @@ function retryWindowsFileOperation(operation, recheck) {
     }
   }
 }
-function readBounded(path, max) {
+function readBounded(path, max, packaged = false) {
   if (!safeDirectory(dirname(path)))
     return;
   let fd;
   try {
     const st = lstatSync(path);
-    if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size > max)
+    if (!st.isFile() || st.isSymbolicLink() || !packaged && st.nlink !== 1 || st.size > max)
       throw new Error("Unsafe or oversized file");
     fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   } catch (error) {
@@ -2169,7 +2169,7 @@ function readBounded(path, max) {
   }
   try {
     const st = fstatSync(fd);
-    if (!st.isFile() || st.nlink !== 1 || st.size > max)
+    if (!st.isFile() || !packaged && st.nlink !== 1 || st.size > max)
       throw new Error("Unsafe or oversized file");
     const buffer = Buffer.alloc(max + 1);
     let size = 0;
@@ -5700,6 +5700,22 @@ function portValue(value) {
     throw new ContractError("invalid");
   return integer(Number(value), 0, 65535);
 }
+var STARTUP_STAGES = [
+  "package",
+  "pi-agent-directory",
+  "pi-auth",
+  "pi-models",
+  "pi-runtime",
+  "service"
+];
+function decodeStartupReport(value) {
+  const o = closed(value, ["status", "error", "stage"]);
+  return {
+    status: oneOf(o.status, ["refused", "quarantined"]),
+    error: oneOf(o.error, ERROR_CODES),
+    stage: oneOf(o.stage, STARTUP_STAGES)
+  };
+}
 
 // src/service/cli.ts
 function nativeCall(c, operation, reveal = false) {
@@ -5800,7 +5816,38 @@ async function stopService(c) {
   return { status: "unconfirmed", epoch };
 }
 function failedStatus(result) {
-  return !!(result && typeof result === "object" && ("status" in result) && ["unconfirmed", "unavailable", "quarantined"].includes(String(result.status)));
+  return !!(result && typeof result === "object" && ("status" in result) && ["unconfirmed", "unavailable", "quarantined", "refused"].includes(String(result.status)));
+}
+function startupGuidance(result, input) {
+  let report;
+  try {
+    report = decodeStartupReport(result);
+  } catch {
+    return "";
+  }
+  const agent = input.config.agentDir;
+  const inspect = `Inspect: cadence-service diagnose|recover inspect --workspace ${JSON.stringify(input.workspace)}
+`;
+  switch (report.stage) {
+    case "package":
+      return `Cadence refused its installed package files (web/dist or agents); reinstall the package rather than editing it.
+`;
+    case "pi-agent-directory":
+      return `Pi's agent directory ${agent} must be an existing real directory owned by you with mode 0700 (chmod 700).
+`;
+    case "pi-auth":
+      return `${join8(agent, "auth.json")} must be your own single-link regular file with mode 0600 holding valid Pi credentials; log in to Pi first.
+`;
+    case "pi-models":
+      return `${join8(agent, "models.json")} must be your own single-link regular file with mode 0600, using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.
+`;
+    case "pi-runtime":
+      return `Loading Pi's SDK model runtime failed after the owner registered (optional SDK packages missing, or sources the SDK refuses); it stays quarantined.
+${inspect}`;
+    default:
+      return report.status === "quarantined" ? `The owner registered, then refused; it stays quarantined.
+${inspect}` : "";
+  }
 }
 async function startService(options, foreground, hostUrl) {
   const network = networkSnapshot(process.env);
@@ -5854,7 +5901,12 @@ async function startService(options, foreground, hostUrl) {
 `))
         return;
       try {
-        const ready = closed(parseWireJson(bytes, 4096), ["status", "epoch"]);
+        const line = parseWireJson(bytes, 4096);
+        if (line && typeof line === "object" && "status" in line && line.status !== "ready") {
+          finish(decodeStartupReport(line));
+          return;
+        }
+        const ready = closed(line, ["status", "epoch"]);
         if (ready.status !== "ready")
           throw new ContractError("unavailable");
         const epoch = decodeId(ready.epoch);
@@ -5878,6 +5930,9 @@ async function startService(options, foreground, hostUrl) {
     })
   ]);
   clearTimeout(timer);
+  const guidance = startupGuidance(result, input);
+  if (guidance)
+    process.stderr.write(guidance);
   child.stdout.destroy();
   child.stdin.destroy();
   if (!foreground)
