@@ -1,6 +1,7 @@
 /** One real owner, original lifetimes, actions, retained readers and authenticated clients. */
 import { lstatSync, opendirSync } from "node:fs";
 import { join } from "node:path";
+import { loadAgentDefinitions } from "../agent-registry.ts";
 import { HistoryFiles, type HistoryReadBudget } from "../history/files.ts";
 import { HistoryLive } from "../history/live.ts";
 import { HistoryNavigation } from "../history/navigation.ts";
@@ -33,6 +34,7 @@ import { AuthNetwork } from "./auth-network.ts";
 import { ServiceCoordination } from "./coordination.ts";
 import { ServiceHttpServer } from "./http.ts";
 import { OwnerModelChoice } from "./model-choice.ts";
+import { piSource, readPiAuth, readPiModels } from "./model-config.ts";
 import { OwnerModelContext } from "./model-context.ts";
 import { ServiceOwner } from "./owner.ts";
 import { encoded, hash } from "./private-files.ts";
@@ -41,6 +43,8 @@ import {
   type HostInput,
   hostEnvironment,
   readHostConfig,
+  StartupRefusal,
+  type StartupStage,
 } from "./runtime.ts";
 import { TaskActions } from "./task-actions.ts";
 
@@ -111,6 +115,18 @@ export interface ServiceHost {
   /** Launch-frozen ordinary environment, never model/access material. */
   checkEnvironment: Readonly<NodeJS.ProcessEnv>;
 }
+/** A pre-bind refusal names its fixed stage; nothing is registered yet. */
+function refuseAt<T>(stage: StartupStage, step: () => T): T {
+  try {
+    return step();
+  } catch (error) {
+    // Never inspect OS exception properties or expose paths/configuration bytes.
+    throw new StartupRefusal(
+      error instanceof ContractError ? error.code : "unavailable",
+      stage,
+    );
+  }
+}
 /** Explicit management only; imported code itself has no SDK/filesystem effects. */
 export async function createServiceHost(
   value: HostInput,
@@ -127,7 +143,12 @@ export async function createServiceHost(
       : __CADENCE_SERVICE_CONTRACT__;
   if (embedded && sourceBuild) throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);
-  const web = loadWebAssets(sourceBuild?.webDirectory); // Validate full package-relative closure BEFORE bind.
+  // Validate the full package-relative closure BEFORE bind, including the Agent
+  // profiles TaskActions reads at construction (only deferred by source tests).
+  const web = refuseAt("package", () => {
+    if (!sourceBuild?.deferActions) loadAgentDefinitions();
+    return loadWebAssets(sourceBuild?.webDirectory);
+  });
   const build = {
     contractHash,
     assets: {
@@ -159,12 +180,21 @@ export async function createServiceHost(
     if (!history) throw new ContractError("corrupt-selected");
     history.assertWritable();
   }
+  // Selected Pi sources are refused before bind too: a configuration refusal
+  // never registers an owner that would quarantine. load() rereads them later.
+  const home = launch.HOME ?? launch.USERPROFILE ?? input.config.agentDir;
+  const pi = refuseAt("pi-agent-directory", () =>
+    piSource(input.config.agentDir, home, input.config.cwd, launch),
+  );
+  refuseAt("pi-auth", () => readPiAuth(pi));
+  refuseAt("pi-models", () => readPiModels(pi));
   const http = new ServiceHttpServer({
     policy: input.config.http,
     assets: web.assets,
   });
   const endpoint = await http.listen(); // bind before metadata, credential runtime, or auth
   let owner: ServiceOwner | undefined;
+  let stage: StartupStage = "service";
   try {
     const resolved = {
       ...input.config,
@@ -225,7 +255,7 @@ export async function createServiceHost(
       owner,
       accounting: writer.auth,
       network,
-      home: launch.HOME ?? launch.USERPROFILE ?? input.config.agentDir,
+      home,
       agentDir: input.config.agentDir,
       cwd: input.config.cwd,
       environment: launch,
@@ -390,9 +420,11 @@ export async function createServiceHost(
       owner.quarantine();
       throw new ContractError("quarantine");
     }
+    stage = "pi-runtime";
     const loading = models.load();
     owner.trackAuth(loading); // original construction promise, no caller reporting race
     await loading;
+    stage = "service";
     lease.assert();
     if (owner.state !== "idle") throw new ContractError("quarantine");
     ready = true;
@@ -427,8 +459,10 @@ export async function createServiceHost(
     } else await http.close();
     // An acquired uncertain owner stays alive/fenced for local diagnosis. No
     // automatic release, repair, kill or restart after an initialization error.
-    throw new ContractError(
+    throw new StartupRefusal(
       error instanceof ContractError ? error.code : "unavailable",
+      stage,
+      !!owner,
     );
   }
 }

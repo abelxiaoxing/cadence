@@ -1,7 +1,11 @@
 // Internal ordinary-Node host. Startup secrets arrive only on anonymous stdin.
 
 import { createServiceHost } from "./service/host.ts";
-import { hostEnvironment, STARTUP_INPUT_BYTES } from "./service/runtime.ts";
+import {
+  hostEnvironment,
+  STARTUP_INPUT_BYTES,
+  startupReport,
+} from "./service/runtime.ts";
 import { parseWireJson } from "./service-contract.ts";
 
 process.stdout.on("error", () => {}); // Initiating management client may detach.
@@ -23,7 +27,9 @@ try {
   process.stdout.write(
     `${JSON.stringify({ status: "ready", epoch: host.owner.lease.registration.epoch })}\n`,
   );
-} catch {
+} catch (error) {
+  // The readiness channel carries the fixed code and stage, never error text.
+  process.stdout.write(`${JSON.stringify(startupReport(error))}\n`);
   process.stderr.write('{"error":"service-host-refused"}\n');
   process.exitCode = 1;
 }

@@ -176,13 +176,13 @@ function retryWindowsFileOperation(operation, recheck) {
     }
   }
 }
-function readBounded(path, max) {
+function readBounded(path, max, packaged = false) {
   if (!safeDirectory(dirname(path)))
     return;
   let fd;
   try {
     const st = lstatSync(path);
-    if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size > max)
+    if (!st.isFile() || st.isSymbolicLink() || !packaged && st.nlink !== 1 || st.size > max)
       throw new Error("Unsafe or oversized file");
     fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   } catch (error) {
@@ -192,7 +192,7 @@ function readBounded(path, max) {
   }
   try {
     const st = fstatSync(fd);
-    if (!st.isFile() || st.nlink !== 1 || st.size > max)
+    if (!st.isFile() || !packaged && st.nlink !== 1 || st.size > max)
       throw new Error("Unsafe or oversized file");
     const buffer = Buffer.alloc(max + 1);
     let size = 0;

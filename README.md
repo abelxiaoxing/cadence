@@ -294,7 +294,9 @@ Byte values are UTF-8/encoded bounds where specified; they are not targets to si
 | Invalid read proof or changed source/key                       | Refuse; never rebase or interpret budget exhaustion as absence                      |
 | Dirty/partial/extra compiled assets or unsafe archive          | Refuse in place; no source refill, wildcard serving or fallback build               |
 | Extension import outside Pi aliases declared only as a peer    | Exact production dependency; Pi's install omits peers and Pi fails to start         |
-| Install without the optional SDK or Pi `auth.json`             | No unit registration or start; a first owner without them quarantines               |
+| Install without the optional SDK or Pi `auth.json`             | No unit registration or start; Pi sources refuse unregistered, no SDK quarantines   |
+| Package files hard-linked into a package manager's store (Bun) | Packaged reads ignore link count, bind exact bodies; other files stay single-link   |
+| Host refuses during startup                                    | Fixed code/stage only; unregistered exits `refused`, registered stays `quarantined` |
 | Workspace containing the private state home                    | Land on `~/cadence` (only start creates it); never move state into the working copy |
 | Upgrade changes the unit workspace or Node path                | Stop with the loaded unit definition before rewriting, not only SIGTERM             |
 
