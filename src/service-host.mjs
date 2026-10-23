@@ -4532,16 +4532,23 @@ function decodeJournalText(line) {
 
 // src/history/files.ts
 class HistoryReadBudget {
+  clock;
   started = performance.now();
   bytes = 0;
   walks = new DirectoryWalks;
+  constructor(clock = true) {
+    this.clock = clock;
+  }
+  static authority() {
+    return new HistoryReadBudget(false);
+  }
   reserve(bytes) {
-    if (!Number.isSafeInteger(bytes) || bytes < 0 || this.bytes + bytes > LIMITS.searchBytes || performance.now() - this.started >= LIMITS.searchMs)
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || this.bytes + bytes > LIMITS.searchBytes || this.elapsed)
       throw new ContractError("receipt-inconclusive");
     this.bytes += bytes;
   }
   get elapsed() {
-    return performance.now() - this.started >= LIMITS.searchMs;
+    return this.clock && performance.now() - this.started >= LIMITS.searchMs;
   }
 }
 
@@ -4562,17 +4569,6 @@ async function retryStalled(read) {
       if (!(error instanceof StalledQuantum) || retry >= STALL_RETRIES)
         throw error;
       await new Promise((resolve3) => setImmediate(resolve3));
-    }
-  }
-}
-function stallTolerant(read) {
-  for (let retry = 0;; retry++) {
-    const budget = new HistoryReadBudget;
-    try {
-      return read(budget);
-    } catch (error) {
-      if (!(error instanceof ContractError) || error.code !== "receipt-inconclusive" || !budget.elapsed || retry >= STALL_RETRIES)
-        throw error;
     }
   }
 }
@@ -5605,7 +5601,7 @@ class IndexTree {
 
 // src/history/run-state.ts
 var uncertainSettlement = (completion) => completion.native.closure === "unconfirmed" || completion.recording.status === "pending" && completion.recording.selected !== null || completion.recording.status === "uncertain";
-function readRunState(files, runId, snapshotSeq, budget = new HistoryReadBudget) {
+function readRunState(files, runId, snapshotSeq, budget = HistoryReadBudget.authority()) {
   const state = new RunState(runId);
   if (snapshotSeq === "0")
     return state;
@@ -5808,7 +5804,7 @@ class OperationState {
 }
 function readOperationState(files, operationId) {
   const state = new OperationState(operationId);
-  for (const batch of files.scan(emptyScan(), false, new HistoryReadBudget))
+  for (const batch of files.scan(emptyScan(), false, HistoryReadBudget.authority()))
     for (const row of batch.rows)
       state.apply(row, batch.marker.last);
   return state;
@@ -7411,11 +7407,9 @@ function checkFold(files, taskId, snapshot, budget, navigation = new HistoryNavi
   return fold;
 }
 function currentChecks(files, taskId, configured, current, snapshotSeq) {
-  return stallTolerant((budget) => {
-    const navigation = new HistoryNavigation(files);
-    const snapshot = snapshotSeq ?? navigation.latest(budget);
-    return checkFold(files, taskId, snapshot, budget, navigation).evaluate(taskId, configured, current);
-  });
+  const budget = HistoryReadBudget.authority(), navigation = new HistoryNavigation(files);
+  const snapshot = snapshotSeq ?? navigation.latest(budget);
+  return checkFold(files, taskId, snapshot, budget, navigation).evaluate(taskId, configured, current);
 }
 
 // src/history/entity-state.ts
@@ -11662,7 +11656,7 @@ class HistoryReader {
   admission(runId, snapshotSeq) {
     decodeId(runId);
     decodeSequence(snapshotSeq);
-    const budget = new HistoryReadBudget;
+    const budget = HistoryReadBudget.authority();
     this.navigation.snapshot(snapshotSeq, budget);
     const batches = this.navigation.entityBatches(runId, snapshotSeq, budget);
     const state = batches ? new RunState(runId) : readRunState(this.files, runId, snapshotSeq, budget);
@@ -11677,9 +11671,7 @@ class HistoryReader {
   publishedPlan(taskId, snapshotSeq, current2) {
     decodeId(taskId);
     decodeSequence(snapshotSeq);
-    return stallTolerant((budget) => this.publishedPlanOnce(taskId, snapshotSeq, current2, budget));
-  }
-  publishedPlanOnce(taskId, snapshotSeq, current2, budget) {
+    const budget = HistoryReadBudget.authority();
     const fold = planFold(this.files, taskId, snapshotSeq, budget, this.navigation, !!current2);
     const { operation, lineage } = fold;
     if (!operation)
@@ -11726,7 +11718,7 @@ class HistoryReader {
       committedSeq: receipt.receipt.committedSeq
     };
   }
-  reviewRun(taskId, runId, snapshotSeq, budget = new HistoryReadBudget) {
+  reviewRun(taskId, runId, snapshotSeq, budget = HistoryReadBudget.authority()) {
     decodeId(taskId);
     decodeId(runId);
     decodeSequence(snapshotSeq);
@@ -11744,9 +11736,7 @@ class HistoryReader {
     return state;
   }
   reviewSelection(taskId, runId, snapshotSeq) {
-    return stallTolerant((budget) => this.reviewSelectionOnce(taskId, runId, snapshotSeq, budget));
-  }
-  reviewSelectionOnce(taskId, runId, snapshotSeq, budget) {
+    const budget = HistoryReadBudget.authority();
     const run = this.reviewRun(taskId, runId, snapshotSeq, budget);
     if (!run.admission)
       throw new ContractError("corrupt-selected");
@@ -13673,7 +13663,7 @@ class HistoryWriter {
   reservedIdentity(commandId) {
     decodeId(commandId);
     try {
-      const bytes = this.files.readCommand(commandId, new HistoryReadBudget);
+      const bytes = this.files.readCommand(commandId, HistoryReadBudget.authority());
       return bytes ? decodeAdmissionIntent(json(bytes, RECORD_BYTES)).identity : null;
     } catch {
       return null;
@@ -13691,7 +13681,7 @@ class HistoryWriter {
   async lookupCommitted(commandId) {
     decodeId(commandId);
     try {
-      const budget = new HistoryReadBudget;
+      const budget = HistoryReadBudget.authority();
       const intent = this.files.readCommand(commandId, budget);
       const directoryExists = this.files.files.directory(join8(this.files.directory, "commands", commandId));
       const wanted = intent ? decodeAdmissionIntent(json(intent, RECORD_BYTES)) : null;
@@ -13973,11 +13963,11 @@ class HistoryWriter {
       if (!head || head.seq !== this.state.committedSeq)
         continue;
       try {
-        const checks = checkFold(this.files, taskId, head.seq, new HistoryReadBudget).state();
+        const checks = checkFold(this.files, taskId, head.seq, HistoryReadBudget.authority()).state();
         if (checks.settled.length > 64)
           continue;
-        const run = latestTaskRun(this.files, taskId, head.seq, new HistoryReadBudget);
-        const plan = planFold(this.files, taskId, head.seq, new HistoryReadBudget, new HistoryNavigation(this.files), true).state();
+        const run = latestTaskRun(this.files, taskId, head.seq, HistoryReadBudget.authority());
+        const plan = planFold(this.files, taskId, head.seq, HistoryReadBudget.authority(), new HistoryNavigation(this.files), true).state();
         this.navigation.writeTaskFold(this.lease, taskId, head.seq, sealTaskFold(this.files, taskId, head, { checks, run, plan }), (bytes) => this.charge(bytes, null, true));
       } catch {}
     }
@@ -14173,7 +14163,7 @@ class HistoryWriter {
     }
   }
   retainedRun(runId) {
-    const budget = new HistoryReadBudget;
+    const budget = HistoryReadBudget.authority();
     const snapshot = this.state.committedSeq;
     this.navigation.snapshot(snapshot, budget);
     const batches = this.navigation.runBatches(runId, snapshot, budget);
@@ -14186,7 +14176,7 @@ class HistoryWriter {
     return state;
   }
   prior(matches) {
-    for (const batch of this.files.scan(emptyScan(), false, new HistoryReadBudget)) {
+    for (const batch of this.files.scan(emptyScan(), false, HistoryReadBudget.authority())) {
       if (batch.rows.some((row) => matches(row.value)))
         return true;
     }
@@ -14550,7 +14540,7 @@ class HistoryWriter {
   assertReview(input, fact) {
     let accepted2 = null;
     let changes = null;
-    for (const batch of this.files.scan(emptyScan(), false, new HistoryReadBudget))
+    for (const batch of this.files.scan(emptyScan(), false, HistoryReadBudget.authority()))
       for (const row of batch.rows) {
         const v = row.value;
         if (v.kind === "admission" && v.intent.operationId === input.link.operationId)
@@ -14707,7 +14697,7 @@ function readOperationStateForPublication(files, operationId) {
   let publication = null;
   const state = new OperationState(operationId);
   const facts = [];
-  for (const batch of files.scan(emptyScan(), false, new HistoryReadBudget))
+  for (const batch of files.scan(emptyScan(), false, HistoryReadBudget.authority()))
     for (const row of batch.rows) {
       const v = row.value;
       if (v.kind === "recovery" && intent)

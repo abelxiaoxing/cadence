@@ -4170,16 +4170,23 @@ function decodeJournalText(line) {
 
 // src/history/files.ts
 class HistoryReadBudget {
+  clock;
   started = performance.now();
   bytes = 0;
   walks = new DirectoryWalks;
+  constructor(clock = true) {
+    this.clock = clock;
+  }
+  static authority() {
+    return new HistoryReadBudget(false);
+  }
   reserve(bytes) {
-    if (!Number.isSafeInteger(bytes) || bytes < 0 || this.bytes + bytes > LIMITS.searchBytes || performance.now() - this.started >= LIMITS.searchMs)
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || this.bytes + bytes > LIMITS.searchBytes || this.elapsed)
       throw new ContractError("receipt-inconclusive");
     this.bytes += bytes;
   }
   get elapsed() {
-    return performance.now() - this.started >= LIMITS.searchMs;
+    return this.clock && performance.now() - this.started >= LIMITS.searchMs;
   }
 }
 function corrupt() {

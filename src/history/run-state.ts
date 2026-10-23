@@ -40,7 +40,7 @@ export function readRunState(
   files: HistoryFiles,
   runId: string,
   snapshotSeq?: string,
-  budget = new HistoryReadBudget(),
+  budget = HistoryReadBudget.authority(),
 ): RunState {
   const state = new RunState(runId);
   if (snapshotSeq === "0") return state;
@@ -389,7 +389,11 @@ export function readOperationState(
   operationId: string,
 ): OperationState {
   const state = new OperationState(operationId);
-  for (const batch of files.scan(emptyScan(), false, new HistoryReadBudget()))
+  for (const batch of files.scan(
+    emptyScan(),
+    false,
+    HistoryReadBudget.authority(),
+  ))
     for (const row of batch.rows) state.apply(row, batch.marker.last);
   return state;
 }

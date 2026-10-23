@@ -31,12 +31,7 @@ import {
 import { closed, decodeHash, integer } from "../worker-public.mjs";
 import type { RunAdmission } from "./admission.ts";
 import { detailPreparation, readRetainedDetail } from "./detail-progress.ts";
-import {
-  emptyScan,
-  HistoryFiles,
-  HistoryReadBudget,
-  stallTolerant,
-} from "./files.ts";
+import { emptyScan, HistoryFiles, HistoryReadBudget } from "./files.ts";
 import { graphPreparation, readRetainedGraph } from "./graph-progress.ts";
 import {
   decodeBatchPointer,
@@ -315,7 +310,7 @@ export class HistoryReader {
   admission(runId: string, snapshotSeq: string): RunAdmission {
     decodeId(runId);
     decodeSequence(snapshotSeq);
-    const budget = new HistoryReadBudget();
+    const budget = HistoryReadBudget.authority();
     this.navigation.snapshot(snapshotSeq, budget);
     const batches = this.navigation.entityBatches(runId, snapshotSeq, budget);
     const state = batches
@@ -337,16 +332,7 @@ export class HistoryReader {
   ): PublishedPlan | null {
     decodeId(taskId);
     decodeSequence(snapshotSeq);
-    return stallTolerant((budget) =>
-      this.publishedPlanOnce(taskId, snapshotSeq, current, budget),
-    );
-  }
-  private publishedPlanOnce(
-    taskId: string,
-    snapshotSeq: string,
-    current: { revision: number; identity: string; plan: string } | undefined,
-    budget: HistoryReadBudget,
-  ): PublishedPlan | null {
+    const budget = HistoryReadBudget.authority();
     const fold = planFold(
       this.files,
       taskId,
@@ -429,7 +415,7 @@ export class HistoryReader {
     taskId: string,
     runId: string,
     snapshotSeq: string,
-    budget = new HistoryReadBudget(),
+    budget = HistoryReadBudget.authority(),
   ): RunState {
     decodeId(taskId);
     decodeId(runId);
@@ -462,16 +448,7 @@ export class HistoryReader {
   /** Review displays the selected execution, not a prospective/default next Start
    * or a later saved graph. Current raw-task authority remains independently bound. */
   reviewSelection(taskId: string, runId: string, snapshotSeq: string) {
-    return stallTolerant((budget) =>
-      this.reviewSelectionOnce(taskId, runId, snapshotSeq, budget),
-    );
-  }
-  private reviewSelectionOnce(
-    taskId: string,
-    runId: string,
-    snapshotSeq: string,
-    budget: HistoryReadBudget,
-  ) {
+    const budget = HistoryReadBudget.authority();
     const run = this.reviewRun(taskId, runId, snapshotSeq, budget);
     if (!run.admission) throw new ContractError("corrupt-selected");
     const { graph } = this.files.readAdmission(runId, run.admission, budget);
