@@ -4565,6 +4565,17 @@ async function retryStalled(read) {
     }
   }
 }
+function stallTolerant(read) {
+  for (let retry = 0;; retry++) {
+    const budget = new HistoryReadBudget;
+    try {
+      return read(budget);
+    } catch (error) {
+      if (!(error instanceof ContractError) || error.code !== "receipt-inconclusive" || !budget.elapsed || retry >= STALL_RETRIES)
+        throw error;
+    }
+  }
+}
 function corrupt() {
   throw new ContractError("corrupt-selected");
 }
@@ -7400,9 +7411,11 @@ function checkFold(files, taskId, snapshot, budget, navigation = new HistoryNavi
   return fold;
 }
 function currentChecks(files, taskId, configured, current, snapshotSeq) {
-  const budget = new HistoryReadBudget, navigation = new HistoryNavigation(files);
-  const snapshot = snapshotSeq ?? navigation.latest(budget);
-  return checkFold(files, taskId, snapshot, budget, navigation).evaluate(taskId, configured, current);
+  return stallTolerant((budget) => {
+    const navigation = new HistoryNavigation(files);
+    const snapshot = snapshotSeq ?? navigation.latest(budget);
+    return checkFold(files, taskId, snapshot, budget, navigation).evaluate(taskId, configured, current);
+  });
 }
 
 // src/history/entity-state.ts
@@ -11664,7 +11677,9 @@ class HistoryReader {
   publishedPlan(taskId, snapshotSeq, current2) {
     decodeId(taskId);
     decodeSequence(snapshotSeq);
-    const budget = new HistoryReadBudget;
+    return stallTolerant((budget) => this.publishedPlanOnce(taskId, snapshotSeq, current2, budget));
+  }
+  publishedPlanOnce(taskId, snapshotSeq, current2, budget) {
     const fold = planFold(this.files, taskId, snapshotSeq, budget, this.navigation, !!current2);
     const { operation, lineage } = fold;
     if (!operation)
@@ -11729,7 +11744,9 @@ class HistoryReader {
     return state;
   }
   reviewSelection(taskId, runId, snapshotSeq) {
-    const budget = new HistoryReadBudget;
+    return stallTolerant((budget) => this.reviewSelectionOnce(taskId, runId, snapshotSeq, budget));
+  }
+  reviewSelectionOnce(taskId, runId, snapshotSeq, budget) {
     const run = this.reviewRun(taskId, runId, snapshotSeq, budget);
     if (!run.admission)
       throw new ContractError("corrupt-selected");
