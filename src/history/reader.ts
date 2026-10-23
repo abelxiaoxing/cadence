@@ -28,17 +28,26 @@ import {
   type ReadCursor,
   type Scope,
 } from "../service-contract.ts";
+import { closed, decodeHash, integer } from "../worker-public.mjs";
 import type { RunAdmission } from "./admission.ts";
 import { detailPreparation, readRetainedDetail } from "./detail-progress.ts";
 import { emptyScan, HistoryFiles, HistoryReadBudget } from "./files.ts";
 import { graphPreparation, readRetainedGraph } from "./graph-progress.ts";
-import { HistoryNavigation } from "./navigation.ts";
+import {
+  decodeBatchPointer,
+  HistoryNavigation,
+  type LocatedBatch,
+  type Pointer,
+} from "./navigation.ts";
 import type { PublishedPlan } from "./plans.ts";
 import { HistoryProjection } from "./projection.ts";
 import { readRange } from "./read-io.ts";
 import { HistoryReadProof } from "./read-proof.ts";
 import {
+  decodePublicationState,
+  type LineageProgress,
   OperationState,
+  type PublicationState,
   RunState,
   readRunState,
   TaskPublicationLineage,
@@ -49,6 +58,7 @@ import {
   materializeSavedGraph,
 } from "./saved-graph-state.ts";
 import { RetainedScan } from "./search.ts";
+import { resumeTaskFold } from "./task-folds.ts";
 import {
   COMPLETE,
   captureCoverage,
@@ -61,6 +71,224 @@ import {
 
 /** Readonly retained journal/detail reader. Construction/open never initializes,
  * repairs, resolves auth, creates a session, or resumes a queue. */
+/** An original admission row inside the task's committed prefix. */
+interface RowAt {
+  pointer: Pointer;
+  row: number;
+}
+/** The latest save-plan operation and the current-plan lineage of one task's
+ * committed prefix. Admissions are locators re-read from the original journal,
+ * never copied graphs or plans. */
+export interface PlanFoldState {
+  savePlan: {
+    at: RowAt;
+    reviewed: boolean;
+    publication: PublicationState;
+  } | null;
+  graphIdentity: string;
+  lineage: { at: RowAt | null; progress: LineageProgress };
+}
+export class PlanFold {
+  operation: OperationState | null = null;
+  graphIdentity = "";
+  private savePlanAt: RowAt | null = null;
+  private lineageAt: RowAt | null = null;
+  constructor(readonly lineage: TaskPublicationLineage | null) {}
+  apply(batch: LocatedBatch, taskId: string): void {
+    batch.rows.forEach((row, index) => {
+      const value = row.value;
+      if (
+        value.kind === "admission" &&
+        value.intent.identity.kind === "action" &&
+        value.intent.identity.action.kind === "save-plan" &&
+        value.intent.identity.action.taskId === taskId
+      ) {
+        if (value.intent.runId !== null)
+          throw new ContractError("corrupt-selected");
+        this.operation = new OperationState(value.intent.operationId);
+        this.graphIdentity = hash(
+          canonicalJson(value.intent.identity.action.graph),
+        );
+        this.savePlanAt = { pointer: batch.pointer, row: index };
+      }
+      this.operation?.apply(row, batch.pointer.seq);
+      if (!this.lineage) return;
+      this.lineage.apply(row, batch.pointer.seq, taskId, this.graphIdentity);
+      if (
+        value.kind === "admission" &&
+        this.lineage.operationId === value.intent.operationId
+      )
+        this.lineageAt = { pointer: batch.pointer, row: index };
+    });
+  }
+  /** Only a fold that also reduced the lineage can be checkpointed. */
+  state(): PlanFoldState {
+    if (!this.lineage) throw new ContractError("invalid");
+    return {
+      savePlan:
+        this.operation && this.savePlanAt
+          ? { at: this.savePlanAt, ...this.operation.progress() }
+          : null,
+      graphIdentity: this.graphIdentity,
+      lineage: { at: this.lineageAt, progress: this.lineage.progress() },
+    };
+  }
+  /** `read` returns the original row at a locator within the checkpoint prefix. */
+  static resumed(
+    state: PlanFoldState,
+    withLineage: boolean,
+    read: (at: RowAt) => import("./types.ts").JournalRow,
+  ): PlanFold {
+    let lineage: TaskPublicationLineage | null = null;
+    if (withLineage) {
+      const row = state.lineage.at && read(state.lineage.at).value;
+      if (row && row.kind !== "admission") throw new ContractError("invalid");
+      lineage = TaskPublicationLineage.resumed(
+        row ? row.intent : null,
+        state.lineage.progress,
+      );
+    }
+    const fold = new PlanFold(lineage);
+    fold.lineageAt = state.lineage.at;
+    fold.graphIdentity = state.graphIdentity;
+    if (!state.savePlan) {
+      if (state.graphIdentity !== "") throw new ContractError("invalid");
+      return fold;
+    }
+    const v = read(state.savePlan.at).value;
+    if (
+      v.kind !== "admission" ||
+      v.intent.identity.kind !== "action" ||
+      v.intent.identity.action.kind !== "save-plan" ||
+      hash(canonicalJson(v.intent.identity.action.graph)) !==
+        state.graphIdentity
+    )
+      throw new ContractError("invalid");
+    fold.operation = OperationState.resumed(
+      v.intent.operationId,
+      { intent: v.intent, record: v.record },
+      state.savePlan,
+    );
+    fold.savePlanAt = state.savePlan.at;
+    return fold;
+  }
+}
+function rowAt(v: unknown): RowAt {
+  const o = closed(v, ["pointer", "row"]);
+  return { pointer: decodeBatchPointer(o.pointer), row: integer(o.row) };
+}
+/** Closed decoding of an authenticated checkpoint's plan state. */
+export function decodePlanFoldState(v: unknown): PlanFoldState {
+  const o = closed(v, ["savePlan", "graphIdentity", "lineage"]);
+  const lineage = closed(o.lineage, ["at", "progress"]),
+    progress = closed(lineage.progress, [
+      "operationId",
+      "state",
+      "endpoint",
+      "graphIdentity",
+    ]);
+  const endpoint =
+    progress.endpoint === null
+      ? null
+      : closed(progress.endpoint, ["revision", "identity"]);
+  let savePlan: PlanFoldState["savePlan"] = null;
+  if (o.savePlan !== null) {
+    const s = closed(o.savePlan, ["at", "reviewed", "publication"]);
+    if (typeof s.reviewed !== "boolean") throw new ContractError("invalid");
+    savePlan = {
+      at: rowAt(s.at),
+      reviewed: s.reviewed,
+      publication: decodePublicationState(s.publication),
+    };
+  }
+  return {
+    savePlan,
+    graphIdentity: o.graphIdentity === "" ? "" : decodeHash(o.graphIdentity),
+    lineage: {
+      at: lineage.at === null ? null : rowAt(lineage.at),
+      progress: {
+        operationId:
+          progress.operationId === null ? null : decodeId(progress.operationId),
+        state: decodePublicationState(progress.state),
+        endpoint: endpoint && {
+          revision: integer(endpoint.revision),
+          identity:
+            endpoint.identity === null ? null : decodeHash(endpoint.identity),
+        },
+        graphIdentity:
+          progress.graphIdentity === null
+            ? null
+            : decodeHash(progress.graphIdentity),
+      },
+    },
+  };
+}
+/** The task's plan fold through `snapshot`, resumed from its newest valid
+ * checkpoint (re-reading its admission locators) or folded from the original
+ * chain. The lineage is reduced only when a current plan is being proven. */
+export function planFold(
+  files: HistoryFiles,
+  taskId: string,
+  snapshot: string,
+  budget: HistoryReadBudget,
+  navigation: HistoryNavigation,
+  withLineage: boolean,
+): PlanFold {
+  navigation.snapshot(snapshot, budget);
+  const read = (at: RowAt) => {
+    if (BigInt(at.pointer.seq) > BigInt(snapshot))
+      throw new ContractError("invalid");
+    const row = navigation.batch(at.pointer, budget).rows[at.row];
+    if (!row) throw new ContractError("invalid");
+    return row;
+  };
+  const { base, batches } = resumeTaskFold(
+    files,
+    navigation,
+    taskId,
+    snapshot,
+    budget,
+    (body) =>
+      PlanFold.resumed(decodePlanFoldState(body.plan), withLineage, read),
+  );
+  const fold =
+    base ?? new PlanFold(withLineage ? new TaskPublicationLineage() : null);
+  for (const batch of batches) fold.apply(batch, taskId);
+  return fold;
+}
+/** The task's latest actual Start/Generate run through `snapshot`, resumed from
+ * its newest valid fold checkpoint; never an old RAM target. */
+export function latestTaskRun(
+  files: HistoryFiles,
+  taskId: string,
+  snapshot: string,
+  budget: HistoryReadBudget,
+  navigation = new HistoryNavigation(files),
+): string | null {
+  navigation.snapshot(snapshot, budget);
+  const { base, batches } = resumeTaskFold(
+    files,
+    navigation,
+    taskId,
+    snapshot,
+    budget,
+    (body) => (body.run === null ? null : decodeId(body.run)),
+  );
+  let latest = base ?? null;
+  for (const batch of batches)
+    for (const row of batch.rows) {
+      const v = row.value;
+      if (
+        v.kind === "admission" &&
+        v.intent.identity.kind === "action" &&
+        v.intent.identity.expected.task?.id === taskId &&
+        (v.intent.identity.action.kind === "start" ||
+          v.intent.identity.action.kind === "generate-plan")
+      )
+        latest = v.intent.runId;
+    }
+  return latest;
+}
 export class HistoryReader {
   private cached?: {
     key: string;
@@ -105,34 +333,15 @@ export class HistoryReader {
     decodeId(taskId);
     decodeSequence(snapshotSeq);
     const budget = new HistoryReadBudget();
-    this.navigation.snapshot(snapshotSeq, budget);
-    const batches =
-      this.navigation.entityBatches(taskId, snapshotSeq, budget) ??
-      this.navigation.scanSnapshot(snapshotSeq, budget);
-    let operation: OperationState | null = null;
-    const lineage = new TaskPublicationLineage();
-    let graphIdentity = "";
-    for (const batch of batches) {
-      for (const row of batch.rows) {
-        const value = row.value;
-        if (
-          value.kind === "admission" &&
-          value.intent.identity.kind === "action" &&
-          value.intent.identity.action.kind === "save-plan" &&
-          value.intent.identity.action.taskId === taskId
-        ) {
-          if (value.intent.runId !== null)
-            throw new ContractError("corrupt-selected");
-          operation = new OperationState(value.intent.operationId);
-          graphIdentity = hash(
-            canonicalJson(value.intent.identity.action.graph),
-          );
-        }
-        operation?.apply(row, batch.pointer.seq);
-        if (current)
-          lineage.apply(row, batch.pointer.seq, taskId, graphIdentity);
-      }
-    }
+    const fold = planFold(
+      this.files,
+      taskId,
+      snapshotSeq,
+      budget,
+      this.navigation,
+      !!current,
+    );
+    const { operation, lineage } = fold;
     if (!operation) return null;
     const command = operation.command;
     if (
@@ -173,10 +382,11 @@ export class HistoryReader {
       throw new ContractError("corrupt-selected");
     if (text.toString("utf8") !== plan)
       throw new ContractError("corrupt-selected");
+    // A current proof always folded the lineage (planFold withLineage).
     const publication = current
-      ? lineage.current()
+      ? lineage?.current()
       : operation.publicationExpected();
-    if (!publication.identity) throw new ContractError("corrupt-selected");
+    if (!publication?.identity) throw new ContractError("corrupt-selected");
     if (
       current &&
       (current.identity !== publication.identity ||
@@ -210,23 +420,13 @@ export class HistoryReader {
     decodeId(taskId);
     decodeId(runId);
     decodeSequence(snapshotSeq);
-    this.navigation.snapshot(snapshotSeq, budget);
-    const batches = () =>
-      this.navigation.entityBatches(taskId, snapshotSeq, budget) ??
-      this.navigation.scanSnapshot(snapshotSeq, budget);
-    let latest: string | null = null;
-    for (const batch of batches())
-      for (const row of batch.rows) {
-        const v = row.value;
-        if (
-          v.kind === "admission" &&
-          v.intent.identity.kind === "action" &&
-          v.intent.identity.expected.task?.id === taskId &&
-          (v.intent.identity.action.kind === "start" ||
-            v.intent.identity.action.kind === "generate-plan")
-        )
-          latest = v.intent.runId;
-      }
+    const latest = latestTaskRun(
+      this.files,
+      taskId,
+      snapshotSeq,
+      budget,
+      this.navigation,
+    );
     if (latest !== runId) throw new ContractError("stale");
     const state = new RunState(runId);
     const runBatches =
