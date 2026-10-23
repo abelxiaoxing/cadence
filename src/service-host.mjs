@@ -11301,7 +11301,7 @@ class HistoryReader {
       throw new ContractError("conflict");
     const { graph, plan } = command.intent.identity.action;
     const ref = graph.plan;
-    const detail = this.selected({
+    const { detail, bytes: text2 } = this.planText({
       storeId: this.storeId,
       scope: { kind: "task", id: taskId },
       snapshotSeq,
@@ -11313,10 +11313,7 @@ class HistoryReader {
     }, budget);
     if (canonicalJson(detail.content) !== canonicalJson(ref) || detail.origin.kind !== "owner" || detail.origin.id !== operation.operationId || detail.owner.taskId !== taskId || detail.owner.runId !== null || detail.owner.childRunId !== null || detail.owner.entity.kind !== "task" || detail.owner.entity.id !== taskId || detail.owner.entity.version !== graph.planRevision || ref.bytes > 32768)
       throw new ContractError("corrupt-selected");
-    const chunks = [];
-    for (const part of this.parts(detail, snapshotSeq, budget))
-      chunks.push(part.bytes);
-    if (Buffer.concat(chunks).toString("utf8") !== plan)
+    if (text2.toString("utf8") !== plan)
       throw new ContractError("corrupt-selected");
     const publication = current2 ? lineage.current() : operation.publicationExpected();
     if (!publication.identity)
@@ -11372,7 +11369,7 @@ class HistoryReader {
     if (!graph)
       return { run, graph, readablePlan: "" };
     const ref = graph.plan;
-    const detail = this.selected({
+    const { detail, bytes } = this.planText({
       storeId: this.storeId,
       scope: { kind: "task", id: taskId },
       snapshotSeq,
@@ -11384,7 +11381,6 @@ class HistoryReader {
     }, budget);
     if (ref.bytes > 32768 || canonicalJson(detail.content) !== canonicalJson(ref) || detail.owner.taskId !== taskId || detail.owner.runId !== null || detail.owner.childRunId !== null || detail.owner.entity.kind !== "task" || detail.owner.entity.id !== taskId || detail.owner.entity.version !== graph.planRevision)
       throw new ContractError("corrupt-selected");
-    const bytes = Buffer.concat([...this.parts(detail, snapshotSeq, budget)].map((p) => p.bytes));
     return { run, graph, readablePlan: bytes.toString("utf8") };
   }
   async graph(value) {
@@ -11588,6 +11584,52 @@ class HistoryReader {
     if (cursor.offset > this.cached.detail.content.bytes)
       throw new ContractError("invalid");
     return this.cached.detail;
+  }
+  planText(cursor, budget) {
+    const indexed = this.indexedText(cursor, budget);
+    if (indexed)
+      return indexed;
+    const detail = this.selected(cursor, budget);
+    return {
+      detail,
+      bytes: Buffer.concat([...this.parts(detail, cursor.snapshotSeq, budget)].map((p) => p.bytes))
+    };
+  }
+  indexedText(cursor, budget) {
+    const nav = this.navigation, id = cursor.recordId;
+    if (!id)
+      return;
+    try {
+      this.files.assertReadFormat(budget);
+      nav.snapshot(cursor.snapshotSeq, budget);
+      const detail = nav.content(id, cursor.snapshotSeq, budget);
+      if (!detail || detail.content.version !== cursor.recordVersion || detail.content.field !== cursor.field)
+        return;
+      const pieces = [];
+      let end = 0;
+      if (detail.content.bytes) {
+        const count2 = nav.partCount(id, budget);
+        for (let part = 0;part < count2; part++) {
+          const chunks = nav.part(id, part, cursor.snapshotSeq, budget);
+          if (!chunks?.length)
+            return;
+          const bytes = this.files.readArtifact(chunks[0].artifact, budget);
+          for (const c of chunks) {
+            if (c.offset !== end || c.start + c.length > bytes.length)
+              return;
+            pieces.push(bytes.subarray(c.start, c.start + c.length));
+            end += c.length;
+          }
+        }
+      }
+      const text2 = Buffer.concat(pieces);
+      if (end !== detail.content.bytes || createHash13("sha256").update(text2).digest("hex") !== detail.content.sha256)
+        return;
+      return { detail, bytes: text2 };
+    } catch {
+      budget.reserve(0);
+      return;
+    }
   }
   *parts(detail, snapshotSeq, budget, range2) {
     if (budget)
