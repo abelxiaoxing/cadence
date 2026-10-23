@@ -11,7 +11,7 @@
 //   node scripts/npm-downloads.mjs append <file>  append "date,week,month" row (used by CI)
 //   node scripts/npm-downloads.mjs summary        markdown block for a CI step summary
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdtempSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -79,14 +79,19 @@ async function status() {
 
 function fetchOnce(quiet = false) {
   const directory = mkdtempSync(path.join(tmpdir(), "cadence-download-"));
-  const result = spawnSync(
-    "npm",
-    ["pack", PACKAGE, `--pack-destination=${directory}`],
-    { stdio: quiet ? "ignore" : "inherit", shell: false },
-  );
-  if (result.error) throw new Error("npm-downloads-npm-missing");
-  if (result.status !== 0) process.exit(result.status ?? 1);
-  if (!quiet) console.log(`downloaded ${PACKAGE} into ${directory}`);
+  try {
+    const result = spawnSync(
+      "npm",
+      ["pack", PACKAGE, `--pack-destination=${directory}`],
+      { stdio: quiet ? "ignore" : "inherit", shell: false },
+    );
+    if (result.error) throw new Error("npm-downloads-npm-missing");
+    if (result.status !== 0) process.exit(result.status ?? 1);
+  } finally {
+    // The tarball is discarded after the counted registry fetch; keep tmpfs clean.
+    rmSync(directory, { recursive: true, force: true });
+  }
+  if (!quiet) console.log(`downloaded ${PACKAGE}`);
 }
 
 async function burst(count) {
