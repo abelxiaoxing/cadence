@@ -145,7 +145,7 @@ export class HistoryReader {
       throw new ContractError("conflict");
     const { graph, plan } = command.intent.identity.action;
     const ref = graph.plan;
-    const detail = this.selected(
+    const { detail, bytes: text } = this.planText(
       {
         storeId: this.storeId,
         scope: { kind: "task", id: taskId },
@@ -171,10 +171,7 @@ export class HistoryReader {
       ref.bytes > 32768
     )
       throw new ContractError("corrupt-selected");
-    const chunks: Buffer[] = [];
-    for (const part of this.parts(detail, snapshotSeq, budget))
-      chunks.push(part.bytes);
-    if (Buffer.concat(chunks).toString("utf8") !== plan)
+    if (text.toString("utf8") !== plan)
       throw new ContractError("corrupt-selected");
     const publication = current
       ? lineage.current()
@@ -257,7 +254,7 @@ export class HistoryReader {
     const { graph } = this.files.readAdmission(runId, run.admission, budget);
     if (!graph) return { run, graph, readablePlan: "" }; // Generate is graph-null.
     const ref = graph.plan;
-    const detail = this.selected(
+    const { detail, bytes } = this.planText(
       {
         storeId: this.storeId,
         scope: { kind: "task", id: taskId },
@@ -281,9 +278,6 @@ export class HistoryReader {
       detail.owner.entity.version !== graph.planRevision
     )
       throw new ContractError("corrupt-selected");
-    const bytes = Buffer.concat(
-      [...this.parts(detail, snapshotSeq, budget)].map((p) => p.bytes),
-    );
     return { run, graph, readablePlan: bytes.toString("utf8") };
   }
   async graph(value: GraphReadRequest): Promise<GraphReadResult> {
@@ -559,6 +553,70 @@ export class HistoryReader {
   /** At most one detail's bounded locator metadata is cached. Cache is not an
    * authority: reread every contributing segment and selected artifact before use.
    * No whole transcript/text array or on-read index publication. */
+  /** A whole small retained text and its end detail at the cursor's snapshot.
+   * Its derived content/part indexes, under the validated snapshot, only select
+   * candidates; their ORIGINAL committed chunk batches and artifacts are read,
+   * contiguous from offset 0, and the aggregate content hash is checked. Absent
+   * or faulty indexes fall back to the complete validated-prefix scan. */
+  private planText(
+    cursor: ReadCursor,
+    budget: HistoryReadBudget,
+  ): { detail: RetainedDetail; bytes: Buffer } {
+    const indexed = this.indexedText(cursor, budget);
+    if (indexed) return indexed;
+    const detail = this.selected(cursor, budget);
+    return {
+      detail,
+      bytes: Buffer.concat(
+        [...this.parts(detail, cursor.snapshotSeq, budget)].map((p) => p.bytes),
+      ),
+    };
+  }
+  private indexedText(
+    cursor: ReadCursor,
+    budget: HistoryReadBudget,
+  ): { detail: RetainedDetail; bytes: Buffer } | undefined {
+    const nav = this.navigation,
+      id = cursor.recordId;
+    if (!id) return;
+    try {
+      this.files.assertReadFormat(budget);
+      nav.snapshot(cursor.snapshotSeq, budget);
+      const detail = nav.content(id, cursor.snapshotSeq, budget);
+      if (
+        !detail ||
+        detail.content.version !== cursor.recordVersion ||
+        detail.content.field !== cursor.field
+      )
+        return;
+      const pieces: Buffer[] = [];
+      let end = 0;
+      if (detail.content.bytes) {
+        const count = nav.partCount(id, budget);
+        for (let part = 0; part < count; part++) {
+          const chunks = nav.part(id, part, cursor.snapshotSeq, budget);
+          if (!chunks?.length) return;
+          const bytes = this.files.readArtifact(chunks[0].artifact, budget);
+          for (const c of chunks) {
+            if (c.offset !== end || c.start + c.length > bytes.length) return;
+            pieces.push(bytes.subarray(c.start, c.start + c.length));
+            end += c.length;
+          }
+        }
+      }
+      const text = Buffer.concat(pieces);
+      if (
+        end !== detail.content.bytes ||
+        createHash("sha256").update(text).digest("hex") !==
+          detail.content.sha256
+      )
+        return;
+      return { detail, bytes: text };
+    } catch {
+      budget.reserve(0); // Exhaustion stays inconclusive; an index fault scans.
+      return;
+    }
+  }
   *parts(
     detail: RetainedDetail,
     snapshotSeq: string,

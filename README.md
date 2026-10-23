@@ -243,6 +243,7 @@ Derived indexes are optional accelerators: readers validate original batches/art
 Current/plan/review reads replay a task's batches inside the100ms read quantum, so per-file cost bounds correctness: a slow host (Windows Node 22) once exceeded it after review, leaving the task `unavailable`.
 `PrivateFiles` reuses a directory walk only within one synchronous `DirectoryWalks` scope (a read budget or lease check), after re-observing that directory's identity; an await or later call walks again, and the quantum is never raised instead.
 A quantum that makes no semantic progress because its wall-clock time ran out (a host stall: GC, scheduling, scanning) is repeated with a fresh quantum at most twice before its refusal stands; byte exhaustion and every other refusal stay final, and no progress is ever faked.
+Plan proofs and Review selections read their small plan text through its content/part indexes under the validated snapshot, verifying the original chunk batches, artifacts and aggregate hash; absent or faulty indexes fall back to the complete validated-prefix scan, which no longer runs per current view.
 Prepared journal heads avoid redundant mutable legacy hints; no-root compatibility and its original integrity checks remain.
 
 New history uses private format3 at `service-v1/history-v2/`, with exclusive private read-proof key creation before the final format marker.

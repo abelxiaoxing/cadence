@@ -50,6 +50,8 @@ async function start(f: Fixture) {
   await f.actions.settled(taskId);
   const receipt = await f.submit({ kind: "start", taskId });
   await f.actions.scheduler.settled(receipt.runId!);
+  // The run settling precedes its task publication; wait for the original too.
+  await f.actions.settledAll();
   return { taskId, runId: receipt.runId!, receipt };
 }
 async function checked(f: Fixture, taskId: string) {
