@@ -1,10 +1,9 @@
 import { defineConfig } from "vitest/config";
-import base from "../vitest.config.ts";
+import { shared } from "../vitest.config.ts";
 
 export default defineConfig({
-  ...base,
   test: {
-    ...base.test,
+    ...shared,
     include: [
       "test/service*.test.ts",
       "test/native-client*.test.ts",
