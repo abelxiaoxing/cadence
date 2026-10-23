@@ -190,6 +190,7 @@ Use their current declarations rather than copying DTO parsing, reducers, a seco
 - Independent readonly assignments may overlap; writers and native parent checks exclude readers and other writers across tasks.
   Reserve bounded slots/bytes before copying/auth/effects; dependencies use exact committed predecessor content only after actual native and recording settlement.
   Overflow, stale dependencies, first failure or wait expiry closes admission without retry; independent already-running siblings retain their own outcomes.
+  Each assignment or check observes the working copy at its baseline, immediately before its native launch and after exit; the steps between recheck ownership, sources and definitions without another Git/file capture.
 - Register the original accepted control flow before its first effect, in addition to separate native/auth/storage originals.
   Reporting timeout, a caught promise, PID absence or an empty roster cannot release resources.
   Stop publishes one shared attempt, quiesces all admissions, requests stops before awaiting children and joins permitted original continuation/safety writes.
