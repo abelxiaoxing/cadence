@@ -4540,6 +4540,30 @@ class HistoryReadBudget {
       throw new ContractError("receipt-inconclusive");
     this.bytes += bytes;
   }
+  get elapsed() {
+    return performance.now() - this.started >= LIMITS.searchMs;
+  }
+}
+
+class StalledQuantum extends ContractError {
+  constructor() {
+    super("receipt-inconclusive");
+  }
+}
+function noProgress(budget) {
+  throw budget.elapsed ? new StalledQuantum : new ContractError("receipt-inconclusive");
+}
+var STALL_RETRIES = 2;
+async function retryStalled(read) {
+  for (let retry = 0;; retry++) {
+    try {
+      return await read();
+    } catch (error) {
+      if (!(error instanceof StalledQuantum) || retry >= STALL_RETRIES)
+        throw error;
+      await new Promise((resolve3) => setImmediate(resolve3));
+    }
+  }
 }
 function corrupt() {
   throw new ContractError("corrupt-selected");
@@ -9046,6 +9070,9 @@ class RetainedScan {
   }
 }
 async function searchHistory(reader, value, limit = LIMITS.pageEntries) {
+  return retryStalled(() => searchQuantum(reader, value, limit));
+}
+async function searchQuantum(reader, value, limit = LIMITS.pageEntries) {
   const cursor = decodeCursor(value);
   if (!cursor.query || !Number.isInteger(limit) || limit < 1 || limit > LIMITS.maxPageEntries)
     throw new ContractError("invalid");
@@ -9139,7 +9166,7 @@ async function searchHistory(reader, value, limit = LIMITS.pageEntries) {
     if (!(error instanceof ContractError) || error.code !== "receipt-inconclusive")
       throw error;
     if (!hits.length && before === coordinate())
-      throw error;
+      noProgress(originalBudget);
     done = false;
   }
   scan.traversal?.assertCurrent();
@@ -9243,7 +9270,7 @@ async function* exportHistory(projection, input, signal) {
     snapshot: 0
   };
   const scan = new RetainedScan(projection.reader, request, new HistoryReadBudget, true);
-  for (;; ) {
+  for (let stalls2 = 0;; ) {
     aborted(signal);
     const before = canonicalJson({ point, state: scan.checkpoint() });
     scan.renew(new HistoryReadBudget);
@@ -9251,8 +9278,13 @@ async function* exportHistory(projection, input, signal) {
       scan.prepare(point);
       break;
     } catch (error) {
-      if (!(error instanceof ContractError) || error.code !== "receipt-inconclusive" || before === canonicalJson({ point, state: scan.checkpoint() }))
+      if (!(error instanceof ContractError) || error.code !== "receipt-inconclusive")
         throw error;
+      if (before === canonicalJson({ point, state: scan.checkpoint() })) {
+        if (!scan.budget.elapsed || ++stalls2 > STALL_RETRIES)
+          throw error;
+      } else
+        stalls2 = 0;
       await yieldTurn();
     }
   }
@@ -9339,7 +9371,7 @@ async function* exportHistory(projection, input, signal) {
       }
     ];
   };
-  let finished = false;
+  let finished = false, stalls = 0;
   while (!finished) {
     aborted(signal);
     const before = canonicalJson({ point, state: scan.checkpoint() });
@@ -9398,8 +9430,13 @@ async function* exportHistory(projection, input, signal) {
       if (finished)
         scan.finish();
     } catch (error) {
-      if (!(error instanceof ContractError) || error.code !== "receipt-inconclusive" || before === canonicalJson({ point, state: scan.checkpoint() }))
+      if (!(error instanceof ContractError) || error.code !== "receipt-inconclusive")
         throw error;
+      if (before === canonicalJson({ point, state: scan.checkpoint() })) {
+        if (!scan.budget.elapsed || ++stalls > STALL_RETRIES)
+          throw error;
+      } else
+        stalls = 0;
       finished = false;
     }
     coverage = combineCoverage(coverage, scan.coverage);
@@ -9470,6 +9507,9 @@ function detailPreparation(cursor, completion) {
   });
 }
 async function readRetainedDetail(reader, input) {
+  return retryStalled(() => detailQuantum(reader, input));
+}
+async function detailQuantum(reader, input) {
   const cursor = decodeCursor(input);
   if (cursor.storeId !== reader.storeId || !cursor.recordId)
     bad7();
@@ -9571,8 +9611,10 @@ async function readRetainedDetail(reader, input) {
       p.event = 0;
     }
   } catch (error) {
-    if (!(error instanceof ContractError) || error.code !== "receipt-inconclusive" || coordinate() === before)
+    if (!(error instanceof ContractError) || error.code !== "receipt-inconclusive")
       throw error;
+    if (coordinate() === before)
+      noProgress(original);
     return decodeDetailReadResult({
       kind: "progress",
       cursor,
@@ -10005,10 +10047,10 @@ function advanceTarget(p, t, snapshot, budget, sources) {
   }
 }
 async function readRetainedList(p, request) {
-  return read(p, request, false);
+  return retryStalled(() => read(p, request, false));
 }
 async function readRetainedEntity(p, request) {
-  return read(p, request, true);
+  return retryStalled(() => read(p, request, true));
 }
 async function read(p, request, entity) {
   const budget = new HistoryReadBudget, proof = new HistoryReadProof(p.reader.files), completion = proof.prepareCompletion(budget);
@@ -10037,7 +10079,7 @@ async function read(p, request, entity) {
   };
   const progress = () => {
     if (coordinate() === before)
-      throw new ContractError("receipt-inconclusive");
+      noProgress(budget);
     const next = seal(request);
     return entity ? decodeEntityReadResult({
       kind: "progress",
@@ -11115,6 +11157,9 @@ function graphPreparation(request, completion) {
   });
 }
 async function readRetainedGraph(reader, request) {
+  return retryStalled(() => graphQuantum(reader, request));
+}
+async function graphQuantum(reader, request) {
   if (request.storeId !== reader.storeId)
     throw new ContractError("corrupt-selected");
   const budget = new HistoryReadBudget, proof = new HistoryReadProof(reader.files), completion = proof.prepareCompletion(budget);
@@ -11174,8 +11219,10 @@ async function readRetainedGraph(reader, request) {
       point.event = 0;
     }
   } catch (error) {
-    if (!(error instanceof ContractError) || error.code !== "receipt-inconclusive" || coordinate() === before)
+    if (!(error instanceof ContractError) || error.code !== "receipt-inconclusive")
       throw error;
+    if (coordinate() === before)
+      noProgress(budget);
     traversal.assertCurrent();
     const next = {
       ...readIdentity(request),

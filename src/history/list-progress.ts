@@ -29,7 +29,7 @@ import {
   materializeEntity,
   sourceAt,
 } from "./entity-state.ts";
-import { HistoryReadBudget } from "./files.ts";
+import { HistoryReadBudget, noProgress, retryStalled } from "./files.ts";
 import type { LocatedBatch } from "./navigation.ts";
 import type { HistoryProjection } from "./projection.ts";
 import { HistoryReadProof, type ReadProofContext } from "./read-proof.ts";
@@ -336,13 +336,13 @@ export async function readRetainedList(
   p: HistoryProjection,
   request: ListRequest,
 ): Promise<HistoryReadResult> {
-  return read(p, request, false);
+  return retryStalled(() => read(p, request, false));
 }
 export async function readRetainedEntity(
   p: HistoryProjection,
   request: EntityReadRequest,
 ): Promise<EntityReadResult> {
-  return read(p, request, true);
+  return retryStalled(() => read(p, request, true));
 }
 function read(
   p: HistoryProjection,
@@ -403,8 +403,7 @@ async function read(
     } as T;
   };
   const progress = () => {
-    if (coordinate() === before)
-      throw new ContractError("receipt-inconclusive");
+    if (coordinate() === before) noProgress(budget);
     const next = seal(request);
     return entity
       ? decodeEntityReadResult({

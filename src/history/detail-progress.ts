@@ -12,7 +12,7 @@ import {
   readIdentity,
 } from "../service-contract.ts";
 import { closed, integer } from "../worker-public.mjs";
-import { HistoryReadBudget } from "./files.ts";
+import { HistoryReadBudget, noProgress, retryStalled } from "./files.ts";
 import { HistoryReadProof } from "./read-proof.ts";
 import type { HistoryReader } from "./reader.ts";
 import { decodeRetainedProgress, freshProgress } from "./retained-progress.ts";
@@ -75,6 +75,12 @@ export function detailPreparation(
 }
 
 export async function readRetainedDetail(
+  reader: HistoryReader,
+  input: ReadCursor,
+): Promise<DetailReadResult> {
+  return retryStalled(() => detailQuantum(reader, input));
+}
+async function detailQuantum(
   reader: HistoryReader,
   input: ReadCursor,
 ): Promise<DetailReadResult> {
@@ -223,10 +229,10 @@ export async function readRetainedDetail(
   } catch (error) {
     if (
       !(error instanceof ContractError) ||
-      error.code !== "receipt-inconclusive" ||
-      coordinate() === before
+      error.code !== "receipt-inconclusive"
     )
       throw error;
+    if (coordinate() === before) noProgress(original);
     return decodeDetailReadResult({
       kind: "progress",
       cursor,
