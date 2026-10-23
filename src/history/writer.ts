@@ -49,6 +49,7 @@ import {
 } from "../service-contract.ts";
 import { TextSanitizer } from "../worker-redaction.mjs";
 import { decodeRunAdmission } from "./admission.ts";
+import { checkFold } from "./checks.ts";
 import {
   emptyScan,
   HistoryFiles,
@@ -65,7 +66,7 @@ import {
   type TaskPublicationRequest,
   type TaskPublicationResult,
 } from "./publication.ts";
-import { HistoryReader } from "./reader.ts";
+import { HistoryReader, latestTaskRun, planFold } from "./reader.ts";
 import { reviewIssues } from "./review.ts";
 import {
   OperationState,
@@ -74,6 +75,7 @@ import {
   readRunState,
   uncertainSettlement,
 } from "./run-state.ts";
+import { sealTaskFold } from "./task-folds.ts";
 import {
   type Artifact,
   COMPLETE,
@@ -892,6 +894,7 @@ export class HistoryWriter implements AdmissionPersistence {
           } catch {
             /* Never turn an accelerator into acceptance authority. */
           }
+          this.checkpointTasks(rows, preparedIndex);
         }
         const batch: CommittedBatch = {
           committedSeq: this.state.committedSeq,
@@ -1657,6 +1660,64 @@ export class HistoryWriter implements AdmissionPersistence {
   }
   /** Actual v1 side effect: committed expected-byte intent -> held save -> observed
    * identity -> committed outcome, all serialized by this original writer. */
+  /** After original durability and its derived hints: one authenticated fold
+   * checkpoint per task whose publication settled in this batch, anchored at
+   * that task's prepared chain head. An accelerator only; any failure (format2
+   * store, exhaustion, quota, oversize) leaves the original chain to be folded. */
+  private checkpointTasks(
+    rows: JournalRow[],
+    prepared: import("./navigation.ts").PreparedIndex | undefined,
+  ): void {
+    if (!prepared) return;
+    const tasks = new Set<string>();
+    for (const { value: v } of rows)
+      if (
+        v.kind === "owner" &&
+        v.events.some(
+          (e) =>
+            e.kind === "owner" &&
+            e.value.kind === "fact" &&
+            e.value.fact.kind === "publication-settled",
+        )
+      )
+        tasks.add(v.link.taskId);
+    for (const taskId of tasks) {
+      const head = prepared.heads.get(taskId);
+      if (!head || head.seq !== this.state.committedSeq) continue;
+      try {
+        const checks = checkFold(
+          this.files,
+          taskId,
+          head.seq,
+          new HistoryReadBudget(),
+        ).state();
+        if (checks.settled.length > 64) continue;
+        const run = latestTaskRun(
+          this.files,
+          taskId,
+          head.seq,
+          new HistoryReadBudget(),
+        );
+        const plan = planFold(
+          this.files,
+          taskId,
+          head.seq,
+          new HistoryReadBudget(),
+          new HistoryNavigation(this.files),
+          true,
+        ).state();
+        this.navigation.writeTaskFold(
+          this.lease,
+          taskId,
+          head.seq,
+          sealTaskFold(this.files, taskId, head, { checks, run, plan }),
+          (bytes) => this.charge(bytes, null, true),
+        );
+      } catch {
+        /* Never turn an accelerator into acceptance authority. */
+      }
+    }
+  }
   async publishTask(
     request: TaskPublicationRequest,
   ): Promise<TaskPublicationResult> {
