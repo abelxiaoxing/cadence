@@ -564,7 +564,8 @@ var thinkingLevels = [
   "low",
   "medium",
   "high",
-  "xhigh"
+  "xhigh",
+  "max"
 ];
 function decodeModelSelector(v) {
   const o = closed(v, ["provider", "model", "api", "thinking"]);

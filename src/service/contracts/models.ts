@@ -35,7 +35,7 @@ export interface ModelCandidate {
   model: string;
   api: ModelSelection["api"] | null;
   thinking: {
-    level: ModelSelection["thinking"] | "max";
+    level: ModelSelection["thinking"];
     selectable: boolean;
   }[];
   eligibility: "candidate" | "unsupported" | "auth-unavailable";
@@ -93,7 +93,7 @@ export function decodeModelCandidate(value: unknown): ModelCandidate {
     thinking: list(o.thinking, 7, (v) => {
       const t = closed(v, ["level", "selectable"]);
       return {
-        level: oneOf(t.level, [...thinkingLevels, "max"] as const),
+        level: oneOf(t.level, thinkingLevels),
         selectable: bool(t.selectable),
       };
     }),
@@ -109,9 +109,7 @@ export function decodeModelCandidate(value: unknown): ModelCandidate {
     candidate.thinking.some(
       (t) =>
         t.selectable &&
-        (t.level === "max" ||
-          candidate.api === null ||
-          candidate.eligibility !== "candidate"),
+        (candidate.api === null || candidate.eligibility !== "candidate"),
     ) ||
     (candidate.eligibility === "candidate" &&
       !candidate.thinking.some((t) => t.selectable))
