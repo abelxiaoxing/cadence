@@ -58,7 +58,10 @@ import { RunBrowser } from "./components/history/RunBrowser";
 import { SearchBar } from "./components/history/SearchBar";
 import { MessageList } from "./components/transcript/MessageList";
 import { ToolCallBlock } from "./components/transcript/ToolCallBlock";
-import { InspectorPanel } from "./components/workspace/InspectorPanel";
+import {
+  InspectorPanel,
+  InspectorPlaceholder,
+} from "./components/workspace/InspectorPanel";
 import { RunSummary } from "./components/workspace/RunSummary";
 import { TaskSidebar } from "./components/workspace/TaskSidebar";
 import { historyUrl, readHistoryUrl } from "./history/history-url";
@@ -401,7 +404,7 @@ export function App({
         >
           <FiMenu aria-hidden="true" />
         </button>
-        <div className="topbar-flow">
+        <div className="topbar-flow" inert={mobile && drawer !== null}>
           <span className="brand">
             <span className="brand-logo" aria-hidden="true">
               C
@@ -736,11 +739,7 @@ export function App({
               planMetadata={metadata}
             />
           ) : (
-            <aside className="panel panel-right">
-              <p className="panel-empty">
-                Select a task to inspect plans, checks, changes and review.
-              </p>
-            </aside>
+            <InspectorPlaceholder />
           )}
         </section>
       </div>
@@ -755,9 +754,13 @@ export function App({
               className={`status-dot ${
                 observation.error || !workspace.workspace
                   ? "error"
-                  : observation.transportStatus === "current"
-                    ? "ok"
-                    : "busy"
+                  : observation.transportStatus !== "current"
+                    ? "busy"
+                    : !observation.state
+                      ? ""
+                      : observation.state.connection === "current"
+                        ? "ok"
+                        : "busy"
               }`}
               aria-hidden="true"
             />
@@ -766,7 +769,7 @@ export function App({
             {observation.error ? ` · ${observation.error}` : ""}
           </span>
           <span
-            className={`status-item shrink${
+            className={`status-item${
               roster?.status === "complete"
                 ? activeRuns.length > 0
                   ? " warn"
@@ -780,13 +783,13 @@ export function App({
                 : "No active runs"
               : "Active roster unavailable; absence is not proof of settlement."}
           </span>
-          <span className="status-item faint shrink optional">
+          <span className="status-item faint">
             Connection freshness is not execution outcome.
           </span>
         </div>
         <div className="statusbar-right">
           <span
-            className={`status-item shrink${workspace.compatible ? " faint" : " warn"}`}
+            className={`status-item${workspace.compatible ? " faint" : " warn"}`}
             title={localBuild?.buildId ?? "unbuilt source"}
           >
             <span className="build-part">

@@ -41,6 +41,15 @@ const INSPECTOR_TABS: readonly (readonly [string, IconType])[] = [
   ["changes", FiGitPullRequest],
   ["review", FiUserCheck],
 ];
+export function InspectorPlaceholder() {
+  return (
+    <aside className="panel panel-right">
+      <p className="panel-empty">
+        Select a task to inspect plans, checks, changes and review.
+      </p>
+    </aside>
+  );
+}
 export function InspectorPanel({
   client,
   context: contextInput,
@@ -113,14 +122,7 @@ export function InspectorPanel({
     (value: CheckObligations) => setChecks(value),
     [],
   );
-  if (!taskId)
-    return (
-      <aside className="panel panel-right">
-        <p className="panel-empty">
-          Select a task to inspect plans, checks, changes and review.
-        </p>
-      </aside>
-    );
+  if (!taskId) return <InspectorPlaceholder />;
   const taskSeed = { ...seed, scope: { kind: "task" as const, id: taskId } };
   return (
     <aside className="panel panel-right">
