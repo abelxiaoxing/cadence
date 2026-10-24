@@ -13,7 +13,7 @@ class PresentationBoundary extends Component<
   }
   render() {
     return this.state.failed ? (
-      <main>
+      <main className="entry">
         <h1>Presentation unavailable</h1>
         <p>
           No execution result is inferred. Reconnect to observe the owner;

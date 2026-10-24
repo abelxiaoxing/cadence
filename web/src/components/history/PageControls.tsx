@@ -33,7 +33,7 @@ export function PageControls({ pager }: { pager: ReturnType<typeof usePage> }) {
         Observe a new snapshot
       </button>
       {page && !("kind" in page) && !page.next && (
-        <span>
+        <span className="page-end">
           End of this retained snapshot
           {page.coverage.observed === "incomplete" ? " (incomplete)" : ""}.
         </span>

@@ -1,6 +1,14 @@
-/* Adapted from pi-web-ui RightPanel.tsx narrow props/tab composition and PlanBoard.
- * MIT (c) 2026 xing-shuyin. Authority and current metadata are never panel defaults. */
+/* Adapted from pi-web-ui RightPanel.tsx narrow props/tab composition, panel chrome
+ * and PlanBoard. MIT (c) 2026 xing-shuyin.
+ * Authority and current metadata are never panel defaults. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { IconType } from "react-icons";
+import {
+  FiCheckSquare,
+  FiFileText,
+  FiGitPullRequest,
+  FiUserCheck,
+} from "react-icons/fi";
 import {
   canonicalJson,
   decodeContext,
@@ -26,6 +34,13 @@ import { PlanBoard } from "../plan/PlanBoard";
 import { CheckPanel } from "../review/CheckPanel";
 import { CurrentChangesPanel } from "../review/CurrentChangesPanel";
 import { ObservationPanel } from "../review/ObservationPanel";
+
+const INSPECTOR_TABS: readonly (readonly [string, IconType])[] = [
+  ["plan", FiFileText],
+  ["checks", FiCheckSquare],
+  ["changes", FiGitPullRequest],
+  ["review", FiUserCheck],
+];
 export function InspectorPanel({
   client,
   context: contextInput,
@@ -101,28 +116,37 @@ export function InspectorPanel({
   if (!taskId)
     return (
       <aside className="panel panel-right">
-        <p>Select a task to inspect plans, checks, changes and review.</p>
+        <p className="panel-empty">
+          Select a task to inspect plans, checks, changes and review.
+        </p>
       </aside>
     );
   const taskSeed = { ...seed, scope: { kind: "task" as const, id: taskId } };
   return (
     <aside className="panel panel-right">
-      <nav className="inspector-tabs" aria-label="Inspector">
-        {["plan", "checks", "changes", "review"].map((t) => (
+      <nav className="rp-tabs" aria-label="Inspector">
+        {INSPECTOR_TABS.map(([t, Icon]) => (
           <button
             type="button"
             key={t}
+            className="rp-tab"
+            aria-label={t}
             aria-pressed={tab === t}
             onClick={() => setTab(t)}
           >
-            {t}
+            <Icon aria-hidden="true" />
+            <span>{t}</span>
           </button>
         ))}
       </nav>
       <div className="inspector-body">
         {tab === "plan" && (
           <>
-            {metaError && <p role="status">{metaError}</p>}
+            {metaError && (
+              <p className="inspector-note" role="status">
+                {metaError}
+              </p>
+            )}
             {progress && (
               <section>
                 <p>

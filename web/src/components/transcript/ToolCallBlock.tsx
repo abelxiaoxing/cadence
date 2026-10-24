@@ -1,5 +1,5 @@
 /* Adapted from pi-web-ui components/ToolCallBlock.tsx; MIT (c) 2026 xing-shuyin.
- * Retains expandable header, raw arguments/output panes, copy and command chrome.
+ * Retains expandable header, path/status head chrome, raw arguments/output panes.
  * Removes inferred stream status, result regex IDs, bash-kill, plugins and media paths. */
 import { memo, useState } from "react";
 import { FiTool } from "react-icons/fi";
@@ -23,6 +23,13 @@ export const ToolCallBlock = memo(function ToolCallBlock({
     : record.startObserved
       ? "Start observed; end not observed in this snapshot"
       : "No start observed";
+  const tone = record.result
+    ? record.result.isError
+      ? "err"
+      : "ok"
+    : record.startObserved
+      ? "pending"
+      : "";
   return (
     <div className={`toolcall ${record.result?.isError ? "err" : ""}`}>
       <CollapsibleHead
@@ -31,15 +38,20 @@ export const ToolCallBlock = memo(function ToolCallBlock({
         headClassName="toolcall-head"
         titleText="Inspect recorded tool call"
         icon={<FiTool />}
+        iconClassName="toolcall-icon"
         titleClassName="toolcall-name"
-        after={<span className="toolcall-status">{status}</span>}
+        after={
+          <>
+            <span className="toolcall-path">
+              Child {record.owner.childRunId} · call {record.owner.entity.id} ·
+              v{record.version}
+            </span>
+            <span className={`toolcall-badge ${tone}`}>{status}</span>
+          </>
+        }
       >
         {record.name}
       </CollapsibleHead>
-      <p className="toolcall-path">
-        Child {record.owner.childRunId} · call {record.owner.entity.id} · v
-        {record.version}
-      </p>
       {open && (
         <div className="toolcall-body">
           <p>

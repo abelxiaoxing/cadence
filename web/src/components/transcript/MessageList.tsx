@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { FiArrowDown } from "react-icons/fi";
 import { usePage } from "../../history/use-page";
 import {
   applyPlan,
@@ -141,7 +142,7 @@ function WindowedMessages({
       </div>
       <button
         type="button"
-        className="follow-button"
+        className="scroll-bottom"
         onClick={() => {
           if (scrollRef.current) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -149,6 +150,7 @@ function WindowedMessages({
           }
         }}
       >
+        <FiArrowDown aria-hidden="true" />
         Latest on loaded page
       </button>
     </div>
@@ -169,7 +171,7 @@ export function MessageList({
       {page && !("kind" in page) && (
         <>
           {page.records.length === 0 && (
-            <p>
+            <p className="empty-note panel-empty">
               No message records on this page
               {page.next ? "; more history remains." : "."}
             </p>
