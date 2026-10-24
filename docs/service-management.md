@@ -93,6 +93,9 @@ To keep the service off while Cadence stays installed, use `systemctl --user dis
   Their mode bits are not checked: Pi creates its agent directory with your umask (0755, or 0775 under umask 002), and Cadence's own state stays 0700 regardless.
   `models.json` may use only fields the pinned SDK supports.
   `supportsMidConvoSystemMessages` from newer Pi is accepted because the pinned SDK has no system-role conversation message; other unknown fields refuse rather than being silently ignored.
+  The owner model choice offers every thinking level the pinned SDK supports for a model, `off` through `xhigh` and `max`; a model whose `thinkingLevelMap` maps only `max` (as some DeepSeek configurations do) is chosen at `max`, and a child runs only at exactly that level.
+  The owner loads `models.json` once at start: after it changes, the model catalog, the chosen model and the workspace view refuse as `stale` (credential changes in `auth.json` are read fresh).
+  Restart the service to reload it (`systemctl --user restart cadence`, or `stop` then `start`), then choose the owner model again.
 - A foreground owner can be managed from another terminal.
   Ctrl-C, SIGTERM, machine crash or terminal destruction is **not** the authenticated orderly Stop route and can leave recovery fences.
   A recovered `stopped` registration means acknowledged fence release, not retroactive native closure certification.

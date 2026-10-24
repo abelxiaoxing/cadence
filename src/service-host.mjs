@@ -951,7 +951,8 @@ var thinkingLevels = [
   "low",
   "medium",
   "high",
-  "xhigh"
+  "xhigh",
+  "max"
 ];
 function decodeModelSelector(v) {
   const o = closed(v, ["provider", "model", "api", "thinking"]);
@@ -4002,7 +4003,7 @@ function decodeModelCandidate(value) {
     thinking: list(o.thinking, 7, (v) => {
       const t = closed(v, ["level", "selectable"]);
       return {
-        level: oneOf(t.level, [...thinkingLevels, "max"]),
+        level: oneOf(t.level, thinkingLevels),
         selectable: bool(t.selectable)
       };
     }),
@@ -4012,7 +4013,7 @@ function decodeModelCandidate(value) {
       "auth-unavailable"
     ])
   };
-  if (new Set(candidate.thinking.map((t) => t.level)).size !== candidate.thinking.length || candidate.thinking.some((t) => t.selectable && (t.level === "max" || candidate.api === null || candidate.eligibility !== "candidate")) || candidate.eligibility === "candidate" && !candidate.thinking.some((t) => t.selectable))
+  if (new Set(candidate.thinking.map((t) => t.level)).size !== candidate.thinking.length || candidate.thinking.some((t) => t.selectable && (candidate.api === null || candidate.eligibility !== "candidate")) || candidate.eligibility === "candidate" && !candidate.thinking.some((t) => t.selectable))
     invalid();
   return candidate;
 }
@@ -22608,7 +22609,7 @@ function refuseAt(stage, step) {
   }
 }
 async function createServiceHost(value, sourceBuild) {
-  const embedded = "e7e5248f8273a373827ac70d2d8be1d5aaea1e329379e59e4947fc10f82be818";
+  const embedded = "ff017feffc6b6b4521e470d82514d0ca008e15472fa1442ec498b243b0f7cf87";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

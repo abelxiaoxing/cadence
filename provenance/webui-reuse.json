@@ -243,7 +243,7 @@
   "destinations": {
     "licenses/pi-web-ui-reuse.md": "11d04d9b727fbe47b6492d598615c23cb94a1df4280e1f1b1afaa9e8850d7902",
     "web/index.html": "d4f99afb551ce57f3c0c361b176c37540520cd1658ef568c86ef01e0cce9e5b1",
-    "web/src/App.tsx": "66bac46620db832387343430144bb11b3fd59e130518d03a5fe3167ff5ea1931",
+    "web/src/App.tsx": "4520e35d2c4ff6f060c65de2b3ede69afc997ba20ed7f1c7a5eb33e41875461b",
     "web/src/client/actions.ts": "192587fe7eee7b7d669a0e93641d0880a4ca33a56a6ca25d0fe4265a8519db88",
     "web/src/client/browser.ts": "3e0645d7603b5c13d68e9ed9785eb519ee44c8b7ec13672950ad2a8b58cd7c14",
     "web/src/client/message-delta.ts": "9133b161d07c0f5ca6a85562d396c36f724982d51f35ea0abae03035d79e4e8b",
@@ -329,7 +329,7 @@
     "web/src/timeline/timeline.css": "92bd283ffbbad8b990dc87b44c1cacfe42762c6bce991265ea2dd2b92f98b73b",
     "web/tsconfig.config.json": "47fbf0677e51c9303cd87916a022bb6b25a58b221ad733e95dd7e8d64430a4d7",
     "web/vitest.config.ts": "e439a39d4a59c7e279e5eb4b869405699f38ff617f413cb6fe1a70e2b15f4ab5",
-    "web/src/components/actions/ModelChooser.tsx": "4c08108a38ae0862bacf1ae6a4df02293c29dc351f5addbc2083f389d7646956",
+    "web/src/components/actions/ModelChooser.tsx": "4673ddfb866734d24bc5298175551f8220fe8fc9586d8b5aaea7de363a2ca4ba",
     "web/src/components/review/CurrentChangesPanel.tsx": "fa0a52386bfca5ab9b4c4b94292d6f12b828c630e747a84892f8544930dc4fbd"
   },
   "existingLicense": {
