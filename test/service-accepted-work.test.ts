@@ -79,13 +79,15 @@ async function fixture() {
   for (const path of [root, agentDir])
     mkdirSync(path, { recursive: true, mode: 0o700 });
   const responses: ServerResponse[] = [];
-  const contacted = gate();
+  const contacted = gate(),
+    bothContacted = gate();
   const server = createServer(async (req, res) => {
     for await (const _ of req) {
       /* genuine SDK request, no stored auth/body */
     }
     responses.push(res);
     contacted.resolve();
+    if (responses.length === 2) bothContacted.resolve();
   });
   await new Promise<void>((yes) => server.listen(0, "127.0.0.1", yes));
   const address = server.address();
@@ -257,6 +259,7 @@ async function fixture() {
     create,
     stop,
     contacted,
+    bothContacted,
     responses,
     reply,
   };
@@ -600,9 +603,9 @@ it("Stop closes queued work and requests BOTH real native stops before joining e
   await f.submit({ kind: "save-plan", taskId, plan, graph });
   await f.actions.settledAll();
   const receipt = await f.submit({ kind: "start", taskId });
-  await vi.waitFor(() => expect(f.responses).toHaveLength(2), {
-    timeout: 5000,
-  });
+  // Both children reach the provider after two SDK cold starts; wait for that
+  // event, not a wall-clock guess at how long those starts take.
+  await f.bothContacted.promise;
   const stopping = f.stop();
   expect(f.actions.run(receipt.runId!)?.cancelRequested).toBe(true);
   expect((await stopping).state).toBe("quarantined");

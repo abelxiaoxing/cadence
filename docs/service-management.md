@@ -31,8 +31,9 @@ On Linux, Pi's user-scope install (`pi install npm:@abelxiaoxing/cadence`, npm i
 Refresh acts only when the package is exactly Pi's managed user copy; checkouts, project (`-l`), temporary and global installs, other platforms and `CADENCE_AUTOSTART=0` are left alone.
 
 The first refresh writes `~/.local/share/systemd/user/cadence.service`, enables it for `default.target` and starts it.
-A user unit runs with the user manager, which starts at login unless logind lingers the user, so that first registration also runs `loginctl --no-ask-password enable-linger` when linger is off; `CADENCE_LINGER=0` at install skips it.
-It never prompts: where polkit requires authorization for `set-self-linger` (older systemd defaults), the unit stays login-only and the result reports `"linger":"refused"`.
+A user unit runs with the user manager, which starts at login unless logind lingers the user, so that first registration also asks logind to enable linger when it is off; `CADENCE_LINGER=0` at install skips it.
+It never prompts: it calls `SetUserLinger` through `busctl` with `interactive=false` and no interactive authorization (bounded to 15s), because `loginctl enable-linger` always requests an interactive check that a desktop polkit agent can turn into a password dialog even with `--no-ask-password`.
+Where polkit requires authorization for `set-self-linger` (older systemd defaults), the unit stays login-only and the result reports `"linger":"refused"`.
 Later refreshes do not change linger, so `loginctl disable-linger` is kept across upgrades.
 The workspace is `~/cadence` (created if missing) or an existing absolute `CADENCE_WORKSPACE`, which lands on `~/cadence` with a note when it contains the unit's state home; later refreshes keep the unit's workspace unless that variable is set again.
 The unit runs `start --foreground --workspace` without `--port`, so a new workspace selects `http://127.0.0.1:17423`.
@@ -56,7 +57,7 @@ After logging in to Pi, start it with `systemctl --user start cadence`.
 Without linger, user units start at login and stop at logout through the same Stop.
 Linger starts the user manager, with every enabled user unit, at boot and keeps it running after logout.
 Because npm hides the install guidance, Pi's session-start card names `autostart install --linger` while Pi's managed copy has no unit, and `loginctl enable-linger` while the enabled unit is login-only.
-A disabled or masked unit, `CADENCE_AUTOSTART=0` or `CADENCE_LINGER=0` in Pi's environment keeps the card quiet.
+A machine not booted with systemd (no `/run/systemd/system`), a disabled or masked unit (also `mask --runtime`) and `CADENCE_AUTOSTART=0` keep the card quiet; with `CADENCE_LINGER=0` in Pi's environment it never suggests linger and names `autostart install` without `--linger`.
 
 ```sh
 cadence-service autostart install [--workspace /absolute/project] [--linger]
@@ -65,9 +66,12 @@ cadence-service autostart remove
 ```
 
 `install` registers, enables and starts the unit from any package location unless it is masked.
-With `--linger` it also runs `loginctl enable-linger`, which may ask for your password; `status` reports `linger` as `on` or `off`.
+With `--linger` it also runs `loginctl enable-linger`, which may ask for your password; it asks only after the unit has started again, so an interrupted prompt never leaves the owner stopped.
+`status` reports `linger` as `on` or `off`.
 `remove` disables it through `ExecStop` and deletes only the generated file; workspace, state home, history and Pi sources stay.
 Because npm runs no uninstall script, run `remove` before `pi remove`; a left-behind unit skips start once its CLI path disappears.
+`remove` is for uninstalling: without the generated file the next `pi update` is a first registration again (unit and linger).
+To keep the service off while Cadence stays installed, use `systemctl --user disable --now cadence` or `mask`.
 
 ## Status, departure and Stop
 

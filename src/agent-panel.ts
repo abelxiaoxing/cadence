@@ -417,7 +417,10 @@ class Transcript {
             String(block.id ?? ""),
             block.arguments ?? {},
           );
-          if (!streaming) tool.setArgsComplete();
+          // Pi's edit renderer previews complete arguments against the file
+          // as it is now, where an applied edit no longer matches and would
+          // read as a failure; a transcript edit shows its call and result only.
+          if (!streaming && block.name !== "edit") tool.setArgsComplete();
           if (failed)
             tool.updateResult({
               content: [

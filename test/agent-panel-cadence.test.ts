@@ -522,6 +522,90 @@ describe("Cadence owner feed", () => {
     // The same child is never announced twice.
     expect(h.published(E.start)).toHaveLength(1);
   });
+
+  it("an owner that stays away ends its followed children as not observed, never running forever", async () => {
+    const { s, client } = owner();
+    s.rows = [row(null, null, "running"), row(C1, "inspect-api", "running")];
+    const conn = connection(client);
+    const h = host(conn);
+    await h.emit("session_start");
+    await advance(FEED_TIMING.firstMs);
+    client.activeRuns.mockResolvedValue(refused as never);
+    conn.refresh.mockRejectedValue(new Error("stale"));
+    await advance(FEED_TIMING.activeMs);
+    // One lost look is not an outcome: the same owner may answer again.
+    expect(h.published(E.end)).toEqual([]);
+    conn.attach.mockRejectedValue(new Error("unavailable"));
+    h.at(T0 + 30_000);
+    await advance(FEED_TIMING.retryMs);
+    expect(h.published(E.end)).toEqual([
+      {
+        id: C1,
+        status: "error",
+        endedAt: T0 + 30_000,
+        error:
+          "inspect-api · outcome not observed here (owner unavailable); see /cadence History",
+      },
+    ]);
+    expect(h.published(E.activity).at(-1)).toEqual({
+      id: C1,
+      activity: "inspect-api · outcome not observed",
+    });
+  });
+
+  it("shutdown waits for the observer's detach, but never longer than its bound", async () => {
+    const { client } = owner();
+    const conn = connection(client);
+    const h = host(conn);
+    await h.emit("session_start");
+    await advance(FEED_TIMING.firstMs);
+    let detached = false;
+    conn.detach.mockImplementation(
+      () =>
+        new Promise<void>((resolve) =>
+          setImmediate(() => {
+            detached = true;
+            resolve();
+          }),
+        ),
+    );
+    // Pi exits right after this; an unsent detach would hold an owner slot.
+    await h.emit("session_shutdown");
+    expect(detached).toBe(true);
+    const stuck = connection(client);
+    const g = host(stuck);
+    await g.emit("session_start");
+    await advance(FEED_TIMING.firstMs);
+    stuck.detach.mockReturnValue(new Promise<void>(() => {}));
+    let settled = false;
+    void g.emit("session_shutdown").then(() => {
+      settled = true;
+    });
+    await advance(1499);
+    expect(settled).toBe(false);
+    await advance(1);
+    expect(settled).toBe(true);
+  });
+
+  it("a shutdown during a roster read sends no session request after its detach", async () => {
+    const { client } = owner();
+    const conn = connection(client);
+    const h = host(conn);
+    await h.emit("session_start");
+    await advance(FEED_TIMING.firstMs);
+    let release!: (value: unknown) => void;
+    client.activeRuns.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }) as never,
+    );
+    await advance(FEED_TIMING.activeMs);
+    await h.emit("session_shutdown");
+    release(refused);
+    await advance(0);
+    expect(conn.refresh).not.toHaveBeenCalled();
+  });
 });
 
 describe("Cadence owner feed bounds", () => {
@@ -558,6 +642,41 @@ describe("Cadence owner feed bounds", () => {
     s.seq = "11";
     await advance(FEED_TIMING.activeMs);
     expect(client.messages).toHaveBeenCalledTimes(3);
+  });
+
+  it("a task snapshot that keeps refusing drains its finished episode", async () => {
+    const { s, client } = owner();
+    s.rows = [row(null, null, "running"), row(C1, "inspect-api", "running")];
+    const h = host(connection(client));
+    await h.emit("session_start");
+    await advance(FEED_TIMING.firstMs);
+    s.roster = [];
+    client.snapshot.mockResolvedValue(refused as never);
+    for (let look = 0; look < 5; look++) await advance(FEED_TIMING.activeMs);
+    expect(h.published(E.end)).toEqual([
+      expect.objectContaining({ id: C1, status: "error" }),
+    ]);
+    const snapshots = client.snapshot.mock.calls.length;
+    await advance(FEED_TIMING.idleMs * 3);
+    expect(client.snapshot).toHaveBeenCalledTimes(snapshots);
+  });
+
+  it("one detail page larger than the cap is cut like a continued one", async () => {
+    const { s, client } = owner();
+    s.rows = [row(null, null, "running"), row(C1, "inspect-api", "running")];
+    s.records[C1] = { messages: [msg("m1", "assistant", "final", ref("r1"))] };
+    s.details.r1 = "x".repeat(70 * 1024);
+    const h = host(connection(client));
+    await h.emit("session_start");
+    await advance(FEED_TIMING.firstMs);
+    h.events.emit(SUBAGENT_VIEW, { id: C1 });
+    await advance(0);
+    const [{ message }] = h.published(E.message) as any[];
+    const text: string = message.content[0].text;
+    expect(text.startsWith(`${"x".repeat(64 * 1024)}\n… (truncated`)).toBe(
+      true,
+    );
+    expect(text.length).toBeLessThan(65 * 1024);
   });
 });
 

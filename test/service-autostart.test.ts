@@ -103,6 +103,7 @@ function fake(
     },
     linger: () => state.linger,
     enableLinger(interactive) {
+      calls.push("enable-linger");
       lingerAttempts.push(interactive);
       if (options.lingerAllowed !== false) state.linger = true;
       return options.lingerAllowed !== false;
@@ -142,6 +143,7 @@ describe.skipIf(process.platform !== "linux")("systemd user autostart", () => {
       "enable cadence.service",
       "reset-failed cadence.service",
       "start cadence.service",
+      "enable-linger",
     ]);
     const text = readFileSync(f.unit, "utf8");
     const cli = join(f.s.root, "src", "service-cli.mjs");
@@ -316,6 +318,17 @@ describe.skipIf(process.platform !== "linux")("systemd user autostart", () => {
       linger: "enabled",
     });
     expect(f.lingerAttempts).toEqual([true]);
+    // The prompt comes after the restart: an interrupted password prompt must
+    // not leave the stopped owner down.
+    f.state.active = true;
+    f.state.linger = false;
+    f.calls.length = 0;
+    configureAutostart(f.s, "install", undefined, true);
+    expect(f.calls).toContain("stop cadence.service");
+    expect(f.calls.slice(-2)).toEqual([
+      "start cadence.service",
+      "enable-linger",
+    ]);
     const masked = fake();
     masked.state.enabled = "masked";
     const result = configureAutostart(masked.s, "install", undefined, true);
@@ -493,10 +506,13 @@ describe.skipIf(process.platform !== "linux")("systemd user autostart", () => {
     roots.push(home);
     vi.stubEnv("HOME", home);
     vi.stubEnv("XDG_DATA_HOME", undefined);
+    vi.stubEnv("CADENCE_LINGER", undefined);
     const hint = autostartHint();
-    expect(hint).toContain("autostart install");
+    expect(hint).toContain("autostart install --linger");
     expect(hint).toContain("http://127.0.0.1:17423");
     expect(hint).toMatch(/[/\\]src[/\\]service-cli\.mjs"/);
+    vi.stubEnv("CADENCE_LINGER", "0");
+    expect(autostartHint()).toMatch(/ at login: .* autostart install$/);
     const unit = join(home, ".local", "share", "systemd", "user");
     mkdirSync(unit, { recursive: true });
     writeFileSync(join(unit, "cadence.service"), "# generated\n");
@@ -515,7 +531,9 @@ describe.skipIf(process.platform !== "linux")("systemd user autostart", () => {
       home,
       root: checkout,
       lingerFile: join(home, "linger", "u"),
+      systemd: join(home, "run-systemd-system"),
     };
+    mkdirSync(o.systemd);
     // Unregistered checkouts and project installs are explicit by design.
     expect(autostartNotice(o)).toBeUndefined();
     const scope = join(home, ".pi", "agent", "npm", "node_modules");
@@ -524,10 +542,18 @@ describe.skipIf(process.platform !== "linux")("systemd user autostart", () => {
     expect(autostartNotice(o)).toMatch(
       /[/\\]src[/\\]service-cli\.mjs" autostart install --linger$/,
     );
+    // A linger opt-out is never undone by the suggested command.
+    expect(autostartNotice({ ...o, env: { CADENCE_LINGER: "0" } })).toMatch(
+      /[/\\]src[/\\]service-cli\.mjs" autostart install$/,
+    );
     expect(
       autostartNotice({ ...o, env: { CADENCE_AUTOSTART: "0" } }),
     ).toBeUndefined();
     expect(autostartNotice({ ...o, platform: "darwin" })).toBeUndefined();
+    // Without systemd there is no user manager to register with.
+    expect(
+      autostartNotice({ ...o, systemd: join(home, "absent") }),
+    ).toBeUndefined();
     const data = join(home, ".local", "share", "systemd", "user");
     const config = join(home, ".config", "systemd", "user");
     mkdirSync(data, { recursive: true });
@@ -547,6 +573,17 @@ describe.skipIf(process.platform !== "linux")("systemd user autostart", () => {
     writeFileSync(o.lingerFile, "");
     expect(autostartNotice(o)).toBeUndefined();
     rmSync(o.lingerFile);
+    // `systemctl --user mask --runtime` links under XDG_RUNTIME_DIR.
+    const runtime = join(home, "run-user");
+    mkdirSync(join(runtime, "systemd", "user"), { recursive: true });
+    symlinkSync(
+      "/dev/null",
+      join(runtime, "systemd", "user", "cadence.service"),
+    );
+    expect(
+      autostartNotice({ ...o, env: { XDG_RUNTIME_DIR: runtime } }),
+    ).toBeUndefined();
+    expect(autostartNotice(o)).toContain("loginctl enable-linger");
     symlinkSync("/dev/null", join(config, "cadence.service"));
     expect(autostartNotice(o)).toBeUndefined();
     expect(existsSync(join(home, "cadence"))).toBe(false);
