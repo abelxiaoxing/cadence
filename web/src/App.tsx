@@ -392,7 +392,11 @@ export function App({
   const activeRuns = roster?.status === "complete" ? roster.runs : [];
   const connection =
     observation.state?.connection ??
-    (workspace.workspace ? "No task selected" : "Service unavailable");
+    (!workspace.workspace
+      ? "Service unavailable"
+      : taskId
+        ? "Task snapshot not observed yet"
+        : "No task selected");
   return (
     <div className="app">
       <header className="topbar">
@@ -404,7 +408,8 @@ export function App({
         >
           <FiMenu aria-hidden="true" />
         </button>
-        <div className="topbar-flow" inert={mobile && drawer !== null}>
+        {/* Phone drawers open below the topbar, so its controls stay live. */}
+        <div className="topbar-flow">
           <span className="brand">
             <span className="brand-logo" aria-hidden="true">
               C
@@ -696,7 +701,9 @@ export function App({
                       ))
                     ) : (
                       <p className="panel-empty">
-                        No owner run projection in this snapshot.
+                        {current && observation.state
+                          ? "No owner run projection in this snapshot."
+                          : "No snapshot observed yet; absence is not proof of settlement."}
                       </p>
                     ))}
                 </div>
