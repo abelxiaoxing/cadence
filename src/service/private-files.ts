@@ -26,10 +26,14 @@ export function refused(): never {
 export function hash(bytes: string | Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
-function privateMode(st: Stats): void {
+/** Owner-only mode for state Cadence creates. External sources it only reads
+ * (Pi's agent directory and files) keep whatever mode the user's umask gave
+ * them, such as 0755/0775 from Pi itself; ownership is still required. */
+function privateMode(st: Stats, ownerOnly = true): void {
   if (
     process.platform !== "win32" &&
-    ((st.mode & 0o077) !== 0 || (process.getuid && st.uid !== process.getuid()))
+    ((ownerOnly && (st.mode & 0o077) !== 0) ||
+      (process.getuid && st.uid !== process.getuid()))
   )
     refused();
 }
@@ -80,7 +84,7 @@ export class DirectoryWalks {
   remember(path: string, st: Stats): void {
     if (this.open()) this.walked.set(path, { dev: st.dev, ino: st.ino });
   }
-  reuse(path: string): boolean {
+  reuse(path: string, ownerOnly = true): boolean {
     const walked = this.open() ? this.walked.get(path) : undefined;
     if (!walked) return false;
     let st: Stats;
@@ -100,7 +104,7 @@ export class DirectoryWalks {
       this.walked.delete(path);
       return false;
     }
-    privateMode(st);
+    privateMode(st, ownerOnly);
     return true;
   }
 }
@@ -109,14 +113,18 @@ export class DirectoryWalks {
  * or hostile-same-user guarantee; failed temporaries are deliberately preserved.
  */
 export class PrivateFiles {
-  constructor(readonly namespace: string) {}
+  /** `ownerOnly: false` for an external namespace such as Pi's agent directory. */
+  constructor(
+    readonly namespace: string,
+    readonly ownerOnly = true,
+  ) {}
   directory(path: string, create = false, walks?: DirectoryWalks): boolean {
     const tail = relative(this.namespace, path);
     if (isAbsolute(tail) || tail === ".." || tail.startsWith(`..${sep}`))
       refused();
     if (!create) {
       const full = resolve(path);
-      if (walks?.reuse(full)) return true;
+      if (walks?.reuse(full, this.ownerOnly)) return true;
       const namespace = resolve(this.namespace);
       let inside = false,
         last: Stats | undefined;
@@ -126,7 +134,7 @@ export class PrivateFiles {
         // including an unsafe parent before a missing child. Only the caller's
         // DirectoryWalks keeps the result, for that same synchronous operation.
         if (at === namespace) inside = true;
-        if (inside) privateMode(st);
+        if (inside) privateMode(st, this.ownerOnly);
         last = st;
       });
       if (found && last) walks?.remember(full, last);
@@ -135,7 +143,7 @@ export class PrivateFiles {
     // Walk the namespace and its ambient ancestors once, then check each
     // private segment exactly once, creating a missing one privately.
     if (!safeDirectory(this.namespace, true)) return false;
-    privateMode(lstatSync(this.namespace));
+    privateMode(lstatSync(this.namespace), this.ownerOnly);
     let at = this.namespace;
     for (const part of tail.split(sep).filter(Boolean)) {
       at = join(at, part);
@@ -160,7 +168,7 @@ export class PrivateFiles {
       }
       if (!st.isDirectory() || st.isSymbolicLink())
         throw new Error("Unsafe directory");
-      privateMode(st);
+      privateMode(st, this.ownerOnly);
     }
     return true;
   }
@@ -179,7 +187,7 @@ export class PrivateFiles {
     }
     if (!before.isFile() || before.nlink !== 1 || before.size > maximum)
       refused();
-    privateMode(before);
+    privateMode(before, this.ownerOnly);
     const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     try {
       const opened = fstatSync(fd);

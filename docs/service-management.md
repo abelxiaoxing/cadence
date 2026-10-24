@@ -89,7 +89,8 @@ To keep the service off while Cadence stays installed, use `systemctl --user dis
   Stages are `package` (installed web assets or Agent profiles), `pi-agent-directory`, `pi-auth`, `pi-models` and `service`; stderr names the selected Pi source to fix.
   `quarantined` with stage `pi-runtime` or `service` means the owner registered first; it keeps its fences for informed recovery.
   Reports carry fixed codes and stages only, never paths, configuration bytes or OS error text.
-- The selected Pi agent directory must be a real directory owned by you with mode 0700; `auth.json` and `models.json` must be your own single-link regular files with mode 0600.
+- The selected Pi agent directory must be a real directory (not a symlink) owned by you; `auth.json` and `models.json` must be your own single-link regular files.
+  Their mode bits are not checked: Pi creates its agent directory with your umask (0755, or 0775 under umask 002), and Cadence's own state stays 0700 regardless.
   `models.json` may use only fields the pinned SDK supports.
   `supportsMidConvoSystemMessages` from newer Pi is accepted because the pinned SDK has no system-role conversation message; other unknown fields refuse rather than being silently ignored.
 - A foreground owner can be managed from another terminal.
