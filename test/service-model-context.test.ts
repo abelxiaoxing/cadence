@@ -50,8 +50,7 @@ const cases = [
   "bad-auth-link",
   "bad-model-link",
   "bad-hardlink",
-  "bad-mode",
-  "bad-dir-mode",
+  "umask-modes",
   "bad-large",
   "bad-missing",
   "invalid-schema",
@@ -117,10 +116,7 @@ describe("owner model preparation: isolated actual public SDK, fabricated stores
   for (const scenario of cases) {
     // POSIX mode bits are not a Windows ACL test. Keep those lanes explicitly
     // unexecuted on Windows, rather than expecting chmod to establish the premise.
-    it.skipIf(
-      process.platform === "win32" &&
-        ["bad-mode", "bad-dir-mode"].includes(scenario),
-    )(
+    it.skipIf(process.platform === "win32" && scenario === "umask-modes")(
       `${scenario} (original native close, no inference)`,
       async () => {
         const root = mkdtempSync(
