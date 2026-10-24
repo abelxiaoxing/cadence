@@ -56,6 +56,7 @@ function harness(registrar = register) {
   const handlers = new Map<string, Array<(...args: any[]) => unknown>>();
   let active = ["read", "bash"];
   const pi = {
+    events: { on: () => () => {}, emit: vi.fn() },
     on(name: string, handler: (...args: any[]) => unknown) {
       handlers.set(name, [...(handlers.get(name) ?? []), handler]);
     },
@@ -299,13 +300,16 @@ describe("Cadence startup configuration card", () => {
       );
       const h = harness(register);
       const notify = vi.fn();
-      await h.emit("session_start", {
+      const ctx = {
         cwd: input.cwd,
         hasUI: true,
         mode: "tui",
         isProjectTrusted: () => true,
         ui: { onTerminalInput: () => () => {}, setWidget: vi.fn(), notify },
-      });
+      };
+      await h.emit("session_start", ctx);
+      // Stops the TUI owner feed before its first look; the card is the subject.
+      await h.emit("session_shutdown", ctx);
       // Linger is the host's logind state; the notice's own cases are unit tests.
       const notice = autostartNotice();
       expect(notify).toHaveBeenCalledWith(

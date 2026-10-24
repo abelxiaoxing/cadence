@@ -306,11 +306,15 @@ function service() {
   };
 }
 function host() {
+  // Every NativeConnection here is the one fake; the panel's readonly owner
+  // feed is covered by agent-panel-cadence.test.ts, not this shell.
+  vi.stubEnv("CADENCE_AGENT_PANEL", "off");
   const s = service(),
     cwd = mkdtempSync(join(tmpdir(), "cadence-native-host-"));
   const handlers = new Map<string, ((...args: any[]) => any)[]>(),
     commands = new Map<string, any>();
   const pi = {
+    events: { on: () => () => {}, emit() {} },
     on(event: string, fn: any) {
       handlers.set(event, [...(handlers.get(event) ?? []), fn]);
     },
@@ -318,8 +322,8 @@ function host() {
       commands.set(name, command);
     },
   };
-  let rawHandler: ((text: string) => void) | undefined,
-    editor = "/cadence";
+  const rawHandlers = new Set<(text: string) => unknown>();
+  let editor = "/cadence";
   const selections: (
       | string
       | undefined
@@ -343,12 +347,11 @@ function host() {
     modelRegistry: { getApiKeyAndHeaders: vi.fn() },
     ui: {
       onTerminalInput(fn: any) {
-        rawHandler = fn;
-        return () => {
-          rawHandler = undefined;
-        };
+        rawHandlers.add(fn);
+        return () => rawHandlers.delete(fn);
       },
       getEditorText: () => editor,
+      setWidget: vi.fn(),
       select: vi.fn(async (title: string, options: string[]) => {
         const item = selections.shift();
         const result = typeof item === "function" ? item(title, options) : item;
@@ -410,10 +413,10 @@ function host() {
     emit,
     enter(text = "/cadence") {
       editor = text;
-      rawHandler?.("\r");
+      for (const fn of rawHandlers) fn("\r");
     },
     input(text: string) {
-      rawHandler?.(text);
+      for (const fn of rawHandlers) fn(text);
     },
     confirm(fn: typeof confirm) {
       confirm = fn;

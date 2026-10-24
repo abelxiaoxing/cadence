@@ -1,0 +1,619 @@
+/** Cadence service children on the background-agent panel. Observation only:
+ * a Pi TUI session attaches to the owner already running for its workspace
+ * (never starting one), polls the active roster and task snapshots, and
+ * announces each child run on Pi's `subagent:*` bus. Reads go through the
+ * typed ServiceClient; nothing here starts, cancels, retries or keeps work
+ * alive, and leaving the session only detaches. */
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { SUBAGENT_EVENTS, SUBAGENT_VIEW } from "./agent-panel-model.ts";
+import { NativeConnection } from "./native-client.ts";
+import type { ServiceClient } from "./service-client.ts";
+import {
+  type ContentRef,
+  type GraphReadRequest,
+  type HistoryRecord,
+  LIMITS,
+  type ListRequest,
+  type ReadCursor,
+  type RunProjection,
+  type Snapshot,
+} from "./service-contract.ts";
+
+/** The NativeConnection surface the feed uses; tests substitute it. */
+export interface FeedConnection {
+  attach(cwd: string): Promise<FeedClient>;
+  refresh(): Promise<unknown>;
+  compatible(): boolean;
+  detach(): Promise<void>;
+}
+/** Readonly ServiceClient reads only: no command, preflight or Cancel. */
+export type FeedClient = Pick<
+  ServiceClient,
+  | "activeRuns"
+  | "snapshot"
+  | "graph"
+  | "messages"
+  | "tools"
+  | "contents"
+  | "detail"
+>;
+export interface CadenceFeedOptions {
+  connection?: () => FeedConnection;
+  now?: () => number;
+  timing?: Partial<FeedTiming>;
+}
+export interface FeedTiming {
+  firstMs: number;
+  activeMs: number;
+  idleMs: number;
+  retryMs: number;
+}
+
+/** First look waits for Pi's startup render; workspace resolution runs Git. */
+export const FEED_TIMING: FeedTiming = {
+  firstMs: 500,
+  activeMs: 2000,
+  idleMs: LIMITS.heartbeatMs,
+  retryMs: 15_000,
+};
+/** Retained reads are paged; a child larger than this stays in /cadence History. */
+const MAX_PAGES = 50;
+const MAX_DETAIL_STEPS = 8;
+/** Characters of one field shown in the panel; the rest stays retained. */
+const TEXT_CAP = 64 * 1024;
+const CACHE_CHARS = 16 * 1024 * 1024;
+/** Snapshots after an episode drained, while its children still look unsettled. */
+const DRAIN_LOOKS = 5;
+
+type Child = {
+  id: string;
+  /** Assignment ID: rows lead with it, since kinds repeat. */
+  label: string;
+  runId: string;
+  storeId: string;
+  /** Committed watermark of the latest snapshot that showed this child. */
+  seq: string;
+  lifecycle: RunProjection["lifecycle"];
+  ended: boolean;
+  activity: string;
+  /** Activity from the latest tools read, shown while the child is running. */
+  working?: string;
+  toolsSeq?: string;
+  transcriptSeq?: string;
+  /** A transcript read failed at this watermark; reopening the view retries. */
+  failedSeq?: string;
+  /** Final transcript messages already announced. */
+  sent: number;
+};
+type Tool = Extract<HistoryRecord, { kind: "tool" }>;
+type Block = { index: number; ref: ContentRef };
+type Built = { messages: object[]; partial?: object; tools: Tool[] };
+
+/** Process-wide: children keep their announced state across sessions, like the
+ * panel's store, so a later session never announces one twice. */
+class FeedState {
+  readonly children = new Map<string, Child>();
+  readonly purposes = new Map<string, Map<string, string>>();
+  readonly texts = new Map<string, string>();
+  cached = 0;
+  viewing: string | undefined;
+  remember(key: string, text: string): void {
+    if (this.cached + text.length > CACHE_CHARS) {
+      this.texts.clear();
+      this.cached = 0;
+    }
+    this.texts.set(key, text);
+    this.cached += text.length;
+  }
+}
+
+export function registerCadenceAgentFeed(
+  pi: ExtensionAPI,
+  options: CadenceFeedOptions = {},
+): void {
+  const state = new FeedState();
+  let feed: Feed | undefined;
+  pi.events.on(SUBAGENT_VIEW, (data) => {
+    const id = (data as { id?: unknown } | undefined)?.id;
+    state.viewing = typeof id === "string" ? id : undefined;
+    const child = state.viewing && state.children.get(state.viewing);
+    if (child) child.failedSeq = undefined;
+    feed?.wake();
+  });
+  const stop = () => {
+    feed?.stop();
+    feed = undefined;
+  };
+  pi.on("session_start", (_event, ctx) => {
+    stop();
+    if (
+      ctx.mode !== "tui" ||
+      !ctx.hasUI ||
+      process.env.CADENCE_AGENT_PANEL === "off"
+    )
+      return;
+    feed = new Feed(pi, ctx.cwd, state, options);
+  });
+  pi.on("session_shutdown", stop);
+}
+
+const label = (purpose: string | undefined, kind: string) =>
+  purpose
+    ? purpose[0].toUpperCase() + purpose.slice(1)
+    : kind === "generate-plan"
+      ? "Planner"
+      : "Child";
+function lifecycleText(row: RunProjection): string {
+  switch (row.lifecycle) {
+    case "queued":
+      return row.reason
+        ? `Queued · ${row.reason.replaceAll("-", " ")}`
+        : "Queued";
+    case "preparing":
+      return "Preparing";
+    case "closing":
+      return "Finishing";
+    default:
+      return "Working";
+  }
+}
+function workingText(tools: Tool[]): string {
+  const last = tools.at(-1);
+  if (!last) return "Working";
+  if (last.result === null) return `Running ${last.name}`;
+  const n = tools.length;
+  return `Working · ${n} tool call${n === 1 ? "" : "s"} (last: ${last.name})`;
+}
+/** Final or execution arguments are canonical JSON; anything else shows none. */
+function parseArgs(text: string | undefined): object {
+  try {
+    const value = text === undefined ? {} : JSON.parse(text);
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? value
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+class Feed {
+  private client: FeedClient | undefined;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private busy = false;
+  private woken = false;
+  private stopped = false;
+  private readonly abort = new AbortController();
+  private readonly connection: FeedConnection;
+  private readonly now: () => number;
+  private readonly timing: FeedTiming;
+  /** Parent run → task, followed until a snapshot after it left the roster. */
+  private readonly episodes = new Map<
+    string,
+    { taskId: string; drained: number }
+  >();
+  constructor(
+    private readonly pi: ExtensionAPI,
+    private readonly cwd: string,
+    private readonly state: FeedState,
+    options: CadenceFeedOptions,
+  ) {
+    this.connection = options.connection?.() ?? new NativeConnection();
+    this.now = options.now ?? Date.now;
+    this.timing = { ...FEED_TIMING, ...options.timing };
+    this.schedule(this.timing.firstMs);
+  }
+  stop(): void {
+    this.stopped = true;
+    clearTimeout(this.timer);
+    this.abort.abort();
+    // Detach this observer only; accepted work continues in the service.
+    void this.connection.detach().catch(() => {});
+  }
+  /** The viewed agent changed: load its transcript now if attached. */
+  wake(): void {
+    if (this.busy) this.woken = true;
+    else if (this.client) this.schedule(0);
+  }
+  private schedule(ms: number): void {
+    clearTimeout(this.timer);
+    if (this.stopped) return;
+    this.timer = setTimeout(() => void this.tick(), ms);
+    // Observation never keeps Pi alive.
+    this.timer.unref?.();
+  }
+  private emit(event: keyof typeof SUBAGENT_EVENTS, data: object): void {
+    if (!this.stopped) this.pi.events.emit(SUBAGENT_EVENTS[event], data);
+  }
+  private async tick(): Promise<void> {
+    if (this.stopped || this.busy) return;
+    this.busy = true;
+    this.woken = false;
+    let next = this.timing.retryMs;
+    try {
+      if (!this.client) {
+        const client = await this.connection.attach(this.cwd);
+        if (this.stopped) {
+          // stop() may have detached before this allocation existed.
+          await this.connection.detach().catch(() => {});
+          return;
+        }
+        if (!this.connection.compatible()) throw new Error("incompatible");
+        this.client = client;
+      }
+      next = await this.observe(this.client);
+    } catch {
+      // Absent, stopped, restarted or incompatible owner: detach and look
+      // again later. Observation never starts one.
+      this.client = undefined;
+      await this.connection.detach().catch(() => {});
+    } finally {
+      this.busy = false;
+    }
+    this.schedule(this.woken ? 0 : next);
+  }
+
+  private async observe(client: FeedClient): Promise<number> {
+    const signal = this.abort.signal;
+    const roster = await client.activeRuns(signal);
+    if (roster.kind === "error" || roster.value.status !== "complete") {
+      // Throws when the owner is gone or restarted; otherwise look again soon.
+      await this.connection.refresh();
+      return this.timing.activeMs;
+    }
+    const active = new Set<string>();
+    for (const run of roster.value.runs) {
+      active.add(run.runId);
+      this.episodes.set(run.runId, { taskId: run.taskId, drained: 0 });
+    }
+    const ends: object[] = [];
+    for (const taskId of new Set(
+      [...this.episodes.values()].map((e) => e.taskId),
+    )) {
+      const reply = await client.snapshot({ kind: "task", id: taskId }, signal);
+      if (this.stopped) return this.timing.activeMs;
+      if (reply.kind === "error") continue;
+      for (const [runId, episode] of this.episodes) {
+        if (episode.taskId !== taskId) continue;
+        const open = await this.follow(client, reply.value, runId, ends);
+        if (!active.has(runId) && (!open || ++episode.drained >= DRAIN_LOOKS))
+          this.episodes.delete(runId);
+      }
+    }
+    await this.refreshActivity(client);
+    await this.refreshTranscript(client);
+    // Ends follow the transcript so its last streaming snapshot is replaced
+    // by the final message rather than kept beside it.
+    for (const end of ends) this.emit("end", end);
+    return this.episodes.size ? this.timing.activeMs : this.timing.idleMs;
+  }
+
+  /** Announce this episode's children; true while any still looks unsettled. */
+  private async follow(
+    client: FeedClient,
+    snapshot: Snapshot,
+    runId: string,
+    ends: object[],
+  ): Promise<boolean> {
+    const rows = snapshot.runs.filter(
+      (r) => r.runId === runId && r.childRunId !== null,
+    );
+    // A check has no children: follow it only until its own row settles.
+    if (!rows.length)
+      return !snapshot.runs.some(
+        (r) => r.runId === runId && !r.childRunId && r.lifecycle === "settled",
+      );
+    const purposes = await this.purposes(client, snapshot, rows[0]);
+    let open = false;
+    for (const row of rows) {
+      const id = row.childRunId as string;
+      const settled = row.lifecycle === "settled";
+      open ||= !settled;
+      let child = this.state.children.get(id);
+      if (!child) {
+        child = {
+          id,
+          label: row.assignmentId ?? id,
+          runId,
+          storeId: snapshot.storeId,
+          seq: snapshot.committedSeq,
+          lifecycle: row.lifecycle,
+          ended: false,
+          activity: "",
+          sent: 0,
+        };
+        this.state.children.set(id, child);
+        this.emit("start", {
+          id,
+          label: child.label,
+          kind: label(purposes.get(row.assignmentId ?? ""), row.admission.kind),
+          // A child first seen settled ran before this session looked.
+          startedAt: settled ? null : this.now(),
+        });
+      }
+      child.storeId = snapshot.storeId;
+      child.seq = snapshot.committedSeq;
+      child.lifecycle = row.lifecycle;
+      if (child.ended) continue;
+      if (settled) {
+        const outcome = row.outcome ?? "unknown";
+        // The row keeps its last activity after the end; make it the outcome.
+        this.activity(child, outcome);
+        child.ended = true;
+        ends.push({
+          id,
+          status:
+            outcome === "completed"
+              ? "done"
+              : outcome === "canceled"
+                ? "cancelled"
+                : "error",
+          endedAt: this.now(),
+          ...(outcome === "completed" || outcome === "canceled"
+            ? {}
+            : {
+                error: `${child.label} · ${outcome}${
+                  row.reason ? ` (${row.reason.replaceAll("-", " ")})` : ""
+                }`,
+              }),
+        });
+        continue;
+      }
+      this.activity(
+        child,
+        row.lifecycle === "running"
+          ? (child.working ?? "Working")
+          : lifecycleText(row),
+      );
+    }
+    return open;
+  }
+  private activity(child: Child, text: string): void {
+    const activity = `${child.label} · ${text}`;
+    if (child.ended || activity === child.activity) return;
+    child.activity = activity;
+    this.emit("activity", { id: child.id, activity });
+  }
+  /** Assignment purposes from the admitted graph, read once per episode. */
+  private async purposes(
+    client: FeedClient,
+    snapshot: Snapshot,
+    row: RunProjection,
+  ): Promise<Map<string, string>> {
+    const cached = this.state.purposes.get(row.runId);
+    if (cached) return cached;
+    const purposes = new Map<string, string>();
+    const graph = row.admission.graph;
+    if (graph) {
+      let request: GraphReadRequest = {
+        storeId: snapshot.storeId,
+        scope: { kind: "run", id: row.runId },
+        snapshotSeq: snapshot.committedSeq,
+        graph,
+      };
+      for (let step = 0; step < MAX_DETAIL_STEPS; step++) {
+        const reply = await client.graph(request, this.abort.signal);
+        if (reply.kind === "error") break;
+        if (!("kind" in reply.value)) {
+          for (const a of reply.value.graph.assignments)
+            purposes.set(a.id, a.purpose);
+          break;
+        }
+        request = reply.value.next;
+      }
+    }
+    // A failed read falls back to a generic kind rather than rereading.
+    this.state.purposes.set(row.runId, purposes);
+    return purposes;
+  }
+
+  /** Latest tool for running children not shown in a view (that read covers it). */
+  private async refreshActivity(client: FeedClient): Promise<void> {
+    for (const child of this.state.children.values()) {
+      if (
+        child.ended ||
+        child.lifecycle !== "running" ||
+        child.id === this.state.viewing ||
+        child.toolsSeq === child.seq ||
+        // Another session's workspace: not this owner's to read.
+        !this.episodes.has(child.runId)
+      )
+        continue;
+      const tools = await this.records(client, "tools", child);
+      if (!tools) continue;
+      child.toolsSeq = child.seq;
+      child.working = workingText(tools as Tool[]);
+      this.activity(child, child.working);
+    }
+  }
+  private async refreshTranscript(client: FeedClient): Promise<void> {
+    const id = this.state.viewing;
+    const child = id === undefined ? undefined : this.state.children.get(id);
+    if (
+      !child ||
+      child.transcriptSeq === child.seq ||
+      child.failedSeq === child.seq
+    )
+      return;
+    const seq = child.seq;
+    const built = await this.transcript(client, child);
+    if (this.stopped) return;
+    if (!built) {
+      child.failedSeq = seq;
+      return;
+    }
+    child.transcriptSeq = seq;
+    child.toolsSeq = seq;
+    child.working = workingText(built.tools);
+    if (child.lifecycle === "running") this.activity(child, child.working);
+    for (let i = child.sent; i < built.messages.length; i++)
+      this.emit("message", { id: child.id, message: built.messages[i] });
+    child.sent = Math.max(child.sent, built.messages.length);
+    if (built.partial)
+      this.emit("message", {
+        id: child.id,
+        message: built.partial,
+        streaming: true,
+      });
+  }
+
+  private async records(
+    client: FeedClient,
+    reader: "messages" | "tools" | "contents",
+    child: Child,
+  ): Promise<HistoryRecord[] | undefined> {
+    let request: ListRequest = {
+      reader,
+      storeId: child.storeId,
+      scope: { kind: "child", id: child.id },
+      snapshotSeq: child.seq,
+      after: null,
+      limit: LIMITS.maxPageEntries,
+    };
+    const records: HistoryRecord[] = [];
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const reply = await client[reader](request, this.abort.signal);
+      if (reply.kind === "error") return undefined;
+      if (!("kind" in reply.value)) records.push(...reply.value.records);
+      if (!reply.value.next) return records;
+      request = reply.value.next;
+    }
+    return undefined;
+  }
+  /** One retained field's leading text, cached by its immutable reference. */
+  private async text(
+    client: FeedClient,
+    child: Child,
+    ref: ContentRef,
+  ): Promise<string | undefined> {
+    const key = `${ref.recordId}:${ref.version}:${ref.field}:${ref.sha256}`;
+    const hit = this.state.texts.get(key);
+    if (hit !== undefined) return hit;
+    let cursor: ReadCursor | null = {
+      storeId: child.storeId,
+      scope: { kind: "child", id: child.id },
+      snapshotSeq: child.seq,
+      query: null,
+      recordId: ref.recordId,
+      recordVersion: ref.version,
+      field: ref.field,
+      offset: 0,
+    };
+    let text = "";
+    for (let step = 0; cursor && step < MAX_DETAIL_STEPS; step++) {
+      const reply = await client.detail(cursor, this.abort.signal);
+      if (reply.kind === "error") return undefined;
+      if (!("kind" in reply.value)) text += reply.value.text;
+      cursor = reply.value.next;
+      if (text.length >= TEXT_CAP) break;
+    }
+    if (cursor)
+      text = `${text.slice(0, TEXT_CAP)}\n… (truncated; the full text is in /cadence History)`;
+    this.state.remember(key, text);
+    return text;
+  }
+  private async joined(
+    client: FeedClient,
+    child: Child,
+    blocks: Block[] | undefined,
+  ): Promise<string | undefined> {
+    const parts: string[] = [];
+    for (const block of [...(blocks ?? [])].sort((a, b) => a.index - b.index)) {
+      const text = await this.text(client, child, block.ref);
+      if (text === undefined) return undefined;
+      parts.push(text);
+    }
+    return parts.join("\n");
+  }
+  /** The child's retained messages in Pi's message shapes: user prompt,
+   * assistant text with its tool calls, and tool results. A partial message
+   * ends the list as a streaming snapshot. */
+  private async transcript(
+    client: FeedClient,
+    child: Child,
+  ): Promise<Built | undefined> {
+    const messages = await this.records(client, "messages", child);
+    const tools = (await this.records(client, "tools", child)) as
+      | Tool[]
+      | undefined;
+    const contents = await this.records(client, "contents", child);
+    if (!messages || !tools || !contents) return undefined;
+    const args = new Map<string, ContentRef>(),
+      results = new Map<string, Block[]>(),
+      finals = new Map<string, Block[]>(),
+      streams = new Map<string, Block[]>();
+    const push = (map: Map<string, Block[]>, key: string, block: Block) =>
+      map.set(key, [...(map.get(key) ?? []), block]);
+    for (const r of contents) {
+      if (r.kind !== "content") continue;
+      const owner = r.descriptor.owner;
+      if (owner.kind === "tool") {
+        if (
+          owner.stage === "execution-arguments" ||
+          (owner.stage === "arguments-final" && !args.has(owner.callId))
+        )
+          args.set(owner.callId, r.content);
+        else if (owner.stage === "result")
+          push(results, owner.callId, { index: owner.index, ref: r.content });
+      } else if (owner.kind === "message")
+        push(owner.stage === "final" ? finals : streams, owner.messageId, {
+          index: owner.index,
+          ref: r.content,
+        });
+    }
+    const calls = new Map<string, Tool[]>(),
+      byId = new Map<string, Tool>();
+    for (const tool of tools) {
+      byId.set(tool.owner.entity.id, tool);
+      const message = tool.declaration?.messageId;
+      if (message) calls.set(message, [...(calls.get(message) ?? []), tool]);
+    }
+    const built: Built = { messages: [], tools };
+    for (const m of messages) {
+      if (m.kind !== "message") continue;
+      const id = m.owner.entity.id;
+      // Only assistant messages carry a derived final text; a user prompt
+      // keeps its final blocks, a partial message its stream blocks.
+      const blocks =
+        m.role === "tool-result" && m.resultCallId
+          ? results.get(m.resultCallId)
+          : (finals.get(id) ?? streams.get(id));
+      const text = m.finalText
+        ? await this.text(client, child, m.finalText)
+        : await this.joined(client, child, blocks);
+      if (text === undefined) return undefined;
+      let message: object;
+      if (m.role === "user")
+        message = { role: "user", content: [{ type: "text", text }] };
+      else if (m.role === "assistant") {
+        const content: object[] = text ? [{ type: "text", text }] : [];
+        for (const tool of calls.get(id) ?? []) {
+          const ref = args.get(tool.owner.entity.id);
+          const raw = ref ? await this.text(client, child, ref) : undefined;
+          if (ref && raw === undefined) return undefined;
+          content.push({
+            type: "toolCall",
+            id: tool.owner.entity.id,
+            name: tool.name,
+            arguments: parseArgs(raw),
+          });
+        }
+        message = { role: "assistant", content };
+      } else {
+        const tool = m.resultCallId ? byId.get(m.resultCallId) : undefined;
+        message = {
+          role: "toolResult",
+          toolCallId: m.resultCallId ?? "",
+          toolName: tool?.name ?? "tool",
+          content: [{ type: "text", text }],
+          isError: tool?.result?.isError === true,
+        };
+      }
+      if (m.state !== "final") {
+        built.partial = message;
+        break;
+      }
+      built.messages.push(message);
+    }
+    return built;
+  }
+}
