@@ -217,11 +217,11 @@ function startupGuidance(result: unknown, input: HostInput): string {
     case "package":
       return "Cadence refused its installed package files (web/dist or agents); reinstall the package rather than editing it.\n";
     case "pi-agent-directory":
-      return `Pi's agent directory ${agent} must be an existing real directory owned by you with mode 0700 (chmod 700).\n`;
+      return `Pi's agent directory ${agent} must be an existing real directory (not a symlink) owned by you.\n`;
     case "pi-auth":
-      return `${join(agent, "auth.json")} must be your own single-link regular file with mode 0600 holding valid Pi credentials; log in to Pi first.\n`;
+      return `${join(agent, "auth.json")} must be your own single-link regular file holding valid Pi credentials; log in to Pi first.\n`;
     case "pi-models":
-      return `${join(agent, "models.json")} must be your own single-link regular file with mode 0600, using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.\n`;
+      return `${join(agent, "models.json")} must be your own single-link regular file using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.\n`;
     case "pi-runtime":
       return `Loading Pi's SDK model runtime failed after the owner registered (optional SDK packages missing, or sources the SDK refuses); it stays quarantined.\n${inspect}`;
     default:

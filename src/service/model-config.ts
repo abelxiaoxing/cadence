@@ -105,7 +105,9 @@ export function piSource(
     lstatSync(directory).isSymbolicLink()
   )
     refuse();
-  const files = new PrivateFiles(directory);
+  // Pi creates its agent directory with the user's umask (0755, or 0775 under
+  // umask 002), so its mode is not a Cadence premise; ownership still is.
+  const files = new PrivateFiles(directory, false);
   if (!files.directory(directory)) refuse();
   return {
     directory,
