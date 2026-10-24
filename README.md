@@ -40,13 +40,13 @@ See [service management](docs/service-management.md) for configuration, model/au
 
 `pi install npm:@abelxiaoxing/cadence` (user scope) writes `~/.local/share/systemd/user/cadence.service`, enables it and starts the owner for `~/cadence` on `http://127.0.0.1:17423`.
 Set an existing absolute `CADENCE_WORKSPACE` at install to choose another workspace, or `CADENCE_AUTOSTART=0` to skip registration.
-That first registration also enables linger when logind allows it without a password, so the service starts at boot instead of at login; `CADENCE_LINGER=0` skips it, and later updates keep `loginctl disable-linger`.
+That first registration also enables linger when logind allows it without any authorization prompt, so the service starts at boot instead of at login; `CADENCE_LINGER=0` skips it, and later updates keep `loginctl disable-linger`.
 Enter the WebUI once with the link from `cadence-service token-link --workspace ~/cadence --reveal`; installation prints that command, not the token.
 Each `pi update` restarts the unit through orderly Stop, so running work is stopped rather than detached; `systemctl --user disable --now cadence` or `mask` is kept across upgrades.
-Run `cadence-service autostart remove` before `pi remove`.
+Run `cadence-service autostart remove` before `pi remove`; after `remove`, a later `pi update` registers the unit again as a first registration, so keep it off with `disable` or `mask` instead.
 The npm client hides dependency install-script output, and with `strict-allow-scripts` it skips those scripts entirely.
 Approve Cadence once with `npm install-scripts approve @abelxiaoxing/cadence` inside `~/.pi/agent/npm` (or `npm config set allow-scripts=@abelxiaoxing/cadence --location=user`), or run `cadence-service autostart install --linger`, which may ask for your password.
-Pi's session-start card names that command while Pi's copy has no unit, and `loginctl enable-linger` while the enabled unit only starts at login.
+Pi's session-start card names that command (without `--linger` under `CADENCE_LINGER=0`) while Pi's copy has no unit on a systemd machine, and `loginctl enable-linger` while the enabled unit only starts at login.
 Until the optional SDK and Pi's `auth.json` exist, registration or start waits instead of quarantining an owner.
 See [the systemd user unit](docs/service-management.md#linux-systemd-user-unit) for exact behavior and limits.
 
@@ -68,10 +68,13 @@ Explicit Cancel requests bounded stop; it is not proof that every escaped descen
 
 A readonly panel in the Pi TUI follows background agents: the child runs of Cadence's running owner and any agents another extension announces on Pi's shared event bus.
 Every TUI session, not only `/cadence`, looks for the owner already running for its workspace half a second after start and every 15s while none answers; it never starts, recovers or selects one, skips an incompatible owner and only detaches on departure.
+That observation holds one of the owner's viewer attachments, so departure (including Pi quit) waits up to 1.5s for the detach to reach the owner rather than leaving the slot to its idle expiry; `/cadence` departs the same way.
 `CADENCE_AGENT_PANEL=off` turns that observation off.
-It reads the active roster every 5s, and while an episode runs that task's snapshot every 2s, announcing each child of the active episodes: its assignment ID as label, purpose as kind, lifecycle or latest tool as activity, and completed, canceled or any other outcome (with its reason) as done, cancelled or error.
+It reads the active roster every 5s, and every 2s together with the task's snapshot while it follows an episode, announcing each child of the active episodes: its assignment ID as label, purpose as kind, lifecycle or latest tool as activity, and completed, canceled or any other outcome (with its reason) as done, cancelled or error.
+A child whose outcome the session can no longer observe (no compatible owner a whole retry after losing it, or no settled row five looks after its run left the roster) ends as an error that says so; `/cadence` History keeps the actual outcome.
 Elapsed time counts from when the session first observed a child (`—` for one first seen settled); no tokens are shown because the owner records no usage.
 Opening a child reads its retained messages, tool calls and results through the history readers, up to 64KiB per field; complete fields, search and export stay in `/cadence` History.
+A retained `edit` call shows its call and result without Pi's diff preview, which would compare against the file as it is now.
 Producers emit `subagent:start {id,label,kind,startedAt}`, `subagent:message {id,message,streaming?}`, `subagent:activity {id,activity,tokensIn?,tokensOut?}`, `subagent:stats {id,tokensIn,tokensOut?}` and `subagent:end {id,status,endedAt,error?}` with status `done`, `error` or `cancelled`; `startedAt: null` marks an unobserved start.
 A message has the main session's message shape; `streaming: true` marks a snapshot that the next message replaces.
 The panel emits `subagent:view {id}` (`id: null` when none) so a producer loads only the shown agent's messages.
@@ -155,8 +158,9 @@ CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify
 bun pm pack --destination /absolute/private-temp
 ```
 
-Build/verification use a fresh private directory with `TMPDIR`, `TEMP` and `TMP` set explicitly.
+Build/verification use a fresh private directory with `TMPDIR`, `TEMP` and `TMP` set explicitly, on the checkout's disk filesystem rather than a nearly full tmpfs.
 `verify` includes native/unit tests, web tests, required real-browser scenarios and exact real-pack auditing; missing required browser is non-green, never an automatic download.
+It needs a Node with TypeScript type stripping (official builds; a distro Node built without it fails `build:web:check`) and NSS `certutil` for the isolated HTTPS browser scenario.
 Source/extracted PTYs, fabricated loopback providers and isolated HTTPS are distinct from physical humans/devices, paid accounts, package-manager installation and native Windows/macOS/ConPTY qualification.
 Those additional lanes remain unqualified unless their own receipts exist.
 No passing gate authorizes commit, push, publication, installation, deployment or cleanup.
@@ -344,7 +348,8 @@ Read affected source and adjacent tests, identify the actual owner of a contract
 Use ordinary source editing and directly affected checks while developing; independently review complete capabilities and run full `verify` at stable integration boundaries.
 Do not run the entire suite after every local edit, but do not replace final integration with unit mocks or citation counts.
 `bun run test` runs unit files in parallel, then `serialProcessFiles` (real PTY/SDK process flows) and `serialScanFiles` (>8MiB cold scans) from `vitest.config.ts` one at a time; a file belongs there only when it measurably exceeds its own waits under shared CPU.
-On this development host create fresh0700 disk roots under `/home/mirako/abel` and explicitly set TMPDIR/TEMP/TMP; `/tmp` is inode-exhausted.
+Create a fresh 0700 root on the checkout's disk filesystem and explicitly set TMPDIR/TEMP/TMP to it; a nearly full tmpfs `/tmp` makes owners refuse at their free-space floor (`receipt-inconclusive`) and `web/dist` publication fail with EXDEV.
+A test waits for the event it needs (both providers contacted, a row settled), not a wall-clock guess at how long process starts take; fixed waits stay only where time is the contract.
 Use fabricated credentials, isolated browser/profile/state roots and local fixtures; never personal credentials, automatic downloads or unknown process cleanup.
 Outer command budgets must cover whole suites and preserve original runner waits; existing SDK20s/child15s, PTY90s/interaction15s and browser120s/action15s fixture budgets are not increased to obtain green.
 Preserve failed attempts; correct a demonstrated cause before rerunning, and never assign old failures a retrospective cause without evidence.
