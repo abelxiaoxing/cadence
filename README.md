@@ -374,6 +374,13 @@ Review the independently enumerated package member list and every emitted body, 
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
 
+### Release 2.0.4 acceptance snapshot
+
+Full `verify` passed on `3987f65` (the `max` thinking change): 1925 root tests in 78 files, 111 web tests, 5 real-browser scenarios and the 132-member pack audit, in the 2.0.3 environment below.
+On the same host, against a real Pi 1.4.0 user-scope install and a user-configured OpenAI-compatible provider, an owner model chosen in the WebUI ran a readonly research Start end to end: the child used `ls`/`find`/`read`, settled `completed`, published its summary and recorded hidden thinking as omitted.
+A concurrent Pi TUI's agent panel followed that child from launch through its tool calls to `finished (ok=1)`.
+A DeepSeek model whose `thinkingLevelMap` maps only `max` became selectable at `max` and its child made tool calls at that level; editing `models.json` during that run turned the owner's views `stale` until restart, as now documented.
+
 ### Release 2.0.3 acceptance snapshot
 
 Full `verify` passed on `c27b8ca`: 1924 root tests in 78 files (27 Windows-only controls skipped on Linux), 111 web tests in 8 files, 5 real-browser scenarios in 3 files and the 132-member real pack audit.
