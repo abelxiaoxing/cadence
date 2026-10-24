@@ -62,6 +62,8 @@ afterEach(() => {
 for (const lane of [
   "key-tool",
   "xhigh-key-tool",
+  // Maps only max, like DeepSeek configurations from newer Pi.
+  "max-readonly",
   "headers-only-readonly",
   "diagnosis-readonly",
   "planner-readonly",
@@ -247,10 +249,22 @@ for (const lane of [
           {
             id: "fixture-model",
             name: "Fixture",
-            reasoning: lane === "xhigh-key-tool",
+            reasoning: lane === "xhigh-key-tool" || lane === "max-readonly",
             ...(lane === "xhigh-key-tool"
               ? { thinkingLevelMap: { xhigh: "xhigh" } }
-              : {}),
+              : lane === "max-readonly"
+                ? {
+                    thinkingLevelMap: {
+                      off: null,
+                      minimal: null,
+                      low: null,
+                      medium: null,
+                      high: null,
+                      xhigh: null,
+                      max: "max",
+                    },
+                  }
+                : {}),
             input: ["text"],
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             contextWindow: 8192,
@@ -298,7 +312,12 @@ for (const lane of [
             : lane === "diagnosis-readonly"
               ? "diagnosis"
               : "research",
-          thinkingLevel: lane === "xhigh-key-tool" ? "xhigh" : "off",
+          thinkingLevel:
+            lane === "xhigh-key-tool"
+              ? "xhigh"
+              : lane === "max-readonly"
+                ? "max"
+                : "off",
           instructions:
             "Synthetic fixture only. Use write only when requested; no shell or external resources.",
           prompt: toolLane
@@ -351,6 +370,8 @@ for (const lane of [
         expect(request.body.model).toBe("fixture-model");
         if (lane === "xhigh-key-tool")
           expect(request.body.reasoning_effort).toBe("xhigh");
+        if (lane === "max-readonly")
+          expect(request.body.reasoning_effort).toBe("max");
         expect(request.headers["x-literal"]).toBe(literal);
         if (lane === "resolved-baseurl-null") {
           expect(request.headers.authorization).toBeUndefined();
@@ -2243,19 +2264,8 @@ for (const thinkingLevel of [
       cwd,
       JSON.stringify({ ...fixtureRequest(cwd), thinkingLevel }),
       true,
-      thinkingLevel === "max"
-        ? undefined
-        : mockBootstrap("thinking-match", "awaited", thinkingLevel),
+      mockBootstrap("thinking-match", "awaited", thinkingLevel),
     );
-    if (thinkingLevel === "max") {
-      expect(result.exitCode).toBe(1);
-      expect(result.stdout).toBe("");
-      expect(diagnostic(result.stderr)).toMatchObject({
-        stage: "parse",
-        class: "parse-failed",
-      });
-      return;
-    }
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
     expect(captureSummary(result.stdout), result.stderr).toBe(

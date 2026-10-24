@@ -213,7 +213,7 @@ export interface ModelSelection {
     | "google-generative-ai"
     | "mistral-conversations"
     | "azure-openai-responses";
-  thinking: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  thinking: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 }
 export type ModelSelector = Omit<ModelSelection, "sourceSelectionId">;
 export declare const modelApis: readonly ModelSelection["api"][];

@@ -60,7 +60,13 @@ it("uses the same selector codec without allocating or accepting a source select
   expect(() =>
     decodeModelSelector({ ...selector, sourceSelectionId: version.epoch }),
   ).toThrow();
-  expect(() => decodeModelSelector({ ...selector, thinking: "max" })).toThrow();
+  expect(decodeModelSelector({ ...selector, thinking: "max" })).toEqual({
+    ...selector,
+    thinking: "max",
+  });
+  expect(() =>
+    decodeModelSelector({ ...selector, thinking: "ultra" }),
+  ).toThrow();
   expect(() =>
     decodeChooseModelRequest({
       expected: version,
@@ -71,7 +77,7 @@ it("uses the same selector codec without allocating or accepting a source select
 });
 it.each([
   { ...candidate, baseUrl: "http://private" },
-  { ...candidate, thinking: [{ level: "max", selectable: true }] },
+  { ...candidate, thinking: [{ level: "ultra", selectable: true }] },
   {
     ...candidate,
     thinking: [

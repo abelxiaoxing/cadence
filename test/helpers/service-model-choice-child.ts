@@ -240,9 +240,10 @@ try {
     assert.deepEqual(catalog.entries[0].thinking, [
       { level: "off", selectable: true },
     ]);
+    // The pinned SDK supports max: a model mapping it can be chosen at max.
     assert.ok(
       catalog.entries[1].thinking.some(
-        (t) => t.level === "max" && !t.selectable,
+        (t) => t.level === "max" && t.selectable,
       ),
     );
     assert.deepEqual(host.models.observe(), []);

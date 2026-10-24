@@ -49,7 +49,7 @@ export function ModelChooser({
           <option value="">Select explicitly</option>
           {catalog?.entries.flatMap((entry) =>
             entry.thinking
-              .filter((t) => t.selectable && t.level !== "max")
+              .filter((t) => t.selectable)
               .map((t) => {
                 const value = JSON.stringify({
                   provider: entry.provider,

@@ -329,7 +329,7 @@
     "web/src/timeline/timeline.css": "92bd283ffbbad8b990dc87b44c1cacfe42762c6bce991265ea2dd2b92f98b73b",
     "web/tsconfig.config.json": "47fbf0677e51c9303cd87916a022bb6b25a58b221ad733e95dd7e8d64430a4d7",
     "web/vitest.config.ts": "e439a39d4a59c7e279e5eb4b869405699f38ff617f413cb6fe1a70e2b15f4ab5",
-    "web/src/components/actions/ModelChooser.tsx": "4c08108a38ae0862bacf1ae6a4df02293c29dc351f5addbc2083f389d7646956",
+    "web/src/components/actions/ModelChooser.tsx": "4673ddfb866734d24bc5298175551f8220fe8fc9586d8b5aaea7de363a2ca4ba",
     "web/src/components/review/CurrentChangesPanel.tsx": "fa0a52386bfca5ab9b4c4b94292d6f12b828c630e747a84892f8544930dc4fbd"
   },
   "existingLicense": {

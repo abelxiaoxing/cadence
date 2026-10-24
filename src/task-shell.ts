@@ -590,7 +590,7 @@ export function registerTaskShell(pi: ExtensionAPI): void {
             "Exact thinking level • no clamping/fallback",
             model.thinking.filter((t) => t.selectable).map((t) => t.level),
           );
-          if (!level || level === "max") return;
+          if (!level) return;
           // Decode via the shared model-choice method; never inspect parent auth.
           const choice = {
             provider: model.provider,
