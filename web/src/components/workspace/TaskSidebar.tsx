@@ -64,13 +64,16 @@ export function TaskSidebar({
   const records =
     tasks.page && !("kind" in tasks.page) ? tasks.page.records : null;
   const taskCount = records?.filter((r) => r.kind === "task").length;
+  // Page-local count; "+" marks retained tasks beyond this bounded page.
+  const countLabel =
+    taskCount === undefined
+      ? ""
+      : ` (${taskCount}${tasks.page && !("kind" in tasks.page) && tasks.page.next ? "+" : ""})`;
   return (
     <aside className="panel panel-left lp-panel">
       <section className="lp-section grow">
         <header className="lp-section-header">
-          <h2 className="lp-section-title">
-            Tasks{taskCount === undefined ? "" : ` (${taskCount})`}
-          </h2>
+          <h2 className="lp-section-title">Tasks{countLabel}</h2>
           <div className="lp-section-actions">
             <button
               type="button"
@@ -122,77 +125,68 @@ export function TaskSidebar({
           </header>
           <div className="lp-section-body">
             <nav aria-label="Runs and assignments">
-              {rows.map((row) => (
-                <div
-                  className="ep-row"
-                  key={row.c.id}
-                  style={{ paddingInlineStart: `${row.depth * 16}px` }}
-                >
-                  {row.hasKids ? (
+              {rows.map((row) => {
+                const state = row.c.failed
+                  ? "failed"
+                  : row.c.unknown
+                    ? "unknown"
+                    : row.c.active
+                      ? "active"
+                      : "settled";
+                return (
+                  <div
+                    className="ep-row"
+                    key={row.c.id}
+                    style={{ paddingInlineStart: `${row.depth * 16}px` }}
+                  >
+                    {row.hasKids ? (
+                      <button
+                        type="button"
+                        className="ep-toggle"
+                        aria-label="Toggle assignments"
+                        aria-expanded={!row.isCollapsed}
+                        onClick={() =>
+                          setCollapsed((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(row.c.id)) next.delete(row.c.id);
+                            else next.add(row.c.id);
+                            return next;
+                          })
+                        }
+                      >
+                        {row.isCollapsed ? (
+                          <FiChevronRight aria-hidden="true" />
+                        ) : (
+                          <FiChevronDown aria-hidden="true" />
+                        )}
+                      </button>
+                    ) : (
+                      <span className="ep-toggle-spacer" aria-hidden="true" />
+                    )}
                     <button
                       type="button"
-                      className="ep-toggle"
-                      aria-label="Toggle assignments"
-                      aria-expanded={!row.isCollapsed}
+                      className="session-item"
                       onClick={() =>
-                        setCollapsed((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(row.c.id)) next.delete(row.c.id);
-                          else next.add(row.c.id);
-                          return next;
+                        onScope({
+                          kind: row.c.parentId ? "child" : "run",
+                          id: row.c.id,
                         })
                       }
                     >
-                      {row.isCollapsed ? (
-                        <FiChevronRight aria-hidden="true" />
-                      ) : (
-                        <FiChevronDown aria-hidden="true" />
-                      )}
+                      <span className="session-info">
+                        <span className="session-title">{row.c.label}</span>
+                        {row.isCollapsed && " "}
+                        {row.isCollapsed && (
+                          <span className="session-sub">
+                            {`${row.descendantCount} descendants${row.hasFailure ? " / failed child" : ""}${row.hasUnknown ? " / unknown child" : ""}`}
+                          </span>
+                        )}
+                      </span>{" "}
+                      <span className={`ep-state ${state}`}>{state}</span>
                     </button>
-                  ) : (
-                    <span className="ep-toggle-spacer" aria-hidden="true" />
-                  )}
-                  <button
-                    type="button"
-                    className="session-item"
-                    onClick={() =>
-                      onScope({
-                        kind: row.c.parentId ? "child" : "run",
-                        id: row.c.id,
-                      })
-                    }
-                  >
-                    <span className="session-info">
-                      <span className="session-title">{row.c.label}</span>
-                      {row.isCollapsed && " "}
-                      {row.isCollapsed && (
-                        <span className="session-sub">
-                          {`${row.descendantCount} descendants${row.hasFailure ? " / failed child" : ""}${row.hasUnknown ? " / unknown child" : ""}`}
-                        </span>
-                      )}
-                    </span>{" "}
-                    <span
-                      className={`ep-state ${
-                        row.c.failed
-                          ? "failed"
-                          : row.c.unknown
-                            ? "unknown"
-                            : row.c.active
-                              ? "active"
-                              : "settled"
-                      }`}
-                    >
-                      {row.c.failed
-                        ? "failed"
-                        : row.c.unknown
-                          ? "unknown"
-                          : row.c.active
-                            ? "active"
-                            : "settled"}
-                    </span>
-                  </button>
-                </div>
-              ))}
+                  </div>
+                );
+              })}
               {rows.length === 0 && (
                 <p className="panel-empty">
                   No active or recent episode observed.

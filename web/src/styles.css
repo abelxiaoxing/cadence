@@ -351,10 +351,6 @@ summary:focus-visible,
   height: 15px;
   color: inherit;
 }
-.chip-sub {
-  color: var(--text-faint);
-  font-size: 11px;
-}
 .chip-root {
   max-width: 240px;
   color: var(--text-dim);
@@ -363,9 +359,6 @@ summary:focus-visible,
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.chip.warn {
-  color: var(--amber-text);
 }
 .tb-actions {
   display: flex;
@@ -418,13 +411,11 @@ summary:focus-visible,
 
 /* Immediate hover explanation (pi data-tip bubble). Always paired with aria-label. */
 .chip[data-tip],
-.panel-toggle[data-tip],
-.status-item[data-tip] {
+.panel-toggle[data-tip] {
   position: relative;
 }
 .chip[data-tip]::after,
-.panel-toggle[data-tip]::after,
-.status-item[data-tip]::after {
+.panel-toggle[data-tip]::after {
   content: attr(data-tip);
   position: absolute;
   top: calc(100% + 8px);
@@ -446,14 +437,8 @@ summary:focus-visible,
   z-index: 40;
 }
 .chip[data-tip]:hover::after,
-.panel-toggle[data-tip]:hover::after,
-.status-item[data-tip]:hover::after {
+.panel-toggle[data-tip]:hover::after {
   opacity: 1;
-}
-
-.status-dot {
-  width: 7px;
-  height: 7px;
 }
 .banner-notice {
   flex: none;
@@ -549,14 +534,6 @@ summary:focus-visible,
 }
 
 /* ---- Panel chrome ---- */
-.panel-title {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
 .panel-hint {
   margin: 0;
   padding: 6px 12px 8px;
@@ -717,11 +694,6 @@ summary:focus-visible,
   font-size: 10.5px;
   color: var(--text-faint);
 }
-.session-time {
-  flex-shrink: 0;
-  font-size: 10.5px;
-  color: var(--text-faint);
-}
 .ep-row {
   display: flex;
   align-items: center;
@@ -849,10 +821,11 @@ summary:focus-visible,
   margin: 0;
   padding: 5px var(--chat-inset);
   border-bottom: 1px solid var(--border-soft);
+  flex-wrap: wrap;
+  row-gap: 0;
   font-size: 11.5px;
+  line-height: 1.5;
   color: var(--text-faint);
-  white-space: nowrap;
-  overflow: hidden;
 }
 .scope-bar > svg {
   flex: none;
@@ -867,17 +840,12 @@ summary:focus-visible,
   text-transform: uppercase;
 }
 .scope-bar code {
-  flex: 0 1 auto;
-  min-width: 6ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
   color: var(--text-dim);
+  overflow-wrap: anywhere;
 }
 .scope-hint {
-  flex: 1 1 0;
+  flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .workspace-content {
   flex: 1;
@@ -1327,9 +1295,6 @@ summary:focus-visible,
   border-top: 1px solid var(--border-soft);
   background: var(--sunken-bg);
 }
-.receipt-dock:empty {
-  display: none;
-}
 .receipt {
   display: flex;
   flex-direction: column;
@@ -1392,8 +1357,21 @@ summary:focus-visible,
   text-align: center;
   color: var(--text-dim);
 }
+.empty-state {
+  min-height: 0;
+  overflow-y: auto;
+  justify-content: safe center;
+}
 .entry {
+  width: 100%;
+  max-width: none;
   height: 100dvh;
+  margin: 0;
+  overflow-y: auto;
+  justify-content: safe center;
+}
+.entry > * {
+  max-width: 520px;
 }
 .empty-state h2,
 .entry h1 {
@@ -1432,68 +1410,49 @@ summary:focus-visible,
   z-index: 50;
   flex-shrink: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  height: 22px;
+  gap: 0 12px;
   min-height: 22px;
-  padding: 0 8px;
+  padding: 3px 8px;
   border-top: 1px solid var(--border-soft);
   background: var(--statusbar-bg, var(--bg-elev));
   font-size: 11px;
+  line-height: 1.4;
   color: var(--text-faint);
-  white-space: nowrap;
-  overflow: hidden;
   font-variant-numeric: tabular-nums;
-}
-.statusbar [data-tip]::after {
-  top: auto;
-  bottom: calc(100% + 6px);
 }
 .statusbar-left,
 .statusbar-right {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 0 12px;
   min-width: 0;
 }
 .statusbar-left {
   flex: 1 1 auto;
-  overflow: hidden;
 }
 .statusbar-right {
   flex: 0 1 auto;
-  max-width: 50%;
   margin-left: auto;
-  overflow: hidden;
 }
 .status-item {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  gap: 4px;
   min-width: 0;
   color: var(--text-dim);
 }
 .status-item.faint {
   color: var(--text-faint);
 }
-.status-item.shrink {
-  display: block;
-  flex: 0 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .status-item.warn {
   color: var(--amber-text);
-}
-.status-item.err {
-  color: var(--red-text);
 }
 .status-item code {
   display: inline-block;
   max-width: 10ch;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
   vertical-align: bottom;
   font-size: 10.5px;
   color: var(--text-faint);
@@ -1502,8 +1461,10 @@ summary:focus-visible,
   display: inline-block;
   width: 6px;
   height: 6px;
+  margin-right: 5px;
   border-radius: 50%;
   flex-shrink: 0;
+  vertical-align: 1px;
   background: var(--text-faint);
 }
 .status-dot.ok {
@@ -1545,7 +1506,11 @@ summary:focus-visible,
 .run-strip-label code {
   color: var(--text-faint);
 }
-.run-strip /* ---- Global search (pi .gs-* inside the dialog) ---- */
+.run-strip .status-dot {
+  width: 7px;
+  height: 7px;
+}
+/* ---- Global search (pi .gs-* inside the dialog) ---- */
 .gs-modal {
   position: static;
   width: 100%;
@@ -1893,13 +1858,9 @@ summary:focus-visible,
   .timeline-mount {
     min-height: 420px;
   }
-  .statusbar-right {
-    max-width: 45%;
-  }
 }
 @media (max-width: 640px) {
-  .tb-tab > span,
-  .brand-name {
+  .tb-tab > span {
     display: none;
   }
   .tb-tab {
@@ -1909,14 +1870,9 @@ summary:focus-visible,
     width: 16px;
     height: 16px;
   }
-  .scope-hint,
   .chip-root,
-  .build-part,
-  .status-item.optional {
+  .build-part {
     display: none;
-  }
-  .statusbar-right {
-    max-width: 45%;
   }
   .msg-state {
     order: 5;
@@ -1937,6 +1893,17 @@ summary:focus-visible,
   }
   .panel-toggle.has-label > span {
     display: none;
+  }
+}
+@media (max-width: 360px) {
+  .brand {
+    margin-right: 0;
+  }
+  .brand-logo {
+    display: none;
+  }
+  .topbar .chip {
+    padding: 0 5px;
   }
 }
 @media (pointer: coarse) {

@@ -31,7 +31,7 @@ export const ToolCallBlock = memo(function ToolCallBlock({
       ? "pending"
       : "";
   return (
-    <div className={`toolcall ${record.result?.isError ? "err" : ""}`}>
+    <div className={`toolcall${tone === "err" ? " err" : ""}`}>
       <CollapsibleHead
         open={open}
         onToggle={() => setOpen((v) => !v)}

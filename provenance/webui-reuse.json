@@ -70,7 +70,7 @@
         "web/src/layout/ResizeHandle.tsx",
         "web/src/layout/use-drawer-focus.ts"
       ],
-      "modifications": "Three-pane composition and selected coherent CSS rule families; direct sash/swipe algorithms; props narrowed to task/run data. Add keyboard focus/inert drawers/44px controls. Delete composer, PTY, plugin slots, filesystem tree and model/provider administration. Correct open-drawer drag offset. Chrome restyle: TopBar brand/chip/tb-tab/panel-toggle and data-tip families, lp-section/session-item sidebar rows, pill inspector tabs, msg-meta/body transcript cards, statusbar, empty-state and scrollbar rules; generic controls use zero-specificity :where() so family classes win; phones wrap the topbar into an action row and an icon tab row. Fine-pointer controls follow pi's 24–28px density and coarse pointers keep 32–36px minimum targets, replacing the earlier universal 44px controls. Accessible names and safety statements are unchanged."
+      "modifications": "Three-pane composition and selected coherent CSS rule families; direct sash/swipe algorithms; props narrowed to task/run data. Add keyboard focus and inert drawers. Delete composer, PTY, plugin slots, filesystem tree and model/provider administration. Correct open-drawer drag offset. Chrome restyle: TopBar brand/chip/tb-tab/panel-toggle and data-tip families, lp-section/session-item sidebar rows, pill inspector tabs, msg-meta/body transcript cards, statusbar, empty-state and scrollbar rules; generic controls use zero-specificity :where() so family classes win; phones wrap the topbar into an action row and an icon tab row. Fine-pointer controls follow pi's 24–28px density and coarse pointers keep 32–36px minimum targets; the earlier universal 44px controls were replaced. Accessible names are unchanged and every safety statement stays fully visible, wrapping in the scope bar and statusbar instead of being clipped or hidden."
     },
     {
       "id": "plan-navigation",
@@ -243,7 +243,7 @@
   "destinations": {
     "licenses/pi-web-ui-reuse.md": "11d04d9b727fbe47b6492d598615c23cb94a1df4280e1f1b1afaa9e8850d7902",
     "web/index.html": "d4f99afb551ce57f3c0c361b176c37540520cd1658ef568c86ef01e0cce9e5b1",
-    "web/src/App.tsx": "cc83cc983728c74a77fec059a9b30be2009813d4a14a45a346db0064375be2a6",
+    "web/src/App.tsx": "1b9bae36a82d951e1c1a87a04e422a5e73357b2e1c31e7b93b94dba2b1ff61b5",
     "web/src/client/actions.ts": "192587fe7eee7b7d669a0e93641d0880a4ca33a56a6ca25d0fe4265a8519db88",
     "web/src/client/browser.ts": "3e0645d7603b5c13d68e9ed9785eb519ee44c8b7ec13672950ad2a8b58cd7c14",
     "web/src/client/message-delta.ts": "9133b161d07c0f5ca6a85562d396c36f724982d51f35ea0abae03035d79e4e8b",
@@ -275,10 +275,10 @@
     "web/src/components/transcript/LazyMount.tsx": "4c18f96386c2164af00b9811a76ec5016a637810d33f5ba06932268a159b88cc",
     "web/src/components/transcript/Message.tsx": "0abaccb20d2677006867e8bdea09860c5145af9380c9472d3e0f6c5cedd922ff",
     "web/src/components/transcript/MessageList.tsx": "51865657b8a83f9dadd54cf2c57919f1bd4dc92e5d50412eb74a349fac1801c7",
-    "web/src/components/transcript/ToolCallBlock.tsx": "77942fce2ffe0cce9eb67a633ed3d32d028f980bc864340be2ca886f158cc32e",
-    "web/src/components/workspace/InspectorPanel.tsx": "52617e8206d2c0175fb22fe98297ebbc7a4949de097d1e978e110cc0aea085c5",
+    "web/src/components/transcript/ToolCallBlock.tsx": "6654f7681e330dc8723712e2a53c752dbe7eb05841f8db5ce964a37f3140b4ab",
+    "web/src/components/workspace/InspectorPanel.tsx": "2f9cd7d4e1e72ea4a057232f40cf1993f9f80967ea76ef747ebd64055e5bc1fb",
     "web/src/components/workspace/RunSummary.tsx": "5fa8d52272af92ae5be9f0e5469dfddf02bf67380f4a8d354e9028db2ef5913a",
-    "web/src/components/workspace/TaskSidebar.tsx": "561a904b1a582a7d6a04911b9a25ca248b2a6a6d1aa77be9136dd58709441633",
+    "web/src/components/workspace/TaskSidebar.tsx": "fbd40c2e088c1b3d83a0a9bc72077ec8b04bae7f3b564cbaf873571b7bea2058",
     "web/src/history/download-export.ts": "8444b3f0face7c4e82f24601bc80eddc1e49d5236f352ec9d40d5739f6e9c76e",
     "web/src/history/history-url.ts": "220424cb0d14afbc2dedd2e50fede09ad75f7b129654831ab449a1b0058e86af",
     "web/src/history/readers.ts": "48bed1b8d4d89bc5719b729fcc3b938f9a88a447583b32dd4a71364b2e88c1e0",
@@ -297,7 +297,7 @@
     "web/src/rich/remark-backslash-math.ts": "273205bd4694172f14fab2adad28acf9993e35c476c00756cbafb73135516c2e",
     "web/src/rich/stream-markdown.ts": "ce80d88c65bd49b3fdb4586201090c46b5fdbb81850ef321a782929f3a40e41e",
     "web/src/rich/use-copy-feedback.ts": "6df2a9e9e085b516c98816220420e307a24c5b8826049d0d276e08b59e19a321",
-    "web/src/styles.css": "1ff6f05140fcd042a5a570c58ad48bb1d8a61ffa0016257cb92323fa2e1321c0",
+    "web/src/styles.css": "77c3db030593f1a37b7983b0cef7f87b8930ca17af49e1502775ad21f43a1d58",
     "web/src/timeline/TimelineView.tsx": "014339c7876543e912fb114ca61a7fc932437453b061cb39e30de23bb1922c79",
     "web/src/timeline/timeline-adapter.ts": "5e1afb53d9d91c8101c84e55db2ac31a1fa43cea3fe3f5387181b287548972c5",
     "web/src/timeline/timeline-client.d.mts": "be20e9ccb6922540854e0a941b711344f77941498056d23de67a876cf86e06fd",
@@ -557,6 +557,37 @@
         }
       ],
       "reason": "Replace the bordered 44px-everywhere fallback stylesheet and range-slider sashes with pi-web-ui's topbar, sidebar, statusbar, transcript and dialog presentation from the pinned styles.css/TopBar.tsx families. Markup changes are presentation only: every tested accessible name, action, consent boundary and recorded statement is preserved; web/dist is republished from Node."
+    },
+    {
+      "stage": "pi-web-ui chrome review fixes",
+      "files": [
+        {
+          "path": "web/src/App.tsx",
+          "before": "cc83cc983728c74a77fec059a9b30be2009813d4a14a45a346db0064375be2a6",
+          "after": "1b9bae36a82d951e1c1a87a04e422a5e73357b2e1c31e7b93b94dba2b1ff61b5"
+        },
+        {
+          "path": "web/src/components/transcript/ToolCallBlock.tsx",
+          "before": "77942fce2ffe0cce9eb67a633ed3d32d028f980bc864340be2ca886f158cc32e",
+          "after": "6654f7681e330dc8723712e2a53c752dbe7eb05841f8db5ce964a37f3140b4ab"
+        },
+        {
+          "path": "web/src/components/workspace/InspectorPanel.tsx",
+          "before": "52617e8206d2c0175fb22fe98297ebbc7a4949de097d1e978e110cc0aea085c5",
+          "after": "2f9cd7d4e1e72ea4a057232f40cf1993f9f80967ea76ef747ebd64055e5bc1fb"
+        },
+        {
+          "path": "web/src/components/workspace/TaskSidebar.tsx",
+          "before": "561a904b1a582a7d6a04911b9a25ca248b2a6a6d1aa77be9136dd58709441633",
+          "after": "fbd40c2e088c1b3d83a0a9bc72077ec8b04bae7f3b564cbaf873571b7bea2058"
+        },
+        {
+          "path": "web/src/styles.css",
+          "before": "1ff6f05140fcd042a5a570c58ad48bb1d8a61ffa0016257cb92323fa2e1321c0",
+          "after": "77c3db030593f1a37b7983b0cef7f87b8930ca17af49e1502775ad21f43a1d58"
+        }
+      ],
+      "reason": "Review of the restyle: keep the Cadence h1 visible on phones (only the decorative logo yields at ≤360px); repair a moved-rule fragment that turned the search-dialog reset into a dead `.run-strip .gs-modal` selector; let the detached/boundary entry and empty state scroll; wrap scope and statusbar statements instead of clipping or hiding them; derive the status dot from observation connection as well as transport; make drawer-covered topbar tabs/actions inert like <main>; mark page-local task counts with '+'; share the inspector placeholder and single-source episode/tool states; drop unused rules."
     }
   ],
   "testAdaptations": [
