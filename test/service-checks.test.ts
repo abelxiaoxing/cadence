@@ -333,11 +333,17 @@ it("native invalid UTF-8 cannot become a successful captured check at exit zero"
     taskId = await f.create();
   const r = await f.submit({ kind: "check", taskId, check: f.check });
   await f.actions.scheduler.settled(r.runId!);
-  expect(settledCheck(f, r.runId!)).toMatchObject({
+  const settled = settledCheck(f, r.runId!);
+  expect(settled).toMatchObject({
     status: "failed",
     coverage: { observed: "incomplete" },
-    native: { exitCode: 0, closure: "direct-child-closed" },
+    native: { closure: "direct-child-closed" },
   });
+  // The child exits 0 right after its write, unless the recorder's refusal of
+  // the byte stops it first (a loaded runner): neither close is a success.
+  expect(
+    settled.native.exitCode === 0 || settled.native.signal === "SIGTERM",
+  ).toBe(true);
 }, 60000);
 
 it("actual private access/model literals redact without check-side auth and with no credential/config writes", async () => {

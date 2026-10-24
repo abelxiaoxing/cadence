@@ -399,8 +399,6 @@ try {
       symlinkSync(target, modelsPath);
     }
     if (which === "hardlink") linkSync(authPath, join(root, "auth-alias"));
-    if (which === "mode") chmodSync(authPath, 0o644);
-    if (which === "dir-mode") chmodSync(agentDir, 0o755);
     if (which === "large")
       writeFileSync(modelsPath, " ".repeat(1024 * 1024 + 1));
     if (which === "missing") {
@@ -417,6 +415,12 @@ try {
     assert.equal(constructed, 0);
   } else {
     await sdkObservation();
+    // Pi creates its sources with the user's umask; their mode is no premise.
+    if (scenario === "umask-modes") {
+      chmodSync(agentDir, 0o775);
+      chmodSync(authPath, 0o664);
+      chmodSync(modelsPath, 0o664);
+    }
     const oauth = scenario.startsWith("oauth-");
     if (oauth)
       await oauthSetup({
