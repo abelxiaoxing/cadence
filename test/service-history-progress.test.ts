@@ -257,11 +257,26 @@ describe("portable data-or-progress correlation (not cryptographic proof)", () =
       ],
       ["/api/v1/search", s.headers, "a".repeat(LIMITS.controlBytes + 1)],
     ] as const) {
-      const result = await request(f.origin, path, {
+      const sent = request(f.origin, path, {
         method: "POST",
         headers,
         body,
       });
+      // The oversized refusal closes the connection with request bytes still
+      // unread; Windows answers that with a reset the client may see before
+      // the response (twice on a Node 22 runner, CI 40097062181). Either way
+      // nothing was read.
+      if (Buffer.byteLength(body) > LIMITS.controlBytes) {
+        const result = await sent.catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "ECONNRESET") throw error;
+          return undefined;
+        });
+        if (!result) continue;
+        expect(result.status).toBeGreaterThanOrEqual(400);
+        expect(JSON.parse(result.text).error.effect).toBe("none");
+        continue;
+      }
+      const result = await sent;
       expect(result.status).toBeGreaterThanOrEqual(400);
       expect(JSON.parse(result.text).error.effect).toBe("none");
     }

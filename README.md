@@ -374,6 +374,15 @@ Review the independently enumerated package member list and every emitted body, 
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
 
+### Release 2.0.3 acceptance snapshot
+
+Full `verify` passed on `c27b8ca`: 1924 root tests in 78 files (27 Windows-only controls skipped on Linux), 111 web tests in 8 files, 5 real-browser scenarios in 3 files and the 132-member real pack audit.
+Observed environment: Linux x86_64, official Node 22.22.1, Bun 1.3.14, the pinned Pi SDK 0.84.3 and Chrome for Testing 153.0.8010.12; later commits change only tests and this section.
+The GitHub matrix (Windows and Ubuntu × Node 22/24 × `parallel`, `serial-process`, `serial-scan`) runs on the separate CI branch.
+A real Pi 1.4.0 user-scope install of the packed candidate, installed into Pi's own npm layout, registered and enabled the unit, enabled linger without a prompt and, on upgrade, stopped the old owner in order before starting the new one.
+That owner started with the agent directory Pi had created at 0775 and served the built WebUI to Chromium at 1440, 390 and 320px widths.
+No model-backed task ran there (no Pi provider login); macOS, physical phones, paid accounts and every adapter, and a second machine remain unqualified.
+
 ### Prior integrated acceptance snapshot
 
 Before removal of development-workflow tooling, the integrated redesign passed full `verify`:1839 root tests/69 files,110 web tests/8 files and5 real-browser scenarios/3 files, with27 existing Windows-only controls skipped on Linux.
