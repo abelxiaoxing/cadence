@@ -565,33 +565,29 @@ for (const [stage, select] of [
   ],
   ["pi-auth", (agent: string) => unlinkSync(join(agent, "auth.json"))],
 ] as const)
-  it(
-    `unusable ${stage} refuses with its stage before registering an owner`,
-    async () => {
-      const f = fixture();
-      select(join(f.dir, "agent"));
-      const before = tree(f.dir),
-        began = performance.now();
-      const result = await run(f, "start", [
-        "--port",
-        "0",
-        "--agent-dir",
-        join(f.dir, "agent"),
-      ]);
-      expect(result.code).toBe(1);
-      expect(JSON.parse(result.stdout)).toEqual({
-        status: "refused",
-        error: "corrupt-selected",
-        stage,
-      });
-      expect(result.stderr).toContain(join(f.dir, "agent"));
-      // A known refusal, not the 10s unconfirmed reporting bound.
-      expect(performance.now() - began).toBeLessThan(10000);
-      expect(tree(f.dir)).toEqual(before);
-      expect(f.c.inspect().status).toBe("absent");
-    },
-    30000,
-  );
+  it(`unusable ${stage} refuses with its stage before registering an owner`, async () => {
+    const f = fixture();
+    select(join(f.dir, "agent"));
+    const before = tree(f.dir),
+      began = performance.now();
+    const result = await run(f, "start", [
+      "--port",
+      "0",
+      "--agent-dir",
+      join(f.dir, "agent"),
+    ]);
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual({
+      status: "refused",
+      error: "corrupt-selected",
+      stage,
+    });
+    expect(result.stderr).toContain(join(f.dir, "agent"));
+    // A known refusal, not the 10s unconfirmed reporting bound.
+    expect(performance.now() - began).toBeLessThan(10000);
+    expect(tree(f.dir)).toEqual(before);
+    expect(f.c.inspect().status).toBe("absent");
+  }, 30000);
 // POSIX mode bits are not a Windows ACL premise.
 it.skipIf(process.platform === "win32")(
   "Pi sources with a umask 002 mode (0775 directory, 0664 files) start",
