@@ -86,7 +86,8 @@ describe("Z3 rows", () => {
     );
     expect(lines[0]).toBe(" ● main");
     expect(lines[1].startsWith(" ⠋ Explore")).toBe(true);
-    expect(lines[2]).toMatch(/^\[▶⠋ Explore .* · ↓0\]$/);
+    // No usage reported: the row ends at its elapsed time, not "↓0".
+    expect(lines[2]).toMatch(/^\[▶⠋ Explore +4m 43s\]$/);
     expect(visibleWidth(lines[2])).toBe(42);
   });
 
@@ -98,7 +99,7 @@ describe("Z3 rows", () => {
     s.apply(E.end, { id: "a2", status: "cancelled" });
     const lines = panelLines(frame(s, { now: T0 + 999_000 }), 60, paint);
     expect(lines.slice(1).map((l) => l[0])).toEqual(["✔", "✘", "○"]);
-    expect(lines[1]).toContain("4m 12s · ↓0");
+    expect(lines[1]).toMatch(/4m 12s$/);
     expect(lines[2]).toContain("Rate limited");
   });
 
@@ -352,7 +353,7 @@ describe("Pi binding", () => {
     vi.advanceTimersByTime(100);
     expect(h.tui.requestRender).toHaveBeenCalledTimes(1);
     expect(h.panel()![1]).not.toBe(first);
-    expect(h.panel()![1]).toContain("1s · ↓0");
+    expect(h.panel()![1]).toMatch(/ 1s$/);
     h.pi.events.emit(E.end, { id: "a", status: "done" });
     h.pi.events.emit(E.end, { id: "b", status: "error" });
     h.tui.requestRender.mockClear();
@@ -600,7 +601,7 @@ describe("agent view", () => {
     h.pi.events.emit(E.end, { id: "b", status: "error", error: "boom" });
     h.key(DOWN);
     h.key(ENTER);
-    expect(plain(h.view())).toContain("✘ failed (4m 12s · ↓0)");
+    expect(plain(h.view())).toContain("✘ failed (4m 12s)");
     expect(h.summary()).toEqual([]);
   });
 });

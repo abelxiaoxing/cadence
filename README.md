@@ -64,9 +64,15 @@ Explicit Cancel requests bounded stop; it is not proof that every escaped descen
 
 ### Background agent panel
 
-A readonly panel in the Pi TUI follows background agents that any extension announces on Pi's shared event bus; Cadence's service children are not yet published there.
-Producers emit `subagent:start {id,label,kind,startedAt}`, `subagent:message {id,message,streaming?}`, `subagent:activity {id,activity,tokensIn?,tokensOut?}`, `subagent:stats {id,tokensIn,tokensOut?}` and `subagent:end {id,status,endedAt,error?}` with status `done`, `error` or `cancelled`.
+A readonly panel in the Pi TUI follows background agents: the child runs of Cadence's running owner and any agents another extension announces on Pi's shared event bus.
+Every TUI session, not only `/cadence`, looks for the owner already running for its workspace half a second after start and every 15s while none answers; it never starts, recovers or selects one, skips an incompatible owner and only detaches on departure.
+`CADENCE_AGENT_PANEL=off` turns that observation off.
+It reads the active roster every 5s, and while an episode runs that task's snapshot every 2s, announcing each child of the active episodes: its assignment ID as label, purpose as kind, lifecycle or latest tool as activity, and completed, canceled or any other outcome (with its reason) as done, cancelled or error.
+Elapsed time counts from when the session first observed a child (`—` for one first seen settled); no tokens are shown because the owner records no usage.
+Opening a child reads its retained messages, tool calls and results through the history readers, up to 64KiB per field; complete fields, search and export stay in `/cadence` History.
+Producers emit `subagent:start {id,label,kind,startedAt}`, `subagent:message {id,message,streaming?}`, `subagent:activity {id,activity,tokensIn?,tokensOut?}`, `subagent:stats {id,tokensIn,tokensOut?}` and `subagent:end {id,status,endedAt,error?}` with status `done`, `error` or `cancelled`; `startedAt: null` marks an unobserved start.
 A message has the main session's message shape; `streaming: true` marks a snapshot that the next message replaces.
+The panel emits `subagent:view {id}` (`id: null` when none) so a producer loads only the shown agent's messages.
 Nothing is mounted until the first agent arrives (`CADENCE_AGENT_PANEL=always` keeps `● main` visible).
 Then a launched/finished block sits above the input and one row per agent below it: at most six recently active rows plus `+K more`.
 With an empty input, ↓ moves focus to the rows; ↑/↓ or Ctrl+P/N select, Enter shows that agent's transcript in place of the main view, PgUp/PgDn, Ctrl+U/D and Home/End scroll it, and Esc returns to the main view and then to the input.
@@ -166,7 +172,7 @@ Historical logs are not runtime dependencies, and removing development tooling m
 | Owner                                                                                                  | Responsibility                                                                                                            |
 | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
 | `src/index.ts`, `src/task-shell.ts`, `src/native-*.ts`                                                 | Nonactivating Pi entry, raw native consent, typed service attachment, paging and verified export; no embedded executor    |
-| `src/agent-panel.ts`, `src/agent-panel-model.ts`                                                       | Readonly background-agent panel over Pi's `subagent:*` bus events: widgets, focus keys, transcript view                   |
+| `src/agent-panel.ts`, `src/agent-panel-model.ts`, `src/agent-panel-cadence.ts`                         | Readonly agent panel over Pi's `subagent:*` bus, fed with a running owner's children; never starts or cancels work        |
 | `src/service/host.ts`, `src/service/cli.ts`, `src/service/autostart.ts`                                | Real single-owner composition, explicit management and the generated Linux user unit; management entry stays SDK-free     |
 | `src/service/{coordination,private-files,owner,recovery}.ts`                                           | Canonical overlap exclusion, exact locks, original-operation lifetime and informed local recovery                         |
 | `src/service/{admission,task-actions,graph,scheduler}.ts`                                              | Context-bound actions, actual current views, finite graph scheduling, check/review barriers                               |
@@ -348,6 +354,7 @@ Regression owners:
 - `worker-*`, `lightweight-sdk`, `lightweight-process-diff`: genuine SDK/tool capture, split redaction, no-spill bounds and original native facts.
 - `service-history-*`: durable ordering, cold/no-index/restarted proof/search/export, corruption/torn/quota and expected-byte publication.
 - `lightweight-shell`, `native-client`, `native-history`, `terminal-integration`: native consent, shared service, Unicode/paging, detach/cancel and actual source/extracted PTYs.
+- `agent-panel`, `agent-panel-model`, `agent-panel-cadence`: panel keys/rendering and readonly owner observation that never starts, cancels or replays work.
 - `test/web/`: adapted pure/SSR tests separately from actual built-browser contexts, HTTPS, mixed clients, focus/viewports and complete downloads.
 - `package-*`, `distribution`, `service-package`, `independence`: exact tar/member/body/import/notice closure and nonactivating discovery.
 - `service-autostart`, `install-config`: Pi user-scope gating, unit escaping, upgrade/disable/mask/foreign handling and orderly removal.

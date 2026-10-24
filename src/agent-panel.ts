@@ -24,19 +24,18 @@ import {
   truncateToWidth,
 } from "@earendil-works/pi-tui";
 import {
-  elapsedOf,
-  formatElapsed,
+  factsText,
   type Paint,
   type PanelAction,
   PanelFocus,
   type PanelKey,
   panelLines,
   SUBAGENT_EVENTS,
+  SUBAGENT_VIEW,
   type SubagentState,
   SubagentStore,
   statusSymbol,
   summaryLines,
-  usage,
 } from "./agent-panel-model.ts";
 
 export interface AgentPanelOptions {
@@ -92,7 +91,9 @@ export function registerAgentPanel(
     detach?.();
     detach =
       ctx.mode === "tui" && ctx.hasUI
-        ? attachPanel(ctx, store, options)
+        ? attachPanel(ctx, store, options, (id) =>
+            pi.events.emit(SUBAGENT_VIEW, { id }),
+          )
         : undefined;
   });
   pi.on("session_shutdown", () => {
@@ -105,6 +106,7 @@ function attachPanel(
   ctx: ExtensionContext,
   store: SubagentStore,
   options: AgentPanelOptions,
+  announce: (id: string | null) => void,
 ): () => void {
   const now = options.now ?? Date.now;
   const maxRows = Math.max(1, options.maxRows ?? 6);
@@ -117,7 +119,14 @@ function attachPanel(
     spinner: ReturnType<typeof setInterval> | undefined,
     view: { component: Component; done: () => void } | undefined,
     // Widgets mount with the first agent, so ordinary sessions show nothing.
-    mounted = false;
+    mounted = false,
+    // The agent last announced on `subagent:view`, so producers load only it.
+    announced: string | undefined;
+  const announceView = () => {
+    if (focus.view === announced) return;
+    announced = focus.view;
+    announce(announced ?? null);
+  };
   const transcripts = new Map<string, Transcript>();
   const stopSpinner = () => {
     clearInterval(spinner);
@@ -147,6 +156,7 @@ function attachPanel(
   const act = (action: PanelAction) => {
     if (action === "open") openView();
     else if (action === "close") view?.done();
+    announceView();
     tui?.requestRender();
     return action === "pass" ? undefined : { consume: true };
   };
@@ -157,6 +167,7 @@ function attachPanel(
       if (!(focused() instanceof Editor)) return undefined;
       focus.abandon();
       view = undefined;
+      announceView();
     }
     if (focus.focus === "panel" && !editorFocused()) {
       // A dialog took focus: its keys are not the panel's.
@@ -239,7 +250,7 @@ function attachPanel(
     const word = { done: "finished", error: "failed", cancelled: "cancelled" }[
       agent.status
     ];
-    const facts = `${formatElapsed(elapsedOf(agent, now()))} · ${usage(agent)}`;
+    const facts = factsText(agent, now());
     return `${paint(role, `${symbol} ${word}`)}${paint(
       "dim",
       ` (${facts}) · ${agent.label}   (Esc to return to main)`,
@@ -280,6 +291,7 @@ function attachPanel(
     unsubscribe();
     unlisten();
     stopSpinner();
+    if (announced !== undefined) announce(null);
     try {
       view?.done();
       if (mounted) {

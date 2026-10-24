@@ -11,6 +11,9 @@ export const SUBAGENT_EVENTS = {
   stats: "subagent:stats",
   end: "subagent:end",
 } as const;
+/** Panel → producers: the agent whose transcript is shown (`id: null` when
+ * none), so a producer can load messages for that one agent only. */
+export const SUBAGENT_VIEW = "subagent:view";
 
 export type SubagentStatus = "running" | "done" | "error" | "cancelled";
 
@@ -19,10 +22,13 @@ export interface SubagentState {
   label: string;
   kind: string;
   startedAt: number;
+  /** Producer passed `startedAt: null`: the run began before it was observed. */
+  untimed?: boolean;
   endedAt?: number;
   status: SubagentStatus;
   activity: string;
-  tokensIn: number;
+  /** Absent until a producer reports usage; not every producer meters it. */
+  tokensIn?: number;
   tokensOut?: number;
   error?: string;
   /** Messages in arrival order (same shape as the main session's). */
@@ -101,9 +107,9 @@ export class SubagentStore {
         label: line(o.label, 512) || id,
         kind: line(o.kind, 32) || "agent",
         startedAt: count(o.startedAt) ?? now,
+        ...(o.startedAt === null ? { untimed: true } : {}),
         status: "running",
         activity: "",
-        tokensIn: 0,
         messages: [],
         streaming: false,
         omitted: 0,
@@ -185,6 +191,10 @@ export function formatTokens(n: number): string {
 export function elapsedOf(agent: SubagentState, now: number): number {
   return (agent.endedAt ?? now) - agent.startedAt;
 }
+/** Elapsed column text: "—" when the start was never observed. */
+export function elapsedText(agent: SubagentState, now: number): string {
+  return agent.untimed ? "—" : formatElapsed(elapsedOf(agent, now));
+}
 
 export type PaintRole =
   | "accent"
@@ -213,10 +223,18 @@ export function statusSymbol(
     ? [SPINNER[frame % SPINNER.length], "accent"]
     : SYMBOL[agent.status];
 }
+/** `↓in [↑out]`, or "" when the producer never reported usage. */
 export function usage(agent: SubagentState): string {
+  const input =
+    agent.tokensIn === undefined ? "" : `↓${formatTokens(agent.tokensIn)}`;
   const out =
-    agent.tokensOut === undefined ? "" : ` ↑${formatTokens(agent.tokensOut)}`;
-  return `↓${formatTokens(agent.tokensIn)}${out}`;
+    agent.tokensOut === undefined ? "" : `↑${formatTokens(agent.tokensOut)}`;
+  return [input, out].filter(Boolean).join(" ");
+}
+/** Elapsed plus usage when known: "4m 12s · ↓1.2M" or "4m 12s". */
+export function factsText(agent: SubagentState, now: number): string {
+  const used = usage(agent);
+  return `${elapsedText(agent, now)}${used ? ` · ${used}` : ""}`;
 }
 
 /** The `max` most recently active agents plus any pinned ones, shown in
@@ -262,7 +280,7 @@ const clip = (plain: string, width: number) =>
   cut(plain, width).replaceAll("\x1b[0m", "");
 
 /** Z3: `● main`, an optional `+K more`, then one row per visible agent:
- * `<status> <kind> <activity…> <elapsed> · ↓in [↑out]`. */
+ * `<status> <kind> <activity…> <elapsed> [· ↓in [↑out]]`. */
 export function panelLines(
   f: PanelFrame,
   width: number,
@@ -301,7 +319,8 @@ export function panelLines(
     const [symbol, role] = statusSymbol(a, f.frame);
     const kind = clip(a.kind, kindWidth);
     const kindCell = kind + " ".repeat(kindWidth - visibleWidth(kind));
-    const right = `${formatElapsed(elapsedOf(a, f.now)).padStart(8)} · ${usage(a)}`;
+    const used = usage(a);
+    const right = `${elapsedText(a, f.now).padStart(8)}${used ? ` · ${used}` : ""}`;
     const head = `${marker(selected)}${symbol} ${kindCell}  `;
     const room = width - visibleWidth(head) - visibleWidth(right) - 2;
     const failed = a.status === "error" && a.error;

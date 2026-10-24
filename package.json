@@ -17,6 +17,7 @@
     "skills",
     "config",
     "agents",
+    "src/agent-panel-cadence.ts",
     "src/agent-panel-model.ts",
     "src/agent-panel.ts",
     "src/index.ts",
