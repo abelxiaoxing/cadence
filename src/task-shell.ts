@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-tui";
 import {
   autostartHint,
+  departure,
   MANAGEMENT_GUIDANCE,
   NativeConnection,
 } from "./native-client.ts";
@@ -98,10 +99,10 @@ export function registerTaskShell(pi: ExtensionAPI): void {
     dismiss?.();
     // Detach original attachment, not service jobs/provider/auth. Shutdown does
     // not wait for their lifetime. Retained transport blocks uncertain reuse.
-    void connection.detach().catch(() => {});
+    return connection.detach().catch(() => {});
   };
   pi.on("session_start", (_event, ctx) => {
-    depart();
+    void depart();
     unsubscribe?.();
     unsubscribe = undefined;
     selectedTask = undefined;
@@ -112,15 +113,17 @@ export function registerTaskShell(pi: ExtensionAPI): void {
       });
   });
   pi.on("session_shutdown", () => {
-    depart();
+    const leaving = depart();
     unsubscribe?.();
     unsubscribe = undefined;
+    return departure(leaving);
   });
-  pi.on("session_before_switch", depart);
-  pi.on("session_before_fork", depart);
-  pi.on("session_before_tree", depart);
-  pi.on("session_before_compact", depart);
-  pi.on("model_select", depart);
+  const leave = () => void depart();
+  pi.on("session_before_switch", leave);
+  pi.on("session_before_fork", leave);
+  pi.on("session_before_tree", leave);
+  pi.on("session_before_compact", leave);
+  pi.on("model_select", leave);
   // Only local dialog input is owned. Detached service work never owns Pi's
   // conversation/tool lifetime or silently cancels it.
   pi.on("input", () => (modal ? { action: "handled" as const } : undefined));

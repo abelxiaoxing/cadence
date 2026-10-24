@@ -69,16 +69,32 @@ export function hostSystem(root: string): AutostartSystem {
       ]);
       return r.status === 0 ? r.stdout.trim() === "yes" : undefined;
     },
-    // The install hook never prompts: no terminal, and --no-ask-password keeps a
-    // desktop polkit agent from opening a dialog. Explicit --linger may prompt.
+    // The install hook never prompts. loginctl always asks logind for an
+    // interactive check (--no-ask-password only skips its own terminal agent),
+    // which lets a desktop polkit agent open a dialog, so call SetUserLinger
+    // with interactive=false and no interactive authorization instead.
+    // Explicit --linger may prompt.
     enableLinger: (interactive) => {
-      const r = spawnSync(
-        "loginctl",
-        interactive
-          ? ["enable-linger"]
-          : ["--no-ask-password", "enable-linger"],
-        { stdio: interactive ? "inherit" : "ignore" },
-      );
+      const r = interactive
+        ? spawnSync("loginctl", ["enable-linger"], { stdio: "inherit" })
+        : spawnSync(
+            "busctl",
+            [
+              "--system",
+              "--allow-interactive-authorization=no",
+              "--timeout=15",
+              "call",
+              "org.freedesktop.login1",
+              "/org/freedesktop/login1",
+              "org.freedesktop.login1.Manager",
+              "SetUserLinger",
+              "ubb",
+              String(process.getuid?.()),
+              "true",
+              "false",
+            ],
+            { stdio: "ignore", timeout: 20000 },
+          );
       return !r.error && r.status === 0;
     },
   };
@@ -370,20 +386,23 @@ export function configureAutostart(
   )
     return { status: "failed", ...result };
   if (!wanted && !active) return { status: "disabled", ...result };
-  const boot = wanted
-    ? bootStart(
-        s,
-        mode === "install"
-          ? linger
-          : previous === undefined && s.env.CADENCE_LINGER !== "0",
-        mode === "install",
-      )
-    : {};
+  // Explicit --linger may prompt, so it runs after the start: an interrupted
+  // prompt must not leave the owner stopped above.
+  const boot = () =>
+    wanted
+      ? bootStart(
+          s,
+          mode === "install"
+            ? linger
+            : previous === undefined && s.env.CADENCE_LINGER !== "0",
+          mode === "install",
+        )
+      : {};
   if (!regularFile(join(agentDir, "auth.json")))
-    return { status: "waiting-for-pi-login", ...result, ...boot };
+    return { status: "waiting-for-pi-login", ...result, ...boot() };
   s.systemctl(["reset-failed", s.unit]);
   const started = s.systemctl(["start", s.unit]).status === 0;
-  return { status: started ? "started" : "failed", ...result, ...boot };
+  return { status: started ? "started" : "failed", ...result, ...boot() };
 }
 /** Disable through ExecStop's orderly route, then delete only our own file.
  * Workspace, state home and Pi sources stay untouched. */

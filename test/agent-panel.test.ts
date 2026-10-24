@@ -165,6 +165,13 @@ describe("Z1 summary", () => {
       "  └ … +3 more",
       "* Waiting for 9 background agents to finish",
     ]);
+    // A new running agent is never hidden behind finished ones.
+    const old = agents(8).s;
+    for (let i = 0; i < 7; i++)
+      old.apply(E.end, { id: `a${i}`, status: "done" });
+    const lines = summaryLines(old.ordered(), 80, paint, 6);
+    expect(lines[1]).toBe("  ├ Analyze part 7");
+    expect(lines.at(-2)).toBe("  └ … +2 more");
   });
 });
 

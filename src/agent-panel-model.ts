@@ -364,7 +364,11 @@ export function summaryLines(
       ),
     ];
   }
-  const shown = agents.slice(0, maxLabels);
+  // Running agents first, so a new one is never hidden behind finished ones.
+  const shown = [
+    ...agents.filter((a) => a.status === "running"),
+    ...agents.filter((a) => a.status !== "running"),
+  ].slice(0, maxLabels);
   const more = n - shown.length;
   const tree = shown.map((a, i) =>
     cut(

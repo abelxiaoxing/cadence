@@ -6,7 +6,7 @@
  * alive, and leaving the session only detaches. */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { SUBAGENT_EVENTS, SUBAGENT_VIEW } from "./agent-panel-model.ts";
-import { NativeConnection } from "./native-client.ts";
+import { departure, NativeConnection } from "./native-client.ts";
 import type { ServiceClient } from "./service-client.ts";
 import {
   type ContentRef,
@@ -121,11 +121,12 @@ export function registerCadenceAgentFeed(
     feed?.wake();
   });
   const stop = () => {
-    feed?.stop();
+    const leaving = feed?.stop();
     feed = undefined;
+    return leaving ?? Promise.resolve();
   };
   pi.on("session_start", (_event, ctx) => {
-    stop();
+    void stop();
     if (
       ctx.mode !== "tui" ||
       !ctx.hasUI ||
@@ -134,7 +135,7 @@ export function registerCadenceAgentFeed(
       return;
     feed = new Feed(pi, ctx.cwd, state, options);
   });
-  pi.on("session_shutdown", stop);
+  pi.on("session_shutdown", () => departure(stop()));
 }
 
 const label = (purpose: string | undefined, kind: string) =>
@@ -202,12 +203,12 @@ class Feed {
     this.timing = { ...FEED_TIMING, ...options.timing };
     this.schedule(this.timing.firstMs);
   }
-  stop(): void {
+  stop(): Promise<void> {
     this.stopped = true;
     clearTimeout(this.timer);
     this.abort.abort();
     // Detach this observer only; accepted work continues in the service.
-    void this.connection.detach().catch(() => {});
+    return this.connection.detach().catch(() => {});
   }
   /** The viewed agent changed: load its transcript now if attached. */
   wake(): void {
@@ -229,6 +230,7 @@ class Feed {
     this.busy = true;
     this.woken = false;
     let next = this.timing.retryMs;
+    const attaching = !this.client;
     try {
       if (!this.client) {
         const client = await this.connection.attach(this.cwd);
@@ -246,6 +248,10 @@ class Feed {
       // again later. Observation never starts one.
       this.client = undefined;
       await this.connection.detach().catch(() => {});
+      // Still no compatible owner a whole retry after losing it: the children
+      // followed so far can no longer be observed from this session.
+      if (attaching)
+        this.abandon([...this.episodes.keys()], "owner unavailable");
     } finally {
       this.busy = false;
     }
@@ -256,6 +262,8 @@ class Feed {
     const signal = this.abort.signal;
     const roster = await client.activeRuns(signal);
     if (roster.kind === "error" || roster.value.status !== "complete") {
+      // stop() aborted this read; a session request now would race its detach.
+      if (this.stopped) return this.timing.activeMs;
       // Throws when the owner is gone or restarted; otherwise look again soon.
       await this.connection.refresh();
       return this.timing.activeMs;
@@ -271,12 +279,16 @@ class Feed {
     )) {
       const reply = await client.snapshot({ kind: "task", id: taskId }, signal);
       if (this.stopped) return this.timing.activeMs;
-      if (reply.kind === "error") continue;
       for (const [runId, episode] of this.episodes) {
         if (episode.taskId !== taskId) continue;
-        const open = await this.follow(client, reply.value, runId, ends);
-        if (!active.has(runId) && (!open || ++episode.drained >= DRAIN_LOOKS))
-          this.episodes.delete(runId);
+        // A refused snapshot drains a finished episode like an unsettled one.
+        const open =
+          reply.kind === "error" ||
+          (await this.follow(client, reply.value, runId, ends));
+        if (active.has(runId)) continue;
+        if (!open) this.episodes.delete(runId);
+        else if (++episode.drained >= DRAIN_LOOKS)
+          this.abandon([runId], "no settled row after the run ended");
       }
     }
     await this.refreshActivity(client);
@@ -366,6 +378,25 @@ class Feed {
       );
     }
     return open;
+  }
+  /** Stop following these episodes. Their unsettled children end as errors
+   * that say the outcome was not observed, instead of spinning as running for
+   * the rest of the session; /cadence History keeps the actual outcome. */
+  private abandon(runIds: string[], why: string): void {
+    for (const runId of runIds) {
+      this.episodes.delete(runId);
+      for (const child of this.state.children.values()) {
+        if (child.runId !== runId || child.ended) continue;
+        this.activity(child, "outcome not observed");
+        child.ended = true;
+        this.emit("end", {
+          id: child.id,
+          status: "error",
+          endedAt: this.now(),
+          error: `${child.label} · outcome not observed here (${why}); see /cadence History`,
+        });
+      }
+    }
   }
   private activity(child: Child, text: string): void {
     const activity = `${child.label} · ${text}`;
@@ -506,7 +537,8 @@ class Feed {
       cursor = reply.value.next;
       if (text.length >= TEXT_CAP) break;
     }
-    if (cursor)
+    // One detail page can exceed the cap on its own, with no cursor left.
+    if (cursor || text.length > TEXT_CAP)
       text = `${text.slice(0, TEXT_CAP)}\n… (truncated; the full text is in /cadence History)`;
     this.state.remember(key, text);
     return text;
