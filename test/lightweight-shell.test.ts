@@ -306,6 +306,9 @@ function service() {
   };
 }
 function host() {
+  // Every NativeConnection here is the one fake; the panel's readonly owner
+  // feed is covered by agent-panel-cadence.test.ts, not this shell.
+  vi.stubEnv("CADENCE_AGENT_PANEL", "off");
   const s = service(),
     cwd = mkdtempSync(join(tmpdir(), "cadence-native-host-"));
   const handlers = new Map<string, ((...args: any[]) => any)[]>(),
