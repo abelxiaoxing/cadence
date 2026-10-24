@@ -64,11 +64,12 @@ export function TaskSidebar({
   const records =
     tasks.page && !("kind" in tasks.page) ? tasks.page.records : null;
   const taskCount = records?.filter((r) => r.kind === "task").length;
-  // Page-local count; "+" marks retained tasks beyond this bounded page.
+  // Page-local count; "+" marks retained tasks beyond this bounded page,
+  // after it as well as before it.
   const countLabel =
     taskCount === undefined
       ? ""
-      : ` (${taskCount}${tasks.page && !("kind" in tasks.page) && tasks.page.next ? "+" : ""})`;
+      : ` (${taskCount}${(tasks.page && !("kind" in tasks.page) && tasks.page.next) || tasks.canPrevious ? "+" : ""})`;
   return (
     <aside className="panel panel-left lp-panel">
       <section className="lp-section grow">
@@ -177,7 +178,7 @@ export function TaskSidebar({
                         <span className="session-title">{row.c.label}</span>
                         {row.isCollapsed && " "}
                         {row.isCollapsed && (
-                          <span className="session-sub">
+                          <span className="session-sub session-outcome">
                             {`${row.descendantCount} descendants${row.hasFailure ? " / failed child" : ""}${row.hasUnknown ? " / unknown child" : ""}`}
                           </span>
                         )}
