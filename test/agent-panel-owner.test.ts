@@ -211,9 +211,18 @@ it("an actual owner's children reach the bus: running, viewed, explicitly cancel
       }),
     );
     expect((await settled(pending, true)).execution).toBe("canceled");
+    // Each child settles on its own; the panel promises no order between them.
     await expect
-      .poll(() => of(E.end).map((d) => [d.id, d.status]), { timeout: 15000 })
-      .toEqual(ids.map((id) => [id, "cancelled"]));
+      .poll(
+        () =>
+          of(E.end)
+            .map((d) => [d.id, d.status])
+            .sort(),
+        {
+          timeout: 15000,
+        },
+      )
+      .toEqual(ids.map((id) => [id, "cancelled"]).sort());
   } catch (error) {
     console.error("original panel-owner assertion", error);
     throw error;
