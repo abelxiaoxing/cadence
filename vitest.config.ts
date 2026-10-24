@@ -28,6 +28,7 @@ export const serialProcessFiles = [
   "test/service-cli.test.ts",
   "test/service-auth-proxy.test.ts",
   "test/worker-recording.test.ts",
+  "test/agent-panel-owner.test.ts",
 ];
 export const serialScanFiles = [
   "test/service-history-list-entity.test.ts",

@@ -111,7 +111,9 @@ beforeAll(async () => {
     });
     snapshot = fact.committedSeq;
   }
-  expect(readFileSync(files.segmentPath(1))).toEqual(original);
+  // Byte comparison: a deep toEqual walks an 8MiB Buffer key by key and
+  // needs about 2.5GB of heap, past V8's default limit on smaller hosts.
+  expect(readFileSync(files.segmentPath(1)).equals(original)).toBe(true);
   renameSync(
     join(files.directory, "indexes"),
     join(directory, "preserved-indexes"),
