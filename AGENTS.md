@@ -2,7 +2,7 @@
 
 `@abelxiaoxing/cadence` is a dual-surface task workspace: native `/cadence` and built WebUI share one persistent service.
 Ordinary engineering and resource discovery never activate execution or start a service.
-Only Pi's Linux user-scope install registers and starts the generated `cadence.service` systemd user unit; upgrades restart it through orderly Stop, and opt-out/disable/mask are respected.
+Only Pi's Linux user-scope install registers and starts the generated `cadence.service` systemd user unit, and only its first registration tries passwordless linger for boot start; upgrades restart it through orderly Stop, and opt-out/disable/mask/disable-linger are respected.
 Code tasks require a readable plan and fresh context-bound Start consent, then direct host-tool edits, real parent checks and human review.
 Native entry retains raw-terminal guards; browser access authentication is not action consent.
 Client departure detaches, never cancels admitted work; explicit Cancel/Stop preserve actual closure and unknown fences.

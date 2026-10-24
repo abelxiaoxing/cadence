@@ -19,6 +19,7 @@ import {
   autostartStatus,
   configureAutostart,
   hostSystem,
+  type LingerState,
   removeAutostart,
 } from "./autostart.ts";
 import { closed, text } from "./contracts/core.ts";
@@ -393,6 +394,19 @@ function autostartGuidance(
     note + autostartStatusGuidance(s, result, name, cli, workspace, manage)
   );
 }
+/** Linger only; never `autostart install`, whose refresh restarts the owner. */
+function lingerGuidance(linger: LingerState | undefined): string {
+  switch (linger) {
+    case "enabled":
+      return "Linger enabled: Cadence starts at boot and keeps running after logout (undo: loginctl disable-linger).\n";
+    case "off":
+      return "Linger is off: Cadence starts at login and stops at logout. Start it at boot: loginctl enable-linger\n";
+    case "refused":
+      return "Linger needs authorization: Cadence starts at login and stops at logout. Start it at boot: loginctl enable-linger (may ask for your password)\n";
+    default:
+      return "";
+  }
+}
 function autostartStatusGuidance(
   s: AutostartSystem,
   result: AutostartResult & { service?: string; endpoint?: string },
@@ -403,16 +417,13 @@ function autostartStatusGuidance(
 ): string {
   switch (result.status) {
     case "started": {
+      const linger = lingerGuidance(result.linger);
       if (result.service !== "alive")
-        return `${s.unit} started for ${result.workspace}, but the owner reports ${result.service}.\nInspect: node ${cli} diagnose --workspace ${workspace}\n${manage}\n`;
-      const linger =
-        s.linger() === false
-          ? "Linger is off: Cadence starts at login and stops at logout. `loginctl enable-linger` keeps it running and starts it at boot.\n"
-          : "";
+        return `${s.unit} started for ${result.workspace}, but the owner reports ${result.service}.\nInspect: node ${cli} diagnose --workspace ${workspace}\n${manage}\n${linger}`;
       return `Cadence WebUI: ${result.endpoint} (${s.unit}, workspace ${result.workspace})\nEnter with your private link: node ${cli} token-link --workspace ${workspace} --reveal\n${manage}\n${linger}`;
     }
     case "waiting-for-pi-login":
-      return `${s.unit} is enabled for ${result.workspace}; it starts once Pi has ${join(agentDirectory(s), "auth.json")}.\nLog in to Pi, then: systemctl --user start ${name}\n`;
+      return `${s.unit} is enabled for ${result.workspace}; it starts once Pi has ${join(agentDirectory(s), "auth.json")}.\nLog in to Pi, then: systemctl --user start ${name}\n${lingerGuidance(result.linger)}`;
     case "disabled":
       return `${s.unit} refreshed for ${result.workspace}; left disabled as configured.\n`;
     case "masked":
@@ -424,7 +435,7 @@ function autostartStatusGuidance(
     case "unavailable":
       return `No systemd user manager; start Cadence explicitly: node ${cli} start --workspace /absolute/project\n`;
     case "failed":
-      return `Could not enable or start ${s.unit}; see systemctl --user status ${name} and journalctl --user -u ${name}.\n`;
+      return `Could not enable or start ${s.unit}; see systemctl --user status ${name} and journalctl --user -u ${name}.\n${lingerGuidance(result.linger)}`;
     default:
       return "";
   }
@@ -432,8 +443,15 @@ function autostartStatusGuidance(
 async function autostartMain(argv: string[], hostUrl: URL): Promise<void> {
   const action = argv.shift();
   let requested: string | undefined;
-  if (action === "install" && argv[0] === "--workspace" && argv[1])
-    requested = resolve(argv.splice(0, 2)[1]);
+  let linger = false;
+  while (action === "install" && argv.length) {
+    if (argv[0] === "--workspace" && argv[1] && requested === undefined)
+      requested = resolve(argv.splice(0, 2)[1]);
+    else if (argv[0] === "--linger" && !linger) {
+      argv.shift();
+      linger = true;
+    } else break;
+  }
   if (
     argv.length ||
     !["install", "refresh", "remove", "status"].includes(action ?? "")
@@ -449,6 +467,7 @@ async function autostartMain(argv: string[], hostUrl: URL): Promise<void> {
         s,
         action === "install" ? "install" : "refresh",
         requested,
+        linger,
       );
     } catch (error) {
       if (error instanceof ContractError && error.code === "invalid")
@@ -475,7 +494,7 @@ export async function managementMain(
     const command = argv.shift();
     if (command === "--help" && !argv.length) {
       process.stdout.write(
-        "cadence-service start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--workspace PATH] [--state-home PATH]\ncadence-service autostart install [--workspace PATH]|refresh|remove|status\nStart is explicit, or the Linux systemd user unit that Pi's user-scope install registers (CADENCE_AUTOSTART=0, disable or mask opts out). Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file.\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop. Unconfirmed/quarantined is not stopped.\nRecovery resolve requires this local native terminal, exact unchanged dead-owner resources and separate process/credential/storage acknowledgments. No --yes, network recovery, killing, repair or cleanup.\n",
+        "cadence-service start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--workspace PATH] [--state-home PATH]\ncadence-service autostart install [--workspace PATH] [--linger]|refresh|remove|status\nStart is explicit, or the Linux systemd user unit that Pi's user-scope install registers (CADENCE_AUTOSTART=0, disable or mask opts out); its first registration also enables linger for boot start when logind allows it without a password (CADENCE_LINGER=0 opts out), and --linger asks for it explicitly. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file.\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop. Unconfirmed/quarantined is not stopped.\nRecovery resolve requires this local native terminal, exact unchanged dead-owner resources and separate process/credential/storage acknowledgments. No --yes, network recovery, killing, repair or cleanup.\n",
       );
       return;
     }

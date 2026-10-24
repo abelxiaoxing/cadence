@@ -1,8 +1,8 @@
 /** Native attachment only. No SDK/auth resolution, worker or storage mutation. */
 
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { homedir, userInfo } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Agent, Dispatcher1Wrapper } from "undici";
 import { nativeBuild } from "./native-build.ts";
@@ -19,20 +19,95 @@ import { effectiveWorkspace } from "./task-store.ts";
 export const MANAGEMENT_GUIDANCE =
   "Cadence owner absent, unavailable or incompatible. Explicitly run cadence-service status --workspace <path>, cadence-service diagnose --workspace <path>, or cadence-service start --workspace <path>. Stop older Cadence sessions first. For retained fences use cadence-service recover inspect; resolve requires a local terminal and separate process, credential and storage acknowledgments. Never treat unavailable/quarantined as stopped. No service was started and no embedded executor is available.";
 
+const UNIT = "cadence.service";
+const xdg = (value: string | undefined, fallback: string) =>
+  value && isAbsolute(value) ? value : fallback;
+const cliPath = () =>
+  JSON.stringify(fileURLToPath(new URL("./service-cli.mjs", import.meta.url)));
+
 /** Linux: npm may skip or hide the Pi install hook that registers the user
  * unit, so name the explicit command when it is absent. Reads one path only. */
 export function autostartHint(): string {
   if (process.platform !== "linux") return "";
-  const data = process.env.XDG_DATA_HOME;
-  const unit = join(
-    data && isAbsolute(data) ? data : join(homedir(), ".local", "share"),
-    "systemd",
-    "user",
-    "cadence.service",
+  const data = xdg(
+    process.env.XDG_DATA_HOME,
+    join(homedir(), ".local", "share"),
   );
-  if (existsSync(unit)) return "";
-  const cli = fileURLToPath(new URL("./service-cli.mjs", import.meta.url));
-  return `\nTo run the shared service and WebUI (default http://127.0.0.1:17423) at login: node ${JSON.stringify(cli)} autostart install`;
+  if (existsSync(join(data, "systemd", "user", UNIT))) return "";
+  return `\nTo run the shared service and WebUI (default http://127.0.0.1:17423) at boot: node ${cliPath()} autostart install --linger`;
+}
+
+export interface AutostartObservation {
+  platform: NodeJS.Platform;
+  env: NodeJS.ProcessEnv;
+  home: string;
+  /** Package root; only Pi's managed user copy registers itself. */
+  root: string;
+  /** logind keeps one flag file per lingering user name. */
+  lingerFile: string;
+}
+function hostObservation(): AutostartObservation {
+  let user = "";
+  try {
+    user = userInfo().username;
+  } catch {
+    // No passwd entry: linger is unobservable, so it reads as off.
+  }
+  return {
+    platform: process.platform,
+    env: process.env,
+    home: homedir(),
+    root: fileURLToPath(new URL("..", import.meta.url)),
+    lingerFile: user ? join("/var/lib/systemd/linger", user) : "",
+  };
+}
+/** Same selection as Pi's getAgentDir: PI_CODING_AGENT_DIR or ~/.pi/agent. */
+function piUserCopy(o: AutostartObservation): boolean {
+  const selected = o.env.PI_CODING_AGENT_DIR;
+  const agent = !selected
+    ? join(o.home, ".pi", "agent")
+    : resolve(
+        selected === "~"
+          ? o.home
+          : selected.startsWith("~/")
+            ? join(o.home, selected.slice(2))
+            : selected,
+      );
+  try {
+    const managed = join(
+      agent,
+      "npm",
+      "node_modules",
+      "@abelxiaoxing",
+      "cadence",
+    );
+    return realpathSync(managed) === realpathSync(o.root);
+  } catch {
+    return false;
+  }
+}
+/** Startup-card line while boot start of the Linux user unit needs a human
+ * step. Path observations only: nothing is created, spawned or started, and a
+ * disabled or masked unit, CADENCE_AUTOSTART=0 or CADENCE_LINGER=0 is quiet. */
+export function autostartNotice(
+  o: AutostartObservation = hostObservation(),
+): string | undefined {
+  if (o.platform !== "linux" || o.env.CADENCE_AUTOSTART === "0") return;
+  const data = xdg(o.env.XDG_DATA_HOME, join(o.home, ".local", "share"));
+  const config = xdg(o.env.XDG_CONFIG_HOME, join(o.home, ".config"));
+  if (!existsSync(join(data, "systemd", "user", UNIT)))
+    return piUserCopy(o)
+      ? `Cadence服务：未注册开机自启（npm 可能跳过或隐藏了安装脚本）。注册并开机启动：node ${cliPath()} autostart install --linger`
+      : undefined;
+  const user = join(config, "systemd", "user");
+  if (
+    existsSync(join(user, UNIT)) ||
+    !existsSync(join(user, "default.target.wants", UNIT)) ||
+    o.env.CADENCE_LINGER === "0" ||
+    existsSync(o.lingerFile)
+  )
+    return;
+  return "Cadence服务：linger 未开启，仅在登录后启动、注销时停止。开机启动：loginctl enable-linger";
 }
 
 export class NativeConnection {

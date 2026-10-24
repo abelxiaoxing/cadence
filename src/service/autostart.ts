@@ -30,13 +30,19 @@ export interface AutostartSystem {
   unit: string;
   systemctl(args: string[]): { status: number | null; stdout: string };
   linger(): boolean | undefined;
+  /** `loginctl enable-linger` for this user; interactive may ask for a password. */
+  enableLinger(interactive: boolean): boolean;
 }
+/** on: already lingering; enabled: Cadence enabled it now; refused: the attempt
+ * needed authorization or failed; off: not attempted. */
+export type LingerState = "on" | "enabled" | "off" | "refused";
 export interface AutostartResult {
   status: string;
   unit?: string;
   workspace?: string;
   redirectedFrom?: string;
   enabled?: string;
+  linger?: LingerState;
 }
 export function hostSystem(root: string): AutostartSystem {
   const run = (command: string, args: string[]) => {
@@ -62,6 +68,18 @@ export function hostSystem(root: string): AutostartSystem {
         "--value",
       ]);
       return r.status === 0 ? r.stdout.trim() === "yes" : undefined;
+    },
+    // The install hook never prompts: no terminal, and --no-ask-password keeps a
+    // desktop polkit agent from opening a dialog. Explicit --linger may prompt.
+    enableLinger: (interactive) => {
+      const r = spawnSync(
+        "loginctl",
+        interactive
+          ? ["enable-linger"]
+          : ["--no-ask-password", "enable-linger"],
+        { stdio: interactive ? "inherit" : "ignore" },
+      );
+      return !r.error && r.status === 0;
     },
   };
 }
@@ -277,12 +295,29 @@ function regularFile(path: string): boolean {
     return false;
   }
 }
-/** refresh: Pi install/update hook (opt-out and user disable/mask respected).
- * install: explicit command from any location; enables unless masked. */
+/** A user unit in default.target starts with the user manager: at login, or
+ * at boot once logind lingers the user. */
+function bootStart(
+  s: AutostartSystem,
+  attempt: boolean,
+  interactive: boolean,
+): { linger?: LingerState } {
+  const current = s.linger();
+  if (current === undefined) return {};
+  if (current) return { linger: "on" };
+  if (!attempt) return { linger: "off" };
+  return { linger: s.enableLinger(interactive) ? "enabled" : "refused" };
+}
+/** refresh: Pi install/update hook (opt-out and user disable/mask respected);
+ * a first registration also tries linger unless CADENCE_LINGER=0, so a later
+ * `loginctl disable-linger` is kept across upgrades.
+ * install: explicit command from any location; enables unless masked, and
+ * with `linger` enables boot start, asking for authorization when needed. */
 export function configureAutostart(
   s: AutostartSystem,
   mode: "refresh" | "install",
   requested?: string,
+  linger = false,
 ): AutostartResult {
   if (s.platform !== "linux") return { status: "skipped" };
   if (
@@ -335,11 +370,20 @@ export function configureAutostart(
   )
     return { status: "failed", ...result };
   if (!wanted && !active) return { status: "disabled", ...result };
+  const boot = wanted
+    ? bootStart(
+        s,
+        mode === "install"
+          ? linger
+          : previous === undefined && s.env.CADENCE_LINGER !== "0",
+        mode === "install",
+      )
+    : {};
   if (!regularFile(join(agentDir, "auth.json")))
-    return { status: "waiting-for-pi-login", ...result };
+    return { status: "waiting-for-pi-login", ...result, ...boot };
   s.systemctl(["reset-failed", s.unit]);
   const started = s.systemctl(["start", s.unit]).status === 0;
-  return { status: started ? "started" : "failed", ...result };
+  return { status: started ? "started" : "failed", ...result, ...boot };
 }
 /** Disable through ExecStop's orderly route, then delete only our own file.
  * Workspace, state home and Pi sources stay untouched. */
@@ -369,5 +413,6 @@ export function autostartStatus(s: AutostartSystem): AutostartResult {
     enabled: s.systemctl(["is-enabled", s.unit]).stdout.trim() || "unknown",
     unit: path,
     workspace: generatedWorkspace(previous),
+    ...bootStart(s, false, false),
   };
 }
