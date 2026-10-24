@@ -10,6 +10,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  renameSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -553,12 +554,18 @@ it("startup outbound proxy/preload requests refuse without spawning or direct fa
     expect(tree(f.dir)).toEqual(before);
   }
 });
-// POSIX mode bits are not a Windows ACL premise.
+// The agent directory's mode is not a premise; it must still be a directory.
 for (const [stage, select] of [
-  ["pi-agent-directory", (agent: string) => chmodSync(agent, 0o755)],
+  [
+    "pi-agent-directory",
+    (agent: string) => {
+      renameSync(agent, `${agent}-moved`);
+      writeFileSync(agent, "", { mode: 0o600 });
+    },
+  ],
   ["pi-auth", (agent: string) => unlinkSync(join(agent, "auth.json"))],
 ] as const)
-  it.skipIf(process.platform === "win32" && stage === "pi-agent-directory")(
+  it(
     `unusable ${stage} refuses with its stage before registering an owner`,
     async () => {
       const f = fixture();
@@ -585,6 +592,27 @@ for (const [stage, select] of [
     },
     30000,
   );
+// POSIX mode bits are not a Windows ACL premise.
+it.skipIf(process.platform === "win32")(
+  "Pi sources with a umask 002 mode (0775 directory, 0664 files) start",
+  async () => {
+    const f = fixture();
+    pending.push(f);
+    const agent = join(f.dir, "agent");
+    // What Pi 1.4.0 itself creates on first launch under umask 002.
+    chmodSync(agent, 0o775);
+    chmodSync(join(agent, "auth.json"), 0o664);
+    const started = await run(f, "start", [
+      "--port",
+      "0",
+      "--agent-dir",
+      agent,
+    ]);
+    expect(started.code, started.stderr).toBe(0);
+    expect(JSON.parse(started.stdout)).toMatchObject({ status: "alive" });
+  },
+  30000,
+);
 it("a compat flag inert on the pinned SDK starts; an unknown one refuses at pi-models before registering", async () => {
   const f = fixture();
   pending.push(f);

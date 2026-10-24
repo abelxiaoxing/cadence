@@ -2815,8 +2815,8 @@ function refused() {
 function hash(bytes) {
   return createHash2("sha256").update(bytes).digest("hex");
 }
-function privateMode(st) {
-  if (process.platform !== "win32" && ((st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
+function privateMode(st, ownerOnly = true) {
+  if (process.platform !== "win32" && (ownerOnly && (st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
     refused();
 }
 function same(a, b) {
@@ -2851,7 +2851,7 @@ class DirectoryWalks {
     if (this.open())
       this.walked.set(path, { dev: st.dev, ino: st.ino });
   }
-  reuse(path) {
+  reuse(path, ownerOnly = true) {
     const walked = this.open() ? this.walked.get(path) : undefined;
     if (!walked)
       return false;
@@ -2868,15 +2868,17 @@ class DirectoryWalks {
       this.walked.delete(path);
       return false;
     }
-    privateMode(st);
+    privateMode(st, ownerOnly);
     return true;
   }
 }
 
 class PrivateFiles {
   namespace;
-  constructor(namespace) {
+  ownerOnly;
+  constructor(namespace, ownerOnly = true) {
     this.namespace = namespace;
+    this.ownerOnly = ownerOnly;
   }
   directory(path, create = false, walks) {
     const tail = relative2(this.namespace, path);
@@ -2884,7 +2886,7 @@ class PrivateFiles {
       refused();
     if (!create) {
       const full = resolve3(path);
-      if (walks?.reuse(full))
+      if (walks?.reuse(full, this.ownerOnly))
         return true;
       const namespace = resolve3(this.namespace);
       let inside = false, last;
@@ -2892,7 +2894,7 @@ class PrivateFiles {
         if (at2 === namespace)
           inside = true;
         if (inside)
-          privateMode(st);
+          privateMode(st, this.ownerOnly);
         last = st;
       });
       if (found && last)
@@ -2901,7 +2903,7 @@ class PrivateFiles {
     }
     if (!safeDirectory(this.namespace, true))
       return false;
-    privateMode(lstatSync3(this.namespace));
+    privateMode(lstatSync3(this.namespace), this.ownerOnly);
     let at = this.namespace;
     for (const part of tail.split(sep3).filter(Boolean)) {
       at = join3(at, part);
@@ -2921,7 +2923,7 @@ class PrivateFiles {
       }
       if (!st.isDirectory() || st.isSymbolicLink())
         throw new Error("Unsafe directory");
-      privateMode(st);
+      privateMode(st, this.ownerOnly);
     }
     return true;
   }
@@ -2938,7 +2940,7 @@ class PrivateFiles {
     }
     if (!before.isFile() || before.nlink !== 1 || before.size > maximum)
       refused();
-    privateMode(before);
+    privateMode(before, this.ownerOnly);
     const fd = openSync2(path, constants2.O_RDONLY | (constants2.O_NOFOLLOW ?? 0));
     try {
       const opened = fstatSync2(fd);
@@ -5872,13 +5874,13 @@ function startupGuidance(result, input) {
       return `Cadence refused its installed package files (web/dist or agents); reinstall the package rather than editing it.
 `;
     case "pi-agent-directory":
-      return `Pi's agent directory ${agent} must be an existing real directory owned by you with mode 0700 (chmod 700).
+      return `Pi's agent directory ${agent} must be an existing real directory (not a symlink) owned by you.
 `;
     case "pi-auth":
-      return `${join8(agent, "auth.json")} must be your own single-link regular file with mode 0600 holding valid Pi credentials; log in to Pi first.
+      return `${join8(agent, "auth.json")} must be your own single-link regular file holding valid Pi credentials; log in to Pi first.
 `;
     case "pi-models":
-      return `${join8(agent, "models.json")} must be your own single-link regular file with mode 0600, using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.
+      return `${join8(agent, "models.json")} must be your own single-link regular file using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.
 `;
     case "pi-runtime":
       return `Loading Pi's SDK model runtime failed after the owner registered (optional SDK packages missing, or sources the SDK refuses); it stays quarantined.
