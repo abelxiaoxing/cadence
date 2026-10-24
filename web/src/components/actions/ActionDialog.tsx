@@ -1,6 +1,7 @@
 /* Adapted from pi-web-ui Dialog.tsx confirm/input/select presentation.
  * MIT (c) 2026 xing-shuyin. Native dialog replaces extension response/appSend. */
 import { type ReactNode, useEffect, useId, useRef } from "react";
+import { FiX } from "react-icons/fi";
 export function ActionDialog({
   title,
   children,
@@ -38,10 +39,12 @@ export function ActionDialog({
         <h2 id={id}>{title}</h2>
         <button
           type="button"
+          className="dialog-close"
           aria-label="Close dialog — no cancellation of accepted work"
+          title="Close — accepted work is not cancelled"
           onClick={onClose}
         >
-          Close
+          <FiX aria-hidden="true" />
         </button>
       </header>
       {children}
