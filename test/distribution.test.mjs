@@ -294,11 +294,11 @@ afterAll(() => {
 });
 
 describe("real lightweight package", () => {
-  it("audits exactly 129 unique regular members, every source body and all Agent pins", () => {
-    expect(expected).toHaveLength(129);
+  it("audits exactly 132 unique regular members, every source body and all Agent pins", () => {
+    expect(expected).toHaveLength(132);
     const audit = auditPackage(archive, root, expected);
     expect(audit.members).toEqual(expected);
-    expect(Object.keys(audit.bodyHashes)).toHaveLength(129);
+    expect(Object.keys(audit.bodyHashes)).toHaveLength(132);
     const receipt = JSON.parse(
       readFileSync(path.join(fixture, "distribution-diagnostics.json"), "utf8"),
     );
@@ -307,13 +307,13 @@ describe("real lightweight package", () => {
     for (const stage of ["after-extract", "after-copy", "after-peer-links"]) {
       const entry = receipt.stages.find((entry) => entry.stage === stage);
       expect(entry.status).toBe("passed");
-      expect(entry.bodyChecks).toHaveLength(129);
+      expect(entry.bodyChecks).toHaveLength(132);
       expect(
         entry.bodyChecks.every((check) => check.status === "matched"),
       ).toBe(true);
     }
     expect(expected.filter((p) => p.startsWith("package/src/"))).toHaveLength(
-      35,
+      38,
     );
     expect(expected.join("\n")).not.toMatch(
       /sqlite|workspace-io|windows-job|apply-transaction|compiler|scheduler/,
