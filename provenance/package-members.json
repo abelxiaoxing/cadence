@@ -23,6 +23,8 @@
   "package/skills/git-commit/SKILL.md",
   "package/skills/grok-search/SKILL.md",
   "package/skills/grok-search/grok-search.mjs",
+  "package/src/agent-panel-model.ts",
+  "package/src/agent-panel.ts",
   "package/src/index.ts",
   "package/src/install-config.mjs",
   "package/src/native-build.ts",

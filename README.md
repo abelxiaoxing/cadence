@@ -62,6 +62,18 @@ Return, session departure and Pi quit **detach; admitted work continues** while 
 Reattach to observe the same IDs without replay.
 Explicit Cancel requests bounded stop; it is not proof that every escaped descendant stopped.
 
+### Background agent panel
+
+A readonly panel in the Pi TUI follows background agents that any extension announces on Pi's shared event bus; Cadence's service children are not yet published there.
+Producers emit `subagent:start {id,label,kind,startedAt}`, `subagent:message {id,message,streaming?}`, `subagent:activity {id,activity,tokensIn?,tokensOut?}`, `subagent:stats {id,tokensIn,tokensOut?}` and `subagent:end {id,status,endedAt,error?}` with status `done`, `error` or `cancelled`.
+A message has the main session's message shape; `streaming: true` marks a snapshot that the next message replaces.
+Nothing is mounted until the first agent arrives (`CADENCE_AGENT_PANEL=always` keeps `● main` visible).
+Then a launched/finished block sits above the input and one row per agent below it: at most six recently active rows plus `+K more`.
+With an empty input, ↓ moves focus to the rows; ↑/↓ or Ctrl+P/N select, Enter shows that agent's transcript in place of the main view, PgUp/PgDn, Ctrl+U/D and Home/End scroll it, and Esc returns to the main view and then to the input.
+Every other input key, including Enter, Shift+Tab and Ctrl+J, stays Pi's; each agent view remembers its scroll position.
+The panel never starts, cancels or keeps an agent or Pi alive, and keeps nothing across restarts.
+For manual checks, `pi -e ./src/index.ts -e ./scripts/agent-panel-demo.ts` adds `/agents-demo [count]`, which plays fake agents (the second fails) and runs nothing.
+
 ### Browser
 
 Open the locally revealed token link.
@@ -154,6 +166,7 @@ Historical logs are not runtime dependencies, and removing development tooling m
 | Owner                                                                                                  | Responsibility                                                                                                            |
 | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
 | `src/index.ts`, `src/task-shell.ts`, `src/native-*.ts`                                                 | Nonactivating Pi entry, raw native consent, typed service attachment, paging and verified export; no embedded executor    |
+| `src/agent-panel.ts`, `src/agent-panel-model.ts`                                                       | Readonly background-agent panel over Pi's `subagent:*` bus events: widgets, focus keys, transcript view                   |
 | `src/service/host.ts`, `src/service/cli.ts`, `src/service/autostart.ts`                                | Real single-owner composition, explicit management and the generated Linux user unit; management entry stays SDK-free     |
 | `src/service/{coordination,private-files,owner,recovery}.ts`                                           | Canonical overlap exclusion, exact locks, original-operation lifetime and informed local recovery                         |
 | `src/service/{admission,task-actions,graph,scheduler}.ts`                                              | Context-bound actions, actual current views, finite graph scheduling, check/review barriers                               |

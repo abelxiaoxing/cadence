@@ -41,6 +41,7 @@ function harness(registrar = register) {
   const handlers = new Map<string, Array<(...args: any[]) => unknown>>();
   let active = ["read", "bash"];
   const pi = {
+    events: { on: () => () => {}, emit: vi.fn() },
     on(name: string, handler: (...args: any[]) => unknown) {
       handlers.set(name, [...(handlers.get(name) ?? []), handler]);
     },

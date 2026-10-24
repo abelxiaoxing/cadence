@@ -17,6 +17,8 @@
     "skills",
     "config",
     "agents",
+    "src/agent-panel-model.ts",
+    "src/agent-panel.ts",
     "src/index.ts",
     "src/install-config.mjs",
     "src/native-build.ts",
