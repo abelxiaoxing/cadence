@@ -2510,6 +2510,10 @@ function hostSystem(root) {
         "--value"
       ]);
       return r.status === 0 ? r.stdout.trim() === "yes" : undefined;
+    },
+    enableLinger: (interactive) => {
+      const r = spawnSync2("loginctl", interactive ? ["enable-linger"] : ["--no-ask-password", "enable-linger"], { stdio: interactive ? "inherit" : "ignore" });
+      return !r.error && r.status === 0;
     }
   };
 }
@@ -2672,7 +2676,17 @@ function regularFile(path) {
     return false;
   }
 }
-function configureAutostart(s, mode, requested) {
+function bootStart(s, attempt, interactive) {
+  const current = s.linger();
+  if (current === undefined)
+    return {};
+  if (current)
+    return { linger: "on" };
+  if (!attempt)
+    return { linger: "off" };
+  return { linger: s.enableLinger(interactive) ? "enabled" : "refused" };
+}
+function configureAutostart(s, mode, requested, linger = false) {
   if (s.platform !== "linux")
     return { status: "skipped" };
   if (mode === "refresh" && (s.env.CADENCE_AUTOSTART === "0" || !piUserInstall(s)))
@@ -2714,11 +2728,12 @@ function configureAutostart(s, mode, requested) {
     return { status: "failed", ...result };
   if (!wanted && !active)
     return { status: "disabled", ...result };
+  const boot = wanted ? bootStart(s, mode === "install" ? linger : previous === undefined && s.env.CADENCE_LINGER !== "0", mode === "install") : {};
   if (!regularFile(join2(agentDir, "auth.json")))
-    return { status: "waiting-for-pi-login", ...result };
+    return { status: "waiting-for-pi-login", ...result, ...boot };
   s.systemctl(["reset-failed", s.unit]);
   const started = s.systemctl(["start", s.unit]).status === 0;
-  return { status: started ? "started" : "failed", ...result };
+  return { status: started ? "started" : "failed", ...result, ...boot };
 }
 function removeAutostart(s) {
   if (s.platform !== "linux")
@@ -2751,7 +2766,8 @@ function autostartStatus(s) {
     status: s.systemctl(["is-active", s.unit]).stdout.trim() || "unknown",
     enabled: s.systemctl(["is-enabled", s.unit]).stdout.trim() || "unknown",
     unit: path,
-    workspace: generatedWorkspace(previous)
+    workspace: generatedWorkspace(previous),
+    ...bootStart(s, false, false)
   };
 }
 
@@ -5984,15 +6000,30 @@ function autostartGuidance(s, result) {
 ` : "";
   return note + autostartStatusGuidance(s, result, name, cli, workspace, manage);
 }
+function lingerGuidance(linger) {
+  switch (linger) {
+    case "enabled":
+      return `Linger enabled: Cadence starts at boot and keeps running after logout (undo: loginctl disable-linger).
+`;
+    case "off":
+      return `Linger is off: Cadence starts at login and stops at logout. Start it at boot: loginctl enable-linger
+`;
+    case "refused":
+      return `Linger needs authorization: Cadence starts at login and stops at logout. Start it at boot: loginctl enable-linger (may ask for your password)
+`;
+    default:
+      return "";
+  }
+}
 function autostartStatusGuidance(s, result, name, cli, workspace, manage) {
   switch (result.status) {
     case "started": {
+      const linger = lingerGuidance(result.linger);
       if (result.service !== "alive")
         return `${s.unit} started for ${result.workspace}, but the owner reports ${result.service}.
 Inspect: node ${cli} diagnose --workspace ${workspace}
 ${manage}
-`;
-      const linger = s.linger() === false ? "Linger is off: Cadence starts at login and stops at logout. `loginctl enable-linger` keeps it running and starts it at boot.\n" : "";
+${linger}`;
       return `Cadence WebUI: ${result.endpoint} (${s.unit}, workspace ${result.workspace})
 Enter with your private link: node ${cli} token-link --workspace ${workspace} --reveal
 ${manage}
@@ -6001,7 +6032,7 @@ ${linger}`;
     case "waiting-for-pi-login":
       return `${s.unit} is enabled for ${result.workspace}; it starts once Pi has ${join8(agentDirectory(s), "auth.json")}.
 Log in to Pi, then: systemctl --user start ${name}
-`;
+${lingerGuidance(result.linger)}`;
     case "disabled":
       return `${s.unit} refreshed for ${result.workspace}; left disabled as configured.
 `;
@@ -6019,7 +6050,7 @@ Log in to Pi, then: systemctl --user start ${name}
 `;
     case "failed":
       return `Could not enable or start ${s.unit}; see systemctl --user status ${name} and journalctl --user -u ${name}.
-`;
+${lingerGuidance(result.linger)}`;
     default:
       return "";
   }
@@ -6027,8 +6058,16 @@ Log in to Pi, then: systemctl --user start ${name}
 async function autostartMain(argv, hostUrl) {
   const action = argv.shift();
   let requested;
-  if (action === "install" && argv[0] === "--workspace" && argv[1])
-    requested = resolve5(argv.splice(0, 2)[1]);
+  let linger = false;
+  while (action === "install" && argv.length) {
+    if (argv[0] === "--workspace" && argv[1] && requested === undefined)
+      requested = resolve5(argv.splice(0, 2)[1]);
+    else if (argv[0] === "--linger" && !linger) {
+      argv.shift();
+      linger = true;
+    } else
+      break;
+  }
   if (argv.length || !["install", "refresh", "remove", "status"].includes(action ?? ""))
     throw new ContractError("invalid");
   const s = hostSystem(dirname8(dirname8(fileURLToPath(hostUrl))));
@@ -6039,7 +6078,7 @@ async function autostartMain(argv, hostUrl) {
     result = autostartStatus(s);
   else {
     try {
-      result = configureAutostart(s, action === "install" ? "install" : "refresh", requested);
+      result = configureAutostart(s, action === "install" ? "install" : "refresh", requested, linger);
     } catch (error) {
       if (error instanceof ContractError && error.code === "invalid")
         process.stderr.write(`Cadence autostart needs an existing absolute workspace directory (--workspace or CADENCE_WORKSPACE).
@@ -6062,8 +6101,8 @@ async function managementMain(argv, hostUrl) {
     const command = argv.shift();
     if (command === "--help" && !argv.length) {
       process.stdout.write(`cadence-service start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--workspace PATH] [--state-home PATH]
-cadence-service autostart install [--workspace PATH]|refresh|remove|status
-Start is explicit, or the Linux systemd user unit that Pi's user-scope install registers (CADENCE_AUTOSTART=0, disable or mask opts out). Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file.
+cadence-service autostart install [--workspace PATH] [--linger]|refresh|remove|status
+Start is explicit, or the Linux systemd user unit that Pi's user-scope install registers (CADENCE_AUTOSTART=0, disable or mask opts out); its first registration also enables linger for boot start when logind allows it without a password (CADENCE_LINGER=0 opts out), and --linger asks for it explicitly. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file.
 Return/quit detaches clients; only explicit Cancel/Stop requests stop. Unconfirmed/quarantined is not stopped.
 Recovery resolve requires this local native terminal, exact unchanged dead-owner resources and separate process/credential/storage acknowledgments. No --yes, network recovery, killing, repair or cleanup.
 `);

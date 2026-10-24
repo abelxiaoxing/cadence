@@ -3,12 +3,14 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import register from "../src/index.ts";
+import { autostartNotice } from "../src/native-client.ts";
 import { startupCardLines } from "../src/startup-card.ts";
 
 const roots: string[] = [];
@@ -16,7 +18,20 @@ afterEach(() => {
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
+/** The entrypoint also reads home-level autostart state; keep it in the fixture. */
+function isolateHome(home: string) {
+  vi.stubEnv("HOME", home);
+  for (const name of [
+    "XDG_DATA_HOME",
+    "XDG_CONFIG_HOME",
+    "PI_CODING_AGENT_DIR",
+    "CADENCE_AUTOSTART",
+    "CADENCE_LINGER",
+  ])
+    vi.stubEnv(name, undefined);
+}
 function fixture() {
   const root = mkdtempSync(path.join(tmpdir(), "cadence-card-"));
   roots.push(root);
@@ -166,6 +181,7 @@ describe("Cadence startup configuration card", () => {
     "shows a subdued notification on every session start in %s",
     async (mode) => {
       const input = fixture();
+      isolateHome(input.home);
       const h = harness();
       const setWidget = vi.fn();
       const notify = vi.fn();
@@ -232,6 +248,7 @@ describe("Cadence startup configuration card", () => {
 
   it("the shipped entrypoint registers a notification and one inert task command without task activation", async () => {
     const input = fixture();
+    isolateHome(input.home);
     const h = harness(register);
     const setWidget = vi.fn();
     const notify = vi.fn();
@@ -260,4 +277,45 @@ describe("Cadence startup configuration card", () => {
     expect(h.active()).toEqual(["read", "bash"]);
     await h.emit("session_shutdown", ctx);
   });
+
+  it.skipIf(process.platform !== "linux")(
+    "appends the boot-start notice for an enabled Cadence unit",
+    async () => {
+      const input = fixture();
+      isolateHome(input.home);
+      const data = path.join(input.home, ".local", "share", "systemd", "user");
+      const wants = path.join(
+        input.home,
+        ".config",
+        "systemd",
+        "user",
+        "default.target.wants",
+      );
+      write(path.join(data, "cadence.service"), "# generated\n");
+      mkdirSync(wants, { recursive: true });
+      symlinkSync(
+        path.join(data, "cadence.service"),
+        path.join(wants, "cadence.service"),
+      );
+      const h = harness(register);
+      const notify = vi.fn();
+      await h.emit("session_start", {
+        cwd: input.cwd,
+        hasUI: true,
+        mode: "tui",
+        isProjectTrusted: () => true,
+        ui: { onTerminalInput: () => () => {}, setWidget: vi.fn(), notify },
+      });
+      // Linger is the host's logind state; the notice's own cases are unit tests.
+      const notice = autostartNotice();
+      expect(notify).toHaveBeenCalledWith(
+        [
+          "Context7：匿名模式，无需密钥｜Grok：待配置 GROK_API_URL、GROK_API_KEY｜Tavily：未配置（可选）",
+          ...(notice ? [notice] : []),
+        ].join("\n"),
+        "info",
+      );
+      if (notice) expect(notice).toContain("loginctl enable-linger");
+    },
+  );
 });

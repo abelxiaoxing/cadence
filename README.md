@@ -40,11 +40,13 @@ See [service management](docs/service-management.md) for configuration, model/au
 
 `pi install npm:@abelxiaoxing/cadence` (user scope) writes `~/.local/share/systemd/user/cadence.service`, enables it and starts the owner for `~/cadence` on `http://127.0.0.1:17423`.
 Set an existing absolute `CADENCE_WORKSPACE` at install to choose another workspace, or `CADENCE_AUTOSTART=0` to skip registration.
+That first registration also enables linger when logind allows it without a password, so the service starts at boot instead of at login; `CADENCE_LINGER=0` skips it, and later updates keep `loginctl disable-linger`.
 Enter the WebUI once with the link from `cadence-service token-link --workspace ~/cadence --reveal`; installation prints that command, not the token.
 Each `pi update` restarts the unit through orderly Stop, so running work is stopped rather than detached; `systemctl --user disable --now cadence` or `mask` is kept across upgrades.
 Run `cadence-service autostart remove` before `pi remove`.
 The npm client hides dependency install-script output, and with `strict-allow-scripts` it skips those scripts entirely.
-Approve Cadence once with `npm install-scripts approve @abelxiaoxing/cadence` inside `~/.pi/agent/npm` (or `npm config set allow-scripts=@abelxiaoxing/cadence --location=user`), or run `cadence-service autostart install`; `/cadence` names that command while no unit is registered.
+Approve Cadence once with `npm install-scripts approve @abelxiaoxing/cadence` inside `~/.pi/agent/npm` (or `npm config set allow-scripts=@abelxiaoxing/cadence --location=user`), or run `cadence-service autostart install --linger`, which may ask for your password.
+Pi's session-start card names that command while Pi's copy has no unit, and `loginctl enable-linger` while the enabled unit only starts at login.
 Until the optional SDK and Pi's `auth.json` exist, registration or start waits instead of quarantining an owner.
 See [the systemd user unit](docs/service-management.md#linux-systemd-user-unit) for exact behavior and limits.
 
@@ -117,7 +119,7 @@ Outbound provider proxy policy is independent of inbound HTTPS and refuses unsup
 - `skills/git-commit` requires an explicit commit request and deterministic audit; task review never commits.
 - Three pinned professional profiles in `agents/` provide readonly design/diagnosis and direct-edit implementation instructions, not execution authority.
 - `config/` contains optional research/check examples.
-  Missing-only user `.env` template creation is the sole postinstall behavior; no service/build/Git/provider operation runs.
+  Missing-only user `.env` template creation and the Linux autostart refresh above are the only postinstall behaviors; no build/Git/provider operation runs.
 - `node /absolute/cadence/src/operator-cli.mjs doctor|runs [workspace]` remains readonly and independent of service startup.
 
 ## Development and evidence
@@ -306,6 +308,7 @@ Byte values are UTF-8/encoded bounds where specified; they are not targets to si
 | Host refuses during startup                                    | Fixed code/stage only; unregistered exits `refused`, registered stays `quarantined` |
 | Workspace containing the private state home                    | Land on `~/cadence` (only start creates it); never move state into the working copy |
 | Upgrade changes the unit workspace or Node path                | Stop with the loaded unit definition before rewriting, not only SIGTERM             |
+| Install hook cannot prompt and npm hides its output            | Only a first registration tries passwordless linger; the startup card names the gap |
 
 Good: current context → explicit grant → durable acceptance → genuine original native/storage settlement → exact retained dependency → real checks → human review.
 Base: a client leaves and another reattaches to the same accepted run without launching it again.

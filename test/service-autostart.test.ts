@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { refreshAutostart } from "../src/install-config.mjs";
-import { autostartHint } from "../src/native-client.ts";
+import { autostartHint, autostartNotice } from "../src/native-client.ts";
 import {
   type AutostartSystem,
   autostartStatus,
@@ -34,11 +34,19 @@ interface Fake {
   home: string;
   calls: string[];
   unit: string;
-  state: { enabled: string; active: boolean };
+  state: { enabled: string; active: boolean; linger: boolean | undefined };
+  /** interactive flag of each enable-linger attempt */
+  lingerAttempts: boolean[];
 }
 /** Pi user-scope layout: ~/.pi/agent/npm/node_modules/@abelxiaoxing/cadence. */
 function fake(
-  options: { pi?: boolean; auth?: boolean; sdk?: boolean } = {},
+  options: {
+    pi?: boolean;
+    auth?: boolean;
+    sdk?: boolean;
+    /** logind allows enable-linger without a password prompt */
+    lingerAllowed?: boolean;
+  } = {},
 ): Fake {
   const home = mkdtempSync(join(tmpdir(), "cadence-autostart-"));
   roots.push(home);
@@ -56,7 +64,12 @@ function fake(
       writeFileSync(join(sdk, "package.json"), "{}");
     }
   const calls: string[] = [];
-  const state = { enabled: "not-found", active: false };
+  const state = {
+    enabled: "not-found",
+    active: false,
+    linger: false as boolean | undefined,
+  };
+  const lingerAttempts: boolean[] = [];
   const s: AutostartSystem = {
     platform: "linux",
     env: {
@@ -88,7 +101,12 @@ function fake(
       }
       return { status: 0, stdout: "" };
     },
-    linger: () => false,
+    linger: () => state.linger,
+    enableLinger(interactive) {
+      lingerAttempts.push(interactive);
+      if (options.lingerAllowed !== false) state.linger = true;
+      return options.lingerAllowed !== false;
+    },
   };
   const unit = join(
     home,
@@ -98,7 +116,7 @@ function fake(
     "user",
     "cadence.service",
   );
-  return { s, home, calls, unit, state };
+  return { s, home, calls, unit, state, lingerAttempts };
 }
 
 // systemd user units are Linux-only; the generated file uses Linux paths/PATH.
@@ -111,7 +129,10 @@ describe.skipIf(process.platform !== "linux")("systemd user autostart", () => {
       status: "started",
       unit: f.unit,
       workspace: join(f.home, "cadence"),
+      linger: "enabled",
     });
+    // Boot start without prompting: the install hook has no terminal.
+    expect(f.lingerAttempts).toEqual([false]);
     expect(existsSync(join(f.home, "cadence"))).toBe(true);
     expect(f.calls).toEqual([
       "show-environment",
@@ -166,6 +187,7 @@ describe.skipIf(process.platform !== "linux")("systemd user autostart", () => {
     expect(configureAutostart(mac.s, "refresh")).toEqual({ status: "skipped" });
     for (const f of [checkout, opted, mac]) {
       expect(f.calls).toEqual([]);
+      expect(f.lingerAttempts).toEqual([]);
       expect(existsSync(f.unit)).toBe(false);
       expect(existsSync(join(f.home, "cadence"))).toBe(false);
     }
@@ -243,6 +265,74 @@ describe.skipIf(process.platform !== "linux")("systemd user autostart", () => {
     );
     expect(f.calls).toContain("enable cadence.service");
     expect(f.calls).not.toContain("start cadence.service");
+  });
+
+  it("a first registration lingers without prompting; refusal, CADENCE_LINGER=0 and a later disable-linger are respected", () => {
+    const refused = fake({ lingerAllowed: false });
+    expect(configureAutostart(refused.s, "refresh")).toMatchObject({
+      status: "started",
+      linger: "refused",
+    });
+    expect(refused.lingerAttempts).toEqual([false]);
+    // Upgrades are not first registrations, so disable-linger is kept.
+    const f = fake();
+    configureAutostart(f.s, "refresh");
+    f.state.linger = false;
+    expect(configureAutostart(f.s, "refresh")).toMatchObject({
+      status: "started",
+      linger: "off",
+    });
+    expect(f.lingerAttempts).toEqual([false]);
+    const opted = fake();
+    opted.s.env.CADENCE_LINGER = "0";
+    expect(configureAutostart(opted.s, "refresh").linger).toBe("off");
+    const on = fake();
+    on.state.linger = true;
+    expect(configureAutostart(on.s, "refresh").linger).toBe("on");
+    // No logind answer: nothing is reported or attempted.
+    const unknown = fake();
+    unknown.state.linger = undefined;
+    expect(configureAutostart(unknown.s, "refresh")).not.toHaveProperty(
+      "linger",
+    );
+    for (const g of [opted, on, unknown]) expect(g.lingerAttempts).toEqual([]);
+    // The enabled unit waiting for Pi login still gets boot start.
+    const waiting = fake({ auth: false });
+    expect(configureAutostart(waiting.s, "refresh")).toMatchObject({
+      status: "waiting-for-pi-login",
+      linger: "enabled",
+    });
+  });
+
+  it("explicit install lingers only with --linger, which may prompt; masked and disabled units never linger", () => {
+    const f = fake();
+    expect(configureAutostart(f.s, "install")).toMatchObject({
+      status: "started",
+      linger: "off",
+    });
+    expect(f.lingerAttempts).toEqual([]);
+    expect(configureAutostart(f.s, "install", undefined, true)).toMatchObject({
+      status: "started",
+      linger: "enabled",
+    });
+    expect(f.lingerAttempts).toEqual([true]);
+    const masked = fake();
+    masked.state.enabled = "masked";
+    const result = configureAutostart(masked.s, "install", undefined, true);
+    expect(result.status).toBe("masked");
+    expect(result).not.toHaveProperty("linger");
+    expect(masked.lingerAttempts).toEqual([]);
+    const disabled = fake();
+    configureAutostart(disabled.s, "refresh");
+    disabled.state.enabled = "disabled";
+    disabled.state.active = false;
+    disabled.state.linger = false;
+    expect(configureAutostart(disabled.s, "refresh")).toEqual({
+      status: "disabled",
+      unit: disabled.unit,
+      workspace: join(disabled.home, "cadence"),
+    });
+    expect(disabled.lingerAttempts).toEqual([false]);
   });
 
   it("without a resolvable Pi SDK nothing is written, so a later refresh is still a first registration", () => {
@@ -364,6 +454,7 @@ describe.skipIf(process.platform !== "linux")("systemd user autostart", () => {
       enabled: "enabled",
       unit: f.unit,
       workspace: join(f.home, "cadence"),
+      linger: "on",
     });
     f.calls.length = 0;
     expect(removeAutostart(f.s)).toEqual({ status: "removed", unit: f.unit });
@@ -411,6 +502,53 @@ describe.skipIf(process.platform !== "linux")("systemd user autostart", () => {
     writeFileSync(join(unit, "cadence.service"), "# generated\n");
     expect(autostartHint()).toBe("");
     // Observation only: nothing else was created.
+    expect(existsSync(join(home, "cadence"))).toBe(false);
+  });
+  it("the startup card names boot-start gaps from path observations only", () => {
+    const home = mkdtempSync(join(tmpdir(), "cadence-notice-"));
+    roots.push(home);
+    const checkout = join(home, "work", "cadence");
+    mkdirSync(checkout, { recursive: true });
+    const o = {
+      platform: "linux" as const,
+      env: {},
+      home,
+      root: checkout,
+      lingerFile: join(home, "linger", "u"),
+    };
+    // Unregistered checkouts and project installs are explicit by design.
+    expect(autostartNotice(o)).toBeUndefined();
+    const scope = join(home, ".pi", "agent", "npm", "node_modules");
+    mkdirSync(join(scope, "@abelxiaoxing"), { recursive: true });
+    symlinkSync(checkout, join(scope, "@abelxiaoxing", "cadence"));
+    expect(autostartNotice(o)).toMatch(
+      /[/\\]src[/\\]service-cli\.mjs" autostart install --linger$/,
+    );
+    expect(
+      autostartNotice({ ...o, env: { CADENCE_AUTOSTART: "0" } }),
+    ).toBeUndefined();
+    expect(autostartNotice({ ...o, platform: "darwin" })).toBeUndefined();
+    const data = join(home, ".local", "share", "systemd", "user");
+    const config = join(home, ".config", "systemd", "user");
+    mkdirSync(data, { recursive: true });
+    writeFileSync(join(data, "cadence.service"), "# generated\n");
+    // Registered but disabled: the user's choice.
+    expect(autostartNotice(o)).toBeUndefined();
+    mkdirSync(join(config, "default.target.wants"), { recursive: true });
+    symlinkSync(
+      join(data, "cadence.service"),
+      join(config, "default.target.wants", "cadence.service"),
+    );
+    expect(autostartNotice(o)).toContain("loginctl enable-linger");
+    expect(
+      autostartNotice({ ...o, env: { CADENCE_LINGER: "0" } }),
+    ).toBeUndefined();
+    mkdirSync(join(home, "linger"));
+    writeFileSync(o.lingerFile, "");
+    expect(autostartNotice(o)).toBeUndefined();
+    rmSync(o.lingerFile);
+    symlinkSync("/dev/null", join(config, "cadence.service"));
+    expect(autostartNotice(o)).toBeUndefined();
     expect(existsSync(join(home, "cadence"))).toBe(false);
   });
 });

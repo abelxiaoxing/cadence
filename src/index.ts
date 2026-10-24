@@ -1,5 +1,6 @@
 import os from "node:os";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { autostartNotice } from "./native-client.ts";
 import { startupCardLines } from "./startup-card.ts";
 import { registerTaskShell } from "./task-shell.ts";
 
@@ -18,10 +19,11 @@ export default function register(pi: ExtensionAPI): void {
         home: os.homedir(),
         projectTrusted: ctx.isProjectTrusted(),
       });
-      ctx.ui.notify(
-        (lines.length > 1 ? lines.slice(1) : lines).join("\n"),
-        "info",
-      );
+      const shown = lines.length > 1 ? lines.slice(1) : lines;
+      // npm hides the install hook's guidance; boot-start gaps surface here.
+      const autostart = autostartNotice();
+      if (autostart) shown.push(autostart);
+      ctx.ui.notify(shown.join("\n"), "info");
     } catch {
       // Presentation only; shell lifecycle still runs.
     }
