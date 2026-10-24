@@ -554,8 +554,16 @@ export function App({
       )}
       {(error || workspace.error) && (
         <p className="banner-notice" role="alert">
-          {error || workspace.error}. Explicit service guidance:{" "}
-          <code>cadence-service status</code> /{" "}
+          {error || workspace.error}.{" "}
+          {!error && workspace.error === "stale" && (
+            <>
+              The service no longer matches the sources it loaded, for example
+              after Pi's <code>models.json</code> changed; restart it to reload
+              them: <code>systemctl --user restart cadence</code> (or{" "}
+              <code>cadence-service stop</code> then <code>start</code>).{" "}
+            </>
+          )}
+          Explicit service guidance: <code>cadence-service status</code> /{" "}
           <code>cadence-service start --workspace &lt;path&gt;</code>. No
           service is started by this page.
         </p>
