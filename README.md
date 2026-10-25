@@ -3,11 +3,52 @@
 `@abelxiaoxing/cadence` is a shared Pi task workspace with two independently usable clients: native `/cadence` and a browser WebUI.
 One persistent service owns tasks, bounded subagent collaboration, real parent checks and retained history.
 Ordinary conversations, resource discovery and opening history never start work or a service.
-On Linux, Pi's user-scope install registers that service as a systemd user unit and starts its WebUI on the default address.
+`cadence server install` registers that service with the user's service manager and starts its WebUI on the default address.
 
 This is a trusted workflow assistant, **not a sandbox, certified executor or transactional application system**.
 Code workers edit the chosen working copy directly; recovery can require human work.
 Model prose, tool results and human Done do not certify checks or code.
+
+## Install
+
+Cadence needs Node `>=22.19.0` with npm and [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent), installed and logged in to a model provider: the service reads Pi's `auth.json` and `models.json` and never creates its own login.
+
+```sh
+npm install -g @abelxiaoxing/cadence
+cadence server install
+cadence token-link --workspace ~/cadence --reveal
+```
+
+The global install puts `cadence` (and its alias `cadence-service`) on `PATH`.
+It needs no install script: the postinstall only creates a missing `~/.pi/agent/cadence/.env` research template, and npm may skip it (npm 12 blocks install scripts by default) without any other effect.
+`cadence server install` registers and starts the background service for `~/cadence` on `http://127.0.0.1:17423`; `--workspace /absolute/project` selects another workspace.
+
+| Platform | Service                                                                                     | Starts                                       |
+| -------- | ------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| Linux    | systemd user unit `~/.local/share/systemd/user/cadence.service`                             | At boot through linger, else at login        |
+| macOS    | LaunchAgent `~/Library/LaunchAgents/com.abelxiaoxing.cadence.plist`                         | At login                                     |
+| Windows  | `HKCU\…\CurrentVersion\Run\Cadence`, starting `%LOCALAPPDATA%\cadence-server\cadence.vbs`   | At login, without a console window           |
+
+On Linux, install enables linger without a prompt when logind allows it, and otherwise asks `loginctl enable-linger`, which may want your password; `--no-linger` (or `CADENCE_LINGER=0`) keeps the service to login.
+Open the printed private link once; the browser then keeps an HttpOnly cookie, and `http://127.0.0.1:17423/` alone only says how to get the link.
+For native `/cadence`, let Pi load the same copy: `pi install "$(npm root -g)/@abelxiaoxing/cadence"` records that path and loads it in place, so an npm upgrade updates both.
+
+```sh
+cadence server status
+cadence server restart     # after an upgrade or a models.json change
+cadence server stop
+cadence server uninstall   # before npm uninstall -g, which runs no Cadence script
+```
+
+Upgrade with `npm install -g @abelxiaoxing/cadence@latest`, then `cadence server restart`, which rewrites the service definition with the current Node and package paths.
+Restart, stop and uninstall go through the authenticated orderly Stop, so running work is stopped, not detached; on macOS and Windows a Stop that is not confirmed changes nothing.
+`stop` keeps the registration, so the service starts again at the next boot or login.
+Uninstall removes only the generated definition; workspace, history, linger and Pi sources stay.
+
+Pi's own package install (`pi install npm:@abelxiaoxing/cadence`) still loads the native client, but its copy has no `cadence` on `PATH`; register the service with `node ~/.pi/agent/npm/node_modules/@abelxiaoxing/cadence/src/service-cli.mjs server install`, the command Pi's startup warning names while no service is registered.
+Keep one copy: two copies drift apart on upgrade, and a native client refuses an owner whose service contract differs from its own.
+A unit registered by an earlier version's Pi install hook keeps running; `cadence server restart` from the copy you keep rewrites it, and `pi update` no longer restarts it.
+See [the background service](docs/service-management.md#background-service) for exact behavior and limits.
 
 ## Load and start explicitly
 
@@ -25,30 +66,16 @@ Before using the shared owner, stop older Cadence sessions and choose one coordi
 No old records, databases, credentials or uncertain locks are imported, reset or cleaned.
 
 ```sh
-cadence-service start --workspace /absolute/project
-cadence-service status --workspace /absolute/project
-cadence-service token-link --workspace /absolute/project --reveal
+cadence start --workspace /absolute/project
+cadence status --workspace /absolute/project
+cadence token-link --workspace /absolute/project --reveal
 ```
 
-Use the installed `cadence-service` bin, or `node /absolute/cadence/src/service-cli.mjs` followed by those arguments.
+Use the installed `cadence` bin (or `cadence-service`), or `node /absolute/cadence/src/service-cli.mjs` followed by those arguments.
 Default binding is numeric loopback `127.0.0.1:17423`; `--foreground` is available for an explicitly configured supervisor.
 Start reads the existing Pi agent directory (or an explicit private configuration), never creates another login/profile.
 A directory that contains the private state home (the home directory and its ancestors, such as `C:\Users\<you>`) cannot be a workspace, so commands there use `~/cadence` instead of refusing; only `start` creates it, and `/cadence` started there attaches to that owner.
 See [service management](docs/service-management.md) for configuration, model/auth policy, Stop, diagnosis and informed recovery.
-
-### Linux autostart after `pi install`
-
-`pi install npm:@abelxiaoxing/cadence` (user scope) writes `~/.local/share/systemd/user/cadence.service`, enables it and starts the owner for `~/cadence` on `http://127.0.0.1:17423`.
-Set an existing absolute `CADENCE_WORKSPACE` at install to choose another workspace, or `CADENCE_AUTOSTART=0` to skip registration.
-That first registration also enables linger when logind allows it without any authorization prompt, so the service starts at boot instead of at login; `CADENCE_LINGER=0` skips it, and later updates keep `loginctl disable-linger`.
-Enter the WebUI once with the link from `cadence-service token-link --workspace ~/cadence --reveal`; installation prints that command, not the token.
-Each `pi update` restarts the unit through orderly Stop, so running work is stopped rather than detached; `systemctl --user disable --now cadence` or `mask` is kept across upgrades.
-Run `cadence-service autostart remove` before `pi remove`; after `remove`, a later `pi update` registers the unit again as a first registration, so keep it off with `disable` or `mask` instead.
-The npm client hides dependency install-script output, and with `strict-allow-scripts` it skips those scripts entirely.
-Approve Cadence once with `npm install-scripts approve @abelxiaoxing/cadence` inside `~/.pi/agent/npm` (or `npm config set allow-scripts=@abelxiaoxing/cadence --location=user`), or run `cadence-service autostart install --linger`, which may ask for your password.
-Pi's session-start card names that command (without `--linger` under `CADENCE_LINGER=0`) while Pi's copy has no unit on a systemd machine, and `loginctl enable-linger` while the enabled unit only starts at login.
-Until the optional SDK and Pi's `auth.json` exist, registration or start waits instead of quarantining an owner.
-See [the systemd user unit](docs/service-management.md#linux-systemd-user-unit) for exact behavior and limits.
 
 ### Native terminal
 
@@ -140,7 +167,8 @@ Outbound provider proxy policy is independent of inbound HTTPS and refuses unsup
 - `skills/git-commit` requires an explicit commit request and deterministic audit; task review never commits.
 - Three pinned professional profiles in `agents/` provide readonly design/diagnosis and direct-edit implementation instructions, not execution authority.
 - `config/` contains optional research/check examples.
-  Missing-only user `.env` template creation and the Linux autostart refresh above are the only postinstall behaviors; no build/Git/provider operation runs.
+  Missing-only user `.env` template creation is the only postinstall behavior; it registers no service, and nothing depends on npm running it.
+  No build/Git/provider operation runs.
 - `node /absolute/cadence/src/operator-cli.mjs doctor|runs [workspace]` remains readonly and independent of service startup.
 
 ## Development and evidence
@@ -179,7 +207,7 @@ Historical logs are not runtime dependencies, and removing development tooling m
 | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
 | `src/index.ts`, `src/task-shell.ts`, `src/native-*.ts`                                                 | Nonactivating Pi entry, raw native consent, typed service attachment, paging and verified export; no embedded executor    |
 | `src/agent-panel.ts`, `src/agent-panel-model.ts`, `src/agent-panel-cadence.ts`                         | Readonly agent panel over Pi's `subagent:*` bus, fed with a running owner's children; never starts or cancels work        |
-| `src/service/host.ts`, `src/service/cli.ts`, `src/service/autostart.ts`                                | Real single-owner composition, explicit management and the generated Linux user unit; management entry stays SDK-free     |
+| `src/service/host.ts`, `src/service/cli.ts`, `src/service/{autostart,launchd,login-run}.ts`            | Single-owner composition, explicit management and generated per-user service definitions; management stays SDK-free       |
 | `src/service/{coordination,private-files,owner,recovery}.ts`                                           | Canonical overlap exclusion, exact locks, original-operation lifetime and informed local recovery                         |
 | `src/service/{admission,task-actions,graph,scheduler}.ts`                                              | Context-bound actions, actual current views, finite graph scheduling, check/review barriers                               |
 | `src/service/{model-config,model-context,model-choice,auth-network}.ts`, `src/sdk-network.ts`          | Existing Pi sources, explicit exact model/thinking, original OAuth writeback and strict shared network policy             |
@@ -326,12 +354,14 @@ Byte values are UTF-8/encoded bounds where specified; they are not targets to si
 | Invalid read proof or changed source/key                       | Refuse; never rebase or interpret budget exhaustion as absence                      |
 | Dirty/partial/extra compiled assets or unsafe archive          | Refuse in place; no source refill, wildcard serving or fallback build               |
 | Extension import outside Pi aliases declared only as a peer    | Exact production dependency; Pi's install omits peers and Pi fails to start         |
-| Install without the optional SDK or Pi `auth.json`             | No unit registration or start; Pi sources refuse unregistered, no SDK quarantines   |
+| Server install without the optional SDK or Pi `auth.json`      | No SDK: nothing written; no `auth.json`: registered, not started (no quarantine)    |
 | Package files hard-linked into a package manager's store (Bun) | Packaged reads ignore link count, bind exact bodies; other files stay single-link   |
 | Host refuses during startup                                    | Fixed code/stage only; unregistered exits `refused`, registered stays `quarantined` |
 | Workspace containing the private state home                    | Land on `~/cadence` (only start creates it); never move state into the working copy |
-| Upgrade changes the unit workspace or Node path                | Stop with the loaded unit definition before rewriting, not only SIGTERM             |
-| Install hook cannot prompt and npm hides its output            | Only a first registration tries passwordless linger; the startup card names the gap |
+| Restart changes the definition's workspace or Node path        | Stop with the loaded definition before rewriting, not only a signal                 |
+| npm skips or hides the install hook (`allow-scripts`)          | Nothing depends on it; only `cadence server install` registers a service            |
+| Service manager that only signals (launchd, Windows login)     | Orderly Stop first; an unconfirmed Stop changes nothing; no SIGTERM or `taskkill`   |
+| Pi's TUI replaces an info status with the next one             | The missing-service hint is its own warning notification                            |
 
 Good: current context → explicit grant → durable acceptance → genuine original native/storage settlement → exact retained dependency → real checks → human review.
 Base: a client leaves and another reattaches to the same accepted run without launching it again.
@@ -365,7 +395,7 @@ Regression owners:
 - `agent-panel`, `agent-panel-model`, `agent-panel-cadence`: panel keys/rendering and readonly owner observation that never starts, cancels or replays work.
 - `test/web/`: adapted pure/SSR tests separately from actual built-browser contexts, HTTPS, mixed clients, focus/viewports and complete downloads.
 - `package-*`, `distribution`, `service-package`, `independence`: exact tar/member/body/import/notice closure and nonactivating discovery.
-- `service-autostart`, `install-config`: Pi user-scope gating, unit escaping, upgrade/disable/mask/foreign handling and orderly removal.
+- `service-autostart`, `install-config`: explicit `cadence server` registration on systemd, launchd and the Windows Run key, definition escaping, restart/disable/mask/foreign handling, orderly Stop before every change and a postinstall that registers nothing.
 - `workspace-landing`: home-directory redirection to `~/cadence` across management, native attach and observation.
 
 Regenerate operator/service/native/browser outputs only through their canonical builders; `--check` variants compare new private output without overwriting canonical bytes.
@@ -373,6 +403,12 @@ Publish `web/dist` from Node: Vite run under Bun lays out its preload helper dif
 Review the independently enumerated package member list and every emitted body, not a count or an expected list generated from the tar under test.
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
+
+### Release 2.0.5 acceptance snapshot
+
+Full `verify` passed on the 2.0.5 release tree (`dce261b` plus the version bump): 1940 root tests in 78 files (27 Windows-only controls skipped on Linux), 111 web tests, 5 real-browser scenarios and the 133-member pack audit, in the 2.0.3 environment below.
+On that host `cadence server status` read the live unit that 2.0.4's Pi install hook had registered as `active` and `enabled` with linger on, so earlier units stay manageable.
+The launchd and Windows Run backends ran only against injected launchctl, reg.exe and orderly-Stop fakes; real macOS and Windows registration remains unqualified.
 
 ### Release 2.0.4 acceptance snapshot
 

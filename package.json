@@ -1,6 +1,6 @@
 {
   "name": "@abelxiaoxing/cadence",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "description": "Shared Pi task workspace: native terminal and WebUI, persistent service, checks and human review.",
   "license": "MIT",
   "type": "module",
@@ -20,6 +20,7 @@
     "src/agent-panel-cadence.ts",
     "src/agent-panel-model.ts",
     "src/agent-panel.ts",
+    "src/cadence-service.mjs",
     "src/index.ts",
     "src/install-config.mjs",
     "src/native-build.ts",
@@ -150,6 +151,7 @@
     "@earendil-works/pi-coding-agent": "0.84.3"
   },
   "bin": {
-    "cadence-service": "./src/service-cli.mjs"
+    "cadence": "./src/service-cli.mjs",
+    "cadence-service": "./src/cadence-service.mjs"
   }
 }
