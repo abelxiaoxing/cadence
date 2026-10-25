@@ -24,13 +24,14 @@ They may still report blocked scripts from the pinned Pi SDK's dependencies: `@g
 `cadence server install` registers and starts the background service for `~/cadence` on `http://127.0.0.1:17423`; `--workspace /absolute/project` selects another workspace.
 It prints the private link to open, `http://127.0.0.1:17423/?token=…`.
 The port and that token live with the research settings in `~/.pi/agent/cadence/.env`.
-Install creates that file from the research template when missing (your own 0600 file; Pi's startup card names the path until it exists), and adds either line when it is missing, never changing an existing one:
+Install creates that file from the research template when missing (Pi's startup card names the path until it exists), and adds either line when it is missing, never changing an existing one:
 
 ```sh
 CADENCE_PORT=17423
 CADENCE_TOKEN=<random 43 characters>
 ```
 
+A file you made yourself works as it is, like Pi's own sources: any permissions (a note suggests `chmod 600` when other users can read it) and dotfiles links; a refusal names the line and reason.
 The token admits anyone who has it to the workspace, so keep the file and the link private; a token you choose needs at least 32 characters.
 To change either, edit the line and run `cadence server restart`, which prints the new link; old links and browser cookies stop working.
 A workspace that an earlier version started with a generated token switches to the file at that restart and keeps its history.
@@ -375,6 +376,7 @@ Byte values are UTF-8/encoded bounds where specified; they are not targets to si
 | Pi's TUI replaces an info status with the next one             | The missing-service hint is its own warning notification                            |
 | Token source the user edits (`CADENCE_TOKEN` in `.env`)        | Read once before binding, never bound for the run: an edit cannot fence Stop        |
 | Saved port/token source differs from `.env`                    | Only when stopped, reselect just those under the reservation; running ones refuse   |
+| User-made `.env` (0755/0644, umask 002, dotfiles links)        | Like Pi's sources: ownership only, links followed; each refusal names its reason    |
 
 Good: current context → explicit grant → durable acceptance → genuine original native/storage settlement → exact retained dependency → real checks → human review.
 Base: a client leaves and another reattaches to the same accepted run without launching it again.

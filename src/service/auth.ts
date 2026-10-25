@@ -26,7 +26,6 @@ import {
 import {
   CONFIG_BYTES,
   readServerConfig,
-  type ServerConfigFile,
   TOKEN_BYTES,
   accessToken as token,
   withToken,
@@ -342,7 +341,7 @@ export class AccessMaterial {
       throw new ContractError("unsupported-context");
     // The server configuration is the user's file: one whose token no longer
     // matches the running one holds a pending edit, refused before any effect.
-    let configured: ServerConfigFile | undefined;
+    let configured: ReturnType<typeof readServerConfig> | undefined;
     if (this.config.source === "config" && this.config.path) {
       configured = readServerConfig(this.config.path);
       if (!sameSecret(configured.config.token, this.secret))
@@ -361,9 +360,10 @@ export class AccessMaterial {
         );
       // Only the token line changes; the port, possibly edited for the next
       // start, and every research setting stay.
+      // The resolved file: a dotfiles link stays a link.
       if (configured)
         configured.files.replace(
-          configured.path,
+          configured.real,
           configured.snapshot,
           withToken(configured, secret),
           CONFIG_BYTES,
