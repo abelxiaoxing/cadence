@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ContentExplorer } from "../components/history/ContentExplorer";
 import { PageControls } from "../components/history/PageControls";
 import { usePage } from "../history/use-page";
+import { useT } from "../i18n/locale";
 import type { HistoryRecord, ListRequest, ServiceClient } from "../types";
 import { timelineBridge } from "./timeline-adapter";
 export function TimelineView({
@@ -13,14 +14,15 @@ export function TimelineView({
   seed: ListRequest;
   onSearch: () => void;
 }) {
+  const { t } = useT();
   const pager = usePage(client, { ...seed, reader: "events" }),
     page = pager.page;
   return (
     <section className="timeline-view">
       <p>
-        Committed order, not wall time. Replay advances visualization only. Raw
-        observations retain clock/sequence provenance; unknown timing is not
-        reconstructed.
+        {t(
+          "Committed order, not wall time. Replay advances visualization only. Raw observations retain clock/sequence provenance; unknown timing is not reconstructed.",
+        )}
       </p>
       <PageControls pager={pager} />
       {page && !("kind" in page) && (
@@ -46,6 +48,7 @@ function MountedTimeline({
   records: HistoryRecord[];
   onSearch: () => void;
 }) {
+  const { t, locale } = useT();
   const ref = useRef<HTMLDivElement>(null),
     [fields, setFields] = useState(false),
     [error, setError] = useState(false);
@@ -64,6 +67,7 @@ function MountedTimeline({
             records,
             () => setFields(true),
             () => searchRef.current(),
+            locale,
           ),
         );
       })
@@ -74,13 +78,14 @@ function MountedTimeline({
       disposed = true;
       cleanup?.();
     };
-  }, [records, seed.scope.id]);
+  }, [records, seed.scope.id, locale]);
   return (
     <>
       {error && (
         <p role="alert">
-          Bundled timeline unavailable; retained events remain accessible, no
-          CDN fallback.
+          {t(
+            "Bundled timeline unavailable; retained events remain accessible, no CDN fallback.",
+          )}
         </p>
       )}
       <div className="timeline-mount" ref={ref} />

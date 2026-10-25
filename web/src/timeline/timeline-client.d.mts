@@ -32,6 +32,7 @@ export type TimelineData =
       analysis: { position: string };
     };
 export interface TimelineReadBridge {
+  lang: "en" | "zh";
   readState(): void;
   readSegments(id: string): void;
   readSegment(id: string, key: string): void;

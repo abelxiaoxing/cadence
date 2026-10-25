@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { usePage } from "../../history/use-page";
+import { useT } from "../../i18n/locale";
 import type {
   GraphReadRequest,
   ListRequest,
@@ -18,6 +19,7 @@ export function RunBrowser({
   seed: ListRequest;
   onScope: (s: Scope) => void;
 }) {
+  const { t } = useT();
   const pager = usePage(client, { ...seed, reader: "runs" }),
     page = pager.page;
   const [graph, setGraph] = useState<GraphReadRequest>();
@@ -39,7 +41,7 @@ export function RunBrowser({
                   })
                 }
               >
-                Open retained episode/child details
+                {t("Open retained episode/child details")}
               </button>
               {r.projection.admission.graph && (
                 <button
@@ -58,7 +60,7 @@ export function RunBrowser({
                       });
                   }}
                 >
-                  Inspect admitted graph and plan
+                  {t("Inspect admitted graph and plan")}
                 </button>
               )}
             </article>

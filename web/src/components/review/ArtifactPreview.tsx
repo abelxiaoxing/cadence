@@ -1,6 +1,7 @@
 /* Adapted from pi-web-ui FilePreview.tsx raw/Markdown/ToC/line selection/zoom family.
  * MIT (c) 2026 xing-shuyin. Only a retained field page, no host paths/media/editor/scripts. */
 import { useLayoutEffect, useRef, useState } from "react";
+import { useT } from "../../i18n/locale";
 import {
   assignHeadingIds,
   shouldShowToc,
@@ -11,6 +12,7 @@ import { CopyButton } from "../rich/CopyButton";
 import { Markdown } from "../rich/Markdown";
 import { DiffView } from "./DiffView";
 export function ArtifactPreview({ text }: { text: string }) {
+  const { t } = useT();
   const [view, setView] = useState<"raw" | "markdown" | "diff">("raw"),
     [wrap, setWrap] = useState(true),
     [zoom, setZoom] = useState(1),
@@ -43,7 +45,7 @@ export function ArtifactPreview({ text }: { text: string }) {
     <div className="fp-preview">
       <div className="fp-head toolbar">
         <label>
-          View
+          {t("View")}
           <select
             value={view}
             onChange={(e) =>
@@ -56,39 +58,40 @@ export function ArtifactPreview({ text }: { text: string }) {
               )
             }
           >
-            <option value="raw">Raw text / lines</option>
-            <option value="markdown">Safe Markdown</option>
-            <option value="diff">Observed diff</option>
+            <option value="raw">{t("Raw text / lines")}</option>
+            <option value="markdown">{t("Safe Markdown")}</option>
+            <option value="diff">{t("Observed diff")}</option>
           </select>
         </label>
         <button type="button" onClick={() => setWrap((v) => !v)}>
-          Wrap: {wrap ? "on" : "off"}
+          {wrap ? t("Wrap: on") : t("Wrap: off")}
         </button>
         <button
           type="button"
           onClick={() => setZoom((v) => Math.min(2, v + 0.1))}
         >
-          Zoom +
+          {t("Zoom +")}
         </button>
         <button
           type="button"
           onClick={() => setZoom((v) => Math.max(0.8, v - 0.1))}
         >
-          Zoom −
+          {t("Zoom −")}
         </button>
         <CopyButton
           text={sel ? lines.slice(sel.start - 1, sel.end).join("\n") : text}
         />
       </div>
       <p className="fp-notice">
-        Captured page only, not a current filesystem read. Line numbers are
-        page-local. Full retained paging and copy are available above.
+        {t(
+          "Captured page only, not a current filesystem read. Line numbers are page-local. Full retained paging and copy are available above.",
+        )}
       </p>
       <div style={{ fontSize: `${zoom}em` }}>
         {view === "markdown" ? (
           <div className="fp-toc-layout">
             {shouldShowToc(toc) && (
-              <nav className="fp-toc" aria-label="Page headings">
+              <nav className="fp-toc" aria-label={t("Page headings")}>
                 {toc.map((h) => (
                   <button
                     type="button"
@@ -121,7 +124,7 @@ export function ArtifactPreview({ text }: { text: string }) {
                 <button
                   type="button"
                   className="fp-num"
-                  aria-label={`Select page line ${n}`}
+                  aria-label={t("Select page line {line}", { line: n })}
                   onClick={(e) => {
                     if (!e.shiftKey) anchor.current = n;
                     setSel({
@@ -140,9 +143,12 @@ export function ArtifactPreview({ text }: { text: string }) {
       </div>
       {sel && (
         <footer className="fp-foot">
-          Selected page lines {sel.start}–{sel.end}
+          {t("Selected page lines {start}–{end}", {
+            start: sel.start,
+            end: sel.end,
+          })}
           <button type="button" onClick={() => setSel(null)}>
-            Clear selection
+            {t("Clear selection")}
           </button>
         </footer>
       )}

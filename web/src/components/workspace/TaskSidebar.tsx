@@ -10,6 +10,7 @@ import {
   FiPlus,
 } from "react-icons/fi";
 import { usePage } from "../../history/use-page";
+import { useT } from "../../i18n/locale";
 import { buildNavigationRows } from "../../navigation/assignment-rows";
 import type {
   ListRequest,
@@ -44,6 +45,7 @@ export function TaskSidebar({
     after: null,
     limit: 50,
   };
+  const { t, tx } = useT();
   const tasks = usePage(client, request),
     [collapsed, setCollapsed] = useState(new Set<string>());
   const rows = useMemo(
@@ -74,20 +76,23 @@ export function TaskSidebar({
     <aside className="panel panel-left lp-panel">
       <section className="lp-section grow">
         <header className="lp-section-header">
-          <h2 className="lp-section-title">Tasks{countLabel}</h2>
+          <h2 className="lp-section-title">
+            {t("Tasks")}
+            {countLabel}
+          </h2>
           <div className="lp-section-actions">
             <button
               type="button"
               className="lp-section-action"
-              aria-label="New task"
-              title="New task"
+              aria-label={t("New task")}
+              title={t("New task")}
               onClick={onNew}
             >
               <FiPlus aria-hidden="true" />
             </button>
           </div>
         </header>
-        <nav aria-label="Tasks" className="lp-section-body task-list">
+        <nav aria-label={t("Tasks")} className="lp-section-body task-list">
           {records?.map((r) =>
             r.kind === "task" ? (
               <button
@@ -111,21 +116,23 @@ export function TaskSidebar({
             ) : null,
           )}
           {taskCount === 0 && (
-            <p className="panel-empty">No retained task on this page.</p>
+            <p className="panel-empty">{t("No retained task on this page.")}</p>
           )}
           <PageControls pager={tasks} />
         </nav>
         <p className="panel-hint">
-          One checkout owner. Open/history never executes.
+          {t("One checkout owner. Open/history never executes.")}
         </p>
       </section>
       {taskId && (
         <section className="lp-section episodes">
           <header className="lp-section-header">
-            <h3 className="lp-section-title">Active and recent episodes</h3>
+            <h3 className="lp-section-title">
+              {t("Active and recent episodes")}
+            </h3>
           </header>
           <div className="lp-section-body">
-            <nav aria-label="Runs and assignments">
+            <nav aria-label={t("Runs and assignments")}>
               {rows.map((row) => {
                 const state = row.c.failed
                   ? "failed"
@@ -144,7 +151,7 @@ export function TaskSidebar({
                       <button
                         type="button"
                         className="ep-toggle"
-                        aria-label="Toggle assignments"
+                        aria-label={t("Toggle assignments")}
                         aria-expanded={!row.isCollapsed}
                         onClick={() =>
                           setCollapsed((prev) => {
@@ -179,18 +186,18 @@ export function TaskSidebar({
                         {row.isCollapsed && " "}
                         {row.isCollapsed && (
                           <span className="session-sub session-outcome">
-                            {`${row.descendantCount} descendants${row.hasFailure ? " / failed child" : ""}${row.hasUnknown ? " / unknown child" : ""}`}
+                            {`${t("{count} descendants", { count: row.descendantCount })}${row.hasFailure ? t(" / failed child") : ""}${row.hasUnknown ? t(" / unknown child") : ""}`}
                           </span>
                         )}
                       </span>{" "}
-                      <span className={`ep-state ${state}`}>{state}</span>
+                      <span className={`ep-state ${state}`}>{tx(state)}</span>
                     </button>
                   </div>
                 );
               })}
               {rows.length === 0 && (
                 <p className="panel-empty">
-                  No active or recent episode observed.
+                  {t("No active or recent episode observed.")}
                 </p>
               )}
             </nav>
@@ -200,7 +207,7 @@ export function TaskSidebar({
               onClick={() => onScope({ kind: "task", id: taskId })}
             >
               <FiList aria-hidden="true" />
-              All retained episodes for task
+              {t("All retained episodes for task")}
             </button>
           </div>
         </section>

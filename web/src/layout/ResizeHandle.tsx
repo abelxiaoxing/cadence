@@ -1,6 +1,7 @@
 /* Adapted from pi-web-ui App/RightPanel sizing and panel-sash.ts weight model.
  * MIT (c) 2026 xing-shuyin. Pointer and keyboard change display geometry only. */
 import { useEffect, useRef } from "react";
+import { useT } from "../i18n/locale";
 import { applySashDrag } from "./panel-sash";
 export function ResizeHandle({
   side,
@@ -11,6 +12,7 @@ export function ResizeHandle({
   width: number;
   onResize: (w: number) => void;
 }) {
+  const { t } = useT();
   const dispose = useRef<(() => void) | undefined>(undefined);
   useEffect(() => () => dispose.current?.(), []);
   return (
@@ -24,7 +26,7 @@ export function ResizeHandle({
       className="resize-handle"
       tabIndex={0}
       aria-orientation="vertical"
-      aria-label={`Resize ${side} pane`}
+      aria-label={t(side === "left" ? "Resize left pane" : "Resize right pane")}
       aria-valuemin={220}
       aria-valuemax={600}
       aria-valuenow={width}
