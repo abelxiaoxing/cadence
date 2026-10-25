@@ -420,6 +420,14 @@ Review the independently enumerated package member list and every emitted body, 
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
 
+### Release 2.0.8 acceptance snapshot
+
+Full `verify` passed on the 2.0.8 release tree (`7a40be6` plus the version bump), in the 2.0.3 environment below.
+It ran 1948 root tests in 78 files (27 Windows-only controls skipped on Linux), 111 web tests, 5 real-browser scenarios and the 132-member pack audit, and CI 40201203720 passed 12/12 on the candidate `1c372b2` (this commit before its snapshot).
+The fix answers a 2.0.7 report: `cadence server install` refused existing `.env` files with one message.
+The 2.0.7 refusal was reproduced for a 0755 directory from the older `mkdir -p` docs, 0644 editor files, umask 002 and a symlinked `~/.pi`.
+Those layouts now install, a dotfiles link stays a link, and a remaining refusal (an `export` line) names its line.
+
 ### Release 2.0.7 acceptance snapshot
 
 Full `verify` ran on the 2.0.7 release tree (`7973e23` plus the version bump), in the 2.0.3 environment below.
