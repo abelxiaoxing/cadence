@@ -36,7 +36,7 @@ cadence server uninstall
 ```
 
 Only these explicit commands register, change or remove the service; no package install, update hook, `/cadence` or browser visit does.
-The package has no install script, so npm 12 and Bun skipping untrusted scripts by default changes nothing; a blocked `@google/genai` preinstall from the pinned Pi SDK only echoes `no-op`.
+The package has no install script, so npm 12 and Bun skipping untrusted scripts by default changes nothing; the pinned Pi SDK's blocked `@google/genai` preinstall only echoes `no-op`, and its `protobufjs` postinstall only warns about version schemes.
 `install` also creates the research template `~/.pi/agent/cadence/.env` when it is missing, never overwriting it, whatever the service result.
 `install` works from any package location and runs `start --foreground --workspace` (Linux, macOS) or `start --workspace` (Windows) from that copy with the installing Node, without `--port`.
 The workspace is `~/cadence` (created if missing), an existing absolute `--workspace`, or on later installs the one the definition already runs; a workspace containing the service's state home lands on `~/cadence` with a note.

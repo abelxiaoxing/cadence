@@ -21,7 +21,7 @@ cadence token-link --workspace ~/cadence --reveal
 
 The global install puts `cadence` (and its alias `cadence-service`) on `PATH`.
 Cadence ships no install script, so npm 12 and Bun, which skip untrusted install scripts by default, change nothing.
-They may still report one blocked script from the pinned Pi SDK (`@google/genai`, whose preinstall only echoes `no-op`); it needs no approval.
+They may still report blocked scripts from the pinned Pi SDK's dependencies: `@google/genai`'s preinstall only echoes `no-op`, and `protobufjs`'s postinstall only warns about a dependent's version scheme, so neither needs approval.
 `cadence server install` registers and starts the background service for `~/cadence` on `http://127.0.0.1:17423`; `--workspace /absolute/project` selects another workspace.
 It also creates the research template `~/.pi/agent/cadence/.env` when missing; Pi's startup card names that path until it exists.
 
@@ -408,7 +408,7 @@ Preserve original license bytes through their precise Git attributes; line-endin
 ### Release 2.0.6 acceptance snapshot
 
 Full `verify` passed on the 2.0.6 release tree (`8d31512` plus the version bump): 1940 root tests in 78 files (27 Windows-only controls skipped on Linux), 111 web tests, 5 real-browser scenarios and the 132-member pack audit, in the 2.0.3 environment below.
-The package ships no install script; Bun 1.4 had reported 2.0.5's postinstall and the Pi SDK's no-op `@google/genai` preinstall as blocked, and only the latter can remain.
+The package ships no install script: in isolated global installs, Bun 1.3.14 blocked three scripts for 2.0.5 (Cadence's postinstall and the Pi SDK's `@google/genai` and `protobufjs` scripts) and only those two SDK scripts for 2.0.6, and npm 11 lists only them.
 
 ### Release 2.0.5 acceptance snapshot
 
