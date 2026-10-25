@@ -28,7 +28,6 @@
   "package/src/agent-panel.ts",
   "package/src/cadence-service.mjs",
   "package/src/index.ts",
-  "package/src/install-config.mjs",
   "package/src/native-build.ts",
   "package/src/native-client.ts",
   "package/src/native-export.ts",
