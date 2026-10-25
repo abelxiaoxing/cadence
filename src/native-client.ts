@@ -2,7 +2,7 @@
 
 import { existsSync, realpathSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Agent, Dispatcher1Wrapper } from "undici";
 import { nativeBuild } from "./native-build.ts";
@@ -20,34 +20,59 @@ export const MANAGEMENT_GUIDANCE =
   "Cadence owner absent, unavailable or incompatible. Explicitly run cadence-service status --workspace <path>, cadence-service diagnose --workspace <path>, or cadence-service start --workspace <path>. Stop older Cadence sessions first. For retained fences use cadence-service recover inspect; resolve requires a local terminal and separate process, credential and storage acknowledgments. Never treat unavailable/quarantined as stopped. No service was started and no embedded executor is available.";
 
 const UNIT = "cadence.service";
+const LABEL = "com.abelxiaoxing.cadence";
 /** Exists only when systemd booted the machine (sd_booted); without it there
- * is no user manager, and `autostart install` reports unavailable. */
+ * is no user manager, and `server install` reports unavailable. */
 const SYSTEMD_BOOTED = "/run/systemd/system";
 const xdg = (value: string | undefined, fallback: string) =>
   value && isAbsolute(value) ? value : fallback;
-const cliPath = () =>
-  JSON.stringify(fileURLToPath(new URL("./service-cli.mjs", import.meta.url)));
-/** CADENCE_LINGER=0 keeps the explicit command login-only, too. */
-const installCommand = (env: NodeJS.ProcessEnv) =>
-  `node ${cliPath()} autostart install${env.CADENCE_LINGER === "0" ? "" : " --linger"}`;
+/** The definition `cadence server install` writes, or undefined without a
+ * supported user service manager. */
+function definition(o: AutostartObservation): string | undefined {
+  switch (o.platform) {
+    case "linux":
+      return existsSync(o.systemd)
+        ? join(
+            xdg(o.env.XDG_DATA_HOME, join(o.home, ".local", "share")),
+            "systemd",
+            "user",
+            UNIT,
+          )
+        : undefined;
+    case "darwin":
+      return join(o.home, "Library", "LaunchAgents", `${LABEL}.plist`);
+    case "win32":
+      return join(
+        xdg(o.env.LOCALAPPDATA, join(o.home, "AppData", "Local")),
+        "cadence-server",
+        "cadence.vbs",
+      );
+    default:
+      return undefined;
+  }
+}
+const bootStart = (o: AutostartObservation) =>
+  o.platform === "linux" && o.env.CADENCE_LINGER !== "0";
+/** Pi's managed copy puts no `cadence` bin on PATH; CADENCE_LINGER=0 keeps
+ * the suggested command login-only, too. */
+const installCommand = (o: AutostartObservation) =>
+  `${piUserCopy(o) ? `node ${JSON.stringify(join(o.root, "src", "service-cli.mjs"))}` : "cadence"} server install${o.platform === "linux" && o.env.CADENCE_LINGER === "0" ? " --no-linger" : ""}`;
 
-/** Linux: npm may skip or hide the Pi install hook that registers the user
- * unit, so name the explicit command when it is absent. Reads two paths only. */
-export function autostartHint(): string {
-  if (process.platform !== "linux" || !existsSync(SYSTEMD_BOOTED)) return "";
-  const data = xdg(
-    process.env.XDG_DATA_HOME,
-    join(homedir(), ".local", "share"),
-  );
-  if (existsSync(join(data, "systemd", "user", UNIT))) return "";
-  return `\nTo run the shared service and WebUI (default http://127.0.0.1:17423) ${process.env.CADENCE_LINGER === "0" ? "at login" : "at boot"}: ${installCommand(process.env)}`;
+/** Name the explicit command while no background service is registered.
+ * Reads paths only. */
+export function autostartHint(
+  o: AutostartObservation = hostObservation(),
+): string {
+  const path = definition(o);
+  if (!path || existsSync(path)) return "";
+  return `\nTo run the shared service and WebUI (default http://127.0.0.1:17423) ${bootStart(o) ? "at boot" : "at login"}: ${installCommand(o)}`;
 }
 
 export interface AutostartObservation {
   platform: NodeJS.Platform;
   env: NodeJS.ProcessEnv;
   home: string;
-  /** Package root; only Pi's managed user copy registers itself. */
+  /** Package root; installed copies, not checkouts, get the startup notice. */
   root: string;
   /** logind keeps one flag file per lingering user name. */
   lingerFile: string;
@@ -95,26 +120,27 @@ function piUserCopy(o: AutostartObservation): boolean {
     return false;
   }
 }
-/** Startup-card line while boot start of the Linux user unit needs a human
- * step. Path observations only: nothing is created, spawned or started. A
- * machine without systemd, a disabled or (also runtime-)masked unit and
- * CADENCE_AUTOSTART=0 are quiet; CADENCE_LINGER=0 never suggests linger. */
+/** An npm or Pi package copy; a checkout loaded with `pi -e` is explicit by design. */
+function installedCopy(o: AutostartObservation): boolean {
+  return piUserCopy(o) || resolve(o.root).split(sep).includes("node_modules");
+}
+/** Startup-card warning while the background service needs a human step.
+ * Path observations only: nothing is created, spawned or started. A machine
+ * without a supported user service manager, a disabled or (also runtime-)
+ * masked Linux unit and CADENCE_AUTOSTART=0 are quiet; CADENCE_LINGER=0 never
+ * suggests linger. */
 export function autostartNotice(
   o: AutostartObservation = hostObservation(),
 ): string | undefined {
-  if (
-    o.platform !== "linux" ||
-    o.env.CADENCE_AUTOSTART === "0" ||
-    !existsSync(o.systemd)
-  )
-    return;
-  const data = xdg(o.env.XDG_DATA_HOME, join(o.home, ".local", "share"));
-  const config = xdg(o.env.XDG_CONFIG_HOME, join(o.home, ".config"));
-  const boot = o.env.CADENCE_LINGER !== "0";
-  if (!existsSync(join(data, "systemd", "user", UNIT)))
-    return piUserCopy(o)
-      ? `Cadence服务：未注册${boot ? "开机" : ""}自启（npm 可能跳过或隐藏了安装脚本）。注册并${boot ? "开机" : "登录后"}启动：${installCommand(o.env)}`
+  if (o.env.CADENCE_AUTOSTART === "0") return;
+  const path = definition(o);
+  if (!path) return;
+  if (!existsSync(path))
+    return installedCopy(o)
+      ? `Cadence服务：后台服务未安装，WebUI（默认 http://127.0.0.1:17423）不会运行。安装并${bootStart(o) ? "开机" : "登录后"}自启：${installCommand(o)}`
       : undefined;
+  if (o.platform !== "linux") return;
+  const config = xdg(o.env.XDG_CONFIG_HOME, join(o.home, ".config"));
   const user = join(config, "systemd", "user");
   const runtime = o.env.XDG_RUNTIME_DIR;
   if (

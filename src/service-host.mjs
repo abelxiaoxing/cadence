@@ -16463,8 +16463,7 @@ Content-Length: 0\r
       }
       if (target2 === "/" && req.method === "GET") {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end(`Cadence: use the owner's token link to enter.
-`);
+        res.end("Cadence: enter with the private link that `cadence token-link --workspace <path> --reveal` prints on this machine (the `cadence server install` service uses ~/cadence by default).\n");
         return;
       }
       if (target2.startsWith("/local/v1/admin/")) {

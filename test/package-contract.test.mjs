@@ -69,7 +69,11 @@ describe("@abelxiaoxing/cadence standalone package contract", () => {
     });
     for (const name of Object.keys(pkg.optionalDependencies))
       expect(pkg.devDependencies?.[name]).toBeUndefined();
-    expect(pkg.bin).toEqual({ "cadence-service": "./src/service-cli.mjs" });
+    // Distinct files: `bun pm pack` writes a file once per bin name.
+    expect(pkg.bin).toEqual({
+      cadence: "./src/service-cli.mjs",
+      "cadence-service": "./src/cadence-service.mjs",
+    });
     expect(pkg.workspaces).toBeUndefined();
     expect(pkg.exports).toBeUndefined();
     const all = JSON.stringify(pkg);

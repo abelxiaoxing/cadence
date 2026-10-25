@@ -26,10 +26,10 @@ export default function register(pi: ExtensionAPI): void {
         projectTrusted: ctx.isProjectTrusted(),
       });
       const shown = lines.length > 1 ? lines.slice(1) : lines;
-      // npm hides the install hook's guidance; boot-start gaps surface here.
-      const autostart = autostartNotice();
-      if (autostart) shown.push(autostart);
       ctx.ui.notify(shown.join("\n"), "info");
+      // A later info status replaces this card in Pi's TUI; a warning stays.
+      const autostart = autostartNotice();
+      if (autostart) ctx.ui.notify(autostart, "warning");
     } catch {
       // Presentation only; shell lifecycle still runs.
     }

@@ -280,7 +280,7 @@ describe("Cadence startup configuration card", () => {
   });
 
   it.skipIf(process.platform !== "linux")(
-    "appends the boot-start notice for an enabled Cadence unit",
+    "adds the boot-start notice for an enabled Cadence unit as a separate warning",
     async () => {
       const input = fixture();
       isolateHome(input.home);
@@ -312,13 +312,14 @@ describe("Cadence startup configuration card", () => {
       await h.emit("session_shutdown", ctx);
       // Linger is the host's logind state; the notice's own cases are unit tests.
       const notice = autostartNotice();
+      // A later info status replaces the card in Pi's TUI; the warning stays.
       expect(notify).toHaveBeenCalledWith(
-        [
-          "Context7：匿名模式，无需密钥｜Grok：待配置 GROK_API_URL、GROK_API_KEY｜Tavily：未配置（可选）",
-          ...(notice ? [notice] : []),
-        ].join("\n"),
+        "Context7：匿名模式，无需密钥｜Grok：待配置 GROK_API_URL、GROK_API_KEY｜Tavily：未配置（可选）",
         "info",
       );
+      expect(
+        notify.mock.calls.filter(([, type]) => type === "warning"),
+      ).toEqual(notice ? [[notice, "warning"]] : []);
       if (notice) expect(notice).toContain("loginctl enable-linger");
     },
   );
