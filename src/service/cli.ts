@@ -20,10 +20,27 @@ import {
   configureAutostart,
   hostSystem,
   type LingerState,
+  type OwnerControl,
+  piUserInstall,
   removeAutostart,
+  stopAutostart,
 } from "./autostart.ts";
 import { closed, text } from "./contracts/core.ts";
 import { ServiceCoordination } from "./coordination.ts";
+import {
+  configureLaunchAgent,
+  LABEL,
+  launchAgentStatus,
+  removeLaunchAgent,
+  stopLaunchAgent,
+} from "./launchd.ts";
+import {
+  configureLoginRun,
+  launcherPath,
+  loginRunStatus,
+  removeLoginRun,
+  stopLoginRun,
+} from "./login-run.ts";
 import { localRecovery } from "./recovery-cli.ts";
 import {
   decodeHostInput,
@@ -379,22 +396,76 @@ async function observeStarted(
   }
   return { service };
 }
-function autostartGuidance(
+/** Orderly owner control for service managers that only signal (macOS, Windows). */
+const ownerControl: OwnerControl = {
+  async ownerStatus(workspace) {
+    try {
+      const observed = await serviceStatus(new ServiceCoordination(workspace));
+      return observed && typeof observed === "object" && "status" in observed
+        ? String(observed.status)
+        : "unavailable";
+    } catch {
+      return "unavailable";
+    }
+  },
+  async stopOwner(workspace) {
+    try {
+      const c = new ServiceCoordination(workspace);
+      const observed = await serviceStatus(c);
+      const status =
+        observed && typeof observed === "object" && "status" in observed
+          ? String(observed.status)
+          : "unavailable";
+      if (status === "absent" || status === "stopped") return "stopped";
+      return status === "alive" ? (await stopService(c)).status : status;
+    } catch {
+      return "unavailable";
+    }
+  },
+};
+type ServerAction = "install" | "status" | "restart" | "stop" | "uninstall";
+async function serverAction(
   s: AutostartSystem,
+  action: ServerAction,
+  requested: string | undefined,
+  linger: boolean,
+): Promise<AutostartResult> {
+  const install = action === "install" || action === "restart";
+  const mode = action === "install" ? "install" : "restart";
+  switch (s.platform) {
+    case "linux":
+      if (install) return configureAutostart(s, mode, requested, linger);
+      if (action === "stop") return stopAutostart(s);
+      return action === "uninstall" ? removeAutostart(s) : autostartStatus(s);
+    case "darwin":
+      if (install) return configureLaunchAgent(s, mode, requested);
+      if (action === "stop") return stopLaunchAgent(s);
+      return action === "uninstall"
+        ? removeLaunchAgent(s)
+        : launchAgentStatus(s);
+    case "win32":
+      if (install) return configureLoginRun(s, mode, requested);
+      if (action === "stop") return stopLoginRun(s);
+      return action === "uninstall" ? removeLoginRun(s) : loginRunStatus(s);
+    default:
+      return { status: "unsupported" };
+  }
+}
+function serverGuidance(
+  s: AutostartSystem,
+  action: ServerAction,
   result: AutostartResult & { service?: string; endpoint?: string },
 ): string {
-  const name = s.unit.replace(/\.service$/, "");
-  const cli = JSON.stringify(join(s.root, "src", "service-cli.mjs"));
-  const workspace = JSON.stringify(result.workspace ?? "");
-  const manage = `Manage: systemctl --user status|restart|stop ${name}; logs: journalctl --user -u ${name}; opt out: systemctl --user disable --now ${name}`;
+  // Pi's managed copy puts no `cadence` bin on PATH.
+  const cli = piUserInstall(s)
+    ? `node ${JSON.stringify(join(s.root, "src", "service-cli.mjs"))}`
+    : "cadence";
   const note = result.redirectedFrom
     ? `Cadence workspace: ${result.workspace} (${result.redirectedFrom} contains Cadence's private state)\n`
     : "";
-  return (
-    note + autostartStatusGuidance(s, result, name, cli, workspace, manage)
-  );
+  return note + serverStatusGuidance(s, action, result, cli);
 }
-/** Linger only; never `autostart install`, whose refresh restarts the owner. */
+/** Linger only; never `server install`, which restarts the owner. */
 function lingerGuidance(linger: LingerState | undefined): string {
   switch (linger) {
     case "enabled":
@@ -407,81 +478,117 @@ function lingerGuidance(linger: LingerState | undefined): string {
       return "";
   }
 }
-function autostartStatusGuidance(
+/** The platform's own diagnosis for a definition it refused to load or start. */
+function managerDetail(s: AutostartSystem): string {
+  switch (s.platform) {
+    case "linux":
+      return "see systemctl --user status cadence and journalctl --user -u cadence";
+    case "darwin":
+      return `see launchctl print gui/${s.uid}/${LABEL} and ~/Library/Logs/cadence.log`;
+    default:
+      return `run its launcher to see why: wscript ${JSON.stringify(launcherPath(s))}`;
+  }
+}
+function serverStatusGuidance(
   s: AutostartSystem,
+  action: ServerAction,
   result: AutostartResult & { service?: string; endpoint?: string },
-  name: string,
   cli: string,
-  workspace: string,
-  manage: string,
 ): string {
+  const workspace = JSON.stringify(result.workspace ?? "");
+  const manage = `Manage: ${cli} server status|restart|stop|uninstall`;
+  const when = s.platform === "linux" ? "at boot or login" : "at login";
   switch (result.status) {
     case "started": {
       const linger = lingerGuidance(result.linger);
       if (result.service !== "alive")
-        return `${s.unit} started for ${result.workspace}, but the owner reports ${result.service}.\nInspect: node ${cli} diagnose --workspace ${workspace}\n${manage}\n${linger}`;
-      return `Cadence WebUI: ${result.endpoint} (${s.unit}, workspace ${result.workspace})\nEnter with your private link: node ${cli} token-link --workspace ${workspace} --reveal\n${manage}\n${linger}`;
+        return `Cadence started for ${result.workspace}, but the owner reports ${result.service}.\nInspect: ${cli} diagnose --workspace ${workspace}\n${manage}\n${linger}`;
+      return `Cadence WebUI: ${result.endpoint} (workspace ${result.workspace}; starts ${when})\nEnter with your private link: ${cli} token-link --workspace ${workspace} --reveal\n${manage}\n${linger}`;
     }
     case "waiting-for-pi-login":
-      return `${s.unit} is enabled for ${result.workspace}; it starts once Pi has ${join(agentDirectory(s), "auth.json")}.\nLog in to Pi, then: systemctl --user start ${name}\n${lingerGuidance(result.linger)}`;
+      return `Cadence is registered for ${result.workspace}; it starts once Pi has ${join(agentDirectory(s), "auth.json")}.\nLog in to Pi, then: ${cli} server restart\n${lingerGuidance(result.linger)}`;
+    case "stopped":
+      return action === "stop"
+        ? `Cadence stopped; it starts again ${when}, or now with: ${cli} server restart\n`
+        : "";
+    case "absent":
+      return action === "restart" || action === "stop"
+        ? `Cadence's background service is not installed: ${cli} server install\n`
+        : "";
     case "disabled":
-      return `${s.unit} refreshed for ${result.workspace}; left disabled as configured.\n`;
+      return `Cadence's service definition was rewritten for ${result.workspace}; left disabled as configured.\n`;
     case "masked":
-      return `${s.unit} is masked; Cadence did not enable or start it.\n`;
+      return "cadence.service is masked; Cadence did not enable or start it.\n";
     case "missing-pi-sdk":
-      return `Cadence did not register or refresh ${s.unit}: the Pi SDK packages pi-coding-agent and pi-ai (scope @earendil-works) do not resolve from ${s.root}, for example after installing without optional dependencies; an owner without them would quarantine.\n`;
+      return `Cadence did not register its service: the Pi SDK packages pi-coding-agent and pi-ai (scope @earendil-works) do not resolve from ${s.root}, for example after installing without optional dependencies; an owner without them would quarantine.\n`;
     case "foreign":
       return `${result.unit} was not generated by Cadence; left unchanged.\n`;
     case "unavailable":
-      return `No systemd user manager; start Cadence explicitly: node ${cli} start --workspace /absolute/project\n`;
+      return result.workspace
+        ? `Cadence changed nothing: its owner could not be observed. Inspect: ${cli} diagnose --workspace ${workspace}\n`
+        : `No user service manager; start Cadence explicitly: ${cli} start --workspace /absolute/project\n`;
+    case "unsupported":
+      return `Cadence has no background service for ${s.platform}; start it explicitly: ${cli} start --workspace /absolute/project\n`;
+    case "unconfirmed":
+    case "quarantined":
+      return `Cadence changed nothing: its owner's orderly Stop was not confirmed (${result.status}). Inspect: ${cli} diagnose --workspace ${workspace}\n`;
     case "failed":
-      return `Could not enable or start ${s.unit}; see systemctl --user status ${name} and journalctl --user -u ${name}.\n${lingerGuidance(result.linger)}`;
+      return `Could not register or start Cadence's service; ${managerDetail(s)}.\n${lingerGuidance(result.linger)}`;
     default:
       return "";
   }
 }
-async function autostartMain(argv: string[], hostUrl: URL): Promise<void> {
-  const action = argv.shift();
+const SERVER_ACTIONS: ServerAction[] = [
+  "install",
+  "status",
+  "restart",
+  "stop",
+  "uninstall",
+];
+async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
+  const action = SERVER_ACTIONS.find((a) => a === argv[0]);
+  if (!action) throw new ContractError("invalid");
+  argv.shift();
   let requested: string | undefined;
-  let linger = false;
+  let linger = process.env.CADENCE_LINGER !== "0";
+  let noLinger = false;
   while (action === "install" && argv.length) {
     if (argv[0] === "--workspace" && argv[1] && requested === undefined)
       requested = resolve(argv.splice(0, 2)[1]);
-    else if (argv[0] === "--linger" && !linger) {
+    else if (argv[0] === "--no-linger" && !noLinger) {
       argv.shift();
-      linger = true;
+      noLinger = true;
+      linger = false;
     } else break;
   }
-  if (
-    argv.length ||
-    !["install", "refresh", "remove", "status"].includes(action ?? "")
-  )
-    throw new ContractError("invalid");
-  const s = hostSystem(dirname(dirname(fileURLToPath(hostUrl))));
+  if (argv.length) throw new ContractError("invalid");
+  const s = hostSystem(dirname(dirname(fileURLToPath(hostUrl))), ownerControl);
   let result: AutostartResult & { service?: string; endpoint?: string };
-  if (action === "remove") result = removeAutostart(s);
-  else if (action === "status") result = autostartStatus(s);
-  else {
-    try {
-      result = configureAutostart(
-        s,
-        action === "install" ? "install" : "refresh",
-        requested,
-        linger,
+  try {
+    result = await serverAction(s, action, requested, linger);
+  } catch (error) {
+    if (error instanceof ContractError && error.code === "invalid")
+      process.stderr.write(
+        "Cadence server install needs an existing absolute --workspace directory.\n",
       );
-    } catch (error) {
-      if (error instanceof ContractError && error.code === "invalid")
-        process.stderr.write(
-          "Cadence autostart needs an existing absolute workspace directory (--workspace or CADENCE_WORKSPACE).\n",
-        );
-      throw error;
-    }
-    if (result.status === "started" && result.workspace)
-      Object.assign(result, await observeStarted(result.workspace));
-    process.stderr.write(autostartGuidance(s, result));
+    throw error;
   }
+  if (result.status === "started" && result.workspace)
+    Object.assign(result, await observeStarted(result.workspace));
+  process.stderr.write(serverGuidance(s, action, result));
   process.stdout.write(`${JSON.stringify(result)}\n`);
-  if (["failed", "foreign", "unavailable"].includes(result.status))
+  if (
+    [
+      "failed",
+      "foreign",
+      "unavailable",
+      "unsupported",
+      "unconfirmed",
+      "quarantined",
+      "missing-pi-sdk",
+    ].includes(result.status) ||
+    (result.status === "absent" && (action === "restart" || action === "stop"))
+  )
     process.exitCode = 1;
 }
 export async function managementMain(
@@ -494,12 +601,12 @@ export async function managementMain(
     const command = argv.shift();
     if (command === "--help" && !argv.length) {
       process.stdout.write(
-        "cadence-service start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--workspace PATH] [--state-home PATH]\ncadence-service autostart install [--workspace PATH] [--linger]|refresh|remove|status\nStart is explicit, or the Linux systemd user unit that Pi's user-scope install registers (CADENCE_AUTOSTART=0, disable or mask opts out); its first registration also enables linger for boot start when logind allows it without a password (CADENCE_LINGER=0 opts out), and --linger asks for it explicitly. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file.\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop. Unconfirmed/quarantined is not stopped.\nRecovery resolve requires this local native terminal, exact unchanged dead-owner resources and separate process/credential/storage acknowledgments. No --yes, network recovery, killing, repair or cleanup.\n",
+        "cadence start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--workspace PATH] [--state-home PATH]\ncadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall\nStart is explicit, or the background service that server install registers: a systemd user unit on Linux, started at boot through linger (--no-linger or CADENCE_LINGER=0 keeps it to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file.\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop. Unconfirmed/quarantined is not stopped.\nRecovery resolve requires this local native terminal, exact unchanged dead-owner resources and separate process/credential/storage acknowledgments. No --yes, network recovery, killing, repair or cleanup.\n",
       );
       return;
     }
-    if (command === "autostart") {
-      await autostartMain(argv, hostUrl);
+    if (command === "server") {
+      await serverMain(argv, hostUrl);
       return;
     }
     let recovery: "inspect" | "resolve" | undefined;
