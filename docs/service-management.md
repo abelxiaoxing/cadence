@@ -68,9 +68,12 @@ CADENCE_TOKEN=<at least 32 characters, no control or format characters>
 ```
 
 The file keeps the research skills' syntax (`KEY=value` lines, `#` comments, one optional pair of quotes), and each of these keys may appear only once.
-`install` and `restart` create the file from the research template when it is missing, as your own 0600 file in a 0700 directory.
+`install` and `restart` create the file from the research template when it is missing, as your own 0600 file.
 They append a missing `CADENCE_PORT` (17423) or `CADENCE_TOKEN` (random, 43 characters) under a comment, in the file's own line endings, and never change an existing line.
-An unusable file (another owner, wider permissions, a symlink, a syntax error the research skills would also refuse, a duplicate key, a port outside 1-65535, a short token) makes them change nothing, naming only its path.
+It is your own file, made by hand, by older docs (`mkdir -p ~/.pi/agent/cadence`) or by a dotfiles manager, so it is read like Pi's sources: its mode bits are not checked (0644, or 0664 under umask 002, work), links in its path and the file itself are followed, and a rewrite goes to the real file, written 0600, leaving the links in place.
+When other users can read it, `install` and `restart` add a note naming `chmod 600`, without refusing.
+Only a file that cannot be the user's own configuration makes them change nothing: missing or a link to nothing, not a regular file, not owned by you or in a directory you do not own, hard-linked, over 64 KiB or not UTF-8, a line the research skills would also refuse, a duplicate key, a port outside 1-65535 or a short token.
+Each refusal names its reason and line number, never a byte of the file.
 A project's `.pi/cadence/.env`, which the research skills prefer, is never read for the service.
 `start --server-config <.env>` makes these lines authoritative.
 The host reads them once before binding, like an environment token, so editing them while the owner runs changes nothing and can never fence access or the orderly Stop; the next start applies them, and `cadence server restart` does both.

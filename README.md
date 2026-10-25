@@ -24,13 +24,14 @@ They may still report blocked scripts from the pinned Pi SDK's dependencies: `@g
 `cadence server install` registers and starts the background service for `~/cadence` on `http://127.0.0.1:17423`; `--workspace /absolute/project` selects another workspace.
 It prints the private link to open, `http://127.0.0.1:17423/?token=…`.
 The port and that token live with the research settings in `~/.pi/agent/cadence/.env`.
-Install creates that file from the research template when missing (your own 0600 file; Pi's startup card names the path until it exists), and adds either line when it is missing, never changing an existing one:
+Install creates that file from the research template when missing (Pi's startup card names the path until it exists), and adds either line when it is missing, never changing an existing one:
 
 ```sh
 CADENCE_PORT=17423
 CADENCE_TOKEN=<random 43 characters>
 ```
 
+A file you made yourself works as it is, like Pi's own sources: any permissions (a note suggests `chmod 600` when other users can read it) and dotfiles links; a refusal names the line and reason.
 The token admits anyone who has it to the workspace, so keep the file and the link private; a token you choose needs at least 32 characters.
 To change either, edit the line and run `cadence server restart`, which prints the new link; old links and browser cookies stop working.
 A workspace that an earlier version started with a generated token switches to the file at that restart and keeps its history.
@@ -375,6 +376,7 @@ Byte values are UTF-8/encoded bounds where specified; they are not targets to si
 | Pi's TUI replaces an info status with the next one             | The missing-service hint is its own warning notification                            |
 | Token source the user edits (`CADENCE_TOKEN` in `.env`)        | Read once before binding, never bound for the run: an edit cannot fence Stop        |
 | Saved port/token source differs from `.env`                    | Only when stopped, reselect just those under the reservation; running ones refuse   |
+| User-made `.env` (0755/0644, umask 002, dotfiles links)        | Like Pi's sources: ownership only, links followed; each refusal names its reason    |
 
 Good: current context → explicit grant → durable acceptance → genuine original native/storage settlement → exact retained dependency → real checks → human review.
 Base: a client leaves and another reattaches to the same accepted run without launching it again.
@@ -417,6 +419,16 @@ Publish `web/dist` from Node: Vite run under Bun lays out its preload helper dif
 Review the independently enumerated package member list and every emitted body, not a count or an expected list generated from the tar under test.
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
+
+### Release 2.0.7 acceptance snapshot
+
+Full `verify` ran on the 2.0.7 release tree (`7973e23` plus the version bump), in the 2.0.3 environment below.
+It passed 1945 root tests in 78 files (27 Windows-only controls skipped on Linux); `service-history-projection`'s multisegment archive test hit its 45s budget under shared load and passed alone (24 tests, 27s).
+The 111 web tests, 5 real-browser scenarios and 132-member pack audit passed, and CI 40194654384 passed 12/12 on the candidate `7341cf6` (this commit before its snapshot).
+`cadence server install|restart|uninstall` ran end to end in an isolated home, with a fake `systemctl` that runs the unit's own ExecStart and ExecStop.
+The printed link entered the WebUI, and an earlier generated-token workspace was reselected to the `.env`.
+An edit while running applied only at restart, and rotation changed only the `CADENCE_TOKEN` line.
+Real systemd, launchd and Windows registration were not exercised for this release.
 
 ### Release 2.0.6 acceptance snapshot
 

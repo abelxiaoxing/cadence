@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -1122,15 +1123,44 @@ describe("startup guidance", () => {
       expect(readFileSync(file, "utf8")).toBe(text);
     }
     const token = "CADENCE_TOKEN=my-own-private-token-0123456789abcdef";
-    for (const bad of [
-      `CADENCE_PORT=0\n${token}\n`,
-      `CADENCE_PORT=70000\n${token}\n`,
-      `CADENCE_PORT=017423\n${token}\n`,
-      "CADENCE_PORT=17423\nCADENCE_TOKEN=short\n",
-      `CADENCE_PORT=17423\n${token}\n${token}\n`,
-      `CADENCE_PORT=17423\nCADENCE_PORT=17424\n${token}\n`,
-      `CADENCE_PORT=17423\n${token}\nnot a setting\n`,
-      `CADENCE_PORT=17423\nCADENCE_TOKEN="my-own-private-token-0123456789abcdef\n`,
+    // Each refusal names its reason and line, never a byte of the file.
+    for (const [bad, reason] of [
+      [
+        `CADENCE_PORT=0\n${token}\n`,
+        "has CADENCE_PORT on line 1 that is not a whole number from 1 to 65535",
+      ],
+      [
+        `CADENCE_PORT=70000\n${token}\n`,
+        "has CADENCE_PORT on line 1 that is not a whole number from 1 to 65535",
+      ],
+      [
+        `CADENCE_PORT=017423\n${token}\n`,
+        "has CADENCE_PORT on line 1 that is not a whole number from 1 to 65535",
+      ],
+      [
+        "CADENCE_PORT=17423\nCADENCE_TOKEN=short\n",
+        "has CADENCE_TOKEN on line 2 shorter than 32 characters or with control characters",
+      ],
+      [
+        `CADENCE_PORT=17423\n${token}\n\n${token}\n`,
+        "sets CADENCE_TOKEN twice (lines 2 and 4); keep one",
+      ],
+      [
+        `CADENCE_PORT=17423\nCADENCE_PORT=17424\n${token}\n`,
+        "sets CADENCE_PORT twice (lines 1 and 2); keep one",
+      ],
+      [
+        `CADENCE_PORT=17423\n${token}\nnot a setting\n`,
+        "has no KEY=value setting on line 3, which the research skills refuse too",
+      ],
+      [
+        `GROK_API_KEY=k\nexport TAVILY_API_KEY=t\n${token}\n`,
+        'has an invalid name on line 2 (letters, digits and _ only, no "export"), which the research skills refuse too',
+      ],
+      [
+        `CADENCE_PORT=17423\nCADENCE_TOKEN="my-own-private-token-0123456789abcdef\n`,
+        "has an unterminated quote on line 2, which the research skills refuse too",
+      ],
     ]) {
       writeFileSync(file, bad);
       const refused = server(
@@ -1141,23 +1171,90 @@ describe("startup guidance", () => {
       );
       expect(refused.status).toBe(1);
       expect(refused.stderr).toContain(
-        `Cadence changed nothing: ${file} must be your own private regular file`,
+        `Cadence changed nothing: ${file} ${reason}.\n`,
       );
       expect(refused.stdout + refused.stderr).not.toContain("my-own-private");
       expect(readFileSync(file, "utf8")).toBe(bad);
       expect(existsSync(join(home, "data"))).toBe(false);
       expect(existsSync(join(home, "cadence"))).toBe(false);
     }
-    if (process.platform !== "win32") {
-      writeFileSync(file, text);
-      chmodSync(file, 0o644);
-      expect(
-        server(home, "install", "--workspace", join(home, "missing")).stderr,
-      ).toContain(`Cadence changed nothing: ${file}`);
-      expect(statSync(file).mode & 0o777).toBe(0o644);
-      expect(readFileSync(file, "utf8")).toBe(text);
-    }
   });
+
+  // Mode bits and links are POSIX facts; Windows has neither check.
+  it.skipIf(process.platform === "win32")(
+    "a .env made by hand, under umask 002 or by a dotfiles manager is accepted like Pi's sources; only ownership and content refuse",
+    () => {
+      const missing = (home: string) => [
+        "install",
+        "--workspace",
+        join(home, "missing"),
+      ];
+      // Older docs had users `mkdir -p ~/.pi/agent/cadence`; an editor then
+      // made the .env 0644. Cadence appends and writes it 0600.
+      const hand = temporary("cadence-env-hand-");
+      const handFile = join(hand, ".pi", "agent", "cadence", ".env");
+      mkdirSync(dirname(handFile), { recursive: true, mode: 0o755 });
+      chmodSync(dirname(handFile), 0o755);
+      writeFileSync(handFile, "GROK_API_KEY=keep-me\n", { mode: 0o644 });
+      chmodSync(handFile, 0o644);
+      const appended = server(hand, ...missing(hand));
+      expect(appended.stderr).toContain(
+        `Cadence added CADENCE_PORT=17423 and a random private CADENCE_TOKEN to ${handFile}\n`,
+      );
+      expect(appended.stderr).not.toContain("changed nothing");
+      expect(appended.stderr).not.toContain("Note:");
+      const handText = readFileSync(handFile, "utf8");
+      expect(handText.startsWith("GROK_API_KEY=keep-me\n")).toBe(true);
+      expect(statSync(handFile).mode & 0o777).toBe(0o600);
+      expect(statSync(dirname(handFile)).mode & 0o777).toBe(0o755);
+
+      // umask 002 with both keys set: nothing is rewritten, the mode stays
+      // and a note names chmod.
+      const shared = temporary("cadence-env-umask-");
+      const sharedFile = join(shared, ".pi", "agent", "cadence", ".env");
+      mkdirSync(dirname(sharedFile), { recursive: true });
+      chmodSync(dirname(sharedFile), 0o775);
+      const full =
+        "CADENCE_PORT=18000\nCADENCE_TOKEN=my-own-private-token-0123456789abcdef\n";
+      writeFileSync(sharedFile, full);
+      chmodSync(sharedFile, 0o664);
+      const noted = server(shared, ...missing(shared));
+      expect(noted.stderr).not.toContain("changed nothing");
+      expect(noted.stderr).not.toContain("Cadence added");
+      expect(noted.stderr).toContain(
+        `Note: other users can read ${sharedFile}; chmod 600 ${JSON.stringify(sharedFile)} keeps CADENCE_TOKEN private.\n`,
+      );
+      expect(readFileSync(sharedFile, "utf8")).toBe(full);
+      expect(statSync(sharedFile).mode & 0o777).toBe(0o664);
+
+      // A symlinked ~/.pi and a stow-style symlinked .env: the keys go into
+      // the real file and both links stay links.
+      const dot = temporary("cadence-env-dotfiles-");
+      const repo = join(dot, "dotfiles");
+      mkdirSync(join(repo, "pi", "agent", "cadence"), { recursive: true });
+      mkdirSync(join(repo, "env"));
+      writeFileSync(join(repo, "env", "cadence.env"), "GROK_API_KEY=k\n");
+      symlinkSync(join(repo, "pi"), join(dot, ".pi"));
+      const dotFile = join(dot, ".pi", "agent", "cadence", ".env");
+      symlinkSync(join(repo, "env", "cadence.env"), dotFile);
+      const linked = server(dot, ...missing(dot));
+      expect(linked.stderr).toContain(`Cadence added CADENCE_PORT=17423`);
+      expect(lstatSync(join(dot, ".pi")).isSymbolicLink()).toBe(true);
+      expect(lstatSync(dotFile).isSymbolicLink()).toBe(true);
+      expect(
+        parseEnvFile(readFileSync(join(repo, "env", "cadence.env"), "utf8")),
+      ).toMatchObject({ GROK_API_KEY: "k", CADENCE_PORT: "17423" });
+
+      // A link to nothing names that, not a privacy rule.
+      rmSync(join(repo, "env", "cadence.env"));
+      const dangling = server(dot, ...missing(dot));
+      expect(dangling.status).toBe(1);
+      expect(dangling.stderr).toContain(
+        `Cadence changed nothing: ${dotFile} is a link to a file that does not exist.\n`,
+      );
+      expect(existsSync(join(repo, "env", "cadence.env"))).toBe(false);
+    },
+  );
 
   it("/cadence names `cadence server install` while no service is registered", () => {
     const { o, home } = observation();

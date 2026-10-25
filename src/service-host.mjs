@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // src/service/host.ts
-import { lstatSync as lstatSync10, opendirSync as opendirSync3 } from "node:fs";
+import { lstatSync as lstatSync11, opendirSync as opendirSync3 } from "node:fs";
 import { join as join18 } from "node:path";
 
 // src/agent-registry.ts
@@ -14800,6 +14800,7 @@ function localOrigin(policy, actualPort) {
 }
 
 // src/service/server-config.ts
+import { lstatSync as lstatSync8, realpathSync as realpathSync3, statSync } from "node:fs";
 import { dirname as dirname7, join as join10 } from "node:path";
 
 // skills/_shared/load-config.mjs
@@ -14845,8 +14846,38 @@ function accessToken(value) {
     throw new ContractError("invalid");
   return result;
 }
+class ServerConfigRefusal extends ContractError {
+  path;
+  reason;
+  constructor(path, reason) {
+    super("corrupt-selected");
+    this.path = path;
+    this.reason = reason;
+  }
+}
+
+class Unusable extends Error {
+}
+var unusable = (reason) => {
+  throw new Unusable(reason);
+};
+function syntax(error) {
+  const message = error instanceof Error ? error.message : "";
+  const line = /at line (\d+)$/.exec(message)?.[1];
+  if (!line)
+    return "is not in KEY=value lines";
+  if (message.startsWith("Invalid configuration name"))
+    return `has an invalid name on line ${line} (letters, digits and _ only, no "export")`;
+  if (message.startsWith("Unterminated"))
+    return `has an unterminated quote on line ${line}`;
+  return `has no KEY=value setting on line ${line}`;
+}
 function settings(source) {
-  parseEnvFile(source);
+  try {
+    parseEnvFile(source);
+  } catch (error) {
+    unusable(`${syntax(error)}, which the research skills refuse too`);
+  }
   const parts = source.split(/(\r\n|\r|\n)/);
   const found = {};
   for (let at = 0;at < parts.length; at += 2) {
@@ -14858,52 +14889,102 @@ function settings(source) {
     const name = key2 === PORT_KEY ? "port" : key2 === TOKEN_KEY ? "token" : undefined;
     if (!name)
       continue;
-    if (found[name])
-      throw new ContractError("invalid");
+    const previous = found[name];
+    if (previous)
+      unusable(`sets ${key2} twice (lines ${previous.line} and ${at / 2 + 1}); keep one`);
     let value = line.slice(separator + 1).trim();
     if (value[0] === '"' || value[0] === "'")
       value = value.slice(1, -1);
-    found[name] = { at, value };
+    found[name] = { at, line: at / 2 + 1, value };
   }
   return { parts, ...found };
 }
-function decodeServerConfig(source) {
+function decode(source) {
   const { port, token } = settings(source);
-  if (!port || !/^[1-9][0-9]{0,4}$/.test(port.value))
-    throw new ContractError("invalid");
+  if (!port)
+    unusable(`has no ${PORT_KEY} line`);
   if (!token)
-    throw new ContractError("invalid");
-  return {
-    port: integer(Number(port.value), 1, 65535),
-    token: accessToken(token.value)
-  };
-}
-
-class ServerConfigRefusal extends ContractError {
-  path;
-  constructor(path) {
-    super("corrupt-selected");
-    this.path = path;
+    unusable(`has no ${TOKEN_KEY} line`);
+  const p = port, t = token;
+  const number = Number(p.value);
+  if (!/^[1-9][0-9]{0,4}$/.test(p.value) || number > 65535)
+    unusable(`has ${PORT_KEY} on line ${p.line} that is not a whole number from 1 to 65535`);
+  try {
+    return { port: number, token: accessToken(t.value) };
+  } catch {
+    return unusable(`has ${TOKEN_KEY} on line ${t.line} shorter than 32 characters or with control characters`);
   }
+}
+var code = (error) => error?.code ?? "error";
+function locate(path) {
+  let real;
+  try {
+    real = realpathSync3(path);
+  } catch (error) {
+    if (code(error) !== "ENOENT")
+      unusable(`cannot be read (${code(error)})`);
+    let link = false;
+    try {
+      link = lstatSync8(path).isSymbolicLink();
+    } catch {}
+    return unusable(link ? "is a link to a file that does not exist" : "does not exist");
+  }
+  return { real, files: new PrivateFiles(dirname7(real), false) };
+}
+function explain(real) {
+  const uid = process.getuid?.();
+  try {
+    const st = lstatSync8(real);
+    if (!st.isFile())
+      return "is not a regular file";
+    if (uid !== undefined && st.uid !== uid)
+      return "is not owned by you";
+    if (uid !== undefined && lstatSync8(dirname7(real)).uid !== uid)
+      return `is in ${dirname7(real)}, which is not owned by you`;
+    if (st.nlink !== 1)
+      return "has more than one hard link";
+    if (st.size > CONFIG_BYTES)
+      return "is larger than 64 KiB";
+    return "changed while Cadence read it; try again";
+  } catch (error) {
+    return `cannot be read (${code(error)})`;
+  }
+}
+function load(path) {
+  const { real, files } = locate(path);
+  let snapshot;
+  try {
+    snapshot = files.read(real, CONFIG_BYTES);
+  } catch {
+    return unusable(explain(real));
+  }
+  if (!snapshot)
+    return unusable("does not exist");
+  let source;
+  try {
+    source = decoded(snapshot);
+  } catch {
+    return unusable("is not UTF-8 text");
+  }
+  return { path, real, files, snapshot, source };
 }
 function decoded(snapshot) {
   return new TextDecoder("utf-8", { fatal: true }).decode(snapshot.bytes);
 }
-function readServerConfig(path) {
+function refusing(path, read2) {
   try {
-    const files = new PrivateFiles(dirname7(path));
-    const snapshot = files.read(path, CONFIG_BYTES);
-    if (!snapshot)
-      throw new ContractError("corrupt-selected");
-    return {
-      path,
-      config: decodeServerConfig(decoded(snapshot)),
-      files,
-      snapshot
-    };
-  } catch {
-    throw new ServerConfigRefusal(path);
+    return read2();
+  } catch (error) {
+    if (error instanceof ServerConfigRefusal)
+      throw error;
+    throw new ServerConfigRefusal(path, error instanceof Unusable ? error.message : `cannot be read (${code(error)})`);
   }
+}
+function readServerConfig(path) {
+  return refusing(path, () => {
+    const file = load(path);
+    return { ...file, config: decode(file.source) };
+  });
 }
 function withToken(file, token) {
   const { parts, token: line } = settings(decoded(file.snapshot));
@@ -15142,7 +15223,7 @@ class AccessMaterial {
       if (this.config.path && this.external && this.externalFile)
         this.externalFile = this.external.replace(this.config.path, this.externalFile, secret, TOKEN_BYTES);
       if (configured)
-        configured.files.replace(configured.path, configured.snapshot, withToken(configured, secret), CONFIG_BYTES);
+        configured.files.replace(configured.real, configured.snapshot, withToken(configured, secret), CONFIG_BYTES);
       const record2 = {
         ...this.record,
         generation,
@@ -15483,7 +15564,7 @@ class AuthNetwork {
 
 // src/service/coordination.ts
 import { randomBytes as randomBytes4, randomUUID as randomUUID8 } from "node:crypto";
-import { opendirSync as opendirSync2, realpathSync as realpathSync3 } from "node:fs";
+import { opendirSync as opendirSync2, realpathSync as realpathSync4 } from "node:fs";
 import { hostname as hostname2 } from "node:os";
 import { dirname as dirname9, isAbsolute as isAbsolute5, join as join12, relative as relative4, sep as sep4 } from "node:path";
 var registrationKeys = [
@@ -15641,7 +15722,7 @@ class ServiceCoordination {
     const o = closed(json(snapshot, REGISTRY_BYTES), ["schema", "entries"]);
     const entries = list(o.entries, REGISTRY_ENTRIES, decodeReservation);
     for (const [i, row] of entries.entries()) {
-      if (row.stateHome !== this.stateHome || realpathSync3(row.root) !== row.root)
+      if (row.stateHome !== this.stateHome || realpathSync4(row.root) !== row.root)
         refused();
       if (entries.slice(0, i).some((other) => rootsOverlap(row.root, other.root) || row.endpoint === other.endpoint))
         refused();
@@ -16320,10 +16401,10 @@ function decodeSocketInput(value) {
 }
 
 // src/service/http.ts
-function refusal(code = "invalid", uncertain = false) {
+function refusal(code2 = "invalid", uncertain = false) {
   return {
     kind: "error",
-    error: publicError(code, uncertain ? "uncertain" : "none")
+    error: publicError(code2, uncertain ? "uncertain" : "none")
   };
 }
 function fixedHeaders(response) {
@@ -16727,9 +16808,9 @@ Content-Length: 0\r
       if (res.headersSent)
         res.destroy();
       else {
-        const code = e instanceof ContractError ? e.code : "unavailable";
+        const code2 = e instanceof ContractError ? e.code : "unavailable";
         res.setHeader("Connection", "close");
-        send(res, errorStatus(code), refusal(code, dispatched));
+        send(res, errorStatus(code2), refusal(code2, dispatched));
       }
     } finally {
       clearTimeout(timer);
@@ -17205,7 +17286,7 @@ class OwnerModelChoice {
 }
 
 // src/service/model-config.ts
-import { lstatSync as lstatSync8, realpathSync as realpathSync4 } from "node:fs";
+import { lstatSync as lstatSync9, realpathSync as realpathSync5 } from "node:fs";
 import { dirname as dirname10, isAbsolute as isAbsolute6, join as join13, resolve as resolve3 } from "node:path";
 var CONFIG_BYTES2 = 1024 * 1024;
 var ENTRY_LIMIT = 256;
@@ -17279,8 +17360,8 @@ function piSource(agentDir, home, cwd, env) {
   if (selected2 === "~" || selected2.startsWith("~/"))
     selected2 = home + selected2.slice(1);
   selected2 = resolve3(cwd, selected2);
-  const directory = join13(realpathSync4(dirname10(selected2)), selected2.slice(dirname10(selected2).length + 1));
-  if (!lstatSync8(directory).isDirectory() || lstatSync8(directory).isSymbolicLink())
+  const directory = join13(realpathSync5(dirname10(selected2)), selected2.slice(dirname10(selected2).length + 1));
+  if (!lstatSync9(directory).isDirectory() || lstatSync9(directory).isSymbolicLink())
     refuse2();
   const files = new PrivateFiles(directory, false);
   if (!files.directory(directory))
@@ -18789,8 +18870,8 @@ function decodeHostInput(value) {
 class StartupRefusal extends ContractError {
   stage;
   quarantined;
-  constructor(code, stage, quarantined = false) {
-    super(code);
+  constructor(code2, stage, quarantined = false) {
+    super(code2);
     this.stage = stage;
     this.quarantined = quarantined;
   }
@@ -18811,12 +18892,12 @@ function startupReport(error) {
 
 // src/service/task-actions.ts
 import { randomUUID as randomUUID15 } from "node:crypto";
-import { realpathSync as realpathSync5 } from "node:fs";
+import { realpathSync as realpathSync6 } from "node:fs";
 
 // src/task-diff.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
 import { createHash as createHash20 } from "node:crypto";
-import { lstatSync as lstatSync9, readdirSync as readdirSync3, readlinkSync } from "node:fs";
+import { lstatSync as lstatSync10, readdirSync as readdirSync3, readlinkSync } from "node:fs";
 import { join as join15, relative as relative5 } from "node:path";
 var admin = (path) => path === ".cadence/assistant/tasks" || path.startsWith(".cadence/assistant/tasks/");
 function captureChanges(root) {
@@ -18859,7 +18940,7 @@ function captureChanges(root) {
     }
     try {
       const path = join15(root, name);
-      const st = lstatSync9(path);
+      const st = lstatSync10(path);
       add(name, `${st.mode}:${st.size}`);
       if (st.isSymbolicLink()) {
         add(name, readlinkSync(path));
@@ -19003,7 +19084,7 @@ ${data2.toString("utf8")}`);
           break;
         }
         try {
-          const st = lstatSync9(path);
+          const st = lstatSync10(path);
           if (st.isDirectory())
             walk(path, depth + 1);
           else
@@ -20291,8 +20372,8 @@ function terminateWindowsTree(pid, fallback) {
   const root = process.env.SystemRoot;
   const taskkill = spawn(root ? join17(root, "System32", "taskkill.exe") : "taskkill.exe", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
   taskkill.once("error", fallback);
-  taskkill.once("close", (code) => {
-    if (code !== 0)
+  taskkill.once("close", (code2) => {
+    if (code2 !== 0)
       fallback();
   });
 }
@@ -20554,7 +20635,7 @@ function runProcess(spec) {
     child.on("error", () => {
       stopping = "failed";
     });
-    child.on("close", (code, signal) => {
+    child.on("close", (code2, signal) => {
       nativeClosed = true;
       clearTimeout(timeout);
       clearTimeout(killTimer);
@@ -20570,7 +20651,7 @@ function runProcess(spec) {
           }
         }
         output += stderrDecoder.end();
-        finish(true, code, signal);
+        finish(true, code2, signal);
       };
       if (spec.checkRecording) {
         Promise.all([stdoutWork, stderrWork]).then(async () => {
@@ -21823,9 +21904,9 @@ class TaskActions {
       selection: structuredClone(options.selection),
       ownerSecrets: [...options.ownerSecrets]
     };
-    this.cwd = realpathSync5(options.cwd);
+    this.cwd = realpathSync6(options.cwd);
     const config = readHostConfig(options.host.coordination);
-    if (!config || realpathSync5(config.cwd) !== this.cwd)
+    if (!config || realpathSync6(config.cwd) !== this.cwd)
       throw new ContractError("unsupported-context");
     this.launchCwd = config.cwd;
     this.checkEnvironment = options.host.checkEnvironment;
@@ -21941,7 +22022,7 @@ class TaskActions {
     if (this.closed || this.options.host.owner.state !== "idle" || this.options.host.writer.quarantined)
       throw new ContractError("quarantine");
     this.options.host.owner.lease.assert();
-    if (!this.sources.current() || realpathSync5(this.cwd) !== this.cwd || realpathSync5(this.launchCwd) !== this.cwd || this.options.host.checkEnvironment !== this.checkEnvironment)
+    if (!this.sources.current() || realpathSync6(this.cwd) !== this.cwd || realpathSync6(this.launchCwd) !== this.cwd || this.options.host.checkEnvironment !== this.checkEnvironment)
       throw new ContractError("stale");
   }
   choiceSnapshot() {
@@ -22059,7 +22140,7 @@ class TaskActions {
     const selected2 = taskId ? h.coordination.store.loadSnapshot(taskId) : null;
     if (taskId && !selected2)
       throw new ContractError("stale");
-    if (selected2 && realpathSync5(selected2.record.cwd) !== this.cwd)
+    if (selected2 && realpathSync6(selected2.record.cwd) !== this.cwd)
       throw new ContractError("unsupported-context");
     const secrets = this.viewSecrets();
     const roles = this.sources.roles.map(({ role: role2, sha256 }) => ({
@@ -22563,7 +22644,7 @@ class TaskActions {
         this.assertChoice(expected);
         held.assertHeld();
         const actual = h.coordination.store.loadSnapshot(task.id), want = published ?? task;
-        if (!actual || actual.identity !== want.identity || actual.record.revision !== want.revision || realpathSync5(actual.record.cwd) !== this.cwd || this.generation !== expected.checkoutGeneration || h.writer.controlRevision(task.id) !== expected.controlRev + 1 || this.scheduler.activeTask(task.id))
+        if (!actual || actual.identity !== want.identity || actual.record.revision !== want.revision || realpathSync6(actual.record.cwd) !== this.cwd || this.generation !== expected.checkoutGeneration || h.writer.controlRevision(task.id) !== expected.controlRev + 1 || this.scheduler.activeTask(task.id))
           throw new ContractError("stale");
         const changes2 = captureChanges(h.coordination.store.root);
         if (changes2.fingerprint !== expected.observation.identity || changes2.complete !== expected.observation.complete)
@@ -22768,7 +22849,7 @@ function legacy(store, budget, reader) {
       if (created.has(entry.name))
         continue;
       const path = join18(store.tasks, entry.name, "task.json");
-      const size = lstatSync10(path).size;
+      const size = lstatSync11(path).size;
       if (size > 128 * 1024)
         throw new ContractError("corrupt-selected");
       budget.reserve(size);

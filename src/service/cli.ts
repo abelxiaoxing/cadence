@@ -231,9 +231,9 @@ function failedStatus(result: unknown): boolean {
     )
   );
 }
-/** Names only the path and keys, never the file's bytes. */
-function serverConfigHint(path: string): string {
-  return `Cadence changed nothing: ${path} must be your own private regular file (chmod 600, in a chmod 700 directory on Linux and macOS) in KEY=value lines with exactly one ${PORT_KEY}=<1-65535> and one ${TOKEN_KEY}=<at least 32 characters>.\n`;
+/** The specific reason, naming only the path, keys and line numbers. */
+function serverConfigHint(error: ServerConfigRefusal): string {
+  return `Cadence changed nothing: ${error.path} ${error.reason}.\nFix it and run the command again; the file holds the WebUI port and token as ${PORT_KEY}=<1-65535> and ${TOKEN_KEY}=<at least 32 characters>, one line each.\n`;
 }
 /** One fixed hint per refused startup stage, naming only the selected sources. */
 function startupGuidance(result: unknown, input: HostInput): string {
@@ -274,7 +274,7 @@ export async function startService(
     input = decodeHostInput(selectStart(options, process.env));
   } catch (error) {
     if (error instanceof ServerConfigRefusal)
-      process.stderr.write(serverConfigHint(error.path));
+      process.stderr.write(serverConfigHint(error));
     throw error;
   }
   const serialized = `${JSON.stringify(input)}\n`;
@@ -625,14 +625,20 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
   // restart add missing keys and refuse an unusable file before any change.
   if (action === "install" || action === "restart") {
     try {
-      const { added } = ensureServerConfig(s.home);
+      const { added, exposed } = ensureServerConfig(s.home);
+      const path = serverConfigPath(s.home);
       if (added.length)
         process.stderr.write(
-          `Cadence added ${added.map((key) => (key === PORT_KEY ? `${key}=${DEFAULT_PORT}` : `a random private ${key}`)).join(" and ")} to ${serverConfigPath(s.home)}\n`,
+          `Cadence added ${added.map((key) => (key === PORT_KEY ? `${key}=${DEFAULT_PORT}` : `a random private ${key}`)).join(" and ")} to ${path}\n`,
+        );
+      // Not a refusal: the user's own mode, like Pi's sources.
+      if (exposed)
+        process.stderr.write(
+          `Note: other users can read ${path}; chmod 600 ${JSON.stringify(path)} keeps ${TOKEN_KEY} private.\n`,
         );
     } catch (error) {
       if (error instanceof ServerConfigRefusal)
-        process.stderr.write(serverConfigHint(error.path));
+        process.stderr.write(serverConfigHint(error));
       throw error;
     }
   }
