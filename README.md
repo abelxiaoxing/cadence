@@ -16,14 +16,24 @@ Cadence needs Node `>=22.19.0` with npm and [Pi](https://www.npmjs.com/package/@
 ```sh
 npm install -g @abelxiaoxing/cadence
 cadence server install
-cadence token-link --workspace ~/cadence --reveal
 ```
 
 The global install puts `cadence` (and its alias `cadence-service`) on `PATH`.
 Cadence ships no install script, so npm 12 and Bun, which skip untrusted install scripts by default, change nothing.
 They may still report blocked scripts from the pinned Pi SDK's dependencies: `@google/genai`'s preinstall only echoes `no-op`, and `protobufjs`'s postinstall only warns about a dependent's version scheme, so neither needs approval.
 `cadence server install` registers and starts the background service for `~/cadence` on `http://127.0.0.1:17423`; `--workspace /absolute/project` selects another workspace.
-It also creates the research template `~/.pi/agent/cadence/.env` when missing; Pi's startup card names that path until it exists.
+It prints the private link to open, `http://127.0.0.1:17423/?token=…`.
+The port and that token live with the research settings in `~/.pi/agent/cadence/.env`.
+Install creates that file from the research template when missing (your own 0600 file; Pi's startup card names the path until it exists), and adds either line when it is missing, never changing an existing one:
+
+```sh
+CADENCE_PORT=17423
+CADENCE_TOKEN=<random 43 characters>
+```
+
+The token admits anyone who has it to the workspace, so keep the file and the link private; a token you choose needs at least 32 characters.
+To change either, edit the line and run `cadence server restart`, which prints the new link; old links and browser cookies stop working.
+A workspace that an earlier version started with a generated token switches to the file at that restart and keeps its history.
 
 | Platform | Service                                                                                     | Starts                                       |
 | -------- | ------------------------------------------------------------------------------------------- | -------------------------------------------- |
@@ -116,7 +126,7 @@ For manual checks, `pi -e ./src/index.ts -e ./scripts/agent-panel-demo.ts` adds 
 
 ### Browser
 
-Open the locally revealed token link.
+Open the private link that `cadence server install` printed, or that `cadence token-link --reveal` reveals.
 Valid bootstrap redirects to a token-free URL and uses an HttpOnly SameSite cookie for subsequent HTTP/WebSocket access; no localStorage token copy.
 The browser can create/plan/Start/Cancel, run exact configured checks and record human review without a live Pi terminal.
 A token grants workspace access, not action consent.
@@ -363,6 +373,8 @@ Byte values are UTF-8/encoded bounds where specified; they are not targets to si
 | npm 12 or Bun skips untrusted install scripts by default       | Ship none; `cadence server install` registers the service and creates the template  |
 | Service manager that only signals (launchd, Windows login)     | Orderly Stop first; an unconfirmed Stop changes nothing; no SIGTERM or `taskkill`   |
 | Pi's TUI replaces an info status with the next one             | The missing-service hint is its own warning notification                            |
+| Token source the user edits (`CADENCE_TOKEN` in `.env`)        | Read once before binding, never bound for the run: an edit cannot fence Stop        |
+| Saved port/token source differs from `.env`                    | Only when stopped, reselect just those under the reservation; running ones refuse   |
 
 Good: current context → explicit grant → durable acceptance → genuine original native/storage settlement → exact retained dependency → real checks → human review.
 Base: a client leaves and another reattaches to the same accepted run without launching it again.
@@ -396,7 +408,8 @@ Regression owners:
 - `agent-panel`, `agent-panel-model`, `agent-panel-cadence`: panel keys/rendering and readonly owner observation that never starts, cancels or replays work.
 - `test/web/`: adapted pure/SSR tests separately from actual built-browser contexts, HTTPS, mixed clients, focus/viewports and complete downloads.
 - `package-*`, `distribution`, `service-package`, `independence`: exact tar/member/body/import/notice closure and nonactivating discovery.
-- `service-autostart`, `install-config`: explicit `cadence server` registration on systemd, launchd and the Windows Run key, definition escaping, restart/disable/mask/foreign handling, orderly Stop before every change and a package without install scripts.
+- `service-autostart`, `install-config`: explicit `cadence server` registration on systemd, launchd and the Windows Run key, definition escaping, restart/disable/mask/foreign handling, orderly Stop before every change, the `.env` port and token lines and a package without install scripts.
+- `service-cli`: real owners started from the `.env` port and token, reselection of a stopped workspace, edits while running and rotation of the token line.
 - `workspace-landing`: home-directory redirection to `~/cadence` across management, native attach and observation.
 
 Regenerate operator/service/native/browser outputs only through their canonical builders; `--check` variants compare new private output without overwriting canonical bytes.

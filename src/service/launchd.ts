@@ -17,6 +17,7 @@ import {
   settle,
   write,
 } from "./autostart.ts";
+import { serverConfigPath } from "./server-config.ts";
 
 export const LABEL = "com.abelxiaoxing.cadence";
 const MARKER =
@@ -35,6 +36,7 @@ export interface PlistInput {
   node: string;
   cli: string;
   workspace: string;
+  serverConfig: string;
   environment: [string, string][];
   log: string;
 }
@@ -50,9 +52,16 @@ export function buildPlist(u: PlistInput): string {
     `\t<string>${LABEL}</string>`,
     "\t<key>ProgramArguments</key>",
     "\t<array>",
-    ...[u.node, u.cli, "start", "--foreground", "--workspace", u.workspace].map(
-      string,
-    ),
+    ...[
+      u.node,
+      u.cli,
+      "start",
+      "--foreground",
+      "--workspace",
+      u.workspace,
+      "--server-config",
+      u.serverConfig,
+    ].map(string),
     "\t</array>",
     "\t<key>WorkingDirectory</key>",
     `\t<string>${xml(u.workspace)}</string>`,
@@ -122,6 +131,7 @@ export async function configureLaunchAgent(
       node: s.node,
       cli: join(s.root, "src", "service-cli.mjs"),
       workspace,
+      serverConfig: serverConfigPath(s.home),
       environment: serviceEnvironment(s),
       log: join(s.home, "Library", "Logs", "cadence.log"),
     }),

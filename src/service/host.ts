@@ -43,9 +43,11 @@ import {
   type HostInput,
   hostEnvironment,
   readHostConfig,
+  reselectable,
   StartupRefusal,
   type StartupStage,
 } from "./runtime.ts";
+import { readServerConfig } from "./server-config.ts";
 import { TaskActions } from "./task-actions.ts";
 
 function legacy(
@@ -164,18 +166,33 @@ export async function createServiceHost(
   if (resolveWorkspace(input.config.cwd).root !== c.store.root)
     throw new ContractError("conflict");
   const old = readHostConfig(c);
-  if (old && encoded(old) !== encoded(input.config))
+  // Existing selected setup is all-or-refuse, never filled in by restart; only
+  // the server configuration may explicitly reselect a stopped one's port and
+  // token source, under the owner reservation below.
+  const reselect = !!old && encoded(old) !== encoded(input.config);
+  if (old && reselect && !reselectable(old, input.config))
+    throw new ContractError("conflict");
+  // Read once, before binding: a later edit applies at the next start and can
+  // never fence or quarantine this owner. It must name the selected port.
+  const configured =
+    input.config.tokenSource === "config" && input.config.tokenFile
+      ? readServerConfig(input.config.tokenFile).config
+      : undefined;
+  if (configured && configured.port !== input.config.http.port)
     throw new ContractError("conflict");
   const source: TokenSource =
     input.environmentToken !== null
       ? { environment: input.environmentToken }
-      : input.config.tokenFile
-        ? { tokenFile: input.config.tokenFile }
-        : {};
+      : configured && input.config.tokenFile
+        ? { serverConfig: input.config.tokenFile, token: configured.token }
+        : input.config.tokenFile
+          ? { tokenFile: input.config.tokenFile }
+          : {};
   AccessMaterial.validateSource(source);
-  // Existing selected setup is all-or-refuse, never filled in by restart.
   if (old) {
-    new AccessMaterial(c.files, c.directory, source);
+    if (reselect)
+      AccessMaterial.validateReselection(c.files, c.directory, source);
+    else new AccessMaterial(c.files, c.directory, source);
     const history = HistoryFiles.open(c);
     if (!history) throw new ContractError("corrupt-selected");
     history.assertWritable();
@@ -211,6 +228,18 @@ export async function createServiceHost(
         c.files.create(c.path("host-config.json"), encoded(resolved));
         AccessMaterial.initialize(c.files, c.directory, source);
       },
+      reselect && old
+        ? (previous) => {
+            if (previous.identity !== hash(encoded(old)))
+              throw new ContractError("conflict");
+            AccessMaterial.reselect(c.files, c.directory, source);
+            c.files.replace(
+              c.path("host-config.json"),
+              previous,
+              encoded(resolved),
+            );
+          }
+        : undefined,
     );
     let writer: HistoryWriter | undefined, live: HistoryLive | undefined;
     owner = new ServiceOwner(lease, {

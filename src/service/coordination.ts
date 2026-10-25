@@ -518,6 +518,9 @@ export class ServiceCoordination {
     input: OwnerConfig,
     resolvedEndpoint: string = input.endpoint,
     initializeNew?: () => void,
+    /** Replaces a stopped selection's host policy and access (given its
+     * selected host-config snapshot); only then may the identity change. */
+    reselectExisting?: (hostConfig: FileSnapshot) => void,
   ): OwnerLease {
     const config = decodeOwnerConfig(input);
     const bound = endpoint(resolvedEndpoint);
@@ -537,7 +540,8 @@ export class ServiceCoordination {
       if (old?.value && old.value.phase !== "stopped")
         throw new ContractError("quarantine");
       if (this.store.inspectLock()) throw new ContractError("conflict");
-      if (old && old.config.identity !== hash(encoded(config)))
+      const reselect = !!old && old.config.identity !== hash(encoded(config));
+      if (reselect && (!reselectExisting || !old?.hostConfig))
         throw new ContractError("conflict");
       // Reserve BEFORE root initialization/legacy acquisition. Any later failure
       // keeps the reservation and short lock as an explicit partial fence.
@@ -561,7 +565,26 @@ export class ServiceCoordination {
         }),
         REGISTRY_BYTES,
       );
-      this.initialize(config);
+      if (old?.hostConfig && reselect && reselectExisting) {
+        // Host policy and access first, then the config and its manifest; the
+        // registration below takes the new identity. Failures keep the fence.
+        reselectExisting(old.hostConfig);
+        const saved = this.files.replace(
+          this.path("config.json"),
+          old.config,
+          encoded(config),
+        );
+        this.files.replace(
+          this.path("format.json"),
+          old.manifest,
+          encoded({
+            schema: "cadence-service-format/1",
+            root: this.store.root,
+            stateHome: this.stateHome,
+            configIdentity: saved.identity,
+          }),
+        );
+      } else this.initialize(config);
       // Called only for genuinely absent selected metadata, under the registry
       // reservation and before registration. Failures preserve the partial fence.
       if (!old) initializeNew?.();
