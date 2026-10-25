@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FiSearch } from "react-icons/fi";
 import { searchRequest } from "../../history/search-request";
 import { emptySearchWindow } from "../../history/search-summary";
+import { useT } from "../../i18n/locale";
 import type {
   ReadCursor,
   SearchHit,
@@ -24,6 +25,7 @@ export function GlobalSearchModal({
   onClose: () => void;
   onHit: (hit: SearchHit) => void;
 }) {
+  const { t, tx } = useT();
   const [frozenSeed] = useState(seed);
   const inputRef = useRef<HTMLInputElement>(null),
     lastReqRef = useRef(0);
@@ -88,13 +90,13 @@ export function GlobalSearchModal({
     };
   }, [query, frozenSeed, search]);
   return (
-    <ActionDialog title="Search retained history" onClose={onClose}>
+    <ActionDialog title={t("Search retained history")} onClose={onClose}>
       <div className="gs-modal">
         <div className="gs-input-row">
           <FiSearch />
           <input
             ref={inputRef}
-            aria-label="Case-sensitive literal query"
+            aria-label={t("Case-sensitive literal query")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -117,20 +119,33 @@ export function GlobalSearchModal({
           />
         </div>
         <p>
-          Case-sensitive literal UTF-8 search. Scope {frozenSeed.scope.kind}{" "}
-          {frozenSeed.scope.id}; snapshot {frozenSeed.snapshotSeq}. No regex,
-          provider request or history repair.
+          {t(
+            "Case-sensitive literal UTF-8 search. Scope {kind} {id}; snapshot {seq}. No regex, provider request or history repair.",
+            {
+              kind: tx(frozenSeed.scope.kind),
+              id: frozenSeed.scope.id,
+              seq: frozenSeed.snapshotSeq,
+            },
+          )}
         </p>
         <div className="gs-results">
-          {pending && <p role="status">Searching bounded retained range…</p>}
-          {error && <p role="alert">Search refused: {error}</p>}
-          {!query && <p>Enter a query to search this selected scope.</p>}
+          {pending && (
+            <p role="status">{t("Searching bounded retained range…")}</p>
+          )}
+          {error && (
+            <p role="alert">
+              {t("Search refused: {error}", { error: tx(error) })}
+            </p>
+          )}
+          {!query && <p>{t("Enter a query to search this selected scope.")}</p>}
           {page && (
             <>
               <Coverage value={page.coverage} />
               <div className="gs-section">
                 <div className="gs-section-head">
-                  Matches on this page: {page.hits.length}
+                  {t("Matches on this page: {count}", {
+                    count: page.hits.length,
+                  })}
                 </div>
                 {page.hits.map((hit, i) => (
                   <button
@@ -144,7 +159,7 @@ export function GlobalSearchModal({
                     }}
                   >
                     <span className="gs-item-title">
-                      {hit.owner.entity.kind} · {hit.content.field} · v
+                      {tx(hit.owner.entity.kind)} · {tx(hit.content.field)} · v
                       {hit.content.version}
                     </span>
                     <span className="gs-item-sub">{hit.preview}</span>
@@ -152,12 +167,15 @@ export function GlobalSearchModal({
                       {hit.owner.childRunId ??
                         hit.owner.runId ??
                         hit.owner.taskId}{" "}
-                      / {hit.content.recordId} / bytes {hit.range.start}–
-                      {hit.range.end}
+                      / {hit.content.recordId} /{" "}
+                      {t("bytes {start}–{end}", {
+                        start: hit.range.start,
+                        end: hit.range.end,
+                      })}
                     </code>
                   </button>
                 ))}
-                {page.hits.length === 0 && <p>{emptySearchWindow(page)}</p>}
+                {page.hits.length === 0 && <p>{tx(emptySearchWindow(page))}</p>}
               </div>
               <button
                 type="button"
@@ -166,14 +184,15 @@ export function GlobalSearchModal({
                   if (page.next) void search(page.next, ++lastReqRef.current);
                 }}
               >
-                Continue same snapshot search
+                {t("Continue same snapshot search")}
               </button>
             </>
           )}
         </div>
         <footer className="gs-foot">
-          ↑↓ Navigate · Enter Open exact hit · Escape Close. Reopening never
-          resumes execution.
+          {t(
+            "↑↓ Navigate · Enter Open exact hit · Escape Close. Reopening never resumes execution.",
+          )}
         </footer>
       </div>
     </ActionDialog>

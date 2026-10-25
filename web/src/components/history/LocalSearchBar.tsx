@@ -5,6 +5,7 @@ import {
   scrollRangeIntoView,
   setHighlight,
 } from "../../history/search-page";
+import { useT } from "../../i18n/locale";
 export function LocalSearchBar({
   container,
   version,
@@ -12,6 +13,7 @@ export function LocalSearchBar({
   container: RefObject<HTMLDivElement | null>;
   version: string;
 }) {
+  const { t } = useT();
   const [query, setQuery] = useState(""),
     [active, setActive] = useState(0),
     [count, setCount] = useState(0),
@@ -39,7 +41,7 @@ export function LocalSearchBar({
   return (
     <div className="search-bar toolbar">
       <label>
-        Find on displayed field page
+        {t("Find on displayed field page")}
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -53,14 +55,14 @@ export function LocalSearchBar({
       </label>
       <span>
         {count ? active + 1 : 0}/{count}
-        {count >= 1000 ? " (first 1000 visual highlights)" : ""}; not
-        whole-history search
+        {count >= 1000 ? t(" (first 1000 visual highlights)") : ""}
+        {t("; not whole-history search")}
       </span>
       <button type="button" disabled={!count} onClick={() => move(-1)}>
-        Previous match
+        {t("Previous match")}
       </button>
       <button type="button" disabled={!count} onClick={() => move(1)}>
-        Next match
+        {t("Next match")}
       </button>
     </div>
   );

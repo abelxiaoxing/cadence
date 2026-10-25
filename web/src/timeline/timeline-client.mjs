@@ -17,27 +17,40 @@ import "./timeline.css";
 const I18N = {
   zh: {
     title: "已记录顺序（非时间轴测量）",
-    live: "已提交页面",
+    live: "已提交页面——非真实时间",
     current: "当前",
-    search: "搜索分段…",
+    search: "筛选已加载事件…",
     fit: "⤢ 适应",
     follow: "◎ 跟随",
     zoomHint: "滚轮缩放 · 拖拽平移 · 点击色块看分析",
-    replay: "回放",
+    replay: "可视回放",
     exitReplay: "退出回放",
     play: "播放",
     pause: "暂停",
     speed: "速度",
 
-    empty: "暂无对话",
-    emptyHint: "打开一个对话后，这里直接显示它的时间线与分析。",
+    empty: "无已记录范围",
+    emptyHint: "选择已记录事件。更多历史可通过分页控件读取。",
     selectHint: "点击时间轴色块或左侧分段查看分析。",
     loading: "加载中…",
     noMatch: "没有匹配的分段（检查搜索/筛选）。",
     copy: "复制",
     copied: "已复制",
     lanes: { input: "输入", model: "模型", tools: "工具" },
-    filters: { input: "输入", model: "模型", tools: "工具" },
+    filters: { input: "所有者/上下文", model: "消息", tools: "工具" },
+    searchAll: "搜索保留历史",
+    vendorFailed:
+      "本地时间线组件不可用——仅显示降级的序号预览。保留的列表与详情仍可访问。",
+    vendorLoading: "正在加载本地时间线组件…",
+    axisDegraded: "降级：本地组件不可用，仅序号预览",
+    axisOrdinal: "序号预览——非真实/原生时间",
+    replayPosition: "可视回放位置",
+    recordedClock: "记录时钟",
+    nativeElapsed: "原生检查耗时（其他情况不可用）",
+    rawNote: "已记录的事件元数据；长字段单独分页。",
+    inspectFields: "查看保留字段",
+    chars: "字",
+    pageEvent: "页内事件",
     tabs: {
       overview: "概述",
       preview: "预览",
@@ -81,7 +94,20 @@ const I18N = {
     copy: "Copy",
     copied: "Copied",
     lanes: { input: "Input", model: "Model", tools: "Tools" },
-    filters: { input: "Input", model: "Model", tools: "Tools" },
+    filters: { input: "Owner/context", model: "Messages", tools: "Tools" },
+    searchAll: "Search retained history",
+    vendorFailed:
+      "Local timeline vendor unavailable — degraded ordinal preview only. Retained list/details remain available.",
+    vendorLoading: "Loading local timeline vendor…",
+    axisDegraded: "Degraded: local vendor unavailable; ordinal preview only",
+    axisOrdinal: "Ordinal preview — not wall/native time",
+    replayPosition: "Visual replay position",
+    recordedClock: "Recorded clock",
+    nativeElapsed: "Native check elapsed (otherwise unavailable)",
+    rawNote: "Recorded event metadata; long fields are independently paged.",
+    inspectFields: "Inspect retained fields",
+    chars: "chars",
+    pageEvent: "page event",
     tabs: {
       overview: "Overview",
       preview: "Preview",
@@ -113,8 +139,8 @@ function esc(s) {
       ],
   );
 }
-function fmtClock(t) {
-  return `page event ${Math.floor(t / 1000) + 1}`;
+function fmtClock(t, L) {
+  return `${L.pageEvent} ${Math.floor(t / 1000) + 1}`;
 }
 function fmtDur(ms) {
   if (ms === undefined || ms === null) return "—";
@@ -189,7 +215,8 @@ function laneColor(seg) {
 
 export default {
   mount(container, ctx) {
-    let lang = "en";
+    // The WebUI's chosen language; switching it mounts a fresh view.
+    const lang = ctx.lang === "zh" ? "zh" : "en";
     let disposed = false;
     const t = () => I18N[lang];
     let convs = [];
@@ -273,11 +300,10 @@ export default {
 		<span class="sp"></span>
 		<input type="search" class="q" />
 		<button class="rtr-btn act-replay"></button>
-		<button class="rtr-btn act-lang">EN</button>
-		<button class="rtr-btn act-search-all">Search retained history</button>
-        <button class="rtr-btn on" data-lane="input" aria-pressed="true">Owner/context</button>
-        <button class="rtr-btn on" data-lane="model" aria-pressed="true">Messages</button>
-        <button class="rtr-btn on" data-lane="tools" aria-pressed="true">Tools</button>
+		<button class="rtr-btn act-search-all">${esc(t().searchAll)}</button>
+        <button class="rtr-btn on" data-lane="input" aria-pressed="true">${esc(t().filters.input)}</button>
+        <button class="rtr-btn on" data-lane="model" aria-pressed="true">${esc(t().filters.model)}</button>
+        <button class="rtr-btn on" data-lane="tools" aria-pressed="true">${esc(t().filters.tools)}</button>
 	</div>
 	<div class="rtr-convs"></div>
 	<div class="rtr-ruler"><div class="rtr-rulerbar"><span class="hint"></span><span class="sp"></span><button class="rtr-btn act-follow"></button><button class="rtr-btn act-fit"></button></div><div class="rtr-legend"></div><div class="rtr-tlbody"></div></div>
@@ -293,7 +319,6 @@ export default {
       hdLive = $(".rtr-live"),
       qEl = $(".q");
     const replayBtn = $(".act-replay"),
-      langBtn = $(".act-lang"),
       searchAllBtn = $(".act-search-all");
     const convsEl = $(".rtr-convs"),
       rulerEl = $(".rtr-ruler"),
@@ -309,7 +334,6 @@ export default {
       qEl.setAttribute("aria-label", L.search);
       replayBtn.textContent = replay.on ? `⏹ ${L.exitReplay}` : `▶ ${L.replay}`;
       replayBtn.classList.toggle("on", replay.on);
-      langBtn.textContent = lang === "zh" ? "EN" : "中文";
     }
 
     function convOf(id) {
@@ -354,9 +378,9 @@ export default {
       const followBtn = rulerEl.querySelector(".act-follow");
       if (hintEl)
         hintEl.textContent = vendorFailed
-          ? "Local timeline vendor unavailable — degraded ordinal preview only. Retained list/details remain available."
+          ? L.vendorFailed
           : !visApi
-            ? "Loading local timeline vendor…"
+            ? L.vendorLoading
             : L.zoomHint;
       if (fitBtn) fitBtn.textContent = L.fit;
       if (followBtn) {
@@ -478,7 +502,7 @@ export default {
         tip.className = "rtr-tip";
         container.appendChild(tip);
       }
-      tip.innerHTML = `<div class="tt">${esc(s.title)}</div><div class="tm">${esc(s.source ?? "")}</div><div class="tm">${esc(fmtClock(s.t))}${s.dur !== undefined ? ` · ${esc(fmtDur(s.dur))}` : ""}${s.end > s.t ? ` → ${esc(fmtClock(s.end))}` : ""}</div>`;
+      tip.innerHTML = `<div class="tt">${esc(s.title)}</div><div class="tm">${esc(s.source ?? "")}</div><div class="tm">${esc(fmtClock(s.t, t()))}${s.dur !== undefined ? ` · ${esc(fmtDur(s.dur))}` : ""}${s.end > s.t ? ` → ${esc(fmtClock(s.end, t()))}` : ""}</div>`;
       tip.style.display = "block";
       const r = container.getBoundingClientRect();
       const x = Math.min(
@@ -618,15 +642,13 @@ export default {
       const minT = Math.min(...all.map((s) => s.t));
       const maxT = Math.max(...all.map((s) => Math.max(s.end ?? s.t, s.t)));
       const span = Math.max(1, maxT - minT);
-      const total = vendorFailed
-        ? "Degraded: local vendor unavailable; ordinal preview only"
-        : "Ordinal preview — not wall/native time";
+      const total = vendorFailed ? L.axisDegraded : L.axisOrdinal;
       // 手写轴同样像素级保底（≈MIN_SLIVER_PX 随容器宽度换算），不歪曲刻度。
       const pxW = body.clientWidth;
       const minSpanMs = pxW > 0 ? span * (MIN_SLIVER_PX / pxW) : 0;
       const lanes = ["input", "model", "tools"];
       body.innerHTML = `
-<div class="rtr-axis"><span>${esc(fmtClock(minT))}</span><span>${esc(total)}</span><span>${esc(fmtClock(maxT))}</span></div>
+<div class="rtr-axis"><span>${esc(fmtClock(minT, L))}</span><span>${esc(total)}</span><span>${esc(fmtClock(maxT, L))}</span></div>
 ${lanes
   .map((ln) => {
     const blocks = all
@@ -672,7 +694,7 @@ ${lanes
           return `<button class="rtr-row${s.key === selectedKey ? " sel" : ""}${s.status === "error" ? " err" : ""}" data-key="${esc(s.key)}">
 <span class="rtr-chip"${tc ? ` style="border-color:${tc};color:${tc}"` : ""}>${esc(chipFor(s, lang))}</span>
 <span class="tt">${esc(s.title)}</span>
-<time>${esc(fmtClock(s.t))}${s.dur !== undefined ? ` · ${esc(fmtDur(s.dur))}` : ""}</time>
+<time>${esc(fmtClock(s.t, L))}${s.dur !== undefined ? ` · ${esc(fmtDur(s.dur))}` : ""}</time>
 </button>`;
         })
         .join("");
@@ -716,7 +738,7 @@ ${lanes
       const idx = Math.min(replay.idx, maxIdx);
       replayBar.innerHTML = `
 <button class="rtr-btn act-play">${replay.playing ? `⏸ ${esc(L.pause)}` : `▶ ${esc(L.play)}`}</button>
-<input type="range" aria-label="Visual replay position" min="0" max="${maxIdx}" value="${idx}" />
+<input type="range" aria-label="${esc(L.replayPosition)}" min="0" max="${maxIdx}" value="${idx}" />
 <span>${idx + 1}/${all.length}</span>
 <label>${esc(L.speed)} <select class="spd">${[0.5, 1, 2, 4].map((x) => `<option value="${x}"${x === replay.speed ? " selected" : ""}>${x}x</option>`).join("")}</select></label>`;
     }
@@ -752,19 +774,19 @@ ${lanes
         const an = cached.analysis ?? {};
         const st = L.status[seg.status] ?? seg.status;
         body = `<dl class="rtr-kv">
-${kvRow("Recorded clock", esc(seg.clock))}${kvRow(F.source, esc(seg.source ?? "—"))}${kvRow(F.status, esc(st))}${kvRow("Native check elapsed (otherwise unavailable)", esc(fmtDur(seg.dur)))}
-${kvRow(F.len, esc(seg.meta?.chars ? `${seg.meta.chars} 字` : `${(cached.detail ?? "").length} 字`))}${kvRow(F.pos, esc(an.position ?? "—"))}
+${kvRow(L.recordedClock, esc(seg.clock))}${kvRow(F.source, esc(seg.source ?? "—"))}${kvRow(F.status, esc(st))}${kvRow(L.nativeElapsed, esc(fmtDur(seg.dur)))}
+${kvRow(F.len, esc(`${seg.meta?.chars ?? (cached.detail ?? "").length} ${L.chars}`))}${kvRow(F.pos, esc(an.position ?? "—"))}
 </dl>`;
         body += `<div class="rtr-sec">${esc(L.tabs.preview)}</div><pre>${esc((cached.detail ?? "").slice(0, 800))}</pre>`;
       } else if (detailTab === "preview") {
         body = `<pre>${esc((cached.detail ?? "").slice(0, 2000))}</pre>`;
       } else if (detailTab === "raw") {
-        body = `<pre>${esc(cached.detail ?? "")}</pre><p>Recorded event metadata; long fields are independently paged.</p><button class="rtr-btn act-open-detail">Inspect retained fields</button><button class="rtr-btn act-copy">📋 ${esc(L.copy)}</button>`;
+        body = `<pre>${esc(cached.detail ?? "")}</pre><p>${esc(L.rawNote)}</p><button class="rtr-btn act-open-detail">${esc(L.inspectFields)}</button><button class="rtr-btn act-copy">📋 ${esc(L.copy)}</button>`;
       } else {
         body = `<dl class="rtr-kv">
 ${kvRow(F.msgKey, esc(seg.key))}${seg.meta?.toolCallId ? kvRow(F.toolCall, esc(seg.meta.toolCallId)) : ""}
 
-${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(F.time, esc(fmtClock(seg.t)))}
+${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(F.time, esc(fmtClock(seg.t, L)))}
 </dl>`;
       }
       detailEl.innerHTML = `<h3 style="margin:0 0 8px">${esc(seg.title)}</h3><div class="rtr-dtabs">${tabs}</div>${body}`;
@@ -1103,11 +1125,6 @@ ${kvRow(F.conv, esc(`${c.title ?? ""} · ${String(c.id).slice(0, 8)}`))}${kvRow(
         replay.speed = Number(e.target.value);
         if (replay.playing) startPlay();
       }
-    });
-    langBtn.addEventListener("click", () => {
-      lang = lang === "zh" ? "en" : "zh";
-      applyLang();
-      scheduleRender();
     });
     searchAllBtn.addEventListener("click", () => ctx.searchHistory());
     for (const button of container.querySelectorAll("[data-lane]")) {

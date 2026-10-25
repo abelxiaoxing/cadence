@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { canonicalJson } from "../../../../src/service-contract.ts";
 import { contentCursor } from "../../history/readers";
+import { useT } from "../../i18n/locale";
 import type {
   GraphReadRequest,
   GraphReadResult,
@@ -27,6 +28,7 @@ function SelectedGraph({
   client: ServiceClient;
   seed: GraphReadRequest;
 }) {
+  const { t, tx } = useT();
   const [request, setRequest] = useState(seed),
     [page, setPage] = useState<GraphReadResult>(),
     [error, setError] = useState<string>(),
@@ -59,20 +61,22 @@ function SelectedGraph({
   }, [client, request]);
   return (
     <section>
-      <h3>Immutable admitted graph</h3>
-      {error && <p role="alert">Graph refused: {error}</p>}
-      {busy && <p>Reading graph…</p>}
+      <h3>{t("Immutable admitted graph")}</h3>
+      {error && (
+        <p role="alert">{t("Graph refused: {error}", { error: tx(error) })}</p>
+      )}
+      {busy && <p>{t("Reading graph…")}</p>}
       {page && "kind" in page && <Coverage value={page.coverage} />}
       {page &&
         ("kind" in page ? (
           <>
-            <p>Graph validation in progress; not an empty graph.</p>
+            <p>{t("Graph validation in progress; not an empty graph.")}</p>
             <button
               type="button"
               disabled={busy}
               onClick={() => setRequest(page.next)}
             >
-              Continue graph validation
+              {t("Continue graph validation")}
             </button>
           </>
         ) : (
@@ -92,7 +96,7 @@ function SelectedGraph({
                   {a.id} / {a.purpose}
                 </h4>
                 <Markdown text={a.instructions} />
-                <p>Expected: {a.expectedOutput}</p>
+                <p>{t("Expected: {output}", { output: a.expectedOutput })}</p>
                 <pre>
                   {JSON.stringify(
                     {

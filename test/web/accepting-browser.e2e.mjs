@@ -47,10 +47,12 @@ for (const route of ["loopback", "https"])
       browser = await chromium.connect(launcher.wsEndpoint());
       const one = await browser.newContext({
         viewport: { width: 1440, height: 900 },
+        locale: "en-US",
         acceptDownloads: true,
       });
       const two = await browser.newContext({
         viewport: { width: 390, height: 844 },
+        locale: "en-US",
         acceptDownloads: true,
       });
       const p = await one.newPage(),

@@ -1,4 +1,10 @@
 /** Cadence bridge for the adapted standalone client. Readonly, no plugin dispatcher. */
+import {
+  type Locale,
+  type MessageKey,
+  translate,
+  type Vars,
+} from "../i18n/locale";
 import type { HistoryRecord } from "../types";
 import type {
   TimelineData,
@@ -15,7 +21,9 @@ export function timelineBridge(
   records: HistoryRecord[],
   open: (record: FactRecord) => void,
   search: () => void,
+  lang: Locale = "en",
 ): TimelineReadBridge {
+  const t = (key: MessageKey, vars?: Vars) => translate(lang, key, vars);
   const facts = records.filter(
     (r): r is FactRecord =>
       r.kind === "owner-fact" || r.kind === "capture-fact",
@@ -32,16 +40,29 @@ export function timelineBridge(
       key: r.recordId,
       lane,
       group: `${child ?? "owner"}:${lane}`,
-      groupLabel: `${child ?? "Owner"} · ${lane}`,
+      groupLabel: `${child ?? t("Owner")} · ${translate(lang, lane)}`,
       kind: lane === "tools" ? "tool" : lane === "model" ? "text" : "system",
       title: `#${r.committedSeq} ${kind}`,
       summary: kind,
-      source: `Committed #${r.committedSeq}; ${child ?? "owner"}`,
-      status: "recorded fact",
+      source: t("Committed #{seq}; {who}", {
+        seq: r.committedSeq,
+        who: child ?? t("owner"),
+      }),
+      status: t("recorded fact"),
       clock:
         r.kind === "capture-fact"
-          ? `Worker-local monotonic observations (${r.link.childRunId}): ${r.capture.source.firstObservedMs}–${r.capture.source.lastObservedMs} ms; not aligned to other workers.`
-          : `Owner observation (${r.link.epoch}): ${r.observedMs} ms; clock origin not established by this reader.`,
+          ? t(
+              "Worker-local monotonic observations ({child}): {first}–{last} ms; not aligned to other workers.",
+              {
+                child: r.link.childRunId,
+                first: r.capture.source.firstObservedMs,
+                last: r.capture.source.lastObservedMs,
+              },
+            )
+          : t(
+              "Owner observation ({epoch}): {ms} ms; clock origin not established by this reader.",
+              { epoch: r.link.epoch, ms: r.observedMs },
+            ),
       ...(r.kind === "owner-fact" && r.fact.kind === "check-settled"
         ? { dur: r.fact.native.durationMs }
         : {}),
@@ -51,6 +72,7 @@ export function timelineBridge(
   });
   let receive: ((data: TimelineData) => void) | undefined;
   return {
+    lang,
     onData(fn) {
       receive = fn;
       return () => {
@@ -63,7 +85,7 @@ export function timelineBridge(
         conversations: [
           {
             id: scopeId,
-            title: `${scopeId} — loaded committed page`,
+            title: t("{scope} — loaded committed page", { scope: scopeId }),
             isStreaming: false,
             segCount: segments.length,
           },
@@ -85,7 +107,10 @@ export function timelineBridge(
         seg: segments[index],
         detail: JSON.stringify(facts[index], null, 2),
         analysis: {
-          position: `Committed sequence ${facts[index].committedSeq}; page ordinal ${index + 1}. Timing shown in raw facts only; clocks may not be comparable.`,
+          position: t(
+            "Committed sequence {seq}; page ordinal {ordinal}. Timing shown in raw facts only; clocks may not be comparable.",
+            { seq: facts[index].committedSeq, ordinal: index + 1 },
+          ),
         },
       });
     },

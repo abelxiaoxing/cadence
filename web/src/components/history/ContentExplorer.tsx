@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { contentCursor } from "../../history/readers";
 import { usePage } from "../../history/use-page";
+import { Template, useT } from "../../i18n/locale";
 import type { ListRequest, ReadCursor, ServiceClient } from "../../types";
 import { Coverage } from "./Coverage";
 import { DetailPane } from "./DetailPane";
@@ -14,16 +15,21 @@ export function ContentExplorer({
   seed: ListRequest;
   entityId?: string;
 }) {
+  const { t, tx } = useT();
   const pager = usePage(client, { ...seed, reader: "contents" });
   const [selected, setSelected] = useState<ReadCursor>();
   const page = pager.page;
   return (
-    <section aria-label="Retained content fields">
+    <section aria-label={t("Retained content fields")}>
       <PageControls pager={pager} />
       {entityId && (
         <p>
-          Showing matches for entity <code>{entityId}</code> on this page only.
-          Continue paging for other fields/versions.
+          <Template
+            text={t(
+              "Showing matches for entity {entity} on this page only. Continue paging for other fields/versions.",
+            )}
+            slots={{ entity: <code>{entityId}</code> }}
+          />
         </p>
       )}
       {page &&
@@ -38,7 +44,7 @@ export function ContentExplorer({
                 key={`${record.owner.entity.id}:${record.version}:${JSON.stringify(record.block.owner)}`}
                 className="omission"
               >
-                Omitted source block:{" "}
+                {t("Omitted source block:")}{" "}
                 <code>{JSON.stringify(record.block)}</code>
               </p>
             );
@@ -47,8 +53,10 @@ export function ContentExplorer({
               key={`${record.content.recordId}:${record.content.version}`}
             >
               <p>
-                {record.owner.entity.kind} <code>{record.owner.entity.id}</code>{" "}
-                · {record.content.field} · {record.content.bytes} retained bytes
+                {tx(record.owner.entity.kind)}{" "}
+                <code>{record.owner.entity.id}</code> ·{" "}
+                {tx(record.content.field)} ·{" "}
+                {t("{bytes} retained bytes", { bytes: record.content.bytes })}
               </p>
               <pre>{JSON.stringify(record.descriptor.owner)}</pre>
               <Coverage value={record.coverage} />
@@ -69,7 +77,7 @@ export function ContentExplorer({
                     );
                 }}
               >
-                Inspect complete retained field
+                {t("Inspect complete retained field")}
               </button>
             </article>
           );

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { requestDownload } from "../../history/download-export";
+import { useT } from "../../i18n/locale";
 import type { ExportRequest } from "../../types";
 import { ActionDialog } from "../actions/ActionDialog";
 export function ExportDialog({
@@ -9,39 +10,42 @@ export function ExportDialog({
   request: ExportRequest;
   onClose: () => void;
 }) {
+  const { t, tx } = useT();
   const [frozenRequest] = useState(request);
   const [format, setFormat] = useState(request.format),
     [status, setStatus] = useState("");
   return (
-    <ActionDialog title="Export retained history" onClose={onClose}>
+    <ActionDialog title={t("Export retained history")} onClose={onClose}>
       <p>
-        Selected {frozenRequest.scope.kind}: {frozenRequest.scope.id} · snapshot{" "}
-        {frozenRequest.snapshotSeq}
+        {t("Selected {kind}: {id} · snapshot {seq}", {
+          kind: tx(frozenRequest.scope.kind),
+          id: frozenRequest.scope.id,
+          seq: frozenRequest.snapshotSeq,
+        })}
       </p>
       <label>
-        Format
+        {t("Format")}
         <select
           value={format}
           onChange={(e) =>
             setFormat(e.target.value === "markdown" ? "markdown" : "ndjson")
           }
         >
-          <option value="ndjson">NDJSON public archive</option>
+          <option value="ndjson">{t("NDJSON public archive")}</option>
           <option value="markdown">
-            Readable Markdown with footer metadata
+            {t("Readable Markdown with footer metadata")}
           </option>
         </select>
       </label>
       <p>
-        Includes retained context, messages/tools, graph, lifecycle, changes,
-        checks, human review and coverage beyond loaded pages. Redactions and
-        source omissions remain.
+        {t(
+          "Includes retained context, messages/tools, graph, lifecycle, changes, checks, human review and coverage beyond loaded pages. Redactions and source omissions remain.",
+        )}
       </p>
       <p>
-        A native browser download request cannot establish completion. Inspect
-        the original EOF and completion trailer/counts/digest in the downloaded
-        artifact; missing footer means incomplete. Revoked access may terminate
-        without a trailer.
+        {t(
+          "A native browser download request cannot establish completion. Inspect the original EOF and completion trailer/counts/digest in the downloaded artifact; missing footer means incomplete. Revoked access may terminate without a trailer.",
+        )}
       </p>
       <button
         type="button"
@@ -49,14 +53,16 @@ export function ExportDialog({
           try {
             requestDownload({ ...frozenRequest, format });
             setStatus(
-              "Download requested — completion not verified by this browser UI.",
+              t(
+                "Download requested — completion not verified by this browser UI.",
+              ),
             );
           } catch {
-            setStatus("Download unavailable; no archive claimed complete.");
+            setStatus(t("Download unavailable; no archive claimed complete."));
           }
         }}
       >
-        Request selected-scope download
+        {t("Request selected-scope download")}
       </button>
       <p role="status">{status}</p>
     </ActionDialog>
