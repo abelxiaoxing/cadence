@@ -15,7 +15,7 @@ import {
   utf8Bytes,
 } from "../service-contract.ts";
 import { type HttpPolicy, loopbackAddress } from "./config.ts";
-import { closed, integer, literal, text } from "./contracts/core.ts";
+import { closed, integer, literal, oneOf } from "./contracts/core.ts";
 import type { Caller } from "./ports.ts";
 import {
   encoded,
@@ -23,18 +23,42 @@ import {
   json,
   PrivateFiles,
 } from "./private-files.ts";
+import {
+  CONFIG_BYTES,
+  readServerConfig,
+  type ServerConfigFile,
+  TOKEN_BYTES,
+  accessToken as token,
+  withToken,
+} from "./server-config.ts";
 
-export const TOKEN_BYTES = 1024;
+/** `serverConfig`: the path of the user's `.env` and the CADENCE_TOKEN the
+ * host read from it once, before binding, like an environment token. */
 export type TokenSource =
-  | { environment: string; tokenFile?: never }
-  | { tokenFile: string; environment?: never }
-  | { environment?: never; tokenFile?: never };
-function token(value: unknown): string {
-  const result = text(value, TOKEN_BYTES, true);
-  if (utf8Bytes(result) < 32 || /[\p{Cc}\p{Cf}]/u.test(result))
-    throw new ContractError("invalid");
-  return result; // Never trim, normalize or interpolate secret bytes.
-}
+  | {
+      environment: string;
+      tokenFile?: never;
+      serverConfig?: never;
+      token?: never;
+    }
+  | {
+      tokenFile: string;
+      environment?: never;
+      serverConfig?: never;
+      token?: never;
+    }
+  | {
+      serverConfig: string;
+      token: string;
+      environment?: never;
+      tokenFile?: never;
+    }
+  | {
+      environment?: never;
+      tokenFile?: never;
+      serverConfig?: never;
+      token?: never;
+    };
 export function sameSecret(candidate: string, expected: string): boolean {
   const a = createHash("sha256").update(candidate).digest();
   const b = createHash("sha256").update(expected).digest();
@@ -72,7 +96,7 @@ function cookieTokens(header: string | undefined, name: string): string[] {
 }
 interface AccessConfig {
   schema: "cadence-service-access-config/1";
-  source: "generated" | "environment" | "file";
+  source: "generated" | "environment" | "file" | "config";
   path: string | null;
 }
 interface AccessRecord {
@@ -81,13 +105,13 @@ interface AccessRecord {
   token: string | null;
 }
 function sourceConfig(source: TokenSource): AccessConfig {
-  if (source.environment !== undefined && source.tokenFile !== undefined)
+  const given = [source.environment, source.tokenFile, source.serverConfig];
+  if (given.filter((v) => v !== undefined).length > 1)
     throw new ContractError("invalid");
   if (source.environment !== undefined) token(source.environment);
-  if (
-    source.tokenFile !== undefined &&
-    (!isAbsolute(source.tokenFile) || source.tokenFile.includes("\0"))
-  )
+  if (source.serverConfig !== undefined) token(source.token);
+  const path = source.tokenFile ?? source.serverConfig;
+  if (path !== undefined && (!isAbsolute(path) || path.includes("\0")))
     throw new ContractError("invalid");
   return {
     schema: "cadence-service-access-config/1",
@@ -96,8 +120,45 @@ function sourceConfig(source: TokenSource): AccessConfig {
         ? "environment"
         : source.tokenFile !== undefined
           ? "file"
-          : "generated",
-    path: source.tokenFile ?? null,
+          : source.serverConfig !== undefined
+            ? "config"
+            : "generated",
+    path: path ?? null,
+  };
+}
+function readSource(config: AccessConfig): void {
+  if (config.source === "file" && config.path) readExternal(config.path);
+}
+/** Intact existing material of a stopped workspace, and the server
+ * configuration it would switch to. */
+function selectedMaterial(
+  files: PrivateFiles,
+  directory: string,
+  source: TokenSource,
+) {
+  const config = sourceConfig(source);
+  if (config.source !== "config") throw new ContractError("invalid");
+  const marker = join(directory, "access-config.json"),
+    access = join(directory, "access.json");
+  const markerFile = files.read(marker),
+    accessFile = files.read(access);
+  if (!markerFile || !accessFile) throw new ContractError("corrupt-selected");
+  const previous = closed(json(markerFile), ["schema", "source", "path"]);
+  literal(previous.schema, "cadence-service-access-config/1");
+  oneOf(previous.source, ["generated", "environment", "file", "config"]);
+  const r = closed(json(accessFile), ["schema", "generation", "token"]);
+  literal(r.schema, "cadence-service-access/1");
+  const generation = integer(r.generation, 1);
+  if ((previous.source === "generated") !== (r.token !== null))
+    throw new ContractError("corrupt-selected");
+  return {
+    config,
+    previous,
+    generation,
+    marker,
+    markerFile,
+    access,
+    accessFile,
   };
 }
 /** Explicit private setup/load, never called by GET/import. Access marker is written
@@ -113,8 +174,7 @@ export class AccessMaterial {
   private listeners = new Set<() => void>();
   readonly config: AccessConfig;
   static validateSource(source: TokenSource): void {
-    const config = sourceConfig(source);
-    if (config.path) readExternal(config.path);
+    readSource(sourceConfig(source));
   }
   static initialize(
     files: PrivateFiles,
@@ -131,7 +191,7 @@ export class AccessMaterial {
       files.read(join(directory, "owner.lock"))
     )
       throw new ContractError("conflict");
-    if (config.path) readExternal(config.path);
+    readSource(config);
     files.create(marker, encoded(config));
     files.create(
       access,
@@ -142,6 +202,36 @@ export class AccessMaterial {
           config.source === "generated"
             ? randomBytes(32).toString("base64url")
             : null,
+      }),
+    );
+  }
+  /** Validation only, before any reservation: a stopped workspace's existing
+   * material must be intact to be reselected. */
+  static validateReselection(
+    files: PrivateFiles,
+    directory: string,
+    source: TokenSource,
+  ): void {
+    selectedMaterial(files, directory, source);
+  }
+  /** Explicit reselection of a stopped workspace to the server configuration,
+   * called only under the owner reservation; a changed source retires the
+   * previous token with a new generation. */
+  static reselect(
+    files: PrivateFiles,
+    directory: string,
+    source: TokenSource,
+  ): void {
+    const m = selectedMaterial(files, directory, source);
+    if (encoded(m.previous) === encoded(m.config)) return;
+    files.replace(m.marker, m.markerFile, encoded(m.config));
+    files.replace(
+      m.access,
+      m.accessFile,
+      encoded({
+        schema: "cadence-service-access/1",
+        generation: integer(m.generation + 1, 1),
+        token: null,
       }),
     );
   }
@@ -167,12 +257,18 @@ export class AccessMaterial {
     };
     if ((this.config.source === "generated") !== (this.record.token !== null))
       throw new ContractError("corrupt-selected");
-    if (this.config.path) {
+    if (this.config.source === "file" && this.config.path) {
       const loaded = readExternal(this.config.path);
       this.external = loaded.files;
       this.externalFile = loaded.file;
       this.secret = loaded.token;
-    } else this.secret = token(this.record.token ?? source.environment);
+    }
+    // A server configuration is not bound for the run: editing it while the
+    // owner runs must not fence access (and with it the orderly Stop).
+    else
+      this.secret = token(
+        this.record.token ?? source.environment ?? source.token,
+      );
     this.configFile = configFile;
     this.accessFile = accessFile;
   }
@@ -220,7 +316,7 @@ export class AccessMaterial {
       this.configFile,
     );
     this.files.assert(join(this.directory, "access.json"), this.accessFile);
-    if (this.config.path)
+    if (this.config.source === "file" && this.config.path)
       this.external?.assert(this.config.path, this.externalFile, TOKEN_BYTES);
   }
   /** Owner-only redaction material. Never a client DTO or child environment. */
@@ -244,6 +340,14 @@ export class AccessMaterial {
   rotate(): void {
     if (this.config.source === "environment")
       throw new ContractError("unsupported-context");
+    // The server configuration is the user's file: one whose token no longer
+    // matches the running one holds a pending edit, refused before any effect.
+    let configured: ServerConfigFile | undefined;
+    if (this.config.source === "config" && this.config.path) {
+      configured = readServerConfig(this.config.path);
+      if (!sameSecret(configured.config.token, this.secret))
+        throw new ContractError("conflict");
+    }
     try {
       this.assertRotation();
       const secret = randomBytes(32).toString("base64url");
@@ -254,6 +358,15 @@ export class AccessMaterial {
           this.externalFile,
           secret,
           TOKEN_BYTES,
+        );
+      // Only the token line changes; the port, possibly edited for the next
+      // start, and every research setting stay.
+      if (configured)
+        configured.files.replace(
+          configured.path,
+          configured.snapshot,
+          withToken(configured, secret),
+          CONFIG_BYTES,
         );
       const record: AccessRecord = {
         ...this.record,

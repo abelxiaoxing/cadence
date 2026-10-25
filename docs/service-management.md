@@ -16,7 +16,7 @@ cadence stop --workspace /absolute/project
 
 `cadence-service` is the same command, and the equivalent package-relative command is `node <cadence>/src/service-cli.mjs ...`.
 `--help` lists the finite interface.
-`start` also accepts `--foreground`, `--config`, `--agent-dir`, `--host` (loopback only), `--port`, `--token-file` and `--state-home`.
+`start` also accepts `--foreground`, `--config`, `--agent-dir`, `--host` (loopback only), `--port`, `--token-file`, `--server-config` ([port and token](#port-and-token)) and `--state-home`.
 Defaults are loopback `127.0.0.1:17423`, normal Pi agent configuration, and detached service lifetime.
 An explicit port0 selects and persists a positive port once; restart uses the selected configuration, not a fallback endpoint.
 Missing/corrupt existing setup is preserved, not filled in or reset.
@@ -37,11 +37,11 @@ cadence server uninstall
 
 Only these explicit commands register, change or remove the service; no package install, update hook, `/cadence` or browser visit does.
 The package has no install script, so npm 12 and Bun skipping untrusted scripts by default changes nothing; the pinned Pi SDK's blocked `@google/genai` preinstall only echoes `no-op`, and its `protobufjs` postinstall only warns about version schemes.
-`install` also creates the research template `~/.pi/agent/cadence/.env` when it is missing, never overwriting it, whatever the service result.
-`install` works from any package location and runs `start --foreground --workspace` (Linux, macOS) or `start --workspace` (Windows) from that copy with the installing Node, without `--port`.
+`install` also creates the research template `~/.pi/agent/cadence/.env` when it is missing, never overwriting it, whatever the service result, and adds its [port and token](#port-and-token) lines when they are missing.
+`install` works from any package location and runs `start --foreground --workspace <workspace> --server-config <file>` (Linux, macOS) or the same without `--foreground` (Windows) from that copy with the installing Node, without `--port`.
 The workspace is `~/cadence` (created if missing), an existing absolute `--workspace`, or on later installs the one the definition already runs; a workspace containing the service's state home lands on `~/cadence` with a note.
-A new workspace selects `http://127.0.0.1:17423`; a port saved by an earlier start of that workspace still wins, and an occupied endpoint fails instead of falling back.
-Browser entry still requires the explicitly revealed token link; install prints the `token-link --reveal` command, never the token.
+The `.env` [port and token](#port-and-token) select the endpoint (17423 by default) and the token; an occupied endpoint fails instead of falling back.
+Install and restart print the private entry link once the owner answers; the JSON result on stdout never carries the token.
 `restart` rewrites an existing definition with the current Node and package paths, keeping its workspace and the user's disable choices, and starts it; run it after an npm upgrade, a Node change or a `models.json` edit.
 `stop` stops the owner orderly and keeps the registration for the next boot or login.
 `uninstall` stops it orderly and deletes only what Cadence generated; workspace, state home, history, linger and Pi sources stay.
@@ -57,6 +57,33 @@ While no service is registered, Pi's session-start card shows a separate warning
 It is a warning rather than part of the info card because Pi's TUI replaces one info status with the next.
 `/cadence` names the same command when it finds no owner.
 A machine without a supported user service manager and `CADENCE_AUTOSTART=0` keep both quiet; with `CADENCE_LINGER=0` they suggest `--no-linger`.
+
+### Port and token
+
+The background service reads two lines of the research configuration `~/.pi/agent/cadence/.env`:
+
+```sh
+CADENCE_PORT=17423
+CADENCE_TOKEN=<at least 32 characters, no control or format characters>
+```
+
+The file keeps the research skills' syntax (`KEY=value` lines, `#` comments, one optional pair of quotes), and each of these keys may appear only once.
+`install` and `restart` create the file from the research template when it is missing, as your own 0600 file in a 0700 directory.
+They append a missing `CADENCE_PORT` (17423) or `CADENCE_TOKEN` (random, 43 characters) under a comment, in the file's own line endings, and never change an existing line.
+An unusable file (another owner, wider permissions, a symlink, a syntax error the research skills would also refuse, a duplicate key, a port outside 1-65535, a short token) makes them change nothing, naming only its path.
+A project's `.pi/cadence/.env`, which the research skills prefer, is never read for the service.
+`start --server-config <.env>` makes these lines authoritative.
+The host reads them once before binding, like an environment token, so editing them while the owner runs changes nothing and can never fence access or the orderly Stop; the next start applies them, and `cadence server restart` does both.
+A workspace whose token comes from the file follows it at every `start`, also without `--server-config`; a contradicting `--port`, `--token-file` or `CADENCE_WEB_TOKEN` refuses.
+`CADENCE_WEB_TOKEN` stays the separate process-environment source; sourcing the `.env` in a shell sets `CADENCE_PORT` and `CADENCE_TOKEN`, which Cadence never reads from its environment.
+The token never enters Cadence's state home, and status and diagnosis never print it.
+`token-rotate` replaces only the `CADENCE_TOKEN` line's value with a new random token, keeping every other byte, and invalidates old links and cookies without stopping work.
+It refuses without any effect when that token was edited since the start, so a pending edit is never overwritten.
+
+A stopped workspace selected earlier with a generated, environment or file token, or another port, is reselected to the file at its next `start --server-config`.
+Under the new owner reservation Cadence retires the previous token with a new access generation and replaces the selected port and token source; the history and every other selected setting stay.
+A different agent directory, host or proxy still conflicts, and a running owner refuses until it has stopped.
+An interrupted replacement keeps the reservation as a fence and is never repaired automatically, like any interrupted start.
 
 ### Linux systemd user unit
 

@@ -11,6 +11,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  statSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -459,6 +460,286 @@ it("external private token file source rotates real selected bytes", async () =>
   expect(new URL(await token(f)).searchParams.get("token")).toBe(
     readFileSync(path, "utf8"),
   );
+}, 30000);
+/** A port free right now; the host binds it exactly or refuses. */
+async function freePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  await new Promise((resolve) => server.close(resolve));
+  if (!address || typeof address === "string") throw new Error("no port");
+  return address.port;
+}
+/** A research .env that also selects the WebUI port and token. */
+function serverConfig(f: F, port: number, token: string): string {
+  const path = join(f.dir, ".env");
+  writeFileSync(
+    path,
+    `# research\nGROK_API_KEY=fabricated-grok-key\nCADENCE_PORT=${port}\nCADENCE_TOKEN=${token}\n`,
+    { mode: 0o600 },
+  );
+  return path;
+}
+async function entered(f: F, secret: string) {
+  const entry = await http(f, `/?token=${encodeURIComponent(secret)}`);
+  expect(entry.status).toBe(303);
+  return entry.headers["set-cookie"][0].split(";")[0] as string;
+}
+it("server configuration selects the port and token; an edit applies at the next start without fencing the running owner", async () => {
+  const f = fixture();
+  pending.push(f);
+  const port = await freePort();
+  const first = "fabricated-server-config-token-1111111111";
+  const path = serverConfig(f, port, first);
+  const agent = ["--agent-dir", join(f.dir, "agent")];
+  const r = await run(f, "start", [...agent, "--server-config", path]);
+  expect(r.code, r.stderr).toBe(0);
+  expect(f.c.localAccess().endpoint).toBe(`http://127.0.0.1:${port}`);
+  expect(await token(f)).toBe(`http://127.0.0.1:${port}/?token=${first}`);
+  expect(readHostConfig(f.c)).toMatchObject({
+    http: { port },
+    tokenSource: "config",
+    tokenFile: path,
+  });
+  // Like an environment token, the secret stays out of Cadence's own state.
+  expect(JSON.stringify(tree(f.state))).not.toContain(
+    Buffer.from(first).toString("hex"),
+  );
+  const cookie = await entered(f, first);
+  // Editing the file while the owner runs changes nothing until restart, and
+  // the orderly Stop still goes through.
+  const port2 = await freePort();
+  const second = "fabricated-server-config-token-2222222222";
+  serverConfig(f, port2, second);
+  expect((await http(f, "/api/v1/session", { cookie })).status).toBe(200);
+  expect(new URL(await token(f)).searchParams.get("token")).toBe(first);
+  // The running owner is not reselected in place.
+  expect((await run(f, "start", ["--server-config", path])).code).toBe(1);
+  const stopped = await run(f, "stop");
+  expect(JSON.parse(stopped.stdout).status, stopped.stderr).toBe("stopped");
+  // A selection that reads its token from the file follows it at every start.
+  expect((await run(f, "start")).code).toBe(0);
+  expect(f.c.localAccess().endpoint).toBe(`http://127.0.0.1:${port2}`);
+  expect(readHostConfig(f.c)?.http.port).toBe(port2);
+  expect(new URL(await token(f)).searchParams.get("token")).toBe(second);
+  expect((await http(f, `/?token=${first}`)).status).toBe(401);
+  expect((await http(f, "/api/v1/session", { cookie })).status).toBe(401);
+  await entered(f, second);
+  // Explicit choices that contradict the file refuse.
+  expect((await run(f, "start", ["--port", String(port)])).code).toBe(1);
+  expect((await run(f, "start", ["--token-file", path])).code).toBe(1);
+  f.env.CADENCE_WEB_TOKEN = "fabricated-environment-owner-token-111111";
+  expect((await run(f, "start")).code).toBe(1);
+  delete f.env.CADENCE_WEB_TOKEN;
+  for (const name of ["status", "diagnose"])
+    expect((await run(f, name)).stdout).not.toContain(second);
+}, 60000);
+it("an unusable server configuration refuses before registering, naming only its path", async () => {
+  const f = fixture();
+  pending.push(f);
+  const path = join(f.dir, ".env");
+  const before = tree(f.state);
+  const token = "CADENCE_TOKEN=fabricated-server-config-token-1111111111";
+  for (const bad of [
+    "CADENCE_PORT=17423\n",
+    `${token}\n`,
+    `CADENCE_PORT=70000\n${token}\n`,
+    `CADENCE_PORT=17423\n${token}\n${token}\n`,
+    `CADENCE_PORT=17423\n${token}\nbroken\n`,
+  ]) {
+    writeFileSync(path, bad, { mode: 0o600 });
+    const r = await run(f, "start", [
+      "--agent-dir",
+      join(f.dir, "agent"),
+      "--server-config",
+      path,
+    ]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain(
+      `Cadence changed nothing: ${path} must be your own private regular file`,
+    );
+    expect(r.stderr).not.toContain("fabricated");
+    expect(tree(f.state)).toEqual(before);
+  }
+  if (process.platform !== "win32") {
+    writeFileSync(path, `CADENCE_PORT=17423\n${token}\n`);
+    chmodSync(path, 0o644);
+    expect(
+      (
+        await run(f, "start", [
+          "--agent-dir",
+          join(f.dir, "agent"),
+          "--server-config",
+          path,
+        ])
+      ).code,
+    ).toBe(1);
+    expect(tree(f.state)).toEqual(before);
+  }
+});
+it("a stopped generated-token workspace is reselected to the server configuration, keeping its history", async () => {
+  const f = await started();
+  const old = await token(f);
+  // Reselection waits for the orderly Stop.
+  const port = await freePort();
+  const secret = "fabricated-server-config-token-1111111111";
+  const path = serverConfig(f, port, secret);
+  expect((await run(f, "start", ["--server-config", path])).code).toBe(1);
+  expect(f.c.localAccess().endpoint).toBe(new URL(old).origin);
+  expect((await run(f, "stop")).code).toBe(0);
+  const history = tree(join(f.c.directory, "history-v2"));
+  const r = await run(f, "start", ["--server-config", path]);
+  expect(r.code, r.stderr).toBe(0);
+  expect(JSON.parse(r.stdout).status).toBe("alive");
+  expect(f.c.localAccess().endpoint).toBe(`http://127.0.0.1:${port}`);
+  expect(await token(f)).toBe(`http://127.0.0.1:${port}/?token=${secret}`);
+  expect(readHostConfig(f.c)).toMatchObject({
+    http: { port },
+    tokenSource: "config",
+    tokenFile: path,
+  });
+  // The generated token is retired; nothing else selected changes.
+  const access = JSON.parse(readFileSync(f.c.path("access.json"), "utf8"));
+  expect(access).toEqual({
+    schema: "cadence-service-access/1",
+    generation: 2,
+    token: null,
+  });
+  expect(
+    JSON.parse(readFileSync(f.c.path("access-config.json"), "utf8")),
+  ).toEqual({
+    schema: "cadence-service-access-config/1",
+    source: "config",
+    path,
+  });
+  // The same history store continues: its identity files are unchanged and
+  // the earlier ledger is a prefix of the current one.
+  const after = tree(join(f.c.directory, "history-v2"));
+  for (const [name, bytes] of Object.entries(history))
+    if (!name.includes(join("history-v2", "indexes")))
+      expect(after[name]?.startsWith(bytes), name).toBe(true);
+  const port2 = await freePort();
+  serverConfig(f, port2, secret);
+  expect((await run(f, "stop")).code).toBe(0);
+  expect((await run(f, "start", ["--server-config", path])).code).toBe(0);
+  expect(f.c.localAccess().endpoint).toBe(`http://127.0.0.1:${port2}`);
+  expect(
+    JSON.parse(readFileSync(f.c.path("access.json"), "utf8")).generation,
+  ).toBe(2);
+  // Only the port and token source may change: another agent directory or a
+  // file-backed token still conflicts.
+  expect((await run(f, "stop")).code).toBe(0);
+  const agent = join(f.dir, "agent2");
+  mkdirSync(agent, { mode: 0o700 });
+  writeFileSync(join(agent, "auth.json"), "{}", { mode: 0o600 });
+  const selected = tree(f.c.directory);
+  expect(
+    (await run(f, "start", ["--agent-dir", agent, "--server-config", path]))
+      .code,
+  ).toBe(1);
+  expect(tree(f.c.directory)).toEqual(selected);
+}, 60000);
+it("token rotation rewrites only the .env's token line; a pending token edit refuses without fencing", async () => {
+  const f = fixture();
+  pending.push(f);
+  const port = await freePort();
+  const first = "fabricated-server-config-token-1111111111";
+  const path = join(f.dir, ".env");
+  const lines = (secret: string) =>
+    `GROK_API_KEY="fabricated grok key"\r\n\r\n# WebUI\r\nCADENCE_PORT=${port}\r\n  CADENCE_TOKEN=${secret}\r\nTAVILY_ENABLED=false\r\n`;
+  writeFileSync(path, lines(`"${first}"`), { mode: 0o600 });
+  const r = await run(f, "start", [
+    "--agent-dir",
+    join(f.dir, "agent"),
+    "--server-config",
+    path,
+  ]);
+  expect(r.code, r.stderr).toBe(0);
+  const cookie = await entered(f, first);
+  expect((await run(f, "token-rotate")).code).toBe(0);
+  const text = readFileSync(path, "utf8");
+  const rotated = /CADENCE_TOKEN=([A-Za-z0-9_-]{43})\r\n/.exec(text)?.[1];
+  expect(rotated).toBeDefined();
+  // Every other byte, line ending and indent stays.
+  expect(text).toBe(lines(rotated!));
+  if (process.platform !== "win32")
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  expect(new URL(await token(f)).searchParams.get("token")).toBe(rotated);
+  expect((await http(f, "/api/v1/session", { cookie })).status).toBe(401);
+  const fresh = await entered(f, rotated!);
+  const edited = lines("fabricated-edited-server-token-3333333333");
+  writeFileSync(path, edited);
+  expect((await run(f, "token-rotate")).code).toBe(1);
+  expect(readFileSync(path, "utf8")).toBe(edited);
+  expect((await http(f, "/api/v1/session", { cookie: fresh })).status).toBe(
+    200,
+  );
+  expect(JSON.parse((await run(f, "status")).stdout).status).toBe("alive");
+}, 60000);
+/** The host's own startup line for an input the management client would
+ * never send, such as a file edited between selection and start. */
+async function hostLine(f: F, config: Record<string, unknown>) {
+  const child = spawn(process.execPath, [host], {
+    cwd: f.root,
+    env: f.env,
+    stdio: ["pipe", "pipe", "ignore"],
+  });
+  let stdout = "";
+  child.stdout.on("data", (b) => {
+    stdout += b;
+  });
+  const closed = once(child, "close");
+  child.stdin.end(
+    JSON.stringify({
+      workspace: f.root,
+      stateHome: f.state,
+      environmentToken: null,
+      config: {
+        schema: "cadence-service-host/1",
+        cwd: f.root,
+        agentDir: join(f.dir, "agent"),
+        ...config,
+      },
+    }),
+  );
+  await closed;
+  return JSON.parse(stdout);
+}
+it("the host refuses a server configuration that no longer names the selected port, or a reselection beyond port and token", async () => {
+  const f = await started();
+  expect((await run(f, "stop")).code).toBe(0);
+  const old = readHostConfig(f.c)!;
+  const port = await freePort();
+  const path = serverConfig(
+    f,
+    port,
+    "fabricated-server-config-token-1111111111",
+  );
+  const selected = tree(f.state);
+  const http = { ...old.http, port: port === 65535 ? 1 : port + 1 };
+  expect(
+    await hostLine(f, { http, tokenSource: "config", tokenFile: path }),
+  ).toEqual({ status: "refused", error: "conflict", stage: "service" });
+  const agent = join(f.dir, "agent2");
+  mkdirSync(agent, { mode: 0o700 });
+  writeFileSync(join(agent, "auth.json"), "{}", { mode: 0o600 });
+  expect(
+    await hostLine(f, {
+      agentDir: agent,
+      http: { ...old.http, port },
+      tokenSource: "config",
+      tokenFile: path,
+    }),
+  ).toEqual({ status: "refused", error: "conflict", stage: "service" });
+  // Only a reselection to the server configuration is accepted.
+  expect(
+    await hostLine(f, {
+      http: { ...old.http, port },
+      tokenSource: "file",
+      tokenFile: path,
+    }),
+  ).toEqual({ status: "refused", error: "conflict", stage: "service" });
+  expect(tree(f.state)).toEqual(selected);
 }, 30000);
 it("overlapping roots refuse before per-root initialization; disjoint owners coexist", async () => {
   const f = await started(),
