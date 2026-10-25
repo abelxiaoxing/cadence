@@ -6,11 +6,13 @@ import {
   cpSync,
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   statSync,
   symlinkSync,
   unlinkSync,
@@ -534,18 +536,27 @@ it("server configuration selects the port and token; an edit applies at the next
   for (const name of ["status", "diagnose"])
     expect((await run(f, name)).stdout).not.toContain(second);
 }, 60000);
-it("an unusable server configuration refuses before registering, naming only its path", async () => {
+it("an unusable server configuration refuses before registering, naming only its path and reason", async () => {
   const f = fixture();
   pending.push(f);
   const path = join(f.dir, ".env");
   const before = tree(f.state);
   const token = "CADENCE_TOKEN=fabricated-server-config-token-1111111111";
-  for (const bad of [
-    "CADENCE_PORT=17423\n",
-    `${token}\n`,
-    `CADENCE_PORT=70000\n${token}\n`,
-    `CADENCE_PORT=17423\n${token}\n${token}\n`,
-    `CADENCE_PORT=17423\n${token}\nbroken\n`,
+  for (const [bad, reason] of [
+    ["CADENCE_PORT=17423\n", "has no CADENCE_TOKEN line"],
+    [`${token}\n`, "has no CADENCE_PORT line"],
+    [
+      `CADENCE_PORT=70000\n${token}\n`,
+      "has CADENCE_PORT on line 1 that is not a whole number from 1 to 65535",
+    ],
+    [
+      `CADENCE_PORT=17423\n${token}\n${token}\n`,
+      "sets CADENCE_TOKEN twice (lines 2 and 3); keep one",
+    ],
+    [
+      `CADENCE_PORT=17423\n${token}\nbroken\n`,
+      "has no KEY=value setting on line 3, which the research skills refuse too",
+    ],
   ]) {
     writeFileSync(path, bad, { mode: 0o600 });
     const r = await run(f, "start", [
@@ -555,28 +566,65 @@ it("an unusable server configuration refuses before registering, naming only its
       path,
     ]);
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain(
-      `Cadence changed nothing: ${path} must be your own private regular file`,
-    );
+    expect(r.stderr).toContain(`Cadence changed nothing: ${path} ${reason}.\n`);
     expect(r.stderr).not.toContain("fabricated");
     expect(tree(f.state)).toEqual(before);
   }
-  if (process.platform !== "win32") {
-    writeFileSync(path, `CADENCE_PORT=17423\n${token}\n`);
-    chmodSync(path, 0o644);
-    expect(
-      (
-        await run(f, "start", [
-          "--agent-dir",
-          join(f.dir, "agent"),
-          "--server-config",
-          path,
-        ])
-      ).code,
-    ).toBe(1);
-    expect(tree(f.state)).toEqual(before);
-  }
+  rmSync(path);
+  const absent = await run(f, "start", [
+    "--agent-dir",
+    join(f.dir, "agent"),
+    "--server-config",
+    path,
+  ]);
+  expect(absent.code).toBe(1);
+  expect(absent.stderr).toContain(
+    `Cadence changed nothing: ${path} does not exist.\n`,
+  );
+  expect(tree(f.state)).toEqual(before);
 });
+// Mode bits and links are POSIX facts; Windows has neither check.
+it.skipIf(process.platform === "win32")(
+  "a real owner starts from a group-readable .env behind dotfiles links, like Pi's sources",
+  async () => {
+    const f = fixture();
+    pending.push(f);
+    const port = await freePort();
+    const secret = "fabricated-server-config-token-1111111111";
+    const repo = join(f.dir, "dotfiles");
+    mkdirSync(repo, { mode: 0o755 });
+    chmodSync(repo, 0o775);
+    const target = join(repo, "cadence.env");
+    writeFileSync(
+      target,
+      `GROK_API_KEY=fabricated-grok-key\nCADENCE_PORT=${port}\nCADENCE_TOKEN=${secret}\n`,
+    );
+    chmodSync(target, 0o664);
+    const path = join(f.dir, ".env");
+    symlinkSync(target, path);
+    const r = await run(f, "start", [
+      "--agent-dir",
+      join(f.dir, "agent"),
+      "--server-config",
+      path,
+    ]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(await token(f)).toBe(`http://127.0.0.1:${port}/?token=${secret}`);
+    await entered(f, secret);
+    // Rotation writes the real file; the link stays a link.
+    expect((await run(f, "token-rotate")).code).toBe(0);
+    expect(lstatSync(path).isSymbolicLink()).toBe(true);
+    const rotated = /CADENCE_TOKEN=([A-Za-z0-9_-]{43})\n/.exec(
+      readFileSync(target, "utf8"),
+    )?.[1];
+    expect(rotated).toBeDefined();
+    expect(new URL(await token(f)).searchParams.get("token")).toBe(rotated);
+    expect(readFileSync(target, "utf8")).toContain(
+      "GROK_API_KEY=fabricated-grok-key\n",
+    );
+  },
+  30000,
+);
 it("a stopped generated-token workspace is reselected to the server configuration, keeping its history", async () => {
   const f = await started();
   const old = await token(f);
