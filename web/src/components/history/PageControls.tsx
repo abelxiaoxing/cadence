@@ -1,21 +1,25 @@
 import type { usePage } from "../../history/use-page";
+import { useT } from "../../i18n/locale";
 import { Coverage } from "./Coverage";
 export function PageControls({ pager }: { pager: ReturnType<typeof usePage> }) {
+  const { t, tx } = useT();
   const { page, busy, error } = pager;
   return (
     <div className="page-controls">
       {error && (
         <p role="alert">
-          Read refused: {error}. Retained state has not been repaired.
+          {t("Read refused: {error}. Retained state has not been repaired.", {
+            error: tx(error),
+          })}
         </p>
       )}
-      {busy && <p role="status">Reading bounded history page…</p>}
+      {busy && <p role="status">{t("Reading bounded history page…")}</p>}
       {page && "kind" in page && (
         <p role="status">
           {page.kind === "snapshot"
-            ? "Snapshot selected"
-            : "Validating retained history"}
-          ; continue this exact read. No data page yet.
+            ? t("Snapshot selected")
+            : t("Validating retained history")}
+          {t("; continue this exact read. No data page yet.")}
         </p>
       )}
       {page && <Coverage value={page.coverage} />}
@@ -24,18 +28,19 @@ export function PageControls({ pager }: { pager: ReturnType<typeof usePage> }) {
         disabled={busy || !pager.canPrevious}
         onClick={pager.previous}
       >
-        Previous page
+        {t("Previous page")}
       </button>
       <button type="button" disabled={busy || !page?.next} onClick={pager.more}>
-        {page && "kind" in page ? "Continue validation" : "Next page"}
+        {page && "kind" in page ? t("Continue validation") : t("Next page")}
       </button>
       <button type="button" disabled={busy} onClick={pager.refresh}>
-        Observe a new snapshot
+        {t("Observe a new snapshot")}
       </button>
       {page && !("kind" in page) && !page.next && (
         <span className="page-end">
-          End of this retained snapshot
-          {page.coverage.observed === "incomplete" ? " (incomplete)" : ""}.
+          {page.coverage.observed === "incomplete"
+            ? t("End of this retained snapshot (incomplete).")
+            : t("End of this retained snapshot.")}
         </span>
       )}
     </div>

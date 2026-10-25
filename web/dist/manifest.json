@@ -1,8 +1,8 @@
 {
   "schema": "cadence-web-assets/1",
-  "sourceHash": "d9b8dc8f8a1ef495ca1823295a1f5bfe8fd4f4b3940d8a3aeb9071a812e48082",
+  "sourceHash": "6d4c1443795d6b3b0c0de7b44dad74239faef39a93490df211af75c10edeb1d7",
   "contractHash": "ff017feffc6b6b4521e470d82514d0ca008e15472fa1442ec498b243b0f7cf87",
-  "buildId": "fcc8593b33e23577346181edf69b448e19a29148048e82677f0d9042c239e221",
+  "buildId": "a69c938903dfeadae1406cc5b8814917819bd11b039730910324fa5962af3f5f",
   "assets": [
     {
       "name": "assets/cadence.css",
@@ -73,8 +73,8 @@
     },
     {
       "name": "assets/cadence.js",
-      "bytes": 187728,
-      "sha256": "dd4a116c9a0d35482001ca7927ba48f433bb90dc3c3d2a34f4140fee6015975e",
+      "bytes": 220925,
+      "sha256": "2d5a3bb076fb22c90129266219a37e31edc3fc3501869dfc9ccfe498cc5e8051",
       "references": [
         "assets/markdown.js",
         "assets/react.js",
@@ -467,8 +467,8 @@
     },
     {
       "name": "assets/timeline-client.js",
-      "bytes": 20696,
-      "sha256": "be4442e3b1dfb7d297ecb8c704de834c241483128792ff4b47fd49fda1711977",
+      "bytes": 21598,
+      "sha256": "557957e2a2d3ae1a014ff1a4808b716c3e7c708be9f3f11540f5be46e3029a9f",
       "references": [
         "assets/cadence.js",
         "assets/vis-timeline.js"

@@ -18,6 +18,7 @@ import {
 } from "../../../../src/service-contract.ts";
 import type { PlanDraft } from "../../client/plan-metadata";
 import { PLAN_METADATA_UNAVAILABLE } from "../../client/plan-metadata";
+import { useT } from "../../i18n/locale";
 import type {
   Assignment,
   ContextVersion,
@@ -50,6 +51,7 @@ export function PlanBoard({
   canSave,
   canAct,
 }: Props) {
+  const { t, tx } = useT();
   const [expanded, setExpanded] = useState(true),
     [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState(""),
@@ -143,8 +145,10 @@ export function PlanBoard({
           onClick={() => setExpanded(!expanded)}
         >
           <FiList />
-          <span>Readable plan & decomposition</span>
-          <span>{steps.length} required assignments</span>
+          <span>{t("Readable plan & decomposition")}</span>
+          <span>
+            {t("{count} required assignments", { count: steps.length })}
+          </span>
           {expanded ? <FiChevronUp /> : <FiChevronDown />}
         </button>
       </div>
@@ -154,10 +158,10 @@ export function PlanBoard({
           disabled={!canAct || context.task?.kind !== "code"}
           onClick={onGenerate}
         >
-          Preview readonly Generate proposal
+          {t("Preview readonly Generate proposal")}
         </button>
         <button type="button" disabled={!canSave} onClick={onSave}>
-          Preview Save plan
+          {t("Preview Save plan")}
         </button>
         <button
           type="button"
@@ -165,21 +169,22 @@ export function PlanBoard({
           disabled={!canAct}
           onClick={onStart}
         >
-          Preview Start saved graph
+          {t("Preview Start saved graph")}
         </button>
       </div>
       <p>
-        Draft changes never execute. Start uses the saved graph shown in its
-        fresh preview, not unsaved text. Generated proposals never save or start
-        themselves.
+        {t(
+          "Draft changes never execute. Start uses the saved graph shown in its fresh preview, not unsaved text. Generated proposals never save or start themselves.",
+        )}
       </p>
       {steps.some(
         (s) => canonicalJson(s.model) !== canonicalJson(context.model),
       ) && (
         <section>
           <p>
-            Saved assignments name an old model selection. Reading does not
-            rebind them.
+            {t(
+              "Saved assignments name an old model selection. Reading does not rebind them.",
+            )}
           </p>
           <button
             type="button"
@@ -190,18 +195,18 @@ export function PlanBoard({
               })
             }
           >
-            Explicitly rebind draft to current model (requires new Save)
+            {t("Explicitly rebind draft to current model (requires new Save)")}
           </button>
         </section>
       )}
-      {!roles && <p role="status">{PLAN_METADATA_UNAVAILABLE}</p>}
-      {error && <p role="alert">{error}</p>}
+      {!roles && <p role="status">{tx(PLAN_METADATA_UNAVAILABLE)}</p>}
+      {error && <p role="alert">{tx(error)}</p>}
       {expanded && (
         <>
           <label>
-            Readable plan
+            {t("Readable plan")}
             <textarea
-              aria-label="Readable plan"
+              aria-label={t("Readable plan")}
               value={draft.readablePlan}
               onChange={(e) =>
                 onChange({ ...draft, readablePlan: e.target.value })
@@ -210,7 +215,7 @@ export function PlanBoard({
             />
           </label>
           <details>
-            <summary>Read rendered plan</summary>
+            <summary>{t("Read rendered plan")}</summary>
             <Markdown text={draft.readablePlan} />
           </details>
           <CopyButton text={draft.readablePlan} />
@@ -220,20 +225,22 @@ export function PlanBoard({
                 <div className="plan-step-head">
                   <strong>{step.id}</strong>
                   <span>
-                    {step.purpose} —{" "}
-                    {step.purpose === "edit" ? "checkout writer" : "readonly"}
+                    {tx(step.purpose)} —{" "}
+                    {step.purpose === "edit"
+                      ? t("checkout writer")
+                      : t("readonly")}
                   </span>
                   <button type="button" onClick={() => startEdit(step)}>
-                    <FiEdit2 /> Edit
+                    <FiEdit2 /> {t("Edit")}
                   </button>
                   <button type="button" onClick={() => remove(step.id)}>
-                    <FiTrash2 /> Remove draft assignment
+                    <FiTrash2 /> {t("Remove draft assignment")}
                   </button>
                 </div>
                 {editingId === step.id ? (
                   <div className="plan-step-edit">
                     <label>
-                      Purpose
+                      {t("Purpose")}
                       <select
                         value={purpose}
                         onChange={(e) => {
@@ -253,23 +260,25 @@ export function PlanBoard({
                               p !== "edit" || context.task?.kind === "code",
                           )
                           .map((p) => (
-                            <option key={p}>{p}</option>
+                            <option key={p} value={p}>
+                              {tx(p)}
+                            </option>
                           ))}
                       </select>
                     </label>
                     <label>
-                      Instructions
+                      {t("Instructions")}
                       <textarea
-                        aria-label="Instructions"
+                        aria-label={t("Instructions")}
                         value={editTitle}
                         onChange={(e) => setEditTitle(e.target.value)}
                         rows={5}
                       />
                     </label>
                     <label>
-                      Expected output
+                      {t("Expected output")}
                       <textarea
-                        aria-label="Expected output"
+                        aria-label={t("Expected output")}
                         value={editDesc}
                         onChange={(e) => setEditDesc(e.target.value)}
                         rows={3}
@@ -277,8 +286,9 @@ export function PlanBoard({
                     </label>
                     <fieldset>
                       <legend>
-                        Current-episode dependencies (whole final text by
-                        default)
+                        {t(
+                          "Current-episode dependencies (whole final text by default)",
+                        )}
                       </legend>
                       {steps
                         .filter((s) => s.id !== step.id)
@@ -350,17 +360,22 @@ export function PlanBoard({
                               )
                             }
                           />
-                          Require complete observation
+                          {t("Require complete observation")}
                         </label>
                         <p>
-                          Selection:{" "}
-                          {d.range
-                            ? `reviewed UTF-8 bytes ${d.range.start}–${d.range.end}`
-                            : "whole final text; no silent clipping"}
+                          {t("Selection: {range}", {
+                            range: d.range
+                              ? t("reviewed UTF-8 bytes {start}–{end}", {
+                                  start: d.range.start,
+                                  end: d.range.end,
+                                })
+                              : t("whole final text; no silent clipping"),
+                          })}
                         </p>
                         <label>
-                          Reviewed edge JSON (range/null and exact historical
-                          identity)
+                          {t(
+                            "Reviewed edge JSON (range/null and exact historical identity)",
+                          )}
                           <textarea
                             defaultValue={JSON.stringify(d)}
                             onBlur={(e) => {
@@ -388,16 +403,18 @@ export function PlanBoard({
                             )
                           }
                         >
-                          Remove edge
+                          {t("Remove edge")}
                         </button>
                       </div>
                     ))}
                     <label>
-                      Explicit historical/advisory edge JSON
+                      {t("Explicit historical/advisory edge JSON")}
                       <textarea
                         value={historical}
                         onChange={(e) => setHistorical(e.target.value)}
-                        placeholder="Exact committed run/child/result/version plus range and coverage requirement"
+                        placeholder={t(
+                          "Exact committed run/child/result/version plus range and coverage requirement",
+                        )}
                       />
                     </label>
                     <button
@@ -417,25 +434,28 @@ export function PlanBoard({
                         }
                       }}
                     >
-                      Add reviewed historical edge
+                      {t("Add reviewed historical edge")}
                     </button>
                     <button type="button" onClick={cancelEdit}>
-                      Discard inline edits
+                      {t("Discard inline edits")}
                     </button>
                     <button
                       type="button"
                       disabled={!!error}
                       onClick={() => saveEdit(step.id)}
                     >
-                      Apply to local draft
+                      {t("Apply to local draft")}
                     </button>
                   </div>
                 ) : (
                   <>
                     <Markdown text={step.instructions} />
-                    <p>Expected: {step.expectedOutput}</p>
                     <p>
-                      Role {step.role.role} / <code>{step.role.sha256}</code>
+                      {t("Expected: {output}", { output: step.expectedOutput })}
+                    </p>
+                    <p>
+                      {t("Role {role}", { role: step.role.role })} /{" "}
+                      <code>{step.role.sha256}</code>
                     </p>
                     <p>
                       {step.model.provider}/{step.model.model} ·{" "}
@@ -452,7 +472,7 @@ export function PlanBoard({
             disabled={!roles || steps.length >= 16}
             onClick={add}
           >
-            <FiPlus /> Add assignment
+            <FiPlus /> {t("Add assignment")}
           </button>
         </>
       )}

@@ -18,6 +18,7 @@ import {
   FiFolder,
   FiGitBranch,
   FiGitCommit,
+  FiGlobe,
   FiLayers,
   FiLink,
   FiLogOut,
@@ -66,6 +67,7 @@ import { RunSummary } from "./components/workspace/RunSummary";
 import { TaskSidebar } from "./components/workspace/TaskSidebar";
 import { historyUrl, readHistoryUrl } from "./history/history-url";
 import { usePage } from "./history/use-page";
+import { Template, useT } from "./i18n/locale";
 import { ResizeHandle } from "./layout/ResizeHandle";
 import type { DrawerSide } from "./layout/swipe-drawer";
 import { useDrawerFocus } from "./layout/use-drawer-focus";
@@ -97,6 +99,7 @@ export function App({
   api?: BrowserClient;
   planMetadata?: PlanMetadataPort;
 }) {
+  const { t, tx, locale, setLocale } = useT();
   const [api] = useState(() => provided ?? browserClient());
   const [modelOpen, setModelOpen] = useState(false);
   const [detached, setDetached] = useState(false);
@@ -222,7 +225,7 @@ export function App({
           : null
         : context;
     if (!workspace.actions || !expected || preparing || detached) {
-      setError("Current action context unavailable; observe again.");
+      setError(t("Current action context unavailable; observe again."));
       return;
     }
     lifetime.current.depart();
@@ -233,11 +236,11 @@ export function App({
       const reply = await prepare(api.client, expected, a);
       if (!lifetime.current.current(ticket)) return;
       if (reply.kind === "error")
-        setError(`Preflight refused: ${reply.error.code}`);
+        setError(t("Preflight refused: {code}", { code: reply.error.code }));
       else setPrepared(reply.value);
     } catch {
       if (lifetime.current.current(ticket))
-        setError("Preflight unavailable. No automatic retry.");
+        setError(t("Preflight unavailable. No automatic retry."));
     } finally {
       if (lifetime.current.current(ticket)) setPreparing(false);
     }
@@ -334,7 +337,7 @@ export function App({
     setCanceling((prev) => new Set(prev).add(runId));
     setReceipt({
       commandId,
-      error: "Stop requested; settlement is not yet confirmed.",
+      error: t("Stop requested; settlement is not yet confirmed."),
     });
     void api.client
       .cancel({ commandId, epoch, runId })
@@ -344,14 +347,17 @@ export function App({
             ? { commandId, receipt: reply.value }
             : {
                 commandId,
-                error: `${reply.error.code}; cancellation effect ${reply.error.effect}. Observe exact receipt.`,
+                error: t(
+                  "{code}; cancellation effect {effect}. Observe exact receipt.",
+                  { code: reply.error.code, effect: reply.error.effect },
+                ),
               },
         );
       })
       .catch(() =>
         setReceipt({
           commandId,
-          error: "Cancellation effect uncertain. Observe exact receipt.",
+          error: t("Cancellation effect uncertain. Observe exact receipt."),
         }),
       )
       .finally(() => {
@@ -372,11 +378,12 @@ export function App({
         <span className="empty-logo" aria-hidden="true">
           C
         </span>
-        <h1>Detached</h1>
-        <p>Accepted service work continues. No Cancel was requested.</p>
+        <h1>{t("Detached")}</h1>
+        <p>{t("Accepted service work continues. No Cancel was requested.")}</p>
         {receipts.map((value) => (
           <p key={value.commandId}>
-            Observe command after reconnect: <code>{value.commandId}</code>
+            {t("Observe command after reconnect:")}{" "}
+            <code>{value.commandId}</code>
           </p>
         ))}
         <button
@@ -384,7 +391,7 @@ export function App({
           className="primary"
           onClick={() => setDetached(false)}
         >
-          Reconnect as a viewer
+          {t("Reconnect as a viewer")}
         </button>
       </main>
     );
@@ -403,7 +410,7 @@ export function App({
         <button
           type="button"
           className="panel-toggle"
-          aria-label="Tasks"
+          aria-label={t("Tasks")}
           onClick={() => setDrawer((d) => (d === "left" ? null : "left"))}
         >
           <FiMenu aria-hidden="true" />
@@ -426,22 +433,22 @@ export function App({
             </span>
           )}
           <span className="tb-spacer" aria-hidden="true" />
-          <nav className="tb-tabs" aria-label="Recorded views">
-            {VIEWS.map(([t, Icon]) => (
+          <nav className="tb-tabs" aria-label={t("Recorded views")}>
+            {VIEWS.map(([view, Icon]) => (
               <button
                 type="button"
-                key={t}
+                key={view}
                 className="tb-tab"
-                aria-label={t}
-                aria-pressed={tab === t}
+                aria-label={tx(view)}
+                aria-pressed={tab === view}
                 onClick={() => {
                   setDetail(undefined);
                   setHit(undefined);
-                  setTab(t);
+                  setTab(view);
                 }}
               >
                 <Icon aria-hidden="true" />
-                <span>{t}</span>
+                <span>{tx(view)}</span>
               </button>
             ))}
           </nav>
@@ -454,8 +461,8 @@ export function App({
             <button
               type="button"
               className="chip"
-              aria-label="Export selected scope"
-              data-tip="Export selected scope"
+              aria-label={t("Export selected scope")}
+              data-tip={t("Export selected scope")}
               disabled={!seed}
               onClick={() => setExportOpen(true)}
             >
@@ -464,13 +471,13 @@ export function App({
             <button
               type="button"
               className="chip"
-              aria-label="Copy token-free link"
-              data-tip="Copy token-free link"
+              aria-label={t("Copy token-free link")}
+              data-tip={t("Copy token-free link")}
               disabled={!taskId}
               onClick={() => {
                 if (taskId)
                   void copyTextToClipboard(historyUrl(taskId, detail)).then(
-                    (ok) => setError(ok ? "" : "Link copy unavailable."),
+                    (ok) => setError(ok ? "" : t("Link copy unavailable.")),
                   );
               }}
             >
@@ -479,8 +486,8 @@ export function App({
             <button
               type="button"
               className="chip"
-              aria-label="Observe current state"
-              data-tip="Observe current state"
+              aria-label={t("Observe current state")}
+              data-tip={t("Observe current state")}
               onClick={() => {
                 workspace.refresh();
                 observation.refresh();
@@ -491,18 +498,18 @@ export function App({
             <button
               type="button"
               className="chip"
-              aria-label="Choose owner model"
-              data-tip="Choose owner model"
+              aria-label={t("Choose owner model")}
+              data-tip={t("Choose owner model")}
               onClick={() => setModelOpen(true)}
             >
               <FiCpu aria-hidden="true" />
-              <span className="chip-label">Model</span>
+              <span className="chip-label">{t("Model")}</span>
             </button>
             <button
               type="button"
               className="chip"
-              aria-label="Return — work continues"
-              data-tip="Return — accepted work continues"
+              aria-label={t("Return — work continues")}
+              data-tip={t("Return — accepted work continues")}
               onClick={() => {
                 setPrepared(undefined);
                 setDrawer(null);
@@ -514,30 +521,45 @@ export function App({
               }}
             >
               <FiLogOut aria-hidden="true" />
-              <span className="chip-label">Return</span>
+              <span className="chip-label">{t("Return")}</span>
+            </button>
+            {/* Named in the language it selects, so either reader can find it. */}
+            <button
+              type="button"
+              className="chip chip-lang"
+              lang={locale === "zh" ? "en" : "zh-CN"}
+              aria-label={locale === "zh" ? "Switch to English" : "切换到中文"}
+              data-tip={locale === "zh" ? "Switch to English" : "切换到中文"}
+              onClick={() => setLocale(locale === "zh" ? "en" : "zh")}
+            >
+              <FiGlobe aria-hidden="true" />
+              <span>{locale === "zh" ? "EN" : "中文"}</span>
             </button>
           </div>
         </div>
         <button
           type="button"
           className="panel-toggle has-label"
-          aria-label="Plan / review"
+          aria-label={t("Plan / review")}
           onClick={() => setDrawer((d) => (d === "right" ? null : "right"))}
         >
           <FiSidebar aria-hidden="true" />
-          <span>Plan</span>
+          <span>{t("Plan")}</span>
         </button>
       </header>
       {activeRuns.length > 0 && (
-        <section className="run-strip" aria-label="Execution and cancellation">
+        <section
+          className="run-strip"
+          aria-label={t("Execution and cancellation")}
+        >
           {activeRuns.map((r) => (
             <div className="run-strip-row" key={r.runId}>
               <span className="status-dot busy" aria-hidden="true" />
               <span className="run-strip-label">
-                {r.kind} {r.runId} · {r.stage}
+                {tx(r.kind)} {r.runId} · {tx(r.stage)}
               </span>
               <button type="button" onClick={() => selectTask(r.taskId)}>
-                Open active task
+                {t("Open active task")}
               </button>
               <button
                 type="button"
@@ -546,7 +568,7 @@ export function App({
                 onClick={() => cancel(r.runId)}
               >
                 <FiSquare aria-hidden="true" />
-                Cancel run — request stop
+                {t("Cancel run — request stop")}
               </button>
             </div>
           ))}
@@ -554,18 +576,33 @@ export function App({
       )}
       {(error || workspace.error) && (
         <p className="banner-notice" role="alert">
-          {error || workspace.error}.{" "}
+          {t("{message}.", { message: error || tx(workspace.error ?? "") })}{" "}
           {!error && workspace.error === "stale" && (
             <>
-              The service no longer matches the sources it loaded, for example
-              after Pi's <code>models.json</code> changed; restart it to reload
-              them: <code>systemctl --user restart cadence</code> (or{" "}
-              <code>cadence-service stop</code> then <code>start</code>).{" "}
+              <Template
+                text={t(
+                  "The service no longer matches the sources it loaded, for example after Pi's {file} changed; restart it to reload them: {restart} (or {stop} then {start}).",
+                )}
+                slots={{
+                  file: <code>models.json</code>,
+                  restart: <code>systemctl --user restart cadence</code>,
+                  stop: <code>cadence-service stop</code>,
+                  start: <code>start</code>,
+                }}
+              />{" "}
             </>
           )}
-          Explicit service guidance: <code>cadence-service status</code> /{" "}
-          <code>cadence-service start --workspace &lt;path&gt;</code>. No
-          service is started by this page.
+          <Template
+            text={t(
+              "Explicit service guidance: {status} / {start}. No service is started by this page.",
+            )}
+            slots={{
+              status: <code>cadence-service status</code>,
+              start: (
+                <code>cadence-service start --workspace &lt;path&gt;</code>
+              ),
+            }}
+          />
         </p>
       )}
       <div
@@ -580,14 +617,14 @@ export function App({
       >
         <button
           type="button"
-          aria-label="Close drawer"
+          aria-label={t("Close drawer")}
           tabIndex={-1}
           className={`drawer-backdrop persistent${drawer ? " on" : ""}`}
           onClick={closeDrawer}
         />
         <section
           className={`panel-drawer drawer-left${drawer === "left" ? " open" : ""}`}
-          aria-label="Task navigation drawer"
+          aria-label={t("Task navigation drawer")}
           tabIndex={-1}
           inert={mobile && drawer !== "left"}
         >
@@ -611,12 +648,15 @@ export function App({
           {scope && (
             <p className="scope-bar">
               <FiGitCommit aria-hidden="true" />
-              <span className="scope-kind">Selected {scope.kind}:</span>
+              <span className="scope-kind">
+                {t("Selected {kind}:", { kind: tx(scope.kind) })}
+              </span>
               <code>{scope.id}</code>
-              <span>· snapshot {snapshotSeq}.</span>
+              <span>{t("· snapshot {seq}.", { seq: snapshotSeq ?? "" })}</span>
               <span className="scope-hint">
-                Pages and old outcomes are historical observations, not renewed
-                consent.
+                {t(
+                  "Pages and old outcomes are historical observations, not renewed consent.",
+                )}
               </span>
             </p>
           )}
@@ -626,10 +666,11 @@ export function App({
                 <span className="empty-logo" aria-hidden="true">
                   C
                 </span>
-                <h2>Open a task or create one explicitly</h2>
+                <h2>{t("Open a task or create one explicitly")}</h2>
                 <p>
-                  Plans, children, checks and human review share one service
-                  owner. No chat or discovery activates execution.
+                  {t(
+                    "Plans, children, checks and human review share one service owner. No chat or discovery activates execution.",
+                  )}
                 </p>
                 <button
                   type="button"
@@ -638,7 +679,7 @@ export function App({
                   onClick={() => setNewOpen(true)}
                 >
                   <FiPlus aria-hidden="true" />
-                  Create task
+                  {t("Create task")}
                 </button>
               </section>
             )}
@@ -710,8 +751,10 @@ export function App({
                     ) : (
                       <p className="panel-empty">
                         {current && observation.state
-                          ? "No owner run projection in this snapshot."
-                          : "No snapshot observed yet; absence is not proof of settlement."}
+                          ? t("No owner run projection in this snapshot.")
+                          : t(
+                              "No snapshot observed yet; absence is not proof of settlement.",
+                            )}
                       </p>
                     ))}
                 </div>
@@ -738,7 +781,7 @@ export function App({
         />
         <section
           className={`panel-drawer drawer-right${drawer === "right" ? " open" : ""}`}
-          aria-label="Plan and review drawer"
+          aria-label={t("Plan and review drawer")}
           tabIndex={-1}
           inert={mobile && drawer !== "right"}
         >
@@ -763,7 +806,7 @@ export function App({
           <span
             className="status-item"
             role="status"
-            title="Connection freshness is not execution outcome."
+            title={t("Connection freshness is not execution outcome.")}
           >
             <span
               className={`status-dot ${
@@ -779,9 +822,11 @@ export function App({
               }`}
               aria-hidden="true"
             />
-            {connection}
-            {` · transport ${observation.transportStatus}`}
-            {observation.error ? ` · ${observation.error}` : ""}
+            {tx(connection)}
+            {t(" · transport {status}", {
+              status: tx(observation.transportStatus),
+            })}
+            {observation.error ? ` · ${tx(observation.error)}` : ""}
           </span>
           <span
             className={`status-item${
@@ -794,29 +839,44 @@ export function App({
           >
             {roster?.status === "complete"
               ? activeRuns.length > 0
-                ? `${activeRuns.length} active run${activeRuns.length === 1 ? "" : "s"}`
-                : "No active runs"
-              : "Active roster unavailable; absence is not proof of settlement."}
+                ? t(
+                    activeRuns.length === 1
+                      ? "{count} active run"
+                      : "{count} active runs",
+                    { count: activeRuns.length },
+                  )
+                : t("No active runs")
+              : t(
+                  "Active roster unavailable; absence is not proof of settlement.",
+                )}
           </span>
           <span className="status-item faint">
-            Connection freshness is not execution outcome.
+            {t("Connection freshness is not execution outcome.")}
           </span>
         </div>
         <div className="statusbar-right">
           <span
             className={`status-item${workspace.compatible ? " faint" : " warn"}`}
-            title={localBuild?.buildId ?? "unbuilt source"}
+            title={localBuild?.buildId ?? t("unbuilt source")}
           >
             <span className="build-part">
-              Local browser build:{" "}
-              <code>{localBuild?.buildId ?? "unbuilt source"}</code>.{" "}
+              <Template
+                text={t("Local browser build: {build}.")}
+                slots={{
+                  build: (
+                    <code>{localBuild?.buildId ?? t("unbuilt source")}</code>
+                  ),
+                }}
+              />{" "}
             </span>
             <span>
-              Shared compatibility:{" "}
-              {workspace.compatible
-                ? "compatible"
-                : "unavailable / mismatch — reload built assets; normal actions disabled"}
-              .
+              {t("Shared compatibility: {state}.", {
+                state: workspace.compatible
+                  ? t("compatible")
+                  : t(
+                      "unavailable / mismatch — reload built assets; normal actions disabled",
+                    ),
+              })}
             </span>
           </span>
         </div>
@@ -838,11 +898,14 @@ export function App({
         />
       )}
       {newOpen && (
-        <ActionDialog title="Create task" onClose={() => setNewOpen(false)}>
+        <ActionDialog
+          title={t("Create task")}
+          onClose={() => setNewOpen(false)}
+        >
           <label>
-            Kind
+            {t("Kind")}
             <select
-              aria-label="Kind"
+              aria-label={t("Kind")}
               value={kind}
               onChange={(e) =>
                 setKind(
@@ -854,15 +917,15 @@ export function App({
                 )
               }
             >
-              <option value="code">Code</option>
-              <option value="research">Readonly research</option>
-              <option value="diagnosis">Readonly diagnosis</option>
+              <option value="code">{t("Code")}</option>
+              <option value="research">{t("Readonly research")}</option>
+              <option value="diagnosis">{t("Readonly diagnosis")}</option>
             </select>
           </label>
           <label>
-            Goal
+            {t("Goal")}
             <textarea
-              aria-label="Goal"
+              aria-label={t("Goal")}
               value={goal}
               onChange={(e) => setGoal(e.target.value)}
               rows={6}
@@ -883,7 +946,7 @@ export function App({
                 void action({ kind: "create", taskKind: kind, goal });
               }}
             >
-              Preview Create (does not Start)
+              {t("Preview Create (does not Start)")}
             </button>
           </footer>
         </ActionDialog>

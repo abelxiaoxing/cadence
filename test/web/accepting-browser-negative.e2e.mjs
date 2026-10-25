@@ -41,6 +41,7 @@ it("built browser safety: old task active Cancel, bad/missing builds, manual ref
     browser = await chromium.connect(launcher.wsEndpoint());
     const context = await browser.newContext({
       viewport: { width: 1440, height: 900 },
+      locale: "en-US",
     });
     const p = await context.newPage();
     page = p;
@@ -173,6 +174,7 @@ it("built browser safety: old task active Cancel, bad/missing builds, manual ref
     // Two actual browser contexts and a real Pi PTY observe the SAME pending run.
     const secondContext = await browser.newContext({
       viewport: { width: 390, height: 844 },
+      locale: "en-US",
     });
     const second = await secondContext.newPage();
     second.setDefaultTimeout(15000);

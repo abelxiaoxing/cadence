@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { CommandObservation } from "../../client/actions";
+import { useT } from "../../i18n/locale";
 import type { ServiceClient } from "../../types";
 export function ReceiptPanel({
   client,
@@ -10,6 +11,7 @@ export function ReceiptPanel({
   value: CommandObservation;
   onChange: (r: CommandObservation) => void;
 }) {
+  const { t, tx } = useT();
   const alive = useRef(true);
   const pending = useRef<AbortController | null>(null);
   useEffect(() => {
@@ -24,25 +26,29 @@ export function ReceiptPanel({
     value.receipt ??
     (value.lookup?.status === "found" ? value.lookup.receipt : undefined);
   return (
-    <section className="receipt" aria-label="Command receipt">
-      <h3>Command receipt</h3>
+    <section className="receipt" aria-label={t("Command receipt")}>
+      <h3>{t("Command receipt")}</h3>
       <code>{value.commandId}</code>
-      {value.error && <p role="alert">{value.error}</p>}
+      {value.error && <p role="alert">{tx(value.error)}</p>}
       {receipt && (
         <dl>
-          <dt>Admission</dt>
-          <dd>{receipt.admission}</dd>
-          <dt>Execution</dt>
-          <dd>{receipt.execution ?? "not settled"}</dd>
-          <dt>Publication</dt>
-          <dd>{receipt.publication}</dd>
-          <dt>Run</dt>
-          <dd>{receipt.runId ?? "metadata action"}</dd>
+          <dt>{t("Admission")}</dt>
+          <dd>{tx(receipt.admission)}</dd>
+          <dt>{t("Execution")}</dt>
+          <dd>
+            {receipt.execution ? tx(receipt.execution) : t("not settled")}
+          </dd>
+          <dt>{t("Publication")}</dt>
+          <dd>{tx(receipt.publication)}</dd>
+          <dt>{t("Run")}</dt>
+          <dd>{receipt.runId ?? t("metadata action")}</dd>
         </dl>
       )}
       {value.lookup && value.lookup.status !== "found" && (
         <p>
-          {value.lookup.status}. This observation does not authorize replay.
+          {t("{status}. This observation does not authorize replay.", {
+            status: tx(value.lookup.status),
+          })}
         </p>
       )}
       <button
@@ -60,7 +66,7 @@ export function ReceiptPanel({
             });
         }}
       >
-        Observe exact receipt
+        {t("Observe exact receipt")}
       </button>
     </section>
   );

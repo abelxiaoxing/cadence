@@ -4,6 +4,7 @@
 import { memo, useState } from "react";
 import { FiChevronUp, FiEye } from "react-icons/fi";
 import { contentCursor } from "../../history/readers";
+import { useT } from "../../i18n/locale";
 import type { HistoryRecord, ListRequest, ServiceClient } from "../../types";
 import { ContentExplorer } from "../history/ContentExplorer";
 import { DetailPane } from "../history/DetailPane";
@@ -16,6 +17,7 @@ export const Message = memo(function Message({
   client: ServiceClient;
   seed: ListRequest;
 }) {
+  const { t, tx } = useT();
   const [expanded, setExpanded] = useState(false);
   return (
     <article
@@ -23,9 +25,11 @@ export const Message = memo(function Message({
       data-msg-id={message.owner.entity.id}
     >
       <header className="msg-meta">
-        <strong className="msg-role">{message.role}</strong>
+        <strong className="msg-role">{tx(message.role)}</strong>
         <span className="msg-state">
-          {message.state} message record, not execution outcome
+          {t("{state} message record, not execution outcome", {
+            state: tx(message.state),
+          })}
         </span>
         <span className="msg-time">v{message.version}</span>
         <button
@@ -39,18 +43,23 @@ export const Message = memo(function Message({
           ) : (
             <FiEye aria-hidden="true" />
           )}
-          {expanded ? "Collapse" : "Inspect message"}
+          {expanded ? t("Collapse") : t("Inspect message")}
         </button>
       </header>
       <div className="msg-body">
         <p className="msg-ident">
-          Child {message.owner.childRunId} · message {message.owner.entity.id} ·
-          version {message.version}
+          {t("Child {child} · message {message} · version {version}", {
+            child: message.owner.childRunId ?? "",
+            message: message.owner.entity.id,
+            version: message.version,
+          })}
         </p>
         {message.role === "tool-result" && (
           <p className="msg-note">
-            Result call: {message.resultCallId ?? "unassociated / orphan"}. Kept
-            visible independently of the tool card.
+            {t(
+              "Result call: {call}. Kept visible independently of the tool card.",
+              { call: message.resultCallId ?? t("unassociated / orphan") },
+            )}
           </p>
         )}
         {expanded && (
@@ -70,13 +79,14 @@ export const Message = memo(function Message({
                 />
               ) : (
                 <p>
-                  No finalized text field in this snapshot. Inspect retained
-                  partial/final blocks and omission metadata below.
+                  {t(
+                    "No finalized text field in this snapshot. Inspect retained partial/final blocks and omission metadata below.",
+                  )}
                 </p>
               )}
               <details>
                 <summary>
-                  All message blocks, source limits and tool associations
+                  {t("All message blocks, source limits and tool associations")}
                 </summary>
                 <ContentExplorer
                   client={client}

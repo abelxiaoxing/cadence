@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Template, useT } from "../../i18n/locale";
 import type { CurrentChanges, ServiceClient } from "../../types";
 import { ArtifactPreview } from "./ArtifactPreview";
 export function CurrentChangesPanel({
@@ -10,6 +11,7 @@ export function CurrentChangesPanel({
   storeId: string;
   taskId: string;
 }) {
+  const { t, tx } = useT();
   const [value, setValue] = useState<CurrentChanges>();
   const [error, setError] = useState("");
   const [revision, refresh] = useState(0);
@@ -31,20 +33,26 @@ export function CurrentChangesPanel({
     return () => abort.abort();
   }, [client, storeId, taskId, revision]);
   return (
-    <section aria-label="Current checkout changes">
-      <h3>Current checkout changes (not a captured historical diff)</h3>
+    <section aria-label={t("Current checkout changes")}>
+      <h3>{t("Current checkout changes (not a captured historical diff)")}</h3>
       <button type="button" onClick={() => refresh((n) => n + 1)}>
-        Observe current changes
+        {t("Observe current changes")}
       </button>
-      {error && <p role="alert">{error}</p>}
+      {error && <p role="alert">{tx(error)}</p>}
       {value && (
         <>
           <p>
-            Fingerprint <code>{value.observation.identity}</code> ·{" "}
-            {value.observation.complete
-              ? "complete within bounded scope"
-              : "incomplete coverage"}{" "}
-            · includes pre-existing dirt; not attribution.
+            <Template
+              text={t(
+                "Fingerprint {identity} · {coverage} · includes pre-existing dirt; not attribution.",
+              )}
+              slots={{
+                identity: <code>{value.observation.identity}</code>,
+                coverage: value.observation.complete
+                  ? t("complete within bounded scope")
+                  : t("incomplete coverage"),
+              }}
+            />
           </p>
           <pre>{JSON.stringify(value.coverage)}</pre>
           <ArtifactPreview text={value.text} />

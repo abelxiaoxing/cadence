@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { decodeModelSelector } from "../../../../src/service-contract.ts";
+import { useT } from "../../i18n/locale";
 import type { ModelCatalog, ServiceClient } from "../../types";
 import { ActionDialog } from "./ActionDialog";
 export function ModelChooser({
@@ -13,6 +14,7 @@ export function ModelChooser({
   onClose(): void;
   onChanged(): void;
 }) {
+  const { t, tx } = useT();
   const [catalog, setCatalog] = useState<ModelCatalog>();
   const [selected, setSelected] = useState("");
   const [error, setError] = useState("");
@@ -32,21 +34,23 @@ export function ModelChooser({
     return () => abort.abort();
   }, [client]);
   return (
-    <ActionDialog title="Choose owner model" onClose={onClose}>
+    <ActionDialog title={t("Choose owner model")} onClose={onClose}>
       <p>
-        Explicit owner-wide choice, only while quiescent. This does not resolve
-        credentials, probe a provider, save a plan or Start work.
+        {t(
+          "Explicit owner-wide choice, only while quiescent. This does not resolve credentials, probe a provider, save a plan or Start work.",
+        )}
       </p>
       <p>
-        Current:{" "}
-        {catalog?.selected
-          ? `${catalog.selected.provider}/${catalog.selected.model} · ${catalog.selected.thinking}`
-          : "No model selected"}
+        {t("Current: {model}", {
+          model: catalog?.selected
+            ? `${catalog.selected.provider}/${catalog.selected.model} · ${catalog.selected.thinking}`
+            : t("No model selected"),
+        })}
       </p>
       <label>
-        Exact model / API / thinking
+        {t("Exact model / API / thinking")}
         <select value={selected} onChange={(e) => setSelected(e.target.value)}>
-          <option value="">Select explicitly</option>
+          <option value="">{t("Select explicitly")}</option>
           {catalog?.entries.flatMap((entry) =>
             entry.thinking
               .filter((t) => t.selectable)
@@ -67,9 +71,17 @@ export function ModelChooser({
         </select>
       </label>
       {catalog?.status === "capacity" && (
-        <p>Catalog capacity exceeded; no partial model list is selectable.</p>
+        <p>
+          {t("Catalog capacity exceeded; no partial model list is selectable.")}
+        </p>
       )}
-      {error && <p role="alert">{error}. No automatic replacement or retry.</p>}
+      {error && (
+        <p role="alert">
+          {t("{error}. No automatic replacement or retry.", {
+            error: tx(error),
+          })}
+        </p>
+      )}
       <button
         type="button"
         disabled={!compatible || !catalog || !selected || pending}
@@ -96,7 +108,7 @@ export function ModelChooser({
             .finally(() => setPending(false));
         }}
       >
-        Confirm owner model choice
+        {t("Confirm owner model choice")}
       </button>
     </ActionDialog>
   );
