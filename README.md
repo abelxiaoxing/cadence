@@ -424,6 +424,13 @@ Review the independently enumerated package member list and every emitted body, 
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
 
+### Release 2.0.9 acceptance snapshot
+
+Full `verify` passed on the 2.0.9 release tree (`0e720a1` plus the version bump), in the 2.0.3 environment below.
+It ran 1948 root tests in 78 files (27 Windows-only controls skipped on Linux), 116 web tests, 5 real-browser scenarios and the 132-member pack audit, and CI 40209338973 passed 12/12 on the candidate `8b53b64` (this commit before its snapshot).
+The release adds the Simplified Chinese WebUI; Chromium at 1440 and 390px rendered the shell, inspector, dialogs and timeline in Chinese from a `zh-CN` browser locale.
+On the feature tree, an earlier full run failed only the reuse provenance pin (refreshed), and one `accepting-browser` run failed after the second context's Start; that scenario passed in four later runs, and its cause was not identified.
+
 ### Release 2.0.8 acceptance snapshot
 
 Full `verify` passed on the 2.0.8 release tree (`7a40be6` plus the version bump), in the 2.0.3 environment below.
