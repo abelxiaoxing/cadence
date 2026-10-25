@@ -418,6 +418,16 @@ Review the independently enumerated package member list and every emitted body, 
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
 
+### Release 2.0.7 acceptance snapshot
+
+Full `verify` ran on the 2.0.7 release tree (`7973e23` plus the version bump), in the 2.0.3 environment below.
+It passed 1945 root tests in 78 files (27 Windows-only controls skipped on Linux); `service-history-projection`'s multisegment archive test hit its 45s budget under shared load and passed alone (24 tests, 27s).
+The 111 web tests, 5 real-browser scenarios and 132-member pack audit passed, and CI 40194654384 passed 12/12 on the candidate `7341cf6` (this commit before its snapshot).
+`cadence server install|restart|uninstall` ran end to end in an isolated home, with a fake `systemctl` that runs the unit's own ExecStart and ExecStop.
+The printed link entered the WebUI, and an earlier generated-token workspace was reselected to the `.env`.
+An edit while running applied only at restart, and rotation changed only the `CADENCE_TOKEN` line.
+Real systemd, launchd and Windows registration were not exercised for this release.
+
 ### Release 2.0.6 acceptance snapshot
 
 Full `verify` passed on the 2.0.6 release tree (`8d31512` plus the version bump): 1940 root tests in 78 files (27 Windows-only controls skipped on Linux), 111 web tests, 5 real-browser scenarios and the 132-member pack audit, in the 2.0.3 environment below.
