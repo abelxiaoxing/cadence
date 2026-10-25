@@ -20,6 +20,7 @@ import {
   write,
   wscript,
 } from "./autostart.ts";
+import { serverConfigPath } from "./server-config.ts";
 
 export const RUN_KEY =
   "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
@@ -49,10 +50,11 @@ export interface LauncherInput {
   node: string;
   cli: string;
   workspace: string;
+  serverConfig: string;
   environment: [string, string][];
 }
 export function buildLauncher(u: LauncherInput): string {
-  const command = `${argument(u.node)} ${argument(u.cli)} start --workspace ${argument(u.workspace)}`;
+  const command = `${argument(u.node)} ${argument(u.cli)} start --workspace ${argument(u.workspace)} --server-config ${argument(u.serverConfig)}`;
   return [
     `${MARKER}; \`cadence server install\` and \`restart\` rewrite this file.`,
     `' Started at login by ${RUN_KEY}\\${RUN_VALUE}; window style 0 hides the console.`,
@@ -115,6 +117,7 @@ export async function configureLoginRun(
         node: s.node,
         cli: join(s.root, "src", "service-cli.mjs"),
         workspace,
+        serverConfig: serverConfigPath(s.home),
         environment,
       }),
     ),

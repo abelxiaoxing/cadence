@@ -42,6 +42,7 @@ import {
   removeLoginRun,
   stopLoginRun,
 } from "./login-run.ts";
+import { encoded } from "./private-files.ts";
 import { localRecovery } from "./recovery-cli.ts";
 import {
   decodeHostInput,
@@ -49,11 +50,20 @@ import {
   type HostInput,
   hostEnvironment,
   portValue,
+  readHostConfig,
   STARTUP_INPUT_BYTES,
   type StartOptions,
   type StartupReport,
   selectStart,
 } from "./runtime.ts";
+import {
+  DEFAULT_PORT,
+  ensureServerConfig,
+  PORT_KEY,
+  ServerConfigRefusal,
+  serverConfigPath,
+  TOKEN_KEY,
+} from "./server-config.ts";
 
 export interface ManagementReply {
   status:
@@ -221,6 +231,10 @@ function failedStatus(result: unknown): boolean {
     )
   );
 }
+/** Names only the path and keys, never the file's bytes. */
+function serverConfigHint(path: string): string {
+  return `Cadence changed nothing: ${path} must be your own private regular file (chmod 600, in a chmod 700 directory on Linux and macOS) in KEY=value lines with exactly one ${PORT_KEY}=<1-65535> and one ${TOKEN_KEY}=<at least 32 characters>.\n`;
+}
 /** One fixed hint per refused startup stage, naming only the selected sources. */
 function startupGuidance(result: unknown, input: HostInput): string {
   let report: StartupReport;
@@ -255,7 +269,14 @@ export async function startService(
 ): Promise<unknown> {
   const network = networkSnapshot(process.env);
   const env = hostEnvironment(process.env); // validate route before any child/SDK import
-  const input = decodeHostInput(selectStart(options, process.env));
+  let input: HostInput;
+  try {
+    input = decodeHostInput(selectStart(options, process.env));
+  } catch (error) {
+    if (error instanceof ServerConfigRefusal)
+      process.stderr.write(serverConfigHint(error.path));
+    throw error;
+  }
   const serialized = `${JSON.stringify(input)}\n`;
   if (Buffer.byteLength(serialized) > STARTUP_INPUT_BYTES)
     throw new ContractError("oversize");
@@ -266,8 +287,14 @@ export async function startService(
     typeof existing === "object" &&
     "status" in existing &&
     existing.status === "alive"
-  )
+  ) {
+    // A running owner keeps its selection; a server configuration that
+    // reselects it applies only after its orderly Stop.
+    const running = readHostConfig(c);
+    if (running && encoded(running) !== encoded(input.config))
+      throw new ContractError("conflict");
     return existing;
+  }
   // No global Node search, inherited preloads, credentials on argv, or TS fallback.
   if (!sameNetwork(network, networkSnapshot(process.env)))
     throw new ContractError("stale");
@@ -397,6 +424,19 @@ async function observeStarted(
   }
   return { service };
 }
+/** The running owner's private entry link, for the guidance only: never part
+ * of the JSON result. */
+async function privateLink(workspace: string): Promise<string | undefined> {
+  try {
+    const value = closed(
+      await nativeCall(new ServiceCoordination(workspace), "token-link", true),
+      ["link"],
+    );
+    return text(value.link, 4096, true);
+  } catch {
+    return undefined;
+  }
+}
 /** Orderly owner control for service managers that only signal (macOS, Windows). */
 const ownerControl: OwnerControl = {
   async ownerStatus(workspace) {
@@ -456,6 +496,7 @@ function serverGuidance(
   s: AutostartSystem,
   action: ServerAction,
   result: AutostartResult & { service?: string; endpoint?: string },
+  link: string | undefined,
 ): string {
   // Pi's managed copy puts no `cadence` bin on PATH.
   const cli = piUserInstall(s)
@@ -464,7 +505,7 @@ function serverGuidance(
   const note = result.redirectedFrom
     ? `Cadence workspace: ${result.workspace} (${result.redirectedFrom} contains Cadence's private state)\n`
     : "";
-  return note + serverStatusGuidance(s, action, result, cli);
+  return note + serverStatusGuidance(s, action, result, cli, link);
 }
 /** Linger only; never `server install`, which restarts the owner. */
 function lingerGuidance(linger: LingerState | undefined): string {
@@ -495,19 +536,23 @@ function serverStatusGuidance(
   action: ServerAction,
   result: AutostartResult & { service?: string; endpoint?: string },
   cli: string,
+  link: string | undefined,
 ): string {
   const workspace = JSON.stringify(result.workspace ?? "");
   const manage = `Manage: ${cli} server status|restart|stop|uninstall`;
   const when = s.platform === "linux" ? "at boot or login" : "at login";
+  const config = `Port and token: ${PORT_KEY} and ${TOKEN_KEY} in ${serverConfigPath(s.home)} (edit them, then: ${cli} server restart)`;
   switch (result.status) {
     case "started": {
       const linger = lingerGuidance(result.linger);
       if (result.service !== "alive")
         return `Cadence started for ${result.workspace}, but the owner reports ${result.service}.\nInspect: ${cli} diagnose --workspace ${workspace}\n${manage}\n${linger}`;
-      return `Cadence WebUI: ${result.endpoint} (workspace ${result.workspace}; starts ${when})\nEnter with your private link: ${cli} token-link --workspace ${workspace} --reveal\n${manage}\n${linger}`;
+      if (!link)
+        return `Cadence WebUI: ${result.endpoint} (workspace ${result.workspace}; starts ${when})\nEnter with your private link: ${cli} token-link --workspace ${workspace} --reveal\n${config}\n${manage}\n${linger}`;
+      return `Cadence WebUI: ${link}\nOpen this private link (workspace ${result.workspace}; starts ${when}); its token admits anyone who has it.\n${config}\n${manage}\n${linger}`;
     }
     case "waiting-for-pi-login":
-      return `Cadence is registered for ${result.workspace}; it starts once Pi has ${join(agentDirectory(s), "auth.json")}.\nLog in to Pi, then: ${cli} server restart\n${lingerGuidance(result.linger)}`;
+      return `Cadence is registered for ${result.workspace}; it starts once Pi has ${join(agentDirectory(s), "auth.json")}.\nLog in to Pi, then: ${cli} server restart\n${config}\n${lingerGuidance(result.linger)}`;
     case "stopped":
       return action === "stop"
         ? `Cadence stopped; it starts again ${when}, or now with: ${cli} server restart\n`
@@ -576,6 +621,21 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
   if (argv.length) throw new ContractError("invalid");
   const s = hostSystem(dirname(dirname(fileURLToPath(hostUrl))), ownerControl);
   if (action === "install") process.stderr.write(researchTemplate(s.home));
+  // The definition starts with --server-config on the .env, so install and
+  // restart add missing keys and refuse an unusable file before any change.
+  if (action === "install" || action === "restart") {
+    try {
+      const { added } = ensureServerConfig(s.home);
+      if (added.length)
+        process.stderr.write(
+          `Cadence added ${added.map((key) => (key === PORT_KEY ? `${key}=${DEFAULT_PORT}` : `a random private ${key}`)).join(" and ")} to ${serverConfigPath(s.home)}\n`,
+        );
+    } catch (error) {
+      if (error instanceof ServerConfigRefusal)
+        process.stderr.write(serverConfigHint(error.path));
+      throw error;
+    }
+  }
   let result: AutostartResult & { service?: string; endpoint?: string };
   try {
     result = await serverAction(s, action, requested, linger);
@@ -586,9 +646,12 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
       );
     throw error;
   }
-  if (result.status === "started" && result.workspace)
+  let link: string | undefined;
+  if (result.status === "started" && result.workspace) {
     Object.assign(result, await observeStarted(result.workspace));
-  process.stderr.write(serverGuidance(s, action, result));
+    if (result.service === "alive") link = await privateLink(result.workspace);
+  }
+  process.stderr.write(serverGuidance(s, action, result, link));
   process.stdout.write(`${JSON.stringify(result)}\n`);
   if (
     [
@@ -614,7 +677,7 @@ export async function managementMain(
     const command = argv.shift();
     if (command === "--help" && !argv.length) {
       process.stdout.write(
-        "cadence start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--workspace PATH] [--state-home PATH]\ncadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall\nStart is explicit, or the background service that server install registers: a systemd user unit on Linux, started at boot through linger (--no-linger or CADENCE_LINGER=0 keeps it to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file.\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop. Unconfirmed/quarantined is not stopped.\nRecovery resolve requires this local native terminal, exact unchanged dead-owner resources and separate process/credential/storage acknowledgments. No --yes, network recovery, killing, repair or cleanup.\n",
+        "cadence start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--workspace PATH] [--state-home PATH]\ncadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall\nStart is explicit, or the background service that server install registers: a systemd user unit on Linux, started at boot through linger (--no-linger or CADENCE_LINGER=0 keeps it to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file, --server-config (the .env whose CADENCE_PORT and CADENCE_TOKEN the background service uses).\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop. Unconfirmed/quarantined is not stopped.\nRecovery resolve requires this local native terminal, exact unchanged dead-owner resources and separate process/credential/storage acknowledgments. No --yes, network recovery, killing, repair or cleanup.\n",
       );
       return;
     }
@@ -666,6 +729,7 @@ export async function managementMain(
       else if (flag === "--config") options.config = value;
       else if (flag === "--agent-dir") options.agentDir = value;
       else if (flag === "--token-file") options.tokenFile = value;
+      else if (flag === "--server-config") options.serverConfig = value;
       else if (flag === "--port") options.port = portValue(value);
       else if (flag === "--host" && (value === "127.0.0.1" || value === "::1"))
         options.host = value;

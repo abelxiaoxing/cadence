@@ -4,7 +4,7 @@ var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // src/service/host.ts
 import { lstatSync as lstatSync10, opendirSync as opendirSync3 } from "node:fs";
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 
 // src/agent-registry.ts
 import { createHash as createHash2 } from "node:crypto";
@@ -14749,7 +14749,7 @@ import {
   randomUUID as randomUUID7,
   timingSafeEqual
 } from "node:crypto";
-import { dirname as dirname7, isAbsolute as isAbsolute4, join as join10 } from "node:path";
+import { dirname as dirname8, isAbsolute as isAbsolute4, join as join11 } from "node:path";
 
 // src/service/config.ts
 import { isIP } from "node:net";
@@ -14799,14 +14799,122 @@ function localOrigin(policy, actualPort) {
   return `http://${policy.host === "::1" ? "[::1]" : policy.host}:${actualPort}`;
 }
 
-// src/service/auth.ts
+// src/service/server-config.ts
+import { dirname as dirname7, join as join10 } from "node:path";
+
+// skills/_shared/load-config.mjs
+function parseEnvFile(content) {
+  const values = {};
+  const lines = content.replaceAll(`\r
+`, `
+`).replaceAll("\r", `
+`).split(`
+`);
+  for (let index = 0;index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (!line || line.startsWith("#"))
+      continue;
+    const separator = line.indexOf("=");
+    if (separator <= 0)
+      throw new Error(`Invalid configuration syntax at line ${index + 1}`);
+    const name = line.slice(0, separator).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      throw new Error(`Invalid configuration name at line ${index + 1}`);
+    }
+    let value = line.slice(separator + 1).trim();
+    const quote = value[0];
+    if (quote === '"' || quote === "'") {
+      if (value.at(-1) !== quote) {
+        throw new Error(`Unterminated quoted configuration value at line ${index + 1}`);
+      }
+      value = value.slice(1, -1);
+    }
+    values[name] = value;
+  }
+  return values;
+}
+
+// src/service/server-config.ts
+var PORT_KEY = "CADENCE_PORT";
+var TOKEN_KEY = "CADENCE_TOKEN";
+var CONFIG_BYTES = 64 * 1024;
 var TOKEN_BYTES = 1024;
-function token(value) {
+function accessToken(value) {
   const result = text(value, TOKEN_BYTES, true);
   if (utf8Bytes(result) < 32 || /[\p{Cc}\p{Cf}]/u.test(result))
     throw new ContractError("invalid");
   return result;
 }
+function settings(source) {
+  parseEnvFile(source);
+  const parts = source.split(/(\r\n|\r|\n)/);
+  const found = {};
+  for (let at = 0;at < parts.length; at += 2) {
+    const line = parts[at].trim();
+    if (!line || line.startsWith("#"))
+      continue;
+    const separator = line.indexOf("=");
+    const key2 = line.slice(0, separator).trim();
+    const name = key2 === PORT_KEY ? "port" : key2 === TOKEN_KEY ? "token" : undefined;
+    if (!name)
+      continue;
+    if (found[name])
+      throw new ContractError("invalid");
+    let value = line.slice(separator + 1).trim();
+    if (value[0] === '"' || value[0] === "'")
+      value = value.slice(1, -1);
+    found[name] = { at, value };
+  }
+  return { parts, ...found };
+}
+function decodeServerConfig(source) {
+  const { port, token } = settings(source);
+  if (!port || !/^[1-9][0-9]{0,4}$/.test(port.value))
+    throw new ContractError("invalid");
+  if (!token)
+    throw new ContractError("invalid");
+  return {
+    port: integer(Number(port.value), 1, 65535),
+    token: accessToken(token.value)
+  };
+}
+
+class ServerConfigRefusal extends ContractError {
+  path;
+  constructor(path) {
+    super("corrupt-selected");
+    this.path = path;
+  }
+}
+function decoded(snapshot) {
+  return new TextDecoder("utf-8", { fatal: true }).decode(snapshot.bytes);
+}
+function readServerConfig(path) {
+  try {
+    const files = new PrivateFiles(dirname7(path));
+    const snapshot = files.read(path, CONFIG_BYTES);
+    if (!snapshot)
+      throw new ContractError("corrupt-selected");
+    return {
+      path,
+      config: decodeServerConfig(decoded(snapshot)),
+      files,
+      snapshot
+    };
+  } catch {
+    throw new ServerConfigRefusal(path);
+  }
+}
+function withToken(file, token) {
+  const { parts, token: line } = settings(decoded(file.snapshot));
+  if (!line)
+    throw new ContractError("invalid");
+  const indent = /^\s*/.exec(parts[line.at])?.[0] ?? "";
+  parts[line.at] = `${indent}${TOKEN_KEY}=${accessToken(token)}`;
+  return parts.join("");
+}
+
+// src/service/auth.ts
 function sameSecret(candidate, expected) {
   const a = createHash18("sha256").update(candidate).digest();
   const b = createHash18("sha256").update(expected).digest();
@@ -14842,16 +14950,50 @@ function cookieTokens(header, name) {
   return out;
 }
 function sourceConfig(source) {
-  if (source.environment !== undefined && source.tokenFile !== undefined)
+  const given = [source.environment, source.tokenFile, source.serverConfig];
+  if (given.filter((v) => v !== undefined).length > 1)
     throw new ContractError("invalid");
   if (source.environment !== undefined)
-    token(source.environment);
-  if (source.tokenFile !== undefined && (!isAbsolute4(source.tokenFile) || source.tokenFile.includes("\x00")))
+    accessToken(source.environment);
+  if (source.serverConfig !== undefined)
+    accessToken(source.token);
+  const path = source.tokenFile ?? source.serverConfig;
+  if (path !== undefined && (!isAbsolute4(path) || path.includes("\x00")))
     throw new ContractError("invalid");
   return {
     schema: "cadence-service-access-config/1",
-    source: source.environment !== undefined ? "environment" : source.tokenFile !== undefined ? "file" : "generated",
-    path: source.tokenFile ?? null
+    source: source.environment !== undefined ? "environment" : source.tokenFile !== undefined ? "file" : source.serverConfig !== undefined ? "config" : "generated",
+    path: path ?? null
+  };
+}
+function readSource(config) {
+  if (config.source === "file" && config.path)
+    readExternal(config.path);
+}
+function selectedMaterial(files, directory, source) {
+  const config = sourceConfig(source);
+  if (config.source !== "config")
+    throw new ContractError("invalid");
+  const marker2 = join11(directory, "access-config.json"), access = join11(directory, "access.json");
+  const markerFile = files.read(marker2), accessFile = files.read(access);
+  if (!markerFile || !accessFile)
+    throw new ContractError("corrupt-selected");
+  const previous = closed(json(markerFile), ["schema", "source", "path"]);
+  literal(previous.schema, "cadence-service-access-config/1");
+  oneOf(previous.source, ["generated", "environment", "file", "config"]);
+  const r = closed(json(accessFile), ["schema", "generation", "token"]);
+  literal(r.schema, "cadence-service-access/1");
+  const generation = integer(r.generation, 1);
+  if (previous.source === "generated" !== (r.token !== null))
+    throw new ContractError("corrupt-selected");
+  return {
+    config,
+    previous,
+    generation,
+    marker: marker2,
+    markerFile,
+    access,
+    accessFile
   };
 }
 
@@ -14869,17 +15011,14 @@ class AccessMaterial {
   listeners = new Set;
   config;
   static validateSource(source) {
-    const config = sourceConfig(source);
-    if (config.path)
-      readExternal(config.path);
+    readSource(sourceConfig(source));
   }
   static initialize(files, directory, source = {}) {
     const config = sourceConfig(source);
-    const marker2 = join10(directory, "access-config.json"), access = join10(directory, "access.json");
-    if (files.read(marker2) || files.read(access) || files.read(join10(directory, "registration.json")) || files.read(join10(directory, "owner.lock")))
+    const marker2 = join11(directory, "access-config.json"), access = join11(directory, "access.json");
+    if (files.read(marker2) || files.read(access) || files.read(join11(directory, "registration.json")) || files.read(join11(directory, "owner.lock")))
       throw new ContractError("conflict");
-    if (config.path)
-      readExternal(config.path);
+    readSource(config);
     files.create(marker2, encoded(config));
     files.create(access, encoded({
       schema: "cadence-service-access/1",
@@ -14887,13 +15026,27 @@ class AccessMaterial {
       token: config.source === "generated" ? randomBytes3(32).toString("base64url") : null
     }));
   }
+  static validateReselection(files, directory, source) {
+    selectedMaterial(files, directory, source);
+  }
+  static reselect(files, directory, source) {
+    const m = selectedMaterial(files, directory, source);
+    if (encoded(m.previous) === encoded(m.config))
+      return;
+    files.replace(m.marker, m.markerFile, encoded(m.config));
+    files.replace(m.access, m.accessFile, encoded({
+      schema: "cadence-service-access/1",
+      generation: integer(m.generation + 1, 1),
+      token: null
+    }));
+  }
   constructor(files, directory, source = {}, assertOwner) {
     this.files = files;
     this.directory = directory;
     this.assertOwner = assertOwner;
     this.config = sourceConfig(source);
-    const configFile = files.read(join10(directory, "access-config.json"));
-    const accessFile = files.read(join10(directory, "access.json"));
+    const configFile = files.read(join11(directory, "access-config.json"));
+    const accessFile = files.read(join11(directory, "access.json"));
     if (!configFile || !accessFile)
       throw new ContractError("corrupt-selected");
     const c = closed(json(configFile), ["schema", "source", "path"]);
@@ -14903,17 +15056,17 @@ class AccessMaterial {
     this.record = {
       schema: literal(r.schema, "cadence-service-access/1"),
       generation: integer(r.generation, 1),
-      token: r.token === null ? null : token(r.token)
+      token: r.token === null ? null : accessToken(r.token)
     };
     if (this.config.source === "generated" !== (this.record.token !== null))
       throw new ContractError("corrupt-selected");
-    if (this.config.path) {
+    if (this.config.source === "file" && this.config.path) {
       const loaded = readExternal(this.config.path);
       this.external = loaded.files;
       this.externalFile = loaded.file;
       this.secret = loaded.token;
     } else
-      this.secret = token(this.record.token ?? source.environment);
+      this.secret = accessToken(this.record.token ?? source.environment ?? source.token);
     this.configFile = configFile;
     this.accessFile = accessFile;
   }
@@ -14953,9 +15106,9 @@ class AccessMaterial {
   assert() {
     if (this.fenced)
       throw new ContractError("quarantine");
-    this.files.assert(join10(this.directory, "access-config.json"), this.configFile);
-    this.files.assert(join10(this.directory, "access.json"), this.accessFile);
-    if (this.config.path)
+    this.files.assert(join11(this.directory, "access-config.json"), this.configFile);
+    this.files.assert(join11(this.directory, "access.json"), this.accessFile);
+    if (this.config.source === "file" && this.config.path)
       this.external?.assert(this.config.path, this.externalFile, TOKEN_BYTES);
   }
   redactionLiterals() {
@@ -14976,19 +15129,27 @@ class AccessMaterial {
   rotate() {
     if (this.config.source === "environment")
       throw new ContractError("unsupported-context");
+    let configured;
+    if (this.config.source === "config" && this.config.path) {
+      configured = readServerConfig(this.config.path);
+      if (!sameSecret(configured.config.token, this.secret))
+        throw new ContractError("conflict");
+    }
     try {
       this.assertRotation();
       const secret = randomBytes3(32).toString("base64url");
       const generation = integer(this.record.generation + 1, 1);
       if (this.config.path && this.external && this.externalFile)
         this.externalFile = this.external.replace(this.config.path, this.externalFile, secret, TOKEN_BYTES);
+      if (configured)
+        configured.files.replace(configured.path, configured.snapshot, withToken(configured, secret), CONFIG_BYTES);
       const record2 = {
         ...this.record,
         generation,
         token: this.config.source === "generated" ? secret : null
       };
       this.assertRotation();
-      this.accessFile = this.files.replace(join10(this.directory, "access.json"), this.accessFile, encoded(record2));
+      this.accessFile = this.files.replace(join11(this.directory, "access.json"), this.accessFile, encoded(record2));
       this.assertRotation();
       this.record = record2;
       this.secret = secret;
@@ -15003,7 +15164,7 @@ class AccessMaterial {
   }
 }
 function readExternal(path) {
-  const files = new PrivateFiles(dirname7(path));
+  const files = new PrivateFiles(dirname8(path));
   const file = files.read(path, TOKEN_BYTES);
   if (!file)
     throw new ContractError("corrupt-selected");
@@ -15011,7 +15172,7 @@ function readExternal(path) {
     return {
       files,
       file,
-      token: token(new TextDecoder("utf-8", { fatal: true }).decode(file.bytes))
+      token: accessToken(new TextDecoder("utf-8", { fatal: true }).decode(file.bytes))
     };
   } catch {
     throw new ContractError("corrupt-selected");
@@ -15324,7 +15485,7 @@ class AuthNetwork {
 import { randomBytes as randomBytes4, randomUUID as randomUUID8 } from "node:crypto";
 import { opendirSync as opendirSync2, realpathSync as realpathSync3 } from "node:fs";
 import { hostname as hostname2 } from "node:os";
-import { dirname as dirname8, isAbsolute as isAbsolute5, join as join11, relative as relative4, sep as sep4 } from "node:path";
+import { dirname as dirname9, isAbsolute as isAbsolute5, join as join12, relative as relative4, sep as sep4 } from "node:path";
 var registrationKeys = [
   "schema",
   "root",
@@ -15450,17 +15611,17 @@ class ServiceCoordination {
   stateHome;
   constructor(workspace, stateHome) {
     this.store = new TaskStore(resolveWorkspace(workspace).root, stateHome);
-    const namespace = dirname8(this.store.privateRoot);
+    const namespace = dirname9(this.store.privateRoot);
     this.files = new PrivateFiles(namespace);
-    this.stateHome = dirname8(namespace);
-    this.directory = join11(this.store.privateRoot, "service-v1");
-    this.registryDirectory = join11(namespace, "service-registry-v1");
+    this.stateHome = dirname9(namespace);
+    this.directory = join12(this.store.privateRoot, "service-v1");
+    this.registryDirectory = join12(namespace, "service-registry-v1");
   }
   path(name) {
-    return join11(this.directory, name);
+    return join12(this.directory, name);
   }
   registryPath(name) {
-    return join11(this.registryDirectory, name);
+    return join12(this.registryDirectory, name);
   }
   registry() {
     if (!this.files.directory(this.registryDirectory))
@@ -15508,7 +15669,7 @@ class ServiceCoordination {
       "host-config.json",
       "history-v2"
     ]);
-    this.files.directory(join11(this.directory, "history-v2"), false, walks);
+    this.files.directory(join12(this.directory, "history-v2"), false, walks);
   }
   selected() {
     const walks = new DirectoryWalks;
@@ -15668,7 +15829,7 @@ class ServiceCoordination {
       throw error;
     }
   }
-  acquire(input, resolvedEndpoint = input.endpoint, initializeNew) {
+  acquire(input, resolvedEndpoint = input.endpoint, initializeNew, reselectExisting) {
     const config = decodeOwnerConfig(input);
     const bound = endpoint(resolvedEndpoint);
     if (!endpointMatches(config.endpoint, bound))
@@ -15683,7 +15844,8 @@ class ServiceCoordination {
         throw new ContractError("quarantine");
       if (this.store.inspectLock())
         throw new ContractError("conflict");
-      if (old && old.config.identity !== hash(encoded(config)))
+      const reselect = !!old && old.config.identity !== hash(encoded(config));
+      if (reselect && (!reselectExisting || !old?.hostConfig))
         throw new ContractError("conflict");
       const row = {
         root: this.store.root,
@@ -15700,7 +15862,17 @@ class ServiceCoordination {
         ...registry.value,
         entries: [...registry.value.entries, row]
       }), REGISTRY_BYTES);
-      this.initialize(config);
+      if (old?.hostConfig && reselect && reselectExisting) {
+        reselectExisting(old.hostConfig);
+        const saved = this.files.replace(this.path("config.json"), old.config, encoded(config));
+        this.files.replace(this.path("format.json"), old.manifest, encoded({
+          schema: "cadence-service-format/1",
+          root: this.store.root,
+          stateHome: this.stateHome,
+          configIdentity: saved.identity
+        }));
+      } else
+        this.initialize(config);
       if (!old)
         initializeNew?.();
       const checkout = this.store.acquire();
@@ -16463,7 +16635,7 @@ Content-Length: 0\r
       }
       if (target2 === "/" && req.method === "GET") {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end("Cadence: enter with the private link that `cadence token-link --workspace <path> --reveal` prints on this machine (the `cadence server install` service uses ~/cadence by default).\n");
+        res.end("Cadence: enter with the private link that `cadence server install` printed, http://127.0.0.1:<CADENCE_PORT>/?token=<CADENCE_TOKEN> from ~/.pi/agent/cadence/.env, or that `cadence token-link --workspace <path> --reveal` prints on this machine.\n");
         return;
       }
       if (target2.startsWith("/local/v1/admin/")) {
@@ -16544,9 +16716,9 @@ Content-Length: 0\r
         unavailable();
       if (route.operation === "session")
         this.attachment(caller);
-      const decoded = decodeHttpOutput(route.operation, value);
+      const decoded2 = decodeHttpOutput(route.operation, value);
       const status = value && typeof value === "object" && "kind" in value && value.kind === "error" && "error" in value ? errorStatus(decodePublicError(value.error).code) : 200;
-      send(res, status, decoded);
+      send(res, status, decoded2);
     } catch (e) {
       if (createdAttachment)
         this.detach(createdAttachment);
@@ -17034,8 +17206,8 @@ class OwnerModelChoice {
 
 // src/service/model-config.ts
 import { lstatSync as lstatSync8, realpathSync as realpathSync4 } from "node:fs";
-import { dirname as dirname9, isAbsolute as isAbsolute6, join as join12, resolve as resolve3 } from "node:path";
-var CONFIG_BYTES = 1024 * 1024;
+import { dirname as dirname10, isAbsolute as isAbsolute6, join as join13, resolve as resolve3 } from "node:path";
+var CONFIG_BYTES2 = 1024 * 1024;
 var ENTRY_LIMIT = 256;
 function refuse2() {
   throw new ContractError("corrupt-selected");
@@ -17092,7 +17264,7 @@ function captureEnvironment(value) {
     if (typeof name !== "string" || !d || !("value" in d) || d.value !== undefined && typeof d.value !== "string")
       refuse2();
     bytes += Buffer.byteLength(name) + Buffer.byteLength(d.value ?? "");
-    if (bytes > CONFIG_BYTES)
+    if (bytes > CONFIG_BYTES2)
       throw new ContractError("oversize");
     out[name] = d.value;
   }
@@ -17101,13 +17273,13 @@ function captureEnvironment(value) {
 function piSource(agentDir, home, cwd, env) {
   if (!isAbsolute6(home) || !isAbsolute6(cwd))
     refuse2();
-  let selected2 = agentDir ?? env.PI_CODING_AGENT_DIR ?? join12(home, ".pi", "agent");
+  let selected2 = agentDir ?? env.PI_CODING_AGENT_DIR ?? join13(home, ".pi", "agent");
   if (!selected2 || selected2.includes("\x00"))
     refuse2();
   if (selected2 === "~" || selected2.startsWith("~/"))
     selected2 = home + selected2.slice(1);
   selected2 = resolve3(cwd, selected2);
-  const directory = join12(realpathSync4(dirname9(selected2)), selected2.slice(dirname9(selected2).length + 1));
+  const directory = join13(realpathSync4(dirname10(selected2)), selected2.slice(dirname10(selected2).length + 1));
   if (!lstatSync8(directory).isDirectory() || lstatSync8(directory).isSymbolicLink())
     refuse2();
   const files = new PrivateFiles(directory, false);
@@ -17116,8 +17288,8 @@ function piSource(agentDir, home, cwd, env) {
   return {
     directory,
     files,
-    authPath: join12(directory, "auth.json"),
-    modelsPath: join12(directory, "models.json")
+    authPath: join13(directory, "auth.json"),
+    modelsPath: join13(directory, "models.json")
   };
 }
 function templateNames(value) {
@@ -17396,7 +17568,7 @@ function modelJson(snapshot) {
     } else if (char === '"')
       quoted = true;
   }
-  return parseWireJson(normalized, CONFIG_BYTES);
+  return parseWireJson(normalized, CONFIG_BYTES2);
 }
 function readPiSnapshot(source) {
   const { auth, credentials } = readPiAuth(source);
@@ -17404,11 +17576,11 @@ function readPiSnapshot(source) {
   return { auth, models, credentials, providers };
 }
 function readPiAuth(source) {
-  const auth = source.files.read(source.authPath, CONFIG_BYTES);
+  const auth = source.files.read(source.authPath, CONFIG_BYTES2);
   if (!auth)
     refuse2();
   const credentials = Object.create(null);
-  for (const [provider, input] of Object.entries(data(json(auth, CONFIG_BYTES)))) {
+  for (const [provider, input] of Object.entries(data(json(auth, CONFIG_BYTES2)))) {
     const credential = data(input);
     if (credential.type === "api_key") {
       keys2(credential, ["type", "key", "env"]);
@@ -17430,7 +17602,7 @@ function readPiAuth(source) {
   return { auth, credentials };
 }
 function readPiModels(source) {
-  const models = source.files.read(source.modelsPath, CONFIG_BYTES);
+  const models = source.files.read(source.modelsPath, CONFIG_BYTES2);
   const providers = Object.create(null);
   if (models) {
     const root = data(modelJson(models));
@@ -17554,9 +17726,9 @@ function clonePrivate(value) {
     return out;
   };
   const encoded2 = JSON.stringify(visit(value, 0));
-  if (Buffer.byteLength(encoded2) > CONFIG_BYTES)
+  if (Buffer.byteLength(encoded2) > CONFIG_BYTES2)
     throw new ContractError("oversize");
-  return parseWireJson(encoded2, CONFIG_BYTES);
+  return parseWireJson(encoded2, CONFIG_BYTES2);
 }
 
 // src/service/model-context.ts
@@ -18510,7 +18682,7 @@ class ServiceOwner {
 }
 
 // src/service/runtime.ts
-import { dirname as dirname10, isAbsolute as isAbsolute7, join as join13, resolve as resolve4 } from "node:path";
+import { dirname as dirname11, isAbsolute as isAbsolute7, join as join14, resolve as resolve4 } from "node:path";
 var STARTUP_INPUT_BYTES = 16 * 1024;
 function absolute(value) {
   const result = text(value, 4096, true);
@@ -18530,10 +18702,11 @@ function decodeHostConfig(value) {
   const tokenSource = oneOf(o.tokenSource, [
     "generated",
     "environment",
-    "file"
+    "file",
+    "config"
   ]);
   const tokenFile = o.tokenFile === null ? null : absolute(o.tokenFile);
-  if (o.tokenSource === "file" !== (tokenFile !== null))
+  if ((tokenSource === "file" || tokenSource === "config") !== !!tokenFile)
     throw new ContractError("invalid");
   return {
     schema: literal(o.schema, "cadence-service-host/1"),
@@ -18543,6 +18716,15 @@ function decodeHostConfig(value) {
     tokenSource,
     tokenFile
   };
+}
+function reselectable(old, next) {
+  const kept = (c) => encoded({
+    ...c,
+    http: { ...c.http, port: 0 },
+    tokenSource: null,
+    tokenFile: null
+  });
+  return next.tokenSource === "config" && kept(old) === kept(next);
 }
 function readHostConfig(c) {
   const owner = c.configuration();
@@ -18635,7 +18817,7 @@ import { realpathSync as realpathSync5 } from "node:fs";
 import { spawnSync as spawnSync2 } from "node:child_process";
 import { createHash as createHash20 } from "node:crypto";
 import { lstatSync as lstatSync9, readdirSync as readdirSync3, readlinkSync } from "node:fs";
-import { join as join14, relative as relative5 } from "node:path";
+import { join as join15, relative as relative5 } from "node:path";
 var admin = (path) => path === ".cadence/assistant/tasks" || path.startsWith(".cadence/assistant/tasks/");
 function captureChanges(root) {
   const deadline = Date.now() + 3000;
@@ -18676,7 +18858,7 @@ function captureChanges(root) {
       return;
     }
     try {
-      const path = join14(root, name);
+      const path = join15(root, name);
       const st = lstatSync9(path);
       add(name, `${st.mode}:${st.size}`);
       if (st.isSymbolicLink()) {
@@ -18812,7 +18994,7 @@ ${data2.toString("utf8")}`);
         return;
       }
       for (const name of names2) {
-        const path = join14(dir, name);
+        const path = join15(dir, name);
         const rel = relative5(root, path).split("\\").join("/");
         if (rel === ".git" || admin(rel))
           continue;
@@ -19108,9 +19290,9 @@ class ActionAdmission {
     });
   }
   existing(record2, commandId, requested) {
-    const decoded = decodeStoredCommand(record2);
-    const receipt = decoded.receipt;
-    if (receipt.commandId !== commandId || canonicalJson(decoded.identity) !== canonicalJson(requested))
+    const decoded2 = decodeStoredCommand(record2);
+    const receipt = decoded2.receipt;
+    if (receipt.commandId !== commandId || canonicalJson(decoded2.identity) !== canonicalJson(requested))
       return error(publicError("conflict"));
     return ok(receipt);
   }
@@ -19375,7 +19557,7 @@ class ActionAdmission {
 
 // src/service/graph.ts
 import { createHash as createHash21 } from "node:crypto";
-import { join as join15 } from "node:path";
+import { join as join16 } from "node:path";
 var hash3 = (text2) => createHash21("sha256").update(text2).digest("hex");
 
 class GraphContext {
@@ -19385,7 +19567,7 @@ class GraphContext {
   identity;
   constructor(root) {
     this.root = root;
-    const bytes = readBounded(join15(root, "AGENTS.md"), 32768);
+    const bytes = readBounded(join16(root, "AGENTS.md"), 32768);
     this.hints = bytes ? new TextDecoder("utf-8", { fatal: true }).decode(bytes) : "";
     this.identity = hash3(canonicalJson({
       hints: bytes === undefined ? null : hash3(bytes),
@@ -19522,7 +19704,7 @@ import { randomUUID as randomUUID14 } from "node:crypto";
 
 // src/subagent-process.ts
 import { spawn } from "node:child_process";
-import { join as join16 } from "node:path";
+import { join as join17 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 // src/worker-capture.mjs
@@ -20107,7 +20289,7 @@ class WorkerRecording {
 // src/subagent-process.ts
 function terminateWindowsTree(pid, fallback) {
   const root = process.env.SystemRoot;
-  const taskkill = spawn(root ? join16(root, "System32", "taskkill.exe") : "taskkill.exe", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
+  const taskkill = spawn(root ? join17(root, "System32", "taskkill.exe") : "taskkill.exe", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
   taskkill.once("error", fallback);
   taskkill.once("close", (code) => {
     if (code !== 0)
@@ -20260,17 +20442,17 @@ function runProcess(spec) {
         const value = parseCaptureLine(line);
         if (!capture)
           capture = new CaptureState(spec.childRunId ?? decodeCaptureFrame(value).childRunId, spec.expectedRequest);
-        const decoded = capture.accept(value, Buffer.byteLength(line) + 1);
-        if (decoded.event.kind === "ready") {
+        const decoded2 = capture.accept(value, Buffer.byteLength(line) + 1);
+        if (decoded2.event.kind === "ready") {
           ready2 = true;
           spec.onProgress?.("Agent ready");
         }
-        if (decoded.event.kind === "tool-start")
-          spec.onProgress?.(clean(`Tool: ${decoded.event.name}`, 128));
-        if (decoded.event.kind === "final")
+        if (decoded2.event.kind === "tool-start")
+          spec.onProgress?.(clean(`Tool: ${decoded2.event.name}`, 128));
+        if (decoded2.event.kind === "final")
           final = capture.preview;
         if (lease) {
-          spec.recording?.accept(decoded, lease);
+          spec.recording?.accept(decoded2, lease);
           lease = undefined;
         }
       } catch {
@@ -22585,7 +22767,7 @@ function legacy(store, budget, reader) {
       decodeId(entry.name);
       if (created.has(entry.name))
         continue;
-      const path = join17(store.tasks, entry.name, "task.json");
+      const path = join18(store.tasks, entry.name, "task.json");
       const size = lstatSync10(path).size;
       if (size > 128 * 1024)
         throw new ContractError("corrupt-selected");
@@ -22632,12 +22814,19 @@ async function createServiceHost(value, sourceBuild) {
   if (resolveWorkspace(input.config.cwd).root !== c.store.root)
     throw new ContractError("conflict");
   const old = readHostConfig(c);
-  if (old && encoded(old) !== encoded(input.config))
+  const reselect = !!old && encoded(old) !== encoded(input.config);
+  if (old && reselect && !reselectable(old, input.config))
     throw new ContractError("conflict");
-  const source = input.environmentToken !== null ? { environment: input.environmentToken } : input.config.tokenFile ? { tokenFile: input.config.tokenFile } : {};
+  const configured = input.config.tokenSource === "config" && input.config.tokenFile ? readServerConfig(input.config.tokenFile).config : undefined;
+  if (configured && configured.port !== input.config.http.port)
+    throw new ContractError("conflict");
+  const source = input.environmentToken !== null ? { environment: input.environmentToken } : configured && input.config.tokenFile ? { serverConfig: input.config.tokenFile, token: configured.token } : input.config.tokenFile ? { tokenFile: input.config.tokenFile } : {};
   AccessMaterial.validateSource(source);
   if (old) {
-    new AccessMaterial(c.files, c.directory, source);
+    if (reselect)
+      AccessMaterial.validateReselection(c.files, c.directory, source);
+    else
+      new AccessMaterial(c.files, c.directory, source);
     const history = HistoryFiles.open(c);
     if (!history)
       throw new ContractError("corrupt-selected");
@@ -22666,7 +22855,12 @@ async function createServiceHost(value, sourceBuild) {
     }, endpoint2, () => {
       c.files.create(c.path("host-config.json"), encoded(resolved));
       AccessMaterial.initialize(c.files, c.directory, source);
-    });
+    }, reselect && old ? (previous) => {
+      if (previous.identity !== hash(encoded(old)))
+        throw new ContractError("conflict");
+      AccessMaterial.reselect(c.files, c.directory, source);
+      c.files.replace(c.path("host-config.json"), previous, encoded(resolved));
+    } : undefined);
     let writer, live;
     owner = new ServiceOwner(lease, {
       quiesce: () => http.quiesce(),

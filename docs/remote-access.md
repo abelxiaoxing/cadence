@@ -23,6 +23,7 @@ Use a private0600 JSON file with actual absolute paths:
 }
 ```
 
+`tokenSource` is `generated`, `environment` (`CADENCE_WEB_TOKEN`), `file` (the whole `tokenFile` is the token) or `config` (`tokenFile` names an `.env` whose [`CADENCE_PORT` and `CADENCE_TOKEN`](service-management.md#port-and-token) apply; its port must equal `http.port`).
 Explicitly start with `cadence-service start --workspace /absolute/project --config /absolute/private-config.json`.
 The host refuses arbitrary forwarding chains, alternate authorities and non-loopback binding.
 Native/management capability traffic remains direct loopback, separate from browser credentials.
@@ -47,14 +48,14 @@ Audit any additional proxy-generated forwarding headers against the exact backen
 HTTP and WebSocket upgrade must use the same authenticated route; no public backend bypass or insecure credential-bearing HTTP.
 This example does not install Caddy, provision DNS/certificates, change a firewall or deploy a service.
 
-Use `cadence-service token-link --workspace /absolute/project --reveal` to reveal a private entry link deliberately.
+Use `cadence-service token-link --workspace /absolute/project --reveal` to reveal a private entry link deliberately; the background service prints its link at `cadence server install` and `restart`.
 Only root GET token entry accepts query credentials; subsequent private reads, exports and WS use the HttpOnly SameSite=Strict Secure cookie.
 Browser mutations/readonly POSTs require exact Origin and CSRF; access does not grant Start/check/review consent.
 A bad explicit token refuses even with an older cookie.
 Never put provider credentials in a browser or URL.
 
 `token-rotate` invalidates old links/cookies, pending grants, authenticated sockets and incomplete downloads without canceling admitted tasks.
-Environment-backed tokens require explicit Stop/restart with changed environment instead.
+Environment-backed tokens require explicit Stop/restart with changed environment instead; an `.env` token's rotation rewrites only its `CADENCE_TOKEN` line.
 Links may already exist in clipboard/history or external logs; redirecting cannot retract disclosure.
 Use [management and recovery](service-management.md) for Stop, uncertainty and exact local resolution.
 Loopback HTTPS/viewport tests are not physical-device or second-machine deployment qualification.
