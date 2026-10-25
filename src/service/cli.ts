@@ -4,6 +4,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { request } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ensureUserConfig } from "../install-config.mjs";
 import { networkSnapshot, sameNetwork } from "../sdk-network.ts";
 import {
   ContractError,
@@ -538,6 +539,17 @@ function serverStatusGuidance(
       return "";
   }
 }
+/** Missing-only, independent of the service result; a failure is reported, not fatal. */
+function researchTemplate(home: string): string {
+  try {
+    const result = ensureUserConfig(home);
+    return result.created
+      ? `Cadence created the research configuration template ${result.path}\n`
+      : "";
+  } catch (error) {
+    return `Cadence could not create the research configuration template: ${error instanceof Error ? error.message : String(error)}\n`;
+  }
+}
 const SERVER_ACTIONS: ServerAction[] = [
   "install",
   "status",
@@ -563,6 +575,7 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
   }
   if (argv.length) throw new ContractError("invalid");
   const s = hostSystem(dirname(dirname(fileURLToPath(hostUrl))), ownerControl);
+  if (action === "install") process.stderr.write(researchTemplate(s.home));
   let result: AutostartResult & { service?: string; endpoint?: string };
   try {
     result = await serverAction(s, action, requested, linger);

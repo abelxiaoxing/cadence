@@ -3,10 +3,47 @@
 
 // src/service/cli.ts
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync as mkdirSync4 } from "node:fs";
+import { existsSync, mkdirSync as mkdirSync5 } from "node:fs";
 import { request } from "node:http";
 import { dirname as dirname8, join as join10, resolve as resolve5 } from "node:path";
 import { fileURLToPath } from "node:url";
+
+// src/install-config.mjs
+import { closeSync, constants, mkdirSync, openSync, writeSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
+var CONFIG_TEMPLATE = `# Cadence research configuration. Keep this file local and never commit it.
+# Context7 works anonymously with its default URL.
+# CONTEXT7_API_URL=https://context7.com/api/v2
+# CONTEXT7_API_KEY=
+
+# Required when using the Grok search skill.
+GROK_API_URL=https://api.x.ai/v1
+GROK_API_KEY=
+
+# Optional Tavily integration.
+# TAVILY_ENABLED=true
+# TAVILY_API_URL=https://api.tavily.com
+# TAVILY_API_KEY=
+`;
+function ensureUserConfig(home = homedir()) {
+  const directory = path.join(home, ".pi", "agent", "cadence");
+  const file = path.join(directory, ".env");
+  mkdirSync(directory, { recursive: true, mode: 448 });
+  try {
+    const fd = openSync(file, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 384);
+    try {
+      writeSync(fd, CONFIG_TEMPLATE, undefined, "utf8");
+    } finally {
+      closeSync(fd);
+    }
+    return { created: true, path: file };
+  } catch (error) {
+    if (error?.code === "EEXIST")
+      return { created: false, path: file };
+    throw error;
+  }
+}
 
 // src/task-types.ts
 var TASK_SCHEMA = "cadence-workflow-assistant/1";
@@ -2049,13 +2086,13 @@ class CaptureBudgetLease {
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
-  closeSync,
-  constants,
+  closeSync as closeSync2,
+  constants as constants2,
   fstatSync,
   fsyncSync,
   lstatSync,
-  mkdirSync,
-  openSync,
+  mkdirSync as mkdirSync2,
+  openSync as openSync2,
   readdirSync,
   readSync,
   realpathSync,
@@ -2063,7 +2100,7 @@ import {
   unlinkSync,
   writeFileSync
 } from "node:fs";
-import { homedir, hostname } from "node:os";
+import { homedir as homedir2, hostname } from "node:os";
 import {
   dirname,
   isAbsolute,
@@ -2100,8 +2137,8 @@ function parseRecord(data) {
 function absent(error) {
   return object(error) && error.code === "ENOENT";
 }
-function safeDirectory(path, create = false, inspectExisting) {
-  const full = resolve(path);
+function safeDirectory(path2, create = false, inspectExisting) {
+  const full = resolve(path2);
   const root = parse(full).root;
   if (inspectExisting) {
     const st = lstatSync(root);
@@ -2124,7 +2161,7 @@ function safeDirectory(path, create = false, inspectExisting) {
       if (!create)
         return false;
       try {
-        mkdirSync(at, { mode: 448 });
+        mkdirSync2(at, { mode: 448 });
       } catch (mkdirError) {
         if (!object(mkdirError) || mkdirError.code !== "EEXIST")
           throw mkdirError;
@@ -2154,15 +2191,15 @@ function retryWindowsFileOperation(operation, recheck) {
     }
   }
 }
-function readBounded(path, max, packaged = false) {
-  if (!safeDirectory(dirname(path)))
+function readBounded(path2, max, packaged = false) {
+  if (!safeDirectory(dirname(path2)))
     return;
   let fd;
   try {
-    const st = lstatSync(path);
+    const st = lstatSync(path2);
     if (!st.isFile() || st.isSymbolicLink() || !packaged && st.nlink !== 1 || st.size > max)
       throw new Error("Unsafe or oversized file");
-    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    fd = openSync2(path2, constants2.O_RDONLY | (constants2.O_NOFOLLOW ?? 0));
   } catch (error) {
     if (absent(error))
       return;
@@ -2184,7 +2221,7 @@ function readBounded(path, max, packaged = false) {
       throw new Error("Oversized file");
     return buffer.subarray(0, size);
   } finally {
-    closeSync(fd);
+    closeSync2(fd);
   }
 }
 function gitEnvironment() {
@@ -2219,7 +2256,7 @@ function defaultStateHome() {
   const candidate = process.platform === "win32" ? process.env.LOCALAPPDATA : process.env.XDG_STATE_HOME;
   if (candidate && !isAbsolute(candidate))
     throw new Error("State home must be absolute");
-  return candidate ?? join(homedir(), process.platform === "win32" ? "AppData/Local" : ".local/state");
+  return candidate ?? join(homedir2(), process.platform === "win32" ? "AppData/Local" : ".local/state");
 }
 function recordText(record) {
   return `${JSON.stringify(record, null, 2)}
@@ -2228,8 +2265,8 @@ function recordText(record) {
 function contentIdentity(text2) {
   return createHash("sha256").update(text2).digest("hex");
 }
-function canonicalAmbientRoot(path) {
-  const full = resolve(path);
+function canonicalAmbientRoot(path2) {
+  const full = resolve(path2);
   try {
     return realpathSync(full);
   } catch (error) {
@@ -2251,8 +2288,8 @@ function canonicalAmbientRoot(path) {
 function privateRootFor(canonicalRoot, stateHome) {
   return join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1", createHash("sha256").update(canonicalRoot).digest("hex"));
 }
-function contains(root, path) {
-  const within = relative(root, resolve(path));
+function contains(root, path2) {
+  const within = relative(root, resolve(path2));
   return !within || !within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within);
 }
 function stateHomeInside(root, stateHome = defaultStateHome()) {
@@ -2260,7 +2297,7 @@ function stateHomeInside(root, stateHome = defaultStateHome()) {
   return contains(canonical, privateRootFor(canonical, stateHome));
 }
 var LANDING_WORKSPACE = "cadence";
-function effectiveWorkspace(requested, stateHome, home = homedir()) {
+function effectiveWorkspace(requested, stateHome, home = homedir2()) {
   if (!stateHomeInside(resolveWorkspace(requested).root, stateHome))
     return { workspace: requested, redirected: false };
   return { workspace: join(home, LANDING_WORKSPACE), redirected: true };
@@ -2282,20 +2319,20 @@ class TaskStore {
   }
   inspectPrivate() {
     const namespace = dirname(this.privateRoot);
-    for (const path of [namespace, this.privateRoot]) {
-      if (!safeDirectory(path))
+    for (const path2 of [namespace, this.privateRoot]) {
+      if (!safeDirectory(path2))
         continue;
-      const st = lstatSync(path);
+      const st = lstatSync(path2);
       if (process.platform !== "win32" && ((st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
         throw new Error("Private state permissions refused");
     }
   }
-  inspectPrivateFile(path, max) {
+  inspectPrivateFile(path2, max) {
     this.inspectPrivate();
     if (!safeDirectory(this.privateRoot))
       return;
     try {
-      const st = lstatSync(path);
+      const st = lstatSync(path2);
       if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size > max || process.platform !== "win32" && ((st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
         throw new Error("Unsafe private state file");
     } catch (error) {
@@ -2326,7 +2363,7 @@ class TaskStore {
     };
     let fd;
     try {
-      fd = retryWindowsFileOperation(() => openSync(this.lockPath, "wx", 384));
+      fd = retryWindowsFileOperation(() => openSync2(this.lockPath, "wx", 384));
     } catch {
       throw new Error("Checkout busy or unresolved lock; inspect and explicitly recover only a dead owner");
     }
@@ -2334,7 +2371,7 @@ class TaskStore {
       writeFileSync(fd, JSON.stringify(lock));
       fsyncSync(fd);
     } finally {
-      closeSync(fd);
+      closeSync2(fd);
     }
     return lock;
   }
@@ -2415,12 +2452,12 @@ class TaskStore {
       if (!current && readdirSync(dir).length)
         throw new Error("Unknown task directory");
       const temporary = join(dir, `task.${randomUUID()}.tmp`);
-      const fd = openSync(temporary, "wx", 384);
+      const fd = openSync2(temporary, "wx", 384);
       try {
         writeFileSync(fd, text2);
         fsyncSync(fd);
       } finally {
-        closeSync(fd);
+        closeSync2(fd);
       }
       this.assertOwner(lock);
       const latest = readBounded(join(dir, "task.json"), MAX_RECORD_BYTES);
@@ -2475,7 +2512,7 @@ var TASK_CONFIG_SCHEMA = "cadence-assistant-checks/1";
 import { spawnSync as spawnSync2 } from "node:child_process";
 import {
   lstatSync as lstatSync2,
-  mkdirSync as mkdirSync2,
+  mkdirSync as mkdirSync3,
   readFileSync,
   realpathSync as realpathSync2,
   renameSync as renameSync2,
@@ -2483,7 +2520,7 @@ import {
   statSync,
   writeFileSync as writeFileSync2
 } from "node:fs";
-import { homedir as homedir2 } from "node:os";
+import { homedir as homedir3 } from "node:os";
 import {
   delimiter,
   dirname as dirname2,
@@ -2511,7 +2548,7 @@ function hostSystem(root, owner) {
   return {
     platform: process.platform,
     env: process.env,
-    home: homedir2(),
+    home: homedir3(),
     node: process.execPath,
     root,
     unit: UNIT,
@@ -2545,8 +2582,8 @@ function hostSystem(root, owner) {
     },
     launchctl: (args) => run("launchctl", args),
     reg: (args) => run("reg", args),
-    launch: (path) => {
-      const r = spawnSync2(wscript(process.env), [path], {
+    launch: (path2) => {
+      const r = spawnSync2(wscript(process.env), [path2], {
         stdio: "ignore",
         windowsHide: true,
         timeout: 20000
@@ -2634,7 +2671,7 @@ function buildUnit(u) {
     "Documentation=https://github.com/abelxiaoxing/cadence/blob/main/docs/service-management.md",
     `ConditionPathExists=${specifiers(u.cli)}`,
     `ConditionPathExists=${specifiers(join2(u.agentDir, "auth.json"))}`,
-    ...u.sdk.map((path) => `ConditionPathExists=${specifiers(path)}`),
+    ...u.sdk.map((path2) => `ConditionPathExists=${specifiers(path2)}`),
     "StartLimitIntervalSec=300",
     "StartLimitBurst=3",
     "",
@@ -2655,11 +2692,11 @@ function buildUnit(u) {
   ].join(`
 `);
 }
-function readGenerated(path, marker) {
+function readGenerated(path2, marker) {
   try {
-    if (!lstatSync2(path).isFile())
+    if (!lstatSync2(path2).isFile())
       return null;
-    const bytes = readFileSync(path);
+    const bytes = readFileSync(path2);
     const text2 = bytes[0] === 255 && bytes[1] === 254 ? bytes.subarray(2).toString("utf16le") : bytes.toString("utf8");
     return text2.startsWith(marker) ? text2 : null;
   } catch (error) {
@@ -2671,9 +2708,9 @@ function readGenerated(path, marker) {
 function unitWorkspace(text2) {
   return text2?.match(/^WorkingDirectory=(.+)$/m)?.[1].replaceAll("%%", "%");
 }
-function directory(path) {
+function directory(path2) {
   try {
-    return isAbsolute2(path) && statSync(path).isDirectory();
+    return isAbsolute2(path2) && statSync(path2).isDirectory();
   } catch {
     return false;
   }
@@ -2693,22 +2730,22 @@ function selectWorkspace(s, requested, kept) {
     chosen = kept;
   const landing = chosen ? effectiveWorkspace(chosen, serviceStateHome(s), s.home) : { workspace: join2(s.home, LANDING_WORKSPACE), redirected: false };
   if (landing.workspace !== chosen)
-    mkdirSync2(landing.workspace, { recursive: true });
+    mkdirSync3(landing.workspace, { recursive: true });
   return landing.redirected ? { workspace: landing.workspace, redirectedFrom: chosen } : { workspace: landing.workspace };
 }
-function write(path, content) {
-  mkdirSync2(dirname2(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.tmp`;
+function write(path2, content) {
+  mkdirSync3(dirname2(path2), { recursive: true });
+  const temporary = `${path2}.${process.pid}.tmp`;
   try {
     writeFileSync2(temporary, content, { mode: 420, flag: "wx" });
-    renameSync2(temporary, path);
+    renameSync2(temporary, path2);
   } finally {
     rmSync(temporary, { force: true });
   }
 }
-function regularFile(path) {
+function regularFile(path2) {
   try {
-    return statSync(path).isFile();
+    return statSync(path2).isFile();
   } catch {
     return false;
   }
@@ -2741,10 +2778,10 @@ function configureAutostart(s, mode, requested, linger = false) {
     return { status: "unsupported" };
   if (s.systemctl(["show-environment"]).status !== 0)
     return { status: "unavailable" };
-  const path = unitPath(s);
-  const previous = readGenerated(path, MARKER);
+  const path2 = unitPath(s);
+  const previous = readGenerated(path2, MARKER);
   if (previous === null)
-    return { status: "foreign", unit: path };
+    return { status: "foreign", unit: path2 };
   if (mode === "restart" && previous === undefined)
     return { status: "absent" };
   const sdk = sdkPackages(s.root);
@@ -2764,10 +2801,10 @@ function configureAutostart(s, mode, requested, linger = false) {
   const active = s.systemctl(["is-active", "--quiet", s.unit]).status === 0;
   if (active)
     s.systemctl(["stop", s.unit]);
-  write(path, content);
+  write(path2, content);
   s.systemctl(["daemon-reload"]);
   const result = {
-    unit: path,
+    unit: path2,
     workspace,
     ...redirectedFrom ? { redirectedFrom } : {}
   };
@@ -2785,51 +2822,51 @@ function configureAutostart(s, mode, requested, linger = false) {
 function stopAutostart(s) {
   if (s.platform !== "linux")
     return { status: "unsupported" };
-  const path = unitPath(s);
-  const previous = readGenerated(path, MARKER);
+  const path2 = unitPath(s);
+  const previous = readGenerated(path2, MARKER);
   if (previous === null)
-    return { status: "foreign", unit: path };
+    return { status: "foreign", unit: path2 };
   if (previous === undefined)
     return { status: "absent" };
   if (s.systemctl(["show-environment"]).status !== 0)
-    return { status: "unavailable", unit: path };
+    return { status: "unavailable", unit: path2 };
   return {
     status: s.systemctl(["stop", s.unit]).status === 0 ? "stopped" : "failed",
-    unit: path,
+    unit: path2,
     workspace: unitWorkspace(previous)
   };
 }
 function removeAutostart(s) {
   if (s.platform !== "linux")
     return { status: "unsupported" };
-  const path = unitPath(s);
-  const previous = readGenerated(path, MARKER);
+  const path2 = unitPath(s);
+  const previous = readGenerated(path2, MARKER);
   if (previous === null)
-    return { status: "foreign", unit: path };
+    return { status: "foreign", unit: path2 };
   if (previous === undefined)
     return { status: "absent" };
   if (s.systemctl(["show-environment"]).status !== 0)
-    return { status: "unavailable", unit: path };
+    return { status: "unavailable", unit: path2 };
   if (s.systemctl(["disable", "--now", s.unit]).status !== 0)
-    return { status: "failed", unit: path };
-  rmSync(path);
+    return { status: "failed", unit: path2 };
+  rmSync(path2);
   s.systemctl(["daemon-reload"]);
   s.systemctl(["reset-failed", s.unit]);
-  return { status: "removed", unit: path };
+  return { status: "removed", unit: path2 };
 }
 function autostartStatus(s) {
   if (s.platform !== "linux")
     return { status: "unsupported" };
-  const path = unitPath(s);
-  const previous = readGenerated(path, MARKER);
+  const path2 = unitPath(s);
+  const previous = readGenerated(path2, MARKER);
   if (previous === null)
-    return { status: "foreign", unit: path };
+    return { status: "foreign", unit: path2 };
   if (previous === undefined)
     return { status: "absent" };
   return {
     status: s.systemctl(["is-active", s.unit]).stdout.trim() || "unknown",
     enabled: s.systemctl(["is-enabled", s.unit]).stdout.trim() || "unknown",
-    unit: path,
+    unit: path2,
     workspace: unitWorkspace(previous),
     ...bootStart(s, false)
   };
@@ -2844,13 +2881,13 @@ import { dirname as dirname4, isAbsolute as isAbsolute4, join as join4, relative
 // src/service/private-files.ts
 import { createHash as createHash2, randomUUID as randomUUID2 } from "node:crypto";
 import {
-  closeSync as closeSync2,
-  constants as constants2,
+  closeSync as closeSync3,
+  constants as constants3,
   fstatSync as fstatSync2,
   fsyncSync as fsyncSync2,
   lstatSync as lstatSync3,
-  mkdirSync as mkdirSync3,
-  openSync as openSync2,
+  mkdirSync as mkdirSync4,
+  openSync as openSync3,
   readSync as readSync2,
   renameSync as renameSync3,
   unlinkSync as unlinkSync2,
@@ -2898,25 +2935,25 @@ class DirectoryWalks {
     this.walked.clear();
     return false;
   }
-  remember(path, st) {
+  remember(path2, st) {
     if (this.open())
-      this.walked.set(path, { dev: st.dev, ino: st.ino });
+      this.walked.set(path2, { dev: st.dev, ino: st.ino });
   }
-  reuse(path, ownerOnly = true) {
-    const walked = this.open() ? this.walked.get(path) : undefined;
+  reuse(path2, ownerOnly = true) {
+    const walked = this.open() ? this.walked.get(path2) : undefined;
     if (!walked)
       return false;
     let st;
     try {
-      st = lstatSync3(path);
+      st = lstatSync3(path2);
     } catch (error) {
       if (!missing(error))
         throw error;
-      this.walked.delete(path);
+      this.walked.delete(path2);
       return false;
     }
     if (!st.isDirectory() || st.isSymbolicLink() || st.dev !== walked.dev || st.ino !== walked.ino) {
-      this.walked.delete(path);
+      this.walked.delete(path2);
       return false;
     }
     privateMode(st, ownerOnly);
@@ -2931,17 +2968,17 @@ class PrivateFiles {
     this.namespace = namespace;
     this.ownerOnly = ownerOnly;
   }
-  directory(path, create = false, walks) {
-    const tail = relative2(this.namespace, path);
+  directory(path2, create = false, walks) {
+    const tail = relative2(this.namespace, path2);
     if (isAbsolute3(tail) || tail === ".." || tail.startsWith(`..${sep3}`))
       refused();
     if (!create) {
-      const full = resolve3(path);
+      const full = resolve3(path2);
       if (walks?.reuse(full, this.ownerOnly))
         return true;
       const namespace = resolve3(this.namespace);
       let inside = false, last;
-      const found = safeDirectory(path, false, (at2, st) => {
+      const found = safeDirectory(path2, false, (at2, st) => {
         if (at2 === namespace)
           inside = true;
         if (inside)
@@ -2965,7 +3002,7 @@ class PrivateFiles {
         if (!missing(error))
           throw error;
         try {
-          mkdirSync3(at, { mode: 448 });
+          mkdirSync4(at, { mode: 448 });
         } catch (mkdirError) {
           if (!(mkdirError instanceof Error && ("code" in mkdirError) && mkdirError.code === "EEXIST"))
             throw mkdirError;
@@ -2978,12 +3015,12 @@ class PrivateFiles {
     }
     return true;
   }
-  read(path, maximum = METADATA_BYTES, walks) {
-    if (!this.directory(dirname3(path), false, walks))
+  read(path2, maximum = METADATA_BYTES, walks) {
+    if (!this.directory(dirname3(path2), false, walks))
       return;
     let before;
     try {
-      before = lstatSync3(path);
+      before = lstatSync3(path2);
     } catch (error) {
       if (missing(error))
         return;
@@ -2992,7 +3029,7 @@ class PrivateFiles {
     if (!before.isFile() || before.nlink !== 1 || before.size > maximum)
       refused();
     privateMode(before, this.ownerOnly);
-    const fd = openSync2(path, constants2.O_RDONLY | (constants2.O_NOFOLLOW ?? 0));
+    const fd = openSync3(path2, constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0));
     try {
       const opened = fstatSync2(fd);
       if (!same(before, opened))
@@ -3006,60 +3043,60 @@ class PrivateFiles {
         size += n;
       }
       const bytes = buffer.subarray(0, size);
-      if (size !== opened.size || !same(opened, fstatSync2(fd)) || !same(opened, lstatSync3(path)))
+      if (size !== opened.size || !same(opened, fstatSync2(fd)) || !same(opened, lstatSync3(path2)))
         refused();
       return { bytes, identity: hash(bytes), stamp: stamp(opened) };
     } finally {
-      closeSync2(fd);
+      closeSync3(fd);
     }
   }
-  assert(path, expected, maximum = METADATA_BYTES, walks) {
-    const current = this.read(path, maximum, walks);
+  assert(path2, expected, maximum = METADATA_BYTES, walks) {
+    const current = this.read(path2, maximum, walks);
     if (current?.identity !== expected?.identity || current?.stamp !== expected?.stamp)
       throw new ContractError("conflict");
   }
-  create(path, bytes, maximum = METADATA_BYTES) {
+  create(path2, bytes, maximum = METADATA_BYTES) {
     if (Buffer.byteLength(bytes) > maximum)
       throw new ContractError("oversize");
-    this.directory(dirname3(path), true);
-    const fd = retryWindowsFileOperation(() => openSync2(path, "wx", 384));
+    this.directory(dirname3(path2), true);
+    const fd = retryWindowsFileOperation(() => openSync3(path2, "wx", 384));
     try {
       writeFileSync3(fd, bytes);
       fsyncSync2(fd);
     } finally {
-      closeSync2(fd);
+      closeSync3(fd);
     }
-    this.syncDirectory(dirname3(path));
-    const result = this.read(path, maximum);
+    this.syncDirectory(dirname3(path2));
+    const result = this.read(path2, maximum);
     if (!result || result.identity !== hash(bytes))
       refused();
     return result;
   }
-  replace(path, expected, bytes, maximum = METADATA_BYTES) {
-    this.assert(path, expected, maximum);
-    const temporary = join3(dirname3(path), `pending-${randomUUID2()}.json`);
+  replace(path2, expected, bytes, maximum = METADATA_BYTES) {
+    this.assert(path2, expected, maximum);
+    const temporary = join3(dirname3(path2), `pending-${randomUUID2()}.json`);
     this.create(temporary, bytes, maximum);
-    this.assert(path, expected, maximum);
-    retryWindowsFileOperation(() => renameSync3(temporary, path), () => this.assert(path, expected, maximum));
-    this.syncDirectory(dirname3(path));
-    const result = this.read(path, maximum);
+    this.assert(path2, expected, maximum);
+    retryWindowsFileOperation(() => renameSync3(temporary, path2), () => this.assert(path2, expected, maximum));
+    this.syncDirectory(dirname3(path2));
+    const result = this.read(path2, maximum);
     if (!result || result.identity !== hash(bytes))
       refused();
     return result;
   }
-  remove(path, expected, maximum = METADATA_BYTES) {
-    this.assert(path, expected, maximum);
-    retryWindowsFileOperation(() => unlinkSync2(path), () => this.assert(path, expected, maximum));
-    this.syncDirectory(dirname3(path));
+  remove(path2, expected, maximum = METADATA_BYTES) {
+    this.assert(path2, expected, maximum);
+    retryWindowsFileOperation(() => unlinkSync2(path2), () => this.assert(path2, expected, maximum));
+    this.syncDirectory(dirname3(path2));
   }
-  syncDirectory(path) {
+  syncDirectory(path2) {
     if (process.platform === "win32")
       return;
-    const fd = openSync2(path, constants2.O_RDONLY | constants2.O_DIRECTORY);
+    const fd = openSync3(path2, constants3.O_RDONLY | constants3.O_DIRECTORY);
     try {
       fsyncSync2(fd);
     } finally {
-      closeSync2(fd);
+      closeSync3(fd);
     }
   }
 }
@@ -3103,10 +3140,10 @@ var registrationKeys = [
 ];
 var reservationKeys = registrationKeys.filter((k) => !["schema", "phase", "checkoutToken"].includes(k));
 function pathValue(value) {
-  const path = text(value, 4096, true);
-  if (!isAbsolute4(path))
+  const path2 = text(value, 4096, true);
+  if (!isAbsolute4(path2))
     refused();
-  return path;
+  return path2;
 }
 function endpoint(value, allowZero = false) {
   const s = text(value, 128, true);
@@ -3165,8 +3202,8 @@ function rootsOverlap(a, b) {
   };
   return within(a, b) || within(b, a);
 }
-function names(path, allowed) {
-  const dir = opendirSync(path);
+function names(path2, allowed) {
+  const dir = opendirSync(path2);
   try {
     let count = 0;
     for (let entry = dir.readSync();entry; entry = dir.readSync()) {
@@ -3751,10 +3788,10 @@ function disabled(s) {
 async function configureLaunchAgent(s, mode, requested) {
   if (s.uid === undefined)
     return { status: "unavailable" };
-  const path = plistPath(s);
-  const previous = readGenerated(path, MARKER2);
+  const path2 = plistPath(s);
+  const previous = readGenerated(path2, MARKER2);
   if (previous === null)
-    return { status: "foreign", unit: path };
+    return { status: "foreign", unit: path2 };
   if (mode === "restart" && previous === undefined)
     return { status: "absent" };
   const sdk = sdkPackages(s.root);
@@ -3764,10 +3801,10 @@ async function configureLaunchAgent(s, mode, requested) {
   const { workspace, redirectedFrom } = selectWorkspace(s, requested, kept);
   const refused2 = await settle(s, kept);
   if (refused2)
-    return { ...refused2, unit: path };
+    return { ...refused2, unit: path2 };
   if (loaded(s))
     s.launchctl(["bootout", target(s)]);
-  write(path, buildPlist({
+  write(path2, buildPlist({
     node: s.node,
     cli: join5(s.root, "src", "service-cli.mjs"),
     workspace,
@@ -3775,7 +3812,7 @@ async function configureLaunchAgent(s, mode, requested) {
     log: join5(s.home, "Library", "Logs", "cadence.log")
   }));
   const result = {
-    unit: path,
+    unit: path2,
     workspace,
     ...redirectedFrom ? { redirectedFrom } : {}
   };
@@ -3785,47 +3822,47 @@ async function configureLaunchAgent(s, mode, requested) {
     return { status: "disabled", ...result };
   if (!regularFile(join5(agentDirectory(s), "auth.json")))
     return { status: "waiting-for-pi-login", ...result };
-  const started = s.launchctl(["bootstrap", domain(s), path]).status === 0;
+  const started = s.launchctl(["bootstrap", domain(s), path2]).status === 0;
   return { status: started ? "started" : "failed", ...result };
 }
 async function stopLaunchAgent(s) {
-  const path = plistPath(s);
-  const previous = readGenerated(path, MARKER2);
+  const path2 = plistPath(s);
+  const previous = readGenerated(path2, MARKER2);
   if (previous === null)
-    return { status: "foreign", unit: path };
+    return { status: "foreign", unit: path2 };
   if (previous === undefined)
     return { status: "absent" };
   const workspace = plistWorkspace(previous);
   const refused2 = await settle(s, workspace);
-  return { ...refused2 ?? { status: "stopped", workspace }, unit: path };
+  return { ...refused2 ?? { status: "stopped", workspace }, unit: path2 };
 }
 async function removeLaunchAgent(s) {
-  const path = plistPath(s);
-  const previous = readGenerated(path, MARKER2);
+  const path2 = plistPath(s);
+  const previous = readGenerated(path2, MARKER2);
   if (previous === null)
-    return { status: "foreign", unit: path };
+    return { status: "foreign", unit: path2 };
   if (previous === undefined)
     return { status: "absent" };
   const refused2 = await settle(s, plistWorkspace(previous));
   if (refused2)
-    return { ...refused2, unit: path };
+    return { ...refused2, unit: path2 };
   if (s.uid !== undefined && loaded(s))
     s.launchctl(["bootout", target(s)]);
-  rmSync2(path);
-  return { status: "removed", unit: path };
+  rmSync2(path2);
+  return { status: "removed", unit: path2 };
 }
 function launchAgentStatus(s) {
-  const path = plistPath(s);
-  const previous = readGenerated(path, MARKER2);
+  const path2 = plistPath(s);
+  const previous = readGenerated(path2, MARKER2);
   if (previous === null)
-    return { status: "foreign", unit: path };
+    return { status: "foreign", unit: path2 };
   if (previous === undefined)
     return { status: "absent" };
   const printed = s.uid === undefined ? undefined : s.launchctl(["print", target(s)]);
   return {
     status: printed?.status !== 0 ? "unloaded" : /^\s*state = running$/m.test(printed.stdout) ? "active" : "inactive",
     enabled: s.uid !== undefined && disabled(s) ? "disabled" : "enabled",
-    unit: path,
+    unit: path2,
     workspace: plistWorkspace(previous)
   };
 }
@@ -3865,7 +3902,7 @@ var utf16 = (text2) => Buffer.concat([Buffer.from([255, 254]), Buffer.from(text2
 function launcherWorkspace(text2) {
   return text2?.match(/^shell\.CurrentDirectory = "((?:[^"]|"")*)"\r?$/m)?.[1].replaceAll('""', '"');
 }
-var runEntry = (path, s) => `"${wscript(s.env)}" "${path}"`;
+var runEntry = (path2, s) => `"${wscript(s.env)}" "${path2}"`;
 var present = (s, key) => s.reg(["query", key, "/v", RUN_VALUE]).status === 0;
 function approvedOff(s) {
   const r = s.reg(["query", APPROVED_KEY, "/v", RUN_VALUE]);
@@ -3873,10 +3910,10 @@ function approvedOff(s) {
   return !!first && (Number.parseInt(first[1], 16) & 1) === 1;
 }
 async function configureLoginRun(s, mode, requested) {
-  const path = launcherPath(s);
-  const previous = readGenerated(path, MARKER3);
+  const path2 = launcherPath(s);
+  const previous = readGenerated(path2, MARKER3);
   if (previous === null)
-    return { status: "foreign", unit: path };
+    return { status: "foreign", unit: path2 };
   if (previous === undefined && present(s, RUN_KEY))
     return { status: "foreign", unit: `${RUN_KEY}\\${RUN_VALUE}` };
   if (mode === "restart" && previous === undefined)
@@ -3888,61 +3925,61 @@ async function configureLoginRun(s, mode, requested) {
   const { workspace, redirectedFrom } = selectWorkspace(s, requested, kept);
   const refused2 = await settle(s, kept);
   if (refused2)
-    return { ...refused2, unit: path };
+    return { ...refused2, unit: path2 };
   const environment = s.env.PI_CODING_AGENT_DIR ? [["PI_CODING_AGENT_DIR", agentDirectory(s)]] : [];
-  write(path, utf16(buildLauncher({
+  write(path2, utf16(buildLauncher({
     node: s.node,
     cli: join6(s.root, "src", "service-cli.mjs"),
     workspace,
     environment
   })));
   const result = {
-    unit: path,
+    unit: path2,
     workspace,
     ...redirectedFrom ? { redirectedFrom } : {}
   };
   if (mode === "install") {
-    const entry = ["/v", RUN_VALUE, "/t", "REG_SZ", "/d", runEntry(path, s)];
+    const entry = ["/v", RUN_VALUE, "/t", "REG_SZ", "/d", runEntry(path2, s)];
     if (s.reg(["add", RUN_KEY, ...entry, "/f"]).status !== 0)
       return { status: "failed", ...result };
     s.reg(["delete", APPROVED_KEY, "/v", RUN_VALUE, "/f"]);
   }
   if (!regularFile(join6(agentDirectory(s), "auth.json")))
     return { status: "waiting-for-pi-login", ...result };
-  return { status: s.launch(path) ? "started" : "failed", ...result };
+  return { status: s.launch(path2) ? "started" : "failed", ...result };
 }
 async function stopLoginRun(s) {
-  const path = launcherPath(s);
-  const previous = readGenerated(path, MARKER3);
+  const path2 = launcherPath(s);
+  const previous = readGenerated(path2, MARKER3);
   if (previous === null)
-    return { status: "foreign", unit: path };
+    return { status: "foreign", unit: path2 };
   if (previous === undefined)
     return { status: "absent" };
   const workspace = launcherWorkspace(previous);
   const refused2 = await settle(s, workspace);
-  return { ...refused2 ?? { status: "stopped", workspace }, unit: path };
+  return { ...refused2 ?? { status: "stopped", workspace }, unit: path2 };
 }
 async function removeLoginRun(s) {
-  const path = launcherPath(s);
-  const previous = readGenerated(path, MARKER3);
+  const path2 = launcherPath(s);
+  const previous = readGenerated(path2, MARKER3);
   if (previous === null)
-    return { status: "foreign", unit: path };
+    return { status: "foreign", unit: path2 };
   if (previous === undefined)
     return { status: "absent" };
   const refused2 = await settle(s, launcherWorkspace(previous));
   if (refused2)
-    return { ...refused2, unit: path };
+    return { ...refused2, unit: path2 };
   for (const key of [RUN_KEY, APPROVED_KEY])
     if (present(s, key))
       s.reg(["delete", key, "/v", RUN_VALUE, "/f"]);
-  rmSync3(path);
-  return { status: "removed", unit: path };
+  rmSync3(path2);
+  return { status: "removed", unit: path2 };
 }
 async function loginRunStatus(s) {
-  const path = launcherPath(s);
-  const previous = readGenerated(path, MARKER3);
+  const path2 = launcherPath(s);
+  const previous = readGenerated(path2, MARKER3);
   if (previous === null)
-    return { status: "foreign", unit: path };
+    return { status: "foreign", unit: path2 };
   if (previous === undefined)
     return { status: "absent" };
   const workspace = launcherWorkspace(previous);
@@ -3950,7 +3987,7 @@ async function loginRunStatus(s) {
   return {
     status: owner === "alive" ? "active" : "inactive",
     enabled: present(s, RUN_KEY) && !approvedOff(s) ? "enabled" : "disabled",
-    unit: path,
+    unit: path2,
     workspace
   };
 }
@@ -4011,13 +4048,13 @@ async function resolveRecovery(coordination, confirmation, history) {
 // src/history/files.ts
 import { createHash as createHash4, randomBytes as randomBytes2, randomUUID as randomUUID4 } from "node:crypto";
 import {
-  closeSync as closeSync4,
-  constants as constants4,
+  closeSync as closeSync5,
+  constants as constants5,
   fstatSync as fstatSync4,
   fsyncSync as fsyncSync3,
   lstatSync as lstatSync5,
   opendirSync as opendirSync2,
-  openSync as openSync4,
+  openSync as openSync5,
   statfsSync
 } from "node:fs";
 import { open } from "node:fs/promises";
@@ -4042,11 +4079,11 @@ function decodeRunAdmission(value) {
 
 // src/history/read-io.ts
 import {
-  closeSync as closeSync3,
-  constants as constants3,
+  closeSync as closeSync4,
+  constants as constants4,
   fstatSync as fstatSync3,
   lstatSync as lstatSync4,
-  openSync as openSync3,
+  openSync as openSync4,
   readSync as readSync3
 } from "node:fs";
 import { dirname as dirname5 } from "node:path";
@@ -4054,32 +4091,32 @@ function bad() {
   throw new ContractError("corrupt-selected");
 }
 var stamp2 = (s) => [s.dev, s.ino, s.size, s.mode, s.uid, s.nlink, s.ctimeMs, s.mtimeMs].join(":");
-function selected(files, path, read, walks) {
-  if (!files.files.directory(dirname5(path), false, walks))
+function selected(files, path2, read, walks) {
+  if (!files.files.directory(dirname5(path2), false, walks))
     bad();
-  const before = lstatSync4(path);
+  const before = lstatSync4(path2);
   if (!before.isFile() || before.nlink !== 1 || process.platform !== "win32" && (before.mode & 63 || process.getuid && before.uid !== process.getuid()))
     bad();
-  const fd = openSync3(path, constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0));
+  const fd = openSync4(path2, constants4.O_RDONLY | (constants4.O_NOFOLLOW ?? 0));
   try {
     if (stamp2(fstatSync3(fd)) !== stamp2(before))
       bad();
     const result = read(fd, before.size, stamp2(before));
-    if (stamp2(fstatSync3(fd)) !== stamp2(before) || stamp2(lstatSync4(path)) !== stamp2(before))
+    if (stamp2(fstatSync3(fd)) !== stamp2(before) || stamp2(lstatSync4(path2)) !== stamp2(before))
       bad();
     return result;
   } finally {
-    closeSync3(fd);
+    closeSync4(fd);
   }
 }
-function assertIncarnation(files, path, expected) {
-  selected(files, path, (_fd, _size, current) => {
+function assertIncarnation(files, path2, expected) {
+  selected(files, path2, (_fd, _size, current) => {
     if (current !== expected)
       bad();
   });
 }
-function statSize(files, path, maximum) {
-  return selected(files, path, (_fd, size) => {
+function statSize(files, path2, maximum) {
+  return selected(files, path2, (_fd, size) => {
     if (size > maximum)
       bad();
     return size;
@@ -4688,19 +4725,19 @@ class HistoryFiles {
     this.files.create(this.admissionPath(value.runId), encoded(value), RECORD_BYTES);
     this.syncParents(this.admissionPath(value.runId));
   }
-  readBudgeted(path, maximum, budget) {
+  readBudgeted(path2, maximum, budget) {
     if (!budget)
-      return this.files.read(path, maximum);
+      return this.files.read(path2, maximum);
     let size;
     try {
-      size = lstatSync5(path).size;
+      size = lstatSync5(path2).size;
     } catch {
-      return this.files.read(path, 0, budget.walks);
+      return this.files.read(path2, 0, budget.walks);
     }
     if (size > maximum)
       corrupt();
     budget.reserve(size);
-    return this.files.read(path, size, budget.walks);
+    return this.files.read(path2, size, budget.walks);
   }
   readCommand(commandId, budget) {
     decodeId(commandId);
@@ -4726,18 +4763,18 @@ class HistoryFiles {
   syncParents(file) {
     if (process.platform === "win32")
       return;
-    for (let path = dirname6(file);; path = dirname6(path)) {
-      if (!this.files.directory(path))
+    for (let path2 = dirname6(file);; path2 = dirname6(path2)) {
+      if (!this.files.directory(path2))
         corrupt();
-      const fd = openSync4(path, constants4.O_RDONLY | constants4.O_DIRECTORY);
+      const fd = openSync5(path2, constants5.O_RDONLY | constants5.O_DIRECTORY);
       try {
         fsyncSync3(fd);
       } finally {
-        closeSync4(fd);
+        closeSync5(fd);
       }
-      if (path === this.coordination.directory)
+      if (path2 === this.coordination.directory)
         break;
-      if (path === dirname6(path))
+      if (path2 === dirname6(path2))
         corrupt();
     }
   }
@@ -4774,14 +4811,14 @@ class HistoryFiles {
     this.syncParents(this.artifactPath(ref));
   }
   usage() {
-    const walk = (path, depth) => {
-      if (depth > 8 || !this.files.directory(path))
+    const walk = (path2, depth) => {
+      if (depth > 8 || !this.files.directory(path2))
         corrupt();
       let bytes = 0;
-      const dir = opendirSync2(path);
+      const dir = opendirSync2(path2);
       try {
         for (let e = dir.readSync();e; e = dir.readSync()) {
-          const p = join7(path, e.name), st = lstatSync5(p);
+          const p = join7(path2, e.name), st = lstatSync5(p);
           if (st.isDirectory())
             bytes += walk(p, depth + 1);
           else {
@@ -4974,17 +5011,17 @@ class HistoryFiles {
     this.assertRecoveryIdle();
     this.validateRecovery(row.value);
     const { body, trailer, marker } = this.encodeBatch(state, [row]);
-    const segment = state.segment + 1, path = this.segmentPath(segment);
+    const segment = state.segment + 1, path2 = this.segmentPath(segment);
     publicationFences.set(this.directory, { ...state });
     this.activity().generation++;
-    const before = this.files.create(path, "", LIMITS.segmentBytes);
+    const before = this.files.create(path2, "", LIMITS.segmentBytes);
     let committed;
-    const fd = await open(path, constants4.O_WRONLY | constants4.O_APPEND | (constants4.O_NOFOLLOW ?? 0));
+    const fd = await open(path2, constants5.O_WRONLY | constants5.O_APPEND | (constants5.O_NOFOLLOW ?? 0));
     const assertOriginal = (bytes) => {
-      const original = fstatSync4(fd.fd), selected2 = lstatSync5(path);
+      const original = fstatSync4(fd.fd), selected2 = lstatSync5(path2);
       if (original.dev !== selected2.dev || original.ino !== selected2.ino || original.nlink !== 1)
         corrupt();
-      const snapshot = this.files.read(path, LIMITS.segmentBytes);
+      const snapshot = this.files.read(path2, LIMITS.segmentBytes);
       if (!snapshot || snapshot.identity !== hash(bytes))
         corrupt();
       return snapshot;
@@ -4992,7 +5029,7 @@ class HistoryFiles {
     try {
       await assertCurrent();
       this.assertWritable();
-      this.files.assert(path, before, LIMITS.segmentBytes);
+      this.files.assert(path2, before, LIMITS.segmentBytes);
       assertOriginal("");
       await fd.writeFile(body);
       await observer?.("journal");
@@ -5001,7 +5038,7 @@ class HistoryFiles {
       assertOriginal(body);
       await fd.writeFile(trailer);
       await fd.sync();
-      this.syncParents(path);
+      this.syncParents(path2);
       await observer?.("commit");
       await assertCurrent();
       this.assertWritable();
@@ -5013,7 +5050,7 @@ class HistoryFiles {
     this.assertWritable();
     if (!committed)
       corrupt();
-    this.files.assert(path, committed, LIMITS.segmentBytes);
+    this.files.assert(path2, committed, LIMITS.segmentBytes);
     publicationFences.delete(this.directory);
     return {
       snapshot: committed,
@@ -5085,20 +5122,20 @@ class HistoryFiles {
     if (state.bytes + Buffer.byteLength(body + trailer) > LIMITS.segmentBytes || state.records + rows.length + 1 > LIMITS.segmentRecords)
       segment++;
     lease.assert();
-    const path = this.segmentPath(segment);
-    let before = this.files.read(path, LIMITS.segmentBytes);
+    const path2 = this.segmentPath(segment);
+    let before = this.files.read(path2, LIMITS.segmentBytes);
     if (segment !== state.segment) {
       if (before)
         corrupt();
-      before = this.files.create(path, "", LIMITS.segmentBytes);
+      before = this.files.create(path2, "", LIMITS.segmentBytes);
     }
     if (!before || segment === state.segment && (before.bytes.length !== state.bytes || before.identity !== state.identity))
       corrupt();
-    const fd = await open(path, constants4.O_WRONLY | constants4.O_APPEND | (constants4.O_NOFOLLOW ?? 0));
+    const fd = await open(path2, constants5.O_WRONLY | constants5.O_APPEND | (constants5.O_NOFOLLOW ?? 0));
     try {
       lease.assert();
-      this.files.assert(path, before, LIMITS.segmentBytes);
-      const opened = await fd.stat(), selected2 = lstatSync5(path);
+      this.files.assert(path2, before, LIMITS.segmentBytes);
+      const opened = await fd.stat(), selected2 = lstatSync5(path2);
       if (opened.ino !== selected2.ino || opened.dev !== selected2.dev || opened.nlink !== 1)
         corrupt();
       beforeEffect?.();
@@ -5112,7 +5149,7 @@ class HistoryFiles {
       await observer?.("commit");
       lease.assert();
       this.assertWritable();
-      const after = this.files.read(path, LIMITS.segmentBytes);
+      const after = this.files.read(path2, LIMITS.segmentBytes);
       if (!after || after.identity !== createHash4("sha256").update(before.bytes).update(body).update(trailer).digest("hex"))
         corrupt();
       return {
@@ -5133,7 +5170,7 @@ class HistoryFiles {
   checkpoint(lease, state) {
     lease.assert();
     this.assertWritable();
-    const path = join7(this.directory, "checkpoint.json"), old = this.files.read(path);
+    const path2 = join7(this.directory, "checkpoint.json"), old = this.files.read(path2);
     const body = encoded({
       schema: "cadence-history-checkpoint/2",
       storeId: this.format.storeId,
@@ -5141,9 +5178,9 @@ class HistoryFiles {
       segment: state.segment
     });
     if (old)
-      this.files.replace(path, old, body);
+      this.files.replace(path2, old, body);
     else
-      this.files.create(path, body);
+      this.files.create(path2, body);
   }
 }
 function emptyScan() {
@@ -5543,13 +5580,13 @@ function digestHistory(files, exclude) {
   files.assertFormat();
   const digest = createHash5("sha256");
   let count = 0;
-  const walk = (path, depth) => {
-    if (depth > 8 || !files.files.directory(path))
+  const walk = (path2, depth) => {
+    if (depth > 8 || !files.files.directory(path2))
       throw new ContractError("corrupt-selected");
-    const directory2 = lstatSync6(path);
+    const directory2 = lstatSync6(path2);
     digest.update(`incarnation:${directory2.dev}:${directory2.ino}
 `);
-    const dir = opendirSync3(path), names2 = [];
+    const dir = opendirSync3(path2), names2 = [];
     try {
       for (let e = dir.readSync();e; e = dir.readSync()) {
         if (++count > LIMITS.dataFrames)
@@ -5560,7 +5597,7 @@ function digestHistory(files, exclude) {
       dir.closeSync();
     }
     for (const name of names2.sort()) {
-      const selected2 = join8(path, name);
+      const selected2 = join8(path2, name);
       if (selected2 === exclude)
         continue;
       const rel = relative4(files.directory, selected2);
@@ -5700,13 +5737,13 @@ class HistoryRecovery {
       },
       acknowledgments: { processes: true, credentials: true, storage: true }
     };
-    const path = files.segmentPath(state.segment + 1);
+    const path2 = files.segmentPath(state.segment + 1);
     const assertCurrent = async () => {
       await confirmation.assertLocalAuthority(structuredClone(expected));
       const selected2 = await inspectRecovery(this.coordination);
       if (selected2.owner !== "absent")
         throw new ContractError("quarantine");
-      if (selected2.epoch !== expected.epoch || selected2.coordinationDigest !== expected.coordinationDigest || digestHistory(files, path) !== expected.history?.digest || this.coordination.recoverySnapshot().digest !== expected.coordinationDigest)
+      if (selected2.epoch !== expected.epoch || selected2.coordinationDigest !== expected.coordinationDigest || digestHistory(files, path2) !== expected.history?.digest || this.coordination.recoverySnapshot().digest !== expected.coordinationDigest)
         throw new ContractError("conflict");
     };
     await confirmation.assertLocalAuthority(structuredClone(expected));
@@ -5730,8 +5767,8 @@ class HistoryRecovery {
     const assert = () => {
       files.assertWritable();
       files.assertRecoveryIdle();
-      files.files.assert(path, after.snapshot, LIMITS.segmentBytes);
-      if (digestHistory(files, path) !== expected.history?.digest)
+      files.files.assert(path2, after.snapshot, LIMITS.segmentBytes);
+      if (digestHistory(files, path2) !== expected.history?.digest)
         throw new ContractError("conflict");
     };
     assert();
@@ -5870,7 +5907,7 @@ async function localRecovery(c, operation) {
 }
 
 // src/service/runtime.ts
-import { homedir as homedir3 } from "node:os";
+import { homedir as homedir4 } from "node:os";
 import { dirname as dirname7, isAbsolute as isAbsolute6, join as join9, resolve as resolve4 } from "node:path";
 
 // src/service/config.ts
@@ -6005,8 +6042,8 @@ function selectStart(options, ambient) {
     throw new ContractError("invalid");
   let fromFile;
   if (options.config) {
-    const path = resolve4(options.config), f = new PrivateFiles(dirname7(path));
-    const bytes = f.read(path);
+    const path2 = resolve4(options.config), f = new PrivateFiles(dirname7(path2));
+    const bytes = f.read(path2);
     if (!bytes)
       throw new ContractError("corrupt-selected");
     fromFile = decodeHostConfig(json(bytes));
@@ -6020,7 +6057,7 @@ function selectStart(options, ambient) {
       port: options.port ?? 17423,
       proxy: null
     },
-    agentDir: resolve4(options.agentDir ?? ambient.PI_CODING_AGENT_DIR ?? join9(ambient.HOME ?? ambient.USERPROFILE ?? homedir3(), ".pi", "agent")),
+    agentDir: resolve4(options.agentDir ?? ambient.PI_CODING_AGENT_DIR ?? join9(ambient.HOME ?? ambient.USERPROFILE ?? homedir4(), ".pi", "agent")),
     tokenSource: options.tokenFile ? "file" : env ? "environment" : "generated",
     tokenFile: options.tokenFile ? resolve4(options.tokenFile) : null
   });
@@ -6457,6 +6494,16 @@ ${lingerGuidance(result.linger)}`;
       return "";
   }
 }
+function researchTemplate(home) {
+  try {
+    const result = ensureUserConfig(home);
+    return result.created ? `Cadence created the research configuration template ${result.path}
+` : "";
+  } catch (error) {
+    return `Cadence could not create the research configuration template: ${error instanceof Error ? error.message : String(error)}
+`;
+  }
+}
 var SERVER_ACTIONS = [
   "install",
   "status",
@@ -6485,6 +6532,8 @@ async function serverMain(argv, hostUrl) {
   if (argv.length)
     throw new ContractError("invalid");
   const s = hostSystem(dirname8(dirname8(fileURLToPath(hostUrl))), ownerControl);
+  if (action === "install")
+    process.stderr.write(researchTemplate(s.home));
   let result;
   try {
     result = await serverAction(s, action, requested, linger);
@@ -6592,7 +6641,7 @@ Recovery resolve requires this local native terminal, exact unchanged dead-owner
 `);
       options.workspace = landing.workspace;
       if (command === "start")
-        mkdirSync4(landing.workspace, { recursive: true });
+        mkdirSync5(landing.workspace, { recursive: true });
     }
     let result;
     if (command === "start")

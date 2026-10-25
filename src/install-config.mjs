@@ -1,7 +1,9 @@
+// The research configuration template. `cadence server install` creates it
+// (missing-only); there is no package install script, which npm 12 and Bun
+// skip by default.
 import { closeSync, constants, mkdirSync, openSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 export const CONFIG_TEMPLATE = `# Cadence research configuration. Keep this file local and never commit it.
 # Context7 works anonymously with its default URL.
@@ -37,23 +39,5 @@ export function ensureUserConfig(home = homedir()) {
   } catch (error) {
     if (error?.code === "EEXIST") return { created: false, path: file };
     throw error;
-  }
-}
-
-// The only install hook behavior. npm may skip it (allow-scripts), so nothing
-// else depends on it; services are registered by `cadence server install`.
-if (
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))
-) {
-  try {
-    const result = ensureUserConfig();
-    if (result.created)
-      process.stderr.write(`Cadence created ${result.path}\n`);
-  } catch (error) {
-    process.stderr.write(
-      `Cadence could not create the user configuration template: ${error instanceof Error ? error.message : String(error)}\n`,
-    );
-    process.exitCode = 0;
   }
 }

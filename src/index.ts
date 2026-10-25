@@ -3,7 +3,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerAgentPanel } from "./agent-panel.ts";
 import { registerCadenceAgentFeed } from "./agent-panel-cadence.ts";
 import { autostartNotice } from "./native-client.ts";
-import { startupCardLines } from "./startup-card.ts";
+import { CONFIG_MISSING, startupCardLines } from "./startup-card.ts";
 import { registerTaskShell } from "./task-shell.ts";
 
 /** Sole production composition. Discovery registers inert capabilities only;
@@ -25,7 +25,11 @@ export default function register(pi: ExtensionAPI): void {
         home: os.homedir(),
         projectTrusted: ctx.isProjectTrusted(),
       });
-      const shown = lines.length > 1 ? lines.slice(1) : lines;
+      // An existing file's path is noise; a missing one says where to create it.
+      const shown =
+        lines.length > 1 && !lines[0].endsWith(CONFIG_MISSING)
+          ? lines.slice(1)
+          : lines;
       ctx.ui.notify(shown.join("\n"), "info");
       // A later info status replaces this card in Pi's TUI; a warning stays.
       const autostart = autostartNotice();

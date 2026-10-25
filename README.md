@@ -20,8 +20,10 @@ cadence token-link --workspace ~/cadence --reveal
 ```
 
 The global install puts `cadence` (and its alias `cadence-service`) on `PATH`.
-It needs no install script: the postinstall only creates a missing `~/.pi/agent/cadence/.env` research template, and npm may skip it (npm 12 blocks install scripts by default) without any other effect.
+Cadence ships no install script, so npm 12 and Bun, which skip untrusted install scripts by default, change nothing.
+They may still report one blocked script from the pinned Pi SDK (`@google/genai`, whose preinstall only echoes `no-op`); it needs no approval.
 `cadence server install` registers and starts the background service for `~/cadence` on `http://127.0.0.1:17423`; `--workspace /absolute/project` selects another workspace.
+It also creates the research template `~/.pi/agent/cadence/.env` when missing; Pi's startup card names that path until it exists.
 
 | Platform | Service                                                                                     | Starts                                       |
 | -------- | ------------------------------------------------------------------------------------------- | -------------------------------------------- |
@@ -167,8 +169,7 @@ Outbound provider proxy policy is independent of inbound HTTPS and refuses unsup
 - `skills/git-commit` requires an explicit commit request and deterministic audit; task review never commits.
 - Three pinned professional profiles in `agents/` provide readonly design/diagnosis and direct-edit implementation instructions, not execution authority.
 - `config/` contains optional research/check examples.
-  Missing-only user `.env` template creation is the only postinstall behavior; it registers no service, and nothing depends on npm running it.
-  No build/Git/provider operation runs.
+  The package has no install script; `cadence server install` creates a missing user `.env` template, and no build/Git/provider operation runs at install.
 - `node /absolute/cadence/src/operator-cli.mjs doctor|runs [workspace]` remains readonly and independent of service startup.
 
 ## Development and evidence
@@ -359,7 +360,7 @@ Byte values are UTF-8/encoded bounds where specified; they are not targets to si
 | Host refuses during startup                                    | Fixed code/stage only; unregistered exits `refused`, registered stays `quarantined` |
 | Workspace containing the private state home                    | Land on `~/cadence` (only start creates it); never move state into the working copy |
 | Restart changes the definition's workspace or Node path        | Stop with the loaded definition before rewriting, not only a signal                 |
-| npm skips or hides the install hook (`allow-scripts`)          | Nothing depends on it; only `cadence server install` registers a service            |
+| npm 12 or Bun skips untrusted install scripts by default       | Ship none; `cadence server install` registers the service and creates the template  |
 | Service manager that only signals (launchd, Windows login)     | Orderly Stop first; an unconfirmed Stop changes nothing; no SIGTERM or `taskkill`   |
 | Pi's TUI replaces an info status with the next one             | The missing-service hint is its own warning notification                            |
 
@@ -395,7 +396,7 @@ Regression owners:
 - `agent-panel`, `agent-panel-model`, `agent-panel-cadence`: panel keys/rendering and readonly owner observation that never starts, cancels or replays work.
 - `test/web/`: adapted pure/SSR tests separately from actual built-browser contexts, HTTPS, mixed clients, focus/viewports and complete downloads.
 - `package-*`, `distribution`, `service-package`, `independence`: exact tar/member/body/import/notice closure and nonactivating discovery.
-- `service-autostart`, `install-config`: explicit `cadence server` registration on systemd, launchd and the Windows Run key, definition escaping, restart/disable/mask/foreign handling, orderly Stop before every change and a postinstall that registers nothing.
+- `service-autostart`, `install-config`: explicit `cadence server` registration on systemd, launchd and the Windows Run key, definition escaping, restart/disable/mask/foreign handling, orderly Stop before every change and a package without install scripts.
 - `workspace-landing`: home-directory redirection to `~/cadence` across management, native attach and observation.
 
 Regenerate operator/service/native/browser outputs only through their canonical builders; `--check` variants compare new private output without overwriting canonical bytes.

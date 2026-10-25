@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { CONFIG_TEMPLATE } from "../src/install-config.mjs";
 import { autostartHint, autostartNotice } from "../src/native-client.ts";
 import {
   type AutostartSystem,
@@ -1005,17 +1006,40 @@ describe("startup guidance", () => {
     return { o, home, checkout, global };
   }
 
-  it("the install hook only creates the configuration template and never registers a service", () => {
-    const home = temporary("cadence-postinstall-");
-    const run = spawnSync(
-      process.execPath,
-      [join(repository, "src", "install-config.mjs")],
-      {
-        encoding: "utf8",
-        env: { PATH: process.env.PATH, HOME: home, USERPROFILE: home },
-      },
+  it("server install creates a missing research template first, never overwriting one", () => {
+    const home = temporary("cadence-template-");
+    const file = join(home, ".pi", "agent", "cadence", ".env");
+    // A missing workspace refuses before any definition is written or started.
+    const install = () =>
+      spawnSync(
+        process.execPath,
+        [
+          join(repository, "src", "service-cli.mjs"),
+          "server",
+          "install",
+          "--workspace",
+          join(home, "missing"),
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            HOME: home,
+            USERPROFILE: home,
+            XDG_DATA_HOME: join(home, "data"),
+            LOCALAPPDATA: join(home, "local"),
+          },
+        },
+      );
+    const first = install();
+    expect(first.status).toBe(1);
+    expect(first.stderr).toContain(
+      `Cadence created the research configuration template ${file}\n`,
     );
-    expect(run.status).toBe(0);
+    expect(readFileSync(file, "utf8")).toBe(CONFIG_TEMPLATE);
+    writeFileSync(file, "GROK_API_KEY=keep-me\n");
+    expect(install().stderr).not.toContain("research configuration template");
+    expect(readFileSync(file, "utf8")).toBe("GROK_API_KEY=keep-me\n");
     const files: string[] = [];
     const walk = (dir: string) => {
       for (const entry of readdirSync(dir, { withFileTypes: true }))

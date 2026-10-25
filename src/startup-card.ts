@@ -5,6 +5,9 @@ import {
 } from "../skills/_shared/load-config.mjs";
 
 export const STARTUP_CARD_KEY = "cadence-configuration";
+/** No install script creates the file, so a missing one names how it is made. */
+export const CONFIG_MISSING =
+  "（未创建）：`cadence server install` 会生成模板，也可以手动创建";
 
 // Only code-owned labels and paths enter the UI; never values, endpoints,
 // models, parser errors or credentials from the configuration file.
@@ -72,7 +75,7 @@ export function startupCardLines(options: {
   lines.unshift(
     selectedPath
       ? `Cadence配置文件：${displayPath(selectedPath)}`
-      : `Cadence配置文件：${displayPath(userPath)}（未创建）`,
+      : `Cadence配置文件：${displayPath(userPath)}${CONFIG_MISSING}`,
   );
   return lines;
 }

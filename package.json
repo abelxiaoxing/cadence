@@ -22,7 +22,6 @@
     "src/agent-panel.ts",
     "src/cadence-service.mjs",
     "src/index.ts",
-    "src/install-config.mjs",
     "src/native-build.ts",
     "src/native-client.ts",
     "src/native-export.ts",
@@ -72,7 +71,6 @@
     ]
   },
   "scripts": {
-    "postinstall": "node src/install-config.mjs",
     "pack:check": "node scripts/pack-check.mjs",
     "traceability:check": "node scripts/traceability-check.mjs",
     "verify": "bun run check && bun run check:web && bun run build:web:check && bun run lint && bun run check:agents && bun run test && bun run test:web && bun run test:browser && bun run pack:check",
