@@ -23,6 +23,8 @@ afterEach(() => {
 /** The entrypoint also reads home-level autostart state; keep it in the fixture. */
 function isolateHome(home: string) {
   vi.stubEnv("HOME", home);
+  // os.homedir() reads USERPROFILE on Windows.
+  vi.stubEnv("USERPROFILE", home);
   for (const name of [
     "XDG_DATA_HOME",
     "XDG_CONFIG_HOME",
