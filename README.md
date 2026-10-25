@@ -405,6 +405,11 @@ Review the independently enumerated package member list and every emitted body, 
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
 
+### Release 2.0.6 acceptance snapshot
+
+Full `verify` passed on the 2.0.6 release tree (`8d31512` plus the version bump): 1940 root tests in 78 files (27 Windows-only controls skipped on Linux), 111 web tests, 5 real-browser scenarios and the 132-member pack audit, in the 2.0.3 environment below.
+The package ships no install script; Bun 1.4 had reported 2.0.5's postinstall and the Pi SDK's no-op `@google/genai` preinstall as blocked, and only the latter can remain.
+
 ### Release 2.0.5 acceptance snapshot
 
 Full `verify` passed on the 2.0.5 release tree (`dce261b` plus the version bump): 1940 root tests in 78 files (27 Windows-only controls skipped on Linux), 111 web tests, 5 real-browser scenarios and the 133-member pack audit, in the 2.0.3 environment below.
