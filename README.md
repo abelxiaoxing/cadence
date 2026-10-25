@@ -404,6 +404,12 @@ Review the independently enumerated package member list and every emitted body, 
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
 
+### Release 2.0.5 acceptance snapshot
+
+Full `verify` passed on the 2.0.5 release tree (`dce261b` plus the version bump): 1940 root tests in 78 files (27 Windows-only controls skipped on Linux), 111 web tests, 5 real-browser scenarios and the 133-member pack audit, in the 2.0.3 environment below.
+On that host `cadence server status` read the live unit that 2.0.4's Pi install hook had registered as `active` and `enabled` with linger on, so earlier units stay manageable.
+The launchd and Windows Run backends ran only against injected launchctl, reg.exe and orderly-Stop fakes; real macOS and Windows registration remains unqualified.
+
 ### Release 2.0.4 acceptance snapshot
 
 Full `verify` passed on `3987f65` (the `max` thinking change): 1925 root tests in 78 files, 111 web tests, 5 real-browser scenarios and the 132-member pack audit, in the 2.0.3 environment below.
