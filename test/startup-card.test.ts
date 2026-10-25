@@ -11,7 +11,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import register from "../src/index.ts";
 import { autostartNotice } from "../src/native-client.ts";
-import { startupCardLines } from "../src/startup-card.ts";
+import { CONFIG_MISSING, startupCardLines } from "../src/startup-card.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -51,6 +51,13 @@ function write(file: string, text: string) {
 }
 function displayedPath(file: string) {
   return JSON.stringify(file).slice(1, -1);
+}
+/** No configuration file exists, so the card names where to create one. */
+function zeroConfigCard(input: { userFile: string }) {
+  return [
+    `Cadence配置文件：${displayedPath(input.userFile)}${CONFIG_MISSING}`,
+    "Context7：匿名模式，无需密钥｜Grok：待配置 GROK_API_URL、GROK_API_KEY｜Tavily：未配置（可选）",
+  ].join("\n");
 }
 function harness(registrar = register) {
   const handlers = new Map<string, Array<(...args: any[]) => unknown>>();
@@ -204,10 +211,7 @@ describe("Cadence startup configuration card", () => {
         await h.emit("session_start", ctx, reason);
       }
       expect(notify).toHaveBeenCalledTimes(6);
-      expect(notify).toHaveBeenCalledWith(
-        "Context7：匿名模式，无需密钥｜Grok：待配置 GROK_API_URL、GROK_API_KEY｜Tavily：未配置（可选）",
-        "info",
-      );
+      expect(notify).toHaveBeenCalledWith(zeroConfigCard(input), "info");
       expect(setWidget).not.toHaveBeenCalled();
       await h.emit("agent_start", ctx);
       await h.emit("session_shutdown", ctx);
@@ -261,10 +265,7 @@ describe("Cadence startup configuration card", () => {
       ui: { onTerminalInput: () => () => {}, setWidget, notify },
     };
     await h.emit("session_start", ctx);
-    expect(notify).toHaveBeenCalledWith(
-      "Context7：匿名模式，无需密钥｜Grok：待配置 GROK_API_URL、GROK_API_KEY｜Tavily：未配置（可选）",
-      "info",
-    );
+    expect(notify).toHaveBeenCalledWith(zeroConfigCard(input), "info");
     expect(setWidget).not.toHaveBeenCalled();
     expect(h.active()).toEqual(["read", "bash"]);
     expect(h.pi.registerCommand).toHaveBeenCalledTimes(1);
@@ -313,10 +314,7 @@ describe("Cadence startup configuration card", () => {
       // Linger is the host's logind state; the notice's own cases are unit tests.
       const notice = autostartNotice();
       // A later info status replaces the card in Pi's TUI; the warning stays.
-      expect(notify).toHaveBeenCalledWith(
-        "Context7：匿名模式，无需密钥｜Grok：待配置 GROK_API_URL、GROK_API_KEY｜Tavily：未配置（可选）",
-        "info",
-      );
+      expect(notify).toHaveBeenCalledWith(zeroConfigCard(input), "info");
       expect(
         notify.mock.calls.filter(([, type]) => type === "warning"),
       ).toEqual(notice ? [[notice, "warning"]] : []);
