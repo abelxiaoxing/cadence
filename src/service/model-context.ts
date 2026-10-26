@@ -297,7 +297,11 @@ export class OwnerModelContext {
     return this.#loading;
   }
   /** Bounded credential-free catalog. No selection, availability/auth probe or refresh. */
-  catalog(): { status: "complete" | "capacity"; entries: ModelCandidate[] } {
+  catalog(): {
+    status: "complete" | "capacity";
+    entries: ModelCandidate[];
+    withheld: number;
+  } {
     try {
       const current = this.catalogSource();
       const runtime = this.#runtime;
@@ -318,19 +322,27 @@ export class OwnerModelContext {
           throw new ContractError("unsupported-context");
         count += runtime.getModels(provider).length;
         if (count > LIMITS.maxPageEntries)
-          return { status: "capacity", entries: [] };
+          return { status: "capacity", entries: [], withheld: 0 };
       }
       const literals = this.catalogLiterals(current);
       const entries: ModelCandidate[] = [];
+      let withheld = 0;
       for (const provider of providers) {
         const models = runtime.getModels(provider);
-        if (entries.length + models.length > LIMITS.maxPageEntries)
+        if (entries.length + withheld + models.length > LIMITS.maxPageEntries)
           throw new ContractError("capacity");
         for (const model of models) {
           if (model.provider !== provider)
             throw new ContractError("unsupported-context");
-          this.publicIdentifier(provider, literals);
-          this.publicIdentifier(model.id, literals);
+          // An ID that would reveal a credential literal (an Ollama apiKey
+          // "ollama" equal to its provider ID) withholds only that entry.
+          if (
+            !this.isPublicIdentifier(provider, literals) ||
+            !this.isPublicIdentifier(model.id, literals)
+          ) {
+            withheld++;
+            continue;
+          }
           const api = modelApis.find((api) => api === model.api) ?? null;
           const levels = this.#thinking(model);
           if (levels.length > 7) throw new ContractError("unsupported-context");
@@ -382,7 +394,7 @@ export class OwnerModelContext {
         after.auth.stamp !== current.auth.stamp
       )
         throw new ContractError("stale");
-      return { status: "complete", entries };
+      return { status: "complete", entries, withheld };
     } catch (error) {
       throw new ContractError(
         error instanceof ContractError ? error.code : "corrupt-selected",
@@ -459,12 +471,18 @@ export class OwnerModelContext {
         add(value);
     return [...literals];
   }
+  private isPublicIdentifier(
+    value: string,
+    literals: readonly string[],
+  ): boolean {
+    return (
+      !/[\p{Cc}\p{Cf}\p{Cs}]/u.test(value) &&
+      diagnosticText(value, 512, literals) === value &&
+      sanitizeText(value, literals) === value
+    );
+  }
   private publicIdentifier(value: string, literals: readonly string[]): void {
-    if (
-      /[\p{Cc}\p{Cf}\p{Cs}]/u.test(value) ||
-      diagnosticText(value, 512, literals) !== value ||
-      sanitizeText(value, literals) !== value
-    )
+    if (!this.isPublicIdentifier(value, literals))
       throw new ContractError("unsupported-context");
   }
   /** Explicit owner-wide replacement only, never called by catalog/read paths. */

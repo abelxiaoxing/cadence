@@ -379,6 +379,7 @@ Byte values are UTF-8/encoded bounds where specified; they are not targets to si
 | Token source the user edits (`CADENCE_TOKEN` in `.env`)        | Read once before binding, never bound for the run: an edit cannot fence Stop        |
 | Saved port/token source differs from `.env`                    | Only when stopped, reselect just those under the reservation; running ones refuse   |
 | User-made `.env` (0755/0644, umask 002, dotfiles links)        | Like Pi's sources: ownership only, links followed; each refusal names its reason    |
+| Credential value inside a provider/model ID (Ollama `ollama`)  | Withhold and count only that catalog entry; choosing it refuses; others selectable  |
 
 Good: current context → explicit grant → durable acceptance → genuine original native/storage settlement → exact retained dependency → real checks → human review.
 Base: a client leaves and another reattaches to the same accepted run without launching it again.
@@ -423,6 +424,13 @@ Publish `web/dist` from Node: Vite run under Bun lays out its preload helper dif
 Review the independently enumerated package member list and every emitted body, not a count or an expected list generated from the tar under test.
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
+
+### Release 2.0.9 acceptance snapshot
+
+Full `verify` passed on the 2.0.9 release tree (`0e720a1` plus the version bump), in the 2.0.3 environment below.
+It ran 1948 root tests in 78 files (27 Windows-only controls skipped on Linux), 116 web tests, 5 real-browser scenarios and the 132-member pack audit, and CI 40209338973 passed 12/12 on the candidate `8b53b64` (this commit before its snapshot).
+The release adds the Simplified Chinese WebUI; Chromium at 1440 and 390px rendered the shell, inspector, dialogs and timeline in Chinese from a `zh-CN` browser locale.
+On the feature tree, an earlier full run failed only the reuse provenance pin (refreshed), and one `accepting-browser` run failed after the second context's Start; that scenario passed in four later runs, and its cause was not identified.
 
 ### Release 2.0.8 acceptance snapshot
 
