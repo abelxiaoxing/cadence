@@ -4,21 +4,36 @@
 // download counts for the package. Every registry tarball fetch
 // (`npm install`, `npm pack`, `pi install npm:...`) adds one count.
 //
+// Fetches rotate through the local mihomo proxy (127.0.0.1:7891, API on
+// 127.0.0.1:9091) so each tarball fetch exits from a different node IP.
+// When mihomo is unreachable the fetch falls back to the direct IP.
+//
 // Usage:
 //   node scripts/npm-downloads.mjs status         7/30-day counts plus 14-day trend
-//   node scripts/npm-downloads.mjs fetch          one counted tarball fetch from this IP
+//   node scripts/npm-downloads.mjs fetch          one counted tarball fetch (rotating IP)
 //   node scripts/npm-downloads.mjs burst <n>      n counted tarball fetches in sequence
 //   node scripts/npm-downloads.mjs append <file>  append "date,week,month" row (used by CI)
 //   node scripts/npm-downloads.mjs summary        markdown block for a CI step summary
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import {
+  appendFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 const PACKAGE = "@abelxiaoxing/cadence";
 const API = "https://api.npmjs.org/downloads";
 const USER_AGENT = "cadence-download-tracker/1.0";
+const MIHOMO_API = "http://127.0.0.1:9091";
+const PROXY = "http://127.0.0.1:7891";
+const ROTATE_STATE = path.join(homedir(), ".cache", "cadence-rotate.json");
+const MAX_NODE_ATTEMPTS = 8;
 
 async function getJson(url) {
   const response = await fetch(url, { headers: { "user-agent": USER_AGENT } });
@@ -77,21 +92,88 @@ async function status() {
   console.log(renderDaily(days));
 }
 
-function fetchOnce(quiet = false) {
+// --- mihomo node rotation -------------------------------------------------
+
+async function mihomoGroup() {
+  const controller = AbortSignal.timeout(2000);
+  const response = await fetch(`${MIHOMO_API}/proxies/ROTATE`, { controller });
+  if (!response.ok) throw new Error("mihomo-rotate-group-unavailable");
+  const group = await response.json();
+  if (!Array.isArray(group.all) || group.all.length === 0) {
+    throw new Error("mihomo-rotate-group-empty");
+  }
+  return group.all;
+}
+
+async function rotateToNext(exclude) {
+  const options = (await mihomoGroup()).filter((name) => !exclude.has(name));
+  if (options.length === 0) throw new Error("mihomo-rotate-options-exhausted");
+  let index = 0;
+  try {
+    index = JSON.parse(readFileSync(ROTATE_STATE, "utf8")).index ?? 0;
+  } catch {
+    index = 0;
+  }
+  const node = options[index % options.length];
+  writeFileSync(
+    ROTATE_STATE,
+    JSON.stringify({ index: (index + 1) % Math.max(options.length, 1) }),
+  );
+  const controller = AbortSignal.timeout(2000);
+  const put = await fetch(`${MIHOMO_API}/proxies/ROTATE`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: node }),
+    controller,
+  });
+  if (put.status !== 204) throw new Error(`mihomo-rotate-http-${put.status}`);
+  return node;
+}
+
+function runNpmPack(directory, useProxy, quiet) {
+  const env = { ...process.env };
+  if (useProxy) {
+    env.HTTPS_PROXY = PROXY;
+    env.HTTP_PROXY = PROXY;
+    env.NO_PROXY = "localhost,127.0.0.1";
+  } else {
+    delete env.HTTPS_PROXY;
+    delete env.HTTP_PROXY;
+  }
+  return spawnSync(
+    "npm",
+    ["pack", PACKAGE, `--pack-destination=${directory}`],
+    { stdio: quiet ? "ignore" : "inherit", shell: false, env },
+  );
+}
+
+async function fetchOnce(quiet = false) {
   const directory = mkdtempSync(path.join(tmpdir(), "cadence-download-"));
   try {
-    const result = spawnSync(
-      "npm",
-      ["pack", PACKAGE, `--pack-destination=${directory}`],
-      { stdio: quiet ? "ignore" : "inherit", shell: false },
-    );
-    if (result.error) throw new Error("npm-downloads-npm-missing");
-    if (result.status !== 0) process.exit(result.status ?? 1);
+    let node = null;
+    const excluded = new Set();
+    for (let attempt = 1; attempt <= MAX_NODE_ATTEMPTS; attempt += 1) {
+      try {
+        node = await rotateToNext(excluded);
+      } catch {
+        break; // mihomo unreachable; fall through to a direct fetch
+      }
+      const result = runNpmPack(directory, true, quiet);
+      if (!result.error && result.status === 0) {
+        if (!quiet) console.log(`downloaded ${PACKAGE} via ${node}`);
+        return node;
+      }
+      excluded.add(node);
+    }
+    const direct = runNpmPack(directory, false, quiet);
+    if (direct.error) throw new Error("npm-downloads-npm-missing");
+    if (direct.status !== 0) process.exit(direct.status ?? 1);
+    if (!quiet) console.log(`downloaded ${PACKAGE} via DIRECT`);
+    return "DIRECT";
   } finally {
     // The tarball is discarded after the counted registry fetch; keep tmpfs clean.
     rmSync(directory, { recursive: true, force: true });
   }
-  if (!quiet) console.log(`downloaded ${PACKAGE}`);
 }
 
 async function burst(count) {
@@ -99,8 +181,8 @@ async function burst(count) {
     throw new Error("npm-downloads-usage-burst-n-1-200");
   }
   for (let i = 1; i <= count; i += 1) {
-    fetchOnce(true);
-    console.log(`burst ${i}/${count} done`);
+    const node = await fetchOnce(true);
+    console.log(`burst ${i}/${count} done via ${node}`);
     if (i < count) await delay(1500);
   }
 }
@@ -149,7 +231,7 @@ try {
       await status();
       break;
     case "fetch":
-      fetchOnce();
+      await fetchOnce();
       break;
     case "burst":
       if (args.length !== 1)
