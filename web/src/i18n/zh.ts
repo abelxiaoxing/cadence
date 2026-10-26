@@ -149,7 +149,12 @@ export const zh = {
     "模型目录超出容量；不能从不完整的列表中选择。",
   "{error}. No automatic replacement or retry.":
     "{error}。不会自动替换或重试。",
-  "Model catalog unavailable.": "模型目录不可用。",
+  "{count} model withheld: its provider or model ID contains a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no provider or model ID; restart the service after editing models.json.":
+    "{count} 个模型未列出：其提供方或模型 ID 包含某个凭据值（例如与提供方名称相同的 apiKey）或控制字符。请让每个凭据值都不与任何提供方或模型 ID 重合；修改 models.json 后需重启服务。",
+  "{count} models withheld: their provider or model IDs contain a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no provider or model ID; restart the service after editing models.json.":
+    "{count} 个模型未列出：其提供方或模型 ID 包含某个凭据值（例如与提供方名称相同的 apiKey）或控制字符。请让每个凭据值都不与任何提供方或模型 ID 重合；修改 models.json 后需重启服务。",
+  "Model catalog unavailable ({code}); no model is selectable. No automatic retry.":
+    "模型目录不可用（{code}）；无法选择任何模型。不会自动重试。",
   "Choice response unconfirmed; observe catalog before another explicit choice.":
     "选择的响应未确认；请先观察目录再进行下一次显式选择。",
   "Confirm owner model choice": "确认所有者模型选择",

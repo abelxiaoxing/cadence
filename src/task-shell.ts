@@ -579,7 +579,7 @@ export function registerTaskShell(pi: ExtensionAPI): void {
               `${e.provider}/${e.model} • ${e.api ?? "unsupported"} • ${e.eligibility}`,
           );
           const selected = await ui.select(
-            `Exact OWNER model (Pi conversation model is independent) • ${catalog.status}\nCurrent ${pretty(catalog.selected)}`,
+            `Exact OWNER model (Pi conversation model is independent) • ${catalog.status}\nCurrent ${pretty(catalog.selected)}${catalog.withheld ? `\n${catalog.withheld} withheld: a provider/model ID contains a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no ID; restart the service after editing models.json.` : ""}`,
             [...labels, "Return"],
           );
           if (!selected || !labels.includes(selected)) return;

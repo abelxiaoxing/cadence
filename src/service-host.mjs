@@ -4019,16 +4019,24 @@ function decodeModelCandidate(value) {
 }
 function decodeModelCatalog(value) {
   canonicalJson({ kind: "ok", value }, LIMITS.pageBytes);
-  const o = closed(value, ["version", "selected", "status", "entries"]);
+  const o = closed(value, [
+    "version",
+    "selected",
+    "status",
+    "entries",
+    "withheld"
+  ]);
   const entries = list(o.entries, LIMITS.maxPageEntries, decodeModelCandidate);
   const status = oneOf(o.status, ["complete", "capacity"]);
-  if (status === "capacity" && entries.length || new Set(entries.map((e) => canonicalJson([e.provider, e.model]))).size !== entries.length)
+  const withheld = integer(o.withheld, 0, LIMITS.maxPageEntries);
+  if (status === "capacity" && (entries.length || withheld) || entries.length + withheld > LIMITS.maxPageEntries || new Set(entries.map((e) => canonicalJson([e.provider, e.model]))).size !== entries.length)
     invalid();
   return {
     version: decodeChoiceVersion(o.version),
     selected: nullable(o.selected, decodeModelSelection),
     status,
-    entries
+    entries,
+    withheld
   };
 }
 // src/history/admission.ts
@@ -17959,19 +17967,22 @@ class OwnerModelContext {
           throw new ContractError("unsupported-context");
         count2 += runtime.getModels(provider).length;
         if (count2 > LIMITS.maxPageEntries)
-          return { status: "capacity", entries: [] };
+          return { status: "capacity", entries: [], withheld: 0 };
       }
       const literals = this.catalogLiterals(current2);
       const entries = [];
+      let withheld = 0;
       for (const provider of providers) {
         const models = runtime.getModels(provider);
-        if (entries.length + models.length > LIMITS.maxPageEntries)
+        if (entries.length + withheld + models.length > LIMITS.maxPageEntries)
           throw new ContractError("capacity");
         for (const model of models) {
           if (model.provider !== provider)
             throw new ContractError("unsupported-context");
-          this.publicIdentifier(provider, literals);
-          this.publicIdentifier(model.id, literals);
+          if (!this.isPublicIdentifier(provider, literals) || !this.isPublicIdentifier(model.id, literals)) {
+            withheld++;
+            continue;
+          }
           const api = modelApis.find((api2) => api2 === model.api) ?? null;
           const levels = this.#thinking(model);
           if (levels.length > 7)
@@ -18018,7 +18029,7 @@ class OwnerModelContext {
       const after = this.catalogSource();
       if (after.auth.identity !== current2.auth.identity || after.auth.stamp !== current2.auth.stamp)
         throw new ContractError("stale");
-      return { status: "complete", entries };
+      return { status: "complete", entries, withheld };
     } catch (error) {
       throw new ContractError(error instanceof ContractError ? error.code : "corrupt-selected");
     }
@@ -18089,8 +18100,11 @@ class OwnerModelContext {
         add(value);
     return [...literals];
   }
+  isPublicIdentifier(value, literals) {
+    return !/[\p{Cc}\p{Cf}\p{Cs}]/u.test(value) && diagnosticText(value, 512, literals) === value && sanitizeText(value, literals) === value;
+  }
   publicIdentifier(value, literals) {
-    if (/[\p{Cc}\p{Cf}\p{Cs}]/u.test(value) || diagnosticText(value, 512, literals) !== value || sanitizeText(value, literals) !== value)
+    if (!this.isPublicIdentifier(value, literals))
       throw new ContractError("unsupported-context");
   }
   replaceSelection(input, beforeInstall) {
@@ -22871,7 +22885,7 @@ function refuseAt(stage, step) {
   }
 }
 async function createServiceHost(value, sourceBuild) {
-  const embedded = "ff017feffc6b6b4521e470d82514d0ca008e15472fa1442ec498b243b0f7cf87";
+  const embedded = "c2bb81519387005a71e88a64364dff47d5c39dab17812833ca898bc51055e59d";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

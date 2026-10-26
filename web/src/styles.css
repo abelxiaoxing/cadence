@@ -1638,6 +1638,10 @@ summary:focus-visible,
 .action-dialog > section > p {
   color: var(--text-dim);
 }
+.action-dialog > [role="alert"],
+.action-dialog > section > [role="alert"] {
+  color: var(--err-text);
+}
 .action-dialog > section {
   margin: 10px 0;
   padding: 10px 12px;
