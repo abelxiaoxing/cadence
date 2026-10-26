@@ -2,7 +2,7 @@
 
 `@abelxiaoxing/cadence` is a dual-surface task workspace: native `/cadence` and built WebUI share one persistent service.
 Ordinary engineering and resource discovery never activate execution or start a service.
-Only explicit `cadence server install` registers and starts the generated per-user service (systemd unit with linger on Linux, LaunchAgent on macOS, Run entry on Windows); no package install hook does, `server restart|stop|uninstall` go through orderly Stop, and disable/mask/disable-linger are respected.
+Only explicit `cadence server install` registers and starts the generated service (Linux system/root unit without linger or explicit legacy user unit, LaunchAgent on macOS, Run entry on Windows); no package install hook does, `server restart|stop|uninstall` go through orderly Stop, and disable/mask/disable-linger are respected.
 Code tasks require a readable plan and fresh context-bound Start consent, then direct host-tool edits, real parent checks and human review.
 Native entry retains raw-terminal guards; browser access authentication is not action consent.
 Client departure detaches, never cancels admitted work; explicit Cancel/Stop preserve actual closure and unknown fences.
@@ -12,6 +12,7 @@ Research/diagnosis are readonly; ordinary conversations remain independent.
 Human-readable task summaries live under `.cadence/assistant/tasks`; private history and coordination use `cadence-assistant-v1` outside the working copy.
 A directory containing that state home (home and its ancestors) lands on `~/cadence` instead of refusing; only `start` creates it.
 Consumer data and uncertain resources must never be imported, reset or cleaned incidentally.
+`cadence project open` explicitly starts or reuses a directory owner on its own selected port, never a task; named Linux services keep projects independent, and root operation never copies another account's credentials or adopts its state.
 
 ## Development
 

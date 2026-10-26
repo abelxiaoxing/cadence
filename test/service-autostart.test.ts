@@ -26,7 +26,9 @@ import {
   configureAutostart,
   removeAutostart,
   servicePath,
+  serviceUnit,
   stopAutostart,
+  unitPath,
 } from "../src/service/autostart.ts";
 import {
   buildPlist,
@@ -45,6 +47,15 @@ import {
   removeLoginRun,
   stopLoginRun,
 } from "../src/service/login-run.ts";
+import {
+  ensureServerConfig,
+  serverConfigPath,
+} from "../src/service/server-config.ts";
+import {
+  configureSystemService,
+  stopSystemService,
+  systemServiceStatus,
+} from "../src/service/system-service.ts";
 
 const repository = fileURLToPath(new URL("..", import.meta.url));
 const roots: string[] = [];
@@ -1369,3 +1380,303 @@ describe("startup guidance", () => {
     },
   );
 });
+
+// These are isolated filesystem/manager-adapter tests, not a host root install.
+describe.skipIf(process.platform !== "linux")(
+  "system service without linger",
+  () => {
+    function system() {
+      const f = fake();
+      f.s.scope = "system";
+      f.s.uid = 0;
+      f.s.unitDirectory = join(f.home, "system-units");
+      const manager = f.s.systemctl;
+      f.s.systemctl = (args) => {
+        const reply = manager(args);
+        if (reply.status === 0 && args[0] === "start") f.state.running = true;
+        if (reply.status === 0 && args[0] === "stop") f.state.running = false;
+        return reply;
+      };
+      f.s.linger = () => {
+        throw new Error("system service must not consult logind");
+      };
+      f.s.enableLinger = () => {
+        throw new Error("system service must not change linger");
+      };
+      return { ...f, systemUnit: unitPath(f.s) };
+    }
+    it("requires explicit root authority; no definition/config/workspace creation or sudo", async () => {
+      const f = system();
+      f.s.uid = 1000;
+      expect(await configureSystemService(f.s, "install")).toEqual({
+        status: "root-required",
+        scope: "system",
+      });
+      expect(await stopSystemService(f.s, true)).toEqual({
+        status: "root-required",
+        scope: "system",
+      });
+      expect(f.calls).toEqual([]);
+      expect(existsSync(f.systemUnit)).toBe(false);
+      expect(existsSync(join(f.home, "cadence"))).toBe(false);
+    });
+    it("writes User=root, multi-user.target and the exact HOME; never accesses linger", async () => {
+      const f = system();
+      const observe = f.s.ownerStatus;
+      f.s.ownerStatus = async (workspace) => {
+        if (!existsSync(workspace))
+          throw new Error("no directory exists to observe yet");
+        return observe(workspace);
+      };
+      expect(await configureSystemService(f.s, "install")).toMatchObject({
+        status: "started",
+        scope: "system",
+        unit: f.systemUnit,
+      });
+      const text = readFileSync(f.systemUnit, "utf8");
+      expect(text).toContain("User=root\n");
+      expect(text).toContain("WantedBy=multi-user.target\n");
+      expect(text).toContain(`Environment="HOME=${f.home}"`);
+      expect(text).toContain('"stop" "--workspace"');
+      expect(text).not.toContain("systemctl --user");
+      expect(f.lingerAttempts).toEqual([]);
+      expect(systemServiceStatus(f.s)).toMatchObject({
+        status: "active",
+        enabled: "enabled",
+        scope: "system",
+      });
+      expect(systemServiceStatus(f.s)).not.toHaveProperty("linger");
+    });
+    it("refuses every uncertain Stop before systemctl stop, rewrite or uninstall", async () => {
+      const f = system();
+      await configureSystemService(f.s, "install");
+      const original = readFileSync(f.systemUnit, "utf8");
+      for (const reply of [
+        "unconfirmed",
+        "quarantined",
+        "unavailable",
+        "stopping",
+      ]) {
+        f.stop.reply = reply;
+        f.s.node = "/new/node";
+        f.calls.length = 0;
+        expect((await configureSystemService(f.s, "restart")).status).not.toBe(
+          "started",
+        );
+        expect((await stopSystemService(f.s, true)).status).not.toBe("removed");
+        expect(f.calls).not.toContain("stop cadence.service");
+        expect(f.calls).not.toContain("daemon-reload");
+        expect(readFileSync(f.systemUnit, "utf8")).toBe(original);
+      }
+    });
+    it("orderly stop precedes the manager; restart retains disable and uninstall preserves data", async () => {
+      const f = system();
+      await configureSystemService(f.s, "install");
+      f.state.enabled = "disabled";
+      f.calls.length = 0;
+      expect((await configureSystemService(f.s, "restart")).status).toBe(
+        "started",
+      );
+      expect(
+        f.calls.indexOf(`stop-owner ${join(f.home, "cadence")}`),
+      ).toBeLessThan(f.calls.indexOf("stop cadence.service"));
+      expect(f.calls).not.toContain("enable cadence.service");
+      const sentinel = join(f.home, "cadence", "consumer.txt");
+      writeFileSync(sentinel, "keep");
+      expect((await stopSystemService(f.s, true)).status).toBe("removed");
+      expect(existsSync(f.systemUnit)).toBe(false);
+      expect(readFileSync(sentinel, "utf8")).toBe("keep");
+      expect(existsSync(join(f.home, ".pi", "agent", "auth.json"))).toBe(true);
+    });
+    it("preserves masks, foreign units, edited definitions and an old user registration", async () => {
+      const f = system();
+      mkdirSync(dirname(f.systemUnit), { recursive: true });
+      symlinkSync("/dev/null", f.systemUnit);
+      f.state.enabled = "masked";
+      expect((await configureSystemService(f.s, "install")).status).toBe(
+        "masked",
+      );
+      expect(lstatSync(f.systemUnit).isSymbolicLink()).toBe(true);
+      const foreign = system();
+      mkdirSync(dirname(foreign.systemUnit), { recursive: true });
+      writeFileSync(foreign.systemUnit, "foreign");
+      expect((await configureSystemService(foreign.s, "install")).status).toBe(
+        "foreign",
+      );
+      const old = system();
+      mkdirSync(dirname(old.unit), { recursive: true });
+      writeFileSync(old.unit, "legacy user registration");
+      expect((await configureSystemService(old.s, "install")).status).toBe(
+        "scope-conflict",
+      );
+      expect(old.calls).toEqual([]);
+      const changed = system();
+      await configureSystemService(changed.s, "install");
+      changed.s.stopOwner = async () => {
+        writeFileSync(changed.systemUnit, "edited by operator");
+        return "stopped";
+      };
+      expect((await configureSystemService(changed.s, "restart")).status).toBe(
+        "foreign",
+      );
+      expect(readFileSync(changed.systemUnit, "utf8")).toBe(
+        "edited by operator",
+      );
+    });
+    it("named services have distinct units/configuration/tokens, without replacing prior ports", async () => {
+      const f = system();
+      f.s.unit = serviceUnit("api");
+      const a = ensureServerConfig(f.home, { name: "api", port: 17424 });
+      const b = ensureServerConfig(f.home, { name: "worker", port: 17425 });
+      expect(a.config.token).not.toBe(b.config.token);
+      expect(a.path).not.toBe(b.path);
+      expect(existsSync(serverConfigPath(f.home))).toBe(false);
+      expect((await configureSystemService(f.s, "install")).status).toBe(
+        "started",
+      );
+      expect(unitPath(f.s)).toBe(
+        join(f.s.unitDirectory as string, "cadence-api.service"),
+      );
+      expect(readFileSync(unitPath(f.s), "utf8")).toContain(
+        `"--server-config" "${a.path}"`,
+      );
+      const bytes = readFileSync(a.path);
+      expect(() =>
+        ensureServerConfig(f.home, { name: "api", port: 17426 }),
+      ).toThrow("corrupt-selected");
+      expect(readFileSync(a.path)).toEqual(bytes);
+      for (const name of [
+        "../escape",
+        "",
+        "a.service",
+        "%i",
+        "two words",
+        "a".repeat(49),
+      ])
+        expect(() => serviceUnit(name)).toThrow();
+    });
+    it("never adopts a detached owner or treats a different state-home as a stopped one", async () => {
+      const f = system();
+      mkdirSync(join(f.home, "cadence"));
+      f.s.ownerStatus = async () => "alive";
+      expect((await configureSystemService(f.s, "install")).status).toBe(
+        "project-running",
+      );
+      expect(existsSync(f.systemUnit)).toBe(false);
+      expect(existsSync(join(f.home, "cadence"))).toBe(true);
+      const changed = system();
+      await configureSystemService(changed.s, "install");
+      const before = readFileSync(changed.systemUnit);
+      changed.s.env.XDG_STATE_HOME = join(changed.home, "another-state");
+      changed.calls.length = 0;
+      expect((await configureSystemService(changed.s, "restart")).status).toBe(
+        "environment-changed",
+      );
+      expect((await stopSystemService(changed.s, true)).status).toBe(
+        "environment-changed",
+      );
+      expect(changed.calls.some((call) => call.startsWith("stop-owner"))).toBe(
+        false,
+      );
+      expect(readFileSync(changed.systemUnit)).toEqual(before);
+    });
+    it.each(["install", "restart", "stop", "uninstall"] as const)(
+      "%s never stops or adopts a detached owner behind an inactive old unit",
+      async (action) => {
+        const f = system();
+        await configureSystemService(f.s, "install");
+        const original = readFileSync(f.systemUnit);
+        f.state.active = false; // Unit stopped, then project open started an owner.
+        f.state.running = true;
+        f.calls.length = 0;
+        const result =
+          action === "install" || action === "restart"
+            ? await configureSystemService(f.s, action)
+            : await stopSystemService(f.s, action === "uninstall");
+        expect(result.status).toBe("project-running");
+        expect(f.state.running).toBe(true);
+        expect(f.state.active).toBe(false);
+        expect(f.calls.some((call) => call.startsWith("stop-owner"))).toBe(
+          false,
+        );
+        expect(f.calls).not.toContain("stop cadence.service");
+        expect(f.calls).not.toContain("start cadence.service");
+        expect(f.calls).not.toContain("daemon-reload");
+        expect(readFileSync(f.systemUnit)).toEqual(original);
+      },
+    );
+    it("a reinstall with a different target does not stop the old directory's detached owner", async () => {
+      const f = system();
+      await configureSystemService(f.s, "install");
+      const original = readFileSync(f.systemUnit),
+        target = join(f.home, "new-project");
+      mkdirSync(target);
+      f.state.active = false;
+      f.state.running = true;
+      f.s.ownerStatus = async (workspace) =>
+        workspace === target ? "absent" : "alive";
+      f.calls.length = 0;
+      expect(
+        (await configureSystemService(f.s, "install", target)).status,
+      ).toBe("project-running");
+      expect(f.state.running).toBe(true);
+      expect(f.calls.some((call) => call.startsWith("stop-owner"))).toBe(false);
+      expect(readFileSync(f.systemUnit)).toEqual(original);
+    });
+    it.each(["quarantined", "unavailable", "stopping"])(
+      "an inactive unit does not prove its old owner's %s state is stopped",
+      async (status) => {
+        const f = system();
+        await configureSystemService(f.s, "install");
+        const original = readFileSync(f.systemUnit);
+        f.state.active = false;
+        f.s.ownerStatus = async () => status;
+        f.calls.length = 0;
+        expect((await configureSystemService(f.s, "restart")).status).toBe(
+          "unavailable",
+        );
+        expect((await stopSystemService(f.s, true)).status).toBe("unavailable");
+        expect(f.calls.some((call) => call.startsWith("stop-owner"))).toBe(
+          false,
+        );
+        expect(f.calls).not.toContain("daemon-reload");
+        expect(readFileSync(f.systemUnit)).toEqual(original);
+      },
+    );
+    it("an inactive unit with a stopped owner can restart without sending Stop to a detached replacement", async () => {
+      const f = system();
+      await configureSystemService(f.s, "install");
+      f.state.active = false;
+      f.state.running = false;
+      f.s.ownerStatus = async () => "stopped";
+      f.s.stopOwner = async () => {
+        throw new Error("inactive owner must not be stopped again");
+      };
+      expect((await configureSystemService(f.s, "restart")).status).toBe(
+        "started",
+      );
+      f.state.active = false;
+      f.state.running = false;
+      expect((await stopSystemService(f.s, true)).status).toBe("removed");
+    });
+    it("root native discovery suggests system install but never loginctl or a user bus", () => {
+      const f = system();
+      const o = {
+        platform: "linux" as const,
+        env: { CADENCE_LINGER: "0" },
+        home: f.home,
+        root: f.s.root,
+        systemd: f.home,
+        lingerFile: "/absent",
+        uid: 0,
+        systemUnitDirectory: f.s.unitDirectory,
+      };
+      expect(autostartHint(o)).toContain("server install --system");
+      expect(autostartHint(o)).toContain("at boot");
+      expect(autostartNotice(o)).toContain("server install --system");
+      mkdirSync(dirname(f.systemUnit), { recursive: true });
+      writeFileSync(f.systemUnit, "registered");
+      expect(autostartNotice(o)).toBeUndefined();
+    });
+  },
+);

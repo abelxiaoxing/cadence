@@ -171,26 +171,44 @@ export function readBounded(
   }
 }
 
-/** Git observations must describe the physical cwd, not inherited alternate index/worktree overrides. */
+/** Git observations describe the physical cwd, not inherited alternate
+ * index/worktree overrides. Root never borrows sudo's original user's trust. */
 export function gitEnvironment(): NodeJS.ProcessEnv {
+  const root = process.getuid?.() === 0;
   return {
     ...Object.fromEntries(
-      Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")),
+      Object.entries(process.env).filter(
+        ([name]) => !name.startsWith("GIT_") && !(root && name === "SUDO_UID"),
+      ),
     ),
     GIT_OPTIONAL_LOCKS: "0",
     LC_ALL: "C",
   };
 }
+/** Observation is not permission to trust another account's repository.
+ * Even with fsmonitor/textconv/ext-diff disabled, status/diff can invoke clean
+ * or process filters. Root therefore requires Git's own ownership check, with
+ * no safe.directory exceptions (including inherited wildcards). No config is
+ * written and ordinary-user trust behavior stays unchanged. */
+export function gitArguments(args: string[]): string[] {
+  return process.platform !== "win32" && process.getuid?.() === 0
+    ? ["-c", "safe.directory=", "-c", "core.fsmonitor=false", ...args]
+    : args;
+}
 export function resolveWorkspace(cwd: string): { root: string; cwd: string } {
   const actual = realpathSync(cwd);
-  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
-    cwd: actual,
-    env: gitEnvironment(),
-    encoding: "utf8",
-    timeout: 3000,
-    maxBuffer: 8192,
-    windowsHide: true,
-  });
+  const result = spawnSync(
+    "git",
+    gitArguments(["rev-parse", "--show-toplevel"]),
+    {
+      cwd: actual,
+      env: gitEnvironment(),
+      encoding: "utf8",
+      timeout: 3000,
+      maxBuffer: 8192,
+      windowsHide: true,
+    },
+  );
   // Remove only Git's record terminator, not valid whitespace in a path.
   const topLevel = result.stdout?.replace(
     process.platform === "win32" ? /\r?\n$/ : /\n$/,
@@ -274,6 +292,18 @@ export function stateHomeInside(
   const canonical = realpathSync(root);
   return contains(canonical, privateRootFor(canonical, stateHome));
 }
+/** Also exclude projects *inside* our reserved private namespace. Root access
+ * does not turn private history/coordination into an ordinary engineering tree.
+ * Resolves missing tails without creating anything (for explicit project mkdir). */
+export function privateWorkspace(
+  requested: string,
+  stateHome = defaultStateHome(),
+): boolean {
+  return contains(
+    join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1"),
+    canonicalAmbientRoot(requested),
+  );
+}
 export const LANDING_WORKSPACE = "cadence";
 /** A directory that contains the private state home (the home directory and
  * its ancestors) can never be a workspace; use ~/cadence instead of refusing.
@@ -283,6 +313,8 @@ export function effectiveWorkspace(
   stateHome?: string,
   home = homedir(),
 ): { workspace: string; redirected: boolean } {
+  if (privateWorkspace(requested, stateHome))
+    throw new Error("Private state cannot be a workspace");
   if (!stateHomeInside(resolveWorkspace(requested).root, stateHome))
     return { workspace: requested, redirected: false };
   return { workspace: join(home, LANDING_WORKSPACE), redirected: true };
@@ -301,6 +333,8 @@ export class TaskStore {
   readonly privateRoot: string;
   constructor(root: string, stateHome = defaultStateHome()) {
     this.root = realpathSync(root);
+    if (privateWorkspace(this.root, stateHome))
+      throw new Error("Private state cannot be a workspace");
     this.tasks = join(this.root, ".cadence", "assistant", "tasks");
     this.privateRoot = privateRootFor(this.root, stateHome);
     if (contains(this.root, this.privateRoot))

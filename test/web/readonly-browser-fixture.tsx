@@ -7,7 +7,7 @@ import {
   type ReadCursor,
 } from "../../src/service-contract.ts";
 import type { Fixture } from "../helpers/service-http-fixture.ts";
-import { coverage } from "./fixtures";
+import { context, coverage, hash } from "./fixtures";
 export function readonlyWorkspace(f: Fixture) {
   const taskId = randomUUID(),
     runId = randomUUID(),
@@ -57,6 +57,44 @@ export function readonlyWorkspace(f: Fixture) {
   });
   if (task.kind !== "task" || message.kind !== "message")
     throw new Error("fixture-kind");
+  const admitted = context();
+  if (!admitted.task) throw new Error("fixture-task");
+  admitted.task.id = taskId;
+  admitted.workspaceId = f.workspaceId;
+  admitted.epoch = f.epoch;
+  const parent = decodeHistoryRecord({
+    kind: "run",
+    projection: {
+      runId,
+      taskId,
+      childRunId: null,
+      assignmentId: null,
+      admission: {
+        operationId: randomUUID(),
+        commandId: randomUUID(),
+        kind: "start",
+        context: admitted,
+        assignments: [{ assignmentId: "inspect-history", childRunId }],
+        graph: { recordId: randomUUID(), revision: 1, sha256: hash },
+      },
+      lifecycle: "settled",
+      outcome: "unknown",
+      settlement: null,
+      reason: null,
+      publication: "uncertain",
+      coverage,
+      result: null,
+    },
+  });
+  if (parent.kind !== "run") throw new Error("fixture-parent");
+  const child = decodeHistoryRecord({
+    kind: "run",
+    projection: {
+      ...parent.projection,
+      childRunId,
+      assignmentId: "inspect-history",
+    },
+  });
   const events = [1, 2, 3].map((n) =>
     decodeHistoryRecord({
       kind: "capture-fact",
@@ -107,10 +145,10 @@ export function readonlyWorkspace(f: Fixture) {
     context: f.snap(f.scope).context,
   });
   f.projection.tasks = async (request) => page(request, [task]);
+  f.projection.runs = async (request) => page(request, [parent, child]);
   f.projection.messages = async (request) => page(request, [message]);
   f.projection.events = async (request) => page(request, events);
   for (const reader of [
-    "runs",
     "tools",
     "contents",
     "checks",
@@ -175,5 +213,13 @@ export function readonlyWorkspace(f: Fixture) {
       coverage: limited,
     };
   };
-  return { taskId, text, content, hitStart, detailCalls: () => detailCalls };
+  return {
+    taskId,
+    childRunId,
+    runId,
+    text,
+    content,
+    hitStart,
+    detailCalls: () => detailCalls,
+  };
 }

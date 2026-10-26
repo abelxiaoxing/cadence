@@ -328,15 +328,63 @@ it("built readonly history, exact Unicode/full copy, timeline and drawers across
         await page
           .getByRole("button", { name: /Readonly Unicode fixture/ })
           .click();
+        assert.equal(await page.locator(".tb-tabs > button").count(), 1);
+        assert.equal(
+          await page
+            .getByRole("button", { name: "timeline", exact: true })
+            .isVisible(),
+          false,
+        );
+        // Subagent conversations are reachable directly in the left history tree,
+        // including when no live snapshot has a recent run projection.
+        if (viewport.width <= 900)
+          await page
+            .getByRole("button", { name: "Tasks", exact: true })
+            .click();
+        // Folding navigation does not restart or rebase its retained reader.
+        const tree = page.locator(".retained-conversations");
+        await tree
+          .getByRole("button", { name: /inspect-history Subagent/ })
+          .waitFor();
+        const readsBeforeFold = await tree
+          .locator(".page-controls")
+          .textContent();
+        await page
+          .getByRole("button", { name: /^Conversation history/ })
+          .click();
+        assert.equal(await tree.isVisible(), false);
+        assert.equal(await tree.count(), 1);
+        await page
+          .getByRole("button", { name: /^Conversation history/ })
+          .click();
+        assert.equal(
+          await tree.locator(".page-controls").textContent(),
+          readsBeforeFold,
+        );
+        await page
+          .getByRole("button", { name: /inspect-history Subagent/ })
+          .click();
+        await page
+          .getByRole("heading", { name: "inspect-history", exact: true })
+          .waitFor();
+        assert.equal(
+          await page.locator(".conversation-badge").textContent(),
+          "Subagent",
+        );
+        assert.equal(
+          new URLSearchParams(new URL(page.url()).hash.slice(1)).get(
+            "snapshot",
+          ),
+          "10",
+        );
+        // The message field loads without expanding Inspect message.
         await page
           .getByRole("button", { name: "Inspect message", exact: true })
-          .click();
+          .waitFor();
         await page
           .getByRole("button", { name: "Continue validation", exact: true })
           .click();
-        await page
-          .getByRole("button", { name: "Markdown page", exact: true })
-          .click();
+
         await page.locator(".katex").first().waitFor();
         assert.equal(
           await page
@@ -388,6 +436,18 @@ it("built readonly history, exact Unicode/full copy, timeline and drawers across
         assert.equal(
           await page.evaluate(() => navigator.clipboard.readText()),
           data.text,
+        );
+        await page.locator(".view-menu > summary").click();
+        const menu = await page.locator(".view-menu-items").boundingBox();
+        assert(
+          menu && menu.x >= 0 && menu.x + menu.width <= viewport.width,
+          "secondary menu remains inside viewport",
+        );
+        assert.equal(
+          await page
+            .locator(".tb-tabs")
+            .evaluate((el) => getComputedStyle(el).overflowY),
+          "visible",
         );
         await page
           .getByRole("button", { name: "timeline", exact: true })
@@ -454,6 +514,7 @@ it("built readonly history, exact Unicode/full copy, timeline and drawers across
         }
         receipt.layouts.push({ ...viewport, ...dimensions });
       }
+      await page.locator(".view-menu > summary").click();
       await page
         .getByRole("button", { name: "Export selected scope", exact: true })
         .click();
@@ -506,6 +567,7 @@ it("built readonly history, exact Unicode/full copy, timeline and drawers across
       await degraded
         .getByRole("button", { name: /Readonly Unicode fixture/ })
         .click();
+      await degraded.locator(".view-menu > summary").click();
       await degraded
         .getByRole("button", { name: "timeline", exact: true })
         .click();
@@ -539,6 +601,7 @@ it("built readonly history, exact Unicode/full copy, timeline and drawers across
       await chinese
         .getByRole("button", { name: /Readonly Unicode fixture/ })
         .click();
+      await chinese.locator(".view-menu > summary").click();
       await chinese
         .getByRole("button", { name: "时间线", exact: true })
         .click();
@@ -555,6 +618,7 @@ it("built readonly history, exact Unicode/full copy, timeline and drawers across
       await chinese
         .getByRole("button", { name: "Switch to English", exact: true })
         .click();
+      await chinese.locator(".view-menu > summary").click();
       await chinese
         .getByRole("button", { name: "timeline", exact: true })
         .waitFor();

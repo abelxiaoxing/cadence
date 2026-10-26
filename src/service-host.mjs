@@ -218,15 +218,19 @@ function readBounded(path, max, packaged = false) {
   }
 }
 function gitEnvironment() {
+  const root = process.getuid?.() === 0;
   return {
-    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))),
+    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_") && !(root && name === "SUDO_UID"))),
     GIT_OPTIONAL_LOCKS: "0",
     LC_ALL: "C"
   };
 }
+function gitArguments(args) {
+  return process.platform !== "win32" && process.getuid?.() === 0 ? ["-c", "safe.directory=", "-c", "core.fsmonitor=false", ...args] : args;
+}
 function resolveWorkspace(cwd) {
   const actual = realpathSync(cwd);
-  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+  const result = spawnSync("git", gitArguments(["rev-parse", "--show-toplevel"]), {
     cwd: actual,
     env: gitEnvironment(),
     encoding: "utf8",
@@ -288,12 +292,17 @@ function contains(root, path) {
   const within = relative(root, resolve(path));
   return !within || !within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within);
 }
+function privateWorkspace(requested, stateHome = defaultStateHome()) {
+  return contains(join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1"), canonicalAmbientRoot(requested));
+}
 class TaskStore {
   root;
   tasks;
   privateRoot;
   constructor(root, stateHome = defaultStateHome()) {
     this.root = realpathSync(root);
+    if (privateWorkspace(this.root, stateHome))
+      throw new Error("Private state cannot be a workspace");
     this.tasks = join(this.root, ".cadence", "assistant", "tasks");
     this.privateRoot = privateRootFor(this.root, stateHome);
     if (contains(this.root, this.privateRoot))
@@ -5233,6 +5242,22 @@ function emptyScan() {
 }
 
 // src/history/live.ts
+function scopedSnapshot(source, scope) {
+  if (scope.kind === "task" || source.scope.kind === "child")
+    return;
+  if (!source.runs.some((run) => scope.kind === "run" ? run.runId === scope.id && run.childRunId === null : run.childRunId === scope.id))
+    return;
+  return decodeSnapshot({
+    ...source,
+    scope,
+    runs: source.runs.filter((run) => scope.kind === "run" ? run.runId === scope.id : run.childRunId === scope.id),
+    horizon: {
+      ...source.horizon,
+      historicalRuns: { ...source.horizon.historicalRuns, scope }
+    }
+  });
+}
+
 class HistoryLive {
   writer;
   projection;
@@ -5346,8 +5371,10 @@ class HistoryLive {
     }
   }
   async drain() {
-    const scopes = [...this.pending.values()];
+    const order = { task: 0, run: 1, child: 2 };
+    const scopes = [...this.pending.values()].sort((a, b) => order[a.kind] - order[b.kind]);
     this.pending.clear();
+    const sources = [];
     try {
       for (const scope of scopes) {
         if (this.closed)
@@ -5355,14 +5382,19 @@ class HistoryLive {
         if (scope.kind !== "run" && ![...this.viewers].some((v) => canonicalJson(v.scope) === canonicalJson(scope)))
           continue;
         let snapshot;
+        for (let i = sources.length - 1;i >= 0 && !snapshot; i--)
+          snapshot = scopedSnapshot(sources[i], scope);
+        const reused = snapshot !== undefined;
         try {
-          snapshot = await this.projection.snapshot(scope);
+          snapshot ??= await this.projection.snapshot(scope);
         } catch {
           for (const v of this.viewers)
             if (v.scope.id === scope.id)
               this.enqueue(v, this.watermark(v.scope));
           continue;
         }
+        if (!reused && sources.length < LIMITS.viewers && (scope.kind === "task" || scopes.some((s) => s.kind === "child" && snapshot.runs.some((r) => r.childRunId === s.id))))
+          sources.push(snapshot);
         const key = `${scope.kind}/${scope.id}`, old = this.rings.get(key);
         const update = (previousSeq, selected2 = scope, previousKeys) => decodeLiveEvent({
           kind: "update",
@@ -14808,7 +14840,13 @@ function localOrigin(policy, actualPort) {
 }
 
 // src/service/server-config.ts
-import { lstatSync as lstatSync8, realpathSync as realpathSync3, statSync } from "node:fs";
+import {
+  existsSync as existsSync2,
+  lstatSync as lstatSync8,
+  mkdirSync as mkdirSync3,
+  realpathSync as realpathSync3,
+  statSync
+} from "node:fs";
 import { dirname as dirname7, join as join10 } from "node:path";
 
 // skills/_shared/load-config.mjs
@@ -18931,7 +18969,7 @@ function captureChanges(root) {
       limits.push("Git observation time budget exhausted");
       return { stdout: Buffer.alloc(0) };
     }
-    const result = spawnSync2("git", ["-c", "core.quotepath=true", ...args], {
+    const result = spawnSync2("git", gitArguments(["-c", "core.quotepath=true", ...args]), {
       cwd: root,
       encoding: "buffer",
       timeout: Math.max(1, deadline - Date.now()),
@@ -18979,7 +19017,7 @@ function captureChanges(root) {
       limits.push(`Unreadable/changing: ${name}`);
     }
   };
-  const probe = spawnSync2("git", ["rev-parse", "--is-inside-work-tree"], {
+  const probe = spawnSync2("git", gitArguments(["rev-parse", "--is-inside-work-tree"]), {
     cwd: root,
     env: gitEnvironment(),
     timeout: 3000,

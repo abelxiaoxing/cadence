@@ -1,7 +1,26 @@
 import { useT } from "../../i18n/locale";
 import type { CaptureCoverage } from "../../types";
-export function Coverage({ value }: { value: CaptureCoverage }) {
+export function Coverage({
+  value,
+  compact = false,
+}: {
+  value: CaptureCoverage;
+  compact?: boolean;
+}) {
   const { t, tx } = useT();
+  if (
+    compact &&
+    value.observed === "complete" &&
+    value.source === "complete" &&
+    !value.redacted &&
+    value.omissions.length === 0
+  )
+    return (
+      <details className="coverage-details">
+        <summary>{t("Recording details")}</summary>
+        <Coverage value={value} />
+      </details>
+    );
   return (
     <p
       className={`coverage${

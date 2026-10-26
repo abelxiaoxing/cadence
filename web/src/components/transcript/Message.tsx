@@ -26,12 +26,9 @@ export const Message = memo(function Message({
     >
       <header className="msg-meta">
         <strong className="msg-role">{tx(message.role)}</strong>
-        <span className="msg-state">
-          {t("{state} message record, not execution outcome", {
-            state: tx(message.state),
-          })}
-        </span>
-        <span className="msg-time">v{message.version}</span>
+        {message.state !== "final" && (
+          <span className="msg-state">{tx(message.state)}</span>
+        )}
         <button
           type="button"
           className="msg-inspect"
@@ -47,13 +44,6 @@ export const Message = memo(function Message({
         </button>
       </header>
       <div className="msg-body">
-        <p className="msg-ident">
-          {t("Child {child} · message {message} · version {version}", {
-            child: message.owner.childRunId ?? "",
-            message: message.owner.entity.id,
-            version: message.version,
-          })}
-        </p>
         {message.role === "tool-result" && (
           <p className="msg-note">
             {t(
@@ -62,41 +52,58 @@ export const Message = memo(function Message({
             )}
           </p>
         )}
-        {expanded && (
-          <div className="msg-text">
-            <div className="msg-text-main">
-              {message.finalText &&
-              seed.scope.kind !== "workspace" &&
-              seed.snapshotSeq !== null ? (
-                <DetailPane
-                  client={client}
-                  cursor={contentCursor(
-                    seed.storeId,
-                    seed.scope,
-                    seed.snapshotSeq,
-                    message.finalText,
-                  )}
-                />
-              ) : (
-                <p>
-                  {t(
-                    "No finalized text field in this snapshot. Inspect retained partial/final blocks and omission metadata below.",
-                  )}
+        <div className="msg-text">
+          <div className="msg-text-main">
+            {message.finalText &&
+            seed.scope.kind !== "workspace" &&
+            seed.snapshotSeq !== null ? (
+              <DetailPane
+                compact
+                client={client}
+                cursor={contentCursor(
+                  seed.storeId,
+                  seed.scope,
+                  seed.snapshotSeq,
+                  message.finalText,
+                )}
+              />
+            ) : (
+              <p>
+                {t(
+                  "No finalized text field in this snapshot. Inspect retained partial/final blocks and omission metadata below.",
+                )}
+              </p>
+            )}
+            {expanded && (
+              <div className="message-inspection">
+                <p className="msg-ident">
+                  {t("Child {child} · message {message} · version {version}", {
+                    child: message.owner.childRunId ?? "",
+                    message: message.owner.entity.id,
+                    version: message.version,
+                  })}
                 </p>
-              )}
-              <details>
-                <summary>
-                  {t("All message blocks, source limits and tool associations")}
-                </summary>
-                <ContentExplorer
-                  client={client}
-                  seed={seed}
-                  entityId={message.owner.entity.id}
-                />
-              </details>
-            </div>
+                <p className="msg-note">
+                  {t("{state} message record, not execution outcome", {
+                    state: tx(message.state),
+                  })}
+                </p>
+                <details open>
+                  <summary>
+                    {t(
+                      "All message blocks, source limits and tool associations",
+                    )}
+                  </summary>
+                  <ContentExplorer
+                    client={client}
+                    seed={seed}
+                    entityId={message.owner.entity.id}
+                  />
+                </details>
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
     </article>
   );

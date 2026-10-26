@@ -170,7 +170,20 @@ export function MessageList({
     page = pager.page;
   return (
     <section className="transcript">
-      <PageControls pager={pager} />
+      <PageControls pager={pager} compact />
+      {page &&
+        !("kind" in page) &&
+        seed.snapshotSeq !== null &&
+        page.request.snapshotSeq !== seed.snapshotSeq && (
+          <button
+            type="button"
+            className="conversation-update"
+            disabled={pager.busy}
+            onClick={pager.refresh}
+          >
+            {t("New activity — update conversation")}
+          </button>
+        )}
       {page && !("kind" in page) && (
         <>
           {page.records.length === 0 && (

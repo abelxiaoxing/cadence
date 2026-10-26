@@ -12,12 +12,12 @@ import {
 import type { IconType } from "react-icons";
 import {
   FiCheckCircle,
+  FiChevronDown,
   FiClock,
   FiCpu,
   FiDownload,
   FiFolder,
   FiGitBranch,
-  FiGitCommit,
   FiGlobe,
   FiLayers,
   FiLink,
@@ -85,7 +85,6 @@ import type {
 } from "./types";
 
 const VIEWS: readonly (readonly [string, IconType])[] = [
-  ["messages", FiMessageSquare],
   ["tools", FiTool],
   ["context", FiLayers],
   ["timeline", FiClock],
@@ -106,7 +105,7 @@ export function App({
   const [initial] = useState(readHistoryUrl),
     [taskId, setTaskId] = useState<string | null>(initial?.taskId ?? null);
   const [scope, setScope] = useState<Scope | null>(
-    initial ? { kind: "task", id: initial.taskId } : null,
+    initial ? (initial.scope ?? { kind: "task", id: initial.taskId }) : null,
   );
   const workspace = useWorkspace(
     api,
@@ -161,6 +160,13 @@ export function App({
     container: layout,
   });
   useDrawerFocus(layout, drawer, mobile && !detached, closeDrawer);
+  const [selectedSnapshot, setSelectedSnapshot] = useState<string | undefined>(
+    initial?.snapshotSeq,
+  );
+  const [taskTitle, setTaskTitle] = useState("");
+  const [scopeTitle, setScopeTitle] = useState("");
+  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const viewMenu = useRef<HTMLDetailsElement>(null);
   const [tab, setTab] = useState("messages"),
     [searchOpen, setSearchOpen] = useState(false),
     [exportOpen, setExportOpen] = useState(false);
@@ -191,6 +197,7 @@ export function App({
   const viewIdentity = canonicalJson({
     taskId,
     scope,
+    selectedSnapshot: selectedSnapshot ?? null,
     detached,
     context,
     attachment: workspace.attachmentVersion,
@@ -245,7 +252,10 @@ export function App({
       if (lifetime.current.current(ticket)) setPreparing(false);
     }
   };
-  const selectTask = (id: string) => {
+  const selectTask = (id: string, title?: string) => {
+    setTaskTitle(title ?? "");
+    setScopeTitle("");
+    setSelectedSnapshot(undefined);
     lifetime.current.depart();
     setPrepared(undefined);
     setPreparing(false);
@@ -266,8 +276,11 @@ export function App({
       lifetime.current.depart();
       setPrepared(undefined);
       setPreparing(false);
+      setSelectedSnapshot(target.snapshotSeq);
+      setTaskTitle("");
+      setScopeTitle("");
       setTaskId(target.taskId);
-      setScope({ kind: "task", id: target.taskId });
+      setScope(target.scope ?? { kind: "task", id: target.taskId });
       setHit(undefined);
       setDetail(target.cursor);
       setTab("messages");
@@ -276,17 +289,26 @@ export function App({
     window.addEventListener("hashchange", navigate);
     return () => window.removeEventListener("hashchange", navigate);
   }, [closeDrawer]);
-  const selectScope = (value: Scope) => {
+  const selectScope = (value: Scope, snapshot?: string, label?: string) => {
+    setSelectedSnapshot(snapshot);
+    setScopeTitle(label ?? "");
     lifetime.current.depart();
     setPrepared(undefined);
     setPreparing(false);
     setScope(value);
     setHit(undefined);
     setDetail(undefined);
-    setTab(value.kind === "task" ? "runs" : "messages");
+    setTab("messages");
     closeDrawer();
+    if (taskId)
+      history.replaceState(
+        null,
+        "",
+        historyUrl(taskId, undefined, { scope: value, snapshotSeq: snapshot }),
+      );
   };
   const snapshotSeq =
+    selectedSnapshot ??
     observation.state?.snapshot.committedSeq ??
     workspace.workspace?.committedSeq;
   const storeId = workspace.workspace?.storeId;
@@ -405,7 +427,7 @@ export function App({
         ? "Task snapshot not observed yet"
         : "No task selected");
   return (
-    <div className="app">
+    <div className={`app${inspectorOpen ? "" : " inspector-hidden"}`}>
       <header className="topbar">
         <button
           type="button"
@@ -434,23 +456,98 @@ export function App({
           )}
           <span className="tb-spacer" aria-hidden="true" />
           <nav className="tb-tabs" aria-label={t("Recorded views")}>
-            {VIEWS.map(([view, Icon]) => (
-              <button
-                type="button"
-                key={view}
-                className="tb-tab"
-                aria-label={tx(view)}
-                aria-pressed={tab === view}
-                onClick={() => {
-                  setDetail(undefined);
-                  setHit(undefined);
-                  setTab(view);
-                }}
-              >
-                <Icon aria-hidden="true" />
-                <span>{tx(view)}</span>
-              </button>
-            ))}
+            <button
+              type="button"
+              className="tb-tab"
+              aria-pressed={tab === "messages" && !detail}
+              onClick={() => {
+                setDetail(undefined);
+                setHit(undefined);
+                setTab("messages");
+              }}
+            >
+              <FiMessageSquare aria-hidden="true" />
+              {t("Conversation")}
+            </button>
+            <details
+              className="view-menu"
+              ref={viewMenu}
+              onKeyDown={(event) => {
+                if (event.key === "Escape" && viewMenu.current) {
+                  viewMenu.current.open = false;
+                  viewMenu.current.querySelector("summary")?.focus();
+                }
+              }}
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget))
+                  event.currentTarget.open = false;
+              }}
+            >
+              <summary className="chip">
+                {tab === "messages" ? t("Details") : tx(tab)}
+                <FiChevronDown aria-hidden="true" />
+              </summary>
+              <div className="view-menu-items">
+                {VIEWS.map(([view, Icon]) => (
+                  <button
+                    type="button"
+                    key={view}
+                    aria-pressed={tab === view}
+                    onClick={() => {
+                      setDetail(undefined);
+                      setHit(undefined);
+                      setTab(view);
+                      if (viewMenu.current) {
+                        viewMenu.current.open = false;
+                        viewMenu.current.querySelector("summary")?.focus();
+                      }
+                    }}
+                  >
+                    <Icon aria-hidden="true" />
+                    {tx(view)}
+                  </button>
+                ))}
+                <div className="view-menu-actions">
+                  <button
+                    type="button"
+                    aria-label={t("Export selected scope")}
+                    disabled={!seed}
+                    onClick={() => {
+                      if (viewMenu.current) {
+                        viewMenu.current.open = false;
+                        viewMenu.current.querySelector("summary")?.focus();
+                      }
+                      setExportOpen(true);
+                    }}
+                  >
+                    <FiDownload aria-hidden="true" />
+                    {t("Export selected scope")}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={t("Copy token-free link")}
+                    disabled={!taskId}
+                    onClick={() => {
+                      if (taskId)
+                        void copyTextToClipboard(
+                          historyUrl(
+                            taskId,
+                            detail,
+                            scope
+                              ? { scope, snapshotSeq: selectedSnapshot }
+                              : undefined,
+                          ),
+                        ).then((ok) =>
+                          setError(ok ? "" : t("Link copy unavailable.")),
+                        );
+                    }}
+                  >
+                    <FiLink aria-hidden="true" />
+                    {t("Copy token-free link")}
+                  </button>
+                </div>
+              </div>
+            </details>
           </nav>
           <span className="tb-spacer" aria-hidden="true" />
           <div className="tb-actions">
@@ -458,31 +555,6 @@ export function App({
               disabled={!searchSeed}
               onOpen={() => setSearchOpen(true)}
             />
-            <button
-              type="button"
-              className="chip"
-              aria-label={t("Export selected scope")}
-              data-tip={t("Export selected scope")}
-              disabled={!seed}
-              onClick={() => setExportOpen(true)}
-            >
-              <FiDownload aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              className="chip"
-              aria-label={t("Copy token-free link")}
-              data-tip={t("Copy token-free link")}
-              disabled={!taskId}
-              onClick={() => {
-                if (taskId)
-                  void copyTextToClipboard(historyUrl(taskId, detail)).then(
-                    (ok) => setError(ok ? "" : t("Link copy unavailable.")),
-                  );
-              }}
-            >
-              <FiLink aria-hidden="true" />
-            </button>
             <button
               type="button"
               className="chip"
@@ -539,15 +611,20 @@ export function App({
         </div>
         <button
           type="button"
-          className="panel-toggle has-label"
+          className="panel-toggle has-label inspector-toggle"
           aria-label={t("Plan / review")}
-          onClick={() => setDrawer((d) => (d === "right" ? null : "right"))}
+          aria-expanded={mobile ? drawer === "right" : inspectorOpen}
+          onClick={() =>
+            mobile
+              ? setDrawer((d) => (d === "right" ? null : "right"))
+              : setInspectorOpen((value) => !value)
+          }
         >
           <FiSidebar aria-hidden="true" />
           <span>{t("Plan")}</span>
         </button>
       </header>
-      {activeRuns.length > 0 && (
+      {!workspace.workspace && activeRuns.length > 0 && (
         <section
           className="run-strip"
           aria-label={t("Execution and cancellation")}
@@ -633,7 +710,26 @@ export function App({
               client={api.client}
               workspace={workspace.workspace}
               taskId={taskId}
+              scope={scope}
               runs={runs}
+              snapshot={observation.state?.snapshot.committedSeq}
+              activeRuns={workspace.activeRuns}
+              cancelCompatible={!!workspace.cancelCompatible}
+              canceling={canceling}
+              onCancel={cancel}
+              onProject={() => {
+                lifetime.current.depart();
+                setPrepared(undefined);
+                setPreparing(false);
+                setTaskId(null);
+                setScope(null);
+                setTaskTitle("");
+                setDetail(undefined);
+                setHit(undefined);
+                setSelectedSnapshot(undefined);
+                closeDrawer();
+                history.replaceState(null, "", location.pathname);
+              }}
               onTask={selectTask}
               onScope={selectScope}
               onNew={() => {
@@ -646,19 +742,43 @@ export function App({
         <ResizeHandle side="left" width={leftWidth} onResize={setLeftWidth} />
         <main className="main" inert={mobile && drawer !== null}>
           {scope && (
-            <p className="scope-bar">
-              <FiGitCommit aria-hidden="true" />
-              <span className="scope-kind">
-                {t("Selected {kind}:", { kind: tx(scope.kind) })}
-              </span>
-              <code>{scope.id}</code>
-              <span>{t("· snapshot {seq}.", { seq: snapshotSeq ?? "" })}</span>
-              <span className="scope-hint">
-                {t(
-                  "Pages and old outcomes are historical observations, not renewed consent.",
+            <header className="conversation-header">
+              <div className="conversation-heading">
+                {scope.kind !== "task" && taskId && (
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => selectTask(taskId, taskTitle)}
+                  >
+                    {t("Back to task")}
+                  </button>
                 )}
-              </span>
-            </p>
+                <h2 title={taskTitle || scope.id}>
+                  {scope.kind === "task"
+                    ? taskTitle || t("Task {id}", { id: scope.id.slice(0, 8) })
+                    : scopeTitle ||
+                      t("{kind} {id}", {
+                        kind: tx(scope.kind),
+                        id: scope.id.slice(0, 8),
+                      })}
+                </h2>
+                {scope.kind === "child" && (
+                  <span className="conversation-badge">{t("Subagent")}</span>
+                )}
+              </div>
+              <details className="conversation-info">
+                <summary>
+                  {t("Recorded conversation")} ·{" "}
+                  {t("snapshot {seq}", { seq: snapshotSeq ?? "" })}
+                </summary>
+                <code>{scope.id}</code>
+                <p>
+                  {t(
+                    "Pages and old outcomes are historical observations, not renewed consent.",
+                  )}
+                </p>
+              </details>
+            </header>
           )}
           <div className="workspace-content">
             {!seed && (
@@ -712,6 +832,7 @@ export function App({
             ) : (
               seed && (
                 <div
+                  key={`${scope?.kind}:${scope?.id}:${selectedSnapshot ?? "current"}`}
                   className={
                     tab === "messages" || tab === "tools"
                       ? "tab-body transcript-body"
@@ -790,7 +911,10 @@ export function App({
               key={taskId}
               client={api.client}
               context={context}
-              seed={seed}
+              seed={{
+                ...seed,
+                scope: { kind: "task", id: taskId ?? seed.scope.id },
+              }}
               runs={runs}
               canAct={canAct && !preparing}
               onAction={(a) => void action(a)}
@@ -850,16 +974,14 @@ export function App({
                   "Active roster unavailable; absence is not proof of settlement.",
                 )}
           </span>
-          <span className="status-item faint">
-            {t("Connection freshness is not execution outcome.")}
-          </span>
         </div>
         <div className="statusbar-right">
-          <span
+          <div
             className={`status-item${workspace.compatible ? " faint" : " warn"}`}
             title={localBuild?.buildId ?? t("unbuilt source")}
           >
-            <span className="build-part">
+            <details className="build-part">
+              <summary>{t("Build information")}</summary>
               <Template
                 text={t("Local browser build: {build}.")}
                 slots={{
@@ -868,7 +990,7 @@ export function App({
                   ),
                 }}
               />{" "}
-            </span>
+            </details>
             <span>
               {t("Shared compatibility: {state}.", {
                 state: workspace.compatible
@@ -878,7 +1000,7 @@ export function App({
                     ),
               })}
             </span>
-          </span>
+          </div>
         </div>
       </footer>
       {modelOpen && (
@@ -981,7 +1103,15 @@ export function App({
             setHit(value);
             setDetail(value.cursor);
             if (taskId)
-              history.replaceState(null, "", historyUrl(taskId, value.cursor));
+              history.replaceState(
+                null,
+                "",
+                historyUrl(
+                  taskId,
+                  value.cursor,
+                  scope ? { scope, snapshotSeq: selectedSnapshot } : undefined,
+                ),
+              );
           }}
         />
       )}

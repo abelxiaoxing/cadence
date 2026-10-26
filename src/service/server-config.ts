@@ -16,7 +16,13 @@
  * 0664 under umask 002), and only ownership is. A file Cadence rewrites is
  * written 0600. Every refusal names its reason, never a byte of the file. */
 import { randomBytes } from "node:crypto";
-import { lstatSync, realpathSync, statSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { parseEnvFile } from "../../skills/_shared/load-config.mjs";
 import { ensureUserConfig } from "../install-config.mjs";
@@ -45,8 +51,12 @@ export interface ServerConfig {
   port: number;
   token: string;
 }
-export function serverConfigPath(home: string): string {
-  return join(home, ".pi", "agent", "cadence", ".env");
+export function serverConfigPath(home: string, name?: string): string {
+  if (name !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$/.test(name))
+    throw new ContractError("invalid");
+  return name === undefined
+    ? join(home, ".pi", "agent", "cadence", ".env")
+    : join(home, ".pi", "agent", "cadence", "servers", `${name}.env`);
 }
 /** A refused file and why, in words that carry none of its bytes. */
 export class ServerConfigRefusal extends ContractError {
@@ -231,22 +241,53 @@ export function withToken(file: ServerConfigFile, token: string): string {
 /** Missing-only: creates the research template when the file is missing and
  * appends only the absent keys; existing lines are never changed. `exposed`:
  * other users can read the file, which keeps working but deserves a note. */
-export function ensureServerConfig(home: string): ServerConfigFile & {
+export function ensureServerConfig(
+  home: string,
+  options: { name?: string; port?: number } = {},
+): ServerConfigFile & {
   config: ServerConfig;
   added: string[];
   exposed: boolean;
 } {
-  const path = serverConfigPath(home);
+  const path = serverConfigPath(home, options.name);
+  if (
+    options.port !== undefined &&
+    (!Number.isInteger(options.port) ||
+      options.port < 1 ||
+      options.port > 65535)
+  )
+    throw new ContractError("invalid");
   const added = refusing(path, () => {
     try {
-      ensureUserConfig(home);
+      if (options.name === undefined) ensureUserConfig(home);
+      else if (!existsSync(path)) {
+        // Named services get independent access material, never a copy of the
+        // default service's token or research/provider configuration.
+        if (options.port === undefined)
+          unusable("needs --port for a new named service");
+        mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+        const directory = realpathSync(dirname(path));
+        new PrivateFiles(directory, false).create(
+          join(directory, `${options.name}.env`),
+          "",
+        );
+      }
     } catch (error) {
+      if (error instanceof Unusable) throw error;
       unusable(`could not be created (${code(error)})`);
     }
     const file = load(path);
     const found = settings(file.source);
     const lines: string[] = [];
-    if (!found.port) lines.push(`${PORT_KEY}=${DEFAULT_PORT}`);
+    if (
+      found.port &&
+      options.port !== undefined &&
+      found.port.value !== String(options.port)
+    )
+      unusable(
+        `already selects another ${PORT_KEY}; edit that line explicitly, then restart`,
+      );
+    if (!found.port) lines.push(`${PORT_KEY}=${options.port ?? DEFAULT_PORT}`);
     if (!found.token)
       lines.push(`${TOKEN_KEY}=${randomBytes(32).toString("base64url")}`);
     if (lines.length) {

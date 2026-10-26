@@ -32,12 +32,14 @@ function definition(o: AutostartObservation): string | undefined {
   switch (o.platform) {
     case "linux":
       return existsSync(o.systemd)
-        ? join(
-            xdg(o.env.XDG_DATA_HOME, join(o.home, ".local", "share")),
-            "systemd",
-            "user",
-            UNIT,
-          )
+        ? o.uid === 0
+          ? join(o.systemUnitDirectory ?? "/etc/systemd/system", UNIT)
+          : join(
+              xdg(o.env.XDG_DATA_HOME, join(o.home, ".local", "share")),
+              "systemd",
+              "user",
+              UNIT,
+            )
         : undefined;
     case "darwin":
       return join(o.home, "Library", "LaunchAgents", `${LABEL}.plist`);
@@ -52,11 +54,11 @@ function definition(o: AutostartObservation): string | undefined {
   }
 }
 const bootStart = (o: AutostartObservation) =>
-  o.platform === "linux" && o.env.CADENCE_LINGER !== "0";
+  o.platform === "linux" && (o.uid === 0 || o.env.CADENCE_LINGER !== "0");
 /** Pi's managed copy puts no `cadence` bin on PATH; CADENCE_LINGER=0 keeps
  * the suggested command login-only, too. */
 const installCommand = (o: AutostartObservation) =>
-  `${piUserCopy(o) ? `node ${JSON.stringify(join(o.root, "src", "service-cli.mjs"))}` : "cadence"} server install${o.platform === "linux" && o.env.CADENCE_LINGER === "0" ? " --no-linger" : ""}`;
+  `${piUserCopy(o) ? `node ${JSON.stringify(join(o.root, "src", "service-cli.mjs"))}` : "cadence"} server install${o.platform === "linux" && o.uid === 0 ? " --system" : o.platform === "linux" && o.env.CADENCE_LINGER === "0" ? " --no-linger" : ""}`;
 
 /** Name the explicit command while no background service is registered.
  * Reads paths only. */
@@ -78,6 +80,9 @@ export interface AutostartObservation {
   lingerFile: string;
   /** Exists only on a systemd-booted machine. */
   systemd: string;
+  uid?: number;
+  /** Only supplied by readonly observation tests. */
+  systemUnitDirectory?: string;
 }
 function hostObservation(): AutostartObservation {
   let user = "";
@@ -93,6 +98,7 @@ function hostObservation(): AutostartObservation {
     root: fileURLToPath(new URL("..", import.meta.url)),
     lingerFile: user ? join("/var/lib/systemd/linger", user) : "",
     systemd: SYSTEMD_BOOTED,
+    uid: process.getuid?.(),
   };
 }
 /** Same selection as Pi's getAgentDir: PI_CODING_AGENT_DIR or ~/.pi/agent. */
@@ -139,7 +145,7 @@ export function autostartNotice(
     return installedCopy(o)
       ? `Cadence服务：后台服务未安装，WebUI（默认 http://127.0.0.1:17423）不会运行。安装并${bootStart(o) ? "开机" : "登录后"}自启：${installCommand(o)}`
       : undefined;
-  if (o.platform !== "linux") return;
+  if (o.platform !== "linux" || o.uid === 0) return;
   const config = xdg(o.env.XDG_CONFIG_HOME, join(o.home, ".config"));
   const user = join(config, "systemd", "user");
   const runtime = o.env.XDG_RUNTIME_DIR;
