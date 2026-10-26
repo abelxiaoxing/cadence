@@ -425,6 +425,14 @@ Review the independently enumerated package member list and every emitted body, 
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
 
+### Release 2.0.10 acceptance snapshot
+
+Full `verify` passed on the 2.0.10 release tree (`4843334` plus the version bump), in the 2.0.3 environment below.
+It ran 1949 root tests in 78 files (27 Windows-only controls skipped on Linux), 116 web tests, 5 real-browser scenarios and the 132-member pack audit, and CI 40278386880 passed 12/12 on the candidate `3cd94f4` (this commit before its snapshot).
+That CI run's first Windows Node 22 `parallel` attempt failed only `workspace-landing`'s cleanup (EBUSY removing the just-stopped landing workspace), as in 2.0.6's first run; the job passed when rerun.
+The fix answers a 2.0.9 report: an Ollama `"apiKey": "ollama"` under a provider named `ollama` made the whole model catalog refuse `unsupported-context`.
+An isolated owner with that `models.json` beside a second provider reproduced the refusal on 2.0.9; on 2.0.10 Chromium listed the second provider's models and explained the one withheld entry in English and Chinese.
+
 ### Release 2.0.9 acceptance snapshot
 
 Full `verify` passed on the 2.0.9 release tree (`0e720a1` plus the version bump), in the 2.0.3 environment below.
