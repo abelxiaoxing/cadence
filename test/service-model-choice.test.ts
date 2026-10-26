@@ -92,39 +92,51 @@ it.each([
   expect(() => decodeModelCandidate(value)).toThrow();
 });
 it("catalog capacity is explicit, bounded, and never a clipped complete roster", () => {
+  const catalog = { version, selected: null, withheld: 0 };
   expect(
-    decodeModelCatalog({
-      version,
-      selected: null,
-      status: "capacity",
-      entries: [],
-    }).status,
+    decodeModelCatalog({ ...catalog, status: "capacity", entries: [] }).status,
   ).toBe("capacity");
   expect(() =>
     decodeModelCatalog({
-      version,
-      selected: null,
+      ...catalog,
       status: "capacity",
       entries: [candidate],
     }),
   ).toThrow();
   expect(() =>
     decodeModelCatalog({
-      version,
-      selected: null,
+      ...catalog,
       status: "complete",
       entries: [candidate, candidate],
     }),
   ).toThrow();
   expect(() =>
     decodeModelCatalog({
-      version,
-      selected: null,
+      ...catalog,
       status: "complete",
       entries: Array(201).fill(candidate),
     }),
   ).toThrow();
   expect(httpOutputLimit("models")).toBe(LIMITS.pageBytes);
+});
+it("counts withheld entries without their identifiers, within the same bound", () => {
+  const catalog = { version, selected: null, status: "complete" };
+  expect(
+    decodeModelCatalog({ ...catalog, entries: [candidate], withheld: 199 })
+      .withheld,
+  ).toBe(199);
+  for (const withheld of [200, -1, 0.5, "1", undefined])
+    expect(() =>
+      decodeModelCatalog({ ...catalog, entries: [candidate], withheld }),
+    ).toThrow();
+  expect(() =>
+    decodeModelCatalog({
+      ...catalog,
+      status: "capacity",
+      entries: [],
+      withheld: 1,
+    }),
+  ).toThrow();
 });
 it("uses bodyless authenticated catalog and explicit choice POST, never readonly POST or query authority", () => {
   expect(wireRequest("models", null)).toEqual({
@@ -151,6 +163,7 @@ it("client forwards readonly abort and treats a substituted/lost choice as uncer
           selected: null,
           status: "complete",
           entries: [candidate],
+          withheld: 0,
         },
       };
     },

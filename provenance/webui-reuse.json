@@ -70,7 +70,7 @@
         "web/src/layout/ResizeHandle.tsx",
         "web/src/layout/use-drawer-focus.ts"
       ],
-      "modifications": "Three-pane composition and selected coherent CSS rule families; direct sash/swipe algorithms; props narrowed to task/run data. Add keyboard focus and inert drawers. Delete composer, PTY, plugin slots, filesystem tree and model/provider administration. Correct open-drawer drag offset. Chrome restyle: TopBar brand/chip/tb-tab/panel-toggle and data-tip families, lp-section/session-item sidebar rows, pill inspector tabs, msg-meta/body transcript cards, statusbar, empty-state and scrollbar rules; generic controls use zero-specificity :where() so family classes win; phones wrap the topbar into an action row and an icon tab row. Fine-pointer controls follow pi's 24–28px density and coarse pointers keep 32–36px minimum targets; the earlier universal 44px controls were replaced. Accessible names are unchanged and every safety statement stays fully visible, wrapping in the scope bar, statusbar and collapsed episode rows instead of being clipped or hidden; small statements, selected tabs and the primary button use AA-contrast tokens. Interface text, including accessible names, is keyed by its English source and shown in English or Simplified Chinese; a topbar chip switches the language."
+      "modifications": "Three-pane composition and selected coherent CSS rule families; direct sash/swipe algorithms; props narrowed to task/run data. Add keyboard focus and inert drawers. Delete composer, PTY, plugin slots, filesystem tree and model/provider administration. Correct open-drawer drag offset. Chrome restyle: TopBar brand/chip/tb-tab/panel-toggle and data-tip families, lp-section/session-item sidebar rows, pill inspector tabs, msg-meta/body transcript cards, statusbar, empty-state and scrollbar rules; generic controls use zero-specificity :where() so family classes win; phones wrap the topbar into an action row and an icon tab row. Fine-pointer controls follow pi's 24–28px density and coarse pointers keep 32–36px minimum targets; the earlier universal 44px controls were replaced. Accessible names are unchanged and every safety statement stays fully visible, wrapping in the scope bar, statusbar and collapsed episode rows instead of being clipped or hidden; small statements, selected tabs and the primary button use AA-contrast tokens. Interface text, including accessible names, is keyed by its English source and shown in English or Simplified Chinese; a topbar chip switches the language. Alert lines inside action dialogs keep the error colour rather than the dimmed dialog paragraph colour."
     },
     {
       "id": "plan-navigation",
@@ -297,7 +297,7 @@
     "web/src/rich/remark-backslash-math.ts": "273205bd4694172f14fab2adad28acf9993e35c476c00756cbafb73135516c2e",
     "web/src/rich/stream-markdown.ts": "ce80d88c65bd49b3fdb4586201090c46b5fdbb81850ef321a782929f3a40e41e",
     "web/src/rich/use-copy-feedback.ts": "6df2a9e9e085b516c98816220420e307a24c5b8826049d0d276e08b59e19a321",
-    "web/src/styles.css": "2e85427bb7ad1659014529b4998f130ab576cc997c27cc96a94f95111f64ff97",
+    "web/src/styles.css": "9d8484ff0a40d7fadba71f91ad5e55057a384df7544593e40a8231c7de41b31b",
     "web/src/timeline/TimelineView.tsx": "25ade49214cfd160c049a56163bfdf40433d3a7e3b3447a46a1e277423b77d6f",
     "web/src/timeline/timeline-adapter.ts": "4bd061c89c0dc78edea5d9f1b7ce6b6be24f82b6949f84d0d7120d3cafe95dbb",
     "web/src/timeline/timeline-client.d.mts": "c216e4da9c9220ee2e0ce78fa9d40e3daf59d690140331184573e724f900525b",
@@ -329,7 +329,7 @@
     "web/src/timeline/timeline.css": "92bd283ffbbad8b990dc87b44c1cacfe42762c6bce991265ea2dd2b92f98b73b",
     "web/tsconfig.config.json": "47fbf0677e51c9303cd87916a022bb6b25a58b221ad733e95dd7e8d64430a4d7",
     "web/vitest.config.ts": "e439a39d4a59c7e279e5eb4b869405699f38ff617f413cb6fe1a70e2b15f4ab5",
-    "web/src/components/actions/ModelChooser.tsx": "2ab6a947757e6af9e2b943400da574aa481a8ecc04a23bc456fbe15398f56b48",
+    "web/src/components/actions/ModelChooser.tsx": "1e415361e51c478139578790ce41fdd053ef8ebec5a8fb0899178135f492efc7",
     "web/src/components/review/CurrentChangesPanel.tsx": "7feada844a4485d1e63fe1d4a10c73b38757cd07525f636d0c16eb8b1845d2c4"
   },
   "existingLicense": {

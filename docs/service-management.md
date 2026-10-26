@@ -152,6 +152,9 @@ At sign-out or shutdown Windows ends the owner without orderly Stop, which can l
   `models.json` may use only fields the pinned SDK supports.
   `supportsMidConvoSystemMessages` from newer Pi is accepted because the pinned SDK has no system-role conversation message; other unknown fields refuse rather than being silently ignored.
   The owner model choice offers every thinking level the pinned SDK supports for a model, `off` through `xhigh` and `max`; a model whose `thinkingLevelMap` maps only `max` (as some DeepSeek configurations do) is chosen at `max`, and a child runs only at exactly that level.
+  A model whose provider or model ID contains a known credential value is withheld from the catalog, since showing the ID would reveal that value; the catalog says how many models are withheld, and the rest stay selectable.
+  Credential values are `auth.json` keys, `models.json` `apiKey` and header values (and the variables they name) and service-environment variables whose names contain `KEY`, `TOKEN`, `SECRET`, `PASS`, `AUTH` or `COOKIE`.
+  The common Ollama placeholder `"apiKey": "ollama"` under a provider named `ollama` is such a case: give the placeholder a value that matches no provider or model ID (for example `"local-no-auth"`), then restart the service.
   The owner loads `models.json` once at start: after it changes, the model catalog, the chosen model and the workspace view refuse as `stale` (credential changes in `auth.json` are read fresh).
   Restart the service to reload it (`cadence server restart`, or `stop` then `start`), then choose the owner model again.
 - A foreground owner can be managed from another terminal.
