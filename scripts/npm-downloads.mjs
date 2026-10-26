@@ -34,6 +34,8 @@ const MIHOMO_API = "http://127.0.0.1:9091";
 const PROXY = "http://127.0.0.1:7891";
 const ROTATE_STATE = path.join(homedir(), ".cache", "cadence-rotate.json");
 const MAX_NODE_ATTEMPTS = 8;
+const NODE_DEAD_TTL_MS = 10 * 60 * 1000;
+const NPM_FETCH_TIMEOUT_MS = "15000";
 
 async function getJson(url) {
   const response = await fetch(url, { headers: { "user-agent": USER_AGENT } });
@@ -105,20 +107,45 @@ async function mihomoGroup() {
   return group.all;
 }
 
-async function rotateToNext(exclude) {
-  const options = (await mihomoGroup()).filter((name) => !exclude.has(name));
-  if (options.length === 0) throw new Error("mihomo-rotate-options-exhausted");
-  let index = 0;
+function readRotateState() {
   try {
-    index = JSON.parse(readFileSync(ROTATE_STATE, "utf8")).index ?? 0;
+    const parsed = JSON.parse(readFileSync(ROTATE_STATE, "utf8"));
+    return {
+      index: typeof parsed.index === "number" ? parsed.index : 0,
+      dead: parsed.dead && typeof parsed.dead === "object" ? parsed.dead : {},
+    };
   } catch {
-    index = 0;
+    return { index: 0, dead: {} };
   }
-  const node = options[index % options.length];
-  writeFileSync(
-    ROTATE_STATE,
-    JSON.stringify({ index: (index + 1) % Math.max(options.length, 1) }),
+}
+
+function writeRotateState(state) {
+  writeFileSync(ROTATE_STATE, JSON.stringify(state));
+}
+
+async function rotateToNext(exclude) {
+  const state = readRotateState();
+  const now = Date.now();
+  const all = await mihomoGroup();
+  // Drop dead marks that expired so flaky nodes get retried later.
+  for (const name of Object.keys(state.dead)) {
+    if (now - state.dead[name] > NODE_DEAD_TTL_MS) delete state.dead[name];
+  }
+  const options = all.filter(
+    (name) => !exclude.has(name) && !(name in state.dead),
   );
+  if (options.length === 0) {
+    // Everything is excluded or dead; retry the full pool once.
+    for (const name of Object.keys(state.dead)) delete state.dead[name];
+  }
+  const pool =
+    options.length > 0 ? options : all.filter((name) => !exclude.has(name));
+  if (pool.length === 0) throw new Error("mihomo-rotate-options-exhausted");
+  const node = pool[state.index % pool.length];
+  writeRotateState({
+    index: (state.index + 1) % pool.length,
+    dead: state.dead,
+  });
   const controller = AbortSignal.timeout(2000);
   const put = await fetch(`${MIHOMO_API}/proxies/ROTATE`, {
     method: "PUT",
@@ -128,6 +155,12 @@ async function rotateToNext(exclude) {
   });
   if (put.status !== 204) throw new Error(`mihomo-rotate-http-${put.status}`);
   return node;
+}
+
+function markNodeDead(node) {
+  const state = readRotateState();
+  state.dead[node] = Date.now();
+  writeRotateState(state);
 }
 
 function runNpmPack(directory, useProxy, quiet) {
@@ -142,7 +175,13 @@ function runNpmPack(directory, useProxy, quiet) {
   }
   return spawnSync(
     "npm",
-    ["pack", PACKAGE, `--pack-destination=${directory}`],
+    [
+      "pack",
+      PACKAGE,
+      `--pack-destination=${directory}`,
+      `--fetch-timeout=${NPM_FETCH_TIMEOUT_MS}`,
+      "--fetch-retries=1",
+    ],
     { stdio: quiet ? "ignore" : "inherit", shell: false, env },
   );
 }
@@ -163,6 +202,7 @@ async function fetchOnce(quiet = false) {
         if (!quiet) console.log(`downloaded ${PACKAGE} via ${node}`);
         return node;
       }
+      markNodeDead(node);
       excluded.add(node);
     }
     const direct = runNpmPack(directory, false, quiet);
