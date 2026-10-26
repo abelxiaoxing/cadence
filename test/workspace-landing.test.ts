@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -12,6 +13,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import { NativeConnection } from "../src/native-client.ts";
+import { ServiceCoordination } from "../src/service/coordination.ts";
 import { effectiveWorkspace, stateHomeInside } from "../src/task-store.ts";
 import { windowsSystemEnvironment } from "./helpers/windows-environment.ts";
 
@@ -19,7 +21,7 @@ const cli = fileURLToPath(new URL("../src/service-cli.mjs", import.meta.url));
 const roots: string[] = [];
 afterEach(() => {
   vi.unstubAllEnvs();
-  // A just-stopped Windows service can still hold its directory briefly.
+  // Windows can release an exited owner's handles a moment after its exit.
   for (const root of roots.splice(0))
     rmSync(root, {
       recursive: true,
@@ -74,6 +76,19 @@ function run(
     child.on("close", (code) => resolve({ code, stdout, stderr }));
   });
 }
+/** Stop confirms before the detached owner process exits, and that process
+ * runs in the landing: Windows cannot remove a live process's directory. */
+async function ownerExit(pid: number): Promise<void> {
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+      throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
 
 it("keeps project directories and redirects only the home directory and its ancestors", () => {
   const f = fakeHome();
@@ -109,7 +124,8 @@ it("start from the home directory lands on ~/cadence; status, explicit --workspa
     workspace: f.landing,
   });
   expect(existsSync(f.landing)).toBe(false);
-  let started = false;
+  let started = false,
+    pid = 0;
   try {
     const start = await run(f, ["start", "--port", "0"]);
     expect(start.stderr).toBe("");
@@ -118,6 +134,20 @@ it("start from the home directory lands on ~/cadence; status, explicit --workspa
     started = true;
     expect(alive).toMatchObject({ status: "alive", workspace: f.landing });
     expect(existsSync(f.landing)).toBe(true);
+    // The children's default state home inside this home (no XDG/LOCALAPPDATA).
+    const stateHome = join(
+      f.home,
+      process.platform === "win32" ? "AppData/Local" : ".local/state",
+    );
+    const registration = JSON.parse(
+      readFileSync(
+        new ServiceCoordination(f.landing, stateHome).path("registration.json"),
+        "utf8",
+      ),
+    );
+    expect(registration.epoch).toBe(alive.epoch);
+    pid = registration.pid;
+    process.kill(pid, 0);
 
     // An explicit home directory is redirected too, with one informational line.
     const explicit = await run(f, ["status", "--workspace", f.home]);
@@ -159,6 +189,9 @@ it("start from the home directory lands on ~/cadence; status, explicit --workspa
         status: "stopped",
         workspace: f.landing,
       });
+      // POSIX removes a live process's directory; an orphan never reaped (an
+      // init-less container) would also never report ESRCH there.
+      if (pid && process.platform === "win32") await ownerExit(pid);
     }
   }
 }, 30000);
