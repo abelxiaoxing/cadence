@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
+import { withoutNodeProxyNotice } from "./helpers/node-notices.ts";
 
 const cases = [
   "passive",
@@ -49,8 +50,7 @@ const cases = [
   "bad-auth-link",
   "bad-model-link",
   "bad-hardlink",
-  "bad-mode",
-  "bad-dir-mode",
+  "umask-modes",
   "bad-large",
   "bad-missing",
   "invalid-schema",
@@ -116,10 +116,7 @@ describe("owner model preparation: isolated actual public SDK, fabricated stores
   for (const scenario of cases) {
     // POSIX mode bits are not a Windows ACL test. Keep those lanes explicitly
     // unexecuted on Windows, rather than expecting chmod to establish the premise.
-    it.skipIf(
-      process.platform === "win32" &&
-        ["bad-mode", "bad-dir-mode"].includes(scenario),
-    )(
+    it.skipIf(process.platform === "win32" && scenario === "umask-modes")(
       `${scenario} (original native close, no inference)`,
       async () => {
         const root = mkdtempSync(
@@ -223,7 +220,7 @@ async function runNative(
     code: expectedCode,
     signal: null,
   });
-  expect(stderr).toBe("");
+  expect(withoutNodeProxyNotice(stderr)).toBe("");
   for (const secret of [
     env.CADENCE_FIXTURE_KEY,
     env.CADENCE_FIXTURE_HEADER,
@@ -331,9 +328,14 @@ it.each([false, true])(
       // Startup opt-in is required on this actual available host. The fixed502
       // establishes routing only, not refresh success through a working proxy.
       expect(observed.startupCapability).toBe(true);
-      expect(observed.resolved).toBe(!optIn);
-      expect(sinkContacts).toBe(optIn ? 0 : 1);
-      expect(proxyContacts).toBe(optIn ? 1 : 0);
+      // Node's built-in env proxy reaches the stock SDK's own HTTP stack on
+      // Node 24+ (observed on 24 and 26); on Node 22 that stock route stays
+      // direct. Cadence never relies on it: owner and workers install their own
+      // validated dispatchers (service-auth-proxy covers them on every runtime).
+      const stockRouted = optIn && Number(observed.node.split(".")[0]) >= 24;
+      expect(observed.resolved).toBe(!stockRouted);
+      expect(sinkContacts).toBe(stockRouted ? 0 : 1);
+      expect(proxyContacts).toBe(stockRouted ? 1 : 0);
       writeFileSync(
         join(root, "route-receipt.json"),
         JSON.stringify({

@@ -3,20 +3,37 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import register from "../src/index.ts";
-import { startupCardLines } from "../src/startup-card.ts";
+import { autostartNotice } from "../src/native-client.ts";
+import { CONFIG_MISSING, startupCardLines } from "../src/startup-card.ts";
 
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
+/** The entrypoint also reads home-level autostart state; keep it in the fixture. */
+function isolateHome(home: string) {
+  vi.stubEnv("HOME", home);
+  // os.homedir() reads USERPROFILE on Windows.
+  vi.stubEnv("USERPROFILE", home);
+  for (const name of [
+    "XDG_DATA_HOME",
+    "XDG_CONFIG_HOME",
+    "PI_CODING_AGENT_DIR",
+    "CADENCE_AUTOSTART",
+    "CADENCE_LINGER",
+  ])
+    vi.stubEnv(name, undefined);
+}
 function fixture() {
   const root = mkdtempSync(path.join(tmpdir(), "cadence-card-"));
   roots.push(root);
@@ -37,10 +54,18 @@ function write(file: string, text: string) {
 function displayedPath(file: string) {
   return JSON.stringify(file).slice(1, -1);
 }
+/** No configuration file exists, so the card names where to create one. */
+function zeroConfigCard(input: { userFile: string }) {
+  return [
+    `Cadence配置文件：${displayedPath(input.userFile)}${CONFIG_MISSING}`,
+    "Context7：匿名模式，无需密钥｜Grok：待配置 GROK_API_URL、GROK_API_KEY｜Tavily：未配置（可选）",
+  ].join("\n");
+}
 function harness(registrar = register) {
   const handlers = new Map<string, Array<(...args: any[]) => unknown>>();
   let active = ["read", "bash"];
   const pi = {
+    events: { on: () => () => {}, emit: vi.fn() },
     on(name: string, handler: (...args: any[]) => unknown) {
       handlers.set(name, [...(handlers.get(name) ?? []), handler]);
     },
@@ -166,6 +191,7 @@ describe("Cadence startup configuration card", () => {
     "shows a subdued notification on every session start in %s",
     async (mode) => {
       const input = fixture();
+      isolateHome(input.home);
       const h = harness();
       const setWidget = vi.fn();
       const notify = vi.fn();
@@ -187,10 +213,7 @@ describe("Cadence startup configuration card", () => {
         await h.emit("session_start", ctx, reason);
       }
       expect(notify).toHaveBeenCalledTimes(6);
-      expect(notify).toHaveBeenCalledWith(
-        "Context7：匿名模式，无需密钥｜Grok：待配置 GROK_API_URL、GROK_API_KEY｜Tavily：未配置（可选）",
-        "info",
-      );
+      expect(notify).toHaveBeenCalledWith(zeroConfigCard(input), "info");
       expect(setWidget).not.toHaveBeenCalled();
       await h.emit("agent_start", ctx);
       await h.emit("session_shutdown", ctx);
@@ -232,6 +255,7 @@ describe("Cadence startup configuration card", () => {
 
   it("the shipped entrypoint registers a notification and one inert task command without task activation", async () => {
     const input = fixture();
+    isolateHome(input.home);
     const h = harness(register);
     const setWidget = vi.fn();
     const notify = vi.fn();
@@ -243,10 +267,7 @@ describe("Cadence startup configuration card", () => {
       ui: { onTerminalInput: () => () => {}, setWidget, notify },
     };
     await h.emit("session_start", ctx);
-    expect(notify).toHaveBeenCalledWith(
-      "Context7：匿名模式，无需密钥｜Grok：待配置 GROK_API_URL、GROK_API_KEY｜Tavily：未配置（可选）",
-      "info",
-    );
+    expect(notify).toHaveBeenCalledWith(zeroConfigCard(input), "info");
     expect(setWidget).not.toHaveBeenCalled();
     expect(h.active()).toEqual(["read", "bash"]);
     expect(h.pi.registerCommand).toHaveBeenCalledTimes(1);
@@ -260,4 +281,46 @@ describe("Cadence startup configuration card", () => {
     expect(h.active()).toEqual(["read", "bash"]);
     await h.emit("session_shutdown", ctx);
   });
+
+  it.skipIf(process.platform !== "linux")(
+    "adds the boot-start notice for an enabled Cadence unit as a separate warning",
+    async () => {
+      const input = fixture();
+      isolateHome(input.home);
+      const data = path.join(input.home, ".local", "share", "systemd", "user");
+      const wants = path.join(
+        input.home,
+        ".config",
+        "systemd",
+        "user",
+        "default.target.wants",
+      );
+      write(path.join(data, "cadence.service"), "# generated\n");
+      mkdirSync(wants, { recursive: true });
+      symlinkSync(
+        path.join(data, "cadence.service"),
+        path.join(wants, "cadence.service"),
+      );
+      const h = harness(register);
+      const notify = vi.fn();
+      const ctx = {
+        cwd: input.cwd,
+        hasUI: true,
+        mode: "tui",
+        isProjectTrusted: () => true,
+        ui: { onTerminalInput: () => () => {}, setWidget: vi.fn(), notify },
+      };
+      await h.emit("session_start", ctx);
+      // Stops the TUI owner feed before its first look; the card is the subject.
+      await h.emit("session_shutdown", ctx);
+      // Linger is the host's logind state; the notice's own cases are unit tests.
+      const notice = autostartNotice();
+      // A later info status replaces the card in Pi's TUI; the warning stays.
+      expect(notify).toHaveBeenCalledWith(zeroConfigCard(input), "info");
+      expect(
+        notify.mock.calls.filter(([, type]) => type === "warning"),
+      ).toEqual(notice ? [[notice, "warning"]] : []);
+      if (notice) expect(notice).toContain("loginctl enable-linger");
+    },
+  );
 });

@@ -1,26 +1,135 @@
 # Explicit service management
 
-The native `/cadence` view and browser are clients of the same explicitly started owner.
-Opening either view, extension discovery, installation and login do not start it.
+The native `/cadence` view and browser are clients of the same owner, started explicitly or by the [background service](#background-service).
+Opening either view, extension discovery, login and package installation do not start it.
 Use one coordination state-home for the checkout; a different state-home is not a recovery route.
 Stop older Cadence sessions before starting the shared service.
 
 ```sh
-cadence-service start --workspace /absolute/project
-cadence-service status --workspace /absolute/project
-cadence-service diagnose --workspace /absolute/project
-cadence-service token-link --workspace /absolute/project --reveal
-cadence-service token-rotate --workspace /absolute/project
-cadence-service stop --workspace /absolute/project
+cadence start --workspace /absolute/project
+cadence status --workspace /absolute/project
+cadence diagnose --workspace /absolute/project
+cadence token-link --workspace /absolute/project --reveal
+cadence token-rotate --workspace /absolute/project
+cadence stop --workspace /absolute/project
 ```
 
-The equivalent package-relative command is `node <cadence>/src/service-cli.mjs ...`.
+`cadence-service` is the same command, and the equivalent package-relative command is `node <cadence>/src/service-cli.mjs ...`.
 `--help` lists the finite interface.
-`start` also accepts `--foreground`, `--config`, `--agent-dir`, `--host` (loopback only), `--port`, `--token-file` and `--state-home`.
+`start` also accepts `--foreground`, `--config`, `--agent-dir`, `--host` (loopback only), `--port`, `--token-file`, `--server-config` ([port and token](#port-and-token)) and `--state-home`.
 Defaults are loopback `127.0.0.1:17423`, normal Pi agent configuration, and detached service lifetime.
 An explicit port0 selects and persists a positive port once; restart uses the selected configuration, not a fallback endpoint.
 Missing/corrupt existing setup is preserved, not filled in or reset.
-There is no login autostart, supervisor installation, provider login or credential migration.
+A workspace that contains the private state home (the home directory and its ancestors, such as `C:\Users\<you>` with `%LOCALAPPDATA%` or `~` with `~/.local/state`) would expose private history and locks to change observation, so every command there uses `~/cadence` (`%USERPROFILE%\cadence`) instead of refusing.
+Only `start` creates it; `status` reports `absent` without creating it, an explicit `--workspace` adds one informational line, and JSON output names the effective `workspace` only when it differs.
+`/cadence` started in such a directory attaches to the same owner, and real project directories are never redirected.
+Apart from the background service below, there is no supervisor installation, provider login or credential migration.
+
+## Background service
+
+```sh
+cadence server install [--workspace /absolute/project] [--no-linger]
+cadence server status
+cadence server restart
+cadence server stop
+cadence server uninstall
+```
+
+Only these explicit commands register, change or remove the service; no package install, update hook, `/cadence` or browser visit does.
+The package has no install script, so npm 12 and Bun skipping untrusted scripts by default changes nothing; the pinned Pi SDK's blocked `@google/genai` preinstall only echoes `no-op`, and its `protobufjs` postinstall only warns about version schemes.
+`install` also creates the research template `~/.pi/agent/cadence/.env` when it is missing, never overwriting it, whatever the service result, and adds its [port and token](#port-and-token) lines when they are missing.
+`install` works from any package location and runs `start --foreground --workspace <workspace> --server-config <file>` (Linux, macOS) or the same without `--foreground` (Windows) from that copy with the installing Node, without `--port`.
+The workspace is `~/cadence` (created if missing), an existing absolute `--workspace`, or on later installs the one the definition already runs; a workspace containing the service's state home lands on `~/cadence` with a note.
+The `.env` [port and token](#port-and-token) select the endpoint (17423 by default) and the token; an occupied endpoint fails instead of falling back.
+Install and restart print the private entry link once the owner answers; the JSON result on stdout never carries the token.
+`restart` rewrites an existing definition with the current Node and package paths, keeping its workspace and the user's disable choices, and starts it; run it after an npm upgrade, a Node change or a `models.json` edit.
+`stop` stops the owner orderly and keeps the registration for the next boot or login.
+`uninstall` stops it orderly and deletes only what Cadence generated; workspace, state home, history, linger and Pi sources stay.
+Because npm runs no uninstall script, uninstall the service before `npm uninstall -g`; a left-behind definition fails to start once its CLI path disappears.
+A definition Cadence did not generate is left unchanged (`foreign`), and `status` reports `absent` when none is registered.
+
+Pi's installer omits peers, so the standalone owner and workers load the Pi SDK (`pi-coding-agent`, `pi-ai`) from exact 0.84.3 optional dependencies.
+Package files may be hard links into the package manager's store (Bun's default install); Cadence binds their exact content, not their link count.
+Missing or unusable Pi sources refuse before an owner registers; a new owner without the SDK quarantines.
+`install` therefore writes nothing while the SDK is unresolvable (for example, optional dependencies omitted), and registers without starting while Pi's `auth.json` is missing (`waiting-for-pi-login`); log in to Pi, then run `cadence server restart`.
+
+While no service is registered, Pi's session-start card shows a separate warning naming `cadence server install` for an installed package copy (`node <copy>/src/service-cli.mjs server install` for Pi's managed copy, which puts no bin on `PATH`); a checkout loaded with `pi -e` stays quiet.
+It is a warning rather than part of the info card because Pi's TUI replaces one info status with the next.
+`/cadence` names the same command when it finds no owner.
+A machine without a supported user service manager and `CADENCE_AUTOSTART=0` keep both quiet; with `CADENCE_LINGER=0` they suggest `--no-linger`.
+
+### Port and token
+
+The background service reads two lines of the research configuration `~/.pi/agent/cadence/.env`:
+
+```sh
+CADENCE_PORT=17423
+CADENCE_TOKEN=<at least 32 characters, no control or format characters>
+```
+
+The file keeps the research skills' syntax (`KEY=value` lines, `#` comments, one optional pair of quotes), and each of these keys may appear only once.
+`install` and `restart` create the file from the research template when it is missing, as your own 0600 file.
+They append a missing `CADENCE_PORT` (17423) or `CADENCE_TOKEN` (random, 43 characters) under a comment, in the file's own line endings, and never change an existing line.
+It is your own file, made by hand, by older docs (`mkdir -p ~/.pi/agent/cadence`) or by a dotfiles manager, so it is read like Pi's sources: its mode bits are not checked (0644, or 0664 under umask 002, work), links in its path and the file itself are followed, and a rewrite goes to the real file, written 0600, leaving the links in place.
+When other users can read it, `install` and `restart` add a note naming `chmod 600`, without refusing.
+Only a file that cannot be the user's own configuration makes them change nothing: missing or a link to nothing, not a regular file, not owned by you or in a directory you do not own, hard-linked, over 64 KiB or not UTF-8, a line the research skills would also refuse, a duplicate key, a port outside 1-65535 or a short token.
+Each refusal names its reason and line number, never a byte of the file.
+A project's `.pi/cadence/.env`, which the research skills prefer, is never read for the service.
+`start --server-config <.env>` makes these lines authoritative.
+The host reads them once before binding, like an environment token, so editing them while the owner runs changes nothing and can never fence access or the orderly Stop; the next start applies them, and `cadence server restart` does both.
+A workspace whose token comes from the file follows it at every `start`, also without `--server-config`; a contradicting `--port`, `--token-file` or `CADENCE_WEB_TOKEN` refuses.
+`CADENCE_WEB_TOKEN` stays the separate process-environment source; sourcing the `.env` in a shell sets `CADENCE_PORT` and `CADENCE_TOKEN`, which Cadence never reads from its environment.
+The token never enters Cadence's state home, and status and diagnosis never print it.
+`token-rotate` replaces only the `CADENCE_TOKEN` line's value with a new random token, keeping every other byte, and invalidates old links and cookies without stopping work.
+It refuses without any effect when that token was edited since the start, so a pending edit is never overwritten.
+
+A stopped workspace selected earlier with a generated, environment or file token, or another port, is reselected to the file at its next `start --server-config`.
+Under the new owner reservation Cadence retires the previous token with a new access generation and replaces the selected port and token source; the history and every other selected setting stay.
+A different agent directory, host or proxy still conflicts, and a running owner refuses until it has stopped.
+An interrupted replacement keeps the reservation as a fence and is never repaired automatically, like any interrupted start.
+
+### Linux systemd user unit
+
+`install` writes `~/.local/share/systemd/user/cadence.service`, enables it for `default.target` (also undoing a `disable`, never a `mask`) and starts it.
+A user unit runs with the user manager, which starts at login unless logind lingers the user, so install also enables linger when it is off.
+It first calls `SetUserLinger` through `busctl` with `interactive=false` and no interactive authorization (bounded to 15s), because `loginctl enable-linger` always requests an interactive check that a desktop polkit agent can turn into a password dialog even with `--no-ask-password`.
+Only where polkit requires authorization for `set-self-linger` (older systemd defaults) does it then run `loginctl enable-linger`, which may ask for your password; that comes after the start, so an interrupted prompt never leaves the owner stopped, and a refusal reports `"linger":"refused"` with a login-only unit.
+`--no-linger` or `CADENCE_LINGER=0` skips linger; `restart` never changes it, so `loginctl disable-linger` is kept.
+The unit bakes the installer's PATH (minus npm lifecycle entries), LANG/LC_ALL, an absolute XDG_STATE_HOME and a custom PI_CODING_AGENT_DIR, so shell management sees the same state home and Pi sources.
+Proxy variables are not baked; add a validated pair with `systemctl --user edit cadence`.
+It carries `ConditionPathExists=` for the CLI, `auth.json` and both SDK packages.
+
+`restart` stops an active unit with its loaded definition, rewrites the file and starts it, without enabling a disabled unit; a masked unit is never enabled or started.
+`ExecStop` is the authenticated orderly Stop, so admitted work is stopped, not detached; `stop` and `uninstall` (`disable --now`) use it too.
+`KillMode=mixed` sends systemd's SIGTERM only to the management client.
+An owner still settling after `TimeoutStopSec=90` (for example a quarantined one) is SIGKILLed, which is not orderly Stop and can leave recovery fences.
+`Restart=on-failure` is bounded to three starts in five minutes; a restart never removes fences, so a crashed owner keeps refusing until informed recovery.
+Without linger, user units start at login and stop at logout through the same Stop.
+Linger starts the user manager, with every enabled user unit, at boot and keeps it running after logout.
+`status` reports `linger` as `on` or `off`, and Pi's startup card names `loginctl enable-linger` while an enabled unit is login-only; a disabled or masked unit (also `mask --runtime`) keeps it quiet.
+To keep the service off while Cadence stays installed, use `systemctl --user disable --now cadence` or `mask`.
+
+### macOS LaunchAgent
+
+`install` writes `~/Library/LaunchAgents/com.abelxiaoxing.cadence.plist` with `RunAtLoad`, runs `launchctl enable` (undoing a `launchctl disable`) and loads it into `gui/<uid>` with `launchctl bootstrap`, which starts it; launchd loads it again at every login.
+It bakes the same PATH, LANG/LC_ALL, XDG_STATE_HOME and PI_CODING_AGENT_DIR as the Linux unit and logs to `~/Library/Logs/cadence.log`.
+Without `auth.json` the agent is written but not loaded.
+Because launchd stops a job only by signaling it, `restart`, `stop`, `uninstall` and a reinstall first stop the owner through the authenticated orderly Stop, and change nothing when that Stop is `unconfirmed`, `quarantined` or `unavailable`.
+Only then does Cadence unload (`bootout`) or replace the agent; `stop` leaves it loaded, and the finished job starts again at the next login.
+There is no `KeepAlive`: launchd has no start limit, and a restart never clears fences, so a failed owner stays down until `cadence server restart`.
+`restart` keeps a `launchctl disable` and reports `disabled` without loading.
+At logout or shutdown launchd signals the job, which is not orderly Stop and can leave recovery fences; run `cadence server stop` first while work is running.
+
+### Windows login Run entry
+
+`install` writes `%LOCALAPPDATA%\cadence-server\cadence.vbs`, beside rather than inside the private state home, and the per-user value `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Cadence`, which runs it with `wscript.exe` at login; no administrator rights are needed.
+The launcher is UTF-16 with a byte-order mark, so non-ASCII paths work, and runs `start --workspace` with window style 0, so no console window appears; the detached owner keeps running after the launcher exits.
+It bakes only a custom PI_CODING_AGENT_DIR, because the login environment already carries PATH and `%LOCALAPPDATA%`.
+`install` also removes Task Manager's `StartupApproved` switch for the entry (undoing a disable there); `restart` keeps both the entry and that switch, and `status` reports a disabled entry.
+Without `auth.json` the entry is registered but nothing starts.
+Nothing supervises the detached owner, so a failed owner is not restarted, and every `restart`, `stop`, `uninstall` and reinstall first runs the authenticated orderly Stop and changes nothing unless it is confirmed; Cadence never kills a process.
+A `Cadence` Run value without Cadence's launcher is `foreign` and left unchanged; registry values are only tested for presence, because `reg.exe` prints them in the console code page.
+At sign-out or shutdown Windows ends the owner without orderly Stop, which can leave recovery fences; run `cadence server stop` first while work is running.
 
 ## Status, departure and Stop
 
@@ -34,6 +143,20 @@ There is no login autostart, supervisor installation, provider login or credenti
 - `unconfirmed` means startup/Stop acknowledgment or settlement was not established within its reporting bound.
   It is not permission to restart, kill a guessed PID or remove a lock.
   `quarantined` preserves uncertain process/auth/storage work and prevents unsafe writers.
+- A host that refuses during `start` reports `{"status":"refused","error":<code>,"stage":<stage>}` and exits without registering an owner.
+  Stages are `package` (installed web assets or Agent profiles), `pi-agent-directory`, `pi-auth`, `pi-models` and `service`; stderr names the selected Pi source to fix.
+  `quarantined` with stage `pi-runtime` or `service` means the owner registered first; it keeps its fences for informed recovery.
+  Reports carry fixed codes and stages only, never paths, configuration bytes or OS error text.
+- The selected Pi agent directory must be a real directory (not a symlink) owned by you; `auth.json` and `models.json` must be your own single-link regular files.
+  Their mode bits are not checked: Pi creates its agent directory with your umask (0755, or 0775 under umask 002), and Cadence's own state stays 0700 regardless.
+  `models.json` may use only fields the pinned SDK supports.
+  `supportsMidConvoSystemMessages` from newer Pi is accepted because the pinned SDK has no system-role conversation message; other unknown fields refuse rather than being silently ignored.
+  The owner model choice offers every thinking level the pinned SDK supports for a model, `off` through `xhigh` and `max`; a model whose `thinkingLevelMap` maps only `max` (as some DeepSeek configurations do) is chosen at `max`, and a child runs only at exactly that level.
+  A model whose provider or model ID contains a known credential value is withheld from the catalog, since showing the ID would reveal that value; the catalog says how many models are withheld, and the rest stay selectable.
+  Credential values are `auth.json` keys, `models.json` `apiKey` and header values (and the variables they name) and service-environment variables whose names contain `KEY`, `TOKEN`, `SECRET`, `PASS`, `AUTH` or `COOKIE`.
+  The common Ollama placeholder `"apiKey": "ollama"` under a provider named `ollama` is such a case: give the placeholder a value that matches no provider or model ID (for example `"local-no-auth"`), then restart the service.
+  The owner loads `models.json` once at start: after it changes, the model catalog, the chosen model and the workspace view refuse as `stale` (credential changes in `auth.json` are read fresh).
+  Restart the service to reload it (`cadence server restart`, or `stop` then `start`), then choose the owner model again.
 - A foreground owner can be managed from another terminal.
   Ctrl-C, SIGTERM, machine crash or terminal destruction is **not** the authenticated orderly Stop route and can leave recovery fences.
   A recovered `stopped` registration means acknowledged fence release, not retroactive native closure certification.
@@ -76,8 +199,8 @@ Local fabricated-provider plain/gzip routing tests are not paid-provider, all-ad
 ## Informed local recovery
 
 ```sh
-cadence-service recover inspect --workspace /absolute/project
-cadence-service recover resolve --workspace /absolute/project
+cadence recover inspect --workspace /absolute/project
+cadence recover resolve --workspace /absolute/project
 ```
 
 Inspection is readonly.

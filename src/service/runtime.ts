@@ -7,12 +7,17 @@ import {
   sameNetwork,
   sdkNetworkEnvironment,
 } from "../sdk-network.ts";
-import { ContractError } from "../service-contract.ts";
+import {
+  ContractError,
+  ERROR_CODES,
+  type ErrorCode,
+} from "../service-contract.ts";
 import { resolveWorkspace } from "../task-store.ts";
 import { decodeHttpPolicy, type HttpPolicy, localOrigin } from "./config.ts";
 import { closed, integer, literal, oneOf, text } from "./contracts/core.ts";
 import { ServiceCoordination } from "./coordination.ts";
 import { encoded, hash, json, PrivateFiles } from "./private-files.ts";
+import { readServerConfig } from "./server-config.ts";
 
 export const STARTUP_INPUT_BYTES = 16 * 1024;
 
@@ -21,7 +26,8 @@ export interface HostConfig {
   http: HttpPolicy;
   cwd: string;
   agentDir: string;
-  tokenSource: "generated" | "environment" | "file";
+  /** `config`: CADENCE_TOKEN of the `.env` at `tokenFile`. */
+  tokenSource: "generated" | "environment" | "file" | "config";
   tokenFile: string | null;
 }
 export interface StartOptions {
@@ -32,6 +38,8 @@ export interface StartOptions {
   host?: HttpPolicy["host"];
   port?: number;
   tokenFile?: string;
+  /** The `.env` whose CADENCE_PORT and CADENCE_TOKEN select the endpoint and token. */
+  serverConfig?: string;
 }
 export interface HostInput {
   workspace: string;
@@ -57,9 +65,10 @@ export function decodeHostConfig(value: unknown): HostConfig {
     "generated",
     "environment",
     "file",
+    "config",
   ]);
   const tokenFile = o.tokenFile === null ? null : absolute(o.tokenFile);
-  if ((o.tokenSource === "file") !== (tokenFile !== null))
+  if ((tokenSource === "file" || tokenSource === "config") !== !!tokenFile)
     throw new ContractError("invalid");
   return {
     schema: literal(o.schema, "cadence-service-host/1"),
@@ -69,6 +78,18 @@ export function decodeHostConfig(value: unknown): HostConfig {
     tokenSource,
     tokenFile,
   };
+}
+/** A stopped workspace may switch only its port and token source, and only to
+ * the server configuration; any other selected difference stays a conflict. */
+export function reselectable(old: HostConfig, next: HostConfig): boolean {
+  const kept = (c: HostConfig) =>
+    encoded({
+      ...c,
+      http: { ...c.http, port: 0 },
+      tokenSource: null,
+      tokenFile: null,
+    });
+  return next.tokenSource === "config" && kept(old) === kept(next);
 }
 export function readHostConfig(c: ServiceCoordination): HostConfig | undefined {
   const owner = c.configuration();
@@ -137,7 +158,7 @@ export function selectStart(
     if (!bytes) throw new ContractError("corrupt-selected");
     fromFile = decodeHostConfig(json(bytes));
   }
-  const selected =
+  const base =
     old ??
     fromFile ??
     decodeHostConfig({
@@ -165,6 +186,26 @@ export function selectStart(
           : "generated",
       tokenFile: options.tokenFile ? resolve(options.tokenFile) : null,
     });
+  // The server configuration is authoritative for the port and token, named
+  // explicitly or by a selection that already reads its token from it. A
+  // stopped workspace selected otherwise is reselected by the host.
+  const server =
+    options.serverConfig !== undefined
+      ? resolve(options.serverConfig)
+      : old?.tokenSource === "config"
+        ? old.tokenFile
+        : null;
+  let selected = base;
+  if (server) {
+    if (options.tokenFile !== undefined) throw new ContractError("conflict");
+    const { port } = readServerConfig(server).config;
+    selected = decodeHostConfig({
+      ...base,
+      http: { ...base.http, port },
+      tokenSource: "config",
+      tokenFile: server,
+    });
+  }
   if (
     (fromFile && encoded(fromFile) !== encoded(selected)) ||
     (options.port !== undefined && options.port !== selected.http.port) ||
@@ -207,4 +248,51 @@ export function decodeHostInput(value: unknown): HostInput {
 export function portValue(value: string): number {
   if (!/^(0|[1-9][0-9]{0,4})$/.test(value)) throw new ContractError("invalid");
   return integer(Number(value), 0, 65535);
+}
+/** Where a host refused: fixed labels, never paths, configuration bytes or OS text. */
+export const STARTUP_STAGES = [
+  "package",
+  "pi-agent-directory",
+  "pi-auth",
+  "pi-models",
+  "pi-runtime",
+  "service",
+] as const;
+export type StartupStage = (typeof STARTUP_STAGES)[number];
+/** `quarantined`: an owner registration was acquired first and stays fenced
+ * for informed recovery; otherwise nothing was registered. */
+export class StartupRefusal extends ContractError {
+  constructor(
+    code: ErrorCode,
+    readonly stage: StartupStage,
+    readonly quarantined = false,
+  ) {
+    super(code);
+  }
+}
+export interface StartupReport {
+  status: "refused" | "quarantined";
+  error: ErrorCode;
+  stage: StartupStage;
+}
+export function startupReport(error: unknown): StartupReport {
+  if (error instanceof StartupRefusal)
+    return {
+      status: error.quarantined ? "quarantined" : "refused",
+      error: error.code,
+      stage: error.stage,
+    };
+  return {
+    status: "refused",
+    error: error instanceof ContractError ? error.code : "unavailable",
+    stage: "service",
+  };
+}
+export function decodeStartupReport(value: unknown): StartupReport {
+  const o = closed(value, ["status", "error", "stage"]);
+  return {
+    status: oneOf(o.status, ["refused", "quarantined"]),
+    error: oneOf(o.error, ERROR_CODES),
+    stage: oneOf(o.stage, STARTUP_STAGES),
+  };
 }

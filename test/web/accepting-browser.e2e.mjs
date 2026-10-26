@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { it } from "vitest";
@@ -14,7 +15,7 @@ for (const route of ["loopback", "https"])
       route === "https"
         ? await secureAcceptingFixture()
         : await acceptingFixture("generated");
-    const root = mkdtempSync("/home/mirako/abel/cdb-");
+    const root = mkdtempSync(join(tmpdir(), "cdb-"));
     let launcher, browser, original, failure, secondPage;
     const receipt = {
       passed: false,
@@ -46,10 +47,12 @@ for (const route of ["loopback", "https"])
       browser = await chromium.connect(launcher.wsEndpoint());
       const one = await browser.newContext({
         viewport: { width: 1440, height: 900 },
+        locale: "en-US",
         acceptDownloads: true,
       });
       const two = await browser.newContext({
         viewport: { width: 390, height: 844 },
+        locale: "en-US",
         acceptDownloads: true,
       });
       const p = await one.newPage(),

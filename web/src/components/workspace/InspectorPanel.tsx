@@ -1,6 +1,14 @@
-/* Adapted from pi-web-ui RightPanel.tsx narrow props/tab composition and PlanBoard.
- * MIT (c) 2026 xing-shuyin. Authority and current metadata are never panel defaults. */
+/* Adapted from pi-web-ui RightPanel.tsx narrow props/tab composition, panel chrome
+ * and PlanBoard. MIT (c) 2026 xing-shuyin.
+ * Authority and current metadata are never panel defaults. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { IconType } from "react-icons";
+import {
+  FiCheckSquare,
+  FiFileText,
+  FiGitPullRequest,
+  FiUserCheck,
+} from "react-icons/fi";
 import {
   canonicalJson,
   decodeContext,
@@ -14,6 +22,7 @@ import type {
 } from "../../client/plan-metadata";
 import { PLAN_METADATA_UNAVAILABLE } from "../../client/plan-metadata";
 import { ViewLifetime } from "../../client/view-lifetime";
+import { useT } from "../../i18n/locale";
 import type {
   Action,
   CheckObligations,
@@ -26,6 +35,23 @@ import { PlanBoard } from "../plan/PlanBoard";
 import { CheckPanel } from "../review/CheckPanel";
 import { CurrentChangesPanel } from "../review/CurrentChangesPanel";
 import { ObservationPanel } from "../review/ObservationPanel";
+
+const INSPECTOR_TABS: readonly (readonly [string, IconType])[] = [
+  ["plan", FiFileText],
+  ["checks", FiCheckSquare],
+  ["changes", FiGitPullRequest],
+  ["review", FiUserCheck],
+];
+export function InspectorPlaceholder() {
+  const { t } = useT();
+  return (
+    <aside className="panel panel-right">
+      <p className="panel-empty">
+        {t("Select a task to inspect plans, checks, changes and review.")}
+      </p>
+    </aside>
+  );
+}
 export function InspectorPanel({
   client,
   context: contextInput,
@@ -43,6 +69,7 @@ export function InspectorPanel({
   onAction: (a: Action) => void;
   planMetadata?: PlanMetadataPort;
 }) {
+  const { t, tx } = useT();
   const contextKey = contextInput ? canonicalJson(contextInput) : "unavailable";
   const context = useMemo(
     () =>
@@ -98,35 +125,37 @@ export function InspectorPanel({
     (value: CheckObligations) => setChecks(value),
     [],
   );
-  if (!taskId)
-    return (
-      <aside className="panel panel-right">
-        <p>Select a task to inspect plans, checks, changes and review.</p>
-      </aside>
-    );
+  if (!taskId) return <InspectorPlaceholder />;
   const taskSeed = { ...seed, scope: { kind: "task" as const, id: taskId } };
   return (
     <aside className="panel panel-right">
-      <nav className="inspector-tabs" aria-label="Inspector">
-        {["plan", "checks", "changes", "review"].map((t) => (
+      <nav className="rp-tabs" aria-label={t("Inspector")}>
+        {INSPECTOR_TABS.map(([name, Icon]) => (
           <button
             type="button"
-            key={t}
-            aria-pressed={tab === t}
-            onClick={() => setTab(t)}
+            key={name}
+            className="rp-tab"
+            aria-label={tx(name)}
+            aria-pressed={tab === name}
+            onClick={() => setTab(name)}
           >
-            {t}
+            <Icon aria-hidden="true" />
+            <span>{tx(name)}</span>
           </button>
         ))}
       </nav>
       <div className="inspector-body">
         {tab === "plan" && (
           <>
-            {metaError && <p role="status">{metaError}</p>}
+            {metaError && (
+              <p className="inspector-note" role="status">
+                {tx(metaError)}
+              </p>
+            )}
             {progress && (
               <section>
                 <p>
-                  Saved graph proof in progress.{" "}
+                  {t("Saved graph proof in progress.")}{" "}
                   {JSON.stringify(progress.coverage)}
                 </p>
                 <button
@@ -149,7 +178,7 @@ export function InspectorPanel({
                       });
                   }}
                 >
-                  Continue saved graph read
+                  {t("Continue saved graph read")}
                 </button>
               </section>
             )}
@@ -163,7 +192,7 @@ export function InspectorPanel({
                   })
                 }
               >
-                Load observed saved plan into local draft
+                {t("Load observed saved plan into local draft")}
               </button>
             )}
             {context ? (
@@ -197,8 +226,9 @@ export function InspectorPanel({
               />
             ) : (
               <p>
-                Current control context unavailable. Historical data is not
-                action authority.
+                {t(
+                  "Current control context unavailable. Historical data is not action authority.",
+                )}
               </p>
             )}
           </>
@@ -220,7 +250,7 @@ export function InspectorPanel({
               storeId={seed.storeId}
               taskId={taskId}
             />
-            <h3>Captured historical observations</h3>
+            <h3>{t("Captured historical observations")}</h3>
             <ObservationPanel
               client={client}
               seed={{ ...taskSeed, reader: "changes" }}
@@ -229,18 +259,19 @@ export function InspectorPanel({
         )}
         {tab === "review" && (
           <>
-            <h3>Human review</h3>
+            <h3>{t("Human review")}</h3>
             <p>
-              Done records human acknowledgment, not execution success or
-              certification. It cannot restart a blocked episode.
+              {t(
+                "Done records human acknowledgment, not execution success or certification. It cannot restart a blocked episode.",
+              )}
             </p>
             <label>
-              Episode to review
+              {t("Episode to review")}
               <select
                 value={reviewRun}
                 onChange={(e) => setReviewRun(e.target.value)}
               >
-                <option value="">Select an observed episode</option>
+                <option value="">{t("Select an observed episode")}</option>
                 {runs
                   .filter(
                     (r) =>
@@ -248,7 +279,7 @@ export function InspectorPanel({
                   )
                   .map((r) => (
                     <option key={r.runId} value={r.runId}>
-                      {r.runId} · {r.outcome ?? r.lifecycle}
+                      {r.runId} · {tx(r.outcome ?? r.lifecycle)}
                     </option>
                   ))}
               </select>
@@ -259,8 +290,9 @@ export function InspectorPanel({
                 checked={issues}
                 onChange={(e) => setIssues(e.target.checked)}
               />
-              I acknowledge current unresolved issues if present; original
-              results will not be rewritten.
+              {t(
+                "I acknowledge current unresolved issues if present; original results will not be rewritten.",
+              )}
             </label>
             <button
               type="button"
@@ -283,11 +315,13 @@ export function InspectorPanel({
                   });
               }}
             >
-              Preview human review / Done
+              {t("Preview human review / Done")}
             </button>
             {!checks && (
               <p>
-                Observe current obligations in Checks before requesting review.
+                {t(
+                  "Observe current obligations in Checks before requesting review.",
+                )}
               </p>
             )}
             <ObservationPanel

@@ -5,14 +5,16 @@ import {
   fstatSync,
   fsyncSync,
   lstatSync,
+  mkdirSync,
   openSync,
+  readSync,
   renameSync,
   type Stats,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { readBounded, safeDirectory } from "../task-store.ts";
+import { retryWindowsFileOperation, safeDirectory } from "../task-store.ts";
 import { ContractError, parseWireJson } from "./contracts/core.ts";
 
 export const METADATA_BYTES = 16 * 1024;
@@ -24,10 +26,14 @@ export function refused(): never {
 export function hash(bytes: string | Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
-function privateMode(st: Stats): void {
+/** Owner-only mode for state Cadence creates. External sources it only reads
+ * (Pi's agent directory and files) keep whatever mode the user's umask gave
+ * them, such as 0755/0775 from Pi itself; ownership is still required. */
+function privateMode(st: Stats, ownerOnly = true): void {
   if (
     process.platform !== "win32" &&
-    ((st.mode & 0o077) !== 0 || (process.getuid && st.uid !== process.getuid()))
+    ((ownerOnly && (st.mode & 0o077) !== 0) ||
+      (process.getuid && st.uid !== process.getuid()))
   )
     refused();
 }
@@ -46,37 +52,132 @@ function same(a: Stats, b: Stats): boolean {
 function missing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
+// Advances once per job, at its first microtask checkpoint. Nothing queued
+// retains a scope, so a dropped read budget is collected as usual.
+let job = 0,
+  advancing = false;
+function currentJob(): number {
+  if (!advancing) {
+    advancing = true;
+    queueMicrotask(() => {
+      job++;
+      advancing = false;
+    });
+  }
+  return job;
+}
+/** Directories that ONE synchronous operation already walked. Reuse re-observes
+ * the directory itself, no-follow, with the walked dev/ino and private mode: an
+ * ancestor substituted for other content resolves elsewhere and walks again. It
+ * goes stale at the next microtask checkpoint, so an await or a later call
+ * always walks; an ancestor's mode change inside one operation is seen by the
+ * next. Absence, refusal and any changed identity fall back to the full walk.
+ */
+export class DirectoryWalks {
+  private readonly job = currentJob();
+  private readonly walked = new Map<string, { dev: number; ino: number }>();
+  private open(): boolean {
+    if (this.job === job) return true;
+    this.walked.clear();
+    return false;
+  }
+  remember(path: string, st: Stats): void {
+    if (this.open()) this.walked.set(path, { dev: st.dev, ino: st.ino });
+  }
+  reuse(path: string, ownerOnly = true): boolean {
+    const walked = this.open() ? this.walked.get(path) : undefined;
+    if (!walked) return false;
+    let st: Stats;
+    try {
+      st = lstatSync(path);
+    } catch (error) {
+      if (!missing(error)) throw error;
+      this.walked.delete(path);
+      return false;
+    }
+    if (
+      !st.isDirectory() ||
+      st.isSymbolicLink() ||
+      st.dev !== walked.dev ||
+      st.ino !== walked.ino
+    ) {
+      this.walked.delete(path);
+      return false;
+    }
+    privateMode(st, ownerOnly);
+    return true;
+  }
+}
 /** Strengthens the existing helpers only inside the owned private namespace.
  * Ambient ancestors retain TaskStore's canonicalization policy. No directory CAS
  * or hostile-same-user guarantee; failed temporaries are deliberately preserved.
  */
 export class PrivateFiles {
-  constructor(readonly namespace: string) {}
-  directory(path: string, create = false): boolean {
+  /** `ownerOnly: false` for an external namespace such as Pi's agent directory. */
+  constructor(
+    readonly namespace: string,
+    readonly ownerOnly = true,
+  ) {}
+  directory(path: string, create = false, walks?: DirectoryWalks): boolean {
     const tail = relative(this.namespace, path);
     if (isAbsolute(tail) || tail === ".." || tail.startsWith(`..${sep}`))
       refused();
     if (!create) {
+      const full = resolve(path);
+      if (walks?.reuse(full, this.ownerOnly)) return true;
       const namespace = resolve(this.namespace);
-      let inside = false;
-      return safeDirectory(path, false, (at, st) => {
+      let inside = false,
+        last: Stats | undefined;
+      const found = safeDirectory(path, false, (at, st) => {
         // Exact segment boundary, not a textual prefix. One synchronous walk
         // checks every ambient ancestor and each existing private ancestor,
-        // including an unsafe parent before a missing child. Nothing is cached.
+        // including an unsafe parent before a missing child. Only the caller's
+        // DirectoryWalks keeps the result, for that same synchronous operation.
         if (at === namespace) inside = true;
-        if (inside) privateMode(st);
+        if (inside) privateMode(st, this.ownerOnly);
+        last = st;
       });
+      if (found && last) walks?.remember(full, last);
+      return found;
     }
+    // Walk the namespace and its ambient ancestors once, then check each
+    // private segment exactly once, creating a missing one privately.
+    if (!safeDirectory(this.namespace, true)) return false;
+    privateMode(lstatSync(this.namespace), this.ownerOnly);
     let at = this.namespace;
-    for (const part of ["", ...tail.split(sep).filter(Boolean)]) {
-      if (part) at = join(at, part);
-      if (!safeDirectory(at, create)) return false;
-      privateMode(lstatSync(at));
+    for (const part of tail.split(sep).filter(Boolean)) {
+      at = join(at, part);
+      let st: Stats;
+      try {
+        st = lstatSync(at);
+      } catch (error) {
+        if (!missing(error)) throw error;
+        try {
+          mkdirSync(at, { mode: 0o700 });
+        } catch (mkdirError) {
+          if (
+            !(
+              mkdirError instanceof Error &&
+              "code" in mkdirError &&
+              mkdirError.code === "EEXIST"
+            )
+          )
+            throw mkdirError;
+        }
+        st = lstatSync(at);
+      }
+      if (!st.isDirectory() || st.isSymbolicLink())
+        throw new Error("Unsafe directory");
+      privateMode(st, this.ownerOnly);
     }
     return true;
   }
-  read(path: string, maximum = METADATA_BYTES): FileSnapshot | undefined {
-    if (!this.directory(dirname(path))) return undefined;
+  read(
+    path: string,
+    maximum = METADATA_BYTES,
+    walks?: DirectoryWalks,
+  ): FileSnapshot | undefined {
+    if (!this.directory(dirname(path), false, walks)) return undefined;
     let before: Stats;
     try {
       before = lstatSync(path);
@@ -86,20 +187,25 @@ export class PrivateFiles {
     }
     if (!before.isFile() || before.nlink !== 1 || before.size > maximum)
       refused();
-    privateMode(before);
+    privateMode(before, this.ownerOnly);
     const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     try {
       const opened = fstatSync(fd);
       if (!same(before, opened)) refused();
-      // Reuse the bounded no-follow reader; surround its read with descriptor and
-      // selected-path identity checks rather than weakening legacy behavior.
-      // The caller's independent maximum was already checked above. Bound the
-      // inner allocation to this exact selected size (+1 growth sentinel); keep
-      // its full ancestor/open checks and our final descriptor/path checks.
-      const bytes = readBounded(path, opened.size);
+      // Read this already opened, no-follow, identity-checked descriptor: its
+      // parents were walked just above, so a second walk and open add nothing.
+      // Bound the read to the selected size (+1 growth sentinel) and keep the
+      // final descriptor/path identity checks.
+      const buffer = Buffer.alloc(opened.size + 1);
+      let size = 0;
+      while (size < buffer.length) {
+        const n = readSync(fd, buffer, size, buffer.length - size, null);
+        if (!n) break;
+        size += n;
+      }
+      const bytes = buffer.subarray(0, size);
       if (
-        !bytes ||
-        bytes.length !== opened.size ||
+        size !== opened.size ||
         !same(opened, fstatSync(fd)) ||
         !same(opened, lstatSync(path))
       )
@@ -113,8 +219,9 @@ export class PrivateFiles {
     path: string,
     expected: FileSnapshot | undefined,
     maximum = METADATA_BYTES,
+    walks?: DirectoryWalks,
   ): void {
-    const current = this.read(path, maximum);
+    const current = this.read(path, maximum, walks);
     if (
       current?.identity !== expected?.identity ||
       current?.stamp !== expected?.stamp
@@ -124,7 +231,7 @@ export class PrivateFiles {
   create(path: string, bytes: string, maximum = METADATA_BYTES): FileSnapshot {
     if (Buffer.byteLength(bytes) > maximum) throw new ContractError("oversize");
     this.directory(dirname(path), true);
-    const fd = openSync(path, "wx", 0o600);
+    const fd = retryWindowsFileOperation(() => openSync(path, "wx", 0o600));
     try {
       writeFileSync(fd, bytes);
       fsyncSync(fd);
@@ -146,7 +253,10 @@ export class PrivateFiles {
     const temporary = join(dirname(path), `pending-${randomUUID()}.json`);
     this.create(temporary, bytes, maximum);
     this.assert(path, expected, maximum);
-    renameSync(temporary, path);
+    retryWindowsFileOperation(
+      () => renameSync(temporary, path),
+      () => this.assert(path, expected, maximum),
+    );
     this.syncDirectory(dirname(path));
     const result = this.read(path, maximum);
     if (!result || result.identity !== hash(bytes)) refused();
@@ -154,7 +264,10 @@ export class PrivateFiles {
   }
   remove(path: string, expected: FileSnapshot, maximum = METADATA_BYTES): void {
     this.assert(path, expected, maximum);
-    unlinkSync(path);
+    retryWindowsFileOperation(
+      () => unlinkSync(path),
+      () => this.assert(path, expected, maximum),
+    );
     this.syncDirectory(dirname(path));
   }
   private syncDirectory(path: string): void {

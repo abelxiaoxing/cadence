@@ -27,6 +27,7 @@
     "web/src/components/SearchBar.tsx": "8eebaf7de4222395e67cd640a69010b0abf413f2586949bedecbb351be576f62",
     "web/src/components/StreamMarkdown.tsx": "c850c260fc0660be9708eb846c4dd1353cafe5fb5b28157d251d977d9e176528",
     "web/src/components/ToolCallBlock.tsx": "e5302f2cb20e66fd4b0b6c9311edca977635f63ab24d44e4e0f85ccb40569b2c",
+    "web/src/components/TopBar.tsx": "e9f40441263261744c589695d3528d4400b57697b69bcada36c8cb4f00002cce",
     "web/src/components/copy-button.tsx": "8abda14e632887c44705bc8ab4f6372acfd2d99c8e4f2d2954f6a47eaea86977",
     "web/src/conv-groups.ts": "4749a773414fabe4944e1317b745ccb9454f1196be2266d7e8389c82928546b0",
     "web/src/download.ts": "ae11b0a709cda8a76be74ed639fcc4134a5db68f5f1ed9477e7a751dfd4aa365",
@@ -49,6 +50,7 @@
       "id": "workspace",
       "sources": [
         "web/src/App.tsx",
+        "web/src/components/TopBar.tsx",
         "web/src/components/LeftPanel.tsx",
         "web/src/components/RightPanel.tsx",
         "web/src/styles.css",
@@ -68,7 +70,7 @@
         "web/src/layout/ResizeHandle.tsx",
         "web/src/layout/use-drawer-focus.ts"
       ],
-      "modifications": "Three-pane composition and selected coherent CSS rule families; direct sash/swipe algorithms; props narrowed to task/run data. Add keyboard focus/inert drawers/44px controls. Delete composer, PTY, plugin slots, filesystem tree and model/provider administration. Correct open-drawer drag offset."
+      "modifications": "Three-pane composition and selected coherent CSS rule families; direct sash/swipe algorithms; props narrowed to task/run data. Add keyboard focus and inert drawers. Delete composer, PTY, plugin slots, filesystem tree and model/provider administration. Correct open-drawer drag offset. Chrome restyle: TopBar brand/chip/tb-tab/panel-toggle and data-tip families, lp-section/session-item sidebar rows, pill inspector tabs, msg-meta/body transcript cards, statusbar, empty-state and scrollbar rules; generic controls use zero-specificity :where() so family classes win; phones wrap the topbar into an action row and an icon tab row. Fine-pointer controls follow pi's 24–28px density and coarse pointers keep 32–36px minimum targets; the earlier universal 44px controls were replaced. Accessible names are unchanged and every safety statement stays fully visible, wrapping in the scope bar, statusbar and collapsed episode rows instead of being clipped or hidden; small statements, selected tabs and the primary button use AA-contrast tokens. Interface text, including accessible names, is keyed by its English source and shown in English or Simplified Chinese; a topbar chip switches the language. Alert lines inside action dialogs keep the error colour rather than the dimmed dialog paragraph colour."
     },
     {
       "id": "plan-navigation",
@@ -167,7 +169,7 @@
         "web/src/timeline/TimelineView.tsx",
         "web/src/timeline/timeline.css"
       ],
-      "modifications": "Direct whole standalone DOM client, not a replacement chart: lanes/list/four detail tabs/filter/zoom/follow/replay/resize/dispose retained. Finite typed read bridge instead of plugin send. Only pinned local vis import/CSS. Remove clear-history, CDN fallback, private redraw, external plugin update messages and active-window inference. Page ordinal/committed sequence visual axis; no browser clock extension of native spans, model-text timing, inferred file-change analysis or execution replay. Serial revision removes dormant live-clock/idle/prose analysis, reports missing vendor as degraded, shows recorded clock domains, and externalizes all 15 exact pinned vendor CSS literals."
+      "modifications": "Direct whole standalone DOM client, not a replacement chart: lanes/list/four detail tabs/filter/zoom/follow/replay/resize/dispose retained. Finite typed read bridge instead of plugin send. Only pinned local vis import/CSS. Remove clear-history, CDN fallback, private redraw, external plugin update messages and active-window inference. Page ordinal/committed sequence visual axis; no browser clock extension of native spans, model-text timing, inferred file-change analysis or execution replay. Serial revision removes dormant live-clock/idle/prose analysis, reports missing vendor as degraded, shows recorded clock domains, and externalizes all 15 exact pinned vendor CSS literals. Its language now comes from the WebUI through the bridge (the client's own toggle is removed), and its remaining hard-coded English labels joined its catalog."
     },
     {
       "id": "reconciliation-actions",
@@ -241,53 +243,53 @@
   "destinations": {
     "licenses/pi-web-ui-reuse.md": "11d04d9b727fbe47b6492d598615c23cb94a1df4280e1f1b1afaa9e8850d7902",
     "web/index.html": "d4f99afb551ce57f3c0c361b176c37540520cd1658ef568c86ef01e0cce9e5b1",
-    "web/src/App.tsx": "422c83c7d2326357ffaa726abcdfeed6bab6670ab8381eaa021379466d33c601",
+    "web/src/App.tsx": "a73df9bcfe9ae7ffaf22599c33ea4f417132228c66162da4fd9fa0428ebbe682",
     "web/src/client/actions.ts": "192587fe7eee7b7d669a0e93641d0880a4ca33a56a6ca25d0fe4265a8519db88",
     "web/src/client/browser.ts": "3e0645d7603b5c13d68e9ed9785eb519ee44c8b7ec13672950ad2a8b58cd7c14",
     "web/src/client/message-delta.ts": "9133b161d07c0f5ca6a85562d396c36f724982d51f35ea0abae03035d79e4e8b",
     "web/src/client/plan-metadata.ts": "e6eae96d36319aac9430fe6a4ab0edd1a7b01cfe2fe9d7748b8fbbd59d957a45",
     "web/src/client/use-workspace.ts": "7554f4c97d7a9a899630cbbd0f675360549a1c708e2987b30668cd26d96f235e",
-    "web/src/components/actions/ActionDialog.tsx": "275c3db03b8919b19801dcdc1386b030d5cf1d8997d0603b7d2797fdd05ea8a6",
-    "web/src/components/actions/ConfirmAction.tsx": "2fac1a65d54c516ac8c1948724d397003f113a23ef41719b3da7a97114a5849a",
-    "web/src/components/actions/ReceiptPanel.tsx": "0c4288266206f3b55c1454aa49c51964fd3cd53a6a0a5aef1c97d8bca0fabfdf",
-    "web/src/components/history/ContentExplorer.tsx": "971f777fd26b6407edf9c54a64dc7e150b8edbd2c7bcf7e7bd0283a9b915a1f6",
-    "web/src/components/history/Coverage.tsx": "db1a1f0e2ccd46d02de9be3ef6b99be4d109584d1f51269ec5fc527c44401d0b",
-    "web/src/components/history/DetailPane.tsx": "2e3c40f6b8f430c3fcc3b69c9fcb43d47610ff13af651305b8cbb215f5f3ec1b",
-    "web/src/components/history/EntityPane.tsx": "5e0aca571009274194d4128edc9e3995a8e0052208460ef5541f01a7aa082cf0",
-    "web/src/components/history/ExportDialog.tsx": "3438c9d7b7be075f1c63b226f2ced0dfc0f3081905d8f06df49e52d06ca7521c",
-    "web/src/components/history/GlobalSearchModal.tsx": "9757588be8a266efed2bbbdf9799b75cd19f0e1f8cb52555e5103baae3820d80",
-    "web/src/components/history/GraphPane.tsx": "67571e93479ac41e25d1d4f1c0fd930ec3d0cac03757d81dd74be05125e6ff0e",
-    "web/src/components/history/LocalSearchBar.tsx": "c2fb8877de97248b8f9dd36745b70f12166fd2a68dcced43d21b384f26349d1f",
-    "web/src/components/history/PageControls.tsx": "7f94b32666b3de0350f06c44f30144f6a420107a5c1e63ec5c2ed3aea4011d19",
-    "web/src/components/history/RunBrowser.tsx": "2d7a955dc2ccf96c64595ee146263fdd1329150616f62257dbe811236accc3b7",
-    "web/src/components/history/SearchBar.tsx": "09c64d57ccf095c0b0785be0eb06c572d87a26361f48a375c8fd5b757786aaf0",
-    "web/src/components/plan/PlanBoard.tsx": "2201ff32c232e4eece59b3778a050d24b4ab7d9d76cca53826d4fe095f8a4911",
-    "web/src/components/review/ArtifactPreview.tsx": "c59f978973fbf605ea7a1b7e19ecf11a14ec7bb3bf10af27b7412e65098317c7",
-    "web/src/components/review/CheckPanel.tsx": "74f224edba3f6d154752c21024898cb9ae2c028714a5797fec40868acd6da7f5",
+    "web/src/components/actions/ActionDialog.tsx": "47341df982c27bfaa7488a158b5af317ab87a6ac199cf1a574306189c12cdc00",
+    "web/src/components/actions/ConfirmAction.tsx": "14a7b10ed73d3930476bdaef810e45de20e744666183986b2ba1d42461de6898",
+    "web/src/components/actions/ReceiptPanel.tsx": "205795ee6b5b23e58e16b8516fa163a62bc40970a3fa0b8abb114713074d668c",
+    "web/src/components/history/ContentExplorer.tsx": "362fb87f04bea106dafbae313e4946486678e8a79685b47ac0626e6680e312d3",
+    "web/src/components/history/Coverage.tsx": "6c5507ffe4e14977fed30f2a9ff9c5e1bdae3d254727eb898ecb0fb74cfdd443",
+    "web/src/components/history/DetailPane.tsx": "edbf8b25546ca1442b7208f2bca9a29702fdec38ae460756c0260ff85d680ae5",
+    "web/src/components/history/EntityPane.tsx": "d03fd20524f0e12957b1d1b6258de3b1844cf69459fa878fa40dbe55f2caad98",
+    "web/src/components/history/ExportDialog.tsx": "0748a623fa3b7e9fd056ebe343608650198004c85b31db7744d6ff18b356153e",
+    "web/src/components/history/GlobalSearchModal.tsx": "d0b08cd48b8c76907e4d780c7ddb72363a40eb17173564034b4304c6456af1c5",
+    "web/src/components/history/GraphPane.tsx": "3f7a0341ca2c325660380ccd0466313bfd236e2de02a785117f0173b8efef765",
+    "web/src/components/history/LocalSearchBar.tsx": "51d39178878eacece230b8f522b67e9fd4e3a7881428784a04b8f301545a6a2b",
+    "web/src/components/history/PageControls.tsx": "8b0523120c9a289267e7139fae192bb93b646f403cd9a942e7865d0bf39d6bce",
+    "web/src/components/history/RunBrowser.tsx": "e4122f550dc22babd3e3cde6973188222571250f9629b1605065b01eec6fe39e",
+    "web/src/components/history/SearchBar.tsx": "035c31a990f13844c892a693372f1a8bf1e0ee9ce111372ac96c0612794e4b78",
+    "web/src/components/plan/PlanBoard.tsx": "89c5d4f1333af02a3e73cfc2fa0b10586392cc1326c13ae93089ef0e0cdab5bf",
+    "web/src/components/review/ArtifactPreview.tsx": "e64c7b7476a11d2935df7bab65050348bc3169a686d6f18a9b3cd9862ac8a732",
+    "web/src/components/review/CheckPanel.tsx": "eaa09c490dbb6921ec0298b3e5647e8c46a0910feb68b6731fb8930660ef0f77",
     "web/src/components/review/DiffView.tsx": "038102afae254cd1d6662eb7898ed126ca73ae8dfcedaf22979783b4edac703b",
-    "web/src/components/review/ObservationPanel.tsx": "b38559b5992186cca9587487036743f02e141eda2e49c07e54fd68325dd8560c",
-    "web/src/components/rich/CopyButton.tsx": "605ed71407129fb8ce748e0057e570fdc44ebbe32bd6d6448452a47ab24fdc4c",
+    "web/src/components/review/ObservationPanel.tsx": "0a83557bd3949e0c593b4311c4cdf4abfa146cfc031a461a3610254c4107eaa4",
+    "web/src/components/rich/CopyButton.tsx": "0c92a6c7501e21be77ffe8cb116e6fb0775ee3e144221bbf211c65e232e60f61",
     "web/src/components/rich/Markdown.tsx": "1236273f6dd3978185c1e84670dcc62238fb46d806eddaf59fc707e91042f652",
     "web/src/components/rich/StreamMarkdown.tsx": "0bc78a104899ce0f236febcc9f9191b37aceb4cf8f5bb0c076a5d67559fca846",
     "web/src/components/transcript/CollapsibleHead.tsx": "5ff6f7f0f442384ff0df6fdc5efdfbd41728b6e0ee8d40659d875931f4406f9f",
     "web/src/components/transcript/LazyMount.tsx": "4c18f96386c2164af00b9811a76ec5016a637810d33f5ba06932268a159b88cc",
-    "web/src/components/transcript/Message.tsx": "7594db13718c18e1bcf1ea98a0255e8c18dbd2144bebcf4d7e95731f794ca30d",
-    "web/src/components/transcript/MessageList.tsx": "698f0b7752028ccc7cd12aa9393f7f234f1fa1caa4cb790f0deb4d665680fdb5",
-    "web/src/components/transcript/ToolCallBlock.tsx": "7821e25abd861e9d209bcf4d52b3cd537084b14effd291d595de920954cc0d3f",
-    "web/src/components/workspace/InspectorPanel.tsx": "166f25c9be384bacb532ffc44e5d03a565213e79ae8ee60c368cb3b55f7f6bdf",
-    "web/src/components/workspace/RunSummary.tsx": "5fa8d52272af92ae5be9f0e5469dfddf02bf67380f4a8d354e9028db2ef5913a",
-    "web/src/components/workspace/TaskSidebar.tsx": "bf18bc817e1a6ba4f391237b28627d1be051f7679661bb3fa3a2bd40c2fe57b5",
+    "web/src/components/transcript/Message.tsx": "529c7df388947af8322212469d0e43649e41c3df1388d1dcd856ad322424af1c",
+    "web/src/components/transcript/MessageList.tsx": "a79acf13d15c3e98fd3ea9db4f5a43c26666141719c3d54da8c03c13931e9339",
+    "web/src/components/transcript/ToolCallBlock.tsx": "d81762bdd1a318de7014e97e0685162016dfa92dba58794c3c23e2f7dab5ec58",
+    "web/src/components/workspace/InspectorPanel.tsx": "5c4b050d94d862adad1e06795d6902bfa729cd33db025f9a7f6aa6b9fc5765b7",
+    "web/src/components/workspace/RunSummary.tsx": "d6a08bb9994aa585a56afe217fe438984894d357365bf7aaed57d1713d0ff7ec",
+    "web/src/components/workspace/TaskSidebar.tsx": "30aebe02c9cfcb53a7036947bccd749b7c0607e4b9a92f6bc68999c15fe9a6d1",
     "web/src/history/download-export.ts": "8444b3f0face7c4e82f24601bc80eddc1e49d5236f352ec9d40d5739f6e9c76e",
     "web/src/history/history-url.ts": "220424cb0d14afbc2dedd2e50fede09ad75f7b129654831ab449a1b0058e86af",
     "web/src/history/readers.ts": "48bed1b8d4d89bc5719b729fcc3b938f9a88a447583b32dd4a71364b2e88c1e0",
     "web/src/history/search-page.ts": "69656774cfd6d11379a74348d15b0249e4b609d066f121ca9d82231cc454302c",
     "web/src/history/use-page.ts": "26244cc7f1da133ac820ebaab3804aecf943608e2ac65ebeb5b32e84aa2a6d5a",
-    "web/src/layout/ResizeHandle.tsx": "1a1daeb2ba3654bab9c2d9b69e27829dce26e62ce1b5a3de241498890fa46093",
+    "web/src/layout/ResizeHandle.tsx": "d9d5cfece8d3d6e419fb68cd70ce71120fcd82daed64c928c91cc0beb774190f",
     "web/src/layout/panel-sash.ts": "0ce5758e99a8ff77fc1993cff787daa464af3accc5d0cefb5b69a044414da562",
     "web/src/layout/swipe-drawer.ts": "1404d6dacc4e8af0d358e9b9e60b00af81b4a8507eb3adc27e31b27deee6950a",
     "web/src/layout/use-drawer-focus.ts": "4ca03c1b6db5838e3a57d7218a333fe8a10b0fc37a26430304e7ac9d9b741c94",
     "web/src/layout/use-swipe-drawer.ts": "3eb0b5ad000dfb36e4fc78b7d8690c714c7ad8bc16b8dd55262667e0035d740a",
-    "web/src/main.tsx": "0b1301eee55b927bb66566a98769f5c5908813ccbeffdffeaaf3a14134caab74",
+    "web/src/main.tsx": "8debdb8fd9f751a50e2a770bf4b67cbb07921bbecd90430146d2addc12d54133",
     "web/src/navigation/assignment-rows.ts": "366ee712340945865fdb4745f378a33750b5ca1a92d1875728e81f8ced63f439",
     "web/src/reference.css": "250b68c4d588c188db96135a35de64d1a3b2cfd1c9068bf4872e8a847deedb34",
     "web/src/review/preview-toc.ts": "3b8687648c5a69356dd41e50dac7b4787215f859718f06b5e70560d616ceb324",
@@ -295,19 +297,19 @@
     "web/src/rich/remark-backslash-math.ts": "273205bd4694172f14fab2adad28acf9993e35c476c00756cbafb73135516c2e",
     "web/src/rich/stream-markdown.ts": "ce80d88c65bd49b3fdb4586201090c46b5fdbb81850ef321a782929f3a40e41e",
     "web/src/rich/use-copy-feedback.ts": "6df2a9e9e085b516c98816220420e307a24c5b8826049d0d276e08b59e19a321",
-    "web/src/styles.css": "360e4615bfadea1db4cd3187306ad7dac5a6f61657f7763ee42a0e966a97bf3e",
-    "web/src/timeline/TimelineView.tsx": "014339c7876543e912fb114ca61a7fc932437453b061cb39e30de23bb1922c79",
-    "web/src/timeline/timeline-adapter.ts": "5e1afb53d9d91c8101c84e55db2ac31a1fa43cea3fe3f5387181b287548972c5",
-    "web/src/timeline/timeline-client.d.mts": "be20e9ccb6922540854e0a941b711344f77941498056d23de67a876cf86e06fd",
-    "web/src/timeline/timeline-client.mjs": "266ec076fbbd5c469833c8049a23817e42b090fcad0502a5811611a12d06a4b0",
+    "web/src/styles.css": "9d8484ff0a40d7fadba71f91ad5e55057a384df7544593e40a8231c7de41b31b",
+    "web/src/timeline/TimelineView.tsx": "25ade49214cfd160c049a56163bfdf40433d3a7e3b3447a46a1e277423b77d6f",
+    "web/src/timeline/timeline-adapter.ts": "4bd061c89c0dc78edea5d9f1b7ce6b6be24f82b6949f84d0d7120d3cafe95dbb",
+    "web/src/timeline/timeline-client.d.mts": "c216e4da9c9220ee2e0ce78fa9d40e3daf59d690140331184573e724f900525b",
+    "web/src/timeline/timeline-client.mjs": "5889c0ff591c0ee744aee3b5823a5c58bfb3e90b7e8f62f267462704e43c90c6",
     "web/src/transcript/lazy-window.ts": "d960cf6aa9f354298c3ca7fabe9c10c4f71066fe69ea7c6f3c1f1bbf8622dcf9",
     "web/src/types.ts": "832a6d73a96cb541246bc5deab532c192fc685b9d35253e25434036536b93372",
     "web/tsconfig.json": "147c75adcc96ca3fec938036e0c1e4aa97d1b32eb59096cdcfba8341bac8dd1a",
     "web/vite.config.ts": "4f372e948d2261f408232612c451a37b3393d3b0d2a14b53984cb04efcd1e5d5",
     "scripts/build-web.mjs": "0334c888aa4c915df9e18cf6e9d62ac939412091d6751754d623201c2f2b9e85",
-    "src/service-assets.ts": "eab134aff1798aebe0b176fc6d725d781647dbf5da75a9622dd1d324f9e056be",
-    "test/web/assets-browser.e2e.mjs": "a533e08b14ab25d16cc62b3da840bd8d65cbe8b6e1e46c3fa0afc7bb390a3227",
-    "test/web/assets.test.tsx": "029f576fb1f1202dda8f35a877421e5655b39ab69e309e054e712b7a7ccf0b8a",
+    "src/service-assets.ts": "ebf42142a64d7c4f00147c19a6e3e05bf4b7a287c68c081695ff0fbb7356ecd5",
+    "test/web/assets-browser.e2e.mjs": "f427e718b98a8cc9effd69422ee3c3f439a432c29d01d7a081373f1e53c1ab6f",
+    "test/web/assets.test.tsx": "0a817c01d89e12e778dbcf6452727c951d81f44ac2dbc87488f384dbafabfdd4",
     "test/web/fixtures.tsx": "2224fa5c37c5ba352476e96a35170f4d7c5d8c62399418a1a192c6c30f1b3f20",
     "test/web/history-timeline.test.tsx": "dcc99efe7f6f7d9ed72f167c89fc1177f0b4506218fe147c5cd1f2e0d2914851",
     "test/web/lazy-window.test.tsx": "96f1519b79b504e44e7b97a5595783006d463c3dee35877eece5a193c346573c",
@@ -327,8 +329,8 @@
     "web/src/timeline/timeline.css": "92bd283ffbbad8b990dc87b44c1cacfe42762c6bce991265ea2dd2b92f98b73b",
     "web/tsconfig.config.json": "47fbf0677e51c9303cd87916a022bb6b25a58b221ad733e95dd7e8d64430a4d7",
     "web/vitest.config.ts": "e439a39d4a59c7e279e5eb4b869405699f38ff617f413cb6fe1a70e2b15f4ab5",
-    "web/src/components/actions/ModelChooser.tsx": "4c08108a38ae0862bacf1ae6a4df02293c29dc351f5addbc2083f389d7646956",
-    "web/src/components/review/CurrentChangesPanel.tsx": "fa0a52386bfca5ab9b4c4b94292d6f12b828c630e747a84892f8544930dc4fbd"
+    "web/src/components/actions/ModelChooser.tsx": "1e415361e51c478139578790ce41fdd053ef8ebec5a8fb0899178135f492efc7",
+    "web/src/components/review/CurrentChangesPanel.tsx": "7feada844a4485d1e63fe1d4a10c73b38757cd07525f636d0c16eb8b1845d2c4"
   },
   "existingLicense": {
     "path": "licenses/pi-web-ui-MIT.txt",
@@ -473,6 +475,119 @@
         "sha256": "bedd1bfcf892dd2153e65a09b997da4318897ae282d933b2b34c9a2857669ed5",
         "bytes": 31556
       }
+    },
+    {
+      "stage": "Package store hard links",
+      "files": [
+        {
+          "path": "src/service-assets.ts",
+          "before": "eab134aff1798aebe0b176fc6d725d781647dbf5da75a9622dd1d324f9e056be",
+          "after": "ebf42142a64d7c4f00147c19a6e3e05bf4b7a287c68c081695ff0fbb7356ecd5"
+        },
+        {
+          "path": "test/web/assets.test.tsx",
+          "before": "029f576fb1f1202dda8f35a877421e5655b39ab69e309e054e712b7a7ccf0b8a",
+          "after": "0a817c01d89e12e778dbcf6452727c951d81f44ac2dbc87488f384dbafabfdd4"
+        }
+      ],
+      "reason": "Asset bodies are read as packaged files: a package manager's store hard link (Bun's default install backend) no longer refuses an exact, hash-bound closure. A hard-linked different member still refuses on its size or body; no adapted upstream bytes changed."
+    },
+    {
+      "stage": "pi-web-ui chrome restyle",
+      "files": [
+        {
+          "path": "web/src/App.tsx",
+          "before": "422c83c7d2326357ffaa726abcdfeed6bab6670ab8381eaa021379466d33c601",
+          "after": "cc83cc983728c74a77fec059a9b30be2009813d4a14a45a346db0064375be2a6"
+        },
+        {
+          "path": "web/src/components/actions/ActionDialog.tsx",
+          "before": "275c3db03b8919b19801dcdc1386b030d5cf1d8997d0603b7d2797fdd05ea8a6",
+          "after": "54f02af1b79c9750c0ba500dc8dc2e0a3b6f5965ef88fafed676822a8da8dc80"
+        },
+        {
+          "path": "web/src/components/history/Coverage.tsx",
+          "before": "db1a1f0e2ccd46d02de9be3ef6b99be4d109584d1f51269ec5fc527c44401d0b",
+          "after": "c0efc11e45dd050254455edcaf732629da19d9468d6c847f8dc6d5d8920420b2"
+        },
+        {
+          "path": "web/src/components/history/PageControls.tsx",
+          "before": "7f94b32666b3de0350f06c44f30144f6a420107a5c1e63ec5c2ed3aea4011d19",
+          "after": "45f7e03c0a6a6b8d03642a82d6a4738150ee1f89098f5e86cfa4ab23f4539f38"
+        },
+        {
+          "path": "web/src/components/history/SearchBar.tsx",
+          "before": "09c64d57ccf095c0b0785be0eb06c572d87a26361f48a375c8fd5b757786aaf0",
+          "after": "36db89718cb42c7a6b7512c9b9ba0d1790dd5495560efca9ae5587f84f9955c8"
+        },
+        {
+          "path": "web/src/components/transcript/Message.tsx",
+          "before": "7594db13718c18e1bcf1ea98a0255e8c18dbd2144bebcf4d7e95731f794ca30d",
+          "after": "0abaccb20d2677006867e8bdea09860c5145af9380c9472d3e0f6c5cedd922ff"
+        },
+        {
+          "path": "web/src/components/transcript/MessageList.tsx",
+          "before": "698f0b7752028ccc7cd12aa9393f7f234f1fa1caa4cb790f0deb4d665680fdb5",
+          "after": "51865657b8a83f9dadd54cf2c57919f1bd4dc92e5d50412eb74a349fac1801c7"
+        },
+        {
+          "path": "web/src/components/transcript/ToolCallBlock.tsx",
+          "before": "7821e25abd861e9d209bcf4d52b3cd537084b14effd291d595de920954cc0d3f",
+          "after": "77942fce2ffe0cce9eb67a633ed3d32d028f980bc864340be2ca886f158cc32e"
+        },
+        {
+          "path": "web/src/components/workspace/InspectorPanel.tsx",
+          "before": "166f25c9be384bacb532ffc44e5d03a565213e79ae8ee60c368cb3b55f7f6bdf",
+          "after": "52617e8206d2c0175fb22fe98297ebbc7a4949de097d1e978e110cc0aea085c5"
+        },
+        {
+          "path": "web/src/components/workspace/TaskSidebar.tsx",
+          "before": "bf18bc817e1a6ba4f391237b28627d1be051f7679661bb3fa3a2bd40c2fe57b5",
+          "after": "561a904b1a582a7d6a04911b9a25ca248b2a6a6d1aa77be9136dd58709441633"
+        },
+        {
+          "path": "web/src/main.tsx",
+          "before": "0b1301eee55b927bb66566a98769f5c5908813ccbeffdffeaaf3a14134caab74",
+          "after": "48c0f73333a772ae527f331abfc895cea81d9f361ade70fb934bfbfe142ac28f"
+        },
+        {
+          "path": "web/src/styles.css",
+          "before": "360e4615bfadea1db4cd3187306ad7dac5a6f61657f7763ee42a0e966a97bf3e",
+          "after": "1ff6f05140fcd042a5a570c58ad48bb1d8a61ffa0016257cb92323fa2e1321c0"
+        }
+      ],
+      "reason": "Replace the bordered 44px-everywhere fallback stylesheet and range-slider sashes with pi-web-ui's topbar, sidebar, statusbar, transcript and dialog presentation from the pinned styles.css/TopBar.tsx families. Markup changes are presentation only: every tested accessible name, action, consent boundary and recorded statement is preserved; web/dist is republished from Node."
+    },
+    {
+      "stage": "pi-web-ui chrome review fixes",
+      "files": [
+        {
+          "path": "web/src/App.tsx",
+          "before": "cc83cc983728c74a77fec059a9b30be2009813d4a14a45a346db0064375be2a6",
+          "after": "1b9bae36a82d951e1c1a87a04e422a5e73357b2e1c31e7b93b94dba2b1ff61b5"
+        },
+        {
+          "path": "web/src/components/transcript/ToolCallBlock.tsx",
+          "before": "77942fce2ffe0cce9eb67a633ed3d32d028f980bc864340be2ca886f158cc32e",
+          "after": "6654f7681e330dc8723712e2a53c752dbe7eb05841f8db5ce964a37f3140b4ab"
+        },
+        {
+          "path": "web/src/components/workspace/InspectorPanel.tsx",
+          "before": "52617e8206d2c0175fb22fe98297ebbc7a4949de097d1e978e110cc0aea085c5",
+          "after": "2f9cd7d4e1e72ea4a057232f40cf1993f9f80967ea76ef747ebd64055e5bc1fb"
+        },
+        {
+          "path": "web/src/components/workspace/TaskSidebar.tsx",
+          "before": "561a904b1a582a7d6a04911b9a25ca248b2a6a6d1aa77be9136dd58709441633",
+          "after": "fbd40c2e088c1b3d83a0a9bc72077ec8b04bae7f3b564cbaf873571b7bea2058"
+        },
+        {
+          "path": "web/src/styles.css",
+          "before": "1ff6f05140fcd042a5a570c58ad48bb1d8a61ffa0016257cb92323fa2e1321c0",
+          "after": "77c3db030593f1a37b7983b0cef7f87b8930ca17af49e1502775ad21f43a1d58"
+        }
+      ],
+      "reason": "Review of the restyle: keep the Cadence h1 visible on phones (only the decorative logo yields at ≤360px); repair a moved-rule fragment that turned the search-dialog reset into a dead `.run-strip .gs-modal` selector; let the detached/boundary entry and empty state scroll; wrap scope and statusbar statements instead of clipping or hiding them; derive the status dot from observation connection as well as transport; make drawer-covered topbar tabs/actions inert like <main>; mark page-local task counts with '+'; share the inspector placeholder and single-source episode/tool states; drop unused rules."
     }
   ],
   "testAdaptations": [

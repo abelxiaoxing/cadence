@@ -38,7 +38,7 @@ export function readRunState(
   files: HistoryFiles,
   runId: string,
   snapshotSeq?: string,
-  budget = new HistoryReadBudget(),
+  budget = HistoryReadBudget.authority(),
 ): RunState {
   const state = new RunState(runId);
   if (snapshotSeq === "0") return state;
@@ -66,7 +66,7 @@ interface ChildFact {
   completion: WorkerCompletion | null;
   settlementSeq: string | null;
 }
-interface PublicationState {
+export interface PublicationState {
   intent: Extract<OwnerFact, { kind: "publication-intent" }> | null;
   status: StoredCommand["receipt"]["publication"];
   seq: string | null;
@@ -118,8 +118,16 @@ function publicationTransition(
   return { ...state, status: fact.status, seq };
 }
 
+export interface LineageProgress {
+  operationId: string | null;
+  state: PublicationState;
+  endpoint: { revision: number; identity: string | null } | null;
+  graphIdentity: string | null;
+}
 /** Bounded current-plan lineage, sharing the exact publication transition with
- * run/operation receipts. One task operation at a time, never an archive cache. */
+ * run/operation receipts. One task operation at a time; its progress may resume
+ * only from the owner writer's remembered task fold state, whose operation
+ * admission is re-read from the original journal. */
 export class TaskPublicationLineage {
   private operation: AdmissionIntent | null = null;
   private state: PublicationState = {
@@ -195,6 +203,31 @@ export class TaskPublicationLineage {
         };
     }
   }
+  get operationId(): string | null {
+    return this.operation?.operationId ?? null;
+  }
+  progress(): LineageProgress {
+    return {
+      operationId: this.operation?.operationId ?? null,
+      state: structuredClone(this.state),
+      endpoint: this.endpoint && { ...this.endpoint },
+      graphIdentity: this.graphIdentity,
+    };
+  }
+  /** `operation` is the re-read original admission named by `progress`. */
+  static resumed(
+    operation: AdmissionIntent | null,
+    progress: LineageProgress,
+  ): TaskPublicationLineage {
+    if ((operation?.operationId ?? null) !== progress.operationId)
+      throw new ContractError("invalid");
+    const lineage = new TaskPublicationLineage();
+    lineage.operation = operation;
+    lineage.state = structuredClone(progress.state);
+    lineage.endpoint = progress.endpoint && { ...progress.endpoint };
+    lineage.graphIdentity = progress.graphIdentity;
+    return lineage;
+  }
   current(): { revision: number; identity: string } {
     requireFact(
       this.operation &&
@@ -209,7 +242,8 @@ export class TaskPublicationLineage {
 }
 
 /** Metadata receipts are not execution receipts. Reduce their own accepted operation,
- * including publication, with no all-history operation cache or current authority. */
+ * including publication, with no all-history operation cache or current authority;
+ * only a remembered task fold state resumes it, from its re-read original admission. */
 export class OperationState {
   command: { intent: AdmissionIntent; record: StoredCommand } | null = null;
   private reviewed = false;
@@ -282,6 +316,26 @@ export class OperationState {
       );
     }
   }
+  progress(): { reviewed: boolean; publication: PublicationState } {
+    return {
+      reviewed: this.reviewed,
+      publication: structuredClone(this.publication),
+    };
+  }
+  /** `command` is the re-read original admission row of this operation. */
+  static resumed(
+    operationId: string,
+    command: { intent: AdmissionIntent; record: StoredCommand },
+    progress: { reviewed: boolean; publication: PublicationState },
+  ): OperationState {
+    if (command.intent.operationId !== operationId)
+      throw new ContractError("invalid");
+    const state = new OperationState(operationId);
+    state.command = command;
+    state.reviewed = progress.reviewed;
+    state.publication = structuredClone(progress.publication);
+    return state;
+  }
   publicationExpected(): { revision: number; identity: string | null } {
     const identity = this.command?.intent.identity;
     requireFact(
@@ -321,7 +375,11 @@ export function readOperationState(
   operationId: string,
 ): OperationState {
   const state = new OperationState(operationId);
-  for (const batch of files.scan(emptyScan(), false, new HistoryReadBudget()))
+  for (const batch of files.scan(
+    emptyScan(),
+    false,
+    HistoryReadBudget.authority(),
+  ))
     for (const row of batch.rows) state.apply(row, batch.marker.last);
   return state;
 }

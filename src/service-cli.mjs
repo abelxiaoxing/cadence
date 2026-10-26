@@ -3,8 +3,47 @@
 
 // src/service/cli.ts
 import { spawn } from "node:child_process";
+import { existsSync, mkdirSync as mkdirSync5 } from "node:fs";
 import { request } from "node:http";
+import { dirname as dirname9, join as join11, resolve as resolve5 } from "node:path";
 import { fileURLToPath } from "node:url";
+
+// src/install-config.mjs
+import { closeSync, constants, mkdirSync, openSync, writeSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
+var CONFIG_TEMPLATE = `# Cadence research configuration. Keep this file local and never commit it.
+# Context7 works anonymously with its default URL.
+# CONTEXT7_API_URL=https://context7.com/api/v2
+# CONTEXT7_API_KEY=
+
+# Required when using the Grok search skill.
+GROK_API_URL=https://api.x.ai/v1
+GROK_API_KEY=
+
+# Optional Tavily integration.
+# TAVILY_ENABLED=true
+# TAVILY_API_URL=https://api.tavily.com
+# TAVILY_API_KEY=
+`;
+function ensureUserConfig(home = homedir()) {
+  const directory = path.join(home, ".pi", "agent", "cadence");
+  const file = path.join(directory, ".env");
+  mkdirSync(directory, { recursive: true, mode: 448 });
+  try {
+    const fd = openSync(file, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 384);
+    try {
+      writeSync(fd, CONFIG_TEMPLATE, undefined, "utf8");
+    } finally {
+      closeSync(fd);
+    }
+    return { created: true, path: file };
+  } catch (error) {
+    if (error?.code === "EEXIST")
+      return { created: false, path: file };
+    throw error;
+  }
+}
 
 // src/task-types.ts
 var TASK_SCHEMA = "cadence-workflow-assistant/1";
@@ -86,7 +125,10 @@ function safeChildEnv() {
     "TMPDIR",
     "LANG",
     "LC_ALL",
-    "PATHEXT"
+    "PATHEXT",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432"
   ])
     if (process.env[key] !== undefined)
       env[key] = process.env[key];
@@ -559,7 +601,8 @@ var thinkingLevels = [
   "low",
   "medium",
   "high",
-  "xhigh"
+  "xhigh",
+  "max"
 ];
 function decodeModelSelector(v) {
   const o = closed(v, ["provider", "model", "api", "thinking"]);
@@ -2039,23 +2082,17 @@ class CaptureBudgetLease {
     this.forget();
   }
 }
-// src/service/coordination.ts
-import { randomBytes, randomUUID as randomUUID3 } from "node:crypto";
-import { opendirSync, realpathSync as realpathSync2 } from "node:fs";
-import { hostname as hostname2 } from "node:os";
-import { dirname as dirname3, isAbsolute as isAbsolute3, join as join3, relative as relative3, sep as sep3 } from "node:path";
-
 // src/task-store.ts
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
-  closeSync,
-  constants,
+  closeSync as closeSync2,
+  constants as constants2,
   fstatSync,
   fsyncSync,
   lstatSync,
-  mkdirSync,
-  openSync,
+  mkdirSync as mkdirSync2,
+  openSync as openSync2,
   readdirSync,
   readSync,
   realpathSync,
@@ -2063,7 +2100,7 @@ import {
   unlinkSync,
   writeFileSync
 } from "node:fs";
-import { homedir, hostname } from "node:os";
+import { homedir as homedir2, hostname } from "node:os";
 import {
   dirname,
   isAbsolute,
@@ -2100,8 +2137,8 @@ function parseRecord(data) {
 function absent(error) {
   return object(error) && error.code === "ENOENT";
 }
-function safeDirectory(path, create = false, inspectExisting) {
-  const full = resolve(path);
+function safeDirectory(path2, create = false, inspectExisting) {
+  const full = resolve(path2);
   const root = parse(full).root;
   if (inspectExisting) {
     const st = lstatSync(root);
@@ -2114,11 +2151,8 @@ function safeDirectory(path, create = false, inspectExisting) {
     at = join(at, part);
     let existing;
     try {
-      const st = lstatSync(at);
-      if (!st.isDirectory())
-        throw new Error("Unsafe directory");
       const checked = lstatSync(at);
-      if (checked.isSymbolicLink() || inspectExisting && !checked.isDirectory())
+      if (!checked.isDirectory() || checked.isSymbolicLink())
         throw new Error("Unsafe directory");
       existing = checked;
     } catch (error) {
@@ -2127,12 +2161,13 @@ function safeDirectory(path, create = false, inspectExisting) {
       if (!create)
         return false;
       try {
-        mkdirSync(at, { mode: 448 });
+        mkdirSync2(at, { mode: 448 });
       } catch (mkdirError) {
         if (!object(mkdirError) || mkdirError.code !== "EEXIST")
           throw mkdirError;
       }
-      if (!lstatSync(at).isDirectory() || lstatSync(at).isSymbolicLink())
+      const created = lstatSync(at);
+      if (!created.isDirectory() || created.isSymbolicLink())
         throw new Error("Unsafe directory");
     }
     if (existing)
@@ -2140,15 +2175,31 @@ function safeDirectory(path, create = false, inspectExisting) {
   }
   return true;
 }
-function readBounded(path, max) {
-  if (!safeDirectory(dirname(path)))
+var transientWindows = new Set(["EPERM", "EACCES", "EBUSY"]);
+function retryWindowsFileOperation(operation, recheck) {
+  if (process.platform !== "win32")
+    return operation();
+  const deadline = performance.now() + 2000;
+  for (let delay = 2;; delay = Math.min(delay * 2, 50)) {
+    try {
+      return operation();
+    } catch (error) {
+      if (!object(error) || !transientWindows.has(String(error.code)) || performance.now() >= deadline)
+        throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+      recheck?.();
+    }
+  }
+}
+function readBounded(path2, max, packaged = false) {
+  if (!safeDirectory(dirname(path2)))
     return;
   let fd;
   try {
-    const st = lstatSync(path);
-    if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size > max)
+    const st = lstatSync(path2);
+    if (!st.isFile() || st.isSymbolicLink() || !packaged && st.nlink !== 1 || st.size > max)
       throw new Error("Unsafe or oversized file");
-    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    fd = openSync2(path2, constants2.O_RDONLY | (constants2.O_NOFOLLOW ?? 0));
   } catch (error) {
     if (absent(error))
       return;
@@ -2156,7 +2207,7 @@ function readBounded(path, max) {
   }
   try {
     const st = fstatSync(fd);
-    if (!st.isFile() || st.nlink !== 1 || st.size > max)
+    if (!st.isFile() || !packaged && st.nlink !== 1 || st.size > max)
       throw new Error("Unsafe or oversized file");
     const buffer = Buffer.alloc(max + 1);
     let size = 0;
@@ -2170,7 +2221,7 @@ function readBounded(path, max) {
       throw new Error("Oversized file");
     return buffer.subarray(0, size);
   } finally {
-    closeSync(fd);
+    closeSync2(fd);
   }
 }
 function gitEnvironment() {
@@ -2205,7 +2256,7 @@ function defaultStateHome() {
   const candidate = process.platform === "win32" ? process.env.LOCALAPPDATA : process.env.XDG_STATE_HOME;
   if (candidate && !isAbsolute(candidate))
     throw new Error("State home must be absolute");
-  return candidate ?? join(homedir(), process.platform === "win32" ? "AppData/Local" : ".local/state");
+  return candidate ?? join(homedir2(), process.platform === "win32" ? "AppData/Local" : ".local/state");
 }
 function recordText(record) {
   return `${JSON.stringify(record, null, 2)}
@@ -2214,8 +2265,8 @@ function recordText(record) {
 function contentIdentity(text2) {
   return createHash("sha256").update(text2).digest("hex");
 }
-function canonicalAmbientRoot(path) {
-  const full = resolve(path);
+function canonicalAmbientRoot(path2) {
+  const full = resolve(path2);
   try {
     return realpathSync(full);
   } catch (error) {
@@ -2234,6 +2285,23 @@ function canonicalAmbientRoot(path) {
     return join(canonicalAmbientRoot(parent), full.slice(parent.length));
   }
 }
+function privateRootFor(canonicalRoot, stateHome) {
+  return join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1", createHash("sha256").update(canonicalRoot).digest("hex"));
+}
+function contains(root, path2) {
+  const within = relative(root, resolve(path2));
+  return !within || !within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within);
+}
+function stateHomeInside(root, stateHome = defaultStateHome()) {
+  const canonical = realpathSync(root);
+  return contains(canonical, privateRootFor(canonical, stateHome));
+}
+var LANDING_WORKSPACE = "cadence";
+function effectiveWorkspace(requested, stateHome, home = homedir2()) {
+  if (!stateHomeInside(resolveWorkspace(requested).root, stateHome))
+    return { workspace: requested, redirected: false };
+  return { workspace: join(home, LANDING_WORKSPACE), redirected: true };
+}
 
 class TaskStore {
   root;
@@ -2242,9 +2310,8 @@ class TaskStore {
   constructor(root, stateHome = defaultStateHome()) {
     this.root = realpathSync(root);
     this.tasks = join(this.root, ".cadence", "assistant", "tasks");
-    this.privateRoot = join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1", createHash("sha256").update(this.root).digest("hex"));
-    const within = relative(this.root, resolve(this.privateRoot));
-    if (!within || !within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within))
+    this.privateRoot = privateRootFor(this.root, stateHome);
+    if (contains(this.root, this.privateRoot))
       throw new Error("Private state home must be outside the working copy");
   }
   get lockPath() {
@@ -2252,20 +2319,20 @@ class TaskStore {
   }
   inspectPrivate() {
     const namespace = dirname(this.privateRoot);
-    for (const path of [namespace, this.privateRoot]) {
-      if (!safeDirectory(path))
+    for (const path2 of [namespace, this.privateRoot]) {
+      if (!safeDirectory(path2))
         continue;
-      const st = lstatSync(path);
+      const st = lstatSync(path2);
       if (process.platform !== "win32" && ((st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
         throw new Error("Private state permissions refused");
     }
   }
-  inspectPrivateFile(path, max) {
+  inspectPrivateFile(path2, max) {
     this.inspectPrivate();
     if (!safeDirectory(this.privateRoot))
       return;
     try {
-      const st = lstatSync(path);
+      const st = lstatSync(path2);
       if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size > max || process.platform !== "win32" && ((st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
         throw new Error("Unsafe private state file");
     } catch (error) {
@@ -2296,7 +2363,7 @@ class TaskStore {
     };
     let fd;
     try {
-      fd = openSync(this.lockPath, "wx", 384);
+      fd = retryWindowsFileOperation(() => openSync2(this.lockPath, "wx", 384));
     } catch {
       throw new Error("Checkout busy or unresolved lock; inspect and explicitly recover only a dead owner");
     }
@@ -2304,7 +2371,7 @@ class TaskStore {
       writeFileSync(fd, JSON.stringify(lock));
       fsyncSync(fd);
     } finally {
-      closeSync(fd);
+      closeSync2(fd);
     }
     return lock;
   }
@@ -2316,7 +2383,7 @@ class TaskStore {
     if (lock.pid !== process.pid || lock.host !== hostname())
       throw new Error("Only the owning process may release a lock");
     this.assertOwner(lock);
-    unlinkSync(this.lockPath);
+    retryWindowsFileOperation(() => unlinkSync(this.lockPath), () => this.assertOwner(lock));
   }
   recover(expected, acknowledgeEscapedProcesses) {
     if (!acknowledgeEscapedProcesses || expected.host !== hostname())
@@ -2385,18 +2452,23 @@ class TaskStore {
       if (!current && readdirSync(dir).length)
         throw new Error("Unknown task directory");
       const temporary = join(dir, `task.${randomUUID()}.tmp`);
-      const fd = openSync(temporary, "wx", 384);
+      const fd = openSync2(temporary, "wx", 384);
       try {
         writeFileSync(fd, text2);
         fsyncSync(fd);
       } finally {
-        closeSync(fd);
+        closeSync2(fd);
       }
       this.assertOwner(lock);
       const latest = readBounded(join(dir, "task.json"), MAX_RECORD_BYTES);
       if ((latest ? contentIdentity(latest) : undefined) !== expectedIdentity)
         throw new Error("Task content changed; replacement preserved without overwrite");
-      renameSync(temporary, join(dir, "task.json"));
+      retryWindowsFileOperation(() => renameSync(temporary, join(dir, "task.json")), () => {
+        this.assertOwner(lock);
+        const now = readBounded(join(dir, "task.json"), MAX_RECORD_BYTES);
+        if ((now ? contentIdentity(now) : undefined) !== expectedIdentity)
+          throw new Error("Task content changed; replacement preserved without overwrite");
+      });
       return next;
     } finally {
       if (!held)
@@ -2436,15 +2508,77 @@ class TaskStore {
 }
 var TASK_CONFIG_SCHEMA = "cadence-assistant-checks/1";
 
+// src/service/autostart.ts
+import { spawnSync as spawnSync2 } from "node:child_process";
+import {
+  lstatSync as lstatSync4,
+  mkdirSync as mkdirSync4,
+  readFileSync,
+  realpathSync as realpathSync3,
+  renameSync as renameSync3,
+  rmSync,
+  statSync as statSync2,
+  writeFileSync as writeFileSync3
+} from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import {
+  delimiter,
+  dirname as dirname4,
+  isAbsolute as isAbsolute3,
+  join as join4,
+  resolve as resolve3,
+  sep as sep3,
+  win32
+} from "node:path";
+
+// src/service/server-config.ts
+import { randomBytes } from "node:crypto";
+import { lstatSync as lstatSync3, realpathSync as realpathSync2, statSync } from "node:fs";
+import { dirname as dirname3, join as join3 } from "node:path";
+
+// skills/_shared/load-config.mjs
+function parseEnvFile(content) {
+  const values = {};
+  const lines = content.replaceAll(`\r
+`, `
+`).replaceAll("\r", `
+`).split(`
+`);
+  for (let index = 0;index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (!line || line.startsWith("#"))
+      continue;
+    const separator = line.indexOf("=");
+    if (separator <= 0)
+      throw new Error(`Invalid configuration syntax at line ${index + 1}`);
+    const name = line.slice(0, separator).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      throw new Error(`Invalid configuration name at line ${index + 1}`);
+    }
+    let value = line.slice(separator + 1).trim();
+    const quote = value[0];
+    if (quote === '"' || quote === "'") {
+      if (value.at(-1) !== quote) {
+        throw new Error(`Unterminated quoted configuration value at line ${index + 1}`);
+      }
+      value = value.slice(1, -1);
+    }
+    values[name] = value;
+  }
+  return values;
+}
+
 // src/service/private-files.ts
 import { createHash as createHash2, randomUUID as randomUUID2 } from "node:crypto";
 import {
-  closeSync as closeSync2,
-  constants as constants2,
+  closeSync as closeSync3,
+  constants as constants3,
   fstatSync as fstatSync2,
   fsyncSync as fsyncSync2,
   lstatSync as lstatSync2,
-  openSync as openSync2,
+  mkdirSync as mkdirSync3,
+  openSync as openSync3,
+  readSync as readSync2,
   renameSync as renameSync2,
   unlinkSync as unlinkSync2,
   writeFileSync as writeFileSync2
@@ -2459,8 +2593,8 @@ function refused() {
 function hash(bytes) {
   return createHash2("sha256").update(bytes).digest("hex");
 }
-function privateMode(st) {
-  if (process.platform !== "win32" && ((st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
+function privateMode(st, ownerOnly = true) {
+  if (process.platform !== "win32" && (ownerOnly && (st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
     refused();
 }
 function same(a, b) {
@@ -2469,42 +2603,114 @@ function same(a, b) {
 function missing(error) {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
+var job = 0;
+var advancing = false;
+function currentJob() {
+  if (!advancing) {
+    advancing = true;
+    queueMicrotask(() => {
+      job++;
+      advancing = false;
+    });
+  }
+  return job;
+}
+
+class DirectoryWalks {
+  job = currentJob();
+  walked = new Map;
+  open() {
+    if (this.job === job)
+      return true;
+    this.walked.clear();
+    return false;
+  }
+  remember(path2, st) {
+    if (this.open())
+      this.walked.set(path2, { dev: st.dev, ino: st.ino });
+  }
+  reuse(path2, ownerOnly = true) {
+    const walked = this.open() ? this.walked.get(path2) : undefined;
+    if (!walked)
+      return false;
+    let st;
+    try {
+      st = lstatSync2(path2);
+    } catch (error) {
+      if (!missing(error))
+        throw error;
+      this.walked.delete(path2);
+      return false;
+    }
+    if (!st.isDirectory() || st.isSymbolicLink() || st.dev !== walked.dev || st.ino !== walked.ino) {
+      this.walked.delete(path2);
+      return false;
+    }
+    privateMode(st, ownerOnly);
+    return true;
+  }
+}
 
 class PrivateFiles {
   namespace;
-  constructor(namespace) {
+  ownerOnly;
+  constructor(namespace, ownerOnly = true) {
     this.namespace = namespace;
+    this.ownerOnly = ownerOnly;
   }
-  directory(path, create = false) {
-    const tail = relative2(this.namespace, path);
+  directory(path2, create = false, walks) {
+    const tail = relative2(this.namespace, path2);
     if (isAbsolute2(tail) || tail === ".." || tail.startsWith(`..${sep2}`))
       refused();
     if (!create) {
+      const full = resolve2(path2);
+      if (walks?.reuse(full, this.ownerOnly))
+        return true;
       const namespace = resolve2(this.namespace);
-      let inside = false;
-      return safeDirectory(path, false, (at2, st) => {
+      let inside = false, last;
+      const found = safeDirectory(path2, false, (at2, st) => {
         if (at2 === namespace)
           inside = true;
         if (inside)
-          privateMode(st);
+          privateMode(st, this.ownerOnly);
+        last = st;
       });
+      if (found && last)
+        walks?.remember(full, last);
+      return found;
     }
+    if (!safeDirectory(this.namespace, true))
+      return false;
+    privateMode(lstatSync2(this.namespace), this.ownerOnly);
     let at = this.namespace;
-    for (const part of ["", ...tail.split(sep2).filter(Boolean)]) {
-      if (part)
-        at = join2(at, part);
-      if (!safeDirectory(at, create))
-        return false;
-      privateMode(lstatSync2(at));
+    for (const part of tail.split(sep2).filter(Boolean)) {
+      at = join2(at, part);
+      let st;
+      try {
+        st = lstatSync2(at);
+      } catch (error) {
+        if (!missing(error))
+          throw error;
+        try {
+          mkdirSync3(at, { mode: 448 });
+        } catch (mkdirError) {
+          if (!(mkdirError instanceof Error && ("code" in mkdirError) && mkdirError.code === "EEXIST"))
+            throw mkdirError;
+        }
+        st = lstatSync2(at);
+      }
+      if (!st.isDirectory() || st.isSymbolicLink())
+        throw new Error("Unsafe directory");
+      privateMode(st, this.ownerOnly);
     }
     return true;
   }
-  read(path, maximum = METADATA_BYTES) {
-    if (!this.directory(dirname2(path)))
+  read(path2, maximum = METADATA_BYTES, walks) {
+    if (!this.directory(dirname2(path2), false, walks))
       return;
     let before;
     try {
-      before = lstatSync2(path);
+      before = lstatSync2(path2);
     } catch (error) {
       if (missing(error))
         return;
@@ -2512,67 +2718,75 @@ class PrivateFiles {
     }
     if (!before.isFile() || before.nlink !== 1 || before.size > maximum)
       refused();
-    privateMode(before);
-    const fd = openSync2(path, constants2.O_RDONLY | (constants2.O_NOFOLLOW ?? 0));
+    privateMode(before, this.ownerOnly);
+    const fd = openSync3(path2, constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0));
     try {
       const opened = fstatSync2(fd);
       if (!same(before, opened))
         refused();
-      const bytes = readBounded(path, opened.size);
-      if (!bytes || bytes.length !== opened.size || !same(opened, fstatSync2(fd)) || !same(opened, lstatSync2(path)))
+      const buffer = Buffer.alloc(opened.size + 1);
+      let size = 0;
+      while (size < buffer.length) {
+        const n = readSync2(fd, buffer, size, buffer.length - size, null);
+        if (!n)
+          break;
+        size += n;
+      }
+      const bytes = buffer.subarray(0, size);
+      if (size !== opened.size || !same(opened, fstatSync2(fd)) || !same(opened, lstatSync2(path2)))
         refused();
       return { bytes, identity: hash(bytes), stamp: stamp(opened) };
     } finally {
-      closeSync2(fd);
+      closeSync3(fd);
     }
   }
-  assert(path, expected, maximum = METADATA_BYTES) {
-    const current = this.read(path, maximum);
+  assert(path2, expected, maximum = METADATA_BYTES, walks) {
+    const current = this.read(path2, maximum, walks);
     if (current?.identity !== expected?.identity || current?.stamp !== expected?.stamp)
       throw new ContractError("conflict");
   }
-  create(path, bytes, maximum = METADATA_BYTES) {
+  create(path2, bytes, maximum = METADATA_BYTES) {
     if (Buffer.byteLength(bytes) > maximum)
       throw new ContractError("oversize");
-    this.directory(dirname2(path), true);
-    const fd = openSync2(path, "wx", 384);
+    this.directory(dirname2(path2), true);
+    const fd = retryWindowsFileOperation(() => openSync3(path2, "wx", 384));
     try {
       writeFileSync2(fd, bytes);
       fsyncSync2(fd);
     } finally {
-      closeSync2(fd);
+      closeSync3(fd);
     }
-    this.syncDirectory(dirname2(path));
-    const result = this.read(path, maximum);
+    this.syncDirectory(dirname2(path2));
+    const result = this.read(path2, maximum);
     if (!result || result.identity !== hash(bytes))
       refused();
     return result;
   }
-  replace(path, expected, bytes, maximum = METADATA_BYTES) {
-    this.assert(path, expected, maximum);
-    const temporary = join2(dirname2(path), `pending-${randomUUID2()}.json`);
+  replace(path2, expected, bytes, maximum = METADATA_BYTES) {
+    this.assert(path2, expected, maximum);
+    const temporary = join2(dirname2(path2), `pending-${randomUUID2()}.json`);
     this.create(temporary, bytes, maximum);
-    this.assert(path, expected, maximum);
-    renameSync2(temporary, path);
-    this.syncDirectory(dirname2(path));
-    const result = this.read(path, maximum);
+    this.assert(path2, expected, maximum);
+    retryWindowsFileOperation(() => renameSync2(temporary, path2), () => this.assert(path2, expected, maximum));
+    this.syncDirectory(dirname2(path2));
+    const result = this.read(path2, maximum);
     if (!result || result.identity !== hash(bytes))
       refused();
     return result;
   }
-  remove(path, expected, maximum = METADATA_BYTES) {
-    this.assert(path, expected, maximum);
-    unlinkSync2(path);
-    this.syncDirectory(dirname2(path));
+  remove(path2, expected, maximum = METADATA_BYTES) {
+    this.assert(path2, expected, maximum);
+    retryWindowsFileOperation(() => unlinkSync2(path2), () => this.assert(path2, expected, maximum));
+    this.syncDirectory(dirname2(path2));
   }
-  syncDirectory(path) {
+  syncDirectory(path2) {
     if (process.platform === "win32")
       return;
-    const fd = openSync2(path, constants2.O_RDONLY | constants2.O_DIRECTORY);
+    const fd = openSync3(path2, constants3.O_RDONLY | constants3.O_DIRECTORY);
     try {
       fsyncSync2(fd);
     } finally {
-      closeSync2(fd);
+      closeSync3(fd);
     }
   }
 }
@@ -2600,7 +2814,551 @@ function encoded(value) {
 `;
 }
 
+// src/service/server-config.ts
+var DEFAULT_PORT = 17423;
+var PORT_KEY = "CADENCE_PORT";
+var TOKEN_KEY = "CADENCE_TOKEN";
+var CONFIG_BYTES = 64 * 1024;
+var HEADER = [
+  "# Cadence WebUI for `cadence server install`: edit, then run `cadence server restart`.",
+  "# The token admits anyone who has it to your workspace; keep it private."
+];
+var TOKEN_BYTES = 1024;
+function accessToken(value) {
+  const result = text(value, TOKEN_BYTES, true);
+  if (utf8Bytes(result) < 32 || /[\p{Cc}\p{Cf}]/u.test(result))
+    throw new ContractError("invalid");
+  return result;
+}
+function serverConfigPath(home) {
+  return join3(home, ".pi", "agent", "cadence", ".env");
+}
+
+class ServerConfigRefusal extends ContractError {
+  path;
+  reason;
+  constructor(path2, reason) {
+    super("corrupt-selected");
+    this.path = path2;
+    this.reason = reason;
+  }
+}
+
+class Unusable extends Error {
+}
+var unusable = (reason) => {
+  throw new Unusable(reason);
+};
+function syntax(error) {
+  const message = error instanceof Error ? error.message : "";
+  const line = /at line (\d+)$/.exec(message)?.[1];
+  if (!line)
+    return "is not in KEY=value lines";
+  if (message.startsWith("Invalid configuration name"))
+    return `has an invalid name on line ${line} (letters, digits and _ only, no "export")`;
+  if (message.startsWith("Unterminated"))
+    return `has an unterminated quote on line ${line}`;
+  return `has no KEY=value setting on line ${line}`;
+}
+function settings(source) {
+  try {
+    parseEnvFile(source);
+  } catch (error) {
+    unusable(`${syntax(error)}, which the research skills refuse too`);
+  }
+  const parts = source.split(/(\r\n|\r|\n)/);
+  const found = {};
+  for (let at = 0;at < parts.length; at += 2) {
+    const line = parts[at].trim();
+    if (!line || line.startsWith("#"))
+      continue;
+    const separator = line.indexOf("=");
+    const key = line.slice(0, separator).trim();
+    const name = key === PORT_KEY ? "port" : key === TOKEN_KEY ? "token" : undefined;
+    if (!name)
+      continue;
+    const previous = found[name];
+    if (previous)
+      unusable(`sets ${key} twice (lines ${previous.line} and ${at / 2 + 1}); keep one`);
+    let value = line.slice(separator + 1).trim();
+    if (value[0] === '"' || value[0] === "'")
+      value = value.slice(1, -1);
+    found[name] = { at, line: at / 2 + 1, value };
+  }
+  return { parts, ...found };
+}
+function decode(source) {
+  const { port, token } = settings(source);
+  if (!port)
+    unusable(`has no ${PORT_KEY} line`);
+  if (!token)
+    unusable(`has no ${TOKEN_KEY} line`);
+  const p = port, t = token;
+  const number = Number(p.value);
+  if (!/^[1-9][0-9]{0,4}$/.test(p.value) || number > 65535)
+    unusable(`has ${PORT_KEY} on line ${p.line} that is not a whole number from 1 to 65535`);
+  try {
+    return { port: number, token: accessToken(t.value) };
+  } catch {
+    return unusable(`has ${TOKEN_KEY} on line ${t.line} shorter than 32 characters or with control characters`);
+  }
+}
+var code = (error) => error?.code ?? "error";
+function locate(path2) {
+  let real;
+  try {
+    real = realpathSync2(path2);
+  } catch (error) {
+    if (code(error) !== "ENOENT")
+      unusable(`cannot be read (${code(error)})`);
+    let link = false;
+    try {
+      link = lstatSync3(path2).isSymbolicLink();
+    } catch {}
+    return unusable(link ? "is a link to a file that does not exist" : "does not exist");
+  }
+  return { real, files: new PrivateFiles(dirname3(real), false) };
+}
+function explain(real) {
+  const uid = process.getuid?.();
+  try {
+    const st = lstatSync3(real);
+    if (!st.isFile())
+      return "is not a regular file";
+    if (uid !== undefined && st.uid !== uid)
+      return "is not owned by you";
+    if (uid !== undefined && lstatSync3(dirname3(real)).uid !== uid)
+      return `is in ${dirname3(real)}, which is not owned by you`;
+    if (st.nlink !== 1)
+      return "has more than one hard link";
+    if (st.size > CONFIG_BYTES)
+      return "is larger than 64 KiB";
+    return "changed while Cadence read it; try again";
+  } catch (error) {
+    return `cannot be read (${code(error)})`;
+  }
+}
+function load(path2) {
+  const { real, files } = locate(path2);
+  let snapshot;
+  try {
+    snapshot = files.read(real, CONFIG_BYTES);
+  } catch {
+    return unusable(explain(real));
+  }
+  if (!snapshot)
+    return unusable("does not exist");
+  let source;
+  try {
+    source = decoded(snapshot);
+  } catch {
+    return unusable("is not UTF-8 text");
+  }
+  return { path: path2, real, files, snapshot, source };
+}
+function decoded(snapshot) {
+  return new TextDecoder("utf-8", { fatal: true }).decode(snapshot.bytes);
+}
+function refusing(path2, read) {
+  try {
+    return read();
+  } catch (error) {
+    if (error instanceof ServerConfigRefusal)
+      throw error;
+    throw new ServerConfigRefusal(path2, error instanceof Unusable ? error.message : `cannot be read (${code(error)})`);
+  }
+}
+function readServerConfig(path2) {
+  return refusing(path2, () => {
+    const file = load(path2);
+    return { ...file, config: decode(file.source) };
+  });
+}
+function ensureServerConfig(home) {
+  const path2 = serverConfigPath(home);
+  const added = refusing(path2, () => {
+    try {
+      ensureUserConfig(home);
+    } catch (error) {
+      unusable(`could not be created (${code(error)})`);
+    }
+    const file2 = load(path2);
+    const found = settings(file2.source);
+    const lines = [];
+    if (!found.port)
+      lines.push(`${PORT_KEY}=${DEFAULT_PORT}`);
+    if (!found.token)
+      lines.push(`${TOKEN_KEY}=${randomBytes(32).toString("base64url")}`);
+    if (lines.length) {
+      const { source } = file2;
+      const eol = source.includes(`\r
+`) ? `\r
+` : `
+`;
+      const ending = !source || /[\r\n]$/.test(source) ? "" : eol;
+      const gap = source ? eol : "";
+      try {
+        file2.files.replace(file2.real, file2.snapshot, `${source}${ending}${gap}${[...HEADER, ...lines].join(eol)}${eol}`, CONFIG_BYTES);
+      } catch (error) {
+        unusable(`could not be updated (${code(error)})`);
+      }
+    }
+    return lines.map((line) => line.slice(0, line.indexOf("=")));
+  });
+  const file = readServerConfig(path2);
+  const exposed = process.platform !== "win32" && (statSync(file.real).mode & 63) !== 0;
+  return { ...file, added, exposed };
+}
+
+// src/service/autostart.ts
+var UNIT = "cadence.service";
+var MARKER = "# Generated by @abelxiaoxing/cadence";
+function wscript(env) {
+  const root = env.SystemRoot;
+  return win32.join(root && win32.isAbsolute(root) ? root : "C:\\Windows", "System32", "wscript.exe");
+}
+function hostSystem(root, owner) {
+  const run = (command, args) => {
+    const r = spawnSync2(command, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true
+    });
+    return { status: r.error ? null : r.status, stdout: r.stdout ?? "" };
+  };
+  return {
+    platform: process.platform,
+    env: process.env,
+    home: homedir3(),
+    node: process.execPath,
+    root,
+    unit: UNIT,
+    uid: process.getuid?.(),
+    systemctl: (args) => run("systemctl", ["--user", ...args]),
+    linger: () => {
+      const r = run("loginctl", [
+        "show-user",
+        String(process.getuid?.()),
+        "--property=Linger",
+        "--value"
+      ]);
+      return r.status === 0 ? r.stdout.trim() === "yes" : undefined;
+    },
+    enableLinger: (interactive) => {
+      const r = interactive ? spawnSync2("loginctl", ["enable-linger"], { stdio: "inherit" }) : spawnSync2("busctl", [
+        "--system",
+        "--allow-interactive-authorization=no",
+        "--timeout=15",
+        "call",
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+        "SetUserLinger",
+        "ubb",
+        String(process.getuid?.()),
+        "true",
+        "false"
+      ], { stdio: "ignore", timeout: 20000 });
+      return !r.error && r.status === 0;
+    },
+    launchctl: (args) => run("launchctl", args),
+    reg: (args) => run("reg", args),
+    launch: (path2) => {
+      const r = spawnSync2(wscript(process.env), [path2], {
+        stdio: "ignore",
+        windowsHide: true,
+        timeout: 20000
+      });
+      return !r.error && r.status === 0;
+    },
+    ...owner
+  };
+}
+function expandHome(value, home) {
+  if (value === "~")
+    return home;
+  return value.startsWith("~/") ? join4(home, value.slice(2)) : value;
+}
+function agentDirectory(s) {
+  const selected = s.env.PI_CODING_AGENT_DIR;
+  return resolve3(selected ? expandHome(selected, s.home) : join4(s.home, ".pi", "agent"));
+}
+function piUserInstall(s) {
+  try {
+    const managed = join4(agentDirectory(s), "npm", "node_modules", "@abelxiaoxing", "cadence");
+    return realpathSync3(managed) === realpathSync3(s.root);
+  } catch {
+    return false;
+  }
+}
+function sdkPackages(root) {
+  let start;
+  try {
+    start = realpathSync3(join4(root, "src"));
+  } catch {
+    return;
+  }
+  const found = [];
+  for (const name of ["pi-coding-agent", "pi-ai"]) {
+    let hit;
+    for (let dir = start;!hit; dir = dirname4(dir)) {
+      const candidate = join4(dir, "node_modules", "@earendil-works", name, "package.json");
+      if (regularFile(candidate))
+        hit = candidate;
+      else if (dirname4(dir) === dir)
+        return;
+    }
+    found.push(hit);
+  }
+  return found;
+}
+function unitPath(s) {
+  const data = s.env.XDG_DATA_HOME;
+  return join4(data && isAbsolute3(data) ? data : join4(s.home, ".local", "share"), "systemd", "user", s.unit);
+}
+function servicePath(value) {
+  const kept = (value ?? "").split(delimiter).filter((entry) => isAbsolute3(entry) && !entry.endsWith(`${sep3}node_modules${sep3}.bin`) && !entry.includes(`${sep3}node-gyp-bin`));
+  return kept.length ? [...new Set(kept)].join(delimiter) : "/usr/local/bin:/usr/bin:/bin";
+}
+function serviceEnvironment(s) {
+  const out = [["PATH", servicePath(s.env.PATH)]];
+  for (const key of ["LANG", "LC_ALL"]) {
+    const value = s.env[key];
+    if (value)
+      out.push([key, value]);
+  }
+  const state = s.env.XDG_STATE_HOME;
+  if (state && isAbsolute3(state))
+    out.push(["XDG_STATE_HOME", state]);
+  if (s.env.PI_CODING_AGENT_DIR)
+    out.push(["PI_CODING_AGENT_DIR", agentDirectory(s)]);
+  return out;
+}
+function checked(value) {
+  if (/[\u0000-\u001f\u007f]/.test(value))
+    throw new ContractError("invalid");
+  return value;
+}
+var specifiers = (value) => checked(value).replaceAll("%", "%%");
+var quoted = (value) => `"${specifiers(value).replace(/["\\]/g, "\\$&")}"`;
+var argument = (value) => quoted(value).replaceAll("$", "$$$$");
+function buildUnit(u) {
+  const command = (args) => [u.node, u.cli, ...args].map(argument).join(" ");
+  return [
+    `${MARKER}; \`cadence server install\` and \`restart\` rewrite this file.`,
+    "# Override with `systemctl --user edit cadence`; opt out with `systemctl --user disable --now cadence` or `mask`.",
+    "[Unit]",
+    "Description=Cadence shared task service and WebUI",
+    "Documentation=https://github.com/abelxiaoxing/cadence/blob/main/docs/service-management.md",
+    `ConditionPathExists=${specifiers(u.cli)}`,
+    `ConditionPathExists=${specifiers(join4(u.agentDir, "auth.json"))}`,
+    ...u.sdk.map((path2) => `ConditionPathExists=${specifiers(path2)}`),
+    "StartLimitIntervalSec=300",
+    "StartLimitBurst=3",
+    "",
+    "[Service]",
+    "Type=simple",
+    `WorkingDirectory=${specifiers(u.workspace)}`,
+    ...u.environment.map(([k, v]) => `Environment=${quoted(`${k}=${v}`)}`),
+    `ExecStart=${command(["start", "--foreground", "--workspace", u.workspace, "--server-config", u.serverConfig])}`,
+    `ExecStop=-${command(["stop", "--workspace", u.workspace])}`,
+    "KillMode=mixed",
+    "TimeoutStopSec=90",
+    "Restart=on-failure",
+    "RestartSec=10",
+    "",
+    "[Install]",
+    "WantedBy=default.target",
+    ""
+  ].join(`
+`);
+}
+function readGenerated(path2, marker) {
+  try {
+    if (!lstatSync4(path2).isFile())
+      return null;
+    const bytes = readFileSync(path2);
+    const text2 = bytes[0] === 255 && bytes[1] === 254 ? bytes.subarray(2).toString("utf16le") : bytes.toString("utf8");
+    return text2.startsWith(marker) ? text2 : null;
+  } catch (error) {
+    if (error.code === "ENOENT")
+      return;
+    throw error;
+  }
+}
+function unitWorkspace(text2) {
+  return text2?.match(/^WorkingDirectory=(.+)$/m)?.[1].replaceAll("%%", "%");
+}
+function directory(path2) {
+  try {
+    return isAbsolute3(path2) && statSync2(path2).isDirectory();
+  } catch {
+    return false;
+  }
+}
+function serviceStateHome(s) {
+  const state = s.platform === "win32" ? s.env.LOCALAPPDATA : s.env.XDG_STATE_HOME;
+  return state && isAbsolute3(state) ? state : join4(s.home, ...s.platform === "win32" ? ["AppData", "Local"] : [".local", "state"]);
+}
+function selectWorkspace(s, requested, kept) {
+  let chosen;
+  if (requested) {
+    chosen = expandHome(requested, s.home);
+    if (!directory(chosen))
+      throw new ContractError("invalid");
+    chosen = resolve3(chosen);
+  } else if (kept && directory(kept))
+    chosen = kept;
+  const landing = chosen ? effectiveWorkspace(chosen, serviceStateHome(s), s.home) : { workspace: join4(s.home, LANDING_WORKSPACE), redirected: false };
+  if (landing.workspace !== chosen)
+    mkdirSync4(landing.workspace, { recursive: true });
+  return landing.redirected ? { workspace: landing.workspace, redirectedFrom: chosen } : { workspace: landing.workspace };
+}
+function write(path2, content) {
+  mkdirSync4(dirname4(path2), { recursive: true });
+  const temporary = `${path2}.${process.pid}.tmp`;
+  try {
+    writeFileSync3(temporary, content, { mode: 420, flag: "wx" });
+    renameSync3(temporary, path2);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
+function regularFile(path2) {
+  try {
+    return statSync2(path2).isFile();
+  } catch {
+    return false;
+  }
+}
+async function settle(s, workspace) {
+  if (!workspace)
+    return;
+  const status = await s.stopOwner(workspace);
+  if (status === "stopped")
+    return;
+  return {
+    status: status === "quarantined" || status === "unavailable" ? status : "unconfirmed",
+    workspace
+  };
+}
+function bootStart(s, attempt) {
+  const current = s.linger();
+  if (current === undefined)
+    return {};
+  if (current)
+    return { linger: "on" };
+  if (!attempt)
+    return { linger: "off" };
+  return {
+    linger: s.enableLinger(false) || s.enableLinger(true) ? "enabled" : "refused"
+  };
+}
+function configureAutostart(s, mode, requested, linger = false) {
+  if (s.platform !== "linux")
+    return { status: "unsupported" };
+  if (s.systemctl(["show-environment"]).status !== 0)
+    return { status: "unavailable" };
+  const path2 = unitPath(s);
+  const previous = readGenerated(path2, MARKER);
+  if (previous === null)
+    return { status: "foreign", unit: path2 };
+  if (mode === "restart" && previous === undefined)
+    return { status: "absent" };
+  const sdk = sdkPackages(s.root);
+  if (!sdk)
+    return { status: "missing-pi-sdk" };
+  const { workspace, redirectedFrom } = selectWorkspace(s, requested, unitWorkspace(previous));
+  const agentDir = agentDirectory(s);
+  const content = buildUnit({
+    node: s.node,
+    cli: join4(s.root, "src", "service-cli.mjs"),
+    workspace,
+    serverConfig: serverConfigPath(s.home),
+    agentDir,
+    sdk,
+    environment: serviceEnvironment(s)
+  });
+  const enabled = s.systemctl(["is-enabled", s.unit]).stdout.trim();
+  const active = s.systemctl(["is-active", "--quiet", s.unit]).status === 0;
+  if (active)
+    s.systemctl(["stop", s.unit]);
+  write(path2, content);
+  s.systemctl(["daemon-reload"]);
+  const result = {
+    unit: path2,
+    workspace,
+    ...redirectedFrom ? { redirectedFrom } : {}
+  };
+  if (enabled.startsWith("masked"))
+    return { status: "masked", ...result };
+  if (mode === "install" && enabled !== "enabled" && s.systemctl(["enable", s.unit]).status !== 0)
+    return { status: "failed", ...result };
+  const boot = () => mode === "install" ? bootStart(s, linger) : {};
+  if (!regularFile(join4(agentDir, "auth.json")))
+    return { status: "waiting-for-pi-login", ...result, ...boot() };
+  s.systemctl(["reset-failed", s.unit]);
+  const started = s.systemctl(["start", s.unit]).status === 0;
+  return { status: started ? "started" : "failed", ...result, ...boot() };
+}
+function stopAutostart(s) {
+  if (s.platform !== "linux")
+    return { status: "unsupported" };
+  const path2 = unitPath(s);
+  const previous = readGenerated(path2, MARKER);
+  if (previous === null)
+    return { status: "foreign", unit: path2 };
+  if (previous === undefined)
+    return { status: "absent" };
+  if (s.systemctl(["show-environment"]).status !== 0)
+    return { status: "unavailable", unit: path2 };
+  return {
+    status: s.systemctl(["stop", s.unit]).status === 0 ? "stopped" : "failed",
+    unit: path2,
+    workspace: unitWorkspace(previous)
+  };
+}
+function removeAutostart(s) {
+  if (s.platform !== "linux")
+    return { status: "unsupported" };
+  const path2 = unitPath(s);
+  const previous = readGenerated(path2, MARKER);
+  if (previous === null)
+    return { status: "foreign", unit: path2 };
+  if (previous === undefined)
+    return { status: "absent" };
+  if (s.systemctl(["show-environment"]).status !== 0)
+    return { status: "unavailable", unit: path2 };
+  if (s.systemctl(["disable", "--now", s.unit]).status !== 0)
+    return { status: "failed", unit: path2 };
+  rmSync(path2);
+  s.systemctl(["daemon-reload"]);
+  s.systemctl(["reset-failed", s.unit]);
+  return { status: "removed", unit: path2 };
+}
+function autostartStatus(s) {
+  if (s.platform !== "linux")
+    return { status: "unsupported" };
+  const path2 = unitPath(s);
+  const previous = readGenerated(path2, MARKER);
+  if (previous === null)
+    return { status: "foreign", unit: path2 };
+  if (previous === undefined)
+    return { status: "absent" };
+  return {
+    status: s.systemctl(["is-active", s.unit]).stdout.trim() || "unknown",
+    enabled: s.systemctl(["is-enabled", s.unit]).stdout.trim() || "unknown",
+    unit: path2,
+    workspace: unitWorkspace(previous),
+    ...bootStart(s, false)
+  };
+}
+
 // src/service/coordination.ts
+import { randomBytes as randomBytes2, randomUUID as randomUUID3 } from "node:crypto";
+import { opendirSync, realpathSync as realpathSync4 } from "node:fs";
+import { hostname as hostname2 } from "node:os";
+import { dirname as dirname5, isAbsolute as isAbsolute4, join as join5, relative as relative3, sep as sep4 } from "node:path";
 var registrationKeys = [
   "schema",
   "root",
@@ -2616,10 +3374,10 @@ var registrationKeys = [
 ];
 var reservationKeys = registrationKeys.filter((k) => !["schema", "phase", "checkoutToken"].includes(k));
 function pathValue(value) {
-  const path = text(value, 4096, true);
-  if (!isAbsolute3(path))
+  const path2 = text(value, 4096, true);
+  if (!isAbsolute4(path2))
     refused();
-  return path;
+  return path2;
 }
 function endpoint(value, allowZero = false) {
   const s = text(value, 128, true);
@@ -2674,12 +3432,12 @@ function decodeRegistration(value) {
 function rootsOverlap(a, b) {
   const within = (x, y) => {
     const r = relative3(x, y);
-    return r === "" || r !== ".." && !r.startsWith(`..${sep3}`) && !isAbsolute3(r);
+    return r === "" || r !== ".." && !r.startsWith(`..${sep4}`) && !isAbsolute4(r);
   };
   return within(a, b) || within(b, a);
 }
-function names(path, allowed) {
-  const dir = opendirSync(path);
+function names(path2, allowed) {
+  const dir = opendirSync(path2);
   try {
     let count = 0;
     for (let entry = dir.readSync();entry; entry = dir.readSync()) {
@@ -2726,17 +3484,17 @@ class ServiceCoordination {
   stateHome;
   constructor(workspace, stateHome) {
     this.store = new TaskStore(resolveWorkspace(workspace).root, stateHome);
-    const namespace = dirname3(this.store.privateRoot);
+    const namespace = dirname5(this.store.privateRoot);
     this.files = new PrivateFiles(namespace);
-    this.stateHome = dirname3(namespace);
-    this.directory = join3(this.store.privateRoot, "service-v1");
-    this.registryDirectory = join3(namespace, "service-registry-v1");
+    this.stateHome = dirname5(namespace);
+    this.directory = join5(this.store.privateRoot, "service-v1");
+    this.registryDirectory = join5(namespace, "service-registry-v1");
   }
   path(name) {
-    return join3(this.directory, name);
+    return join5(this.directory, name);
   }
   registryPath(name) {
-    return join3(this.registryDirectory, name);
+    return join5(this.registryDirectory, name);
   }
   registry() {
     if (!this.files.directory(this.registryDirectory))
@@ -2756,7 +3514,7 @@ class ServiceCoordination {
     const o = closed(json(snapshot, REGISTRY_BYTES), ["schema", "entries"]);
     const entries = list(o.entries, REGISTRY_ENTRIES, decodeReservation);
     for (const [i, row] of entries.entries()) {
-      if (row.stateHome !== this.stateHome || realpathSync2(row.root) !== row.root)
+      if (row.stateHome !== this.stateHome || realpathSync4(row.root) !== row.root)
         refused();
       if (entries.slice(0, i).some((other) => rootsOverlap(row.root, other.root) || row.endpoint === other.endpoint))
         refused();
@@ -2770,8 +3528,8 @@ class ServiceCoordination {
       }
     };
   }
-  assertNamespace() {
-    if (!this.files.directory(this.directory))
+  assertNamespace(walks) {
+    if (!this.files.directory(this.directory, false, walks))
       refused();
     names(this.directory, [
       "format.json",
@@ -2784,14 +3542,15 @@ class ServiceCoordination {
       "host-config.json",
       "history-v2"
     ]);
-    this.files.directory(join3(this.directory, "history-v2"));
+    this.files.directory(join5(this.directory, "history-v2"), false, walks);
   }
   selected() {
-    if (!this.files.directory(this.directory))
+    const walks = new DirectoryWalks;
+    if (!this.files.directory(this.directory, false, walks))
       return;
-    this.assertNamespace();
-    const manifest = this.files.read(this.path("format.json"));
-    const config = this.files.read(this.path("config.json"));
+    this.assertNamespace(walks);
+    const manifest = this.files.read(this.path("format.json"), undefined, walks);
+    const config = this.files.read(this.path("config.json"), undefined, walks);
     if (!manifest || !config)
       refused();
     const f = closed(json(manifest), [
@@ -2805,13 +3564,13 @@ class ServiceCoordination {
     literal(f.stateHome, this.stateHome);
     literal(f.configIdentity, config.identity);
     const c = decodeOwnerConfig(json(config));
-    const hostConfig = this.files.read(this.path("host-config.json"));
+    const hostConfig = this.files.read(this.path("host-config.json"), undefined, walks);
     if (hostConfig && hostConfig.identity !== c.policyIdentity)
       refused();
-    const registration = this.files.read(this.path("registration.json"));
-    const owner = this.files.read(this.path("owner.lock"));
-    const capability = this.files.read(this.path("local-capability.json"));
-    const checkout = this.files.read(this.store.lockPath, 8192);
+    const registration = this.files.read(this.path("registration.json"), undefined, walks);
+    const owner = this.files.read(this.path("owner.lock"), undefined, walks);
+    const capability = this.files.read(this.path("local-capability.json"), undefined, walks);
+    const checkout = this.files.read(this.store.lockPath, 8192, walks);
     const value = registration ? decodeRegistration(json(registration)) : undefined;
     if (value && (value.root !== this.store.root || value.stateHome !== this.stateHome || value.configIdentity !== config.identity || !endpointMatches(c.endpoint, value.endpoint)))
       refused();
@@ -2943,7 +3702,7 @@ class ServiceCoordination {
       throw error;
     }
   }
-  acquire(input, resolvedEndpoint = input.endpoint, initializeNew) {
+  acquire(input, resolvedEndpoint = input.endpoint, initializeNew, reselectExisting) {
     const config = decodeOwnerConfig(input);
     const bound = endpoint(resolvedEndpoint);
     if (!endpointMatches(config.endpoint, bound))
@@ -2958,7 +3717,8 @@ class ServiceCoordination {
         throw new ContractError("quarantine");
       if (this.store.inspectLock())
         throw new ContractError("conflict");
-      if (old && old.config.identity !== hash(encoded(config)))
+      const reselect = !!old && old.config.identity !== hash(encoded(config));
+      if (reselect && (!reselectExisting || !old?.hostConfig))
         throw new ContractError("conflict");
       const row = {
         root: this.store.root,
@@ -2975,7 +3735,17 @@ class ServiceCoordination {
         ...registry.value,
         entries: [...registry.value.entries, row]
       }), REGISTRY_BYTES);
-      this.initialize(config);
+      if (old?.hostConfig && reselect && reselectExisting) {
+        reselectExisting(old.hostConfig);
+        const saved = this.files.replace(this.path("config.json"), old.config, encoded(config));
+        this.files.replace(this.path("format.json"), old.manifest, encoded({
+          schema: "cadence-service-format/1",
+          root: this.store.root,
+          stateHome: this.stateHome,
+          configIdentity: saved.identity
+        }));
+      } else
+        this.initialize(config);
       if (!old)
         initializeNew?.();
       const checkout = this.store.acquire();
@@ -2992,7 +3762,7 @@ class ServiceCoordination {
       const capability = this.files.create(this.path("local-capability.json"), encoded({
         schema: "cadence-service-local-capability/1",
         epoch: row.epoch,
-        capability: randomBytes(32).toString("base64url")
+        capability: randomBytes2(32).toString("base64url")
       }));
       const value = {
         schema: "cadence-service-registration/1",
@@ -3158,8 +3928,8 @@ class OwnerLease {
   assert() {
     if (this.released || this.selected.value.pid !== process.pid || this.selected.value.host !== hostname2())
       throw new ContractError("conflict");
-    const c = this.coordination;
-    c.assertNamespace();
+    const c = this.coordination, walks = new DirectoryWalks;
+    c.assertNamespace(walks);
     for (const [name, snapshot] of [
       ["config.json", this.selected.config],
       ["host-config.json", this.selected.hostConfig],
@@ -3168,8 +3938,8 @@ class OwnerLease {
       ["owner.lock", this.selected.owner],
       ["local-capability.json", this.selected.capability]
     ])
-      c.files.assert(c.path(name), snapshot);
-    c.files.assert(c.store.lockPath, this.selected.checkout, 8192);
+      c.files.assert(c.path(name), snapshot, undefined, walks);
+    c.files.assert(c.store.lockPath, this.selected.checkout, 8192, walks);
     c.store.assertOwner(this.checkout);
   }
   phase(phase) {
@@ -3203,13 +3973,288 @@ class OwnerLease {
   }
 }
 
+// src/service/launchd.ts
+import { rmSync as rmSync2 } from "node:fs";
+import { join as join6 } from "node:path";
+var LABEL = "com.abelxiaoxing.cadence";
+var MARKER2 = `<?xml version="1.0" encoding="UTF-8"?>
+<!-- Generated by @abelxiaoxing/cadence`;
+function plistPath(s) {
+  return join6(s.home, "Library", "LaunchAgents", `${LABEL}.plist`);
+}
+var xml = (value) => checked(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+function buildPlist(u) {
+  const string = (value) => `		<string>${xml(value)}</string>`;
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    "<!-- Generated by @abelxiaoxing/cadence; `cadence server install` and `restart` rewrite this file. -->",
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+    '<plist version="1.0">',
+    "<dict>",
+    "\t<key>Label</key>",
+    `	<string>${LABEL}</string>`,
+    "\t<key>ProgramArguments</key>",
+    "\t<array>",
+    ...[
+      u.node,
+      u.cli,
+      "start",
+      "--foreground",
+      "--workspace",
+      u.workspace,
+      "--server-config",
+      u.serverConfig
+    ].map(string),
+    "\t</array>",
+    "\t<key>WorkingDirectory</key>",
+    `	<string>${xml(u.workspace)}</string>`,
+    "\t<key>EnvironmentVariables</key>",
+    "\t<dict>",
+    ...u.environment.flatMap(([k, v]) => [
+      `		<key>${xml(k)}</key>`,
+      string(v)
+    ]),
+    "\t</dict>",
+    "\t<key>RunAtLoad</key>",
+    "\t<true/>",
+    "\t<key>ProcessType</key>",
+    "\t<string>Background</string>",
+    "\t<key>StandardOutPath</key>",
+    `	<string>${xml(u.log)}</string>`,
+    "\t<key>StandardErrorPath</key>",
+    `	<string>${xml(u.log)}</string>`,
+    "</dict>",
+    "</plist>",
+    ""
+  ].join(`
+`);
+}
+function plistWorkspace(text2) {
+  const m = text2?.match(/^\t<key>WorkingDirectory<\/key>\n\t<string>([^<]*)<\/string>$/m);
+  return m?.[1].replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+}
+var domain = (s) => `gui/${s.uid}`;
+var target = (s) => `${domain(s)}/${LABEL}`;
+var loaded = (s) => s.launchctl(["print", target(s)]).status === 0;
+function disabled(s) {
+  return new RegExp(`"${LABEL.replaceAll(".", "\\.")}" => (true|disabled)`).test(s.launchctl(["print-disabled", domain(s)]).stdout);
+}
+async function configureLaunchAgent(s, mode, requested) {
+  if (s.uid === undefined)
+    return { status: "unavailable" };
+  const path2 = plistPath(s);
+  const previous = readGenerated(path2, MARKER2);
+  if (previous === null)
+    return { status: "foreign", unit: path2 };
+  if (mode === "restart" && previous === undefined)
+    return { status: "absent" };
+  const sdk = sdkPackages(s.root);
+  if (!sdk)
+    return { status: "missing-pi-sdk" };
+  const kept = plistWorkspace(previous);
+  const { workspace, redirectedFrom } = selectWorkspace(s, requested, kept);
+  const refused2 = await settle(s, kept);
+  if (refused2)
+    return { ...refused2, unit: path2 };
+  if (loaded(s))
+    s.launchctl(["bootout", target(s)]);
+  write(path2, buildPlist({
+    node: s.node,
+    cli: join6(s.root, "src", "service-cli.mjs"),
+    workspace,
+    serverConfig: serverConfigPath(s.home),
+    environment: serviceEnvironment(s),
+    log: join6(s.home, "Library", "Logs", "cadence.log")
+  }));
+  const result = {
+    unit: path2,
+    workspace,
+    ...redirectedFrom ? { redirectedFrom } : {}
+  };
+  if (mode === "install")
+    s.launchctl(["enable", target(s)]);
+  else if (disabled(s))
+    return { status: "disabled", ...result };
+  if (!regularFile(join6(agentDirectory(s), "auth.json")))
+    return { status: "waiting-for-pi-login", ...result };
+  const started = s.launchctl(["bootstrap", domain(s), path2]).status === 0;
+  return { status: started ? "started" : "failed", ...result };
+}
+async function stopLaunchAgent(s) {
+  const path2 = plistPath(s);
+  const previous = readGenerated(path2, MARKER2);
+  if (previous === null)
+    return { status: "foreign", unit: path2 };
+  if (previous === undefined)
+    return { status: "absent" };
+  const workspace = plistWorkspace(previous);
+  const refused2 = await settle(s, workspace);
+  return { ...refused2 ?? { status: "stopped", workspace }, unit: path2 };
+}
+async function removeLaunchAgent(s) {
+  const path2 = plistPath(s);
+  const previous = readGenerated(path2, MARKER2);
+  if (previous === null)
+    return { status: "foreign", unit: path2 };
+  if (previous === undefined)
+    return { status: "absent" };
+  const refused2 = await settle(s, plistWorkspace(previous));
+  if (refused2)
+    return { ...refused2, unit: path2 };
+  if (s.uid !== undefined && loaded(s))
+    s.launchctl(["bootout", target(s)]);
+  rmSync2(path2);
+  return { status: "removed", unit: path2 };
+}
+function launchAgentStatus(s) {
+  const path2 = plistPath(s);
+  const previous = readGenerated(path2, MARKER2);
+  if (previous === null)
+    return { status: "foreign", unit: path2 };
+  if (previous === undefined)
+    return { status: "absent" };
+  const printed = s.uid === undefined ? undefined : s.launchctl(["print", target(s)]);
+  return {
+    status: printed?.status !== 0 ? "unloaded" : /^\s*state = running$/m.test(printed.stdout) ? "active" : "inactive",
+    enabled: s.uid !== undefined && disabled(s) ? "disabled" : "enabled",
+    unit: path2,
+    workspace: plistWorkspace(previous)
+  };
+}
+
+// src/service/login-run.ts
+import { rmSync as rmSync3 } from "node:fs";
+import { isAbsolute as isAbsolute5, join as join7 } from "node:path";
+var RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+var APPROVED_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
+var RUN_VALUE = "Cadence";
+var MARKER3 = "' Generated by @abelxiaoxing/cadence";
+function launcherPath(s) {
+  const local = s.env.LOCALAPPDATA;
+  return join7(local && isAbsolute5(local) ? local : join7(s.home, "AppData", "Local"), "cadence-server", "cadence.vbs");
+}
+var literal2 = (value) => `"${checked(value).replaceAll('"', '""')}"`;
+function argument2(value) {
+  if (checked(value).includes('"'))
+    throw new ContractError("invalid");
+  return `"${value}"`;
+}
+function buildLauncher(u) {
+  const command = `${argument2(u.node)} ${argument2(u.cli)} start --workspace ${argument2(u.workspace)} --server-config ${argument2(u.serverConfig)}`;
+  return [
+    `${MARKER3}; \`cadence server install\` and \`restart\` rewrite this file.`,
+    `' Started at login by ${RUN_KEY}\\${RUN_VALUE}; window style 0 hides the console.`,
+    'Set shell = CreateObject("WScript.Shell")',
+    ...u.environment.length ? ['Set env = shell.Environment("Process")'] : [],
+    ...u.environment.map(([k, v]) => `env(${literal2(k)}) = ${literal2(v)}`),
+    `shell.CurrentDirectory = ${literal2(u.workspace)}`,
+    `shell.Run ${literal2(command)}, 0, False`,
+    ""
+  ].join(`\r
+`);
+}
+var utf16 = (text2) => Buffer.concat([Buffer.from([255, 254]), Buffer.from(text2, "utf16le")]);
+function launcherWorkspace(text2) {
+  return text2?.match(/^shell\.CurrentDirectory = "((?:[^"]|"")*)"\r?$/m)?.[1].replaceAll('""', '"');
+}
+var runEntry = (path2, s) => `"${wscript(s.env)}" "${path2}"`;
+var present = (s, key) => s.reg(["query", key, "/v", RUN_VALUE]).status === 0;
+function approvedOff(s) {
+  const r = s.reg(["query", APPROVED_KEY, "/v", RUN_VALUE]);
+  const first = r.status === 0 && /REG_BINARY\s+([0-9A-F]{2})/i.exec(r.stdout);
+  return !!first && (Number.parseInt(first[1], 16) & 1) === 1;
+}
+async function configureLoginRun(s, mode, requested) {
+  const path2 = launcherPath(s);
+  const previous = readGenerated(path2, MARKER3);
+  if (previous === null)
+    return { status: "foreign", unit: path2 };
+  if (previous === undefined && present(s, RUN_KEY))
+    return { status: "foreign", unit: `${RUN_KEY}\\${RUN_VALUE}` };
+  if (mode === "restart" && previous === undefined)
+    return { status: "absent" };
+  const sdk = sdkPackages(s.root);
+  if (!sdk)
+    return { status: "missing-pi-sdk" };
+  const kept = launcherWorkspace(previous);
+  const { workspace, redirectedFrom } = selectWorkspace(s, requested, kept);
+  const refused2 = await settle(s, kept);
+  if (refused2)
+    return { ...refused2, unit: path2 };
+  const environment = s.env.PI_CODING_AGENT_DIR ? [["PI_CODING_AGENT_DIR", agentDirectory(s)]] : [];
+  write(path2, utf16(buildLauncher({
+    node: s.node,
+    cli: join7(s.root, "src", "service-cli.mjs"),
+    workspace,
+    serverConfig: serverConfigPath(s.home),
+    environment
+  })));
+  const result = {
+    unit: path2,
+    workspace,
+    ...redirectedFrom ? { redirectedFrom } : {}
+  };
+  if (mode === "install") {
+    const entry = ["/v", RUN_VALUE, "/t", "REG_SZ", "/d", runEntry(path2, s)];
+    if (s.reg(["add", RUN_KEY, ...entry, "/f"]).status !== 0)
+      return { status: "failed", ...result };
+    s.reg(["delete", APPROVED_KEY, "/v", RUN_VALUE, "/f"]);
+  }
+  if (!regularFile(join7(agentDirectory(s), "auth.json")))
+    return { status: "waiting-for-pi-login", ...result };
+  return { status: s.launch(path2) ? "started" : "failed", ...result };
+}
+async function stopLoginRun(s) {
+  const path2 = launcherPath(s);
+  const previous = readGenerated(path2, MARKER3);
+  if (previous === null)
+    return { status: "foreign", unit: path2 };
+  if (previous === undefined)
+    return { status: "absent" };
+  const workspace = launcherWorkspace(previous);
+  const refused2 = await settle(s, workspace);
+  return { ...refused2 ?? { status: "stopped", workspace }, unit: path2 };
+}
+async function removeLoginRun(s) {
+  const path2 = launcherPath(s);
+  const previous = readGenerated(path2, MARKER3);
+  if (previous === null)
+    return { status: "foreign", unit: path2 };
+  if (previous === undefined)
+    return { status: "absent" };
+  const refused2 = await settle(s, launcherWorkspace(previous));
+  if (refused2)
+    return { ...refused2, unit: path2 };
+  for (const key of [RUN_KEY, APPROVED_KEY])
+    if (present(s, key))
+      s.reg(["delete", key, "/v", RUN_VALUE, "/f"]);
+  rmSync3(path2);
+  return { status: "removed", unit: path2 };
+}
+async function loginRunStatus(s) {
+  const path2 = launcherPath(s);
+  const previous = readGenerated(path2, MARKER3);
+  if (previous === null)
+    return { status: "foreign", unit: path2 };
+  if (previous === undefined)
+    return { status: "absent" };
+  const workspace = launcherWorkspace(previous);
+  const owner = workspace ? await s.ownerStatus(workspace) : "unavailable";
+  return {
+    status: owner === "alive" ? "active" : "inactive",
+    enabled: present(s, RUN_KEY) && !approvedOff(s) ? "enabled" : "disabled",
+    unit: path2,
+    workspace
+  };
+}
+
 // src/service/recovery-cli.ts
 import { isatty } from "node:tty";
 
 // src/history/recovery.ts
 import { createHash as createHash5, randomUUID as randomUUID5 } from "node:crypto";
-import { lstatSync as lstatSync5, opendirSync as opendirSync3 } from "node:fs";
-import { join as join5, relative as relative4 } from "node:path";
+import { lstatSync as lstatSync7, opendirSync as opendirSync3 } from "node:fs";
+import { join as join9, relative as relative4 } from "node:path";
 
 // src/service/recovery.ts
 async function inspectRecovery(coordination, history) {
@@ -3257,19 +4302,19 @@ async function resolveRecovery(coordination, confirmation, history) {
 }
 
 // src/history/files.ts
-import { createHash as createHash4, randomBytes as randomBytes2, randomUUID as randomUUID4 } from "node:crypto";
+import { createHash as createHash4, randomBytes as randomBytes3, randomUUID as randomUUID4 } from "node:crypto";
 import {
-  closeSync as closeSync4,
-  constants as constants4,
+  closeSync as closeSync5,
+  constants as constants5,
   fstatSync as fstatSync4,
   fsyncSync as fsyncSync3,
-  lstatSync as lstatSync4,
+  lstatSync as lstatSync6,
   opendirSync as opendirSync2,
-  openSync as openSync4,
+  openSync as openSync5,
   statfsSync
 } from "node:fs";
 import { open } from "node:fs/promises";
-import { dirname as dirname5, join as join4 } from "node:path";
+import { dirname as dirname7, join as join8 } from "node:path";
 
 // src/history/admission.ts
 function decodeRunAdmission(value) {
@@ -3290,44 +4335,44 @@ function decodeRunAdmission(value) {
 
 // src/history/read-io.ts
 import {
-  closeSync as closeSync3,
-  constants as constants3,
+  closeSync as closeSync4,
+  constants as constants4,
   fstatSync as fstatSync3,
-  lstatSync as lstatSync3,
-  openSync as openSync3,
-  readSync as readSync2
+  lstatSync as lstatSync5,
+  openSync as openSync4,
+  readSync as readSync3
 } from "node:fs";
-import { dirname as dirname4 } from "node:path";
+import { dirname as dirname6 } from "node:path";
 function bad() {
   throw new ContractError("corrupt-selected");
 }
 var stamp2 = (s) => [s.dev, s.ino, s.size, s.mode, s.uid, s.nlink, s.ctimeMs, s.mtimeMs].join(":");
-function selected(files, path, read) {
-  if (!files.files.directory(dirname4(path)))
+function selected(files, path2, read, walks) {
+  if (!files.files.directory(dirname6(path2), false, walks))
     bad();
-  const before = lstatSync3(path);
+  const before = lstatSync5(path2);
   if (!before.isFile() || before.nlink !== 1 || process.platform !== "win32" && (before.mode & 63 || process.getuid && before.uid !== process.getuid()))
     bad();
-  const fd = openSync3(path, constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0));
+  const fd = openSync4(path2, constants4.O_RDONLY | (constants4.O_NOFOLLOW ?? 0));
   try {
     if (stamp2(fstatSync3(fd)) !== stamp2(before))
       bad();
     const result = read(fd, before.size, stamp2(before));
-    if (stamp2(fstatSync3(fd)) !== stamp2(before) || stamp2(lstatSync3(path)) !== stamp2(before))
+    if (stamp2(fstatSync3(fd)) !== stamp2(before) || stamp2(lstatSync5(path2)) !== stamp2(before))
       bad();
     return result;
   } finally {
-    closeSync3(fd);
+    closeSync4(fd);
   }
 }
-function assertIncarnation(files, path, expected) {
-  selected(files, path, (_fd, _size, current) => {
+function assertIncarnation(files, path2, expected) {
+  selected(files, path2, (_fd, _size, current) => {
     if (current !== expected)
       bad();
   });
 }
-function statSize(files, path, maximum) {
-  return selected(files, path, (_fd, size) => {
+function statSize(files, path2, maximum) {
+  return selected(files, path2, (_fd, size) => {
     if (size > maximum)
       bad();
     return size;
@@ -3764,12 +4809,23 @@ function decodeJournalText(line) {
 
 // src/history/files.ts
 class HistoryReadBudget {
+  clock;
   started = performance.now();
   bytes = 0;
+  walks = new DirectoryWalks;
+  constructor(clock = true) {
+    this.clock = clock;
+  }
+  static authority() {
+    return new HistoryReadBudget(false);
+  }
   reserve(bytes) {
-    if (!Number.isSafeInteger(bytes) || bytes < 0 || this.bytes + bytes > LIMITS.searchBytes || performance.now() - this.started >= LIMITS.searchMs)
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || this.bytes + bytes > LIMITS.searchBytes || this.elapsed)
       throw new ContractError("receipt-inconclusive");
     this.bytes += bytes;
+  }
+  get elapsed() {
+    return this.clock && performance.now() - this.started >= LIMITS.searchMs;
   }
 }
 function corrupt() {
@@ -3789,14 +4845,14 @@ class HistoryFiles {
     this.coordination = coordination;
     this.format = format;
     this.formatSnapshot = formatSnapshot;
-    this.directory = join4(coordination.directory, "history-v2");
+    this.directory = join8(coordination.directory, "history-v2");
     this.files = coordination.files;
   }
   static open(coordination) {
-    const dir = join4(coordination.directory, "history-v2");
+    const dir = join8(coordination.directory, "history-v2");
     if (!coordination.files.directory(dir))
       return;
-    const file = coordination.files.read(join4(dir, "format.json"));
+    const file = coordination.files.read(join8(dir, "format.json"));
     if (!file)
       corrupt();
     const format = decodeFormat(json(file));
@@ -3812,7 +4868,7 @@ class HistoryFiles {
       existing.assertWritable();
       return existing;
     }
-    const dir = join4(c.directory, "history-v2");
+    const dir = join8(c.directory, "history-v2");
     const format = {
       schema: FORMAT,
       storeId: randomUUID4(),
@@ -3822,19 +4878,19 @@ class HistoryFiles {
     c.files.directory(dir, true);
     for (const name of ["commands", "ledger", "runs", "indexes"]) {
       lease.assert();
-      c.files.directory(join4(dir, name), true);
+      c.files.directory(join8(dir, name), true);
     }
     lease.assert();
-    const keyPath = join4(dir, "read-proof-key.json");
+    const keyPath = join8(dir, "read-proof-key.json");
     c.files.create(keyPath, encoded({
       schema: "cadence-history-read-key/1",
       storeId: format.storeId,
-      key: randomBytes2(32).toString("base64url")
+      key: randomBytes3(32).toString("base64url")
     }));
     lease.assert();
-    const snapshot = c.files.create(join4(dir, "format.json"), encoded(format));
+    const snapshot = c.files.create(join8(dir, "format.json"), encoded(format));
     const result = new HistoryFiles(c, format, snapshot);
-    result.syncParents(join4(dir, "format.json"));
+    result.syncParents(join8(dir, "format.json"));
     result.assertWritable();
     return result;
   }
@@ -3869,7 +4925,7 @@ class HistoryFiles {
       throw new ContractError("quarantine");
   }
   assertFormat() {
-    this.files.assert(join4(this.directory, "format.json"), this.formatSnapshot);
+    this.files.assert(join8(this.directory, "format.json"), this.formatSnapshot);
   }
   readProofMaterial(budget) {
     if (this.format.schema !== FORMAT)
@@ -3878,7 +4934,7 @@ class HistoryFiles {
       this.assertReadFormat(budget);
     else
       this.assertFormat();
-    const selected2 = this.readBudgeted(join4(this.directory, "read-proof-key.json"), 512, budget);
+    const selected2 = this.readBudgeted(join8(this.directory, "read-proof-key.json"), 512, budget);
     if (!selected2 || this.proofSnapshot && (selected2.identity !== this.proofSnapshot.identity || selected2.stamp !== this.proofSnapshot.stamp))
       corrupt();
     try {
@@ -3906,17 +4962,17 @@ class HistoryFiles {
       return;
     }
     this.assertFormat();
-    assertIncarnation(this, join4(this.directory, "read-proof-key.json"), this.proofSnapshot.stamp);
+    assertIncarnation(this, join8(this.directory, "read-proof-key.json"), this.proofSnapshot.stamp);
   }
   segmentPath(segment) {
-    return join4(this.directory, "ledger", `${String(segment).padStart(12, "0")}.jsonl`);
+    return join8(this.directory, "ledger", `${String(segment).padStart(12, "0")}.jsonl`);
   }
   artifactPath(ref) {
-    return join4(this.directory, "runs", ref.runId, "artifacts", ref.artifactId, `${ref.part}.part`);
+    return join8(this.directory, "runs", ref.runId, "artifacts", ref.artifactId, `${ref.part}.part`);
   }
   admissionPath(runId) {
     decodeId(runId);
-    return join4(this.directory, "runs", runId, "admission.json");
+    return join8(this.directory, "runs", runId, "admission.json");
   }
   writeAdmission(lease, input) {
     lease.assert();
@@ -3925,24 +4981,24 @@ class HistoryFiles {
     this.files.create(this.admissionPath(value.runId), encoded(value), RECORD_BYTES);
     this.syncParents(this.admissionPath(value.runId));
   }
-  readBudgeted(path, maximum, budget) {
+  readBudgeted(path2, maximum, budget) {
     if (!budget)
-      return this.files.read(path, maximum);
+      return this.files.read(path2, maximum);
     let size;
     try {
-      size = lstatSync4(path).size;
+      size = lstatSync6(path2).size;
     } catch {
-      return this.files.read(path, 0);
+      return this.files.read(path2, 0, budget.walks);
     }
     if (size > maximum)
       corrupt();
     budget.reserve(size);
-    return this.files.read(path, size);
+    return this.files.read(path2, size, budget.walks);
   }
   readCommand(commandId, budget) {
     decodeId(commandId);
     this.assertReadFormat(budget);
-    return this.readBudgeted(join4(this.directory, "commands", commandId, "intent.json"), RECORD_BYTES, budget);
+    return this.readBudgeted(join8(this.directory, "commands", commandId, "intent.json"), RECORD_BYTES, budget);
   }
   readAdmission(runId, identity, budget) {
     return this.readAdmissionIdentity(runId, hash(canonicalJson(identity)), budget);
@@ -3963,24 +5019,24 @@ class HistoryFiles {
   syncParents(file) {
     if (process.platform === "win32")
       return;
-    for (let path = dirname5(file);; path = dirname5(path)) {
-      if (!this.files.directory(path))
+    for (let path2 = dirname7(file);; path2 = dirname7(path2)) {
+      if (!this.files.directory(path2))
         corrupt();
-      const fd = openSync4(path, constants4.O_RDONLY | constants4.O_DIRECTORY);
+      const fd = openSync5(path2, constants5.O_RDONLY | constants5.O_DIRECTORY);
       try {
         fsyncSync3(fd);
       } finally {
-        closeSync4(fd);
+        closeSync5(fd);
       }
-      if (path === this.coordination.directory)
+      if (path2 === this.coordination.directory)
         break;
-      if (path === dirname5(path))
+      if (path2 === dirname7(path2))
         corrupt();
     }
   }
   assertReadFormat(budget) {
     budget.reserve(this.formatSnapshot.bytes.length);
-    this.files.assert(join4(this.directory, "format.json"), this.formatSnapshot, this.formatSnapshot.bytes.length);
+    this.files.assert(join8(this.directory, "format.json"), this.formatSnapshot, this.formatSnapshot.bytes.length);
   }
   assertPublished(segment, end, seq) {
     const fence = publicationFences.get(this.directory);
@@ -4011,14 +5067,14 @@ class HistoryFiles {
     this.syncParents(this.artifactPath(ref));
   }
   usage() {
-    const walk = (path, depth) => {
-      if (depth > 8 || !this.files.directory(path))
+    const walk = (path2, depth) => {
+      if (depth > 8 || !this.files.directory(path2))
         corrupt();
       let bytes = 0;
-      const dir = opendirSync2(path);
+      const dir = opendirSync2(path2);
       try {
         for (let e = dir.readSync();e; e = dir.readSync()) {
-          const p = join4(path, e.name), st = lstatSync4(p);
+          const p = join8(path2, e.name), st = lstatSync6(p);
           if (st.isDirectory())
             bytes += walk(p, depth + 1);
           else {
@@ -4053,7 +5109,7 @@ class HistoryFiles {
     state.bytes = 0;
     state.identity = null;
     let count = 0;
-    const ledger = join4(this.directory, "ledger");
+    const ledger = join8(this.directory, "ledger");
     if (!this.files.directory(ledger))
       corrupt();
     const dir = opendirSync2(ledger);
@@ -4101,9 +5157,9 @@ class HistoryFiles {
         const line = file.bytes.subarray(at, end + 1);
         if (line.length > RECORD_BYTES)
           corrupt();
-        let decoded;
+        let decoded2;
         try {
-          decoded = decodeJournalText(new TextDecoder("utf-8", { fatal: true }).decode(line));
+          decoded2 = decodeJournalText(new TextDecoder("utf-8", { fatal: true }).decode(line));
         } catch {
           corrupt();
         }
@@ -4111,29 +5167,29 @@ class HistoryFiles {
         state.records++;
         if (state.records > LIMITS.segmentRecords)
           corrupt();
-        if (decoded.kind === "record") {
+        if (decoded2.kind === "record") {
           let base = state.committedSeq;
-          if (decoded.value.kind === "recovery") {
-            if (pending.length || at !== line.length || n !== decoded.value.previous.segment + 1)
+          if (decoded2.value.kind === "recovery") {
+            if (pending.length || at !== line.length || n !== decoded2.value.previous.segment + 1)
               corrupt();
-            if (decoded.value.previous.segment !== preceding.segment || decoded.value.previous.bytes !== preceding.bytes || decoded.value.previous.sha256 !== (preceding.identity ?? hash("")) || decoded.value.previous.committedSeq !== preceding.committedSeq || decoded.value.previous.highSeq !== (preceding.highSeq ?? preceding.committedSeq) || decoded.value.previous.committedBytes !== (preceding.committedBytes ?? 0))
+            if (decoded2.value.previous.segment !== preceding.segment || decoded2.value.previous.bytes !== preceding.bytes || decoded2.value.previous.sha256 !== (preceding.identity ?? hash("")) || decoded2.value.previous.committedSeq !== preceding.committedSeq || decoded2.value.previous.highSeq !== (preceding.highSeq ?? preceding.committedSeq) || decoded2.value.previous.committedBytes !== (preceding.committedBytes ?? 0))
               corrupt();
-            base = decoded.value.previous.highSeq;
+            base = decoded2.value.previous.highSeq;
           } else if (preceding.tail && state.committedBytes === 0)
             corrupt();
           const next = BigInt(base) + BigInt(pending.length) + 1n;
-          if (decoded.seq !== String(next))
+          if (decoded2.seq !== String(next))
             corrupt();
-          state.highSeq = decoded.seq;
+          state.highSeq = decoded2.seq;
           pendingBytes += line.length;
           if (pendingBytes > 2 * RECORD_BYTES)
             corrupt();
-          pending.push(decoded);
+          pending.push(decoded2);
           checksum.update(line);
           continue;
         }
         const artifacts = batchArtifacts(pending);
-        if (!pending.length || !validBatchSequence(pending, decoded.previous) || decoded.previous !== state.committedSeq || decoded.first !== pending[0].seq || decoded.last !== pending.at(-1)?.seq || decoded.count !== pending.length || decoded.sha256 !== checksum.digest("hex") || canonicalJson(decoded.artifacts, RECORD_BYTES) !== canonicalJson(artifacts, RECORD_BYTES))
+        if (!pending.length || !validBatchSequence(pending, decoded2.previous) || decoded2.previous !== state.committedSeq || decoded2.first !== pending[0].seq || decoded2.last !== pending.at(-1)?.seq || decoded2.count !== pending.length || decoded2.sha256 !== checksum.digest("hex") || canonicalJson(decoded2.artifacts, RECORD_BYTES) !== canonicalJson(artifacts, RECORD_BYTES))
           corrupt();
         if (verifyArtifacts)
           for (const artifact of artifacts)
@@ -4146,12 +5202,12 @@ class HistoryFiles {
             if (e.kind === "owner" && e.value.kind === "fact" && e.value.fact.kind === "parent-admitted")
               this.readAdmission(e.value.fact.runId, e.value.fact.identity, budget);
         }
-        state.committedSeq = decoded.last;
+        state.committedSeq = decoded2.last;
         state.committedBytes = at;
-        state.navigationRoot = decoded.navigationRoot;
+        state.navigationRoot = decoded2.navigationRoot;
         yield {
           rows: pending,
-          marker: decoded,
+          marker: decoded2,
           segment: n,
           identity: file.identity,
           segmentBytes: file.bytes.length
@@ -4211,17 +5267,17 @@ class HistoryFiles {
     this.assertRecoveryIdle();
     this.validateRecovery(row.value);
     const { body, trailer, marker } = this.encodeBatch(state, [row]);
-    const segment = state.segment + 1, path = this.segmentPath(segment);
+    const segment = state.segment + 1, path2 = this.segmentPath(segment);
     publicationFences.set(this.directory, { ...state });
     this.activity().generation++;
-    const before = this.files.create(path, "", LIMITS.segmentBytes);
+    const before = this.files.create(path2, "", LIMITS.segmentBytes);
     let committed;
-    const fd = await open(path, constants4.O_WRONLY | constants4.O_APPEND | (constants4.O_NOFOLLOW ?? 0));
+    const fd = await open(path2, constants5.O_WRONLY | constants5.O_APPEND | (constants5.O_NOFOLLOW ?? 0));
     const assertOriginal = (bytes) => {
-      const original = fstatSync4(fd.fd), selected2 = lstatSync4(path);
+      const original = fstatSync4(fd.fd), selected2 = lstatSync6(path2);
       if (original.dev !== selected2.dev || original.ino !== selected2.ino || original.nlink !== 1)
         corrupt();
-      const snapshot = this.files.read(path, LIMITS.segmentBytes);
+      const snapshot = this.files.read(path2, LIMITS.segmentBytes);
       if (!snapshot || snapshot.identity !== hash(bytes))
         corrupt();
       return snapshot;
@@ -4229,7 +5285,7 @@ class HistoryFiles {
     try {
       await assertCurrent();
       this.assertWritable();
-      this.files.assert(path, before, LIMITS.segmentBytes);
+      this.files.assert(path2, before, LIMITS.segmentBytes);
       assertOriginal("");
       await fd.writeFile(body);
       await observer?.("journal");
@@ -4238,7 +5294,7 @@ class HistoryFiles {
       assertOriginal(body);
       await fd.writeFile(trailer);
       await fd.sync();
-      this.syncParents(path);
+      this.syncParents(path2);
       await observer?.("commit");
       await assertCurrent();
       this.assertWritable();
@@ -4250,7 +5306,7 @@ class HistoryFiles {
     this.assertWritable();
     if (!committed)
       corrupt();
-    this.files.assert(path, committed, LIMITS.segmentBytes);
+    this.files.assert(path2, committed, LIMITS.segmentBytes);
     publicationFences.delete(this.directory);
     return {
       snapshot: committed,
@@ -4322,20 +5378,20 @@ class HistoryFiles {
     if (state.bytes + Buffer.byteLength(body + trailer) > LIMITS.segmentBytes || state.records + rows.length + 1 > LIMITS.segmentRecords)
       segment++;
     lease.assert();
-    const path = this.segmentPath(segment);
-    let before = this.files.read(path, LIMITS.segmentBytes);
+    const path2 = this.segmentPath(segment);
+    let before = this.files.read(path2, LIMITS.segmentBytes);
     if (segment !== state.segment) {
       if (before)
         corrupt();
-      before = this.files.create(path, "", LIMITS.segmentBytes);
+      before = this.files.create(path2, "", LIMITS.segmentBytes);
     }
     if (!before || segment === state.segment && (before.bytes.length !== state.bytes || before.identity !== state.identity))
       corrupt();
-    const fd = await open(path, constants4.O_WRONLY | constants4.O_APPEND | (constants4.O_NOFOLLOW ?? 0));
+    const fd = await open(path2, constants5.O_WRONLY | constants5.O_APPEND | (constants5.O_NOFOLLOW ?? 0));
     try {
       lease.assert();
-      this.files.assert(path, before, LIMITS.segmentBytes);
-      const opened = await fd.stat(), selected2 = lstatSync4(path);
+      this.files.assert(path2, before, LIMITS.segmentBytes);
+      const opened = await fd.stat(), selected2 = lstatSync6(path2);
       if (opened.ino !== selected2.ino || opened.dev !== selected2.dev || opened.nlink !== 1)
         corrupt();
       beforeEffect?.();
@@ -4349,7 +5405,7 @@ class HistoryFiles {
       await observer?.("commit");
       lease.assert();
       this.assertWritable();
-      const after = this.files.read(path, LIMITS.segmentBytes);
+      const after = this.files.read(path2, LIMITS.segmentBytes);
       if (!after || after.identity !== createHash4("sha256").update(before.bytes).update(body).update(trailer).digest("hex"))
         corrupt();
       return {
@@ -4370,7 +5426,7 @@ class HistoryFiles {
   checkpoint(lease, state) {
     lease.assert();
     this.assertWritable();
-    const path = join4(this.directory, "checkpoint.json"), old = this.files.read(path);
+    const path2 = join8(this.directory, "checkpoint.json"), old = this.files.read(path2);
     const body = encoded({
       schema: "cadence-history-checkpoint/2",
       storeId: this.format.storeId,
@@ -4378,9 +5434,9 @@ class HistoryFiles {
       segment: state.segment
     });
     if (old)
-      this.files.replace(path, old, body);
+      this.files.replace(path2, old, body);
     else
-      this.files.create(path, body);
+      this.files.create(path2, body);
   }
 }
 function emptyScan() {
@@ -4780,13 +5836,13 @@ function digestHistory(files, exclude) {
   files.assertFormat();
   const digest = createHash5("sha256");
   let count = 0;
-  const walk = (path, depth) => {
-    if (depth > 8 || !files.files.directory(path))
+  const walk = (path2, depth) => {
+    if (depth > 8 || !files.files.directory(path2))
       throw new ContractError("corrupt-selected");
-    const directory = lstatSync5(path);
-    digest.update(`incarnation:${directory.dev}:${directory.ino}
+    const directory2 = lstatSync7(path2);
+    digest.update(`incarnation:${directory2.dev}:${directory2.ino}
 `);
-    const dir = opendirSync3(path), names2 = [];
+    const dir = opendirSync3(path2), names2 = [];
     try {
       for (let e = dir.readSync();e; e = dir.readSync()) {
         if (++count > LIMITS.dataFrames)
@@ -4797,11 +5853,11 @@ function digestHistory(files, exclude) {
       dir.closeSync();
     }
     for (const name of names2.sort()) {
-      const selected2 = join5(path, name);
+      const selected2 = join9(path2, name);
       if (selected2 === exclude)
         continue;
       const rel = relative4(files.directory, selected2);
-      if (lstatSync5(selected2).isDirectory()) {
+      if (lstatSync7(selected2).isDirectory()) {
         digest.update(`directory:${Buffer.byteLength(rel)}:${rel}
 `);
         walk(selected2, depth + 1);
@@ -4937,13 +5993,13 @@ class HistoryRecovery {
       },
       acknowledgments: { processes: true, credentials: true, storage: true }
     };
-    const path = files.segmentPath(state.segment + 1);
+    const path2 = files.segmentPath(state.segment + 1);
     const assertCurrent = async () => {
       await confirmation.assertLocalAuthority(structuredClone(expected));
       const selected2 = await inspectRecovery(this.coordination);
       if (selected2.owner !== "absent")
         throw new ContractError("quarantine");
-      if (selected2.epoch !== expected.epoch || selected2.coordinationDigest !== expected.coordinationDigest || digestHistory(files, path) !== expected.history?.digest || this.coordination.recoverySnapshot().digest !== expected.coordinationDigest)
+      if (selected2.epoch !== expected.epoch || selected2.coordinationDigest !== expected.coordinationDigest || digestHistory(files, path2) !== expected.history?.digest || this.coordination.recoverySnapshot().digest !== expected.coordinationDigest)
         throw new ContractError("conflict");
     };
     await confirmation.assertLocalAuthority(structuredClone(expected));
@@ -4967,8 +6023,8 @@ class HistoryRecovery {
     const assert = () => {
       files.assertWritable();
       files.assertRecoveryIdle();
-      files.files.assert(path, after.snapshot, LIMITS.segmentBytes);
-      if (digestHistory(files, path) !== expected.history?.digest)
+      files.files.assert(path2, after.snapshot, LIMITS.segmentBytes);
+      if (digestHistory(files, path2) !== expected.history?.digest)
         throw new ContractError("conflict");
     };
     assert();
@@ -5015,7 +6071,7 @@ async function confirm(expected) {
       `resolve ${expected.epoch}`
     ]
   ];
-  await new Promise((resolve3, reject) => {
+  await new Promise((resolve4, reject) => {
     let index = 0, line = "", done = false;
     const raw = process.stdin.isRaw;
     const finish = (ok) => {
@@ -5031,7 +6087,7 @@ async function confirm(expected) {
       process.stdout.write(`\x1B[?2004l
 `);
       if (ok)
-        resolve3();
+        resolve4();
       else
         reject(new ContractError("forbidden"));
     };
@@ -5107,8 +6163,8 @@ async function localRecovery(c, operation) {
 }
 
 // src/service/runtime.ts
-import { homedir as homedir2 } from "node:os";
-import { dirname as dirname6, isAbsolute as isAbsolute4, join as join6, resolve as resolve3 } from "node:path";
+import { homedir as homedir4 } from "node:os";
+import { dirname as dirname8, isAbsolute as isAbsolute6, join as join10, resolve as resolve4 } from "node:path";
 
 // src/service/config.ts
 import { isIP } from "node:net";
@@ -5162,7 +6218,7 @@ function localOrigin(policy, actualPort) {
 var STARTUP_INPUT_BYTES = 16 * 1024;
 function absolute(value) {
   const result = text(value, 4096, true);
-  if (!isAbsolute4(result))
+  if (!isAbsolute6(result))
     throw new ContractError("invalid");
   return result;
 }
@@ -5178,10 +6234,11 @@ function decodeHostConfig(value) {
   const tokenSource = oneOf(o.tokenSource, [
     "generated",
     "environment",
-    "file"
+    "file",
+    "config"
   ]);
   const tokenFile = o.tokenFile === null ? null : absolute(o.tokenFile);
-  if (o.tokenSource === "file" !== (tokenFile !== null))
+  if ((tokenSource === "file" || tokenSource === "config") !== !!tokenFile)
     throw new ContractError("invalid");
   return {
     schema: literal(o.schema, "cadence-service-host/1"),
@@ -5242,13 +6299,13 @@ function selectStart(options, ambient) {
     throw new ContractError("invalid");
   let fromFile;
   if (options.config) {
-    const path = resolve3(options.config), f = new PrivateFiles(dirname6(path));
-    const bytes = f.read(path);
+    const path2 = resolve4(options.config), f = new PrivateFiles(dirname8(path2));
+    const bytes = f.read(path2);
     if (!bytes)
       throw new ContractError("corrupt-selected");
     fromFile = decodeHostConfig(json(bytes));
   }
-  const selected2 = old ?? fromFile ?? decodeHostConfig({
+  const base = old ?? fromFile ?? decodeHostConfig({
     schema: "cadence-service-host/1",
     cwd: workspace.cwd,
     http: {
@@ -5257,11 +6314,24 @@ function selectStart(options, ambient) {
       port: options.port ?? 17423,
       proxy: null
     },
-    agentDir: resolve3(options.agentDir ?? ambient.PI_CODING_AGENT_DIR ?? join6(ambient.HOME ?? ambient.USERPROFILE ?? homedir2(), ".pi", "agent")),
+    agentDir: resolve4(options.agentDir ?? ambient.PI_CODING_AGENT_DIR ?? join10(ambient.HOME ?? ambient.USERPROFILE ?? homedir4(), ".pi", "agent")),
     tokenSource: options.tokenFile ? "file" : env ? "environment" : "generated",
-    tokenFile: options.tokenFile ? resolve3(options.tokenFile) : null
+    tokenFile: options.tokenFile ? resolve4(options.tokenFile) : null
   });
-  if (fromFile && encoded(fromFile) !== encoded(selected2) || options.port !== undefined && options.port !== selected2.http.port || options.host !== undefined && options.host !== selected2.http.host || options.agentDir !== undefined && resolve3(options.agentDir) !== selected2.agentDir || options.tokenFile !== undefined && resolve3(options.tokenFile) !== selected2.tokenFile || env && selected2.tokenSource !== "environment" || selected2.tokenSource === "environment" && !env || resolveWorkspace(selected2.cwd).root !== workspace.root)
+  const server = options.serverConfig !== undefined ? resolve4(options.serverConfig) : old?.tokenSource === "config" ? old.tokenFile : null;
+  let selected2 = base;
+  if (server) {
+    if (options.tokenFile !== undefined)
+      throw new ContractError("conflict");
+    const { port } = readServerConfig(server).config;
+    selected2 = decodeHostConfig({
+      ...base,
+      http: { ...base.http, port },
+      tokenSource: "config",
+      tokenFile: server
+    });
+  }
+  if (fromFile && encoded(fromFile) !== encoded(selected2) || options.port !== undefined && options.port !== selected2.http.port || options.host !== undefined && options.host !== selected2.http.host || options.agentDir !== undefined && resolve4(options.agentDir) !== selected2.agentDir || options.tokenFile !== undefined && resolve4(options.tokenFile) !== selected2.tokenFile || env && selected2.tokenSource !== "environment" || selected2.tokenSource === "environment" && !env || resolveWorkspace(selected2.cwd).root !== workspace.root)
     throw new ContractError("conflict");
   return {
     workspace: workspace.root,
@@ -5293,21 +6363,37 @@ function portValue(value) {
     throw new ContractError("invalid");
   return integer(Number(value), 0, 65535);
 }
+var STARTUP_STAGES = [
+  "package",
+  "pi-agent-directory",
+  "pi-auth",
+  "pi-models",
+  "pi-runtime",
+  "service"
+];
+function decodeStartupReport(value) {
+  const o = closed(value, ["status", "error", "stage"]);
+  return {
+    status: oneOf(o.status, ["refused", "quarantined"]),
+    error: oneOf(o.error, ERROR_CODES),
+    stage: oneOf(o.stage, STARTUP_STAGES)
+  };
+}
 
 // src/service/cli.ts
 function nativeCall(c, operation, reveal = false) {
   const access = c.localAccess();
   const url = new URL(`${access.endpoint}/local/v1/admin/${operation}`);
-  const write = !["status", "diagnose"].includes(operation);
-  const body = write ? JSON.stringify(reveal ? { reveal: true } : {}) : undefined;
-  return new Promise((resolve4, reject) => {
+  const write2 = !["status", "diagnose"].includes(operation);
+  const body = write2 ? JSON.stringify(reveal ? { reveal: true } : {}) : undefined;
+  return new Promise((resolve6, reject) => {
     let timer;
     const fail = () => {
       clearTimeout(timer);
       reject(new ContractError("unavailable"));
     };
     const req = request(url, {
-      method: write ? "POST" : "GET",
+      method: write2 ? "POST" : "GET",
       agent: false,
       headers: {
         "X-Cadence-Local": access.capability,
@@ -5341,7 +6427,7 @@ function nativeCall(c, operation, reveal = false) {
               throw new ContractError("stale");
           }
           clearTimeout(timer);
-          resolve4(reply.value);
+          resolve6(reply.value);
         } catch {
           fail();
         }
@@ -5356,7 +6442,7 @@ function nativeCall(c, operation, reveal = false) {
     req.end(body);
   });
 }
-var pause = (ms) => new Promise((resolve4) => setTimeout(resolve4, ms));
+var pause = (ms) => new Promise((resolve6) => setTimeout(resolve6, ms));
 async function serviceStatus(c, diagnose = false) {
   const observed = c.inspect();
   if (observed.status === "absent" || observed.status === "stopped")
@@ -5393,20 +6479,67 @@ async function stopService(c) {
   return { status: "unconfirmed", epoch };
 }
 function failedStatus(result) {
-  return !!(result && typeof result === "object" && ("status" in result) && ["unconfirmed", "unavailable", "quarantined"].includes(String(result.status)));
+  return !!(result && typeof result === "object" && ("status" in result) && ["unconfirmed", "unavailable", "quarantined", "refused"].includes(String(result.status)));
+}
+function serverConfigHint(error) {
+  return `Cadence changed nothing: ${error.path} ${error.reason}.
+Fix it and run the command again; the file holds the WebUI port and token as ${PORT_KEY}=<1-65535> and ${TOKEN_KEY}=<at least 32 characters>, one line each.
+`;
+}
+function startupGuidance(result, input) {
+  let report;
+  try {
+    report = decodeStartupReport(result);
+  } catch {
+    return "";
+  }
+  const agent = input.config.agentDir;
+  const inspect = `Inspect: cadence-service diagnose|recover inspect --workspace ${JSON.stringify(input.workspace)}
+`;
+  switch (report.stage) {
+    case "package":
+      return `Cadence refused its installed package files (web/dist or agents); reinstall the package rather than editing it.
+`;
+    case "pi-agent-directory":
+      return `Pi's agent directory ${agent} must be an existing real directory (not a symlink) owned by you.
+`;
+    case "pi-auth":
+      return `${join11(agent, "auth.json")} must be your own single-link regular file holding valid Pi credentials; log in to Pi first.
+`;
+    case "pi-models":
+      return `${join11(agent, "models.json")} must be your own single-link regular file using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.
+`;
+    case "pi-runtime":
+      return `Loading Pi's SDK model runtime failed after the owner registered (optional SDK packages missing, or sources the SDK refuses); it stays quarantined.
+${inspect}`;
+    default:
+      return report.status === "quarantined" ? `The owner registered, then refused; it stays quarantined.
+${inspect}` : "";
+  }
 }
 async function startService(options, foreground, hostUrl) {
   const network = networkSnapshot(process.env);
   const env = hostEnvironment(process.env);
-  const input = decodeHostInput(selectStart(options, process.env));
+  let input;
+  try {
+    input = decodeHostInput(selectStart(options, process.env));
+  } catch (error) {
+    if (error instanceof ServerConfigRefusal)
+      process.stderr.write(serverConfigHint(error));
+    throw error;
+  }
   const serialized = `${JSON.stringify(input)}
 `;
   if (Buffer.byteLength(serialized) > STARTUP_INPUT_BYTES)
     throw new ContractError("oversize");
   const c = new ServiceCoordination(input.workspace, input.stateHome);
   const existing = await serviceStatus(c);
-  if (existing && typeof existing === "object" && "status" in existing && existing.status === "alive")
+  if (existing && typeof existing === "object" && "status" in existing && existing.status === "alive") {
+    const running = readHostConfig(c);
+    if (running && encoded(running) !== encoded(input.config))
+      throw new ContractError("conflict");
     return existing;
+  }
   if (!sameNetwork(network, networkSnapshot(process.env)))
     throw new ContractError("stale");
   const child = spawn(process.execPath, [
@@ -5420,18 +6553,18 @@ async function startService(options, foreground, hostUrl) {
     stdio: ["pipe", "pipe", "ignore"]
   });
   let completed = false;
-  const closure = new Promise((resolve4) => child.once("close", (code, signal) => {
+  const closure = new Promise((resolve6) => child.once("close", (code2, signal) => {
     completed = true;
-    if (foreground && (code !== 0 || signal !== null))
+    if (foreground && (code2 !== 0 || signal !== null))
       process.exitCode = 1;
-    resolve4();
+    resolve6();
   }));
-  const startup = new Promise((resolve4) => {
+  const startup = new Promise((resolve6) => {
     let bytes = "", resolved = false;
     const finish = (value) => {
       if (!resolved) {
         resolved = true;
-        resolve4(value);
+        resolve6(value);
       }
     };
     child.on("error", () => finish({ status: "unconfirmed" }));
@@ -5447,7 +6580,12 @@ async function startService(options, foreground, hostUrl) {
 `))
         return;
       try {
-        const ready = closed(parseWireJson(bytes, 4096), ["status", "epoch"]);
+        const line = parseWireJson(bytes, 4096);
+        if (line && typeof line === "object" && "status" in line && line.status !== "ready") {
+          finish(decodeStartupReport(line));
+          return;
+        }
+        const ready = closed(line, ["status", "epoch"]);
         if (ready.status !== "ready")
           throw new ContractError("unavailable");
         const epoch = decodeId(ready.epoch);
@@ -5466,11 +6604,14 @@ async function startService(options, foreground, hostUrl) {
   let timer;
   const result = await Promise.race([
     startup,
-    new Promise((resolve4) => {
-      timer = setTimeout(() => resolve4({ status: "unconfirmed" }), LIMITS.startWaitMs);
+    new Promise((resolve6) => {
+      timer = setTimeout(() => resolve6({ status: "unconfirmed" }), LIMITS.startWaitMs);
     })
   ]);
   clearTimeout(timer);
+  const guidance = startupGuidance(result, input);
+  if (guidance)
+    process.stderr.write(guidance);
   child.stdout.destroy();
   child.stdin.destroy();
   if (!foreground)
@@ -5485,17 +6626,278 @@ async function startService(options, foreground, hostUrl) {
   }
   return result;
 }
+async function observeStarted(workspace) {
+  const deadline = performance.now() + LIMITS.startWaitMs + 2000;
+  let service = "unconfirmed";
+  while (performance.now() < deadline) {
+    try {
+      const c = new ServiceCoordination(workspace);
+      const observed = await serviceStatus(c);
+      if (observed && typeof observed === "object" && "status" in observed)
+        service = String(observed.status);
+      if (service === "alive")
+        return { service, endpoint: c.localAccess().endpoint };
+      if (service === "quarantined")
+        break;
+    } catch {}
+    await pause(250);
+  }
+  return { service };
+}
+async function privateLink(workspace) {
+  try {
+    const value = closed(await nativeCall(new ServiceCoordination(workspace), "token-link", true), ["link"]);
+    return text(value.link, 4096, true);
+  } catch {
+    return;
+  }
+}
+var ownerControl = {
+  async ownerStatus(workspace) {
+    try {
+      const observed = await serviceStatus(new ServiceCoordination(workspace));
+      return observed && typeof observed === "object" && "status" in observed ? String(observed.status) : "unavailable";
+    } catch {
+      return "unavailable";
+    }
+  },
+  async stopOwner(workspace) {
+    try {
+      const c = new ServiceCoordination(workspace);
+      const observed = await serviceStatus(c);
+      const status = observed && typeof observed === "object" && "status" in observed ? String(observed.status) : "unavailable";
+      if (status === "absent" || status === "stopped")
+        return "stopped";
+      return status === "alive" ? (await stopService(c)).status : status;
+    } catch {
+      return "unavailable";
+    }
+  }
+};
+async function serverAction(s, action, requested, linger) {
+  const install = action === "install" || action === "restart";
+  const mode = action === "install" ? "install" : "restart";
+  switch (s.platform) {
+    case "linux":
+      if (install)
+        return configureAutostart(s, mode, requested, linger);
+      if (action === "stop")
+        return stopAutostart(s);
+      return action === "uninstall" ? removeAutostart(s) : autostartStatus(s);
+    case "darwin":
+      if (install)
+        return configureLaunchAgent(s, mode, requested);
+      if (action === "stop")
+        return stopLaunchAgent(s);
+      return action === "uninstall" ? removeLaunchAgent(s) : launchAgentStatus(s);
+    case "win32":
+      if (install)
+        return configureLoginRun(s, mode, requested);
+      if (action === "stop")
+        return stopLoginRun(s);
+      return action === "uninstall" ? removeLoginRun(s) : loginRunStatus(s);
+    default:
+      return { status: "unsupported" };
+  }
+}
+function serverGuidance(s, action, result, link) {
+  const cli = piUserInstall(s) ? `node ${JSON.stringify(join11(s.root, "src", "service-cli.mjs"))}` : "cadence";
+  const note = result.redirectedFrom ? `Cadence workspace: ${result.workspace} (${result.redirectedFrom} contains Cadence's private state)
+` : "";
+  return note + serverStatusGuidance(s, action, result, cli, link);
+}
+function lingerGuidance(linger) {
+  switch (linger) {
+    case "enabled":
+      return `Linger enabled: Cadence starts at boot and keeps running after logout (undo: loginctl disable-linger).
+`;
+    case "off":
+      return `Linger is off: Cadence starts at login and stops at logout. Start it at boot: loginctl enable-linger
+`;
+    case "refused":
+      return `Linger needs authorization: Cadence starts at login and stops at logout. Start it at boot: loginctl enable-linger (may ask for your password)
+`;
+    default:
+      return "";
+  }
+}
+function managerDetail(s) {
+  switch (s.platform) {
+    case "linux":
+      return "see systemctl --user status cadence and journalctl --user -u cadence";
+    case "darwin":
+      return `see launchctl print gui/${s.uid}/${LABEL} and ~/Library/Logs/cadence.log`;
+    default:
+      return `run its launcher to see why: wscript ${JSON.stringify(launcherPath(s))}`;
+  }
+}
+function serverStatusGuidance(s, action, result, cli, link) {
+  const workspace = JSON.stringify(result.workspace ?? "");
+  const manage = `Manage: ${cli} server status|restart|stop|uninstall`;
+  const when = s.platform === "linux" ? "at boot or login" : "at login";
+  const config = `Port and token: ${PORT_KEY} and ${TOKEN_KEY} in ${serverConfigPath(s.home)} (edit them, then: ${cli} server restart)`;
+  switch (result.status) {
+    case "started": {
+      const linger = lingerGuidance(result.linger);
+      if (result.service !== "alive")
+        return `Cadence started for ${result.workspace}, but the owner reports ${result.service}.
+Inspect: ${cli} diagnose --workspace ${workspace}
+${manage}
+${linger}`;
+      if (!link)
+        return `Cadence WebUI: ${result.endpoint} (workspace ${result.workspace}; starts ${when})
+Enter with your private link: ${cli} token-link --workspace ${workspace} --reveal
+${config}
+${manage}
+${linger}`;
+      return `Cadence WebUI: ${link}
+Open this private link (workspace ${result.workspace}; starts ${when}); its token admits anyone who has it.
+${config}
+${manage}
+${linger}`;
+    }
+    case "waiting-for-pi-login":
+      return `Cadence is registered for ${result.workspace}; it starts once Pi has ${join11(agentDirectory(s), "auth.json")}.
+Log in to Pi, then: ${cli} server restart
+${config}
+${lingerGuidance(result.linger)}`;
+    case "stopped":
+      return action === "stop" ? `Cadence stopped; it starts again ${when}, or now with: ${cli} server restart
+` : "";
+    case "absent":
+      return action === "restart" || action === "stop" ? `Cadence's background service is not installed: ${cli} server install
+` : "";
+    case "disabled":
+      return `Cadence's service definition was rewritten for ${result.workspace}; left disabled as configured.
+`;
+    case "masked":
+      return `cadence.service is masked; Cadence did not enable or start it.
+`;
+    case "missing-pi-sdk":
+      return `Cadence did not register its service: the Pi SDK packages pi-coding-agent and pi-ai (scope @earendil-works) do not resolve from ${s.root}, for example after installing without optional dependencies; an owner without them would quarantine.
+`;
+    case "foreign":
+      return `${result.unit} was not generated by Cadence; left unchanged.
+`;
+    case "unavailable":
+      return result.workspace ? `Cadence changed nothing: its owner could not be observed. Inspect: ${cli} diagnose --workspace ${workspace}
+` : `No user service manager; start Cadence explicitly: ${cli} start --workspace /absolute/project
+`;
+    case "unsupported":
+      return `Cadence has no background service for ${s.platform}; start it explicitly: ${cli} start --workspace /absolute/project
+`;
+    case "unconfirmed":
+    case "quarantined":
+      return `Cadence changed nothing: its owner's orderly Stop was not confirmed (${result.status}). Inspect: ${cli} diagnose --workspace ${workspace}
+`;
+    case "failed":
+      return `Could not register or start Cadence's service; ${managerDetail(s)}.
+${lingerGuidance(result.linger)}`;
+    default:
+      return "";
+  }
+}
+function researchTemplate(home) {
+  try {
+    const result = ensureUserConfig(home);
+    return result.created ? `Cadence created the research configuration template ${result.path}
+` : "";
+  } catch (error) {
+    return `Cadence could not create the research configuration template: ${error instanceof Error ? error.message : String(error)}
+`;
+  }
+}
+var SERVER_ACTIONS = [
+  "install",
+  "status",
+  "restart",
+  "stop",
+  "uninstall"
+];
+async function serverMain(argv, hostUrl) {
+  const action = SERVER_ACTIONS.find((a) => a === argv[0]);
+  if (!action)
+    throw new ContractError("invalid");
+  argv.shift();
+  let requested;
+  let linger = process.env.CADENCE_LINGER !== "0";
+  let noLinger = false;
+  while (action === "install" && argv.length) {
+    if (argv[0] === "--workspace" && argv[1] && requested === undefined)
+      requested = resolve5(argv.splice(0, 2)[1]);
+    else if (argv[0] === "--no-linger" && !noLinger) {
+      argv.shift();
+      noLinger = true;
+      linger = false;
+    } else
+      break;
+  }
+  if (argv.length)
+    throw new ContractError("invalid");
+  const s = hostSystem(dirname9(dirname9(fileURLToPath(hostUrl))), ownerControl);
+  if (action === "install")
+    process.stderr.write(researchTemplate(s.home));
+  if (action === "install" || action === "restart") {
+    try {
+      const { added, exposed } = ensureServerConfig(s.home);
+      const path2 = serverConfigPath(s.home);
+      if (added.length)
+        process.stderr.write(`Cadence added ${added.map((key) => key === PORT_KEY ? `${key}=${DEFAULT_PORT}` : `a random private ${key}`).join(" and ")} to ${path2}
+`);
+      if (exposed)
+        process.stderr.write(`Note: other users can read ${path2}; chmod 600 ${JSON.stringify(path2)} keeps ${TOKEN_KEY} private.
+`);
+    } catch (error) {
+      if (error instanceof ServerConfigRefusal)
+        process.stderr.write(serverConfigHint(error));
+      throw error;
+    }
+  }
+  let result;
+  try {
+    result = await serverAction(s, action, requested, linger);
+  } catch (error) {
+    if (error instanceof ContractError && error.code === "invalid")
+      process.stderr.write(`Cadence server install needs an existing absolute --workspace directory.
+`);
+    throw error;
+  }
+  let link;
+  if (result.status === "started" && result.workspace) {
+    Object.assign(result, await observeStarted(result.workspace));
+    if (result.service === "alive")
+      link = await privateLink(result.workspace);
+  }
+  process.stderr.write(serverGuidance(s, action, result, link));
+  process.stdout.write(`${JSON.stringify(result)}
+`);
+  if ([
+    "failed",
+    "foreign",
+    "unavailable",
+    "unsupported",
+    "unconfirmed",
+    "quarantined",
+    "missing-pi-sdk"
+  ].includes(result.status) || result.status === "absent" && (action === "restart" || action === "stop"))
+    process.exitCode = 1;
+}
 async function managementMain(argv, hostUrl) {
   try {
     if (!process.versions.node || process.versions.bun)
       throw new ContractError("unsupported-context");
     const command = argv.shift();
     if (command === "--help" && !argv.length) {
-      process.stdout.write(`cadence-service start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--workspace PATH] [--state-home PATH]
-Explicit start only; default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file.
+      process.stdout.write(`cadence start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--workspace PATH] [--state-home PATH]
+cadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall
+Start is explicit, or the background service that server install registers: a systemd user unit on Linux, started at boot through linger (--no-linger or CADENCE_LINGER=0 keeps it to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file, --server-config (the .env whose CADENCE_PORT and CADENCE_TOKEN the background service uses).
 Return/quit detaches clients; only explicit Cancel/Stop requests stop. Unconfirmed/quarantined is not stopped.
 Recovery resolve requires this local native terminal, exact unchanged dead-owner resources and separate process/credential/storage acknowledgments. No --yes, network recovery, killing, repair or cleanup.
 `);
+      return;
+    }
+    if (command === "server") {
+      await serverMain(argv, hostUrl);
       return;
     }
     let recovery;
@@ -5548,6 +6950,8 @@ Recovery resolve requires this local native terminal, exact unchanged dead-owner
         options.agentDir = value;
       else if (flag === "--token-file")
         options.tokenFile = value;
+      else if (flag === "--server-config")
+        options.serverConfig = value;
       else if (flag === "--port")
         options.port = portValue(value);
       else if (flag === "--host" && (value === "127.0.0.1" || value === "::1"))
@@ -5555,10 +6959,23 @@ Recovery resolve requires this local native terminal, exact unchanged dead-owner
       else
         throw new ContractError("invalid");
     }
+    const landing = effectiveWorkspace(options.workspace, options.stateHome);
+    if (landing.redirected) {
+      if (seen.has("--workspace"))
+        process.stderr.write(`Cadence workspace: ${landing.workspace} (${options.workspace} contains Cadence's private state)
+`);
+      options.workspace = landing.workspace;
+      if (command === "start")
+        mkdirSync5(landing.workspace, { recursive: true });
+    }
     let result;
     if (command === "start")
       result = await startService(options, foreground, hostUrl);
-    else {
+    else if (landing.redirected && !existsSync(landing.workspace)) {
+      if (command !== "status" && command !== "diagnose")
+        throw new ContractError("unavailable");
+      result = { status: "absent" };
+    } else {
       const c = new ServiceCoordination(options.workspace, options.stateHome);
       if (command === "recover" && recovery)
         result = await localRecovery(c, recovery);
@@ -5576,6 +6993,8 @@ Recovery resolve requires this local native terminal, exact unchanged dead-owner
       else
         throw new ContractError("invalid");
     }
+    if (landing.redirected && result && typeof result === "object")
+      result = { ...result, workspace: landing.workspace };
     if (result !== null)
       process.stdout.write(`${JSON.stringify(result)}
 `);

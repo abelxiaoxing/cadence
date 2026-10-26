@@ -75,16 +75,11 @@ export function safeDirectory(
     at = join(at, part);
     let existing: Stats | undefined;
     try {
-      const st = lstatSync(at);
-      if (!st.isDirectory()) throw new Error("Unsafe directory");
+      // One no-follow observation per component: a link is never reported as
+      // a directory, and the inspection sees this same, latest observation.
       const checked = lstatSync(at);
-      if (
-        checked.isSymbolicLink() ||
-        (inspectExisting && !checked.isDirectory())
-      )
+      if (!checked.isDirectory() || checked.isSymbolicLink())
         throw new Error("Unsafe directory");
-      // Inspect the latest observation, not an earlier stat whose mode/uid
-      // may already have changed. No extra IO or cross-call authority cache.
       existing = checked;
     } catch (error) {
       if (!absent(error)) throw error;
@@ -95,7 +90,8 @@ export function safeDirectory(
         if (!object(mkdirError) || mkdirError.code !== "EEXIST")
           throw mkdirError;
       }
-      if (!lstatSync(at).isDirectory() || lstatSync(at).isSymbolicLink())
+      const created = lstatSync(at);
+      if (!created.isDirectory() || created.isSymbolicLink())
         throw new Error("Unsafe directory");
     }
     // Outside the ENOENT handler: an inspection refusal is never absence and
@@ -104,12 +100,52 @@ export function safeDirectory(
   }
   return true;
 }
-export function readBounded(path: string, max: number): Buffer | undefined {
+const transientWindows = new Set(["EPERM", "EACCES", "EBUSY"]);
+/** Windows refuses to replace, remove or recreate a path while another process
+ * holds it (a polling reader, antivirus, a delete still pending), which POSIX
+ * never does. Retry the same operation briefly; `recheck` reasserts the
+ * caller's expected bytes before every retry, so a retry never overwrites a
+ * change. Other errors, including EEXIST and ENOENT, keep their meaning. */
+export function retryWindowsFileOperation<T>(
+  operation: () => T,
+  recheck?: () => void,
+): T {
+  if (process.platform !== "win32") return operation();
+  const deadline = performance.now() + 2000;
+  for (let delay = 2; ; delay = Math.min(delay * 2, 50)) {
+    try {
+      return operation();
+    } catch (error) {
+      if (
+        !object(error) ||
+        !transientWindows.has(String(error.code)) ||
+        performance.now() >= deadline
+      )
+        throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+      recheck?.();
+    }
+  }
+}
+/** `packaged` reads the installed package's own files (web assets, Agent
+ * profiles). A package manager may hard-link them into its store (Bun's default
+ * backend), so a second link is not an alias of workspace or task state; their
+ * callers bind content instead. Every other read stays single-link. */
+export function readBounded(
+  path: string,
+  max: number,
+  packaged = false,
+): Buffer | undefined {
   if (!safeDirectory(dirname(path))) return undefined;
   let fd: number;
   try {
     const st = lstatSync(path);
-    if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size > max)
+    if (
+      !st.isFile() ||
+      st.isSymbolicLink() ||
+      (!packaged && st.nlink !== 1) ||
+      st.size > max
+    )
       throw new Error("Unsafe or oversized file");
     fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   } catch (error) {
@@ -118,7 +154,7 @@ export function readBounded(path: string, max: number): Buffer | undefined {
   }
   try {
     const st = fstatSync(fd);
-    if (!st.isFile() || st.nlink !== 1 || st.size > max)
+    if (!st.isFile() || (!packaged && st.nlink !== 1) || st.size > max)
       throw new Error("Unsafe or oversized file");
     // Read at most max+1 even if another editor grows the file after stat.
     const buffer = Buffer.alloc(max + 1);
@@ -215,6 +251,42 @@ function canonicalAmbientRoot(path: string): string {
     return join(canonicalAmbientRoot(parent), full.slice(parent.length));
   }
 }
+function privateRootFor(canonicalRoot: string, stateHome: string): string {
+  return join(
+    canonicalAmbientRoot(stateHome),
+    "cadence-assistant-v1",
+    createHash("sha256").update(canonicalRoot).digest("hex"),
+  );
+}
+function contains(root: string, path: string): boolean {
+  const within = relative(root, resolve(path));
+  return (
+    !within ||
+    (!within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within))
+  );
+}
+/** Private history, locks and access material must stay outside the working
+ * copy, or change observation, check freshness and review would see them. */
+export function stateHomeInside(
+  root: string,
+  stateHome = defaultStateHome(),
+): boolean {
+  const canonical = realpathSync(root);
+  return contains(canonical, privateRootFor(canonical, stateHome));
+}
+export const LANDING_WORKSPACE = "cadence";
+/** A directory that contains the private state home (the home directory and
+ * its ancestors) can never be a workspace; use ~/cadence instead of refusing.
+ * Observation only: the caller decides whether the landing may be created. */
+export function effectiveWorkspace(
+  requested: string,
+  stateHome?: string,
+  home = homedir(),
+): { workspace: string; redirected: boolean } {
+  if (!stateHomeInside(resolveWorkspace(requested).root, stateHome))
+    return { workspace: requested, redirected: false };
+  return { workspace: join(home, LANDING_WORKSPACE), redirected: true };
+}
 export interface CheckoutLock {
   schema: "cadence-assistant-lock/1";
   token: string;
@@ -230,16 +302,8 @@ export class TaskStore {
   constructor(root: string, stateHome = defaultStateHome()) {
     this.root = realpathSync(root);
     this.tasks = join(this.root, ".cadence", "assistant", "tasks");
-    this.privateRoot = join(
-      canonicalAmbientRoot(stateHome),
-      "cadence-assistant-v1",
-      createHash("sha256").update(this.root).digest("hex"),
-    );
-    const within = relative(this.root, resolve(this.privateRoot));
-    if (
-      !within ||
-      (!within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within))
-    )
+    this.privateRoot = privateRootFor(this.root, stateHome);
+    if (contains(this.root, this.privateRoot))
       throw new Error("Private state home must be outside the working copy");
   }
   get lockPath(): string {
@@ -310,7 +374,9 @@ export class TaskStore {
     };
     let fd: number;
     try {
-      fd = openSync(this.lockPath, "wx", 0o600);
+      fd = retryWindowsFileOperation(() =>
+        openSync(this.lockPath, "wx", 0o600),
+      );
     } catch {
       throw new Error(
         "Checkout busy or unresolved lock; inspect and explicitly recover only a dead owner",
@@ -332,7 +398,10 @@ export class TaskStore {
     if (lock.pid !== process.pid || lock.host !== hostname())
       throw new Error("Only the owning process may release a lock");
     this.assertOwner(lock);
-    unlinkSync(this.lockPath);
+    retryWindowsFileOperation(
+      () => unlinkSync(this.lockPath),
+      () => this.assertOwner(lock),
+    );
   }
   recover(expected: CheckoutLock, acknowledgeEscapedProcesses: boolean): void {
     if (!acknowledgeEscapedProcesses || expected.host !== hostname())
@@ -426,7 +495,17 @@ export class TaskStore {
         throw new Error(
           "Task content changed; replacement preserved without overwrite",
         );
-      renameSync(temporary, join(dir, "task.json"));
+      retryWindowsFileOperation(
+        () => renameSync(temporary, join(dir, "task.json")),
+        () => {
+          this.assertOwner(lock);
+          const now = readBounded(join(dir, "task.json"), MAX_RECORD_BYTES);
+          if ((now ? contentIdentity(now) : undefined) !== expectedIdentity)
+            throw new Error(
+              "Task content changed; replacement preserved without overwrite",
+            );
+        },
+      );
       return next;
     } finally {
       if (!held) this.release(lock);

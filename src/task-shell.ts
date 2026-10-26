@@ -9,7 +9,12 @@ import {
   truncateToWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import { MANAGEMENT_GUIDANCE, NativeConnection } from "./native-client.ts";
+import {
+  autostartHint,
+  departure,
+  MANAGEMENT_GUIDANCE,
+  NativeConnection,
+} from "./native-client.ts";
 import {
   NativeHistory,
   type NativeViews,
@@ -94,10 +99,10 @@ export function registerTaskShell(pi: ExtensionAPI): void {
     dismiss?.();
     // Detach original attachment, not service jobs/provider/auth. Shutdown does
     // not wait for their lifetime. Retained transport blocks uncertain reuse.
-    void connection.detach().catch(() => {});
+    return connection.detach().catch(() => {});
   };
   pi.on("session_start", (_event, ctx) => {
-    depart();
+    void depart();
     unsubscribe?.();
     unsubscribe = undefined;
     selectedTask = undefined;
@@ -108,15 +113,17 @@ export function registerTaskShell(pi: ExtensionAPI): void {
       });
   });
   pi.on("session_shutdown", () => {
-    depart();
+    const leaving = depart();
     unsubscribe?.();
     unsubscribe = undefined;
+    return departure(leaving);
   });
-  pi.on("session_before_switch", depart);
-  pi.on("session_before_fork", depart);
-  pi.on("session_before_tree", depart);
-  pi.on("session_before_compact", depart);
-  pi.on("model_select", depart);
+  const leave = () => void depart();
+  pi.on("session_before_switch", leave);
+  pi.on("session_before_fork", leave);
+  pi.on("session_before_tree", leave);
+  pi.on("session_before_compact", leave);
+  pi.on("model_select", leave);
   // Only local dialog input is owned. Detached service work never owns Pi's
   // conversation/tool lifetime or silently cancels it.
   pi.on("input", () => (modal ? { action: "handled" as const } : undefined));
@@ -180,14 +187,20 @@ export function registerTaskShell(pi: ExtensionAPI): void {
         const clean = diagnosticText(text, Number.MAX_SAFE_INTEGER);
         await ctx.ui.custom<void>((tui, _theme, _keys, done) => {
           let offset = 0,
-            rows: string[] = [];
+            rows: string[] = [],
+            wrapped: number | undefined;
           const close = () => done();
           dismiss = close;
           return {
             render(width) {
-              rows = clean
-                .split("\n")
-                .flatMap((line) => wrapTextWithAnsi(line, Math.max(1, width)));
+              // Wrap the whole text once per width; paging only moves the window.
+              const columns = Math.max(1, width);
+              if (columns !== wrapped) {
+                rows = clean
+                  .split("\n")
+                  .flatMap((line) => wrapTextWithAnsi(line, columns));
+                wrapped = columns;
+              }
               const height = Math.max(1, Math.min(24, tui.terminal.rows - 4));
               offset = Math.max(
                 0,
@@ -566,7 +579,7 @@ export function registerTaskShell(pi: ExtensionAPI): void {
               `${e.provider}/${e.model} • ${e.api ?? "unsupported"} • ${e.eligibility}`,
           );
           const selected = await ui.select(
-            `Exact OWNER model (Pi conversation model is independent) • ${catalog.status}\nCurrent ${pretty(catalog.selected)}`,
+            `Exact OWNER model (Pi conversation model is independent) • ${catalog.status}\nCurrent ${pretty(catalog.selected)}${catalog.withheld ? `\n${catalog.withheld} withheld: a provider/model ID contains a credential value (such as an apiKey equal to the provider name) or control characters. Give each credential a value that matches no ID; restart the service after editing models.json.` : ""}`,
             [...labels, "Return"],
           );
           if (!selected || !labels.includes(selected)) return;
@@ -577,7 +590,7 @@ export function registerTaskShell(pi: ExtensionAPI): void {
             "Exact thinking level • no clamping/fallback",
             model.thinking.filter((t) => t.selectable).map((t) => t.level),
           );
-          if (!level || level === "max") return;
+          if (!level) return;
           // Decode via the shared model-choice method; never inspect parent auth.
           const choice = {
             provider: model.provider,
@@ -1019,7 +1032,7 @@ export function registerTaskShell(pi: ExtensionAPI): void {
         }
       } catch (error) {
         ctx.ui.notify(
-          `${error instanceof ContractError ? error.code : "unavailable"}: Cadence refused or observation unavailable. No automatic action replay.\n${attached ? "Reopen /cadence for a fresh observation and confirmation. Accepted work may continue. For quarantined/unavailable ownership use cadence-service diagnose --workspace <path>; no locks were cleared." : MANAGEMENT_GUIDANCE}`,
+          `${error instanceof ContractError ? error.code : "unavailable"}: Cadence refused or observation unavailable. No automatic action replay.\n${attached ? "Reopen /cadence for a fresh observation and confirmation. Accepted work may continue. For quarantined/unavailable ownership use cadence-service diagnose --workspace <path>; no locks were cleared." : `${MANAGEMENT_GUIDANCE}${autostartHint()}`}`,
           "error",
         );
       } finally {

@@ -36,7 +36,13 @@ const version = {
   configRev: 1,
   catalogId: randomUUID(),
 };
-const catalog = { version, selected: null, status: "complete", entries: [] };
+const catalog = {
+  version,
+  selected: null,
+  status: "complete",
+  entries: [],
+  withheld: 0,
+};
 
 it.each(["models", "chooseModel"] as const)(
   "%s rejects raw Reply bytes above 512KiB before normalizing whitespace",
@@ -178,7 +184,7 @@ it("model optional ports refuse and choice shares actual cookie/CSRF/attachment/
     }
     for (const body of [
       JSON.stringify({ ...input, surface: "terminal" }),
-      JSON.stringify({ ...input, choice: { ...selector, thinking: "max" } }),
+      JSON.stringify({ ...input, choice: { ...selector, thinking: "ultra" } }),
       '{"expected":null,"expected":null,"choice":null}',
     ]) {
       expect((await post(native.headers, body)).status).not.toBe(200);

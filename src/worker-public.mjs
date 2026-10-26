@@ -411,6 +411,8 @@ export const modelApis = [
   "mistral-conversations",
   "azure-openai-responses",
 ];
+// The pinned SDK's ThinkingLevel, including "max" (models whose
+// thinkingLevelMap maps only max, such as some DeepSeek configurations).
 export const thinkingLevels = [
   "off",
   "minimal",
@@ -418,6 +420,7 @@ export const thinkingLevels = [
   "medium",
   "high",
   "xhigh",
+  "max",
 ];
 export function decodeModelSelector(v) {
   const o = closed(v, ["provider", "model", "api", "thinking"]);

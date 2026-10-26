@@ -15,6 +15,7 @@ import type {
   Receipt,
 } from "../../src/service-contract.ts";
 import { createServiceHost } from "./source-host.ts";
+import { keepOnlyEnvironment } from "./windows-environment.ts";
 
 const observedNatives = vi.hoisted(
   () =>
@@ -148,8 +149,7 @@ export async function fixture(
     "VITEST_POOL_ID",
     "VITEST_WORKER_ID",
   ]);
-  for (const key of Object.keys(process.env))
-    if (!allowed.has(key)) vi.stubEnv(key, undefined);
+  keepOnlyEnvironment(allowed);
   vi.stubEnv("HOME", home);
   vi.stubEnv("USERPROFILE", home);
   vi.stubEnv("ORDINARY_CHECK_VALUE", "launch-frozen");

@@ -77,6 +77,18 @@ export type TaskActionsOptions = ActionDependencies &
     | { choice: OwnerModelChoice; selection?: never }
   );
 const actionOwners = new WeakSet<ServiceHost["owner"]>();
+/** One operation's folds of its own fixed committed snapshot, read once and
+ * treated as read-only. A failed read is not kept. Raw task bytes, changes,
+ * configuration, choice, barrier and active work stay outside and are checked
+ * on every validation; a later operation folds again. */
+type SnapshotReads = <T>(key: string, read: () => T) => T;
+function snapshotReads(): SnapshotReads {
+  const kept = new Map<string, unknown>();
+  return <T>(key: string, read: () => T): T => {
+    if (!kept.has(key)) kept.set(key, read());
+    return kept.get(key) as T;
+  };
+}
 export class TaskActions implements AdmissionOwner {
   readonly admission: ActionAdmission;
   readonly scheduler: TaskScheduler;
@@ -675,13 +687,18 @@ export class TaskActions implements AdmissionOwner {
     assertCurrent();
     return checks;
   }
-  private obligations(version: ContextVersion, snapshot: string) {
+  private obligations(
+    version: ContextVersion,
+    snapshot: string,
+    reads?: SnapshotReads,
+  ) {
     if (!version.task) throw new ContractError("stale");
     return this.obligationsFor(
       version.task.id,
       version.task.kind,
       { status: "available", version },
       snapshot,
+      reads,
     );
   }
   private obligationsFor(
@@ -689,17 +706,28 @@ export class TaskActions implements AdmissionOwner {
     kind: TaskRecord["kind"],
     context: ControlContext,
     snapshot: string,
+    reads?: SnapshotReads,
   ) {
     const configured = this.checks(taskId);
-    const state = currentChecks(
-      this.options.host.reader.files,
-      taskId,
+    const selections =
       kind === "code"
         ? configured
-        : { revision: configured.revision, selections: [] },
-      context,
-      snapshot,
-    );
+        : { revision: configured.revision, selections: [] };
+    const fold = () =>
+      currentChecks(
+        this.options.host.reader.files,
+        taskId,
+        selections,
+        context,
+        snapshot,
+      );
+    // Keyed by every input, so a configuration change folds again.
+    const state = reads
+      ? reads(
+          `checks:${canonicalJson({ taskId, selections, context, snapshot })}`,
+          fold,
+        )
+      : fold();
     if (canonicalJson(configured) !== canonicalJson(this.checks(taskId)))
       throw new ContractError("stale");
     // An unavailable viewer conservatively projects a passed check as stale,
@@ -1016,6 +1044,8 @@ export class TaskActions implements AdmissionOwner {
           return false;
         }
       },
+      generation: () => this.generation,
+      advance: () => ++this.generation,
       observe: (advance) => {
         if (advance) this.generation++;
         const view = captureChanges(h.coordination.store.root);
@@ -1037,8 +1067,8 @@ export class TaskActions implements AdmissionOwner {
         if (publication.status !== "published" || !publication.observed)
           throw new ContractError("conflict");
         own = publication.observed;
-        // Cold current-graph continuity is proven by original publication facts,
-        // not an evictable RAM approval/lineage cache.
+        // Cold current-graph continuity is proven by original publication facts;
+        // the owner's remembered fold of them only saves refolding its prefix.
       },
     });
     accepted.activate(work);
@@ -1047,13 +1077,17 @@ export class TaskActions implements AdmissionOwner {
     runId: string,
     version: ContextVersion,
     snapshot = this.options.host.writer.committedSeq,
+    reads?: SnapshotReads,
   ) {
     if (!version.task) throw new ContractError("stale");
     const h = this.options.host,
       taskId = version.task.id;
-    const selection = h.reader.reviewSelection(taskId, runId, snapshot);
+    const select = () => h.reader.reviewSelection(taskId, runId, snapshot);
+    const selection = reads
+      ? reads(`selection:${taskId}:${runId}:${snapshot}`, select)
+      : select();
     const { run } = selection;
-    const state = this.obligations(version, snapshot);
+    const state = this.obligations(version, snapshot, reads);
     const current: ReviewContext = {
       ...state,
       checks: state.checks,
@@ -1114,6 +1148,9 @@ export class TaskActions implements AdmissionOwner {
         (currentGraph?.revision ?? null) !== task.graphRevision
       )
         throw new ContractError("stale");
+      // History at `snapshot` is immutable input: fold it once for this
+      // review. Every validation still checks the mutable state below.
+      const reads = snapshotReads();
       const validate = (published?: {
         revision: number;
         identity: string;
@@ -1138,13 +1175,15 @@ export class TaskActions implements AdmissionOwner {
           changes.complete !== expected.observation.complete
         )
           throw new ContractError("stale");
-        // Revalidate original historical proof while checking actual selected raw
-        // bytes above. This snapshot is immutable input, not a current default.
-        const proven = h.reader.publishedPlan(task.id, snapshot, {
-          revision: selected.record.revision,
-          identity: selected.identity,
-          plan: selected.record.plan,
-        });
+        // Original historical proof of this immutable snapshot (not a current
+        // default), proven once per review beside the raw-byte checks above.
+        const proven = reads(`plan:${task.id}:${snapshot}`, () =>
+          h.reader.publishedPlan(task.id, snapshot, {
+            revision: selected.record.revision,
+            identity: selected.identity,
+            plan: selected.record.plan,
+          }),
+        );
         if (
           (proven?.reference.sha256 ??
             (currentGraph ? hash(canonicalJson(currentGraph)) : null)) !==
@@ -1155,6 +1194,7 @@ export class TaskActions implements AdmissionOwner {
           action.runId,
           expected,
           snapshot,
+          reads,
         );
         if (
           current.checks.revision !== action.checksRevision ||

@@ -1,7 +1,10 @@
 /** SDK-free native management client. No task-action or provider API imports. */
 import { spawn } from "node:child_process";
+import { existsSync, mkdirSync } from "node:fs";
 import { request } from "node:http";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ensureUserConfig } from "../install-config.mjs";
 import { networkSnapshot, sameNetwork } from "../sdk-network.ts";
 import {
   ContractError,
@@ -9,17 +12,58 @@ import {
   LIMITS,
   parseWireJson,
 } from "../service-contract.ts";
+import { effectiveWorkspace } from "../task-store.ts";
+import {
+  type AutostartResult,
+  type AutostartSystem,
+  agentDirectory,
+  autostartStatus,
+  configureAutostart,
+  hostSystem,
+  type LingerState,
+  type OwnerControl,
+  piUserInstall,
+  removeAutostart,
+  stopAutostart,
+} from "./autostart.ts";
 import { closed, text } from "./contracts/core.ts";
 import { ServiceCoordination } from "./coordination.ts";
+import {
+  configureLaunchAgent,
+  LABEL,
+  launchAgentStatus,
+  removeLaunchAgent,
+  stopLaunchAgent,
+} from "./launchd.ts";
+import {
+  configureLoginRun,
+  launcherPath,
+  loginRunStatus,
+  removeLoginRun,
+  stopLoginRun,
+} from "./login-run.ts";
+import { encoded } from "./private-files.ts";
 import { localRecovery } from "./recovery-cli.ts";
 import {
   decodeHostInput,
+  decodeStartupReport,
+  type HostInput,
   hostEnvironment,
   portValue,
+  readHostConfig,
   STARTUP_INPUT_BYTES,
   type StartOptions,
+  type StartupReport,
   selectStart,
 } from "./runtime.ts";
+import {
+  DEFAULT_PORT,
+  ensureServerConfig,
+  PORT_KEY,
+  ServerConfigRefusal,
+  serverConfigPath,
+  TOKEN_KEY,
+} from "./server-config.ts";
 
 export interface ManagementReply {
   status:
@@ -182,10 +226,41 @@ function failedStatus(result: unknown): boolean {
     result &&
     typeof result === "object" &&
     "status" in result &&
-    ["unconfirmed", "unavailable", "quarantined"].includes(
+    ["unconfirmed", "unavailable", "quarantined", "refused"].includes(
       String(result.status),
     )
   );
+}
+/** The specific reason, naming only the path, keys and line numbers. */
+function serverConfigHint(error: ServerConfigRefusal): string {
+  return `Cadence changed nothing: ${error.path} ${error.reason}.\nFix it and run the command again; the file holds the WebUI port and token as ${PORT_KEY}=<1-65535> and ${TOKEN_KEY}=<at least 32 characters>, one line each.\n`;
+}
+/** One fixed hint per refused startup stage, naming only the selected sources. */
+function startupGuidance(result: unknown, input: HostInput): string {
+  let report: StartupReport;
+  try {
+    report = decodeStartupReport(result);
+  } catch {
+    return "";
+  }
+  const agent = input.config.agentDir;
+  const inspect = `Inspect: cadence-service diagnose|recover inspect --workspace ${JSON.stringify(input.workspace)}\n`;
+  switch (report.stage) {
+    case "package":
+      return "Cadence refused its installed package files (web/dist or agents); reinstall the package rather than editing it.\n";
+    case "pi-agent-directory":
+      return `Pi's agent directory ${agent} must be an existing real directory (not a symlink) owned by you.\n`;
+    case "pi-auth":
+      return `${join(agent, "auth.json")} must be your own single-link regular file holding valid Pi credentials; log in to Pi first.\n`;
+    case "pi-models":
+      return `${join(agent, "models.json")} must be your own single-link regular file using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.\n`;
+    case "pi-runtime":
+      return `Loading Pi's SDK model runtime failed after the owner registered (optional SDK packages missing, or sources the SDK refuses); it stays quarantined.\n${inspect}`;
+    default:
+      return report.status === "quarantined"
+        ? `The owner registered, then refused; it stays quarantined.\n${inspect}`
+        : "";
+  }
 }
 export async function startService(
   options: StartOptions,
@@ -194,7 +269,14 @@ export async function startService(
 ): Promise<unknown> {
   const network = networkSnapshot(process.env);
   const env = hostEnvironment(process.env); // validate route before any child/SDK import
-  const input = decodeHostInput(selectStart(options, process.env));
+  let input: HostInput;
+  try {
+    input = decodeHostInput(selectStart(options, process.env));
+  } catch (error) {
+    if (error instanceof ServerConfigRefusal)
+      process.stderr.write(serverConfigHint(error));
+    throw error;
+  }
   const serialized = `${JSON.stringify(input)}\n`;
   if (Buffer.byteLength(serialized) > STARTUP_INPUT_BYTES)
     throw new ContractError("oversize");
@@ -205,8 +287,14 @@ export async function startService(
     typeof existing === "object" &&
     "status" in existing &&
     existing.status === "alive"
-  )
+  ) {
+    // A running owner keeps its selection; a server configuration that
+    // reselects it applies only after its orderly Stop.
+    const running = readHostConfig(c);
+    if (running && encoded(running) !== encoded(input.config))
+      throw new ContractError("conflict");
     return existing;
+  }
   // No global Node search, inherited preloads, credentials on argv, or TS fallback.
   if (!sameNetwork(network, networkSnapshot(process.env)))
     throw new ContractError("stale");
@@ -255,7 +343,18 @@ export async function startService(
       bytes += chunk.toString("utf8");
       if (!bytes.endsWith("\n")) return;
       try {
-        const ready = closed(parseWireJson(bytes, 4096), ["status", "epoch"]);
+        const line = parseWireJson(bytes, 4096);
+        // The host's own fixed refusal: a code and stage, never paths or text.
+        if (
+          line &&
+          typeof line === "object" &&
+          "status" in line &&
+          line.status !== "ready"
+        ) {
+          finish(decodeStartupReport(line));
+          return;
+        }
+        const ready = closed(line, ["status", "epoch"]);
         if (ready.status !== "ready") throw new ContractError("unavailable");
         const epoch = decodeId(ready.epoch);
         void nativeCall(c, "status")
@@ -288,6 +387,8 @@ export async function startService(
     }),
   ]);
   clearTimeout(timer);
+  const guidance = startupGuidance(result, input);
+  if (guidance) process.stderr.write(guidance);
   // A reporting bound/client departure never sends a signal or restarts a child.
   child.stdout.destroy();
   child.stdin.destroy();
@@ -300,6 +401,278 @@ export async function startService(
   }
   return result;
 }
+/** Observe the unit's owner through the same authenticated status route; a
+ * reporting bound is not a stop or restart reason. */
+async function observeStarted(
+  workspace: string,
+): Promise<{ service: string; endpoint?: string }> {
+  const deadline = performance.now() + LIMITS.startWaitMs + 2000;
+  let service = "unconfirmed";
+  while (performance.now() < deadline) {
+    try {
+      const c = new ServiceCoordination(workspace);
+      const observed = await serviceStatus(c);
+      if (observed && typeof observed === "object" && "status" in observed)
+        service = String(observed.status);
+      if (service === "alive")
+        return { service, endpoint: c.localAccess().endpoint };
+      if (service === "quarantined") break;
+    } catch {
+      /* not registered yet */
+    }
+    await pause(250);
+  }
+  return { service };
+}
+/** The running owner's private entry link, for the guidance only: never part
+ * of the JSON result. */
+async function privateLink(workspace: string): Promise<string | undefined> {
+  try {
+    const value = closed(
+      await nativeCall(new ServiceCoordination(workspace), "token-link", true),
+      ["link"],
+    );
+    return text(value.link, 4096, true);
+  } catch {
+    return undefined;
+  }
+}
+/** Orderly owner control for service managers that only signal (macOS, Windows). */
+const ownerControl: OwnerControl = {
+  async ownerStatus(workspace) {
+    try {
+      const observed = await serviceStatus(new ServiceCoordination(workspace));
+      return observed && typeof observed === "object" && "status" in observed
+        ? String(observed.status)
+        : "unavailable";
+    } catch {
+      return "unavailable";
+    }
+  },
+  async stopOwner(workspace) {
+    try {
+      const c = new ServiceCoordination(workspace);
+      const observed = await serviceStatus(c);
+      const status =
+        observed && typeof observed === "object" && "status" in observed
+          ? String(observed.status)
+          : "unavailable";
+      if (status === "absent" || status === "stopped") return "stopped";
+      return status === "alive" ? (await stopService(c)).status : status;
+    } catch {
+      return "unavailable";
+    }
+  },
+};
+type ServerAction = "install" | "status" | "restart" | "stop" | "uninstall";
+async function serverAction(
+  s: AutostartSystem,
+  action: ServerAction,
+  requested: string | undefined,
+  linger: boolean,
+): Promise<AutostartResult> {
+  const install = action === "install" || action === "restart";
+  const mode = action === "install" ? "install" : "restart";
+  switch (s.platform) {
+    case "linux":
+      if (install) return configureAutostart(s, mode, requested, linger);
+      if (action === "stop") return stopAutostart(s);
+      return action === "uninstall" ? removeAutostart(s) : autostartStatus(s);
+    case "darwin":
+      if (install) return configureLaunchAgent(s, mode, requested);
+      if (action === "stop") return stopLaunchAgent(s);
+      return action === "uninstall"
+        ? removeLaunchAgent(s)
+        : launchAgentStatus(s);
+    case "win32":
+      if (install) return configureLoginRun(s, mode, requested);
+      if (action === "stop") return stopLoginRun(s);
+      return action === "uninstall" ? removeLoginRun(s) : loginRunStatus(s);
+    default:
+      return { status: "unsupported" };
+  }
+}
+function serverGuidance(
+  s: AutostartSystem,
+  action: ServerAction,
+  result: AutostartResult & { service?: string; endpoint?: string },
+  link: string | undefined,
+): string {
+  // Pi's managed copy puts no `cadence` bin on PATH.
+  const cli = piUserInstall(s)
+    ? `node ${JSON.stringify(join(s.root, "src", "service-cli.mjs"))}`
+    : "cadence";
+  const note = result.redirectedFrom
+    ? `Cadence workspace: ${result.workspace} (${result.redirectedFrom} contains Cadence's private state)\n`
+    : "";
+  return note + serverStatusGuidance(s, action, result, cli, link);
+}
+/** Linger only; never `server install`, which restarts the owner. */
+function lingerGuidance(linger: LingerState | undefined): string {
+  switch (linger) {
+    case "enabled":
+      return "Linger enabled: Cadence starts at boot and keeps running after logout (undo: loginctl disable-linger).\n";
+    case "off":
+      return "Linger is off: Cadence starts at login and stops at logout. Start it at boot: loginctl enable-linger\n";
+    case "refused":
+      return "Linger needs authorization: Cadence starts at login and stops at logout. Start it at boot: loginctl enable-linger (may ask for your password)\n";
+    default:
+      return "";
+  }
+}
+/** The platform's own diagnosis for a definition it refused to load or start. */
+function managerDetail(s: AutostartSystem): string {
+  switch (s.platform) {
+    case "linux":
+      return "see systemctl --user status cadence and journalctl --user -u cadence";
+    case "darwin":
+      return `see launchctl print gui/${s.uid}/${LABEL} and ~/Library/Logs/cadence.log`;
+    default:
+      return `run its launcher to see why: wscript ${JSON.stringify(launcherPath(s))}`;
+  }
+}
+function serverStatusGuidance(
+  s: AutostartSystem,
+  action: ServerAction,
+  result: AutostartResult & { service?: string; endpoint?: string },
+  cli: string,
+  link: string | undefined,
+): string {
+  const workspace = JSON.stringify(result.workspace ?? "");
+  const manage = `Manage: ${cli} server status|restart|stop|uninstall`;
+  const when = s.platform === "linux" ? "at boot or login" : "at login";
+  const config = `Port and token: ${PORT_KEY} and ${TOKEN_KEY} in ${serverConfigPath(s.home)} (edit them, then: ${cli} server restart)`;
+  switch (result.status) {
+    case "started": {
+      const linger = lingerGuidance(result.linger);
+      if (result.service !== "alive")
+        return `Cadence started for ${result.workspace}, but the owner reports ${result.service}.\nInspect: ${cli} diagnose --workspace ${workspace}\n${manage}\n${linger}`;
+      if (!link)
+        return `Cadence WebUI: ${result.endpoint} (workspace ${result.workspace}; starts ${when})\nEnter with your private link: ${cli} token-link --workspace ${workspace} --reveal\n${config}\n${manage}\n${linger}`;
+      return `Cadence WebUI: ${link}\nOpen this private link (workspace ${result.workspace}; starts ${when}); its token admits anyone who has it.\n${config}\n${manage}\n${linger}`;
+    }
+    case "waiting-for-pi-login":
+      return `Cadence is registered for ${result.workspace}; it starts once Pi has ${join(agentDirectory(s), "auth.json")}.\nLog in to Pi, then: ${cli} server restart\n${config}\n${lingerGuidance(result.linger)}`;
+    case "stopped":
+      return action === "stop"
+        ? `Cadence stopped; it starts again ${when}, or now with: ${cli} server restart\n`
+        : "";
+    case "absent":
+      return action === "restart" || action === "stop"
+        ? `Cadence's background service is not installed: ${cli} server install\n`
+        : "";
+    case "disabled":
+      return `Cadence's service definition was rewritten for ${result.workspace}; left disabled as configured.\n`;
+    case "masked":
+      return "cadence.service is masked; Cadence did not enable or start it.\n";
+    case "missing-pi-sdk":
+      return `Cadence did not register its service: the Pi SDK packages pi-coding-agent and pi-ai (scope @earendil-works) do not resolve from ${s.root}, for example after installing without optional dependencies; an owner without them would quarantine.\n`;
+    case "foreign":
+      return `${result.unit} was not generated by Cadence; left unchanged.\n`;
+    case "unavailable":
+      return result.workspace
+        ? `Cadence changed nothing: its owner could not be observed. Inspect: ${cli} diagnose --workspace ${workspace}\n`
+        : `No user service manager; start Cadence explicitly: ${cli} start --workspace /absolute/project\n`;
+    case "unsupported":
+      return `Cadence has no background service for ${s.platform}; start it explicitly: ${cli} start --workspace /absolute/project\n`;
+    case "unconfirmed":
+    case "quarantined":
+      return `Cadence changed nothing: its owner's orderly Stop was not confirmed (${result.status}). Inspect: ${cli} diagnose --workspace ${workspace}\n`;
+    case "failed":
+      return `Could not register or start Cadence's service; ${managerDetail(s)}.\n${lingerGuidance(result.linger)}`;
+    default:
+      return "";
+  }
+}
+/** Missing-only, independent of the service result; a failure is reported, not fatal. */
+function researchTemplate(home: string): string {
+  try {
+    const result = ensureUserConfig(home);
+    return result.created
+      ? `Cadence created the research configuration template ${result.path}\n`
+      : "";
+  } catch (error) {
+    return `Cadence could not create the research configuration template: ${error instanceof Error ? error.message : String(error)}\n`;
+  }
+}
+const SERVER_ACTIONS: ServerAction[] = [
+  "install",
+  "status",
+  "restart",
+  "stop",
+  "uninstall",
+];
+async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
+  const action = SERVER_ACTIONS.find((a) => a === argv[0]);
+  if (!action) throw new ContractError("invalid");
+  argv.shift();
+  let requested: string | undefined;
+  let linger = process.env.CADENCE_LINGER !== "0";
+  let noLinger = false;
+  while (action === "install" && argv.length) {
+    if (argv[0] === "--workspace" && argv[1] && requested === undefined)
+      requested = resolve(argv.splice(0, 2)[1]);
+    else if (argv[0] === "--no-linger" && !noLinger) {
+      argv.shift();
+      noLinger = true;
+      linger = false;
+    } else break;
+  }
+  if (argv.length) throw new ContractError("invalid");
+  const s = hostSystem(dirname(dirname(fileURLToPath(hostUrl))), ownerControl);
+  if (action === "install") process.stderr.write(researchTemplate(s.home));
+  // The definition starts with --server-config on the .env, so install and
+  // restart add missing keys and refuse an unusable file before any change.
+  if (action === "install" || action === "restart") {
+    try {
+      const { added, exposed } = ensureServerConfig(s.home);
+      const path = serverConfigPath(s.home);
+      if (added.length)
+        process.stderr.write(
+          `Cadence added ${added.map((key) => (key === PORT_KEY ? `${key}=${DEFAULT_PORT}` : `a random private ${key}`)).join(" and ")} to ${path}\n`,
+        );
+      // Not a refusal: the user's own mode, like Pi's sources.
+      if (exposed)
+        process.stderr.write(
+          `Note: other users can read ${path}; chmod 600 ${JSON.stringify(path)} keeps ${TOKEN_KEY} private.\n`,
+        );
+    } catch (error) {
+      if (error instanceof ServerConfigRefusal)
+        process.stderr.write(serverConfigHint(error));
+      throw error;
+    }
+  }
+  let result: AutostartResult & { service?: string; endpoint?: string };
+  try {
+    result = await serverAction(s, action, requested, linger);
+  } catch (error) {
+    if (error instanceof ContractError && error.code === "invalid")
+      process.stderr.write(
+        "Cadence server install needs an existing absolute --workspace directory.\n",
+      );
+    throw error;
+  }
+  let link: string | undefined;
+  if (result.status === "started" && result.workspace) {
+    Object.assign(result, await observeStarted(result.workspace));
+    if (result.service === "alive") link = await privateLink(result.workspace);
+  }
+  process.stderr.write(serverGuidance(s, action, result, link));
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+  if (
+    [
+      "failed",
+      "foreign",
+      "unavailable",
+      "unsupported",
+      "unconfirmed",
+      "quarantined",
+      "missing-pi-sdk",
+    ].includes(result.status) ||
+    (result.status === "absent" && (action === "restart" || action === "stop"))
+  )
+    process.exitCode = 1;
+}
 export async function managementMain(
   argv: string[],
   hostUrl: URL,
@@ -310,8 +683,12 @@ export async function managementMain(
     const command = argv.shift();
     if (command === "--help" && !argv.length) {
       process.stdout.write(
-        "cadence-service start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--workspace PATH] [--state-home PATH]\nExplicit start only; default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file.\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop. Unconfirmed/quarantined is not stopped.\nRecovery resolve requires this local native terminal, exact unchanged dead-owner resources and separate process/credential/storage acknowledgments. No --yes, network recovery, killing, repair or cleanup.\n",
+        "cadence start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--workspace PATH] [--state-home PATH]\ncadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall\nStart is explicit, or the background service that server install registers: a systemd user unit on Linux, started at boot through linger (--no-linger or CADENCE_LINGER=0 keeps it to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file, --server-config (the .env whose CADENCE_PORT and CADENCE_TOKEN the background service uses).\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop. Unconfirmed/quarantined is not stopped.\nRecovery resolve requires this local native terminal, exact unchanged dead-owner resources and separate process/credential/storage acknowledgments. No --yes, network recovery, killing, repair or cleanup.\n",
       );
+      return;
+    }
+    if (command === "server") {
+      await serverMain(argv, hostUrl);
       return;
     }
     let recovery: "inspect" | "resolve" | undefined;
@@ -358,15 +735,33 @@ export async function managementMain(
       else if (flag === "--config") options.config = value;
       else if (flag === "--agent-dir") options.agentDir = value;
       else if (flag === "--token-file") options.tokenFile = value;
+      else if (flag === "--server-config") options.serverConfig = value;
       else if (flag === "--port") options.port = portValue(value);
       else if (flag === "--host" && (value === "127.0.0.1" || value === "::1"))
         options.host = value;
       else throw new ContractError("invalid");
     }
+    // A directory containing the private state home (the home directory and
+    // its ancestors) can never be a workspace; land on ~/cadence instead of
+    // refusing. Only start creates it; observation creates nothing.
+    const landing = effectiveWorkspace(options.workspace, options.stateHome);
+    if (landing.redirected) {
+      if (seen.has("--workspace"))
+        process.stderr.write(
+          `Cadence workspace: ${landing.workspace} (${options.workspace} contains Cadence's private state)\n`,
+        );
+      options.workspace = landing.workspace;
+      if (command === "start")
+        mkdirSync(landing.workspace, { recursive: true });
+    }
     let result: unknown;
     if (command === "start")
       result = await startService(options, foreground, hostUrl);
-    else {
+    else if (landing.redirected && !existsSync(landing.workspace)) {
+      if (command !== "status" && command !== "diagnose")
+        throw new ContractError("unavailable");
+      result = { status: "absent" };
+    } else {
       const c = new ServiceCoordination(options.workspace, options.stateHome);
       if (command === "recover" && recovery)
         result = await localRecovery(c, recovery);
@@ -381,6 +776,10 @@ export async function managementMain(
         result = await nativeCall(c, command);
       else throw new ContractError("invalid");
     }
+    // Name the effective workspace only when it differs from the request, so
+    // every existing output stays byte-identical.
+    if (landing.redirected && result && typeof result === "object")
+      result = { ...result, workspace: landing.workspace };
     if (result !== null) process.stdout.write(`${JSON.stringify(result)}\n`);
     if (failedStatus(result)) process.exitCode = 1;
   } catch {

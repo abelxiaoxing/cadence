@@ -1,6 +1,6 @@
 {
   "name": "@abelxiaoxing/cadence",
-  "version": "1.8.4",
+  "version": "2.0.10",
   "description": "Shared Pi task workspace: native terminal and WebUI, persistent service, checks and human review.",
   "license": "MIT",
   "type": "module",
@@ -17,8 +17,11 @@
     "skills",
     "config",
     "agents",
+    "src/agent-panel-cadence.ts",
+    "src/agent-panel-model.ts",
+    "src/agent-panel.ts",
+    "src/cadence-service.mjs",
     "src/index.ts",
-    "src/install-config.mjs",
     "src/native-build.ts",
     "src/native-client.ts",
     "src/native-export.ts",
@@ -68,13 +71,12 @@
     ]
   },
   "scripts": {
-    "postinstall": "node src/install-config.mjs",
     "pack:check": "node scripts/pack-check.mjs",
     "traceability:check": "node scripts/traceability-check.mjs",
     "verify": "bun run check && bun run check:web && bun run build:web:check && bun run lint && bun run check:agents && bun run test && bun run test:web && bun run test:browser && bun run pack:check",
     "check": "node scripts/check-syntax.mjs && bun scripts/build-operator.mjs --check && bun scripts/build-service.mjs --check && tsc --noEmit",
     "lint": "biome check . && rumdl check .",
-    "test": "vitest run --no-file-parallelism",
+    "test": "vitest run",
     "test:target": "vitest run",
     "check:agents": "node scripts/check-agents.mjs",
     "doctor": "node src/operator-cli.mjs doctor",
@@ -99,13 +101,11 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
-    "@earendil-works/pi-coding-agent": "0.84.3",
     "@earendil-works/pi-tui": "0.84.3",
     "@types/node": "^22.15.3",
     "rumdl": "^0.2.10",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8",
-    "@earendil-works/pi-ai": "0.84.3",
     "@types/ws": "8.18.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
@@ -144,7 +144,12 @@
     "undici": "8.9.0",
     "ws": "8.21.3"
   },
+  "optionalDependencies": {
+    "@earendil-works/pi-ai": "0.84.3",
+    "@earendil-works/pi-coding-agent": "0.84.3"
+  },
   "bin": {
-    "cadence-service": "./src/service-cli.mjs"
+    "cadence": "./src/service-cli.mjs",
+    "cadence-service": "./src/cadence-service.mjs"
   }
 }

@@ -80,7 +80,7 @@ it("actual built assets, two isolated readonly contexts and CSP (no execution wo
       { width: 1440, height: 900 },
       { width: 390, height: 844 },
     ]) {
-      const context = await browser.newContext({ viewport });
+      const context = await browser.newContext({ viewport, locale: "en-US" });
       context.setDefaultTimeout(15000);
       await context.route("**/*", (route) =>
         route.request().url().startsWith(`${origin}/`)
@@ -291,6 +291,7 @@ it("built readonly history, exact Unicode/full copy, timeline and drawers across
     ]) {
       const context = await browser.newContext({
         viewport: viewports[0],
+        locale: "en-US",
         permissions: ["clipboard-read", "clipboard-write"],
         reducedMotion: "reduce",
       });
@@ -515,6 +516,52 @@ it("built readonly history, exact Unicode/full copy, timeline and drawers across
         .waitFor();
       assert.equal(await degraded.locator(".rtr-row").count(), 3);
       await degraded.close();
+      // Only the viewer's explicit switch selects and stores Chinese; it
+      // relabels the shell and the timeline and survives a reload.
+      const chinese = await context.newPage();
+      chinese.on("pageerror", (error) => errors.push(error.name));
+      await chinese.goto(`${origin}/app`);
+      await chinese
+        .getByRole("button", { name: "切换到中文", exact: true })
+        .click();
+      assert.deepEqual(
+        await chinese.evaluate(() => [
+          document.documentElement.lang,
+          localStorage.getItem("cadence-locale"),
+        ]),
+        ["zh-CN", "zh"],
+      );
+      await chinese.reload();
+      if (viewports[0].width <= 900)
+        await chinese
+          .getByRole("button", { name: "任务", exact: true })
+          .click();
+      await chinese
+        .getByRole("button", { name: /Readonly Unicode fixture/ })
+        .click();
+      await chinese
+        .getByRole("button", { name: "时间线", exact: true })
+        .click();
+      await chinese.locator(".rtr .vis-timeline").waitFor();
+      await chinese
+        .getByRole("button", { name: "▶ 可视回放", exact: true })
+        .waitFor();
+      assert.equal(
+        await chinese.evaluate(
+          () => document.documentElement.scrollWidth > innerWidth,
+        ),
+        false,
+      );
+      await chinese
+        .getByRole("button", { name: "Switch to English", exact: true })
+        .click();
+      await chinese
+        .getByRole("button", { name: "timeline", exact: true })
+        .waitFor();
+      await chinese.close();
+      assert.deepEqual(external, []);
+      assert.deepEqual(controls, []);
+      assert.deepEqual(errors, []);
       await context.close();
     }
     receipt.passed = true;

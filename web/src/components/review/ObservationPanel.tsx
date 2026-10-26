@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { contentCursor } from "../../history/readers";
 import { usePage } from "../../history/use-page";
+import { useT } from "../../i18n/locale";
 import type { ListRequest, ReadCursor, ServiceClient } from "../../types";
 import { DetailPane } from "../history/DetailPane";
 import { PageControls } from "../history/PageControls";
@@ -14,6 +15,7 @@ export function ObservationPanel({
   client: ServiceClient;
   seed: ListRequest;
 }) {
+  const { t, tx } = useT();
   const pager = usePage(client, seed),
     [selected, setSelected] = useState<ReadCursor>();
   const page = pager.page;
@@ -21,9 +23,9 @@ export function ObservationPanel({
     <section className="scm-body">
       <PageControls pager={pager} />
       <p>
-        Captured observations include pre-existing dirt. They do not attribute
-        every change to Cadence; bounded fingerprints are not filesystem
-        snapshots.
+        {t(
+          "Captured observations include pre-existing dirt. They do not attribute every change to Cadence; bounded fingerprints are not filesystem snapshots.",
+        )}
       </p>
       <div className="scm-files-list">
         {page &&
@@ -40,7 +42,7 @@ export function ObservationPanel({
             return (
               <article className="scm-file" key={r.recordId}>
                 <h3>
-                  {fact.kind} · committed #{r.committedSeq}
+                  {fact.kind} · {t("committed #{seq}", { seq: r.committedSeq })}
                 </h3>
                 <pre>{JSON.stringify(fact, null, 2)}</pre>
                 {content && (
@@ -61,7 +63,9 @@ export function ObservationPanel({
                         );
                     }}
                   >
-                    Inspect full retained {content.field}
+                    {t("Inspect full retained {field}", {
+                      field: tx(content.field),
+                    })}
                   </button>
                 )}
               </article>

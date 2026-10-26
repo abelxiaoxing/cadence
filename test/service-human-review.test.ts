@@ -50,6 +50,8 @@ async function start(f: Fixture) {
   await f.actions.settled(taskId);
   const receipt = await f.submit({ kind: "start", taskId });
   await f.actions.scheduler.settled(receipt.runId!);
+  // The run settling precedes its task publication; wait for the original too.
+  await f.actions.settledAll();
   return { taskId, runId: receipt.runId!, receipt };
 }
 async function checked(f: Fixture, taskId: string) {
@@ -888,4 +890,34 @@ it("cold own-publication proof survives more than sixteen other task selections,
     ),
   ).toThrow();
   expect(readFileSync(path)).toEqual(external);
+}, 60000);
+it("one accepted review folds its immutable snapshot once, across every validation", async () => {
+  const f = await fixture();
+  f.configure([f.check]);
+  const { taskId, runId } = await start(f);
+  await checked(f, taskId);
+  const selected = await review(f, taskId, runId, false);
+  expect(selected.preview.issues).toEqual([]);
+  const plans = vi.spyOn(HistoryReader.prototype, "publishedPlan"),
+    selections = vi.spyOn(HistoryReader.prototype, "reviewSelection");
+  try {
+    const done = await f.submit(selected.action);
+    await f.actions.settled(taskId);
+    expect(f.h.coordination.store.load(taskId)).toMatchObject({
+      phase: "done",
+      review: { outcome: "reviewed" },
+    });
+    expect(await f.h.writer.lookup(done.commandId)).toMatchObject({
+      status: "found",
+      record: { receipt: { publication: "published" } },
+    });
+    // Before, every validation of this one review re-folded the same snapshot
+    // (70 plan and 69 selection folds here). Previews, current views and
+    // admission still fold in their own operations.
+    expect(plans.mock.calls.length).toBeLessThanOrEqual(8);
+    expect(selections.mock.calls.length).toBeLessThanOrEqual(8);
+  } finally {
+    plans.mockRestore();
+    selections.mockRestore();
+  }
 }, 60000);

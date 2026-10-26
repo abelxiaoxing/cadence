@@ -291,7 +291,7 @@ export class HistoryNavigation {
       return structuredClone(source.value);
     }
     try {
-      if (!this.files.files.directory(dirname(path)))
+      if (!this.files.files.directory(dirname(path), false, budget.walks))
         return source ? structuredClone(source.value) : undefined;
       const size = lstatSync(path).size;
       if (size > RECORD_BYTES)
@@ -989,36 +989,76 @@ export class HistoryNavigation {
     if (expected === undefined) throw new ContractError("receipt-inconclusive");
     let head: IndexHead | null = expected;
     while (head) {
-      const value = this.index(
+      const link = this.link(
         roster ? "roster-links" : "entity-links",
-        `${id}/${head.seq}`,
+        id,
+        head,
         budget,
       );
-      if (!value) throw new ContractError("receipt-inconclusive");
-      const o = closed(value, ["pointer", "previous", "previousHash", "hash"]),
-        p = pointer(o.pointer);
-      const previous = o.previous === null ? null : decodeSequence(o.previous),
-        previousHash =
-          o.previousHash === null
-            ? null
-            : typeof o.previousHash === "string"
-              ? o.previousHash
-              : undefined;
-      if (
-        previousHash === undefined ||
-        (previous === null) !== (previousHash === null) ||
-        p.seq !== head.seq ||
-        o.hash !== head.hash ||
-        chainHash(p.seq, previous, previousHash) !== head.hash ||
-        (previous !== null && BigInt(previous) >= BigInt(p.seq))
-      )
-        throw new ContractError("receipt-inconclusive");
-      yield this.batch(p, budget);
-      head =
+      yield this.batch(link.pointer, budget);
+      head = link.previous;
+    }
+  }
+  /** The validated link at `head` and its predecessor; throws unless it chains. */
+  private link(
+    group: string,
+    id: string,
+    head: IndexHead,
+    budget: HistoryReadBudget,
+  ): { pointer: ReturnType<typeof pointer>; previous: IndexHead | null } {
+    const value = this.index(group, `${id}/${head.seq}`, budget);
+    if (!value) throw new ContractError("receipt-inconclusive");
+    const o = closed(value, ["pointer", "previous", "previousHash", "hash"]),
+      p = pointer(o.pointer);
+    const previous = o.previous === null ? null : decodeSequence(o.previous),
+      previousHash =
+        o.previousHash === null
+          ? null
+          : typeof o.previousHash === "string"
+            ? o.previousHash
+            : undefined;
+    if (
+      previousHash === undefined ||
+      (previous === null) !== (previousHash === null) ||
+      p.seq !== head.seq ||
+      o.hash !== head.hash ||
+      chainHash(p.seq, previous, previousHash) !== head.hash ||
+      (previous !== null && BigInt(previous) >= BigInt(p.seq))
+    )
+      throw new ContractError("receipt-inconclusive");
+    return {
+      pointer: p,
+      previous:
         previous !== null && previousHash !== null
           ? { seq: previous, hash: previousHash }
-          : null;
+          : null,
+    };
+  }
+  /** A task's original batches newer than the newest chain link at or before
+   * `snapshot` that `accept` resumes (an in-process remembered state), in
+   * commit order, with that state. Undefined (none accepted, any index fault)
+   * means fold the original chain instead; exhaustion still propagates. */
+  taskSuffix<T>(
+    taskId: string,
+    snapshot: string,
+    budget: HistoryReadBudget,
+    accept: (head: IndexHead) => T | undefined,
+  ): { base: T; batches: LocatedBatch[] } | undefined {
+    decodeId(taskId);
+    try {
+      let head = this.anchoredHead(taskId, snapshot, budget) ?? null;
+      const newer: LocatedBatch[] = [];
+      while (head) {
+        const base = accept(head);
+        if (base !== undefined) return { base, batches: newer.reverse() };
+        const link = this.link("entity-links", taskId, head, budget);
+        newer.push(this.batch(link.pointer, budget));
+        head = link.previous;
+      }
+    } catch {
+      budget.reserve(0);
     }
+    return;
   }
   runBatches(
     id: string,

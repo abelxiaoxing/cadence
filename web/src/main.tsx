@@ -1,8 +1,25 @@
 import { Component, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { LocaleProvider, useT } from "./i18n/locale";
 import "./styles.css";
 
+function PresentationUnavailable() {
+  const { t } = useT();
+  return (
+    <main className="entry">
+      <h1>{t("Presentation unavailable")}</h1>
+      <p>
+        {t(
+          "No execution result is inferred. Reconnect to observe the owner; accepted work continues.",
+        )}
+      </p>
+      <button type="button" onClick={() => window.location.reload()}>
+        {t("Reload observation")}
+      </button>
+    </main>
+  );
+}
 class PresentationBoundary extends Component<
   { children: ReactNode },
   { failed: boolean }
@@ -13,16 +30,7 @@ class PresentationBoundary extends Component<
   }
   render() {
     return this.state.failed ? (
-      <main>
-        <h1>Presentation unavailable</h1>
-        <p>
-          No execution result is inferred. Reconnect to observe the owner;
-          accepted work continues.
-        </p>
-        <button type="button" onClick={() => window.location.reload()}>
-          Reload observation
-        </button>
-      </main>
+      <PresentationUnavailable />
     ) : (
       this.props.children
     );
@@ -31,7 +39,9 @@ class PresentationBoundary extends Component<
 const root = document.getElementById("root");
 if (!root) throw new Error("Application root unavailable");
 createRoot(root).render(
-  <PresentationBoundary>
-    <App />
-  </PresentationBoundary>,
+  <LocaleProvider>
+    <PresentationBoundary>
+      <App />
+    </PresentationBoundary>
+  </LocaleProvider>,
 );

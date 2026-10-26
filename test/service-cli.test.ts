@@ -2,12 +2,20 @@ import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import {
+  chmodSync,
+  cpSync,
   existsSync,
+  linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createServer, request } from "node:http";
@@ -17,10 +25,17 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, expect, it } from "vitest";
 import { nativeCall } from "../src/service/cli.ts";
 import { ServiceCoordination } from "../src/service/coordination.ts";
-import { readHostConfig } from "../src/service/runtime.ts";
+import {
+  decodeStartupReport,
+  readHostConfig,
+  StartupRefusal,
+  startupReport,
+} from "../src/service/runtime.ts";
 import { ServiceClient } from "../src/service-client.ts";
 import { HttpServiceTransport } from "../src/service-http-client.ts";
 import { historyFixture } from "./helpers/history-fixture.ts";
+import { withoutNodeProxyNotice } from "./helpers/node-notices.ts";
+import { windowsSystemEnvironment } from "./helpers/windows-environment.ts";
 
 const cli = fileURLToPath(new URL("../src/service-cli.mjs", import.meta.url));
 const host = fileURLToPath(new URL("../src/service-host.mjs", import.meta.url));
@@ -42,8 +57,7 @@ function fixture() {
     PATH: process.env.PATH,
     NO_COLOR: "1",
   };
-  for (const key of ["SystemRoot", "WINDIR", "COMSPEC", "PATHEXT"])
-    if (process.env[key]) env[key] = process.env[key];
+  Object.assign(env, windowsSystemEnvironment());
   const root = join(dir, "workspace"),
     state = join(dir, "state");
   return { dir, root, state, env, c: new ServiceCoordination(root, state) };
@@ -220,7 +234,11 @@ it("native-proxy-enabled management keeps local capability direct without changi
   });
   try {
     const result = await run(f, "status"); // real generated SDK-free CLI, actual native proxy opt-in
-    expect([result.code, result.signal, result.stderr]).toEqual([0, null, ""]);
+    expect([
+      result.code,
+      result.signal,
+      withoutNodeProxyNotice(result.stderr),
+    ]).toEqual([0, null, ""]);
     expect(JSON.parse(result.stdout)).toEqual({ status: "alive", epoch });
     expect({ localHits, proxyHits, leakedCapability }).toEqual({
       localHits: 1,
@@ -445,6 +463,332 @@ it("external private token file source rotates real selected bytes", async () =>
     readFileSync(path, "utf8"),
   );
 }, 30000);
+/** A port free right now; the host binds it exactly or refuses. */
+async function freePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  await new Promise((resolve) => server.close(resolve));
+  if (!address || typeof address === "string") throw new Error("no port");
+  return address.port;
+}
+/** A research .env that also selects the WebUI port and token. */
+function serverConfig(f: F, port: number, token: string): string {
+  const path = join(f.dir, ".env");
+  writeFileSync(
+    path,
+    `# research\nGROK_API_KEY=fabricated-grok-key\nCADENCE_PORT=${port}\nCADENCE_TOKEN=${token}\n`,
+    { mode: 0o600 },
+  );
+  return path;
+}
+async function entered(f: F, secret: string) {
+  const entry = await http(f, `/?token=${encodeURIComponent(secret)}`);
+  expect(entry.status).toBe(303);
+  return entry.headers["set-cookie"][0].split(";")[0] as string;
+}
+it("server configuration selects the port and token; an edit applies at the next start without fencing the running owner", async () => {
+  const f = fixture();
+  pending.push(f);
+  const port = await freePort();
+  const first = "fabricated-server-config-token-1111111111";
+  const path = serverConfig(f, port, first);
+  const agent = ["--agent-dir", join(f.dir, "agent")];
+  const r = await run(f, "start", [...agent, "--server-config", path]);
+  expect(r.code, r.stderr).toBe(0);
+  expect(f.c.localAccess().endpoint).toBe(`http://127.0.0.1:${port}`);
+  expect(await token(f)).toBe(`http://127.0.0.1:${port}/?token=${first}`);
+  expect(readHostConfig(f.c)).toMatchObject({
+    http: { port },
+    tokenSource: "config",
+    tokenFile: path,
+  });
+  // Like an environment token, the secret stays out of Cadence's own state.
+  expect(JSON.stringify(tree(f.state))).not.toContain(
+    Buffer.from(first).toString("hex"),
+  );
+  const cookie = await entered(f, first);
+  // Editing the file while the owner runs changes nothing until restart, and
+  // the orderly Stop still goes through.
+  const port2 = await freePort();
+  const second = "fabricated-server-config-token-2222222222";
+  serverConfig(f, port2, second);
+  expect((await http(f, "/api/v1/session", { cookie })).status).toBe(200);
+  expect(new URL(await token(f)).searchParams.get("token")).toBe(first);
+  // The running owner is not reselected in place.
+  expect((await run(f, "start", ["--server-config", path])).code).toBe(1);
+  const stopped = await run(f, "stop");
+  expect(JSON.parse(stopped.stdout).status, stopped.stderr).toBe("stopped");
+  // A selection that reads its token from the file follows it at every start.
+  expect((await run(f, "start")).code).toBe(0);
+  expect(f.c.localAccess().endpoint).toBe(`http://127.0.0.1:${port2}`);
+  expect(readHostConfig(f.c)?.http.port).toBe(port2);
+  expect(new URL(await token(f)).searchParams.get("token")).toBe(second);
+  expect((await http(f, `/?token=${first}`)).status).toBe(401);
+  expect((await http(f, "/api/v1/session", { cookie })).status).toBe(401);
+  await entered(f, second);
+  // Explicit choices that contradict the file refuse.
+  expect((await run(f, "start", ["--port", String(port)])).code).toBe(1);
+  expect((await run(f, "start", ["--token-file", path])).code).toBe(1);
+  f.env.CADENCE_WEB_TOKEN = "fabricated-environment-owner-token-111111";
+  expect((await run(f, "start")).code).toBe(1);
+  delete f.env.CADENCE_WEB_TOKEN;
+  for (const name of ["status", "diagnose"])
+    expect((await run(f, name)).stdout).not.toContain(second);
+}, 60000);
+it("an unusable server configuration refuses before registering, naming only its path and reason", async () => {
+  const f = fixture();
+  pending.push(f);
+  const path = join(f.dir, ".env");
+  const before = tree(f.state);
+  const token = "CADENCE_TOKEN=fabricated-server-config-token-1111111111";
+  for (const [bad, reason] of [
+    ["CADENCE_PORT=17423\n", "has no CADENCE_TOKEN line"],
+    [`${token}\n`, "has no CADENCE_PORT line"],
+    [
+      `CADENCE_PORT=70000\n${token}\n`,
+      "has CADENCE_PORT on line 1 that is not a whole number from 1 to 65535",
+    ],
+    [
+      `CADENCE_PORT=17423\n${token}\n${token}\n`,
+      "sets CADENCE_TOKEN twice (lines 2 and 3); keep one",
+    ],
+    [
+      `CADENCE_PORT=17423\n${token}\nbroken\n`,
+      "has no KEY=value setting on line 3, which the research skills refuse too",
+    ],
+  ]) {
+    writeFileSync(path, bad, { mode: 0o600 });
+    const r = await run(f, "start", [
+      "--agent-dir",
+      join(f.dir, "agent"),
+      "--server-config",
+      path,
+    ]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain(`Cadence changed nothing: ${path} ${reason}.\n`);
+    expect(r.stderr).not.toContain("fabricated");
+    expect(tree(f.state)).toEqual(before);
+  }
+  rmSync(path);
+  const absent = await run(f, "start", [
+    "--agent-dir",
+    join(f.dir, "agent"),
+    "--server-config",
+    path,
+  ]);
+  expect(absent.code).toBe(1);
+  expect(absent.stderr).toContain(
+    `Cadence changed nothing: ${path} does not exist.\n`,
+  );
+  expect(tree(f.state)).toEqual(before);
+});
+// Mode bits and links are POSIX facts; Windows has neither check.
+it.skipIf(process.platform === "win32")(
+  "a real owner starts from a group-readable .env behind dotfiles links, like Pi's sources",
+  async () => {
+    const f = fixture();
+    pending.push(f);
+    const port = await freePort();
+    const secret = "fabricated-server-config-token-1111111111";
+    const repo = join(f.dir, "dotfiles");
+    mkdirSync(repo, { mode: 0o755 });
+    chmodSync(repo, 0o775);
+    const target = join(repo, "cadence.env");
+    writeFileSync(
+      target,
+      `GROK_API_KEY=fabricated-grok-key\nCADENCE_PORT=${port}\nCADENCE_TOKEN=${secret}\n`,
+    );
+    chmodSync(target, 0o664);
+    const path = join(f.dir, ".env");
+    symlinkSync(target, path);
+    const r = await run(f, "start", [
+      "--agent-dir",
+      join(f.dir, "agent"),
+      "--server-config",
+      path,
+    ]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(await token(f)).toBe(`http://127.0.0.1:${port}/?token=${secret}`);
+    await entered(f, secret);
+    // Rotation writes the real file; the link stays a link.
+    expect((await run(f, "token-rotate")).code).toBe(0);
+    expect(lstatSync(path).isSymbolicLink()).toBe(true);
+    const rotated = /CADENCE_TOKEN=([A-Za-z0-9_-]{43})\n/.exec(
+      readFileSync(target, "utf8"),
+    )?.[1];
+    expect(rotated).toBeDefined();
+    expect(new URL(await token(f)).searchParams.get("token")).toBe(rotated);
+    expect(readFileSync(target, "utf8")).toContain(
+      "GROK_API_KEY=fabricated-grok-key\n",
+    );
+  },
+  30000,
+);
+it("a stopped generated-token workspace is reselected to the server configuration, keeping its history", async () => {
+  const f = await started();
+  const old = await token(f);
+  // Reselection waits for the orderly Stop.
+  const port = await freePort();
+  const secret = "fabricated-server-config-token-1111111111";
+  const path = serverConfig(f, port, secret);
+  expect((await run(f, "start", ["--server-config", path])).code).toBe(1);
+  expect(f.c.localAccess().endpoint).toBe(new URL(old).origin);
+  expect((await run(f, "stop")).code).toBe(0);
+  const history = tree(join(f.c.directory, "history-v2"));
+  const r = await run(f, "start", ["--server-config", path]);
+  expect(r.code, r.stderr).toBe(0);
+  expect(JSON.parse(r.stdout).status).toBe("alive");
+  expect(f.c.localAccess().endpoint).toBe(`http://127.0.0.1:${port}`);
+  expect(await token(f)).toBe(`http://127.0.0.1:${port}/?token=${secret}`);
+  expect(readHostConfig(f.c)).toMatchObject({
+    http: { port },
+    tokenSource: "config",
+    tokenFile: path,
+  });
+  // The generated token is retired; nothing else selected changes.
+  const access = JSON.parse(readFileSync(f.c.path("access.json"), "utf8"));
+  expect(access).toEqual({
+    schema: "cadence-service-access/1",
+    generation: 2,
+    token: null,
+  });
+  expect(
+    JSON.parse(readFileSync(f.c.path("access-config.json"), "utf8")),
+  ).toEqual({
+    schema: "cadence-service-access-config/1",
+    source: "config",
+    path,
+  });
+  // The same history store continues: its identity files are unchanged and
+  // the earlier ledger is a prefix of the current one.
+  const after = tree(join(f.c.directory, "history-v2"));
+  for (const [name, bytes] of Object.entries(history))
+    if (!name.includes(join("history-v2", "indexes")))
+      expect(after[name]?.startsWith(bytes), name).toBe(true);
+  const port2 = await freePort();
+  serverConfig(f, port2, secret);
+  expect((await run(f, "stop")).code).toBe(0);
+  expect((await run(f, "start", ["--server-config", path])).code).toBe(0);
+  expect(f.c.localAccess().endpoint).toBe(`http://127.0.0.1:${port2}`);
+  expect(
+    JSON.parse(readFileSync(f.c.path("access.json"), "utf8")).generation,
+  ).toBe(2);
+  // Only the port and token source may change: another agent directory or a
+  // file-backed token still conflicts.
+  expect((await run(f, "stop")).code).toBe(0);
+  const agent = join(f.dir, "agent2");
+  mkdirSync(agent, { mode: 0o700 });
+  writeFileSync(join(agent, "auth.json"), "{}", { mode: 0o600 });
+  const selected = tree(f.c.directory);
+  expect(
+    (await run(f, "start", ["--agent-dir", agent, "--server-config", path]))
+      .code,
+  ).toBe(1);
+  expect(tree(f.c.directory)).toEqual(selected);
+}, 60000);
+it("token rotation rewrites only the .env's token line; a pending token edit refuses without fencing", async () => {
+  const f = fixture();
+  pending.push(f);
+  const port = await freePort();
+  const first = "fabricated-server-config-token-1111111111";
+  const path = join(f.dir, ".env");
+  const lines = (secret: string) =>
+    `GROK_API_KEY="fabricated grok key"\r\n\r\n# WebUI\r\nCADENCE_PORT=${port}\r\n  CADENCE_TOKEN=${secret}\r\nTAVILY_ENABLED=false\r\n`;
+  writeFileSync(path, lines(`"${first}"`), { mode: 0o600 });
+  const r = await run(f, "start", [
+    "--agent-dir",
+    join(f.dir, "agent"),
+    "--server-config",
+    path,
+  ]);
+  expect(r.code, r.stderr).toBe(0);
+  const cookie = await entered(f, first);
+  expect((await run(f, "token-rotate")).code).toBe(0);
+  const text = readFileSync(path, "utf8");
+  const rotated = /CADENCE_TOKEN=([A-Za-z0-9_-]{43})\r\n/.exec(text)?.[1];
+  expect(rotated).toBeDefined();
+  // Every other byte, line ending and indent stays.
+  expect(text).toBe(lines(rotated!));
+  if (process.platform !== "win32")
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  expect(new URL(await token(f)).searchParams.get("token")).toBe(rotated);
+  expect((await http(f, "/api/v1/session", { cookie })).status).toBe(401);
+  const fresh = await entered(f, rotated!);
+  const edited = lines("fabricated-edited-server-token-3333333333");
+  writeFileSync(path, edited);
+  expect((await run(f, "token-rotate")).code).toBe(1);
+  expect(readFileSync(path, "utf8")).toBe(edited);
+  expect((await http(f, "/api/v1/session", { cookie: fresh })).status).toBe(
+    200,
+  );
+  expect(JSON.parse((await run(f, "status")).stdout).status).toBe("alive");
+}, 60000);
+/** The host's own startup line for an input the management client would
+ * never send, such as a file edited between selection and start. */
+async function hostLine(f: F, config: Record<string, unknown>) {
+  const child = spawn(process.execPath, [host], {
+    cwd: f.root,
+    env: f.env,
+    stdio: ["pipe", "pipe", "ignore"],
+  });
+  let stdout = "";
+  child.stdout.on("data", (b) => {
+    stdout += b;
+  });
+  const closed = once(child, "close");
+  child.stdin.end(
+    JSON.stringify({
+      workspace: f.root,
+      stateHome: f.state,
+      environmentToken: null,
+      config: {
+        schema: "cadence-service-host/1",
+        cwd: f.root,
+        agentDir: join(f.dir, "agent"),
+        ...config,
+      },
+    }),
+  );
+  await closed;
+  return JSON.parse(stdout);
+}
+it("the host refuses a server configuration that no longer names the selected port, or a reselection beyond port and token", async () => {
+  const f = await started();
+  expect((await run(f, "stop")).code).toBe(0);
+  const old = readHostConfig(f.c)!;
+  const port = await freePort();
+  const path = serverConfig(
+    f,
+    port,
+    "fabricated-server-config-token-1111111111",
+  );
+  const selected = tree(f.state);
+  const http = { ...old.http, port: port === 65535 ? 1 : port + 1 };
+  expect(
+    await hostLine(f, { http, tokenSource: "config", tokenFile: path }),
+  ).toEqual({ status: "refused", error: "conflict", stage: "service" });
+  const agent = join(f.dir, "agent2");
+  mkdirSync(agent, { mode: 0o700 });
+  writeFileSync(join(agent, "auth.json"), "{}", { mode: 0o600 });
+  expect(
+    await hostLine(f, {
+      agentDir: agent,
+      http: { ...old.http, port },
+      tokenSource: "config",
+      tokenFile: path,
+    }),
+  ).toEqual({ status: "refused", error: "conflict", stage: "service" });
+  // Only a reselection to the server configuration is accepted.
+  expect(
+    await hostLine(f, {
+      http: { ...old.http, port },
+      tokenSource: "file",
+      tokenFile: path,
+    }),
+  ).toEqual({ status: "refused", error: "conflict", stage: "service" });
+  expect(tree(f.state)).toEqual(selected);
+}, 30000);
 it("overlapping roots refuse before per-root initialization; disjoint owners coexist", async () => {
   const f = await started(),
     nestedRoot = join(f.root, "nested");
@@ -538,6 +882,156 @@ it("startup outbound proxy/preload requests refuse without spawning or direct fa
     ).toBe(1);
     expect(tree(f.dir)).toEqual(before);
   }
+});
+// The agent directory's mode is not a premise; it must still be a directory.
+for (const [stage, select] of [
+  [
+    "pi-agent-directory",
+    (agent: string) => {
+      renameSync(agent, `${agent}-moved`);
+      writeFileSync(agent, "", { mode: 0o600 });
+    },
+  ],
+  ["pi-auth", (agent: string) => unlinkSync(join(agent, "auth.json"))],
+] as const)
+  it(`unusable ${stage} refuses with its stage before registering an owner`, async () => {
+    const f = fixture();
+    select(join(f.dir, "agent"));
+    const before = tree(f.dir),
+      began = performance.now();
+    const result = await run(f, "start", [
+      "--port",
+      "0",
+      "--agent-dir",
+      join(f.dir, "agent"),
+    ]);
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual({
+      status: "refused",
+      error: "corrupt-selected",
+      stage,
+    });
+    expect(result.stderr).toContain(join(f.dir, "agent"));
+    // A known refusal, not the 10s unconfirmed reporting bound.
+    expect(performance.now() - began).toBeLessThan(10000);
+    expect(tree(f.dir)).toEqual(before);
+    expect(f.c.inspect().status).toBe("absent");
+  }, 30000);
+// POSIX mode bits are not a Windows ACL premise.
+it.skipIf(process.platform === "win32")(
+  "Pi sources with a umask 002 mode (0775 directory, 0664 files) start",
+  async () => {
+    const f = fixture();
+    pending.push(f);
+    const agent = join(f.dir, "agent");
+    // What Pi 1.4.0 itself creates on first launch under umask 002.
+    chmodSync(agent, 0o775);
+    chmodSync(join(agent, "auth.json"), 0o664);
+    const started = await run(f, "start", [
+      "--port",
+      "0",
+      "--agent-dir",
+      agent,
+    ]);
+    expect(started.code, started.stderr).toBe(0);
+    expect(JSON.parse(started.stdout)).toMatchObject({ status: "alive" });
+  },
+  30000,
+);
+it("a compat flag inert on the pinned SDK starts; an unknown one refuses at pi-models before registering", async () => {
+  const f = fixture();
+  pending.push(f);
+  const agent = join(f.dir, "agent"),
+    models = (compat: Record<string, boolean>) =>
+      writeFileSync(
+        join(agent, "models.json"),
+        JSON.stringify({
+          providers: {
+            fixture: {
+              baseUrl: "http://127.0.0.1:9",
+              apiKey: "fixture",
+              api: "openai-responses",
+              models: [{ id: "m", compat }],
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+  models({ supportsFutureFlag: true });
+  const before = tree(f.dir);
+  const refused = await run(f, "start", ["--port", "0", "--agent-dir", agent]);
+  expect(refused.code).toBe(1);
+  expect(JSON.parse(refused.stdout)).toEqual({
+    status: "refused",
+    error: "corrupt-selected",
+    stage: "pi-models",
+  });
+  expect(refused.stderr).toContain(join(agent, "models.json"));
+  expect(tree(f.dir)).toEqual(before);
+  expect(f.c.inspect().status).toBe("absent");
+  // Newer Pi writes this; the pinned SDK has no system-role message to collapse.
+  models({ supportsMidConvoSystemMessages: false });
+  const started = await run(f, "start", ["--port", "0", "--agent-dir", agent]);
+  expect(started.code, started.stderr).toBe(0);
+  expect(JSON.parse(started.stdout)).toMatchObject({ status: "alive" });
+}, 30000);
+it("a package hard-linked into its package manager's store (Bun's default install) starts", async () => {
+  const f = fixture();
+  pending.push(f);
+  const pkg = join(f.dir, "package"),
+    store = join(f.dir, "store");
+  for (const name of ["src", "agents", "web/dist", "package.json"])
+    cpSync(
+      fileURLToPath(new URL(`../${name}`, import.meta.url)),
+      join(pkg, name),
+      { recursive: true },
+    );
+  // Every package file gets a second link, like Bun's hardlink backend.
+  const link = (from: string, to: string) => {
+    mkdirSync(to, { recursive: true });
+    for (const e of readdirSync(from, { withFileTypes: true }))
+      if (e.isDirectory()) link(join(from, e.name), join(to, e.name));
+      else linkSync(join(from, e.name), join(to, e.name));
+  };
+  link(pkg, store);
+  symlinkSync(
+    fileURLToPath(new URL("../node_modules", import.meta.url)),
+    join(pkg, "node_modules"),
+    "junction",
+  );
+  const result = await run(
+    f,
+    "start",
+    ["--port", "0", "--agent-dir", join(f.dir, "agent")],
+    join(pkg, "src", "service-cli.mjs"),
+  );
+  expect(result.code, result.stdout).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({ status: "alive" });
+}, 30000);
+it("startup refusal report carries only a fixed code and stage", () => {
+  expect(
+    startupReport(new StartupRefusal("corrupt-selected", "pi-runtime", true)),
+  ).toEqual({
+    status: "quarantined",
+    error: "corrupt-selected",
+    stage: "pi-runtime",
+  });
+  const opaque = startupReport(new Error(`/private/${randomUUID()}`));
+  expect(opaque).toEqual({
+    status: "refused",
+    error: "unavailable",
+    stage: "service",
+  });
+  expect(decodeStartupReport(JSON.parse(JSON.stringify(opaque)))).toEqual(
+    opaque,
+  );
+  for (const bad of [
+    { ...opaque, detail: "x" },
+    { ...opaque, stage: "elsewhere" },
+    { ...opaque, error: "ENOENT" },
+    { ...opaque, status: "ready" },
+  ])
+    expect(() => decodeStartupReport(bad)).toThrow();
 });
 it("explicit management starts configured owner routing before SDK imports and cleanly stops the owned dispatcher", async () => {
   let contacts = 0;
@@ -725,169 +1219,174 @@ it("ordinary Node foreground management waits original host close after authenti
   expect(signal).toBeNull();
 }, 30000);
 
-it("generated owner crash, native recovery, readonly diagnosis and fresh foreground restart never replay", async () => {
-  const f = fixture();
-  const child = spawn(process.execPath, [host], {
-    cwd: f.root,
-    env: f.env,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  const closed = once(child, "close");
-  let stdout = "",
-    stderr = "",
-    original: unknown;
-  child.stdout.on("data", (b) => {
-    stdout += b;
-  });
-  child.stderr.on("data", (b) => {
-    stderr += b;
-  });
-  child.stdin.end(
-    JSON.stringify({
-      workspace: f.root,
-      stateHome: f.state,
-      environmentToken: null,
-      config: {
-        schema: "cadence-service-host/1",
-        cwd: f.root,
-        agentDir: join(f.dir, "agent"),
-        tokenSource: "generated",
-        tokenFile: null,
-        http: {
-          schema: "cadence-service-http/1",
-          host: "127.0.0.1",
-          port: 0,
-          proxy: null,
-        },
-      },
-    }),
-  );
-  try {
-    await expect
-      .poll(() => stdout.includes("\n"), { timeout: 10000 })
-      .toBe(true);
-    expect(JSON.parse(stdout).status).toBe("ready");
-    const first = f.c.localAccess();
-    child.kill("SIGKILL"); // explicit abrupt-crash injection to this original fixture handle only
-    original = await closed;
-    expect(original).toEqual([null, "SIGKILL"]);
-    const before = tree(f.state);
-    for (const command of ["status", "diagnose", "status"])
-      expect(JSON.parse((await run(f, command)).stdout).status).toBe(
-        "unavailable",
-      );
-    expect(tree(f.state)).toEqual(before);
-    const config = join(f.dir, "recovery-pty.json"),
-      receipt = join(f.dir, "pty-receipt.json");
-    writeFileSync(
-      config,
+// Recovery is driven through a POSIX pty (recovery-pty.py); see service-recovery.
+it.skipIf(process.platform === "win32")(
+  "generated owner crash, native recovery, readonly diagnosis and fresh foreground restart never replay",
+  async () => {
+    const f = fixture();
+    const child = spawn(process.execPath, [host], {
+      cwd: f.root,
+      env: f.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const closed = once(child, "close");
+    let stdout = "",
+      stderr = "",
+      original: unknown;
+    child.stdout.on("data", (b) => {
+      stdout += b;
+    });
+    child.stderr.on("data", (b) => {
+      stderr += b;
+    });
+    child.stdin.end(
       JSON.stringify({
-        mode: "resolve",
+        workspace: f.root,
+        stateHome: f.state,
+        environmentToken: null,
+        config: {
+          schema: "cadence-service-host/1",
+          cwd: f.root,
+          agentDir: join(f.dir, "agent"),
+          tokenSource: "generated",
+          tokenFile: null,
+          http: {
+            schema: "cadence-service-http/1",
+            host: "127.0.0.1",
+            port: 0,
+            proxy: null,
+          },
+        },
+      }),
+    );
+    try {
+      await expect
+        .poll(() => stdout.includes("\n"), { timeout: 10000 })
+        .toBe(true);
+      expect(JSON.parse(stdout).status).toBe("ready");
+      const first = f.c.localAccess();
+      child.kill("SIGKILL"); // explicit abrupt-crash injection to this original fixture handle only
+      original = await closed;
+      expect(original).toEqual([null, "SIGKILL"]);
+      const before = tree(f.state);
+      for (const command of ["status", "diagnose", "status"])
+        expect(JSON.parse((await run(f, command)).stdout).status).toBe(
+          "unavailable",
+        );
+      expect(tree(f.state)).toEqual(before);
+      const config = join(f.dir, "recovery-pty.json"),
+        receipt = join(f.dir, "pty-receipt.json");
+      writeFileSync(
+        config,
+        JSON.stringify({
+          mode: "resolve",
+          epoch: first.epoch,
+          receipt,
+          cwd: f.root,
+          env: f.env,
+          argv: [
+            process.execPath,
+            cli,
+            "recover",
+            "resolve",
+            "--workspace",
+            f.root,
+            "--state-home",
+            f.state,
+          ],
+        }),
+        { mode: 0o600 },
+      );
+      const recovery = spawnSync(
+        "python3",
+        ["test/helpers/recovery-pty.py", config],
+        { env: f.env, encoding: "utf8", timeout: 90000 },
+      );
+      expect(recovery.error).toBeUndefined();
+      expect(recovery.status, recovery.stderr).toBe(0);
+      expect(JSON.parse(readFileSync(receipt, "utf8"))).toEqual({
+        waitpidReturned: true,
+        exitCode: 0,
+        forced: false,
+        fault: null,
+      });
+      expect(JSON.parse((await run(f, "status")).stdout)).toEqual({
+        status: "stopped",
         epoch: first.epoch,
-        receipt,
-        cwd: f.root,
-        env: f.env,
-        argv: [
-          process.execPath,
+      });
+      const next = spawn(
+        process.execPath,
+        [
           cli,
-          "recover",
-          "resolve",
+          "start",
+          "--foreground",
           "--workspace",
           f.root,
           "--state-home",
           f.state,
         ],
-      }),
-      { mode: 0o600 },
-    );
-    const recovery = spawnSync(
-      "python3",
-      ["test/helpers/recovery-pty.py", config],
-      { env: f.env, encoding: "utf8", timeout: 90000 },
-    );
-    expect(recovery.error).toBeUndefined();
-    expect(recovery.status, recovery.stderr).toBe(0);
-    expect(JSON.parse(readFileSync(receipt, "utf8"))).toEqual({
-      waitpidReturned: true,
-      exitCode: 0,
-      forced: false,
-      fault: null,
-    });
-    expect(JSON.parse((await run(f, "status")).stdout)).toEqual({
-      status: "stopped",
-      epoch: first.epoch,
-    });
-    const next = spawn(
-      process.execPath,
-      [
-        cli,
-        "start",
-        "--foreground",
-        "--workspace",
-        f.root,
-        "--state-home",
-        f.state,
-      ],
-      { cwd: f.root, env: f.env, stdio: ["ignore", "pipe", "pipe"] },
-    );
-    const nextClosed = once(next, "close");
-    let ready = "",
-      errors = "",
-      stopped: unknown;
-    next.stdout.on("data", (b) => {
-      ready += b;
-    });
-    next.stderr.on("data", (b) => {
-      errors += b;
-    });
-    try {
-      await expect
-        .poll(() => ready.includes("\n"), { timeout: 10000 })
-        .toBe(true);
-      expect(JSON.parse(ready)).toMatchObject({
-        status: "alive",
-        actions: false,
+        { cwd: f.root, env: f.env, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const nextClosed = once(next, "close");
+      let ready = "",
+        errors = "",
+        stopped: unknown;
+      next.stdout.on("data", (b) => {
+        ready += b;
       });
-      const second = f.c.localAccess();
-      expect(second.epoch).not.toBe(first.epoch);
-      expect(second.capability).not.toBe(first.capability);
-      expect(second.endpoint).toBe(first.endpoint);
-      expect(JSON.parse((await run(f, "diagnose")).stdout)).toMatchObject({
-        status: "alive",
-        pendingWrites: 0,
-        pendingPreparations: 0,
+      next.stderr.on("data", (b) => {
+        errors += b;
       });
-      expect(f.c.store.list()).toEqual([]); // no recovery/task/queue replay
+      try {
+        await expect
+          .poll(() => ready.includes("\n"), { timeout: 10000 })
+          .toBe(true);
+        expect(JSON.parse(ready)).toMatchObject({
+          status: "alive",
+          actions: false,
+        });
+        const second = f.c.localAccess();
+        expect(second.epoch).not.toBe(first.epoch);
+        expect(second.capability).not.toBe(first.capability);
+        expect(second.endpoint).toBe(first.endpoint);
+        expect(JSON.parse((await run(f, "diagnose")).stdout)).toMatchObject({
+          status: "alive",
+          pendingWrites: 0,
+          pendingPreparations: 0,
+        });
+        expect(f.c.store.list()).toEqual([]); // no recovery/task/queue replay
+      } finally {
+        stopped = await run(f, "stop");
+        const restartedClose = await nextClosed;
+        writeFileSync(
+          join(f.dir, "recovery-restart-receipt.json"),
+          JSON.stringify({
+            crashedOriginal: original,
+            restartedOriginal: restartedClose,
+            stop: stopped,
+            stderr,
+            errors,
+          }),
+          { mode: 0o600 },
+        );
+        expect(restartedClose).toEqual([0, null]);
+        expect(stopped).toMatchObject({ code: 0, signal: null, stderr: "" });
+        expect(errors).toBe("");
+      }
     } finally {
-      stopped = await run(f, "stop");
-      const restartedClose = await nextClosed;
+      if (!original) {
+        child.kill("SIGTERM");
+        original = await closed;
+      }
       writeFileSync(
-        join(f.dir, "recovery-restart-receipt.json"),
-        JSON.stringify({
-          crashedOriginal: original,
-          restartedOriginal: restartedClose,
-          stop: stopped,
-          stderr,
-          errors,
-        }),
+        join(f.dir, "crash-original-receipt.json"),
+        JSON.stringify({ original, stderr }),
         { mode: 0o600 },
       );
-      expect(restartedClose).toEqual([0, null]);
-      expect(stopped).toMatchObject({ code: 0, signal: null, stderr: "" });
-      expect(errors).toBe("");
     }
-  } finally {
-    if (!original) {
-      child.kill("SIGTERM");
-      original = await closed;
-    }
-    writeFileSync(
-      join(f.dir, "crash-original-receipt.json"),
-      JSON.stringify({ original, stderr }),
-      { mode: 0o600 },
-    );
-  }
-}, 90000);
+  },
+  90000,
+);
 it.each([0, 7])(
   "foreground unconfirmed readiness remains CLI failure after fixture child exit %s",
   async (code) => {

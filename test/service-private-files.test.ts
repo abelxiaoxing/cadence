@@ -14,7 +14,11 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, parse, relative, resolve, sep } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { PrivateFiles, REGISTRY_BYTES } from "../src/service/private-files.ts";
+import {
+  DirectoryWalks,
+  PrivateFiles,
+  REGISTRY_BYTES,
+} from "../src/service/private-files.ts";
 import { readBounded, safeDirectory } from "../src/task-store.ts";
 
 // Fixed counters only: never retain buffer arguments, Stats, call traces or
@@ -101,20 +105,22 @@ it("bounded real-file work measurement: one readonly walk and exact-size allocat
   const directory = { stats: io.stats, namespaceStats: io.selectedStats };
   const d = depth(f.namespace),
     k = depth(f.directory) - d;
+  // The former per-segment rewalk with two observations per component.
   const repeated = Array.from(
     { length: k + 1 },
     (_, n) => 2 * (d + n) + 1,
   ).reduce((a, b) => a + b, 0);
-  expect(directory.stats).toBe(1 + 2 * (d + k));
+  // One no-follow observation per component, root included.
+  expect(directory.stats).toBe(1 + d + k);
   expect(directory.stats).toBeLessThan(repeated);
-  expect(directory.namespaceStats).toBe(2);
-  // The create branch still repeats the original per-component validation,
-  // even when every directory already exists. It is not this readonly hook.
+  expect(directory.namespaceStats).toBe(1);
+  // Creation walks the namespace once, then checks each private segment once.
   reset(f.namespace);
   expect(f.files.directory(f.directory, true)).toBe(true);
   const create = { stats: io.stats, namespaceStats: io.selectedStats };
-  expect(create.stats).toBe(repeated);
-  expect(create.namespaceStats).toBe(2 * (k + 1) + 1);
+  expect(create.stats).toBe(d + 1 + k);
+  expect(create.stats).toBeLessThan(repeated);
+  expect(create.namespaceStats).toBe(2);
   const alloc = Buffer.alloc;
   let allocations = 0,
     allocatedBytes = 0;
@@ -133,8 +139,9 @@ it("bounded real-file work measurement: one readonly walk and exact-size allocat
   expect(snapshot?.bytes.toString()).toBe(f.body);
   expect(allocations).toBe(1);
   expect(allocatedBytes).toBe(Buffer.byteLength(f.body) + 1);
-  expect(io.opens).toBe(2);
-  expect(io.closes).toBe(2);
+  // One no-follow open: the bytes come from the identity-checked descriptor.
+  expect(io.opens).toBe(1);
+  expect(io.closes).toBe(1);
   writeFileSync(
     join(f.root, "work.json"),
     JSON.stringify({
@@ -236,7 +243,7 @@ it.each(["namespace", "ancestor", "leaf"])(
 );
 
 it.each(["namespace", "ancestor", "leaf"])(
-  "later observed unsafe %s mode is not hidden by the readonly inspection hook",
+  "unsafe %s mode observed during the walk is not hidden by the readonly inspection hook",
   (location) => {
     if (process.platform === "win32") return;
     for (const missing of [false, true]) {
@@ -249,8 +256,9 @@ it.each(["namespace", "ancestor", "leaf"])(
             : f.directory;
       reset(selected);
       let injected = false;
+      // Change the mode just before the component's single observation.
       io.after = (op, path) => {
-        if (!injected && op === "stat" && path === selected) {
+        if (!injected && op === "stat" && path === dirname(selected)) {
           injected = true;
           chmodSync(selected, 0o755);
         }
@@ -261,7 +269,7 @@ it.each(["namespace", "ancestor", "leaf"])(
       expect(() => f.files.directory(target)).toThrow();
       io.after = undefined;
       expect(injected).toBe(true);
-      expect(io.selectedStats).toBe(2);
+      expect(io.selectedStats).toBe(1);
       expect(existsSync(join(f.directory, "absent"))).toBe(false);
       // The unmodified creation path must still refuse before any effect.
       expect(() =>
@@ -272,12 +280,15 @@ it.each(["namespace", "ancestor", "leaf"])(
   },
 );
 
-it("readonly inspection never receives a later observed non-directory", () => {
+it("readonly inspection never receives an observed non-directory", () => {
   const f = fixture();
   reset(f.directory);
   let inspected = false;
+  let injected = false;
+  // Replace the component just before its single observation.
   io.after = (op, path) => {
-    if (op === "stat" && path === f.directory && io.selectedStats === 1) {
+    if (!injected && op === "stat" && path === dirname(f.directory)) {
+      injected = true;
       renameSync(f.directory, `${f.directory}.preserved`);
       writeFileSync(f.directory, "not a directory", { mode: 0o600 });
     }
@@ -288,8 +299,9 @@ it("readonly inspection never receives a later observed non-directory", () => {
     }),
   ).toThrow();
   io.after = undefined;
+  expect(injected).toBe(true);
   expect(inspected).toBe(false);
-  expect(io.selectedStats).toBe(2);
+  expect(io.selectedStats).toBe(1);
   expect(readFileSync(f.directory, "utf8")).toBe("not a directory");
 });
 
@@ -302,7 +314,7 @@ it("zero independent maximum accepts only an unchanged empty file", () => {
   expect(io.opens).toBe(0);
 });
 
-it.each(["outer-open", "inner-open"])(
+it.each(["open", "read"])(
   "selected disappearance after %s refuses rather than returning absence",
   (stage) => {
     const f = fixture();
@@ -311,9 +323,7 @@ it.each(["outer-open", "inner-open"])(
     io.after = (op, path) => {
       if (
         !injected &&
-        op === "open" &&
-        path === f.path &&
-        io.opens === (stage === "outer-open" ? 1 : 2)
+        (stage === "read" ? op === "read" : op === "open" && path === f.path)
       ) {
         injected = true;
         renameSync(f.path, `${f.path}.preserved`);
@@ -382,7 +392,7 @@ it.each(["symlink", "hardlink", "directory", "mode"])(
   },
 );
 
-it.each(["outer-open", "inner-open", "after-read", "final-stat"])(
+it.each(["open", "after-read", "final-stat"])(
   "growth/shrink/replacement/mode changes at %s still refuse (injected real filesystem boundary)",
   (stage) => {
     for (const change of ["grow", "shrink", "replace", "mode"] as const) {
@@ -392,14 +402,13 @@ it.each(["outer-open", "inner-open", "after-read", "final-stat"])(
       let injected = false;
       io.after = (op, path) => {
         if (injected) return;
+        // The descriptor's second fstat is the final descriptor check.
         const selected =
           stage === "final-stat"
-            ? op === "fstat" && io.fstats === 3
+            ? op === "fstat" && io.fstats === 2
             : stage === "after-read"
               ? op === "read"
-              : op === "open" &&
-                path === f.path &&
-                io.opens === (stage === "outer-open" ? 1 : 2);
+              : op === "open" && path === f.path;
         if (!selected) return;
         injected = true;
         if (change === "grow") writeFileSync(f.path, `${f.body}grew`);
@@ -418,20 +427,50 @@ it.each(["outer-open", "inner-open", "after-read", "final-stat"])(
   },
 );
 
-it("inner bounded reader independently rewalks ancestors after outer selected-file open", () => {
-  const f = fixture();
-  reset();
-  io.after = (op, path) => {
-    if (op === "open" && path === f.path && io.opens === 1) {
-      renameSync(f.directory, `${f.directory}.preserved`);
-      symlinkSync(`${f.directory}.preserved`, f.directory, "junction");
+// Windows refuses to rename a directory holding an open file, so this ancestor
+// swap after the selected-file open cannot occur there.
+it.skipIf(process.platform === "win32")(
+  "an ancestor swapped for a link after the selected-file open never yields other bytes",
+  () => {
+    // A link to another directory with other content: the final path
+    // identity check refuses.
+    {
+      const f = fixture();
+      const attacker = join(f.root, "attacker");
+      mkdirSync(attacker, { mode: 0o700 });
+      writeFileSync(join(attacker, "selected.json"), "attacker bytes\n", {
+        mode: 0o600,
+      });
+      reset();
+      io.after = (op, path) => {
+        if (op === "open" && path === f.path && io.opens === 1) {
+          renameSync(f.directory, `${f.directory}.preserved`);
+          symlinkSync(attacker, f.directory, "junction");
+        }
+      };
+      expect(() => f.files.read(f.path)).toThrow();
+      io.after = undefined;
+      expect(io.opens).toBe(1);
+      expect(io.closes).toBe(1);
     }
-  };
-  expect(() => f.files.read(f.path)).toThrow();
-  io.after = undefined;
-  expect(io.opens).toBe(1);
-  expect(io.closes).toBe(1);
-});
+    // A link back to the same directory: the bytes come only from the
+    // descriptor validated before the swap, and the next walk rejects the link.
+    {
+      const f = fixture();
+      reset();
+      io.after = (op, path) => {
+        if (op === "open" && path === f.path && io.opens === 1) {
+          renameSync(f.directory, `${f.directory}.preserved`);
+          symlinkSync(`${f.directory}.preserved`, f.directory, "junction");
+        }
+      };
+      expect(f.files.read(f.path)?.bytes.toString()).toBe(f.body);
+      io.after = undefined;
+      expect(io.opens).toBe(io.closes);
+      expect(() => f.files.read(f.path)).toThrow();
+    }
+  },
+);
 
 it("default safeDirectory/readBounded retain legacy mode policy and stepwise creation", () => {
   const f = fixture();
@@ -507,6 +546,124 @@ it("changed private modes are rechecked on the next call and after an await (no 
   expect(() => f.files.directory(f.directory)).toThrow();
 });
 
+it("one synchronous operation re-observes only a walked directory, not its ancestors", () => {
+  const f = fixture();
+  const second = join(f.directory, "second.json");
+  writeFileSync(second, "second bytes\n", { mode: 0o600 });
+  const walks = new DirectoryWalks();
+  reset(f.directory);
+  expect(f.files.read(f.path, undefined, walks)?.bytes.toString()).toBe(f.body);
+  // The first read walks root and every component once, then the file.
+  expect(io.stats).toBe(1 + depth(f.directory) + 2);
+  reset(f.directory);
+  expect(f.files.read(second, undefined, walks)?.bytes.toString()).toBe(
+    "second bytes\n",
+  );
+  // The directory itself once, then the file's selection and final stats.
+  expect(io.selectedStats).toBe(1);
+  expect(io.stats).toBe(3);
+  expect(io.opens).toBe(1);
+  expect(io.closes).toBe(1);
+  // Without walks every call still walks in full.
+  reset();
+  expect(f.files.read(second)?.bytes.toString()).toBe("second bytes\n");
+  expect(io.stats).toBe(1 + depth(f.directory) + 2);
+});
+
+it.each(["ancestor", "leaf"])(
+  "a walked %s substituted for other content refuses inside the same operation",
+  (location) => {
+    const f = fixture();
+    const walks = new DirectoryWalks();
+    expect(f.files.read(f.path, undefined, walks)?.bytes.toString()).toBe(
+      f.body,
+    );
+    const selected =
+      location === "ancestor" ? dirname(f.directory) : f.directory;
+    // Another directory tree with other bytes at the same relative path.
+    const attacker = join(f.root, "attacker");
+    const copy = join(attacker, relative(selected, f.path));
+    mkdirSync(dirname(copy), { recursive: true, mode: 0o700 });
+    writeFileSync(copy, "attacker bytes\n", { mode: 0o600 });
+    renameSync(selected, `${selected}.preserved`);
+    symlinkSync(attacker, selected, "junction");
+    expect(() => f.files.read(f.path, undefined, walks)).toThrow();
+    expect(() => f.files.directory(f.directory, false, walks)).toThrow();
+    expect(readFileSync(copy, "utf8")).toBe("attacker bytes\n");
+  },
+);
+
+it("an ancestor linked back to the same directory yields only genuine bytes, and the next operation refuses", () => {
+  const f = fixture();
+  const walks = new DirectoryWalks();
+  expect(f.files.read(f.path, undefined, walks)?.bytes.toString()).toBe(f.body);
+  const ancestor = dirname(f.directory);
+  renameSync(ancestor, `${ancestor}.preserved`);
+  symlinkSync(`${ancestor}.preserved`, ancestor, "junction");
+  // Same resolved directory identity: the walked directory's own bytes.
+  expect(f.files.read(f.path, undefined, walks)?.bytes.toString()).toBe(f.body);
+  expect(() => f.files.read(f.path, undefined, new DirectoryWalks())).toThrow();
+  expect(() => f.files.read(f.path)).toThrow();
+});
+
+it("a walked directory that disappears is absent again, not reused", () => {
+  const f = fixture();
+  const walks = new DirectoryWalks();
+  expect(f.files.read(f.path, undefined, walks)).toBeDefined();
+  renameSync(f.directory, `${f.directory}.preserved`);
+  expect(f.files.read(f.path, undefined, walks)).toBeUndefined();
+  expect(f.files.directory(f.directory, false, walks)).toBe(false);
+});
+
+it("an await closes the walks: the next read walks every ancestor again", async () => {
+  const f = fixture();
+  const walks = new DirectoryWalks();
+  expect(f.files.read(f.path, undefined, walks)).toBeDefined();
+  await Promise.resolve();
+  reset();
+  expect(f.files.read(f.path, undefined, walks)).toBeDefined();
+  expect(io.stats).toBe(1 + depth(f.directory) + 2);
+  // A later macrotask job: still stale, and a scope made there starts empty.
+  const later = new DirectoryWalks();
+  expect(f.files.read(f.path, undefined, later)).toBeDefined();
+  await new Promise((resolve) => setImmediate(resolve));
+  reset();
+  expect(f.files.read(f.path, undefined, later)).toBeDefined();
+  expect(io.stats).toBe(1 + depth(f.directory) + 2);
+  reset();
+  const fresh = new DirectoryWalks();
+  expect(f.files.read(f.path, undefined, fresh)).toBeDefined();
+  expect(io.stats).toBe(1 + depth(f.directory) + 2);
+  if (process.platform === "win32") return;
+  chmodSync(f.namespace, 0o755);
+  expect(() => f.files.read(f.path, undefined, walks)).toThrow();
+  expect(() => f.files.read(f.path, undefined, later)).toThrow();
+});
+
+it("inside one operation the walked directory's own mode is rechecked; an ancestor's is seen by the next operation", () => {
+  if (process.platform === "win32") return;
+  {
+    const f = fixture();
+    const walks = new DirectoryWalks();
+    expect(f.files.read(f.path, undefined, walks)).toBeDefined();
+    chmodSync(f.directory, 0o755);
+    expect(() => f.files.read(f.path, undefined, walks)).toThrow();
+  }
+  {
+    const f = fixture();
+    const walks = new DirectoryWalks();
+    expect(f.files.read(f.path, undefined, walks)).toBeDefined();
+    chmodSync(f.namespace, 0o755);
+    expect(f.files.read(f.path, undefined, walks)?.bytes.toString()).toBe(
+      f.body,
+    );
+    expect(() =>
+      f.files.read(f.path, undefined, new DirectoryWalks()),
+    ).toThrow();
+    expect(() => f.files.read(f.path)).toThrow();
+  }
+});
+
 it("foreign ownership refuses (injected uid observation, not a foreign-user execution)", () => {
   if (process.platform === "win32" || !process.getuid) return;
   const f = fixture();
@@ -537,14 +694,14 @@ it.each(["file", "dangling-link"])(
   },
 );
 
-it("empty selected file still has a one-byte growth sentinel after inner fstat", () => {
+it("empty selected file still has a one-byte growth sentinel after the descriptor fstat", () => {
   const f = fixture("");
   reset();
   let injected = false;
-  // Grow after the inner stat was selected, before allocation/read. The one
-  // sentinel byte must catch it even when the selected file was empty.
+  // Grow after the descriptor stat was selected, before allocation/read. The
+  // one sentinel byte must catch it even when the selected file was empty.
   io.after = (op) => {
-    if (op === "fstat" && io.fstats === 2 && !injected) {
+    if (op === "fstat" && io.fstats === 1 && !injected) {
       injected = true;
       writeFileSync(f.path, "x");
     }
@@ -552,23 +709,26 @@ it("empty selected file still has a one-byte growth sentinel after inner fstat",
   expect(() => f.files.read(f.path, REGISTRY_BYTES)).toThrow();
   io.after = undefined;
   expect(injected).toBe(true);
-  expect(io.opens).toBe(2);
-  expect(io.closes).toBe(2);
+  expect(io.opens).toBe(1);
+  expect(io.closes).toBe(1);
   expect(readFileSync(f.path, "utf8")).toBe("x");
 });
 
-it.each([1, 2])(
-  "selected file symlink substitution after stat %i cannot be followed",
-  (ordinal) => {
+it.each(["stat", "open"])(
+  "selected file symlink substitution after %s cannot be followed",
+  (stage) => {
     const f = fixture();
     reset(f.path);
     let injected = false;
+    // After the selection stat the no-follow open refuses; after the open the
+    // final path identity check sees the link.
     io.after = (op, path) => {
       if (
         !injected &&
-        op === "stat" &&
         path === f.path &&
-        io.selectedStats === ordinal
+        (stage === "stat"
+          ? op === "stat" && io.selectedStats === 1
+          : op === "open")
       ) {
         injected = true;
         renameSync(f.path, `${f.path}.preserved`);

@@ -17,6 +17,7 @@ import type { OwnerStopReport } from "../src/service/owner.ts";
 import { TaskActions } from "../src/service/task-actions.ts";
 import type { Action } from "../src/service-contract.ts";
 import { createServiceHost } from "./helpers/source-host.ts";
+import { keepOnlyEnvironment } from "./helpers/windows-environment.ts";
 
 const natives = vi.hoisted(
   () => [] as { closed: boolean; code: number | null; signal: string | null }[],
@@ -78,13 +79,15 @@ async function fixture() {
   for (const path of [root, agentDir])
     mkdirSync(path, { recursive: true, mode: 0o700 });
   const responses: ServerResponse[] = [];
-  const contacted = gate();
+  const contacted = gate(),
+    bothContacted = gate();
   const server = createServer(async (req, res) => {
     for await (const _ of req) {
       /* genuine SDK request, no stored auth/body */
     }
     responses.push(res);
     contacted.resolve();
+    if (responses.length === 2) bothContacted.resolve();
   });
   await new Promise<void>((yes) => server.listen(0, "127.0.0.1", yes));
   const address = server.address();
@@ -127,8 +130,7 @@ async function fixture() {
     "VITEST_POOL_ID",
     "VITEST_WORKER_ID",
   ]);
-  for (const key of Object.keys(process.env))
-    if (!allowed.has(key)) vi.stubEnv(key, undefined);
+  keepOnlyEnvironment(allowed);
   vi.stubEnv("HOME", home);
   vi.stubEnv("USERPROFILE", home);
   const h = await createServiceHost({
@@ -257,6 +259,7 @@ async function fixture() {
     create,
     stop,
     contacted,
+    bothContacted,
     responses,
     reply,
   };
@@ -397,6 +400,9 @@ it("Stop retains the original preparing continuation and prevents late native la
   expect(f.h.owner.state).toBe("quarantined");
 }, 20000);
 
+// POSIX stops the process group with SIGTERM; Windows terminates the tree
+// (taskkill /F), which Node reports as exit code 1 with no signal.
+const stopSignal = process.platform === "win32" ? null : "SIGTERM";
 it.each([false, true])(
   "Stop during native activity joins original close and never signals after ownership loss: %s",
   async (lost) => {
@@ -414,7 +420,7 @@ it.each([false, true])(
     await f.actions.settledAll();
     expect(natives).toHaveLength(1);
     expect(natives[0].closed).toBe(true);
-    expect(natives[0].signal).toBe(lost ? null : "SIGTERM");
+    expect(natives[0].signal).toBe(lost ? null : stopSignal);
     if (lost) expect(natives[0].code).toBe(0);
     else {
       const state = readRunState(f.h.reader.files, receipt.runId!);
@@ -597,15 +603,15 @@ it("Stop closes queued work and requests BOTH real native stops before joining e
   await f.submit({ kind: "save-plan", taskId, plan, graph });
   await f.actions.settledAll();
   const receipt = await f.submit({ kind: "start", taskId });
-  await vi.waitFor(() => expect(f.responses).toHaveLength(2), {
-    timeout: 5000,
-  });
+  // Both children reach the provider after two SDK cold starts; wait for that
+  // event, not a wall-clock guess at how long those starts take.
+  await f.bothContacted.promise;
   const stopping = f.stop();
   expect(f.actions.run(receipt.runId!)?.cancelRequested).toBe(true);
   expect((await stopping).state).toBe("quarantined");
   expect(f.responses).toHaveLength(2);
   expect(natives).toHaveLength(2);
-  expect(natives.every((n) => n.closed && n.signal === "SIGTERM")).toBe(true);
+  expect(natives.every((n) => n.closed && n.signal === stopSignal)).toBe(true);
   const state = readRunState(f.h.reader.files, receipt.runId!);
   expect(state.children.size).toBe(2);
   expect(state.settlement).toMatchObject({ outcome: "canceled" });

@@ -35,7 +35,7 @@ export interface ModelCandidate {
   model: string;
   api: ModelSelection["api"] | null;
   thinking: {
-    level: ModelSelection["thinking"] | "max";
+    level: ModelSelection["thinking"];
     selectable: boolean;
   }[];
   eligibility: "candidate" | "unsupported" | "auth-unavailable";
@@ -43,6 +43,9 @@ export interface ModelCandidate {
 export interface ModelCatalog extends ModelChoiceState {
   status: "complete" | "capacity";
   entries: ModelCandidate[];
+  /** Models left out because a provider/model ID contains a known credential
+   * literal or control characters; never their identifiers. */
+  withheld: number;
 }
 export interface ChooseModelRequest {
   expected: ChoiceVersion;
@@ -93,7 +96,7 @@ export function decodeModelCandidate(value: unknown): ModelCandidate {
     thinking: list(o.thinking, 7, (v) => {
       const t = closed(v, ["level", "selectable"]);
       return {
-        level: oneOf(t.level, [...thinkingLevels, "max"] as const),
+        level: oneOf(t.level, thinkingLevels),
         selectable: bool(t.selectable),
       };
     }),
@@ -109,9 +112,7 @@ export function decodeModelCandidate(value: unknown): ModelCandidate {
     candidate.thinking.some(
       (t) =>
         t.selectable &&
-        (t.level === "max" ||
-          candidate.api === null ||
-          candidate.eligibility !== "candidate"),
+        (candidate.api === null || candidate.eligibility !== "candidate"),
     ) ||
     (candidate.eligibility === "candidate" &&
       !candidate.thinking.some((t) => t.selectable))
@@ -121,11 +122,19 @@ export function decodeModelCandidate(value: unknown): ModelCandidate {
 }
 export function decodeModelCatalog(value: unknown): ModelCatalog {
   canonicalJson({ kind: "ok", value }, LIMITS.pageBytes);
-  const o = closed(value, ["version", "selected", "status", "entries"]);
+  const o = closed(value, [
+    "version",
+    "selected",
+    "status",
+    "entries",
+    "withheld",
+  ]);
   const entries = list(o.entries, LIMITS.maxPageEntries, decodeModelCandidate);
   const status = oneOf(o.status, ["complete", "capacity"]);
+  const withheld = integer(o.withheld, 0, LIMITS.maxPageEntries);
   if (
-    (status === "capacity" && entries.length) ||
+    (status === "capacity" && (entries.length || withheld)) ||
+    entries.length + withheld > LIMITS.maxPageEntries ||
     new Set(entries.map((e) => canonicalJson([e.provider, e.model]))).size !==
       entries.length
   )
@@ -135,5 +144,6 @@ export function decodeModelCatalog(value: unknown): ModelCatalog {
     selected: nullable(o.selected, decodeModelSelection),
     status,
     entries,
+    withheld,
   };
 }

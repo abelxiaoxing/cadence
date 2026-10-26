@@ -72,6 +72,10 @@ interface EpisodeContext {
   /** Actual selected-source check; unrelated task revisions/access rotation excluded. */
   current(): boolean;
   observe(advance: boolean): { observation: ObservationFact; text: string };
+  /** The owned checkout generation, without observing the working copy. */
+  generation(): number;
+  /** Advance the owned checkout generation by one and return it. */
+  advance(): number;
   publish(baseline?: ContentRef): Promise<void>;
 }
 export type EpisodeInput = EpisodeContext &
@@ -679,7 +683,11 @@ export class TaskScheduler {
       this.pumping = false;
     }
   }
-  private current(e: Episode, n: Node): boolean {
+  /** Cheap ownership/source/definition currency at every step. The working
+   * copy is observed (`changes`) only where it decides an effect: the last
+   * check before a native launch; the baseline and after-exit captures are
+   * compared where they are taken. */
+  private current(e: Episode, n: Node, changes = false): boolean {
     return (
       !this.closed &&
       !e.reason &&
@@ -688,8 +696,9 @@ export class TaskScheduler {
       this.owned() &&
       e.input.current() &&
       e.input.sources.current() &&
-      canonicalJson(e.input.observe(false).observation) ===
-        canonicalJson(e.expectedObservation)
+      (!changes ||
+        canonicalJson(e.input.observe(false).observation) ===
+          canonicalJson(e.expectedObservation))
     );
   }
   private async execute(e: Episode, n: Node): Promise<void> {
@@ -718,8 +727,7 @@ export class TaskScheduler {
         reservationId: n.childRunId,
         lane,
         state: "held",
-        checkoutGeneration:
-          e.input.observe(false).observation.checkoutGeneration,
+        checkoutGeneration: e.input.generation(),
       });
       held = true;
       if (!this.current(e, n)) {
@@ -730,7 +738,10 @@ export class TaskScheduler {
         before = observed.observation;
       const baseline = await this.changes(e, "before", observed);
       e.baseline ??= baseline;
-      if (!this.current(e, n)) {
+      if (
+        !this.current(e, n) ||
+        canonicalJson(before) !== canonicalJson(e.expectedObservation)
+      ) {
         await this.close(e, e.reason ?? "stale-dependency");
         return;
       }
@@ -802,7 +813,7 @@ export class TaskScheduler {
       });
       originalAuth = auth.settled;
       const prepared = await auth.result;
-      if (prepared.status !== "prepared" || !this.current(e, n)) {
+      if (prepared.status !== "prepared" || !this.current(e, n, true)) {
         await this.close(e, e.reason ?? "failed");
         await this.fact(e, {
           kind: "assignment-state",
@@ -904,8 +915,7 @@ export class TaskScheduler {
             reservationId: n.childRunId,
             lane,
             state: "released",
-            checkoutGeneration:
-              e.input.observe(false).observation.checkoutGeneration,
+            checkoutGeneration: e.input.generation(),
           });
         this.holders.delete(n.childRunId);
         n.state = "done";
@@ -961,7 +971,7 @@ export class TaskScheduler {
             // Register the original native promise BEFORE its single launch microtask.
             const output = recording;
             const original = Promise.resolve().then(async () => {
-              if (!this.current(e, n) || !input.definitionCurrent())
+              if (!this.current(e, n, true) || !input.definitionCurrent())
                 return native;
               await runCheck(input.check, input.cwd, n.abort.signal, {
                 environment: input.environment,
@@ -994,7 +1004,10 @@ export class TaskScheduler {
       // One owned transition, only while this exact check holds the lane. Any
       // foreign generation remains visible and cannot borrow this normalization.
       const observed = input.observe(false).observation;
-      const after = held ? input.observe(true).observation : observed;
+      // The same observation, with this check's one owned generation advance.
+      const after = held
+        ? { ...observed, checkoutGeneration: input.advance() }
+        : observed;
       const ownAdvance =
         held && observed.checkoutGeneration === before.checkoutGeneration
           ? {

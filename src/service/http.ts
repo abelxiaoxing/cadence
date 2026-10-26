@@ -512,7 +512,9 @@ export class ServiceHttpServer {
       }
       if (target === "/" && req.method === "GET") {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end("Cadence: use the owner's token link to enter.\n");
+        res.end(
+          "Cadence: enter with the private link that `cadence server install` printed, http://127.0.0.1:<CADENCE_PORT>/?token=<CADENCE_TOKEN> from ~/.pi/agent/cadence/.env, or that `cadence token-link --workspace <path> --reveal` prints on this machine.\n",
+        );
         return;
       }
       if (target.startsWith("/local/v1/admin/")) {

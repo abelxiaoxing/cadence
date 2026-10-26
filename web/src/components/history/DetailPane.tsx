@@ -4,6 +4,7 @@ import {
   decodeCursor,
 } from "../../../../src/service-contract.ts";
 import { readFullText } from "../../history/readers";
+import { useT } from "../../i18n/locale";
 import { copyTextToClipboard } from "../../rich/use-copy-feedback";
 import type {
   ByteRange,
@@ -26,6 +27,7 @@ export function DetailPane({
   highlight?: ByteRange;
   render?: (text: string) => ReactNode;
 }) {
+  const { t, tx } = useT();
   const cursorKey = canonicalJson(cursor);
   const stableCursor = useMemo(
     () => decodeCursor(JSON.parse(cursorKey)),
@@ -75,7 +77,7 @@ export function DetailPane({
     if (copying.current) return;
     const controller = new AbortController();
     copying.current = controller;
-    setCopyState("Reading all retained field pages…");
+    setCopyState(t("Reading all retained field pages…"));
     try {
       const text = await readFullText(client, cursor, controller.signal);
       if (controller.signal.aborted) return;
@@ -84,13 +86,17 @@ export function DetailPane({
       setCopyState(
         copied
           ? text.recordingComplete
-            ? "Copied all retained field bytes (source omissions still apply)."
-            : "Copied retained field bytes; recording is incomplete. No complete-source claim."
-          : "Clipboard unavailable.",
+            ? t(
+                "Copied all retained field bytes (source omissions still apply).",
+              )
+            : t(
+                "Copied retained field bytes; recording is incomplete. No complete-source claim.",
+              )
+          : t("Clipboard unavailable."),
       );
     } catch {
       if (!controller.signal.aborted)
-        setCopyState("Full-field copy refused/incomplete.");
+        setCopyState(t("Full-field copy refused/incomplete."));
     } finally {
       if (copying.current === controller) copying.current = null;
     }
@@ -114,15 +120,18 @@ export function DetailPane({
     );
   };
   return (
-    <section className="detail-pane" aria-label="Retained field">
+    <section className="detail-pane" aria-label={t("Retained field")}>
       <div className="detail-identity">
-        <code>{cursor.recordId}</code> v{cursor.recordVersion} / {cursor.field}{" "}
-        / snapshot {cursor.snapshotSeq}
+        <code>{cursor.recordId}</code> v{cursor.recordVersion} /{" "}
+        {cursor.field && tx(cursor.field)} /{" "}
+        {t("snapshot {seq}", { seq: cursor.snapshotSeq })}
       </div>
       {highlight && (
         <p>
-          Exact hit bytes [{highlight.start}, {highlight.end}); only this
-          immutable field is highlighted.
+          {t(
+            "Exact hit bytes [{start}, {end}); only this immutable field is highlighted.",
+            { start: highlight.start, end: highlight.end },
+          )}
         </p>
       )}
       <div className="toolbar">
@@ -130,14 +139,14 @@ export function DetailPane({
           type="button"
           onClick={() => setMode((m) => (m === "raw" ? "markdown" : "raw"))}
         >
-          {mode === "raw" ? "Markdown page" : "Raw page"}
+          {mode === "raw" ? t("Markdown page") : t("Raw page")}
         </button>
         <button
           type="button"
           disabled={!!copying.current}
           onClick={() => void copy()}
         >
-          Copy full retained field
+          {t("Copy full retained field")}
         </button>
         {!!copying.current && (
           <button
@@ -145,26 +154,33 @@ export function DetailPane({
             onClick={() => {
               copying.current?.abort();
               copying.current = null;
-              setCopyState("Copy canceled; execution unchanged.");
+              setCopyState(t("Copy canceled; execution unchanged."));
             }}
           >
-            Cancel copy
+            {t("Cancel copy")}
           </button>
         )}
       </div>
       <p role="status">{copyState}</p>
-      {error && <p role="alert">Detail refused: {error}</p>}
-      {busy && <p role="status">Reading…</p>}
+      {error && (
+        <p role="alert">{t("Detail refused: {error}", { error: tx(error) })}</p>
+      )}
+      {busy && <p role="status">{t("Reading…")}</p>}
       {page && <Coverage value={page.coverage} />}
       {page && "kind" in page && (
-        <p>Validation in progress. The retained field is not empty.</p>
+        <p>{t("Validation in progress. The retained field is not empty.")}</p>
       )}
       {data && (
         <>
           <p>
-            Bytes {data.range?.start ?? 0}–{data.range?.end ?? 0} of{" "}
-            {data.content.bytes}.{" "}
-            {data.next ? "More retained data available." : "End of field."}
+            {t("Bytes {start}–{end} of {total}.", {
+              start: data.range?.start ?? 0,
+              end: data.range?.end ?? 0,
+              total: data.content.bytes,
+            })}{" "}
+            {data.next
+              ? t("More retained data available.")
+              : t("End of field.")}
           </p>
           <LocalSearchBar
             container={textContainer}
@@ -190,7 +206,7 @@ export function DetailPane({
             setBack((p) => p.slice(0, -1));
           }}
         >
-          Previous
+          {t("Previous")}
         </button>
         <button
           type="button"
@@ -202,7 +218,9 @@ export function DetailPane({
             }
           }}
         >
-          {page && "kind" in page ? "Continue validation" : "Next field page"}
+          {page && "kind" in page
+            ? t("Continue validation")
+            : t("Next field page")}
         </button>
       </div>
     </section>

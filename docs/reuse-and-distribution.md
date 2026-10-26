@@ -8,7 +8,7 @@ Repository `provenance/webui-reuse.json` records source/destination hashes and e
 
 | Source family                        | Package adaptation                                                       |
 | ------------------------------------ | ------------------------------------------------------------------------ |
-| App, panels, layout, drawers         | Three-pane task workspace and responsive phone navigation                |
+| App, TopBar, panels, layout, drawers | Three-pane workspace, pi topbar/statusbar chrome and phone navigation    |
 | conv-groups, PlanBoard               | Task/run/child tree, editable finite graph and separate confirmations    |
 | MessageList, Message, ToolCallBlock  | Paged transcript, stable tool associations and retained detail           |
 | Markdown, StreamMarkdown, copy       | Sanitized Markdown/math/code, no script/external-image execution         |
@@ -35,7 +35,7 @@ Provisioned official notice bodies were reused locally; builds never download li
 ## Runtime/package closure
 
 Only the native extension's explicit import closure, maintained SDK worker/shared JS capture modules, generated management/host/operator executables, Agents, independent skills/configuration, documentation, notices and complete built assets ship.
-Service/worker execution uses ordinary Node with declared external Pi/Typebox peers and exact production `undici` and `ws`; no source-tree or TypeScript fallback, SDK bundle or consumer compilation.
+Service/worker execution uses ordinary Node with exact production `undici` and `ws` and the Pi SDK (`pi-coding-agent`, `pi-ai`) from exact 0.84.3 optional dependencies, because Pi's installer omits peers; no source-tree or TypeScript fallback, SDK bundle or consumer compilation.
 Pi's package installer omits peers and aliases only its own packages and Typebox, so every other runtime import reachable from `src/index.ts` must be a production dependency; otherwise Pi fails to load the extension at startup.
 The retired shell-local controller is not a shipped competing executor.
 

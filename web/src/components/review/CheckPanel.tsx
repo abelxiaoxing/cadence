@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useT } from "../../i18n/locale";
 import type {
   Action,
   CheckObligations,
@@ -21,6 +22,7 @@ export function CheckPanel({
   onAction: (a: Action) => void;
   onObligations: (c: CheckObligations) => void;
 }) {
+  const { t, tx } = useT();
   const [checks, setChecks] = useState<CheckObligations>(),
     [error, setError] = useState<string>(),
     [reload, setReload] = useState(0);
@@ -52,23 +54,31 @@ export function CheckPanel({
   }, [client, taskId, reload, onObligations]);
   return (
     <section>
-      <h3>Current configured obligations</h3>
+      <h3>{t("Current configured obligations")}</h3>
       <button type="button" onClick={() => setReload((n) => n + 1)}>
-        Observe obligations
+        {t("Observe obligations")}
       </button>
-      {error && <p role="alert">Obligations unavailable: {error}</p>}
+      {error && (
+        <p role="alert">
+          {t("Obligations unavailable: {error}", { error: tx(error) })}
+        </p>
+      )}
       {checks?.definitions.length === 0 && (
-        <p>No configured obligations. This is not passing check coverage.</p>
+        <p>
+          {t("No configured obligations. This is not passing check coverage.")}
+        </p>
       )}
       {checks?.definitions.map((d) => (
         <article key={d.selection.name}>
           <h4>
-            {d.selection.name}: {d.status}
+            {d.selection.name}: {tx(d.status)}
           </h4>
           <pre>{d.selection.command}</pre>
           <p>
-            Timeout {d.selection.timeoutMs} ms. Native outcome and freshness
-            remain separate.
+            {t(
+              "Timeout {timeout} ms. Native outcome and freshness remain separate.",
+              { timeout: d.selection.timeoutMs },
+            )}
           </p>
           <button
             type="button"
@@ -77,13 +87,14 @@ export function CheckPanel({
               onAction({ kind: "check", taskId, check: d.selection })
             }
           >
-            Preview exact configured check
+            {t("Preview exact configured check")}
           </button>
         </article>
       ))}
       <p>
-        Browser checks are configured selections only. Native-local manual
-        commands are not a browser shell endpoint.
+        {t(
+          "Browser checks are configured selections only. Native-local manual commands are not a browser shell endpoint.",
+        )}
       </p>
       <ObservationPanel client={client} seed={{ ...seed, reader: "checks" }} />
     </section>

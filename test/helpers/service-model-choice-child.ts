@@ -55,28 +55,34 @@ write(
 process.env.CHOICE_FIXTURE_VALUE = key;
 process.env.CHOICE_HEADER = "PRIVATE_HEADER_29481";
 const model = { id: "fixed", reasoning: false };
+// Each of these IDs would reveal a credential literal (or carries controls):
+// only its own entry is withheld, beside the still selectable "fixed".
+const withheldId =
+  scenario === "secret-id" || scenario === "template-secret-id"
+    ? key
+    : scenario === "scoped-secret-id"
+      ? "PRIVATE_SCOPED_84291"
+      : scenario === "template-header-secret-id"
+        ? "PRIVATE_HEADER_29481"
+        : scenario === "unsafe-id"
+          ? "fixed\u001b[31m"
+          : undefined;
 const models =
   scenario === "capacity"
     ? Array.from({ length: 201 }, (_, i) => ({
         id: `model-${i}`,
         reasoning: false,
       }))
-    : scenario === "secret-id" || scenario === "template-secret-id"
-      ? [{ ...model, id: key }]
-      : scenario === "scoped-secret-id"
-        ? [{ ...model, id: "PRIVATE_SCOPED_84291" }]
-        : scenario === "template-header-secret-id"
-          ? [{ ...model, id: "PRIVATE_HEADER_29481" }]
-          : scenario === "unsafe-id"
-            ? [{ ...model, id: "fixed\u001b[31m" }]
-            : [
-                model,
-                {
-                  id: "reasoner",
-                  reasoning: true,
-                  thinkingLevelMap: { xhigh: "xhigh", max: "max" },
-                },
-              ];
+    : withheldId
+      ? [model, { ...model, id: withheldId }]
+      : [
+          model,
+          {
+            id: "reasoner",
+            reasoning: true,
+            thinkingLevelMap: { xhigh: "xhigh", max: "max" },
+          },
+        ];
 write("models.json", {
   providers: {
     fixture: {
@@ -87,6 +93,17 @@ write("models.json", {
         : {}),
       models,
     },
+    // The common Ollama placeholder: an apiKey equal to its provider ID.
+    ...(scenario === "secret-id"
+      ? {
+          ollama: {
+            baseUrl: "http://127.0.0.1:9/v1",
+            api: "openai-completions",
+            apiKey: "ollama",
+            models: [{ id: "local", reasoning: false }],
+          },
+        }
+      : {}),
   },
 });
 const authBefore = readFileSync(join(agent, "auth.json"));
@@ -204,22 +221,28 @@ assert.throws(
 );
 let stopHandled = false;
 try {
-  if (
-    scenario === "secret-id" ||
-    scenario === "template-secret-id" ||
-    scenario === "scoped-secret-id" ||
-    scenario === "template-header-secret-id" ||
-    scenario === "unsafe-id"
-  ) {
-    failed(await client.models(), "unsupported-context");
-    failed(
-      chooseCore({
-        expected: host.choice.snapshot().version,
-        choice: { ...choice, model: models[0].id },
-      }),
-      "unsupported-context",
+  if (withheldId) {
+    const catalog = ok(await client.models());
+    assert.equal(catalog.status, "complete");
+    assert.deepEqual(
+      catalog.entries.map((e) => [e.provider, e.model, e.eligibility]),
+      [["fixture", "fixed", "candidate"]],
     );
+    assert.equal(catalog.withheld, scenario === "secret-id" ? 2 : 1);
+    for (const hidden of [withheldId, key, "ollama"])
+      assert.ok(!JSON.stringify(catalog).includes(hidden));
+    for (const refused of [
+      { ...choice, model: withheldId },
+      ...(scenario === "secret-id"
+        ? [{ ...choice, provider: "ollama", model: "local" }]
+        : []),
+    ])
+      failed(
+        chooseCore({ expected: catalog.version, choice: refused }),
+        "unsupported-context",
+      );
     assert.deepEqual(host.models.observe(), []);
+    if (scenario === "secret-id") assert.ok(ok(await choose()).selected);
   } else if (scenario === "literal-capacity") {
     failed(await client.models(), "oversize");
     failed(
@@ -240,9 +263,10 @@ try {
     assert.deepEqual(catalog.entries[0].thinking, [
       { level: "off", selectable: true },
     ]);
+    // The pinned SDK supports max: a model mapping it can be chosen at max.
     assert.ok(
       catalog.entries[1].thinking.some(
-        (t) => t.level === "max" && !t.selectable,
+        (t) => t.level === "max" && t.selectable,
       ),
     );
     assert.deepEqual(host.models.observe(), []);
@@ -344,13 +368,27 @@ try {
     const original = runtime.getProvider("fixture");
     assert.ok(original);
     let invoked = 0;
-    runtime.registerNativeProvider({
-      ...original,
-      getModels: () => {
-        invoked++;
-        return original.getModels();
-      },
-    });
+    // Registration starts its own unawaited SDK refresh; capture that genuine
+    // promise and let it settle so its getModels calls are not counted below.
+    const refresh = runtime.refresh;
+    const settling: Promise<unknown>[] = [];
+    runtime.refresh = (options) => {
+      const pending = refresh.call(runtime, options);
+      settling.push(pending);
+      return pending;
+    };
+    try {
+      runtime.registerNativeProvider({
+        ...original,
+        getModels: () => {
+          invoked++;
+          return original.getModels();
+        },
+      });
+    } finally {
+      runtime.refresh = refresh;
+    }
+    await Promise.allSettled(settling);
     invoked = 0; // Registration's SDK snapshot is setup, not a Cadence read.
     failed(await client.models(), "unsupported-context");
     assert.equal(invoked, 0);

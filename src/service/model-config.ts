@@ -105,7 +105,9 @@ export function piSource(
     lstatSync(directory).isSymbolicLink()
   )
     refuse();
-  const files = new PrivateFiles(directory);
+  // Pi creates its agent directory with the user's umask (0755, or 0775 under
+  // umask 002), so its mode is not a Cadence premise; ownership still is.
+  const files = new PrivateFiles(directory, false);
   if (!files.directory(directory)) refuse();
   return {
     directory,
@@ -196,6 +198,10 @@ function compat(value: unknown): void {
     "allowEmptySignature",
     "supportsStrictTools",
     "supportsToolReferences",
+    // Newer Pi (1.x) keeps or collapses mid-conversation system messages. The
+    // pinned SDK's messages have no system role, so this flag is inert here.
+    // Other newer keys may change requests or thinking and stay refused.
+    "supportsMidConvoSystemMessages",
   ];
   const enums: Record<string, readonly string[]> = {
     maxTokensField: ["max_completion_tokens", "max_tokens"],
@@ -405,6 +411,13 @@ function modelJson(snapshot: FileSnapshot): unknown {
   return parseWireJson(normalized, CONFIG_BYTES);
 }
 export function readPiSnapshot(source: PiSource): PiSnapshot {
+  const { auth, credentials } = readPiAuth(source);
+  const { models, providers } = readPiModels(source);
+  return { auth, models, credentials, providers };
+}
+export function readPiAuth(
+  source: PiSource,
+): Pick<PiSnapshot, "auth" | "credentials"> {
   const auth = source.files.read(source.authPath, CONFIG_BYTES);
   if (!auth) refuse();
   const credentials: Record<string, Credential> = Object.create(null);
@@ -430,6 +443,11 @@ export function readPiSnapshot(source: PiSource): PiSnapshot {
     } else refuse();
     credentials[provider] = credential as unknown as Credential;
   }
+  return { auth, credentials };
+}
+export function readPiModels(
+  source: PiSource,
+): Pick<PiSnapshot, "models" | "providers"> {
   const models = source.files.read(source.modelsPath, CONFIG_BYTES);
   const providers: Record<string, Data> = Object.create(null);
   if (models) {
@@ -472,7 +490,7 @@ export function readPiSnapshot(source: PiSource): PiSnapshot {
       providers[id] = provider;
     }
   }
-  return { auth, models, credentials, providers };
+  return { models, providers };
 }
 /** Private equality only, not a public hash/selection ID. */
 export function sourceIdentity(snapshot: PiSnapshot, provider: string): string {

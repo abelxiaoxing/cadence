@@ -1,6 +1,9 @@
 import os from "node:os";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { startupCardLines } from "./startup-card.ts";
+import { registerAgentPanel } from "./agent-panel.ts";
+import { registerCadenceAgentFeed } from "./agent-panel-cadence.ts";
+import { autostartNotice } from "./native-client.ts";
+import { CONFIG_MISSING, startupCardLines } from "./startup-card.ts";
 import { registerTaskShell } from "./task-shell.ts";
 
 /** Sole production composition. Discovery registers inert capabilities only;
@@ -8,6 +11,10 @@ import { registerTaskShell } from "./task-shell.ts";
 export default function register(pi: ExtensionAPI): void {
   if (process.env.CADENCE_SUBAGENT_CHILD === "1") return;
   registerTaskShell(pi);
+  // Observes `subagent:*` bus events only; renders nothing until one arrives.
+  registerAgentPanel(pi);
+  // Publishes a running owner's child runs there; readonly, never starts one.
+  registerCadenceAgentFeed(pi);
   pi.on("session_start", (_event, ctx) => {
     if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return;
     // Preserve independent, nonactivating configuration presentation. This
@@ -18,10 +25,15 @@ export default function register(pi: ExtensionAPI): void {
         home: os.homedir(),
         projectTrusted: ctx.isProjectTrusted(),
       });
-      ctx.ui.notify(
-        (lines.length > 1 ? lines.slice(1) : lines).join("\n"),
-        "info",
-      );
+      // An existing file's path is noise; a missing one says where to create it.
+      const shown =
+        lines.length > 1 && !lines[0].endsWith(CONFIG_MISSING)
+          ? lines.slice(1)
+          : lines;
+      ctx.ui.notify(shown.join("\n"), "info");
+      // A later info status replaces this card in Pi's TUI; a warning stays.
+      const autostart = autostartNotice();
+      if (autostart) ctx.ui.notify(autostart, "warning");
     } catch {
       // Presentation only; shell lifecycle still runs.
     }

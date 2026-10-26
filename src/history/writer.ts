@@ -49,6 +49,7 @@ import {
 } from "../service-contract.ts";
 import { TextSanitizer } from "../worker-redaction.mjs";
 import { decodeRunAdmission } from "./admission.ts";
+import { checkFold } from "./checks.ts";
 import {
   emptyScan,
   HistoryFiles,
@@ -65,7 +66,7 @@ import {
   type TaskPublicationRequest,
   type TaskPublicationResult,
 } from "./publication.ts";
-import { HistoryReader } from "./reader.ts";
+import { HistoryReader, latestTaskRun, planFold } from "./reader.ts";
 import { reviewIssues } from "./review.ts";
 import {
   OperationState,
@@ -74,6 +75,7 @@ import {
   readRunState,
   uncertainSettlement,
 } from "./run-state.ts";
+import { taskFoldMemory } from "./task-folds.ts";
 import {
   type Artifact,
   COMPLETE,
@@ -892,6 +894,7 @@ export class HistoryWriter implements AdmissionPersistence {
           } catch {
             /* Never turn an accelerator into acceptance authority. */
           }
+          this.rememberTaskFolds(rows, preparedIndex);
         }
         const batch: CommittedBatch = {
           committedSeq: this.state.committedSeq,
@@ -1143,7 +1146,10 @@ export class HistoryWriter implements AdmissionPersistence {
   reservedIdentity(commandId: string): AdmissionIntent["identity"] | null {
     decodeId(commandId);
     try {
-      const bytes = this.files.readCommand(commandId, new HistoryReadBudget());
+      const bytes = this.files.readCommand(
+        commandId,
+        HistoryReadBudget.authority(),
+      );
       return bytes
         ? decodeAdmissionIntent(json(bytes, RECORD_BYTES)).identity
         : null;
@@ -1171,7 +1177,7 @@ export class HistoryWriter implements AdmissionPersistence {
   private async lookupCommitted(commandId: string): Promise<StoredLookup> {
     decodeId(commandId);
     try {
-      const budget = new HistoryReadBudget();
+      const budget = HistoryReadBudget.authority();
       const intent = this.files.readCommand(commandId, budget);
       const directoryExists = this.files.files.directory(
         join(this.files.directory, "commands", commandId),
@@ -1657,6 +1663,61 @@ export class HistoryWriter implements AdmissionPersistence {
   }
   /** Actual v1 side effect: committed expected-byte intent -> held save -> observed
    * identity -> committed outcome, all serialized by this original writer. */
+  /** After original durability and its derived hints: remember, in this
+   * process only, each task's fold state at its prepared chain head when this
+   * batch settles its publication. An accelerator only; any failure (format2
+   * store, exhaustion) leaves the original chain to be folded. */
+  private rememberTaskFolds(
+    rows: JournalRow[],
+    prepared: import("./navigation.ts").PreparedIndex | undefined,
+  ): void {
+    if (!prepared) return;
+    const tasks = new Set<string>();
+    for (const { value: v } of rows)
+      if (
+        v.kind === "owner" &&
+        v.events.some(
+          (e) =>
+            e.kind === "owner" &&
+            e.value.kind === "fact" &&
+            e.value.fact.kind === "publication-settled",
+        )
+      )
+        tasks.add(v.link.taskId);
+    for (const taskId of tasks) {
+      const head = prepared.heads.get(taskId);
+      if (!head || head.seq !== this.state.committedSeq) continue;
+      try {
+        const checks = checkFold(
+          this.files,
+          taskId,
+          head.seq,
+          HistoryReadBudget.authority(),
+        ).state();
+        const run = latestTaskRun(
+          this.files,
+          taskId,
+          head.seq,
+          HistoryReadBudget.authority(),
+        );
+        const plan = planFold(
+          this.files,
+          taskId,
+          head.seq,
+          HistoryReadBudget.authority(),
+          new HistoryNavigation(this.files),
+          true,
+        ).state();
+        taskFoldMemory(this.files).remember(taskId, head, {
+          checks,
+          run,
+          plan,
+        });
+      } catch {
+        /* Never turn an accelerator into acceptance authority. */
+      }
+    }
+  }
   async publishTask(
     request: TaskPublicationRequest,
   ): Promise<TaskPublicationResult> {
@@ -1936,7 +1997,7 @@ export class HistoryWriter implements AdmissionPersistence {
    * No cache crosses an await. Missing/invalid acceleration uses the SAME bounded
    * original scan, never renewed budgets, an empty-success default or index authority. */
   private retainedRun(runId: string): RunState {
-    const budget = new HistoryReadBudget();
+    const budget = HistoryReadBudget.authority();
     const snapshot = this.state.committedSeq;
     this.navigation.snapshot(snapshot, budget);
     const batches = this.navigation.runBatches(runId, snapshot, budget);
@@ -1950,7 +2011,7 @@ export class HistoryWriter implements AdmissionPersistence {
     for (const batch of this.files.scan(
       emptyScan(),
       false,
-      new HistoryReadBudget(),
+      HistoryReadBudget.authority(),
     )) {
       if (batch.rows.some((row) => matches(row.value))) return true;
     }
@@ -2572,7 +2633,7 @@ export class HistoryWriter implements AdmissionPersistence {
     for (const batch of this.files.scan(
       emptyScan(),
       false,
-      new HistoryReadBudget(),
+      HistoryReadBudget.authority(),
     ))
       for (const row of batch.rows) {
         const v = row.value;
@@ -2905,7 +2966,11 @@ function readOperationStateForPublication(
   > | null = null;
   const state = new OperationState(operationId);
   const facts: { link: OwnerLink; fact: OwnerFact }[] = [];
-  for (const batch of files.scan(emptyScan(), false, new HistoryReadBudget()))
+  for (const batch of files.scan(
+    emptyScan(),
+    false,
+    HistoryReadBudget.authority(),
+  ))
     for (const row of batch.rows) {
       const v = row.value;
       if (v.kind === "recovery" && intent) recovered = true;

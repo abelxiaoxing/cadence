@@ -15,6 +15,7 @@ import { type HostInput, readHostConfig } from "../../src/service/runtime.ts";
 import { ServiceClient } from "../../src/service-client.ts";
 import { HttpServiceTransport } from "../../src/service-http-client.ts";
 import { nativeBuild, sourceContract } from "./source-build.ts";
+import { windowsSystemEnvironment } from "./windows-environment.ts";
 
 export async function acceptingFixture(
   mode: "source" | "generated",
@@ -148,8 +149,7 @@ export async function acceptingFixture(
     TMP: join(dir, "tmp"),
     NO_COLOR: "1",
   };
-  for (const k of ["SystemRoot", "WINDIR", "COMSPEC", "PATHEXT"])
-    if (process.env[k]) env[k] = process.env[k];
+  Object.assign(env, windowsSystemEnvironment());
   const input: HostInput = {
     workspace: root,
     stateHome: join(dir, "state"),
@@ -206,7 +206,9 @@ export async function acceptingFixture(
     )
       await new Promise((r) => setTimeout(r, 20));
     if (!stdout.includes('"ready"'))
-      throw Error(`native host readiness unavailable: ${stderr}`);
+      throw Error(
+        `native host readiness unavailable (env names: ${Object.keys(env).join(",")}): ${stderr}`,
+      );
   }
   if (mode === "source") {
     if (!environment)

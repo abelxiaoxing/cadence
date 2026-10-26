@@ -1,5 +1,6 @@
 import { type ChildProcessByStdio, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { join } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
@@ -74,6 +75,22 @@ export interface ProcessSpec {
   onProgress?: (text: string) => void;
 }
 /** One bounded process owner for SDK workers and user-confirmed parent checks. */
+/** Windows has no process groups, and terminating CMD/a worker alone leaves
+ * its children holding the stdio pipes, so the direct child never closes.
+ * While Node holds the live child's handle its PID cannot be reused; terminate
+ * exactly that tree, as the Pi SDK's killProcessTree does. */
+function terminateWindowsTree(pid: number, fallback: () => void): void {
+  const root = process.env.SystemRoot;
+  const taskkill = spawn(
+    root ? join(root, "System32", "taskkill.exe") : "taskkill.exe",
+    ["/F", "/T", "/PID", String(pid)],
+    { stdio: "ignore", windowsHide: true },
+  );
+  taskkill.once("error", fallback);
+  taskkill.once("close", (code) => {
+    if (code !== 0) fallback();
+  });
+}
 export function runProcess(spec: ProcessSpec): Promise<RunResult> {
   const started = Date.now();
   const early = (outcome: RunResult["outcome"], text: string): RunResult => ({
@@ -226,6 +243,12 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         if (spec.maySignal && !spec.maySignal()) return;
         if (process.platform !== "win32" && child.pid)
           process.kill(-child.pid, signal);
+        else if (
+          child.pid &&
+          child.exitCode === null &&
+          child.signalCode === null
+        )
+          terminateWindowsTree(child.pid, () => child.kill(signal));
         else child.kill(signal);
       } catch {
         /* Wait for close; signal failure is never completion. */

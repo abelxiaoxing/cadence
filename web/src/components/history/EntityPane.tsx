@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { canonicalJson } from "../../../../src/service-contract.ts";
+import { useT } from "../../i18n/locale";
 import type {
   EntityReadRequest,
   EntityReadResult,
@@ -24,6 +25,7 @@ function SelectedEntity({
   client: ServiceClient;
   seed: EntityReadRequest;
 }) {
+  const { t, tx } = useT();
   const [request, setRequest] = useState(seed),
     [page, setPage] = useState<EntityReadResult>(),
     [error, setError] = useState<string>(),
@@ -60,25 +62,27 @@ function SelectedEntity({
     };
   }, [client, request]);
   return (
-    <section aria-label="Exact entity metadata">
-      {busy && <p>Reading exact entity version…</p>}
-      {error && <p role="alert">Entity refused: {error}</p>}
+    <section aria-label={t("Exact entity metadata")}>
+      {busy && <p>{t("Reading exact entity version…")}</p>}
+      {error && (
+        <p role="alert">{t("Entity refused: {error}", { error: tx(error) })}</p>
+      )}
       {page && "kind" in page && <Coverage value={page.coverage} />}
       {page &&
         ("kind" in page ? (
           <>
-            <p>Entity validation in progress, not missing.</p>
+            <p>{t("Entity validation in progress, not missing.")}</p>
             <button
               type="button"
               disabled={busy}
               onClick={() => setRequest(page.next)}
             >
-              Continue exact entity validation
+              {t("Continue exact entity validation")}
             </button>
           </>
         ) : (
           <details>
-            <summary>Exact stored owner and associations</summary>
+            <summary>{t("Exact stored owner and associations")}</summary>
             <pre>{JSON.stringify(page.record, null, 2)}</pre>
           </details>
         ))}

@@ -9,6 +9,27 @@ import {
   useRef,
   useState,
 } from "react";
+import type { IconType } from "react-icons";
+import {
+  FiCheckCircle,
+  FiClock,
+  FiCpu,
+  FiDownload,
+  FiFolder,
+  FiGitBranch,
+  FiGitCommit,
+  FiGlobe,
+  FiLayers,
+  FiLink,
+  FiLogOut,
+  FiMenu,
+  FiMessageSquare,
+  FiPlus,
+  FiRefreshCw,
+  FiSidebar,
+  FiSquare,
+  FiTool,
+} from "react-icons/fi";
 import { canonicalJson } from "../../src/service-contract.ts";
 import {
   type CommandObservation,
@@ -38,11 +59,15 @@ import { RunBrowser } from "./components/history/RunBrowser";
 import { SearchBar } from "./components/history/SearchBar";
 import { MessageList } from "./components/transcript/MessageList";
 import { ToolCallBlock } from "./components/transcript/ToolCallBlock";
-import { InspectorPanel } from "./components/workspace/InspectorPanel";
+import {
+  InspectorPanel,
+  InspectorPlaceholder,
+} from "./components/workspace/InspectorPanel";
 import { RunSummary } from "./components/workspace/RunSummary";
 import { TaskSidebar } from "./components/workspace/TaskSidebar";
 import { historyUrl, readHistoryUrl } from "./history/history-url";
 import { usePage } from "./history/use-page";
+import { Template, useT } from "./i18n/locale";
 import { ResizeHandle } from "./layout/ResizeHandle";
 import type { DrawerSide } from "./layout/swipe-drawer";
 import { useDrawerFocus } from "./layout/use-drawer-focus";
@@ -58,6 +83,15 @@ import type {
   SearchHit,
   TaskKind,
 } from "./types";
+
+const VIEWS: readonly (readonly [string, IconType])[] = [
+  ["messages", FiMessageSquare],
+  ["tools", FiTool],
+  ["context", FiLayers],
+  ["timeline", FiClock],
+  ["runs", FiGitBranch],
+  ["outcomes", FiCheckCircle],
+];
 export function App({
   api: provided,
   planMetadata,
@@ -65,6 +99,7 @@ export function App({
   api?: BrowserClient;
   planMetadata?: PlanMetadataPort;
 }) {
+  const { t, tx, locale, setLocale } = useT();
   const [api] = useState(() => provided ?? browserClient());
   const [modelOpen, setModelOpen] = useState(false);
   const [detached, setDetached] = useState(false);
@@ -190,7 +225,7 @@ export function App({
           : null
         : context;
     if (!workspace.actions || !expected || preparing || detached) {
-      setError("Current action context unavailable; observe again.");
+      setError(t("Current action context unavailable; observe again."));
       return;
     }
     lifetime.current.depart();
@@ -201,11 +236,11 @@ export function App({
       const reply = await prepare(api.client, expected, a);
       if (!lifetime.current.current(ticket)) return;
       if (reply.kind === "error")
-        setError(`Preflight refused: ${reply.error.code}`);
+        setError(t("Preflight refused: {code}", { code: reply.error.code }));
       else setPrepared(reply.value);
     } catch {
       if (lifetime.current.current(ticket))
-        setError("Preflight unavailable. No automatic retry.");
+        setError(t("Preflight unavailable. No automatic retry."));
     } finally {
       if (lifetime.current.current(ticket)) setPreparing(false);
     }
@@ -302,7 +337,7 @@ export function App({
     setCanceling((prev) => new Set(prev).add(runId));
     setReceipt({
       commandId,
-      error: "Stop requested; settlement is not yet confirmed.",
+      error: t("Stop requested; settlement is not yet confirmed."),
     });
     void api.client
       .cancel({ commandId, epoch, runId })
@@ -312,14 +347,17 @@ export function App({
             ? { commandId, receipt: reply.value }
             : {
                 commandId,
-                error: `${reply.error.code}; cancellation effect ${reply.error.effect}. Observe exact receipt.`,
+                error: t(
+                  "{code}; cancellation effect {effect}. Observe exact receipt.",
+                  { code: reply.error.code, effect: reply.error.effect },
+                ),
               },
         );
       })
       .catch(() =>
         setReceipt({
           commandId,
-          error: "Cancellation effect uncertain. Observe exact receipt.",
+          error: t("Cancellation effect uncertain. Observe exact receipt."),
         }),
       )
       .finally(() => {
@@ -337,91 +375,234 @@ export function App({
   if (detached)
     return (
       <main className="entry">
-        <h1>Detached</h1>
-        <p>Accepted service work continues. No Cancel was requested.</p>
+        <span className="empty-logo" aria-hidden="true">
+          C
+        </span>
+        <h1>{t("Detached")}</h1>
+        <p>{t("Accepted service work continues. No Cancel was requested.")}</p>
         {receipts.map((value) => (
           <p key={value.commandId}>
-            Observe command after reconnect: <code>{value.commandId}</code>
+            {t("Observe command after reconnect:")}{" "}
+            <code>{value.commandId}</code>
           </p>
         ))}
-        <button type="button" onClick={() => setDetached(false)}>
-          Reconnect as a viewer
+        <button
+          type="button"
+          className="primary"
+          onClick={() => setDetached(false)}
+        >
+          {t("Reconnect as a viewer")}
         </button>
       </main>
     );
+  const roster = workspace.activeRuns;
+  const activeRuns = roster?.status === "complete" ? roster.runs : [];
+  const connection =
+    observation.state?.connection ??
+    (!workspace.workspace
+      ? "Service unavailable"
+      : taskId
+        ? "Task snapshot not observed yet"
+        : "No task selected");
   return (
     <div className="app">
       <header className="topbar">
-        <h1>Cadence</h1>
         <button
           type="button"
+          className="panel-toggle"
+          aria-label={t("Tasks")}
           onClick={() => setDrawer((d) => (d === "left" ? null : "left"))}
         >
-          Tasks
+          <FiMenu aria-hidden="true" />
         </button>
+        {/* Phone drawers open below the topbar, so its controls stay live. */}
+        <div className="topbar-flow">
+          <span className="brand">
+            <span className="brand-logo" aria-hidden="true">
+              C
+            </span>
+            <h1 className="brand-name">Cadence</h1>
+          </span>
+          {workspace.workspace && (
+            <span
+              className="chip static chip-root"
+              title={workspace.workspace.rootLabel}
+            >
+              <FiFolder aria-hidden="true" />
+              <span>{workspace.workspace.rootLabel}</span>
+            </span>
+          )}
+          <span className="tb-spacer" aria-hidden="true" />
+          <nav className="tb-tabs" aria-label={t("Recorded views")}>
+            {VIEWS.map(([view, Icon]) => (
+              <button
+                type="button"
+                key={view}
+                className="tb-tab"
+                aria-label={tx(view)}
+                aria-pressed={tab === view}
+                onClick={() => {
+                  setDetail(undefined);
+                  setHit(undefined);
+                  setTab(view);
+                }}
+              >
+                <Icon aria-hidden="true" />
+                <span>{tx(view)}</span>
+              </button>
+            ))}
+          </nav>
+          <span className="tb-spacer" aria-hidden="true" />
+          <div className="tb-actions">
+            <SearchBar
+              disabled={!searchSeed}
+              onOpen={() => setSearchOpen(true)}
+            />
+            <button
+              type="button"
+              className="chip"
+              aria-label={t("Export selected scope")}
+              data-tip={t("Export selected scope")}
+              disabled={!seed}
+              onClick={() => setExportOpen(true)}
+            >
+              <FiDownload aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="chip"
+              aria-label={t("Copy token-free link")}
+              data-tip={t("Copy token-free link")}
+              disabled={!taskId}
+              onClick={() => {
+                if (taskId)
+                  void copyTextToClipboard(historyUrl(taskId, detail)).then(
+                    (ok) => setError(ok ? "" : t("Link copy unavailable.")),
+                  );
+              }}
+            >
+              <FiLink aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="chip"
+              aria-label={t("Observe current state")}
+              data-tip={t("Observe current state")}
+              onClick={() => {
+                workspace.refresh();
+                observation.refresh();
+              }}
+            >
+              <FiRefreshCw aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="chip"
+              aria-label={t("Choose owner model")}
+              data-tip={t("Choose owner model")}
+              onClick={() => setModelOpen(true)}
+            >
+              <FiCpu aria-hidden="true" />
+              <span className="chip-label">{t("Model")}</span>
+            </button>
+            <button
+              type="button"
+              className="chip"
+              aria-label={t("Return — work continues")}
+              data-tip={t("Return — accepted work continues")}
+              onClick={() => {
+                setPrepared(undefined);
+                setDrawer(null);
+                setSearchOpen(false);
+                setExportOpen(false);
+                lifetime.current.depart();
+                setPreparing(false);
+                setDetached(true);
+              }}
+            >
+              <FiLogOut aria-hidden="true" />
+              <span className="chip-label">{t("Return")}</span>
+            </button>
+            {/* Named in the language it selects, so either reader can find it. */}
+            <button
+              type="button"
+              className="chip chip-lang"
+              lang={locale === "zh" ? "en" : "zh-CN"}
+              aria-label={locale === "zh" ? "Switch to English" : "切换到中文"}
+              data-tip={locale === "zh" ? "Switch to English" : "切换到中文"}
+              onClick={() => setLocale(locale === "zh" ? "en" : "zh")}
+            >
+              <FiGlobe aria-hidden="true" />
+              <span>{locale === "zh" ? "EN" : "中文"}</span>
+            </button>
+          </div>
+        </div>
         <button
           type="button"
+          className="panel-toggle has-label"
+          aria-label={t("Plan / review")}
           onClick={() => setDrawer((d) => (d === "right" ? null : "right"))}
         >
-          Plan / review
-        </button>
-        <span className="connection" role="status">
-          {observation.state?.connection ??
-            (workspace.workspace ? "No task selected" : "Service unavailable")}
-          {` · transport ${observation.transportStatus}`}
-          {observation.error ? ` · ${observation.error}` : ""}
-        </span>
-        <button type="button" onClick={() => setModelOpen(true)}>
-          Choose owner model
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setPrepared(undefined);
-            setDrawer(null);
-            setSearchOpen(false);
-            setExportOpen(false);
-            lifetime.current.depart();
-            setPreparing(false);
-            setDetached(true);
-          }}
-        >
-          Return — work continues
+          <FiSidebar aria-hidden="true" />
+          <span>{t("Plan")}</span>
         </button>
       </header>
-      <section className="run-status" aria-label="Execution and cancellation">
-        {workspace.activeRuns?.status === "complete" ? (
-          workspace.activeRuns.runs.map((r) => (
-            <div key={r.runId}>
-              <button type="button" onClick={() => selectTask(r.taskId)}>
-                Open active task
-              </button>
-              <span>
-                {r.kind} {r.runId} · {r.stage}
+      {activeRuns.length > 0 && (
+        <section
+          className="run-strip"
+          aria-label={t("Execution and cancellation")}
+        >
+          {activeRuns.map((r) => (
+            <div className="run-strip-row" key={r.runId}>
+              <span className="status-dot busy" aria-hidden="true" />
+              <span className="run-strip-label">
+                {tx(r.kind)} {r.runId} · {tx(r.stage)}
               </span>
+              <button type="button" onClick={() => selectTask(r.taskId)}>
+                {t("Open active task")}
+              </button>
               <button
                 type="button"
                 className="danger"
                 disabled={!workspace.cancelCompatible || canceling.has(r.runId)}
                 onClick={() => cancel(r.runId)}
               >
-                Cancel run — request stop
+                <FiSquare aria-hidden="true" />
+                {t("Cancel run — request stop")}
               </button>
             </div>
-          ))
-        ) : (
-          <span>
-            Active roster unavailable; absence is not proof of settlement.
-          </span>
-        )}
-        <span>Connection freshness is not execution outcome.</span>
-      </section>
+          ))}
+        </section>
+      )}
       {(error || workspace.error) && (
-        <p className="notice" role="alert">
-          {error || workspace.error}. Explicit service guidance:{" "}
-          <code>cadence-service status</code> /{" "}
-          <code>cadence-service start --workspace &lt;path&gt;</code>. No
-          service is started by this page.
+        <p className="banner-notice" role="alert">
+          {t("{message}.", { message: error || tx(workspace.error ?? "") })}{" "}
+          {!error && workspace.error === "stale" && (
+            <>
+              <Template
+                text={t(
+                  "The service no longer matches the sources it loaded, for example after Pi's {file} changed; restart it to reload them: {restart} (or {stop} then {start}).",
+                )}
+                slots={{
+                  file: <code>models.json</code>,
+                  restart: <code>systemctl --user restart cadence</code>,
+                  stop: <code>cadence-service stop</code>,
+                  start: <code>start</code>,
+                }}
+              />{" "}
+            </>
+          )}
+          <Template
+            text={t(
+              "Explicit service guidance: {status} / {start}. No service is started by this page.",
+            )}
+            slots={{
+              status: <code>cadence-service status</code>,
+              start: (
+                <code>cadence-service start --workspace &lt;path&gt;</code>
+              ),
+            }}
+          />
         </p>
       )}
       <div
@@ -436,14 +617,14 @@ export function App({
       >
         <button
           type="button"
-          aria-label="Close drawer"
+          aria-label={t("Close drawer")}
           tabIndex={-1}
           className={`drawer-backdrop persistent${drawer ? " on" : ""}`}
           onClick={closeDrawer}
         />
         <section
           className={`panel-drawer drawer-left${drawer === "left" ? " open" : ""}`}
-          aria-label="Task navigation drawer"
+          aria-label={t("Task navigation drawer")}
           tabIndex={-1}
           inert={mobile && drawer !== "left"}
         >
@@ -464,89 +645,46 @@ export function App({
         </section>
         <ResizeHandle side="left" width={leftWidth} onResize={setLeftWidth} />
         <main className="main" inert={mobile && drawer !== null}>
-          <div className="workspace-toolbar">
-            <SearchBar
-              disabled={!searchSeed}
-              onOpen={() => setSearchOpen(true)}
-            />
-            <button
-              type="button"
-              disabled={!seed}
-              onClick={() => setExportOpen(true)}
-            >
-              Export selected scope
-            </button>
-            <button
-              type="button"
-              disabled={!taskId}
-              onClick={() => {
-                if (taskId)
-                  void copyTextToClipboard(historyUrl(taskId, detail)).then(
-                    (ok) => setError(ok ? "" : "Link copy unavailable."),
-                  );
-              }}
-            >
-              Copy token-free link
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                workspace.refresh();
-                observation.refresh();
-              }}
-            >
-              Observe current state
-            </button>
-          </div>
           {scope && (
-            <p className="scope-label">
-              Selected {scope.kind}: <code>{scope.id}</code> · snapshot{" "}
-              {snapshotSeq}. Pages and old outcomes are historical observations,
-              not renewed consent.
+            <p className="scope-bar">
+              <FiGitCommit aria-hidden="true" />
+              <span className="scope-kind">
+                {t("Selected {kind}:", { kind: tx(scope.kind) })}
+              </span>
+              <code>{scope.id}</code>
+              <span>{t("· snapshot {seq}.", { seq: snapshotSeq ?? "" })}</span>
+              <span className="scope-hint">
+                {t(
+                  "Pages and old outcomes are historical observations, not renewed consent.",
+                )}
+              </span>
             </p>
           )}
-          <nav className="workspace-tabs" aria-label="Recorded views">
-            {[
-              "messages",
-              "tools",
-              "context",
-              "timeline",
-              "runs",
-              "outcomes",
-            ].map((t) => (
-              <button
-                type="button"
-                key={t}
-                aria-pressed={tab === t}
-                onClick={() => {
-                  setDetail(undefined);
-                  setHit(undefined);
-                  setTab(t);
-                }}
-              >
-                {t}
-              </button>
-            ))}
-          </nav>
           <div className="workspace-content">
             {!seed && (
-              <section className="empty">
-                <h2>Open a task or create one explicitly</h2>
+              <section className="empty-state">
+                <span className="empty-logo" aria-hidden="true">
+                  C
+                </span>
+                <h2>{t("Open a task or create one explicitly")}</h2>
                 <p>
-                  Plans, children, checks and human review share one service
-                  owner. No chat or discovery activates execution.
+                  {t(
+                    "Plans, children, checks and human review share one service owner. No chat or discovery activates execution.",
+                  )}
                 </p>
                 <button
                   type="button"
+                  className="primary"
                   disabled={!workspace.workspace}
                   onClick={() => setNewOpen(true)}
                 >
-                  Create task
+                  <FiPlus aria-hidden="true" />
+                  {t("Create task")}
                 </button>
               </section>
             )}
             {seed && detail ? (
-              <>
+              <div className="tab-body">
                 {hit &&
                   (hit.owner.entity.kind === "task" ||
                     hit.owner.entity.kind === "message" ||
@@ -570,10 +708,16 @@ export function App({
                   cursor={detail}
                   highlight={hit?.range}
                 />
-              </>
+              </div>
             ) : (
               seed && (
-                <>
+                <div
+                  className={
+                    tab === "messages" || tab === "tools"
+                      ? "tab-body transcript-body"
+                      : "tab-body"
+                  }
+                >
                   {tab === "messages" && (
                     <MessageList client={api.client} seed={seed} />
                   )}
@@ -600,14 +744,26 @@ export function App({
                     />
                   )}
                   {tab === "outcomes" &&
-                    runs.map((r) => (
-                      <RunSummary key={r.childRunId ?? r.runId} run={r} />
+                    (runs.length > 0 ? (
+                      runs.map((r) => (
+                        <RunSummary key={r.childRunId ?? r.runId} run={r} />
+                      ))
+                    ) : (
+                      <p className="panel-empty">
+                        {current && observation.state
+                          ? t("No owner run projection in this snapshot.")
+                          : t(
+                              "No snapshot observed yet; absence is not proof of settlement.",
+                            )}
+                      </p>
                     ))}
-                </>
+                </div>
               )
             )}
-            {workspace.workspace &&
-              receipts.map((receipt) => (
+          </div>
+          {workspace.workspace && receipts.length > 0 && (
+            <div className="receipt-dock">
+              {receipts.map((receipt) => (
                 <ReceiptPanel
                   key={receipt.commandId}
                   client={api.client}
@@ -615,16 +771,8 @@ export function App({
                   onChange={setReceipt}
                 />
               ))}
-            <p className="notice">
-              Local browser build:{" "}
-              <code>{localBuild?.buildId ?? "unbuilt source"}</code>. Shared
-              compatibility:{" "}
-              {workspace.compatible
-                ? "compatible"
-                : "unavailable / mismatch — reload built assets; normal actions disabled"}
-              .
-            </p>
-          </div>
+            </div>
+          )}
         </main>
         <ResizeHandle
           side="right"
@@ -633,11 +781,11 @@ export function App({
         />
         <section
           className={`panel-drawer drawer-right${drawer === "right" ? " open" : ""}`}
-          aria-label="Plan and review drawer"
+          aria-label={t("Plan and review drawer")}
           tabIndex={-1}
           inert={mobile && drawer !== "right"}
         >
-          {seed && (
+          {seed ? (
             <InspectorPanel
               key={taskId}
               client={api.client}
@@ -648,9 +796,91 @@ export function App({
               onAction={(a) => void action(a)}
               planMetadata={metadata}
             />
+          ) : (
+            <InspectorPlaceholder />
           )}
         </section>
       </div>
+      <footer className="statusbar">
+        <div className="statusbar-left">
+          <span
+            className="status-item"
+            role="status"
+            title={t("Connection freshness is not execution outcome.")}
+          >
+            <span
+              className={`status-dot ${
+                observation.error || !workspace.workspace
+                  ? "error"
+                  : observation.transportStatus !== "current"
+                    ? "busy"
+                    : !observation.state
+                      ? ""
+                      : observation.state.connection === "current"
+                        ? "ok"
+                        : "busy"
+              }`}
+              aria-hidden="true"
+            />
+            {tx(connection)}
+            {t(" · transport {status}", {
+              status: tx(observation.transportStatus),
+            })}
+            {observation.error ? ` · ${tx(observation.error)}` : ""}
+          </span>
+          <span
+            className={`status-item${
+              roster?.status === "complete"
+                ? activeRuns.length > 0
+                  ? " warn"
+                  : ""
+                : " faint"
+            }`}
+          >
+            {roster?.status === "complete"
+              ? activeRuns.length > 0
+                ? t(
+                    activeRuns.length === 1
+                      ? "{count} active run"
+                      : "{count} active runs",
+                    { count: activeRuns.length },
+                  )
+                : t("No active runs")
+              : t(
+                  "Active roster unavailable; absence is not proof of settlement.",
+                )}
+          </span>
+          <span className="status-item faint">
+            {t("Connection freshness is not execution outcome.")}
+          </span>
+        </div>
+        <div className="statusbar-right">
+          <span
+            className={`status-item${workspace.compatible ? " faint" : " warn"}`}
+            title={localBuild?.buildId ?? t("unbuilt source")}
+          >
+            <span className="build-part">
+              <Template
+                text={t("Local browser build: {build}.")}
+                slots={{
+                  build: (
+                    <code>{localBuild?.buildId ?? t("unbuilt source")}</code>
+                  ),
+                }}
+              />{" "}
+            </span>
+            <span>
+              {t("Shared compatibility: {state}.", {
+                state: workspace.compatible
+                  ? t("compatible")
+                  : t(
+                      "unavailable / mismatch — reload built assets; normal actions disabled",
+                    ),
+              })}
+            </span>
+          </span>
+        </div>
+      </footer>
       {modelOpen && (
         <ModelChooser
           client={api.client}
@@ -668,11 +898,14 @@ export function App({
         />
       )}
       {newOpen && (
-        <ActionDialog title="Create task" onClose={() => setNewOpen(false)}>
+        <ActionDialog
+          title={t("Create task")}
+          onClose={() => setNewOpen(false)}
+        >
           <label>
-            Kind
+            {t("Kind")}
             <select
-              aria-label="Kind"
+              aria-label={t("Kind")}
               value={kind}
               onChange={(e) =>
                 setKind(
@@ -684,35 +917,38 @@ export function App({
                 )
               }
             >
-              <option value="code">Code</option>
-              <option value="research">Readonly research</option>
-              <option value="diagnosis">Readonly diagnosis</option>
+              <option value="code">{t("Code")}</option>
+              <option value="research">{t("Readonly research")}</option>
+              <option value="diagnosis">{t("Readonly diagnosis")}</option>
             </select>
           </label>
           <label>
-            Goal
+            {t("Goal")}
             <textarea
-              aria-label="Goal"
+              aria-label={t("Goal")}
               value={goal}
               onChange={(e) => setGoal(e.target.value)}
               rows={6}
             />
           </label>
-          <button
-            type="button"
-            disabled={
-              !workspace.actions ||
-              workspace.workspace?.context.status !== "available" ||
-              preparing ||
-              !goal.trim()
-            }
-            onClick={() => {
-              setNewOpen(false);
-              void action({ kind: "create", taskKind: kind, goal });
-            }}
-          >
-            Preview Create (does not Start)
-          </button>
+          <footer>
+            <button
+              type="button"
+              className="primary"
+              disabled={
+                !workspace.actions ||
+                workspace.workspace?.context.status !== "available" ||
+                preparing ||
+                !goal.trim()
+              }
+              onClick={() => {
+                setNewOpen(false);
+                void action({ kind: "create", taskKind: kind, goal });
+              }}
+            >
+              {t("Preview Create (does not Start)")}
+            </button>
+          </footer>
         </ActionDialog>
       )}
       {prepared && (
@@ -773,20 +1009,22 @@ function Tools({
   const pager = usePage(client, { ...seed, reader: "tools" }),
     page = pager.page;
   return (
-    <section>
+    <section className="tools-list">
       <PageControls pager={pager} />
-      {page &&
-        !("kind" in page) &&
-        page.records.map((r) =>
-          r.kind === "tool" ? (
-            <ToolCallBlock
-              key={`${r.owner.entity.id}:${r.version}`}
-              record={r}
-              client={client}
-              seed={page.request}
-            />
-          ) : null,
-        )}
+      <div className="tools-body">
+        {page &&
+          !("kind" in page) &&
+          page.records.map((r) =>
+            r.kind === "tool" ? (
+              <ToolCallBlock
+                key={`${r.owner.entity.id}:${r.version}`}
+                record={r}
+                client={client}
+                seed={page.request}
+              />
+            ) : null,
+          )}
+      </div>
     </section>
   );
 }

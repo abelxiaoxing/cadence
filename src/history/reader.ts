@@ -32,13 +32,19 @@ import type { RunAdmission } from "./admission.ts";
 import { detailPreparation, readRetainedDetail } from "./detail-progress.ts";
 import { emptyScan, HistoryFiles, HistoryReadBudget } from "./files.ts";
 import { graphPreparation, readRetainedGraph } from "./graph-progress.ts";
-import { HistoryNavigation } from "./navigation.ts";
+import {
+  HistoryNavigation,
+  type LocatedBatch,
+  type Pointer,
+} from "./navigation.ts";
 import type { PublishedPlan } from "./plans.ts";
 import { HistoryProjection } from "./projection.ts";
 import { readRange } from "./read-io.ts";
 import { HistoryReadProof } from "./read-proof.ts";
 import {
+  type LineageProgress,
   OperationState,
+  type PublicationState,
   RunState,
   readRunState,
   TaskPublicationLineage,
@@ -49,6 +55,7 @@ import {
   materializeSavedGraph,
 } from "./saved-graph-state.ts";
 import { RetainedScan } from "./search.ts";
+import { resumeTaskFold } from "./task-folds.ts";
 import {
   COMPLETE,
   captureCoverage,
@@ -61,6 +68,173 @@ import {
 
 /** Readonly retained journal/detail reader. Construction/open never initializes,
  * repairs, resolves auth, creates a session, or resumes a queue. */
+/** An original admission row inside the task's committed prefix. */
+interface RowAt {
+  pointer: Pointer;
+  row: number;
+}
+/** The latest save-plan operation and the current-plan lineage of one task's
+ * committed prefix. Admissions are locators re-read from the original journal,
+ * never copied graphs or plans. */
+export interface PlanFoldState {
+  savePlan: {
+    at: RowAt;
+    reviewed: boolean;
+    publication: PublicationState;
+  } | null;
+  graphIdentity: string;
+  lineage: { at: RowAt | null; progress: LineageProgress };
+}
+export class PlanFold {
+  operation: OperationState | null = null;
+  graphIdentity = "";
+  private savePlanAt: RowAt | null = null;
+  private lineageAt: RowAt | null = null;
+  constructor(readonly lineage: TaskPublicationLineage | null) {}
+  apply(batch: LocatedBatch, taskId: string): void {
+    batch.rows.forEach((row, index) => {
+      const value = row.value;
+      if (
+        value.kind === "admission" &&
+        value.intent.identity.kind === "action" &&
+        value.intent.identity.action.kind === "save-plan" &&
+        value.intent.identity.action.taskId === taskId
+      ) {
+        if (value.intent.runId !== null)
+          throw new ContractError("corrupt-selected");
+        this.operation = new OperationState(value.intent.operationId);
+        this.graphIdentity = hash(
+          canonicalJson(value.intent.identity.action.graph),
+        );
+        this.savePlanAt = { pointer: batch.pointer, row: index };
+      }
+      this.operation?.apply(row, batch.pointer.seq);
+      if (!this.lineage) return;
+      this.lineage.apply(row, batch.pointer.seq, taskId, this.graphIdentity);
+      if (
+        value.kind === "admission" &&
+        this.lineage.operationId === value.intent.operationId
+      )
+        this.lineageAt = { pointer: batch.pointer, row: index };
+    });
+  }
+  /** Only a fold that also reduced the lineage can be remembered. */
+  state(): PlanFoldState {
+    if (!this.lineage) throw new ContractError("invalid");
+    return {
+      savePlan:
+        this.operation && this.savePlanAt
+          ? { at: this.savePlanAt, ...this.operation.progress() }
+          : null,
+      graphIdentity: this.graphIdentity,
+      lineage: { at: this.lineageAt, progress: this.lineage.progress() },
+    };
+  }
+  /** `read` returns the original row at a locator within the remembered prefix. */
+  static resumed(
+    state: PlanFoldState,
+    withLineage: boolean,
+    read: (at: RowAt) => import("./types.ts").JournalRow,
+  ): PlanFold {
+    let lineage: TaskPublicationLineage | null = null;
+    if (withLineage) {
+      const row = state.lineage.at && read(state.lineage.at).value;
+      if (row && row.kind !== "admission") throw new ContractError("invalid");
+      lineage = TaskPublicationLineage.resumed(
+        row ? row.intent : null,
+        state.lineage.progress,
+      );
+    }
+    const fold = new PlanFold(lineage);
+    fold.lineageAt = state.lineage.at;
+    fold.graphIdentity = state.graphIdentity;
+    if (!state.savePlan) {
+      if (state.graphIdentity !== "") throw new ContractError("invalid");
+      return fold;
+    }
+    const v = read(state.savePlan.at).value;
+    if (
+      v.kind !== "admission" ||
+      v.intent.identity.kind !== "action" ||
+      v.intent.identity.action.kind !== "save-plan" ||
+      hash(canonicalJson(v.intent.identity.action.graph)) !==
+        state.graphIdentity
+    )
+      throw new ContractError("invalid");
+    fold.operation = OperationState.resumed(
+      v.intent.operationId,
+      { intent: v.intent, record: v.record },
+      state.savePlan,
+    );
+    fold.savePlanAt = state.savePlan.at;
+    return fold;
+  }
+}
+/** The task's plan fold through `snapshot`, resumed from its newest valid
+ * remembered state (re-reading its admission locators) or folded from the original
+ * chain. The lineage is reduced only when a current plan is being proven. */
+export function planFold(
+  files: HistoryFiles,
+  taskId: string,
+  snapshot: string,
+  budget: HistoryReadBudget,
+  navigation: HistoryNavigation,
+  withLineage: boolean,
+): PlanFold {
+  navigation.snapshot(snapshot, budget);
+  const read = (at: RowAt) => {
+    if (BigInt(at.pointer.seq) > BigInt(snapshot))
+      throw new ContractError("invalid");
+    const row = navigation.batch(at.pointer, budget).rows[at.row];
+    if (!row) throw new ContractError("invalid");
+    return row;
+  };
+  const { base, batches } = resumeTaskFold(
+    files,
+    navigation,
+    taskId,
+    snapshot,
+    budget,
+    (state) => PlanFold.resumed(state.plan, withLineage, read),
+  );
+  const fold =
+    base ?? new PlanFold(withLineage ? new TaskPublicationLineage() : null);
+  for (const batch of batches) fold.apply(batch, taskId);
+  return fold;
+}
+/** The task's latest actual Start/Generate run through `snapshot`, resumed from
+ * its newest remembered fold state; never an old RAM target. */
+export function latestTaskRun(
+  files: HistoryFiles,
+  taskId: string,
+  snapshot: string,
+  budget: HistoryReadBudget,
+  navigation = new HistoryNavigation(files),
+): string | null {
+  navigation.snapshot(snapshot, budget);
+  const { base, batches } = resumeTaskFold(
+    files,
+    navigation,
+    taskId,
+    snapshot,
+    budget,
+    (state) => state.run,
+  );
+  let latest = base ?? null;
+  for (const batch of batches)
+    for (const row of batch.rows) {
+      const v = row.value;
+      if (
+        v.kind === "admission" &&
+        v.intent.identity.kind === "action" &&
+        v.intent.identity.expected.task?.id === taskId &&
+        (v.intent.identity.action.kind === "start" ||
+          v.intent.identity.action.kind === "generate-plan")
+      )
+        latest = v.intent.runId;
+    }
+  return latest;
+}
 export class HistoryReader {
   private cached?: {
     key: string;
@@ -82,7 +256,7 @@ export class HistoryReader {
   admission(runId: string, snapshotSeq: string): RunAdmission {
     decodeId(runId);
     decodeSequence(snapshotSeq);
-    const budget = new HistoryReadBudget();
+    const budget = HistoryReadBudget.authority();
     this.navigation.snapshot(snapshotSeq, budget);
     const batches = this.navigation.entityBatches(runId, snapshotSeq, budget);
     const state = batches
@@ -104,35 +278,16 @@ export class HistoryReader {
   ): PublishedPlan | null {
     decodeId(taskId);
     decodeSequence(snapshotSeq);
-    const budget = new HistoryReadBudget();
-    this.navigation.snapshot(snapshotSeq, budget);
-    const batches =
-      this.navigation.entityBatches(taskId, snapshotSeq, budget) ??
-      this.navigation.scanSnapshot(snapshotSeq, budget);
-    let operation: OperationState | null = null;
-    const lineage = new TaskPublicationLineage();
-    let graphIdentity = "";
-    for (const batch of batches) {
-      for (const row of batch.rows) {
-        const value = row.value;
-        if (
-          value.kind === "admission" &&
-          value.intent.identity.kind === "action" &&
-          value.intent.identity.action.kind === "save-plan" &&
-          value.intent.identity.action.taskId === taskId
-        ) {
-          if (value.intent.runId !== null)
-            throw new ContractError("corrupt-selected");
-          operation = new OperationState(value.intent.operationId);
-          graphIdentity = hash(
-            canonicalJson(value.intent.identity.action.graph),
-          );
-        }
-        operation?.apply(row, batch.pointer.seq);
-        if (current)
-          lineage.apply(row, batch.pointer.seq, taskId, graphIdentity);
-      }
-    }
+    const budget = HistoryReadBudget.authority();
+    const fold = planFold(
+      this.files,
+      taskId,
+      snapshotSeq,
+      budget,
+      this.navigation,
+      !!current,
+    );
+    const { operation, lineage } = fold;
     if (!operation) return null;
     const command = operation.command;
     if (
@@ -145,7 +300,7 @@ export class HistoryReader {
       throw new ContractError("conflict");
     const { graph, plan } = command.intent.identity.action;
     const ref = graph.plan;
-    const detail = this.selected(
+    const { detail, bytes: text } = this.planText(
       {
         storeId: this.storeId,
         scope: { kind: "task", id: taskId },
@@ -171,15 +326,13 @@ export class HistoryReader {
       ref.bytes > 32768
     )
       throw new ContractError("corrupt-selected");
-    const chunks: Buffer[] = [];
-    for (const part of this.parts(detail, snapshotSeq, budget))
-      chunks.push(part.bytes);
-    if (Buffer.concat(chunks).toString("utf8") !== plan)
+    if (text.toString("utf8") !== plan)
       throw new ContractError("corrupt-selected");
+    // A current proof always folded the lineage (planFold withLineage).
     const publication = current
-      ? lineage.current()
+      ? lineage?.current()
       : operation.publicationExpected();
-    if (!publication.identity) throw new ContractError("corrupt-selected");
+    if (!publication?.identity) throw new ContractError("corrupt-selected");
     if (
       current &&
       (current.identity !== publication.identity ||
@@ -208,28 +361,18 @@ export class HistoryReader {
     taskId: string,
     runId: string,
     snapshotSeq: string,
-    budget = new HistoryReadBudget(),
+    budget = HistoryReadBudget.authority(),
   ): RunState {
     decodeId(taskId);
     decodeId(runId);
     decodeSequence(snapshotSeq);
-    this.navigation.snapshot(snapshotSeq, budget);
-    const batches = () =>
-      this.navigation.entityBatches(taskId, snapshotSeq, budget) ??
-      this.navigation.scanSnapshot(snapshotSeq, budget);
-    let latest: string | null = null;
-    for (const batch of batches())
-      for (const row of batch.rows) {
-        const v = row.value;
-        if (
-          v.kind === "admission" &&
-          v.intent.identity.kind === "action" &&
-          v.intent.identity.expected.task?.id === taskId &&
-          (v.intent.identity.action.kind === "start" ||
-            v.intent.identity.action.kind === "generate-plan")
-        )
-          latest = v.intent.runId;
-      }
+    const latest = latestTaskRun(
+      this.files,
+      taskId,
+      snapshotSeq,
+      budget,
+      this.navigation,
+    );
     if (latest !== runId) throw new ContractError("stale");
     const state = new RunState(runId);
     const runBatches =
@@ -251,13 +394,13 @@ export class HistoryReader {
   /** Review displays the selected execution, not a prospective/default next Start
    * or a later saved graph. Current raw-task authority remains independently bound. */
   reviewSelection(taskId: string, runId: string, snapshotSeq: string) {
-    const budget = new HistoryReadBudget();
+    const budget = HistoryReadBudget.authority();
     const run = this.reviewRun(taskId, runId, snapshotSeq, budget);
     if (!run.admission) throw new ContractError("corrupt-selected");
     const { graph } = this.files.readAdmission(runId, run.admission, budget);
     if (!graph) return { run, graph, readablePlan: "" }; // Generate is graph-null.
     const ref = graph.plan;
-    const detail = this.selected(
+    const { detail, bytes } = this.planText(
       {
         storeId: this.storeId,
         scope: { kind: "task", id: taskId },
@@ -281,9 +424,6 @@ export class HistoryReader {
       detail.owner.entity.version !== graph.planRevision
     )
       throw new ContractError("corrupt-selected");
-    const bytes = Buffer.concat(
-      [...this.parts(detail, snapshotSeq, budget)].map((p) => p.bytes),
-    );
     return { run, graph, readablePlan: bytes.toString("utf8") };
   }
   async graph(value: GraphReadRequest): Promise<GraphReadResult> {
@@ -559,6 +699,70 @@ export class HistoryReader {
   /** At most one detail's bounded locator metadata is cached. Cache is not an
    * authority: reread every contributing segment and selected artifact before use.
    * No whole transcript/text array or on-read index publication. */
+  /** A whole small retained text and its end detail at the cursor's snapshot.
+   * Its derived content/part indexes, under the validated snapshot, only select
+   * candidates; their ORIGINAL committed chunk batches and artifacts are read,
+   * contiguous from offset 0, and the aggregate content hash is checked. Absent
+   * or faulty indexes fall back to the complete validated-prefix scan. */
+  private planText(
+    cursor: ReadCursor,
+    budget: HistoryReadBudget,
+  ): { detail: RetainedDetail; bytes: Buffer } {
+    const indexed = this.indexedText(cursor, budget);
+    if (indexed) return indexed;
+    const detail = this.selected(cursor, budget);
+    return {
+      detail,
+      bytes: Buffer.concat(
+        [...this.parts(detail, cursor.snapshotSeq, budget)].map((p) => p.bytes),
+      ),
+    };
+  }
+  private indexedText(
+    cursor: ReadCursor,
+    budget: HistoryReadBudget,
+  ): { detail: RetainedDetail; bytes: Buffer } | undefined {
+    const nav = this.navigation,
+      id = cursor.recordId;
+    if (!id) return;
+    try {
+      this.files.assertReadFormat(budget);
+      nav.snapshot(cursor.snapshotSeq, budget);
+      const detail = nav.content(id, cursor.snapshotSeq, budget);
+      if (
+        !detail ||
+        detail.content.version !== cursor.recordVersion ||
+        detail.content.field !== cursor.field
+      )
+        return;
+      const pieces: Buffer[] = [];
+      let end = 0;
+      if (detail.content.bytes) {
+        const count = nav.partCount(id, budget);
+        for (let part = 0; part < count; part++) {
+          const chunks = nav.part(id, part, cursor.snapshotSeq, budget);
+          if (!chunks?.length) return;
+          const bytes = this.files.readArtifact(chunks[0].artifact, budget);
+          for (const c of chunks) {
+            if (c.offset !== end || c.start + c.length > bytes.length) return;
+            pieces.push(bytes.subarray(c.start, c.start + c.length));
+            end += c.length;
+          }
+        }
+      }
+      const text = Buffer.concat(pieces);
+      if (
+        end !== detail.content.bytes ||
+        createHash("sha256").update(text).digest("hex") !==
+          detail.content.sha256
+      )
+        return;
+      return { detail, bytes: text };
+    } catch {
+      budget.reserve(0); // Exhaustion stays inconclusive; an index fault scans.
+      return;
+    }
+  }
   *parts(
     detail: RetainedDetail,
     snapshotSeq: string,

@@ -9,7 +9,9 @@ import {
   useRef,
   useState,
 } from "react";
+import { FiArrowDown } from "react-icons/fi";
 import { usePage } from "../../history/use-page";
+import { useT } from "../../i18n/locale";
 import {
   applyPlan,
   getPlaceholderHeight,
@@ -32,6 +34,7 @@ function WindowedMessages({
   client: ServiceClient;
   seed: ListRequest;
 }) {
+  const { t } = useT();
   const scrollRef = useRef<HTMLDivElement>(null),
     stickRef = useRef(true);
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
@@ -141,7 +144,7 @@ function WindowedMessages({
       </div>
       <button
         type="button"
-        className="follow-button"
+        className="scroll-bottom"
         onClick={() => {
           if (scrollRef.current) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -149,7 +152,8 @@ function WindowedMessages({
           }
         }}
       >
-        Latest on loaded page
+        <FiArrowDown aria-hidden="true" />
+        {t("Latest on loaded page")}
       </button>
     </div>
   );
@@ -161,6 +165,7 @@ export function MessageList({
   client: ServiceClient;
   seed: ListRequest;
 }) {
+  const { t } = useT();
   const pager = usePage(client, { ...seed, reader: "messages" }),
     page = pager.page;
   return (
@@ -169,9 +174,10 @@ export function MessageList({
       {page && !("kind" in page) && (
         <>
           {page.records.length === 0 && (
-            <p>
-              No message records on this page
-              {page.next ? "; more history remains." : "."}
+            <p className="empty-note panel-empty">
+              {page.next
+                ? t("No message records on this page; more history remains.")
+                : t("No message records on this page.")}
             </p>
           )}
           <WindowedMessages

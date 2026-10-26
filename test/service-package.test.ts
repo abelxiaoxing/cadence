@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import ts from "typescript";
 import { expect, it } from "vitest";
 import { auditNotices } from "../scripts/audit-notices.mjs";
@@ -23,9 +23,10 @@ it("reviewed package closes native and maintained worker imports without a termi
     );
     const next = (specifier: string) => {
       if (!specifier.startsWith(".")) return;
-      const path = resolve(root, dirname(name), specifier);
-      expect(path.startsWith(`${root}/`)).toBe(true);
-      visit(path.slice(root.length + 1));
+      // Reviewed members use "/"; Windows resolves with "\\".
+      const path = relative(root, resolve(root, dirname(name), specifier));
+      expect(path && !path.startsWith("..") && !isAbsolute(path)).toBe(true);
+      visit(path.split(sep).join("/"));
     };
     source.forEachChild((node) => {
       if (
@@ -65,7 +66,7 @@ it("reviewed package closes native and maintained worker imports without a termi
   for (const entry of [
     "src/index.ts",
     "src/sdk-worker.mjs",
-    "src/install-config.mjs",
+    "src/cadence-service.mjs",
   ])
     visit(entry);
   expect(visited.has("src/task-controller.ts")).toBe(false);
@@ -124,7 +125,9 @@ it("verify includes actual browser once, separate web tests, Agent checks and re
   ])
     expect(pkg.scripts.verify).toContain(`bun run ${route}`);
   expect(pkg.scripts.verify.match(/bun run test:browser/g)).toHaveLength(1);
-  expect(pkg.scripts.postinstall).toBe("node src/install-config.mjs");
+  // npm 12 and Bun skip dependency install scripts by default; none ship.
+  for (const hook of ["preinstall", "install", "postinstall", "prepare"])
+    expect(pkg.scripts[hook]).toBeUndefined();
   expect(readFileSync(join(root, "vitest.config.ts"), "utf8")).not.toContain(
     "e2e",
   );

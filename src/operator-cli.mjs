@@ -136,11 +136,8 @@ function safeDirectory(path, create = false, inspectExisting) {
     at = join(at, part);
     let existing;
     try {
-      const st = lstatSync(at);
-      if (!st.isDirectory())
-        throw new Error("Unsafe directory");
       const checked = lstatSync(at);
-      if (checked.isSymbolicLink() || inspectExisting && !checked.isDirectory())
+      if (!checked.isDirectory() || checked.isSymbolicLink())
         throw new Error("Unsafe directory");
       existing = checked;
     } catch (error) {
@@ -154,7 +151,8 @@ function safeDirectory(path, create = false, inspectExisting) {
         if (!object(mkdirError) || mkdirError.code !== "EEXIST")
           throw mkdirError;
       }
-      if (!lstatSync(at).isDirectory() || lstatSync(at).isSymbolicLink())
+      const created = lstatSync(at);
+      if (!created.isDirectory() || created.isSymbolicLink())
         throw new Error("Unsafe directory");
     }
     if (existing)
@@ -162,13 +160,29 @@ function safeDirectory(path, create = false, inspectExisting) {
   }
   return true;
 }
-function readBounded(path, max) {
+var transientWindows = new Set(["EPERM", "EACCES", "EBUSY"]);
+function retryWindowsFileOperation(operation, recheck) {
+  if (process.platform !== "win32")
+    return operation();
+  const deadline = performance.now() + 2000;
+  for (let delay = 2;; delay = Math.min(delay * 2, 50)) {
+    try {
+      return operation();
+    } catch (error) {
+      if (!object(error) || !transientWindows.has(String(error.code)) || performance.now() >= deadline)
+        throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+      recheck?.();
+    }
+  }
+}
+function readBounded(path, max, packaged = false) {
   if (!safeDirectory(dirname(path)))
     return;
   let fd;
   try {
     const st = lstatSync(path);
-    if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size > max)
+    if (!st.isFile() || st.isSymbolicLink() || !packaged && st.nlink !== 1 || st.size > max)
       throw new Error("Unsafe or oversized file");
     fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   } catch (error) {
@@ -178,7 +192,7 @@ function readBounded(path, max) {
   }
   try {
     const st = fstatSync(fd);
-    if (!st.isFile() || st.nlink !== 1 || st.size > max)
+    if (!st.isFile() || !packaged && st.nlink !== 1 || st.size > max)
       throw new Error("Unsafe or oversized file");
     const buffer = Buffer.alloc(max + 1);
     let size = 0;
@@ -256,6 +270,23 @@ function canonicalAmbientRoot(path) {
     return join(canonicalAmbientRoot(parent), full.slice(parent.length));
   }
 }
+function privateRootFor(canonicalRoot, stateHome) {
+  return join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1", createHash("sha256").update(canonicalRoot).digest("hex"));
+}
+function contains(root, path) {
+  const within = relative(root, resolve(path));
+  return !within || !within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within);
+}
+function stateHomeInside(root, stateHome = defaultStateHome()) {
+  const canonical = realpathSync(root);
+  return contains(canonical, privateRootFor(canonical, stateHome));
+}
+var LANDING_WORKSPACE = "cadence";
+function effectiveWorkspace(requested, stateHome, home = homedir()) {
+  if (!stateHomeInside(resolveWorkspace(requested).root, stateHome))
+    return { workspace: requested, redirected: false };
+  return { workspace: join(home, LANDING_WORKSPACE), redirected: true };
+}
 
 class TaskStore {
   root;
@@ -264,9 +295,8 @@ class TaskStore {
   constructor(root, stateHome = defaultStateHome()) {
     this.root = realpathSync(root);
     this.tasks = join(this.root, ".cadence", "assistant", "tasks");
-    this.privateRoot = join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1", createHash("sha256").update(this.root).digest("hex"));
-    const within = relative(this.root, resolve(this.privateRoot));
-    if (!within || !within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within))
+    this.privateRoot = privateRootFor(this.root, stateHome);
+    if (contains(this.root, this.privateRoot))
       throw new Error("Private state home must be outside the working copy");
   }
   get lockPath() {
@@ -318,7 +348,7 @@ class TaskStore {
     };
     let fd;
     try {
-      fd = openSync(this.lockPath, "wx", 384);
+      fd = retryWindowsFileOperation(() => openSync(this.lockPath, "wx", 384));
     } catch {
       throw new Error("Checkout busy or unresolved lock; inspect and explicitly recover only a dead owner");
     }
@@ -338,7 +368,7 @@ class TaskStore {
     if (lock.pid !== process.pid || lock.host !== hostname())
       throw new Error("Only the owning process may release a lock");
     this.assertOwner(lock);
-    unlinkSync(this.lockPath);
+    retryWindowsFileOperation(() => unlinkSync(this.lockPath), () => this.assertOwner(lock));
   }
   recover(expected, acknowledgeEscapedProcesses) {
     if (!acknowledgeEscapedProcesses || expected.host !== hostname())
@@ -418,7 +448,12 @@ class TaskStore {
       const latest = readBounded(join(dir, "task.json"), MAX_RECORD_BYTES);
       if ((latest ? contentIdentity(latest) : undefined) !== expectedIdentity)
         throw new Error("Task content changed; replacement preserved without overwrite");
-      renameSync(temporary, join(dir, "task.json"));
+      retryWindowsFileOperation(() => renameSync(temporary, join(dir, "task.json")), () => {
+        this.assertOwner(lock);
+        const now = readBounded(join(dir, "task.json"), MAX_RECORD_BYTES);
+        if ((now ? contentIdentity(now) : undefined) !== expectedIdentity)
+          throw new Error("Task content changed; replacement preserved without overwrite");
+      });
       return next;
     } finally {
       if (!held)
@@ -459,8 +494,9 @@ class TaskStore {
 var TASK_CONFIG_SCHEMA = "cadence-assistant-checks/1";
 
 // src/operator-tools.ts
+var observed = (cwd) => resolveWorkspace(effectiveWorkspace(cwd).workspace);
 function inspectConsumer(cwd) {
-  const workspace = resolveWorkspace(cwd);
+  const workspace = observed(cwd);
   const store = new TaskStore(workspace.root);
   const tasks = store.list();
   const checks = store.checks();
@@ -481,7 +517,7 @@ function inspectConsumer(cwd) {
   };
 }
 function inspectRuns(cwd) {
-  const workspace = resolveWorkspace(cwd);
+  const workspace = observed(cwd);
   const store = new TaskStore(workspace.root);
   return {
     ok: true,
