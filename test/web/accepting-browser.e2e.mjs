@@ -144,7 +144,7 @@ for (const route of ["loopback", "https"])
       const created = await published(await confirm("create"));
       const taskId = created.created.taskId;
       await p
-        .locator(".panel-left")
+        .locator(".task-list > .page-controls")
         .getByRole("button", { name: "Observe a new snapshot" })
         .click();
       await p
@@ -208,6 +208,7 @@ for (const route of ["loopback", "https"])
       await other
         .getByRole("button", { name: "Observe current state", exact: true })
         .click();
+      await other.locator(".view-menu > summary").click();
       await other
         .getByRole("button", { name: "outcomes", exact: true })
         .click();
@@ -325,12 +326,13 @@ for (const route of ["loopback", "https"])
       ]) {
         if (scopeLabel === "run")
           await p
-            .getByRole("button", { name: "start settled", exact: true })
+            .getByRole("button", { name: "start completed", exact: true })
             .click();
         if (scopeLabel === "child")
           await p
-            .getByRole("button", { name: "assignment-1 settled", exact: true })
+            .getByRole("button", { name: /assignment-1.*Subagent.*completed/ })
             .click();
+        await p.locator(".view-menu > summary").click();
         await p.getByRole("button", { name: "Export selected scope" }).click();
         const dialog = p.getByRole("dialog");
         await dialog.getByLabel("Format").selectOption(format);

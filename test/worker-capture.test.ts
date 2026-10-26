@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { Type } from "typebox";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   legacyWorkerEnvelope,
   runProcess,
@@ -18,7 +18,11 @@ import {
   CaptureState,
   SdkCapture,
 } from "../src/worker-capture.mjs";
-import { LIMITS, type NativeSettlement } from "../src/worker-public.mjs";
+import {
+  type CaptureEvent,
+  LIMITS,
+  type NativeSettlement,
+} from "../src/worker-public.mjs";
 import {
   DetailSanitizer,
   sanitizeData,
@@ -857,3 +861,102 @@ it("ordinary simultaneous partial declarations do not spend megabyte leases on e
   await capture.final();
   expect(emitter.queue.bytes).toBe(0);
 });
+
+// Actual HTTP failure and public SDK, not an injected successful transcript.
+it("a provider HTTP error retains its error message and reports prompt failure, not capture corruption", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "cadence-prompt-failure-"));
+  const key = "fabricated-prompt-failure-canary";
+  let contacts = 0;
+  const server = createServer(async (req, res) => {
+    for await (const _ of req) {
+      /* bounded fixture request drain */
+    }
+    contacts++;
+    res.writeHead(400, {
+      "content-type": "application/json",
+      connection: "close",
+    });
+    res.end(
+      JSON.stringify({ error: { message: `fabricated failure ${key}` } }),
+    );
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("fixture");
+  const material = legacyWorkerEnvelope({
+    cwd,
+    kind: "research",
+    instructions: "Readonly fixture",
+    prompt: "Observe the failure",
+    auth: { ok: true, apiKey: key },
+    model: {
+      id: "fixed",
+      name: "Fixture",
+      provider: "fixture",
+      api: "openai-completions",
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 8192,
+      maxTokens: 4096,
+    },
+  });
+  const events: CaptureEvent[] = [];
+  const accept = CaptureState.prototype.accept;
+  const observer = vi
+    .spyOn(CaptureState.prototype, "accept")
+    .mockImplementation(function (this: CaptureState, ...args) {
+      const frame = Reflect.apply(accept, this, args);
+      events.push(frame.event);
+      return frame;
+    });
+  try {
+    const result = await runProcess({
+      command: process.execPath,
+      args: [
+        "--import",
+        new URL("./helpers/lightweight-sdk-guard.mjs", import.meta.url).href,
+        fileURLToPath(new URL("../src/sdk-worker.mjs", import.meta.url)),
+      ],
+      cwd,
+      timeoutMs: 15000,
+      signal: new AbortController().signal,
+      env: safeChildEnv(),
+      protocol: true,
+      childRunId: material.request.childRunId,
+      input: JSON.stringify(material),
+    });
+    expect(result).toMatchObject({
+      outcome: "failed",
+      exitCode: 1,
+      signal: null,
+      closed: true,
+    });
+    expect(contacts).toBe(1);
+    expect(events).toContainEqual({ kind: "worker-failure", code: "prompt" });
+    expect(events).not.toContainEqual({
+      kind: "worker-failure",
+      code: "capture",
+    });
+    expect(
+      events.some((e) => e.kind === "message-end" && e.stopReason === "error"),
+    ).toBe(true);
+    expect(events.some((e) => e.kind === "final")).toBe(false);
+    const diagnostics = result.output
+      .split("\n")
+      .filter((line) => line.startsWith("{"))
+      .map((line) => JSON.parse(line));
+    expect(diagnostics.at(-1)).toMatchObject({
+      stage: "assistant-final",
+      class: "terminal-incomplete",
+      terminalStopReason: "error",
+      cleanupSettled: true,
+    });
+    expect(JSON.stringify(events) + result.output).not.toContain(key);
+  } finally {
+    observer.mockRestore();
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}, 20000);

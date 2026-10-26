@@ -49,6 +49,10 @@ export interface AutostartSystem extends OwnerControl {
   /** Package root containing src/service-cli.mjs. */
   root: string;
   unit: string;
+  /** Linux manager scope. Undefined keeps the legacy per-user adapter. */
+  scope?: "user" | "system";
+  /** Injected filesystem destination for isolated manager tests, never a CLI option. */
+  unitDirectory?: string;
   uid: number | undefined;
   systemctl(args: string[]): Command;
   linger(): boolean | undefined;
@@ -71,6 +75,7 @@ export interface AutostartResult {
   redirectedFrom?: string;
   enabled?: string;
   linger?: LingerState;
+  scope?: "system";
 }
 export function wscript(env: NodeJS.ProcessEnv): string {
   const root = env.SystemRoot;
@@ -80,7 +85,17 @@ export function wscript(env: NodeJS.ProcessEnv): string {
     "wscript.exe",
   );
 }
-export function hostSystem(root: string, owner: OwnerControl): AutostartSystem {
+export function hostSystem(
+  root: string,
+  owner: OwnerControl,
+  selection: { scope?: "user" | "system"; name?: string } = {},
+): AutostartSystem {
+  const scope =
+    selection.scope ??
+    (process.platform === "linux" && process.getuid?.() === 0
+      ? "system"
+      : "user");
+  const unit = serviceUnit(selection.name);
   const run = (command: string, args: string[]) => {
     const r = spawnSync(command, args, {
       encoding: "utf8",
@@ -95,9 +110,11 @@ export function hostSystem(root: string, owner: OwnerControl): AutostartSystem {
     home: homedir(),
     node: process.execPath,
     root,
-    unit: UNIT,
+    unit,
+    scope,
     uid: process.getuid?.(),
-    systemctl: (args) => run("systemctl", ["--user", ...args]),
+    systemctl: (args) =>
+      run("systemctl", [scope === "system" ? "--system" : "--user", ...args]),
     linger: () => {
       const r = run("loginctl", [
         "show-user",
@@ -147,6 +164,24 @@ export function hostSystem(root: string, owner: OwnerControl): AutostartSystem {
     },
     ...owner,
   };
+}
+/** Finite names, not systemd specifiers or filesystem paths. */
+export function serviceUnit(name?: string): string {
+  if (name === undefined) return UNIT;
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$/.test(name))
+    throw new ContractError("invalid");
+  return `cadence-${name}.service`;
+}
+export function serviceName(s: AutostartSystem): string | undefined {
+  if (s.unit === UNIT) return undefined;
+  const name = /^cadence-([A-Za-z0-9][A-Za-z0-9_-]{0,47})\.service$/.exec(
+    s.unit,
+  )?.[1];
+  if (!name) throw new ContractError("invalid");
+  return name;
+}
+export function serviceConfigPath(s: AutostartSystem): string {
+  return serverConfigPath(s.home, serviceName(s));
 }
 export function expandHome(value: string, home: string): string {
   if (value === "~") return home;
@@ -205,6 +240,9 @@ export function sdkPackages(root: string): string[] | undefined {
 /** Package-owned units live in the user data path, so `systemctl --user mask`
  * and `edit` in ~/.config/systemd/user keep overriding what restarts rewrite. */
 export function unitPath(s: AutostartSystem): string {
+  serviceName(s); // Validate even injected manager inputs before composing a path.
+  if (s.scope === "system")
+    return join(s.unitDirectory ?? "/etc/systemd/system", s.unit);
   const data = s.env.XDG_DATA_HOME;
   return join(
     data && isAbsolute(data) ? data : join(s.home, ".local", "share"),
@@ -230,6 +268,8 @@ export function servicePath(value: string | undefined): string {
 /** systemd and launchd start services with a minimal environment. */
 export function serviceEnvironment(s: AutostartSystem): [string, string][] {
   const out: [string, string][] = [["PATH", servicePath(s.env.PATH)]];
+  if (s.scope === "system")
+    out.push(["HOME", s.home], ["USER", "root"], ["LOGNAME", "root"]);
   for (const key of ["LANG", "LC_ALL"]) {
     const value = s.env[key];
     if (value) out.push([key, value]);
@@ -253,6 +293,7 @@ const quoted = (value: string) =>
 const argument = (value: string) => quoted(value).replaceAll("$", "$$$$");
 
 export interface UnitInput {
+  system?: boolean;
   node: string;
   cli: string;
   workspace: string;
@@ -267,7 +308,9 @@ export function buildUnit(u: UnitInput): string {
     [u.node, u.cli, ...args].map(argument).join(" ");
   return [
     `${MARKER}; \`cadence server install\` and \`restart\` rewrite this file.`,
-    "# Override with `systemctl --user edit cadence`; opt out with `systemctl --user disable --now cadence` or `mask`.",
+    u.system
+      ? "# System service (root); manage explicitly with cadence server <action> --system. No user manager or linger."
+      : "# Override with `systemctl --user edit cadence`; opt out with `systemctl --user disable --now cadence` or `mask`.",
     "[Unit]",
     "Description=Cadence shared task service and WebUI",
     "Documentation=https://github.com/abelxiaoxing/cadence/blob/main/docs/service-management.md",
@@ -280,6 +323,7 @@ export function buildUnit(u: UnitInput): string {
     "",
     "[Service]",
     "Type=simple",
+    ...(u.system ? ["User=root"] : []),
     `WorkingDirectory=${specifiers(u.workspace)}`,
     ...u.environment.map(([k, v]) => `Environment=${quoted(`${k}=${v}`)}`),
     `ExecStart=${command(["start", "--foreground", "--workspace", u.workspace, "--server-config", u.serverConfig])}`,
@@ -292,7 +336,7 @@ export function buildUnit(u: UnitInput): string {
     "RestartSec=10",
     "",
     "[Install]",
-    "WantedBy=default.target",
+    u.system ? "WantedBy=multi-user.target" : "WantedBy=default.target",
     "",
   ].join("\n");
 }
@@ -315,7 +359,7 @@ export function readGenerated(
     throw error;
   }
 }
-function unitWorkspace(text: string | undefined): string | undefined {
+export function unitWorkspace(text: string | undefined): string | undefined {
   return text?.match(/^WorkingDirectory=(.+)$/m)?.[1].replaceAll("%%", "%");
 }
 function directory(path: string): boolean {
@@ -343,6 +387,7 @@ export function selectWorkspace(
   s: AutostartSystem,
   requested: string | undefined,
   kept: string | undefined,
+  create = true,
 ): { workspace: string; redirectedFrom?: string } {
   let chosen: string | undefined;
   if (requested) {
@@ -353,7 +398,7 @@ export function selectWorkspace(
   const landing = chosen
     ? effectiveWorkspace(chosen, serviceStateHome(s), s.home)
     : { workspace: join(s.home, LANDING_WORKSPACE), redirected: false };
-  if (landing.workspace !== chosen)
+  if (create && landing.workspace !== chosen)
     mkdirSync(landing.workspace, { recursive: true });
   return landing.redirected
     ? { workspace: landing.workspace, redirectedFrom: chosen }
@@ -420,7 +465,8 @@ export function configureAutostart(
   requested?: string,
   linger = false,
 ): AutostartResult {
-  if (s.platform !== "linux") return { status: "unsupported" };
+  if (s.platform !== "linux" || s.scope === "system")
+    return { status: "unsupported" };
   if (s.systemctl(["show-environment"]).status !== 0)
     return { status: "unavailable" };
   const path = unitPath(s);
@@ -440,7 +486,7 @@ export function configureAutostart(
     node: s.node,
     cli: join(s.root, "src", "service-cli.mjs"),
     workspace,
-    serverConfig: serverConfigPath(s.home),
+    serverConfig: serviceConfigPath(s),
     agentDir,
     sdk,
     environment: serviceEnvironment(s),
@@ -449,7 +495,12 @@ export function configureAutostart(
   const active = s.systemctl(["is-active", "--quiet", s.unit]).status === 0;
   // Stop with the loaded definition, so a changed workspace or Node path still
   // reaches the old owner's orderly ExecStop before the file is replaced.
-  if (active) s.systemctl(["stop", s.unit]);
+  if (active && s.systemctl(["stop", s.unit]).status !== 0)
+    return {
+      status: "unconfirmed",
+      unit: path,
+      workspace: unitWorkspace(previous),
+    };
   write(path, content);
   s.systemctl(["daemon-reload"]);
   const result = {
@@ -475,7 +526,8 @@ export function configureAutostart(
 }
 /** ExecStop is the authenticated orderly Stop; the unit stays enabled. */
 export function stopAutostart(s: AutostartSystem): AutostartResult {
-  if (s.platform !== "linux") return { status: "unsupported" };
+  if (s.platform !== "linux" || s.scope === "system")
+    return { status: "unsupported" };
   const path = unitPath(s);
   const previous = readGenerated(path, MARKER);
   if (previous === null) return { status: "foreign", unit: path };
@@ -491,7 +543,8 @@ export function stopAutostart(s: AutostartSystem): AutostartResult {
 /** Disable through ExecStop's orderly route, then delete only our own file.
  * Workspace, state home, linger and Pi sources stay untouched. */
 export function removeAutostart(s: AutostartSystem): AutostartResult {
-  if (s.platform !== "linux") return { status: "unsupported" };
+  if (s.platform !== "linux" || s.scope === "system")
+    return { status: "unsupported" };
   const path = unitPath(s);
   const previous = readGenerated(path, MARKER);
   if (previous === null) return { status: "foreign", unit: path };
@@ -506,7 +559,8 @@ export function removeAutostart(s: AutostartSystem): AutostartResult {
   return { status: "removed", unit: path };
 }
 export function autostartStatus(s: AutostartSystem): AutostartResult {
-  if (s.platform !== "linux") return { status: "unsupported" };
+  if (s.platform !== "linux" || s.scope === "system")
+    return { status: "unsupported" };
   const path = unitPath(s);
   const previous = readGenerated(path, MARKER);
   if (previous === null) return { status: "foreign", unit: path };

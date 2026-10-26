@@ -210,15 +210,19 @@ function readBounded(path, max, packaged = false) {
   }
 }
 function gitEnvironment() {
+  const root = process.getuid?.() === 0;
   return {
-    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))),
+    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_") && !(root && name === "SUDO_UID"))),
     GIT_OPTIONAL_LOCKS: "0",
     LC_ALL: "C"
   };
 }
+function gitArguments(args) {
+  return process.platform !== "win32" && process.getuid?.() === 0 ? ["-c", "safe.directory=", "-c", "core.fsmonitor=false", ...args] : args;
+}
 function resolveWorkspace(cwd) {
   const actual = realpathSync(cwd);
-  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+  const result = spawnSync("git", gitArguments(["rev-parse", "--show-toplevel"]), {
     cwd: actual,
     env: gitEnvironment(),
     encoding: "utf8",
@@ -281,8 +285,13 @@ function stateHomeInside(root, stateHome = defaultStateHome()) {
   const canonical = realpathSync(root);
   return contains(canonical, privateRootFor(canonical, stateHome));
 }
+function privateWorkspace(requested, stateHome = defaultStateHome()) {
+  return contains(join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1"), canonicalAmbientRoot(requested));
+}
 var LANDING_WORKSPACE = "cadence";
 function effectiveWorkspace(requested, stateHome, home = homedir()) {
+  if (privateWorkspace(requested, stateHome))
+    throw new Error("Private state cannot be a workspace");
   if (!stateHomeInside(resolveWorkspace(requested).root, stateHome))
     return { workspace: requested, redirected: false };
   return { workspace: join(home, LANDING_WORKSPACE), redirected: true };
@@ -294,6 +303,8 @@ class TaskStore {
   privateRoot;
   constructor(root, stateHome = defaultStateHome()) {
     this.root = realpathSync(root);
+    if (privateWorkspace(this.root, stateHome))
+      throw new Error("Private state cannot be a workspace");
     this.tasks = join(this.root, ".cadence", "assistant", "tasks");
     this.privateRoot = privateRootFor(this.root, stateHome);
     if (contains(this.root, this.privateRoot))

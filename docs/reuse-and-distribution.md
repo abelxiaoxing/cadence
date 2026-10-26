@@ -8,9 +8,9 @@ Repository `provenance/webui-reuse.json` records source/destination hashes and e
 
 | Source family                        | Package adaptation                                                       |
 | ------------------------------------ | ------------------------------------------------------------------------ |
-| App, TopBar, panels, layout, drawers | Three-pane workspace, pi topbar/statusbar chrome and phone navigation    |
-| conv-groups, PlanBoard               | Task/run/child tree, editable finite graph and separate confirmations    |
-| MessageList, Message, ToolCallBlock  | Paged transcript, stable tool associations and retained detail           |
+| App, TopBar, panels, layout, drawers | Conversation-first workspace, project/session sidebar and phone drawers  |
+| conv-groups, PlanBoard               | Active/history task and subagent tree, finite graph and explicit consent |
+| MessageList, Message, ToolCallBlock  | Default Markdown transcript, folded metadata and bounded retained detail |
 | Markdown, StreamMarkdown, copy       | Sanitized Markdown/math/code, no script/external-image execution         |
 | FilePreview, SCM presentation        | Readonly observed changes, no Git/file mutation API                      |
 | GlobalSearchModal, search, deep link | Literal durable search, exact versioned hits and scoped export           |

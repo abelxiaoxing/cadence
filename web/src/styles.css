@@ -1746,9 +1746,8 @@ summary:focus-visible,
     order: 3;
     flex: 1 0 100%;
     justify-content: space-between;
-    overflow-x: auto;
-    scrollbar-width: none;
-    /* Room for the focus ring, which the scroll container would clip. */
+    overflow: visible;
+    /* The secondary menu must escape the navigation row on phones. */
     padding: 4px;
   }
   .tb-tab {
@@ -1934,4 +1933,263 @@ summary:focus-visible,
   .ep-toggle {
     min-height: 32px;
   }
+}
+
+/* Conversation-first workspace: pi's project/session hierarchy, with Cadence
+ * authority and retained-source inspection kept at the edges. */
+.view-menu {
+  position: relative;
+  margin: 0;
+}
+.view-menu > summary {
+  list-style: none;
+}
+.view-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.view-menu-items {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  width: 180px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  box-shadow: 0 8px 24px #0006;
+}
+.view-menu-items button {
+  display: flex;
+  width: 100%;
+  justify-content: flex-start;
+  border: 0;
+  background: transparent;
+  padding: 8px 10px;
+  text-transform: capitalize;
+}
+.view-menu-items button[aria-pressed="true"] {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+.inspector-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border-color: transparent;
+}
+@media (min-width: 901px) {
+  .inspector-hidden .drawer-right,
+  .inspector-hidden .main + .resize-handle {
+    display: none;
+  }
+}
+.lp-new {
+  flex: none;
+  padding: 12px 10px 8px;
+}
+.new-conversation {
+  width: 100%;
+  justify-content: flex-start;
+  padding: 9px 12px;
+  background: var(--bg-elev2);
+}
+.lp-section-heading {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+.lp-section-heading:hover:not(:disabled) {
+  background: transparent;
+}
+.lp-count {
+  color: var(--text-faint);
+  font-size: 11px;
+  padding: 0 4px;
+}
+.lp-section.collapsed {
+  flex: none;
+  min-height: 32px;
+}
+.lp-section.projects {
+  flex: none;
+}
+.lp-section.running-conversations {
+  flex: 0 1 auto;
+  max-height: 40%;
+}
+.lp-section.projects .panel-hint {
+  padding: 4px 10px 6px;
+}
+.project-item .session-title {
+  font-weight: 600;
+}
+.session-sub {
+  font-family: var(--sans);
+}
+.conversation-group {
+  padding-block: 2px 8px;
+}
+.conversation-stop {
+  margin: 0 8px 3px 22px;
+  padding: 2px 6px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--red-text);
+  font-size: 10.5px;
+  text-align: left;
+}
+.conversation-tree {
+  margin-left: 6px;
+  border-left: 1px solid var(--border-soft);
+}
+.conversation-tree .session-item {
+  gap: 6px;
+}
+.ep-state {
+  max-width: 76px;
+  overflow-wrap: anywhere;
+}
+.ep-state.partial,
+.ep-state.unknown,
+.ep-state.canceled {
+  color: var(--amber-text);
+}
+.task-conversations {
+  margin-top: 8px;
+}
+.task-conversations > h3 {
+  margin: 10px 8px 6px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 500;
+}
+.retained-conversations .page-controls {
+  padding: 4px 6px;
+}
+.conversation-header {
+  flex: none;
+  min-width: 0;
+  padding: 12px var(--chat-inset) 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.conversation-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.conversation-heading h2 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conversation-heading > button {
+  font-size: 11px;
+  flex: none;
+}
+.conversation-badge {
+  color: var(--accent-text);
+  font-size: 10px;
+  background: var(--accent-soft);
+  border-radius: 5px;
+  padding: 1px 6px;
+}
+.conversation-info {
+  margin: 2px 0 0;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+.conversation-info p {
+  margin: 4px 0;
+}
+.conversation-info summary {
+  color: var(--text-faint);
+}
+.page-controls.compact {
+  gap: 4px;
+  border-bottom: 0;
+  font-size: 10.5px;
+}
+.page-controls.compact > button {
+  padding: 2px 6px;
+}
+.coverage-details {
+  margin: 0;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+.coverage-details > summary {
+  color: var(--text-faint);
+}
+.conversation-update {
+  align-self: center;
+  margin: 4px;
+  color: var(--accent-text);
+}
+.message-field .field-details {
+  margin: 0 0 8px;
+  font-size: 10.5px;
+}
+.message-field .field-details > summary {
+  color: var(--text-faint);
+}
+.message-field .coverage-details {
+  margin-bottom: 8px;
+}
+.message-field [data-retained-field] {
+  font-size: 14px;
+}
+.message-field [data-retained-field] > :first-child {
+  margin-top: 0;
+}
+.message-inspection {
+  margin-top: 12px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 8px;
+}
+.msg-inspect {
+  margin-left: auto;
+}
+.msg-role {
+  color: var(--text-dim);
+}
+
+.page-controls.compact > .coverage-details {
+  flex: 1;
+}
+
+.view-menu-actions {
+  border-top: 1px solid var(--border-soft);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+.view-menu-actions > button {
+  font-size: 11.5px;
+}
+.msg .detail-pane.message-field {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.statusbar-right > .status-item {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 8px;
+}
+.build-part {
+  margin: 0;
+  font-size: inherit;
 }

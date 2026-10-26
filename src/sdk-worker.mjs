@@ -63,6 +63,8 @@ const fail = (where, category) => {
   failure ??= { stage: where, class: category };
   process.exitCode = 1;
   if (first) {
+    // Prompt/preflight/terminal failure is distinct from a capture failure.
+    // A normal provider error can have a completely retained error message.
     if (
       emitter?.state.position.workerSeq &&
       !emitter.state.position.final &&
@@ -77,7 +79,9 @@ const fail = (where, category) => {
                 ? "cleanup"
                 : where === "network"
                   ? "network"
-                  : "capture",
+                  : ["prompt", "preflight", "assistant-final"].includes(where)
+                    ? "prompt"
+                    : "capture",
           })
           .catch(() => {});
       } catch {

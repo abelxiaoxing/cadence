@@ -6,6 +6,7 @@ import {
   canonicalJson,
   decodeLiveEvent,
   decodeScope,
+  decodeSnapshot,
   LIMITS,
   type LiveEvent,
   type Scope,
@@ -13,6 +14,38 @@ import {
 } from "../service-contract.ts";
 import type { HistoryProjection } from "./projection.ts";
 import type { HistoryWriter } from "./writer.ts";
+
+/** Narrow an already observed atomic group, never synthesize a missing run.
+ * Task horizons contain whole parent/assignment groups. Run snapshots contain
+ * that same complete group; child snapshots cannot prove their siblings. The
+ * context and watermark remain the source observation, not renewed consent. */
+export function scopedSnapshot(
+  source: Snapshot,
+  scope: Scope,
+): Snapshot | undefined {
+  if (scope.kind === "task" || source.scope.kind === "child") return;
+  if (
+    !source.runs.some((run) =>
+      scope.kind === "run"
+        ? run.runId === scope.id && run.childRunId === null
+        : run.childRunId === scope.id,
+    )
+  )
+    return;
+  return decodeSnapshot({
+    ...source,
+    scope,
+    runs: source.runs.filter((run) =>
+      scope.kind === "run"
+        ? run.runId === scope.id
+        : run.childRunId === scope.id,
+    ),
+    horizon: {
+      ...source.horizon,
+      historicalRuns: { ...source.horizon.historicalRuns, scope },
+    },
+  });
+}
 
 interface Viewer {
   scope: Scope;
@@ -151,8 +184,15 @@ export class HistoryLive implements LiveProjectionPort {
   }
 
   private async drain(): Promise<void> {
-    const scopes = [...this.pending.values()];
+    const order = { task: 0, run: 1, child: 2 };
+    const scopes = [...this.pending.values()].sort(
+      (a, b) => order[a.kind] - order[b.kind],
+    );
     this.pending.clear();
+    // Only this finite drain's actual snapshots, never prior rings/current
+    // context cached across notification rounds. New commits queue the next
+    // drain while this one runs, so a narrowed observation cannot lose a final.
+    const sources: Snapshot[] = [];
     try {
       for (const scope of scopes) {
         if (this.closed) return;
@@ -163,15 +203,34 @@ export class HistoryLive implements LiveProjectionPort {
           )
         )
           continue;
-        let snapshot: Snapshot;
+        let snapshot: Snapshot | undefined;
+        // Prefer the latest already-observed containing group. Do not rescan
+        // the same task/run and re-observe its checkout/model for every scope.
+        for (let i = sources.length - 1; i >= 0 && !snapshot; i--)
+          snapshot = scopedSnapshot(sources[i], scope);
+        const reused = snapshot !== undefined;
         try {
-          snapshot = await this.projection.snapshot(scope);
+          snapshot ??= await this.projection.snapshot(scope);
         } catch {
           for (const v of this.viewers)
             if (v.scope.id === scope.id)
               this.enqueue(v, this.watermark(v.scope));
           continue;
         }
+        // Retain only originals that can serve viewers in this round. No copy
+        // of every unobserved run ring, nor a second narrowed copy of a group:
+        // at most one page-sized source per viewer (not 200 x 512KiB).
+        if (
+          !reused &&
+          sources.length < LIMITS.viewers &&
+          (scope.kind === "task" ||
+            scopes.some(
+              (s) =>
+                s.kind === "child" &&
+                snapshot.runs.some((r) => r.childRunId === s.id),
+            ))
+        )
+          sources.push(snapshot);
         const key = `${scope.kind}/${scope.id}`,
           old = this.rings.get(key);
         const update = (

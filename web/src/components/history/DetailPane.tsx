@@ -21,11 +21,13 @@ export function DetailPane({
   cursor,
   highlight,
   render,
+  compact = false,
 }: {
   client: ServiceClient;
   cursor: ReadCursor;
   highlight?: ByteRange;
   render?: (text: string) => ReactNode;
+  compact?: boolean;
 }) {
   const { t, tx } = useT();
   const cursorKey = canonicalJson(cursor);
@@ -38,7 +40,9 @@ export function DetailPane({
   const [back, setBack] = useState<ReadCursor[]>([]),
     [busy, setBusy] = useState(false),
     [error, setError] = useState<string>();
-  const [mode, setMode] = useState<"raw" | "markdown">("raw"),
+  const [mode, setMode] = useState<"raw" | "markdown">(
+      compact ? "markdown" : "raw",
+    ),
     [copyState, setCopyState] = useState("");
   const copying = useRef<AbortController | null>(null);
   const textContainer = useRef<HTMLDivElement>(null);
@@ -120,72 +124,82 @@ export function DetailPane({
     );
   };
   return (
-    <section className="detail-pane" aria-label={t("Retained field")}>
-      <div className="detail-identity">
-        <code>{cursor.recordId}</code> v{cursor.recordVersion} /{" "}
-        {cursor.field && tx(cursor.field)} /{" "}
-        {t("snapshot {seq}", { seq: cursor.snapshotSeq })}
-      </div>
-      {highlight && (
-        <p>
-          {t(
-            "Exact hit bytes [{start}, {end}); only this immutable field is highlighted.",
-            { start: highlight.start, end: highlight.end },
-          )}
-        </p>
-      )}
-      <div className="toolbar">
-        <button
-          type="button"
-          onClick={() => setMode((m) => (m === "raw" ? "markdown" : "raw"))}
-        >
-          {mode === "raw" ? t("Markdown page") : t("Raw page")}
-        </button>
-        <button
-          type="button"
-          disabled={!!copying.current}
-          onClick={() => void copy()}
-        >
-          {t("Copy full retained field")}
-        </button>
-        {!!copying.current && (
+    <section
+      className={`detail-pane${compact ? " message-field" : ""}`}
+      aria-label={t("Retained field")}
+    >
+      <details className="field-details" open={compact ? undefined : true}>
+        <summary>{t("Field details")}</summary>
+        <div className="detail-identity">
+          <code>{cursor.recordId}</code> v{cursor.recordVersion} /{" "}
+          {cursor.field && tx(cursor.field)} /{" "}
+          {t("snapshot {seq}", { seq: cursor.snapshotSeq })}
+        </div>
+        {highlight && (
+          <p>
+            {t(
+              "Exact hit bytes [{start}, {end}); only this immutable field is highlighted.",
+              { start: highlight.start, end: highlight.end },
+            )}
+          </p>
+        )}
+        <div className="toolbar">
           <button
             type="button"
-            onClick={() => {
-              copying.current?.abort();
-              copying.current = null;
-              setCopyState(t("Copy canceled; execution unchanged."));
-            }}
+            onClick={() => setMode((m) => (m === "raw" ? "markdown" : "raw"))}
           >
-            {t("Cancel copy")}
+            {mode === "raw" ? t("Markdown page") : t("Raw page")}
           </button>
-        )}
-      </div>
-      <p role="status">{copyState}</p>
+          <button
+            type="button"
+            disabled={!!copying.current}
+            onClick={() => void copy()}
+          >
+            {t("Copy full retained field")}
+          </button>
+          {!!copying.current && (
+            <button
+              type="button"
+              onClick={() => {
+                copying.current?.abort();
+                copying.current = null;
+                setCopyState(t("Copy canceled; execution unchanged."));
+              }}
+            >
+              {t("Cancel copy")}
+            </button>
+          )}
+        </div>
+      </details>
+      {copyState && <p role="status">{copyState}</p>}
       {error && (
         <p role="alert">{t("Detail refused: {error}", { error: tx(error) })}</p>
       )}
       {busy && <p role="status">{t("Reading…")}</p>}
-      {page && <Coverage value={page.coverage} />}
+      {page && <Coverage value={page.coverage} compact={compact} />}
       {page && "kind" in page && (
         <p>{t("Validation in progress. The retained field is not empty.")}</p>
       )}
       {data && (
         <>
-          <p>
-            {t("Bytes {start}–{end} of {total}.", {
-              start: data.range?.start ?? 0,
-              end: data.range?.end ?? 0,
-              total: data.content.bytes,
-            })}{" "}
-            {data.next
-              ? t("More retained data available.")
-              : t("End of field.")}
-          </p>
-          <LocalSearchBar
-            container={textContainer}
-            version={`${data.content.recordId}:${data.content.version}:${data.range?.start ?? 0}:${mode}`}
-          />
+          {(!compact || data.next) && (
+            <p>
+              {t("Bytes {start}–{end} of {total}.", {
+                start: data.range?.start ?? 0,
+                end: data.range?.end ?? 0,
+                total: data.content.bytes,
+              })}{" "}
+              {data.next
+                ? t("More retained data available.")
+                : t("End of field.")}
+            </p>
+          )}
+          {!compact && (
+            <LocalSearchBar
+              container={textContainer}
+              version={`${data.content.recordId}:${data.content.version}:${data.range?.start ?? 0}:${mode}`}
+            />
+          )}
           <div ref={textContainer} data-retained-field>
             {render ? (
               render(data.text)
@@ -197,32 +211,34 @@ export function DetailPane({
           </div>
         </>
       )}
-      <div className="toolbar">
-        <button
-          type="button"
-          disabled={busy || !back.length}
-          onClick={() => {
-            setRequest(back[back.length - 1]);
-            setBack((p) => p.slice(0, -1));
-          }}
-        >
-          {t("Previous")}
-        </button>
-        <button
-          type="button"
-          disabled={busy || !page?.next}
-          onClick={() => {
-            if (page?.next) {
-              setBack((p) => [...p, request]);
-              setRequest(page.next);
-            }
-          }}
-        >
-          {page && "kind" in page
-            ? t("Continue validation")
-            : t("Next field page")}
-        </button>
-      </div>
+      {(!compact || back.length > 0 || page?.next) && (
+        <div className="toolbar">
+          <button
+            type="button"
+            disabled={busy || !back.length}
+            onClick={() => {
+              setRequest(back[back.length - 1]);
+              setBack((p) => p.slice(0, -1));
+            }}
+          >
+            {t("Previous")}
+          </button>
+          <button
+            type="button"
+            disabled={busy || !page?.next}
+            onClick={() => {
+              if (page?.next) {
+                setBack((p) => [...p, request]);
+                setRequest(page.next);
+              }
+            }}
+          >
+            {page && "kind" in page
+              ? t("Continue validation")
+              : t("Next field page")}
+          </button>
+        </div>
+      )}
     </section>
   );
 }

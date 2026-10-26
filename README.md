@@ -36,13 +36,15 @@ The token admits anyone who has it to the workspace, so keep the file and the li
 To change either, edit the line and run `cadence server restart`, which prints the new link; old links and browser cookies stop working.
 A workspace that an earlier version started with a generated token switches to the file at that restart and keeps its history.
 
-| Platform | Service                                                                                     | Starts                                       |
-| -------- | ------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| Linux    | systemd user unit `~/.local/share/systemd/user/cadence.service`                             | At boot through linger, else at login        |
-| macOS    | LaunchAgent `~/Library/LaunchAgents/com.abelxiaoxing.cadence.plist`                         | At login                                     |
-| Windows  | `HKCU\…\CurrentVersion\Run\Cadence`, starting `%LOCALAPPDATA%\cadence-server\cadence.vbs`   | At login, without a console window           |
+| Platform     | Service                                                                                   | Starts                                |
+| ------------ | ----------------------------------------------------------------------------------------- | ------------------------------------- |
+| Linux (root) | System unit `/etc/systemd/system/cadence.service`                                         | At boot, no linger                    |
+| Linux (user) | User unit `~/.local/share/systemd/user/cadence.service`                                   | At boot through linger, else at login |
+| macOS        | LaunchAgent `~/Library/LaunchAgents/com.abelxiaoxing.cadence.plist`                       | At login                              |
+| Windows      | `HKCU\…\CurrentVersion\Run\Cadence`, starting `%LOCALAPPDATA%\cadence-server\cadence.vbs` | At login, without a console window    |
 
-On Linux, install enables linger without a prompt when logind allows it, and otherwise asks `loginctl enable-linger`, which may want your password; `--no-linger` (or `CADENCE_LINGER=0`) keeps the service to login.
+On Linux, root defaults to `--system` and never uses linger; ordinary accounts default to `--user`.
+In user scope, install enables linger without a prompt when logind allows it, and otherwise asks `loginctl enable-linger`, which may want your password; `--no-linger` (or `CADENCE_LINGER=0`) keeps the service to login.
 Open the printed private link once; the browser then keeps an HttpOnly cookie, and `http://127.0.0.1:17423/` alone only says how to get the link.
 For native `/cadence`, let Pi load the same copy: `pi install "$(npm root -g)/@abelxiaoxing/cadence"` records that path and loads it in place, so an npm upgrade updates both.
 
@@ -54,7 +56,7 @@ cadence server uninstall   # before npm uninstall -g, which runs no Cadence scri
 ```
 
 Upgrade with `npm install -g @abelxiaoxing/cadence@latest`, then `cadence server restart`, which rewrites the service definition with the current Node and package paths.
-Restart, stop and uninstall go through the authenticated orderly Stop, so running work is stopped, not detached; on macOS and Windows a Stop that is not confirmed changes nothing.
+Restart, stop and uninstall go through the authenticated orderly Stop, so running work is stopped, not detached; system/root, macOS and Windows management refuse to signal or replace a service when its Stop is not confirmed.
 `stop` keeps the registration, so the service starts again at the next boot or login.
 Uninstall removes only the generated definition; workspace, history, linger and Pi sources stay.
 
@@ -138,6 +140,32 @@ Its chrome follows pi-web-ui: a compact topbar with view tabs and icon actions, 
 The interface is in English or Simplified Chinese: it follows the browser's first preferred language, and the topbar's globe chip (`中文` / `EN`) switches it, remembered only in that browser.
 Error codes, identifiers, commands and recorded content stay untranslated.
 
+### Root services and independent projects
+
+Linux can run Cadence as a system-level root service, without a user bus or linger:
+
+```sh
+sudo -H cadence server install --system --workspace /srv/project
+sudo -H cadence server status --system
+```
+
+Root defaults to `--system`; an ordinary account still defaults to `--user`, which retains the existing linger behavior.
+There is no automatic sudo or credential/profile copying: the root owner uses root's own Pi sources and private state, and has full host permissions, not a sandbox.
+Stop old owners before changing accounts or state homes; a different account's private namespace cannot coordinate the former owner's work.
+
+Open another existing folder explicitly, or create a new project directory:
+
+```sh
+cadence project open /absolute/project
+cadence project open /absolute/new-project --create
+```
+
+A new project selects an available loopback port once; reopening keeps its exact owner, port, cwd and history.
+The command prints its private WebUI entry link; it does not create a task, choose a model or Start execution, and existing projects' admitted work continues.
+Each project has its own WebUI entry and native `/cadence` attachment, not a global mutable cwd or a same-page cross-project router.
+For independent boot services, use `cadence server install --system --name api --workspace /srv/api --port 17424` as root, and manage it with the same `--system --name api` flags.
+See [service management](docs/service-management.md) for migration, named port/token files and limits.
+
 ## Execution, checks and review
 
 - Graphs contain 1–16 required assignments with explicit purposes/dependencies and exact model choice; no recursive spawning or autonomous retry.
@@ -217,22 +245,22 @@ Historical logs are not runtime dependencies, and removing development tooling m
 
 ### Source ownership and API boundaries
 
-| Owner                                                                                                  | Responsibility                                                                                                            |
-| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| `src/index.ts`, `src/task-shell.ts`, `src/native-*.ts`                                                 | Nonactivating Pi entry, raw native consent, typed service attachment, paging and verified export; no embedded executor    |
-| `src/agent-panel.ts`, `src/agent-panel-model.ts`, `src/agent-panel-cadence.ts`                         | Readonly agent panel over Pi's `subagent:*` bus, fed with a running owner's children; never starts or cancels work        |
-| `src/service/host.ts`, `src/service/cli.ts`, `src/service/{autostart,launchd,login-run}.ts`            | Single-owner composition, explicit management and generated per-user service definitions; management stays SDK-free       |
-| `src/service/{coordination,private-files,owner,recovery}.ts`                                           | Canonical overlap exclusion, exact locks, original-operation lifetime and informed local recovery                         |
-| `src/service/{admission,task-actions,graph,scheduler}.ts`                                              | Context-bound actions, actual current views, finite graph scheduling, check/review barriers                               |
-| `src/service/{model-config,model-context,model-choice,auth-network}.ts`, `src/sdk-network.ts`          | Existing Pi sources, explicit exact model/thinking, original OAuth writeback and strict shared network policy             |
-| `src/worker-public.mjs` and `.d.mts`, `src/service-contract.ts`                                        | One portable core/domain/capture codec with matching declarations and facade; TS core/domain/capture modules re-export it |
-| `src/service/contracts/`, `src/service-client.ts`, `src/service-wire.ts`, `src/service-http-client.ts` | Closed DTOs, typed named operations, reply correlation, transport bounds and one projection tracker                       |
-| `src/subagent-process.ts`, `src/sdk-worker.mjs`, `src/worker-{capture,redaction,tools}.mjs`            | Same native worker/check launcher, genuine SDK capture, incremental sanitizer and bounded no-raw-spill bash adapter       |
-| `src/history/{writer,run-state,publication}.ts`                                                        | One committed sequence authority, shared semantic reducers and expected-byte strict-v1 summaries                          |
-| `src/history/` readers/proof/search/export/live modules                                                | Original-source integrity, bounded retained navigation, exact search and complete nonblocking exports                     |
-| `src/task-store.ts`, `src/task-types.ts`, `src/task-diff.ts`                                           | Literal workspace identity, bounded plain summaries/configuration and honest change observation                           |
-| `web/src/`                                                                                             | Reused presentation and thin shared-client adapters, not SDK/session/execution ownership                                  |
-| `scripts/`, `provenance/`, `licenses/`                                                                 | Reproducible builds, exact package/body/reference/notice audits and pinned reuse                                          |
+| Owner                                                                                                      | Responsibility                                                                                                             |
+| ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `src/index.ts`, `src/task-shell.ts`, `src/native-*.ts`                                                     | Nonactivating Pi entry, raw native consent, typed service attachment, paging and verified export; no embedded executor     |
+| `src/agent-panel.ts`, `src/agent-panel-model.ts`, `src/agent-panel-cadence.ts`                             | Readonly agent panel over Pi's `subagent:*` bus, fed with a running owner's children; never starts or cancels work         |
+| `src/service/host.ts`, `src/service/cli.ts`, `src/service/{autostart,system-service,launchd,login-run}.ts` | Single-owner composition, explicit project launch and generated system/user service definitions; management stays SDK-free |
+| `src/service/{coordination,private-files,owner,recovery}.ts`                                               | Canonical overlap exclusion, exact locks, original-operation lifetime and informed local recovery                          |
+| `src/service/{admission,task-actions,graph,scheduler}.ts`                                                  | Context-bound actions, actual current views, finite graph scheduling, check/review barriers                                |
+| `src/service/{model-config,model-context,model-choice,auth-network}.ts`, `src/sdk-network.ts`              | Existing Pi sources, explicit exact model/thinking, original OAuth writeback and strict shared network policy              |
+| `src/worker-public.mjs` and `.d.mts`, `src/service-contract.ts`                                            | One portable core/domain/capture codec with matching declarations and facade; TS core/domain/capture modules re-export it  |
+| `src/service/contracts/`, `src/service-client.ts`, `src/service-wire.ts`, `src/service-http-client.ts`     | Closed DTOs, typed named operations, reply correlation, transport bounds and one projection tracker                        |
+| `src/subagent-process.ts`, `src/sdk-worker.mjs`, `src/worker-{capture,redaction,tools}.mjs`                | Same native worker/check launcher, genuine SDK capture, incremental sanitizer and bounded no-raw-spill bash adapter        |
+| `src/history/{writer,run-state,publication}.ts`                                                            | One committed sequence authority, shared semantic reducers and expected-byte strict-v1 summaries                           |
+| `src/history/` readers/proof/search/export/live modules                                                    | Original-source integrity, bounded retained navigation, exact search and complete nonblocking exports                      |
+| `src/task-store.ts`, `src/task-types.ts`, `src/task-diff.ts`                                               | Literal workspace identity, bounded plain summaries/configuration and honest change observation                            |
+| `web/src/`                                                                                                 | Reused presentation and thin shared-client adapters, not SDK/session/execution ownership                                   |
+| `scripts/`, `provenance/`, `licenses/`                                                                     | Reproducible builds, exact package/body/reference/notice audits and pinned reuse                                           |
 
 The native path is `index → shell → native client → service → scheduler/process/history`.
 `src/task-controller.ts` remains a legacy regression subject, not a reachable or shipped production executor.
@@ -245,6 +273,11 @@ Use their current declarations rather than copying DTO parsing, reducers, a seco
 ### Admission, execution and original lifetimes
 
 - One canonical checkout/state-home domain has one persistent owner, including while idle.
+  Explicit project launch uses a new port only for a new checkout selection; reopened projects retain exact cwd/port/history, and no project navigation changes another owner's execution.
+  Root Git observations require Git's own ownership check: reset `safe.directory` exceptions per command, drop inherited `SUDO_UID` and disable fsmonitor, without configuration writes or ownership changes.
+  Merely selecting a foreign-owned repository cannot grant permission to run its clean/process filters; use its owning account instead.
+  Ordinary-user Git trust behavior remains unchanged.
+  System services require uid0, bypass user managers/logind entirely and require confirmed native Stop before manager stop or definition replacement; changed state-home inputs, old user units and detached running owners refuse implicit adoption.
   Registry reservation atomically rejects canonical ancestor/descendant overlaps, including nested Git roots and aliases; a different state-home does not coordinate arbitrary other owners.
 - Native entry requires fresh raw Enter within1500ms, trusted/idle TUI, no pending modal/messages and no child guard.
   Browser authentication grants access, not task consent; normal mutation ingress also requires independently built compatible client/service/assets identities.
@@ -302,6 +335,8 @@ Never await a run's own settlement from inside its awaited subscriber.
 Sanitize known literals, structured sensitive values and terminal controls before stdout and again before owner persistence.
 Preserve split UTF-8, escaped literals, surrogate pairs and possible secret prefixes across chunks; independent per-chunk string replacement is insufficient.
 Tool-start is an SDK observation, not proof of native execution; tool error is not a parent check result.
+A prompt/preflight/non-success terminal response is labeled `worker-failure: prompt`, not `capture`; the recorded message stop reason, actual exit and cleanup facts stay independent.
+A browser settlement timeout must retain its last receipt/active-roster facts before fixture teardown: a later Stop and its uncertain publication are not evidence that capture caused the original wait failure.
 Hidden thinking, signatures, provider envelopes and binary/media bodies remain explicitly omitted.
 Known-secret sanitation is not universal business-secret detection or an OS privacy sandbox.
 
@@ -309,6 +344,9 @@ Only the serialized history writer assigns committed sequence and persisted cont
 Commit actual admission/auth/launch/result facts in order; an index, observer callback or candidate reducer cannot authorize effects.
 Quota/exhaustion/refusal stops unsafe work without eviction; torn tails retain a verified prefix and visible gaps, while interior corruption refuses affected ranges.
 Derived indexes are optional accelerators: readers validate original batches/artifacts, use bounded fallback and never repair on view.
+Live task/run/child views share an already observed containing snapshot only within one notification drain, retaining its exact context and committed watermark.
+Narrowing requires the requested parent/child to be present; a historical run outside the task horizon still takes its independent reader, and no observation is cached into the next drain or used as renewed action consent.
+Transient reuse keeps at most one page-sized source per viewer, rather than retaining every unobserved run ring.
 Current/plan/review reads replay a task's batches, so per-file cost bounds them: on a slow host (Windows Node 22) that replay once exceeded the 100ms read quantum after review, leaving the task `unavailable`.
 `PrivateFiles` reuses a directory walk only within one synchronous `DirectoryWalks` scope (a read budget or lease check), after re-observing that directory's identity; an await or later call walks again, and the quantum is never raised instead.
 When a batch settles a task's publication, the owner writer remembers in process memory that task's fold state (check facts, latest run, plan/lineage progress with original admission locators) under its chain head's sequence and hash, a bounded number of tasks and states.
@@ -396,6 +434,8 @@ Read affected source and adjacent tests, identify the actual owner of a contract
 Use ordinary source editing and directly affected checks while developing; independently review complete capabilities and run full `verify` at stable integration boundaries.
 Do not run the entire suite after every local edit, but do not replace final integration with unit mocks or citation counts.
 `bun run test` runs unit files in parallel, then `serialProcessFiles` (real PTY/SDK process flows) and `serialScanFiles` (>8MiB cold scans) from `vitest.config.ts` one at a time; a file belongs there only when it measurably exceeds its own waits under shared CPU.
+`vitest run --config test/fast.config.ts` selects only its reviewed short-test allowlist, without inheriting root projects; `test/integration.config.ts` selects the exact complement and retains the serial projects.
+`test/test-selection.test.ts` compares the runner's actual file discovery across all three configurations, rejecting duplicates, overlap, omissions and moved serial files; new tests belong to integration until explicitly promoted.
 Create a fresh 0700 root on the checkout's disk filesystem and explicitly set TMPDIR/TEMP/TMP to it; a nearly full tmpfs `/tmp` makes owners refuse at their free-space floor (`receipt-inconclusive`) and `web/dist` publication fail with EXDEV.
 A test waits for the event it needs (both providers contacted, a row settled), not a wall-clock guess at how long process starts take; fixed waits stay only where time is the contract.
 Use fabricated credentials, isolated browser/profile/state roots and local fixtures; never personal credentials, automatic downloads or unknown process cleanup.
@@ -413,17 +453,35 @@ Regression owners:
 - `agent-panel`, `agent-panel-model`, `agent-panel-cadence`: panel keys/rendering and readonly owner observation that never starts, cancels or replays work.
 - `test/web/`: adapted pure/SSR tests separately from actual built-browser contexts, HTTPS, mixed clients, focus/viewports and complete downloads.
 - `package-*`, `distribution`, `service-package`, `independence`: exact tar/member/body/import/notice closure and nonactivating discovery.
-- `service-autostart`, `install-config`: explicit `cadence server` registration on systemd, launchd and the Windows Run key, definition escaping, restart/disable/mask/foreign handling, orderly Stop before every change, the `.env` port and token lines and a package without install scripts.
+- `service-autostart`, `project-start`, `install-config`: explicit `cadence server` registration on systemd (root system scope without linger, legacy user scope), launchd and the Windows Run key, separate named service definitions and directory owners, definition escaping, restart/disable/mask/foreign handling, orderly Stop before every change, the `.env` port and token lines and a package without install scripts.
 - `service-cli`: real owners started from the `.env` port and token, reselection of a stopped workspace, edits while running and rotation of the token line.
 - `workspace-landing`: home-directory redirection to `~/cadence` across management, native attach and observation.
 
 Regenerate operator/service/native/browser outputs only through their canonical builders; `--check` variants compare new private output without overwriting canonical bytes.
 WebUI text is keyed by its English source: fixed text goes through `useT().t`, whose type requires a `web/src/i18n/zh.ts` entry with the same `{name}` marks, and run-time status words or kept notices through `tx`, which passes unknown text and codes through.
 The timeline client takes the chosen language from its bridge and is remounted on a switch; browser scenarios pin `locale: "en-US"` so English assertions do not follow the host's `LANG`.
+The browser is conversation-first: the left panel groups the current service project, the actual active roster and retained task conversations, with run/subagent children under their task.
+One service still exposes one checkout; the project section is not a cross-project registry, Pi session importer or cwd switcher.
+The center shows retained message text as Markdown by default; tools/context/timeline/run facts and export/link actions live under Details, while the collapsible right inspector remains bound to the task's current plan/check/change/review context even when viewing a child.
+Historical child links bind exact scope and watermark.
+Bounded history and Back never silently rebase; running conversations offer an explicit new-activity update, and source limitations/progress stay visible even when complete-record metadata is folded.
+Cancel uses the independent active roster (including the fallback strip when workspace discovery fails); navigation, project selection and hiding panels never cancel or authorize execution.
+
 Publish `web/dist` from Node: Vite run under Bun lays out its preload helper differently, so a Bun build fails a Node `build:web:check`.
 Review the independently enumerated package member list and every emitted body, not a count or an expected list generated from the tar under test.
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
+
+### Release 2.0.11 acceptance snapshot
+
+Full `verify` passed on the 2.0.11 release candidate before this evidence-only paragraph: 1976 root tests in 80 files (27 skipped on Linux), 122 web tests, 5 real-browser scenarios and the 132-member pack audit.
+Observed environment: Linux x86_64, Node26.7.0, Bun1.3.14, Pi SDK0.84.3 and existing Chrome for Testing151.0.7922.34.
+The root Git regressions use real Git with simulated ownership mismatch, and system service management uses isolated filesystem/manager adapters; no real root/systemd installation, new CI matrix, macOS or Windows qualification is claimed.
+
+This release adds explicit directory project launch and independent named Linux system/root services, and a conversation-first WebUI with retained task/run/subagent navigation.
+Root observation no longer automatically trusts foreign Git repositories; inactive service definitions cannot stop or adopt detached owners, including through restart or uninstall.
+Fast/integration test selection is checked against actual Vitest discovery, and provider prompt failures remain separate from capture failures.
+Live task/run/child views reuse only an already observed containing snapshot within one notification drain, never a previous round's action context.
 
 ### Release 2.0.10 acceptance snapshot
 

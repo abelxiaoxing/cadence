@@ -23,12 +23,41 @@ Missing/corrupt existing setup is preserved, not filled in or reset.
 A workspace that contains the private state home (the home directory and its ancestors, such as `C:\Users\<you>` with `%LOCALAPPDATA%` or `~` with `~/.local/state`) would expose private history and locks to change observation, so every command there uses `~/cadence` (`%USERPROFILE%\cadence`) instead of refusing.
 Only `start` creates it; `status` reports `absent` without creating it, an explicit `--workspace` adds one informational line, and JSON output names the effective `workspace` only when it differs.
 `/cadence` started in such a directory attaches to the same owner, and real project directories are never redirected.
+A directory inside `cadence-assistant-v1` is never an engineering workspace, even for root or `project open --create`.
 Apart from the background service below, there is no supervisor installation, provider login or credential migration.
+
+## Open a project directory
+
+```sh
+cadence project open /absolute/existing-project
+cadence project open /absolute/new-project --create
+# Optional explicit sources, without copying them:
+cadence project open /srv/project --agent-dir /root/.pi/agent --state-home /root/.local/state
+```
+
+Without a path, `project open` uses the current directory; a missing directory refuses unless `--create` was supplied.
+The project may be a Git checkout or an ordinary directory, including spaces and Unicode names; it need not be inside `~/cadence` or the package directory.
+The command explicitly starts a detached owner, or observes the already running exact owner; it never creates a task, chooses a model, renews a grant or starts a worker.
+New projects bind port0 and retain the resulting positive port, avoiding the default17423 collision; existing selections keep their exact port, cwd, agent sources and history.
+The JSON result reports the canonical workspace, actual task cwd and endpoint; the private entry link is printed separately to stderr, like `server install`.
+Keep that link private.
+Open Pi in the same project and use `/cadence` for the native client; explicit `cadence stop --workspace <path>` stops only that project.
+Opening another project never changes the cwd or cancels work in the former one.
+Each project has its own browser entry and owner; this is not a same-page cross-project browser router.
+Git subdirectories and aliases resolve to the same checkout, while overlapping parent/child owners still refuse.
+An unknown, quarantined or inaccessible selection is never treated as a new project or recovered by choosing another state home.
+
+When run as root, Git observation requires a repository Git recognizes as root-owned: Cadence clears `safe.directory` exceptions per command, removes inherited `SUDO_UID` and disables fsmonitor.
+A foreign-owned repository refuses even if a global `safe.directory=*` would allow it; selecting a path is not consent to execute its configured clean/process filters.
+Use the repository's owning account instead, or deliberately provision a root-owned checkout outside Cadence; no Git configuration edit, `chown`, credential import or permission reset is performed.
+Ordinary-user Git trust behavior remains intact.
+Trusted repositories can still carry executable Git configuration; root is not an isolation or sandbox guarantee.
+Changing to root changes the effective account and its private namespace: stop all old Cadence owners before doing so, since different accounts/state homes do not coordinate each other's original work.
 
 ## Background service
 
 ```sh
-cadence server install [--workspace /absolute/project] [--no-linger]
+cadence server install [--workspace /absolute/project] [--system|--user] [--no-linger]
 cadence server status
 cadence server restart
 cadence server stop
@@ -37,6 +66,11 @@ cadence server uninstall
 
 Only these explicit commands register, change or remove the service; no package install, update hook, `/cadence` or browser visit does.
 The package has no install script, so npm 12 and Bun skipping untrusted scripts by default changes nothing; the pinned Pi SDK's blocked `@google/genai` preinstall only echoes `no-op`, and its `protobufjs` postinstall only warns about version schemes.
+Linux server commands accept `--system` or `--user` after the action; root defaults to system scope and other accounts to user scope.
+`--system` requires root and never runs sudo itself; `--user` explicitly selects the legacy per-user manager, even when invoked by root.
+Linux also accepts `--name <name>` on every server command to select `cadence-<name>.service`, and `install` accepts `--port <1-65535>` for a missing port setting.
+Names must start with a letter or digit and contain only letters, digits, `_` and `-` (at most48characters).
+
 `install` also creates the research template `~/.pi/agent/cadence/.env` when it is missing, never overwriting it, whatever the service result, and adds its [port and token](#port-and-token) lines when they are missing.
 `install` works from any package location and runs `start --foreground --workspace <workspace> --server-config <file>` (Linux, macOS) or the same without `--foreground` (Windows) from that copy with the installing Node, without `--port`.
 The workspace is `~/cadence` (created if missing), an existing absolute `--workspace`, or on later installs the one the definition already runs; a workspace containing the service's state home lands on `~/cadence` with a note.
@@ -51,7 +85,7 @@ A definition Cadence did not generate is left unchanged (`foreign`), and `status
 Pi's installer omits peers, so the standalone owner and workers load the Pi SDK (`pi-coding-agent`, `pi-ai`) from exact 0.84.3 optional dependencies.
 Package files may be hard links into the package manager's store (Bun's default install); Cadence binds their exact content, not their link count.
 Missing or unusable Pi sources refuse before an owner registers; a new owner without the SDK quarantines.
-`install` therefore writes nothing while the SDK is unresolvable (for example, optional dependencies omitted), and registers without starting while Pi's `auth.json` is missing (`waiting-for-pi-login`); log in to Pi, then run `cadence server restart`.
+`install` therefore writes no service definition while the SDK is unresolvable (for example, optional dependencies omitted), and registers without starting while Pi's `auth.json` is missing (`waiting-for-pi-login`); log in to Pi, then run `cadence server restart`.
 
 While no service is registered, Pi's session-start card shows a separate warning naming `cadence server install` for an installed package copy (`node <copy>/src/service-cli.mjs server install` for Pi's managed copy, which puts no bin on `PATH`); a checkout loaded with `pi -e` stays quiet.
 It is a warning rather than part of the info card because Pi's TUI replaces one info status with the next.
@@ -88,9 +122,53 @@ Under the new owner reservation Cadence retires the previous token with a new ac
 A different agent directory, host or proxy still conflicts, and a running owner refuses until it has stopped.
 An interrupted replacement keeps the reservation as a fence and is never repaired automatically, like any interrupted start.
 
+### Linux systemd system/root unit (no linger)
+
+```sh
+# Root must already have its own usable Pi credentials and SDK installation.
+sudo -H cadence server install --system --workspace /srv/project
+sudo -H cadence server status --system
+sudo -H cadence server restart --system
+sudo -H cadence server stop --system
+sudo -H cadence server uninstall --system
+```
+
+Use an absolute Node and package CLI path with `sudo -H` if `cadence` is not on root's PATH.
+These commands generate `/etc/systemd/system/cadence.service` with `User=root` and `WantedBy=multi-user.target`, and use `systemctl --system`.
+They never consult or change linger, require no logged-in user manager and start at boot independently of root login.
+The definition freezes HOME, PATH, LANG/LC_ALL, an explicit XDG_STATE_HOME and custom PI_CODING_AGENT_DIR; root must own its selected Pi sources, and no normal-user profile or credentials are copied.
+Root runs the agent and approved checks with full root privileges: browser authentication remains access, not permission to Start, and this is not a sandbox.
+Status and install output identify system scope; Pi's root startup hint recommends `--system`, never `loginctl enable-linger`.
+
+A prior user-scope definition of the same name causes `scope-conflict`, never automatic migration.
+For a root account's older user unit, explicitly run `cadence server uninstall --user` first, then install `--system`; this preserves its workspace, private history, credentials and linger setting.
+For another account's service, first stop/uninstall it as that account; root must not silently import its private state or assume its owners are absent.
+A detached owner already running in the target directory causes `project-running`; stop it explicitly before installing a different supervisor.
+An old but inactive unit does not own a subsequently detached owner: install, restart, stop and uninstall also refuse in that case, without sending Stop to it, and changing the requested target does not bypass the old directory's check.
+An unconfirmed or quarantined Stop, changed generated file, changed HOME/XDG state selection, a mask or a foreign unit prevents replacement/adoption.
+`restart`, `stop` and `uninstall` await the authenticated original owner Stop before invoking systemctl, so manager timeouts are never used as proof of settlement.
+Restart keeps disablement and does not unmask anything; uninstall removes only the generated definition, never data or linger.
+Direct systemctl shutdown still has the unit's ExecStop and timeout behavior described below; it is not an alternative recovery mechanism.
+
+### Independent named Linux services
+
+```sh
+sudo -H cadence server install --system --name api --workspace /srv/api --port 17424
+sudo -H cadence server install --system --name web --workspace /srv/web --port 17425
+sudo -H cadence server status --system --name api
+sudo -H cadence server restart --system --name web
+```
+
+The units, ports, access tokens, working directories and owner lifetimes are separate; restarting or stopping one does not touch another.
+A named service uses `~/.pi/agent/cadence/servers/<name>.env` under its effective account, never a copy of the default token or research/provider configuration.
+A new named configuration requires `--port`; existing port/token lines are preserved, and a conflicting `--port` refuses instead of rewriting them.
+Edit the selected named file explicitly and restart that same `--name` to change its port.
+An occupied port still refuses rather than silently falling back; use `project open` when an automatically selected detached port is preferable.
+All projects still share one coordination state home for their account, retaining canonical overlap checks and uncertain fences.
+
 ### Linux systemd user unit
 
-`install` writes `~/.local/share/systemd/user/cadence.service`, enables it for `default.target` (also undoing a `disable`, never a `mask`) and starts it.
+`install --user` writes `~/.local/share/systemd/user/cadence.service`, enables it for `default.target` (also undoing a `disable`, never a `mask`) and starts it.
 A user unit runs with the user manager, which starts at login unless logind lingers the user, so install also enables linger when it is off.
 It first calls `SetUserLinger` through `busctl` with `interactive=false` and no interactive authorization (bounded to 15s), because `loginctl enable-linger` always requests an interactive check that a desktop polkit agent can turn into a password dialog even with `--no-ask-password`.
 Only where polkit requires authorization for `set-self-linger` (older systemd defaults) does it then run `loginctl enable-linger`, which may ask for your password; that comes after the start, so an interrupted prompt never leaves the owner stopped, and a refusal reports `"linger":"refused"` with a login-only unit.

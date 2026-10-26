@@ -9,6 +9,26 @@ export const zh = {
     "不会推断任何执行结果。重新连接以观察所有者服务；已接受的工作会继续进行。",
   "Reload observation": "重新加载观察",
 
+  // Conversation-first workspace
+  "Build information": "构建信息",
+  Conversation: "对话",
+  Details: "详情",
+  "Back to task": "返回任务",
+  "Task {id}": "任务 {id}",
+  "{kind} {id}": "{kind} {id}",
+  Subagent: "子代理",
+  "Recorded conversation": "已记录对话",
+  "Recording details": "记录信息",
+  "Field details": "原文与复制",
+  "New activity — update conversation": "有新动态 · 更新对话",
+  "No retained conversations on this page.": "本页没有已保留的对话。",
+  "Recent projects": "最近项目",
+  "This service exposes one project. Opening it never starts work.":
+    "当前服务连接一个项目，打开项目不会启动执行。",
+  "Running conversations": "运行的对话",
+  "Conversation history": "历史对话",
+  "Task conversations": "任务对话与子代理",
+
   // Topbar, drawers and statusbar
   Tasks: "任务",
   "Recorded views": "已记录视图",

@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readlinkSync } from "node:fs";
 import { join, relative } from "node:path";
-import { gitEnvironment, readBounded } from "./task-store.ts";
+import { gitArguments, gitEnvironment, readBounded } from "./task-store.ts";
 import type { ChangeView } from "./task-types.ts";
 import { diagnosticText } from "./verification-diagnostics.ts";
 
@@ -27,14 +27,18 @@ export function captureChanges(root: string): ChangeView {
       limits.push("Git observation time budget exhausted");
       return { stdout: Buffer.alloc(0) };
     }
-    const result = spawnSync("git", ["-c", "core.quotepath=true", ...args], {
-      cwd: root,
-      encoding: "buffer",
-      timeout: Math.max(1, deadline - Date.now()),
-      maxBuffer: 512 * 1024,
-      windowsHide: true,
-      env: gitEnvironment(),
-    });
+    const result = spawnSync(
+      "git",
+      gitArguments(["-c", "core.quotepath=true", ...args]),
+      {
+        cwd: root,
+        encoding: "buffer",
+        timeout: Math.max(1, deadline - Date.now()),
+        maxBuffer: 512 * 1024,
+        windowsHide: true,
+        env: gitEnvironment(),
+      },
+    );
     if (result.error || result.status !== 0) {
       complete = false;
       limits.push(`Unavailable/limited Git observation: ${args[0]}`);
@@ -79,14 +83,18 @@ export function captureChanges(root: string): ChangeView {
       limits.push(`Unreadable/changing: ${name}`);
     }
   };
-  const probe = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], {
-    cwd: root,
-    env: gitEnvironment(),
-    timeout: 3000,
-    maxBuffer: 8192,
-    encoding: "utf8",
-    windowsHide: true,
-  });
+  const probe = spawnSync(
+    "git",
+    gitArguments(["rev-parse", "--is-inside-work-tree"]),
+    {
+      cwd: root,
+      env: gitEnvironment(),
+      timeout: 3000,
+      maxBuffer: 8192,
+      encoding: "utf8",
+      windowsHide: true,
+    },
+  );
   const isGit = probe.status === 0 && probe.stdout.trim() === "true";
   if (isGit) {
     const pathspec = [

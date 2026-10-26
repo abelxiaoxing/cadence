@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { HistoryFiles } from "../src/history/files.ts";
-import { HistoryLive } from "../src/history/live.ts";
+import { HistoryLive, scopedSnapshot } from "../src/history/live.ts";
 import { HistoryNavigation } from "../src/history/navigation.ts";
 import {
   HistoryProjection,
@@ -19,6 +19,7 @@ import {
   ContractError,
   canonicalJson,
   type ListRequest,
+  type LiveEvent,
   type OwnerRecordingInput,
   publicError,
   type ReadCursor,
@@ -450,6 +451,114 @@ it("a pending asynchronous observer never holds original commit settlement, and 
     live?.close();
     metrics.finish({ pendingWrites });
   }
+});
+it("one notification round observes a task once for its task/run/child viewers, without caching the next round", async () => {
+  const f = historyFixture();
+  await f.writer.commit(f.intent);
+  await admitFixtureRun(f);
+  const env = environment(f),
+    context = vi.fn(env.context);
+  env.context = context;
+  const p = project(f, env),
+    live = new HistoryLive(f.writer, p);
+  const task = { kind: "task" as const, id: f.link.taskId },
+    run = { kind: "run" as const, id: f.link.runId },
+    child = { kind: "child" as const, id: f.link.childRunId };
+  const received: LiveEvent[] = [];
+  const stops = [task, run, child].map((scope) =>
+    live.subscribe(scope, (event) => {
+      received.push(event);
+    }),
+  );
+  const snapshot = vi.spyOn(p, "snapshot");
+  try {
+    for (const scope of [task, run, child]) await p.snapshot(scope);
+    context.mockClear();
+    snapshot.mockClear();
+    await ownerFact(f, {
+      kind: "gate",
+      lane: "reader",
+      state: "waiting",
+      checkoutGeneration: 0,
+    });
+    await expect
+      .poll(() => received.filter((e) => e.kind === "update").length)
+      .toBe(3);
+    expect(snapshot.mock.calls.map(([scope]) => scope)).toEqual([task]);
+    expect(context).toHaveBeenCalledTimes(1);
+    const updates = received.filter((e) => e.kind === "update");
+    expect(new Set(updates.map((e) => e.committedSeq)).size).toBe(1);
+    expect(updates.find((e) => e.scope.kind === "run")?.runs).toHaveLength(2);
+    expect(updates.find((e) => e.scope.kind === "child")?.runs).toMatchObject([
+      { childRunId: child.id },
+    ]);
+    const first = updates[0].context;
+    f.context = { ...f.context, controlRev: f.context.controlRev + 1 };
+    received.length = 0;
+    context.mockClear();
+    snapshot.mockClear();
+    await ownerFact(f, {
+      kind: "gate",
+      lane: "reader",
+      state: "held",
+      checkoutGeneration: 0,
+    });
+    await expect
+      .poll(() => received.filter((e) => e.kind === "update").length)
+      .toBe(3);
+    expect(snapshot.mock.calls.map(([scope]) => scope)).toEqual([task]);
+    expect(context).toHaveBeenCalledTimes(1);
+    expect(received.find((e) => e.kind === "update")?.context).not.toEqual(
+      first,
+    );
+    // Standalone observation is still fresh, not a read of the prior ring.
+    f.context = { ...f.context, controlRev: f.context.controlRev + 1 };
+    const fresh = await p.snapshot(run);
+    expect(fresh.context).toMatchObject({
+      status: "available",
+      version: { controlRev: f.context.controlRev },
+    });
+    expect(context).toHaveBeenCalledTimes(2);
+  } finally {
+    snapshot.mockRestore();
+    for (const stop of stops) stop();
+    live.close();
+  }
+});
+it("narrowed snapshots retain exact context/watermark/horizon and never invent a missing historical run", async () => {
+  const f = historyFixture();
+  await f.writer.commit(f.intent);
+  await admitFixtureRun(f);
+  const p = project(f),
+    task = await p.snapshot({ kind: "task", id: f.link.taskId });
+  const runScope = { kind: "run" as const, id: f.link.runId },
+    childScope = { kind: "child" as const, id: f.link.childRunId };
+  const run = scopedSnapshot(task, runScope),
+    child = scopedSnapshot(task, childScope);
+  for (const [selected, scope] of [
+    [run, runScope],
+    [child, childScope],
+  ] as const) {
+    expect(selected).toBeDefined();
+    expect(selected?.scope).toEqual(scope);
+    expect(selected?.horizon.historicalRuns.scope).toEqual(scope);
+    expect(selected?.horizon.historicalRuns.snapshotSeq).toBe(
+      task.committedSeq,
+    );
+    expect(selected?.context).toEqual(task.context);
+    expect(selected?.committedSeq).toBe(task.committedSeq);
+  }
+  expect(run?.runs).toHaveLength(2);
+  expect(child?.runs).toHaveLength(1);
+  expect(
+    scopedSnapshot(task, { kind: "run", id: randomUUID() }),
+  ).toBeUndefined();
+  expect(
+    scopedSnapshot(task, { kind: "child", id: randomUUID() }),
+  ).toBeUndefined();
+  expect(scopedSnapshot({ ...task, runs: [] }, runScope)).toBeUndefined();
+  expect(scopedSnapshot(child!, runScope)).toBeUndefined();
+  expect(scopedSnapshot(run!, task.scope)).toBeUndefined();
 });
 it("horizon contains whole groups under 200 rows while historical runs remain independently pageable", async () => {
   const f = historyFixture();

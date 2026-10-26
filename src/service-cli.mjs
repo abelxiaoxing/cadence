@@ -3,9 +3,9 @@
 
 // src/service/cli.ts
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync as mkdirSync5 } from "node:fs";
+import { existsSync as existsSync3, mkdirSync as mkdirSync7 } from "node:fs";
 import { request } from "node:http";
-import { dirname as dirname9, join as join11, resolve as resolve5 } from "node:path";
+import { dirname as dirname9, join as join12, resolve as resolve5 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/install-config.mjs
@@ -2225,15 +2225,19 @@ function readBounded(path2, max, packaged = false) {
   }
 }
 function gitEnvironment() {
+  const root = process.getuid?.() === 0;
   return {
-    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))),
+    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_") && !(root && name === "SUDO_UID"))),
     GIT_OPTIONAL_LOCKS: "0",
     LC_ALL: "C"
   };
 }
+function gitArguments(args) {
+  return process.platform !== "win32" && process.getuid?.() === 0 ? ["-c", "safe.directory=", "-c", "core.fsmonitor=false", ...args] : args;
+}
 function resolveWorkspace(cwd) {
   const actual = realpathSync(cwd);
-  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+  const result = spawnSync("git", gitArguments(["rev-parse", "--show-toplevel"]), {
     cwd: actual,
     env: gitEnvironment(),
     encoding: "utf8",
@@ -2296,8 +2300,13 @@ function stateHomeInside(root, stateHome = defaultStateHome()) {
   const canonical = realpathSync(root);
   return contains(canonical, privateRootFor(canonical, stateHome));
 }
+function privateWorkspace(requested, stateHome = defaultStateHome()) {
+  return contains(join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1"), canonicalAmbientRoot(requested));
+}
 var LANDING_WORKSPACE = "cadence";
 function effectiveWorkspace(requested, stateHome, home = homedir2()) {
+  if (privateWorkspace(requested, stateHome))
+    throw new Error("Private state cannot be a workspace");
   if (!stateHomeInside(resolveWorkspace(requested).root, stateHome))
     return { workspace: requested, redirected: false };
   return { workspace: join(home, LANDING_WORKSPACE), redirected: true };
@@ -2309,6 +2318,8 @@ class TaskStore {
   privateRoot;
   constructor(root, stateHome = defaultStateHome()) {
     this.root = realpathSync(root);
+    if (privateWorkspace(this.root, stateHome))
+      throw new Error("Private state cannot be a workspace");
     this.tasks = join(this.root, ".cadence", "assistant", "tasks");
     this.privateRoot = privateRootFor(this.root, stateHome);
     if (contains(this.root, this.privateRoot))
@@ -2512,7 +2523,7 @@ var TASK_CONFIG_SCHEMA = "cadence-assistant-checks/1";
 import { spawnSync as spawnSync2 } from "node:child_process";
 import {
   lstatSync as lstatSync4,
-  mkdirSync as mkdirSync4,
+  mkdirSync as mkdirSync5,
   readFileSync,
   realpathSync as realpathSync3,
   renameSync as renameSync3,
@@ -2533,7 +2544,13 @@ import {
 
 // src/service/server-config.ts
 import { randomBytes } from "node:crypto";
-import { lstatSync as lstatSync3, realpathSync as realpathSync2, statSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync as lstatSync3,
+  mkdirSync as mkdirSync4,
+  realpathSync as realpathSync2,
+  statSync
+} from "node:fs";
 import { dirname as dirname3, join as join3 } from "node:path";
 
 // skills/_shared/load-config.mjs
@@ -2830,8 +2847,10 @@ function accessToken(value) {
     throw new ContractError("invalid");
   return result;
 }
-function serverConfigPath(home) {
-  return join3(home, ".pi", "agent", "cadence", ".env");
+function serverConfigPath(home, name) {
+  if (name !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$/.test(name))
+    throw new ContractError("invalid");
+  return name === undefined ? join3(home, ".pi", "agent", "cadence", ".env") : join3(home, ".pi", "agent", "cadence", "servers", `${name}.env`);
 }
 
 class ServerConfigRefusal extends ContractError {
@@ -2974,19 +2993,33 @@ function readServerConfig(path2) {
     return { ...file, config: decode(file.source) };
   });
 }
-function ensureServerConfig(home) {
-  const path2 = serverConfigPath(home);
+function ensureServerConfig(home, options = {}) {
+  const path2 = serverConfigPath(home, options.name);
+  if (options.port !== undefined && (!Number.isInteger(options.port) || options.port < 1 || options.port > 65535))
+    throw new ContractError("invalid");
   const added = refusing(path2, () => {
     try {
-      ensureUserConfig(home);
+      if (options.name === undefined)
+        ensureUserConfig(home);
+      else if (!existsSync(path2)) {
+        if (options.port === undefined)
+          unusable("needs --port for a new named service");
+        mkdirSync4(dirname3(path2), { recursive: true, mode: 448 });
+        const directory = realpathSync2(dirname3(path2));
+        new PrivateFiles(directory, false).create(join3(directory, `${options.name}.env`), "");
+      }
     } catch (error) {
+      if (error instanceof Unusable)
+        throw error;
       unusable(`could not be created (${code(error)})`);
     }
     const file2 = load(path2);
     const found = settings(file2.source);
     const lines = [];
+    if (found.port && options.port !== undefined && found.port.value !== String(options.port))
+      unusable(`already selects another ${PORT_KEY}; edit that line explicitly, then restart`);
     if (!found.port)
-      lines.push(`${PORT_KEY}=${DEFAULT_PORT}`);
+      lines.push(`${PORT_KEY}=${options.port ?? DEFAULT_PORT}`);
     if (!found.token)
       lines.push(`${TOKEN_KEY}=${randomBytes(32).toString("base64url")}`);
     if (lines.length) {
@@ -3017,7 +3050,9 @@ function wscript(env) {
   const root = env.SystemRoot;
   return win32.join(root && win32.isAbsolute(root) ? root : "C:\\Windows", "System32", "wscript.exe");
 }
-function hostSystem(root, owner) {
+function hostSystem(root, owner, selection = {}) {
+  const scope = selection.scope ?? (process.platform === "linux" && process.getuid?.() === 0 ? "system" : "user");
+  const unit = serviceUnit(selection.name);
   const run = (command, args) => {
     const r = spawnSync2(command, args, {
       encoding: "utf8",
@@ -3032,9 +3067,10 @@ function hostSystem(root, owner) {
     home: homedir3(),
     node: process.execPath,
     root,
-    unit: UNIT,
+    unit,
+    scope,
     uid: process.getuid?.(),
-    systemctl: (args) => run("systemctl", ["--user", ...args]),
+    systemctl: (args) => run("systemctl", [scope === "system" ? "--system" : "--user", ...args]),
     linger: () => {
       const r = run("loginctl", [
         "show-user",
@@ -3073,6 +3109,24 @@ function hostSystem(root, owner) {
     },
     ...owner
   };
+}
+function serviceUnit(name) {
+  if (name === undefined)
+    return UNIT;
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$/.test(name))
+    throw new ContractError("invalid");
+  return `cadence-${name}.service`;
+}
+function serviceName(s) {
+  if (s.unit === UNIT)
+    return;
+  const name = /^cadence-([A-Za-z0-9][A-Za-z0-9_-]{0,47})\.service$/.exec(s.unit)?.[1];
+  if (!name)
+    throw new ContractError("invalid");
+  return name;
+}
+function serviceConfigPath(s) {
+  return serverConfigPath(s.home, serviceName(s));
 }
 function expandHome(value, home) {
   if (value === "~")
@@ -3113,6 +3167,9 @@ function sdkPackages(root) {
   return found;
 }
 function unitPath(s) {
+  serviceName(s);
+  if (s.scope === "system")
+    return join4(s.unitDirectory ?? "/etc/systemd/system", s.unit);
   const data = s.env.XDG_DATA_HOME;
   return join4(data && isAbsolute3(data) ? data : join4(s.home, ".local", "share"), "systemd", "user", s.unit);
 }
@@ -3122,6 +3179,8 @@ function servicePath(value) {
 }
 function serviceEnvironment(s) {
   const out = [["PATH", servicePath(s.env.PATH)]];
+  if (s.scope === "system")
+    out.push(["HOME", s.home], ["USER", "root"], ["LOGNAME", "root"]);
   for (const key of ["LANG", "LC_ALL"]) {
     const value = s.env[key];
     if (value)
@@ -3146,7 +3205,7 @@ function buildUnit(u) {
   const command = (args) => [u.node, u.cli, ...args].map(argument).join(" ");
   return [
     `${MARKER}; \`cadence server install\` and \`restart\` rewrite this file.`,
-    "# Override with `systemctl --user edit cadence`; opt out with `systemctl --user disable --now cadence` or `mask`.",
+    u.system ? "# System service (root); manage explicitly with cadence server <action> --system. No user manager or linger." : "# Override with `systemctl --user edit cadence`; opt out with `systemctl --user disable --now cadence` or `mask`.",
     "[Unit]",
     "Description=Cadence shared task service and WebUI",
     "Documentation=https://github.com/abelxiaoxing/cadence/blob/main/docs/service-management.md",
@@ -3158,6 +3217,7 @@ function buildUnit(u) {
     "",
     "[Service]",
     "Type=simple",
+    ...u.system ? ["User=root"] : [],
     `WorkingDirectory=${specifiers(u.workspace)}`,
     ...u.environment.map(([k, v]) => `Environment=${quoted(`${k}=${v}`)}`),
     `ExecStart=${command(["start", "--foreground", "--workspace", u.workspace, "--server-config", u.serverConfig])}`,
@@ -3168,7 +3228,7 @@ function buildUnit(u) {
     "RestartSec=10",
     "",
     "[Install]",
-    "WantedBy=default.target",
+    u.system ? "WantedBy=multi-user.target" : "WantedBy=default.target",
     ""
   ].join(`
 `);
@@ -3200,7 +3260,7 @@ function serviceStateHome(s) {
   const state = s.platform === "win32" ? s.env.LOCALAPPDATA : s.env.XDG_STATE_HOME;
   return state && isAbsolute3(state) ? state : join4(s.home, ...s.platform === "win32" ? ["AppData", "Local"] : [".local", "state"]);
 }
-function selectWorkspace(s, requested, kept) {
+function selectWorkspace(s, requested, kept, create = true) {
   let chosen;
   if (requested) {
     chosen = expandHome(requested, s.home);
@@ -3210,12 +3270,12 @@ function selectWorkspace(s, requested, kept) {
   } else if (kept && directory(kept))
     chosen = kept;
   const landing = chosen ? effectiveWorkspace(chosen, serviceStateHome(s), s.home) : { workspace: join4(s.home, LANDING_WORKSPACE), redirected: false };
-  if (landing.workspace !== chosen)
-    mkdirSync4(landing.workspace, { recursive: true });
+  if (create && landing.workspace !== chosen)
+    mkdirSync5(landing.workspace, { recursive: true });
   return landing.redirected ? { workspace: landing.workspace, redirectedFrom: chosen } : { workspace: landing.workspace };
 }
 function write(path2, content) {
-  mkdirSync4(dirname4(path2), { recursive: true });
+  mkdirSync5(dirname4(path2), { recursive: true });
   const temporary = `${path2}.${process.pid}.tmp`;
   try {
     writeFileSync3(temporary, content, { mode: 420, flag: "wx" });
@@ -3255,7 +3315,7 @@ function bootStart(s, attempt) {
   };
 }
 function configureAutostart(s, mode, requested, linger = false) {
-  if (s.platform !== "linux")
+  if (s.platform !== "linux" || s.scope === "system")
     return { status: "unsupported" };
   if (s.systemctl(["show-environment"]).status !== 0)
     return { status: "unavailable" };
@@ -3274,15 +3334,19 @@ function configureAutostart(s, mode, requested, linger = false) {
     node: s.node,
     cli: join4(s.root, "src", "service-cli.mjs"),
     workspace,
-    serverConfig: serverConfigPath(s.home),
+    serverConfig: serviceConfigPath(s),
     agentDir,
     sdk,
     environment: serviceEnvironment(s)
   });
   const enabled = s.systemctl(["is-enabled", s.unit]).stdout.trim();
   const active = s.systemctl(["is-active", "--quiet", s.unit]).status === 0;
-  if (active)
-    s.systemctl(["stop", s.unit]);
+  if (active && s.systemctl(["stop", s.unit]).status !== 0)
+    return {
+      status: "unconfirmed",
+      unit: path2,
+      workspace: unitWorkspace(previous)
+    };
   write(path2, content);
   s.systemctl(["daemon-reload"]);
   const result = {
@@ -3302,7 +3366,7 @@ function configureAutostart(s, mode, requested, linger = false) {
   return { status: started ? "started" : "failed", ...result, ...boot() };
 }
 function stopAutostart(s) {
-  if (s.platform !== "linux")
+  if (s.platform !== "linux" || s.scope === "system")
     return { status: "unsupported" };
   const path2 = unitPath(s);
   const previous = readGenerated(path2, MARKER);
@@ -3319,7 +3383,7 @@ function stopAutostart(s) {
   };
 }
 function removeAutostart(s) {
-  if (s.platform !== "linux")
+  if (s.platform !== "linux" || s.scope === "system")
     return { status: "unsupported" };
   const path2 = unitPath(s);
   const previous = readGenerated(path2, MARKER);
@@ -3337,7 +3401,7 @@ function removeAutostart(s) {
   return { status: "removed", unit: path2 };
 }
 function autostartStatus(s) {
-  if (s.platform !== "linux")
+  if (s.platform !== "linux" || s.scope === "system")
     return { status: "unsupported" };
   const path2 = unitPath(s);
   const previous = readGenerated(path2, MARKER);
@@ -6380,6 +6444,212 @@ function decodeStartupReport(value) {
   };
 }
 
+// src/service/system-service.ts
+import { existsSync as existsSync2, mkdirSync as mkdirSync6, realpathSync as realpathSync5, rmSync as rmSync4 } from "node:fs";
+import { isAbsolute as isAbsolute7, join as join11 } from "node:path";
+var MARKER4 = "# Generated by @abelxiaoxing/cadence";
+function boundary(s) {
+  if (s.platform !== "linux" || s.scope !== "system")
+    return { status: "unsupported" };
+  if (s.uid !== 0)
+    return { status: "root-required", scope: "system" };
+}
+function legacyPath(s) {
+  return unitPath({ ...s, scope: "user", unitDirectory: undefined });
+}
+function observed(s) {
+  const path2 = unitPath(s);
+  let previous = readGenerated(path2, MARKER4);
+  if (typeof previous === "string" && (!isAbsolute7(unitWorkspace(previous) ?? "") || !previous.includes(`
+User=root
+`)))
+    previous = null;
+  const result = { unit: path2, scope: "system" };
+  return { path: path2, previous, result };
+}
+function masked(s) {
+  return s.systemctl(["is-enabled", s.unit]).stdout.trim().startsWith("masked");
+}
+function sameStateEnvironment(s, previous) {
+  try {
+    const values = new Map;
+    for (const line of previous.split(`
+`)) {
+      if (!line.startsWith("Environment="))
+        continue;
+      const value = JSON.parse(line.slice("Environment=".length));
+      if (typeof value !== "string")
+        return false;
+      const at = value.indexOf("=");
+      const key = value.slice(0, at);
+      if (key !== "HOME" && key !== "XDG_STATE_HOME")
+        continue;
+      if (values.has(key))
+        return false;
+      values.set(key, value.slice(at + 1).replaceAll("%%", "%"));
+    }
+    const state = s.env.XDG_STATE_HOME;
+    return values.get("HOME") === s.home && values.get("XDG_STATE_HOME") === (state && isAbsolute7(state) ? state : undefined);
+  } catch {
+    return false;
+  }
+}
+async function ownerBoundary(s, workspace, managed) {
+  const status = await s.ownerStatus(workspace);
+  if (managed) {
+    if (status === "absent")
+      return { status: "unavailable", workspace };
+  } else if (status !== "absent" && status !== "stopped") {
+    return {
+      status: status === "alive" ? "project-running" : "unavailable",
+      workspace
+    };
+  }
+}
+async function configureSystemService(s, mode, requested) {
+  const refused2 = boundary(s);
+  if (refused2)
+    return refused2;
+  if (existsSync2(legacyPath(s)))
+    return { status: "scope-conflict", unit: legacyPath(s), scope: "system" };
+  if (s.systemctl(["show-environment"]).status !== 0)
+    return { status: "unavailable", scope: "system" };
+  const { path: path2, previous, result } = observed(s);
+  if (masked(s))
+    return { status: "masked", ...result };
+  if (previous === null)
+    return { status: "foreign", ...result };
+  if (mode === "restart" && previous === undefined)
+    return { status: "absent", scope: "system" };
+  const sdk = sdkPackages(s.root);
+  if (!sdk)
+    return { status: "missing-pi-sdk", scope: "system" };
+  if (previous && !existsSync2(unitWorkspace(previous)))
+    return { status: "workspace-changed", ...result };
+  const selected2 = selectWorkspace(s, requested, unitWorkspace(previous), false);
+  const selectedReal = existsSync2(selected2.workspace) ? realpathSync5(selected2.workspace) : undefined;
+  const agentDir = agentDirectory(s);
+  const content = buildUnit({
+    system: true,
+    node: s.node,
+    cli: join11(s.root, "src", "service-cli.mjs"),
+    workspace: selected2.workspace,
+    serverConfig: serviceConfigPath(s),
+    agentDir,
+    sdk,
+    environment: serviceEnvironment(s)
+  });
+  if (previous && !sameStateEnvironment(s, previous))
+    return { status: "environment-changed", ...result };
+  const active = s.systemctl(["is-active", "--quiet", s.unit]);
+  if (active.status !== 0 && active.status !== 3 && !(active.status === 4 && previous === undefined))
+    return { status: "unavailable", ...result };
+  if (active.status === 0 && previous === undefined)
+    return { status: "foreign", ...result };
+  if (selectedReal && (previous === undefined || selected2.workspace !== unitWorkspace(previous))) {
+    const target2 = await ownerBoundary(s, selected2.workspace, false);
+    if (target2)
+      return { ...selected2, ...target2, ...result };
+  }
+  const workspace = unitWorkspace(previous);
+  if (workspace) {
+    const refused3 = await ownerBoundary(s, workspace, active.status === 0);
+    if (refused3)
+      return { ...refused3, ...result };
+  }
+  const unsettled = active.status === 0 ? await settle(s, workspace) : undefined;
+  if (unsettled)
+    return { ...unsettled, ...result };
+  if (readGenerated(path2, MARKER4) !== previous)
+    return { status: "foreign", ...result };
+  if (selectedReal) {
+    try {
+      if (realpathSync5(selected2.workspace) !== selectedReal)
+        return { status: "workspace-changed", ...result };
+    } catch {
+      return { status: "workspace-changed", ...result };
+    }
+  }
+  if (active.status === 0 && s.systemctl(["stop", s.unit]).status !== 0)
+    return {
+      status: "unconfirmed",
+      workspace: unitWorkspace(previous),
+      ...result
+    };
+  mkdirSync6(selected2.workspace, { recursive: true });
+  write(path2, content);
+  if (s.systemctl(["daemon-reload"]).status !== 0)
+    return { status: "failed", ...result, ...selected2 };
+  if (mode === "install" && s.systemctl(["enable", s.unit]).status !== 0)
+    return { status: "failed", ...result, ...selected2 };
+  if (!regularFile(join11(agentDir, "auth.json")))
+    return { status: "waiting-for-pi-login", ...result, ...selected2 };
+  s.systemctl(["reset-failed", s.unit]);
+  return {
+    status: s.systemctl(["start", s.unit]).status === 0 ? "started" : "failed",
+    ...result,
+    ...selected2
+  };
+}
+async function stopSystemService(s, remove = false) {
+  const refused2 = boundary(s);
+  if (refused2)
+    return refused2;
+  const { path: path2, previous, result } = observed(s);
+  if (previous === null)
+    return { status: masked(s) ? "masked" : "foreign", ...result };
+  if (previous === undefined)
+    return { status: "absent", scope: "system" };
+  if (s.systemctl(["show-environment"]).status !== 0)
+    return { status: "unavailable", ...result };
+  const workspace = unitWorkspace(previous);
+  if (!sameStateEnvironment(s, previous))
+    return { status: "environment-changed", workspace, ...result };
+  const active = s.systemctl(["is-active", "--quiet", s.unit]);
+  if (active.status !== 0 && active.status !== 3)
+    return { status: "unavailable", workspace, ...result };
+  const owner = await ownerBoundary(s, workspace, active.status === 0);
+  if (owner)
+    return { ...owner, ...result };
+  const unsettled = active.status === 0 ? await settle(s, workspace) : undefined;
+  if (unsettled)
+    return { ...unsettled, ...result };
+  if (readGenerated(path2, MARKER4) !== previous)
+    return { status: "foreign", ...result };
+  if (active.status === 0 && s.systemctl(["stop", s.unit]).status !== 0)
+    return { status: "unconfirmed", workspace, ...result };
+  if (!remove)
+    return { status: "stopped", workspace, ...result };
+  if (s.systemctl(["disable", s.unit]).status !== 0)
+    return { status: "failed", workspace, ...result };
+  if (readGenerated(path2, MARKER4) !== previous)
+    return { status: "foreign", ...result };
+  rmSync4(path2);
+  if (s.systemctl(["daemon-reload"]).status !== 0)
+    return { status: "failed", ...result };
+  s.systemctl(["reset-failed", s.unit]);
+  return { status: "removed", ...result };
+}
+function systemServiceStatus(s) {
+  const refused2 = boundary(s);
+  if (refused2)
+    return refused2;
+  const { previous, result } = observed(s);
+  if (previous === undefined)
+    return { status: "absent", scope: "system" };
+  const enabled = s.systemctl(["is-enabled", s.unit]).stdout.trim() || "unknown";
+  if (enabled.startsWith("masked"))
+    return { status: "masked", enabled, ...result };
+  if (previous === null)
+    return { status: "foreign", ...result };
+  return {
+    status: s.systemctl(["is-active", s.unit]).stdout.trim() || "unknown",
+    enabled,
+    workspace: unitWorkspace(previous),
+    ...result
+  };
+}
+
 // src/service/cli.ts
 function nativeCall(c, operation, reveal = false) {
   const access = c.localAccess();
@@ -6444,14 +6714,14 @@ function nativeCall(c, operation, reveal = false) {
 }
 var pause = (ms) => new Promise((resolve6) => setTimeout(resolve6, ms));
 async function serviceStatus(c, diagnose = false) {
-  const observed = c.inspect();
-  if (observed.status === "absent" || observed.status === "stopped")
-    return observed;
+  const observed2 = c.inspect();
+  if (observed2.status === "absent" || observed2.status === "stopped")
+    return observed2;
   try {
     return await nativeCall(c, diagnose ? "diagnose" : "status");
   } catch {
     return {
-      status: observed.status === "quarantined" ? "quarantined" : "unavailable"
+      status: observed2.status === "quarantined" ? "quarantined" : "unavailable"
     };
   }
 }
@@ -6467,12 +6737,12 @@ async function stopService(c) {
   }
   const deadline = performance.now() + LIMITS.stopWaitMs;
   while (performance.now() < deadline) {
-    const observed = c.inspect();
-    if ("epoch" in observed && observed.epoch === epoch && observed.status === "stopped")
+    const observed2 = c.inspect();
+    if ("epoch" in observed2 && observed2.epoch === epoch && observed2.status === "stopped")
       return { status: "stopped", epoch };
-    if (observed.status === "quarantined")
+    if (observed2.status === "quarantined")
       return { status: "quarantined", epoch };
-    if ("epoch" in observed && observed.epoch !== null && observed.epoch !== epoch)
+    if ("epoch" in observed2 && observed2.epoch !== null && observed2.epoch !== epoch)
       return { status: "unconfirmed", epoch };
     await pause(25);
   }
@@ -6504,10 +6774,10 @@ function startupGuidance(result, input) {
       return `Pi's agent directory ${agent} must be an existing real directory (not a symlink) owned by you.
 `;
     case "pi-auth":
-      return `${join11(agent, "auth.json")} must be your own single-link regular file holding valid Pi credentials; log in to Pi first.
+      return `${join12(agent, "auth.json")} must be your own single-link regular file holding valid Pi credentials; log in to Pi first.
 `;
     case "pi-models":
-      return `${join11(agent, "models.json")} must be your own single-link regular file using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.
+      return `${join12(agent, "models.json")} must be your own single-link regular file using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.
 `;
     case "pi-runtime":
       return `Loading Pi's SDK model runtime failed after the owner registered (optional SDK packages missing, or sources the SDK refuses); it stays quarantined.
@@ -6632,9 +6902,9 @@ async function observeStarted(workspace) {
   while (performance.now() < deadline) {
     try {
       const c = new ServiceCoordination(workspace);
-      const observed = await serviceStatus(c);
-      if (observed && typeof observed === "object" && "status" in observed)
-        service = String(observed.status);
+      const observed2 = await serviceStatus(c);
+      if (observed2 && typeof observed2 === "object" && "status" in observed2)
+        service = String(observed2.status);
       if (service === "alive")
         return { service, endpoint: c.localAccess().endpoint };
       if (service === "quarantined")
@@ -6644,9 +6914,9 @@ async function observeStarted(workspace) {
   }
   return { service };
 }
-async function privateLink(workspace) {
+async function privateLink(workspace, stateHome) {
   try {
-    const value = closed(await nativeCall(new ServiceCoordination(workspace), "token-link", true), ["link"]);
+    const value = closed(await nativeCall(new ServiceCoordination(workspace, stateHome), "token-link", true), ["link"]);
     return text(value.link, 4096, true);
   } catch {
     return;
@@ -6655,8 +6925,8 @@ async function privateLink(workspace) {
 var ownerControl = {
   async ownerStatus(workspace) {
     try {
-      const observed = await serviceStatus(new ServiceCoordination(workspace));
-      return observed && typeof observed === "object" && "status" in observed ? String(observed.status) : "unavailable";
+      const observed2 = await serviceStatus(new ServiceCoordination(workspace));
+      return observed2 && typeof observed2 === "object" && "status" in observed2 ? String(observed2.status) : "unavailable";
     } catch {
       return "unavailable";
     }
@@ -6664,8 +6934,8 @@ var ownerControl = {
   async stopOwner(workspace) {
     try {
       const c = new ServiceCoordination(workspace);
-      const observed = await serviceStatus(c);
-      const status = observed && typeof observed === "object" && "status" in observed ? String(observed.status) : "unavailable";
+      const observed2 = await serviceStatus(c);
+      const status = observed2 && typeof observed2 === "object" && "status" in observed2 ? String(observed2.status) : "unavailable";
       if (status === "absent" || status === "stopped")
         return "stopped";
       return status === "alive" ? (await stopService(c)).status : status;
@@ -6679,6 +6949,13 @@ async function serverAction(s, action, requested, linger) {
   const mode = action === "install" ? "install" : "restart";
   switch (s.platform) {
     case "linux":
+      if (s.scope === "system") {
+        if (install)
+          return configureSystemService(s, mode, requested);
+        if (action === "stop" || action === "uninstall")
+          return stopSystemService(s, action === "uninstall");
+        return systemServiceStatus(s);
+      }
       if (install)
         return configureAutostart(s, mode, requested, linger);
       if (action === "stop")
@@ -6701,7 +6978,7 @@ async function serverAction(s, action, requested, linger) {
   }
 }
 function serverGuidance(s, action, result, link) {
-  const cli = piUserInstall(s) ? `node ${JSON.stringify(join11(s.root, "src", "service-cli.mjs"))}` : "cadence";
+  const cli = piUserInstall(s) ? `node ${JSON.stringify(join12(s.root, "src", "service-cli.mjs"))}` : "cadence";
   const note = result.redirectedFrom ? `Cadence workspace: ${result.workspace} (${result.redirectedFrom} contains Cadence's private state)
 ` : "";
   return note + serverStatusGuidance(s, action, result, cli, link);
@@ -6724,7 +7001,7 @@ function lingerGuidance(linger) {
 function managerDetail(s) {
   switch (s.platform) {
     case "linux":
-      return "see systemctl --user status cadence and journalctl --user -u cadence";
+      return `see systemctl ${s.scope === "system" ? "--system" : "--user"} status ${s.unit} and journalctl ${s.scope === "system" ? "" : "--user "}-u ${s.unit}`;
     case "darwin":
       return `see launchctl print gui/${s.uid}/${LABEL} and ~/Library/Logs/cadence.log`;
     default:
@@ -6733,9 +7010,10 @@ function managerDetail(s) {
 }
 function serverStatusGuidance(s, action, result, cli, link) {
   const workspace = JSON.stringify(result.workspace ?? "");
-  const manage = `Manage: ${cli} server status|restart|stop|uninstall`;
-  const when = s.platform === "linux" ? "at boot or login" : "at login";
-  const config = `Port and token: ${PORT_KEY} and ${TOKEN_KEY} in ${serverConfigPath(s.home)} (edit them, then: ${cli} server restart)`;
+  const flags = `${s.scope === "system" ? " --system" : s.platform === "linux" ? " --user" : ""}${serviceName(s) ? ` --name ${serviceName(s)}` : ""}`;
+  const manage = `Manage: ${cli} server status|restart|stop|uninstall${flags}`;
+  const when = s.scope === "system" ? "at boot, as root (no linger)" : s.platform === "linux" ? "at boot or login" : "at login";
+  const config = `Port and token: ${PORT_KEY} and ${TOKEN_KEY} in ${serviceConfigPath(s)} (edit them, then: ${cli} server restart${flags})`;
   switch (result.status) {
     case "started": {
       const linger = lingerGuidance(result.linger);
@@ -6757,12 +7035,12 @@ ${manage}
 ${linger}`;
     }
     case "waiting-for-pi-login":
-      return `Cadence is registered for ${result.workspace}; it starts once Pi has ${join11(agentDirectory(s), "auth.json")}.
-Log in to Pi, then: ${cli} server restart
+      return `Cadence is registered for ${result.workspace}; it starts once Pi has ${join12(agentDirectory(s), "auth.json")}.
+Log in to Pi, then: ${cli} server restart${flags}
 ${config}
 ${lingerGuidance(result.linger)}`;
     case "stopped":
-      return action === "stop" ? `Cadence stopped; it starts again ${when}, or now with: ${cli} server restart
+      return action === "stop" ? `Cadence stopped; it starts again ${when}, or now with: ${cli} server restart${flags}
 ` : "";
     case "absent":
       return action === "restart" || action === "stop" ? `Cadence's background service is not installed: ${cli} server install
@@ -6771,7 +7049,22 @@ ${lingerGuidance(result.linger)}`;
       return `Cadence's service definition was rewritten for ${result.workspace}; left disabled as configured.
 `;
     case "masked":
-      return `cadence.service is masked; Cadence did not enable or start it.
+      return `${s.unit} is masked; Cadence did not enable or start it.
+`;
+    case "root-required":
+      return `System service management requires root. Run this command explicitly as root (for example sudo -H); Cadence never elevates itself. Root uses its own Pi credentials and private state, not copied user profiles.
+`;
+    case "scope-conflict":
+      return `The user service ${result.unit} still exists. Stop/uninstall it explicitly with --user before installing --system; no service or state was migrated.
+`;
+    case "project-running":
+      return `This project already has a running owner. Stop it explicitly before registering a different supervisor: ${cli} stop --workspace ${workspace}
+`;
+    case "environment-changed":
+      return `HOME or XDG_STATE_HOME differs from the generated unit. Use its original environment for orderly stop/uninstall before explicitly installing with the new state selection; no migration or lock cleanup was attempted.
+`;
+    case "workspace-changed":
+      return `Workspace changed during orderly Stop; nothing was rewritten. Observe and retry explicitly.
 `;
     case "missing-pi-sdk":
       return `Cadence did not register its service: the Pi SDK packages pi-coding-agent and pi-ai (scope @earendil-works) do not resolve from ${s.root}, for example after installing without optional dependencies; an owner without them would quarantine.
@@ -6781,7 +7074,7 @@ ${lingerGuidance(result.linger)}`;
 `;
     case "unavailable":
       return result.workspace ? `Cadence changed nothing: its owner could not be observed. Inspect: ${cli} diagnose --workspace ${workspace}
-` : `No user service manager; start Cadence explicitly: ${cli} start --workspace /absolute/project
+` : `No selected service manager; start Cadence explicitly: ${cli} start --workspace /absolute/project
 `;
     case "unsupported":
       return `Cadence has no background service for ${s.platform}; start it explicitly: ${cli} start --workspace /absolute/project
@@ -6821,28 +7114,56 @@ async function serverMain(argv, hostUrl) {
   argv.shift();
   let requested;
   let linger = process.env.CADENCE_LINGER !== "0";
-  let noLinger = false;
-  while (action === "install" && argv.length) {
-    if (argv[0] === "--workspace" && argv[1] && requested === undefined)
-      requested = resolve5(argv.splice(0, 2)[1]);
-    else if (argv[0] === "--no-linger" && !noLinger) {
-      argv.shift();
-      noLinger = true;
+  let scope;
+  let name, port;
+  const seen = new Set;
+  while (argv.length) {
+    const flag = argv.shift();
+    if (!flag || seen.has(flag))
+      throw new ContractError("invalid");
+    seen.add(flag);
+    if (flag === "--system" || flag === "--user") {
+      if (scope)
+        throw new ContractError("invalid");
+      scope = flag === "--system" ? "system" : "user";
+    } else if (flag === "--no-linger" && action === "install")
       linger = false;
+    else if (flag === "--name" && argv[0])
+      name = argv.shift();
+    else if (flag === "--workspace" && action === "install" && argv[0])
+      requested = resolve5(argv.shift());
+    else if (flag === "--port" && action === "install" && argv[0]) {
+      port = portValue(argv.shift());
+      if (!port)
+        throw new ContractError("invalid");
     } else
-      break;
+      throw new ContractError("invalid");
   }
-  if (argv.length)
-    throw new ContractError("invalid");
-  const s = hostSystem(dirname9(dirname9(fileURLToPath(hostUrl))), ownerControl);
+  const s = hostSystem(dirname9(dirname9(fileURLToPath(hostUrl))), ownerControl, {
+    scope,
+    name
+  });
+  if ((scope || name !== undefined) && s.platform !== "linux")
+    throw new ContractError("unsupported-context");
+  if (s.scope === "system" && s.uid !== 0) {
+    const result2 = { status: "root-required", scope: "system" };
+    process.stderr.write(serverGuidance(s, action, result2, undefined));
+    process.stdout.write(`${JSON.stringify(result2)}
+`);
+    process.exitCode = 1;
+    return;
+  }
   if (action === "install")
     process.stderr.write(researchTemplate(s.home));
   if (action === "install" || action === "restart") {
     try {
-      const { added, exposed } = ensureServerConfig(s.home);
-      const path2 = serverConfigPath(s.home);
+      const { added, exposed } = ensureServerConfig(s.home, {
+        name: serviceName(s),
+        port
+      });
+      const path2 = serviceConfigPath(s);
       if (added.length)
-        process.stderr.write(`Cadence added ${added.map((key) => key === PORT_KEY ? `${key}=${DEFAULT_PORT}` : `a random private ${key}`).join(" and ")} to ${path2}
+        process.stderr.write(`Cadence added ${added.map((key) => key === PORT_KEY ? `${key}=${port ?? DEFAULT_PORT}` : `a random private ${key}`).join(" and ")} to ${path2}
 `);
       if (exposed)
         process.stderr.write(`Note: other users can read ${path2}; chmod 600 ${JSON.stringify(path2)} keeps ${TOKEN_KEY} private.
@@ -6878,8 +7199,70 @@ async function serverMain(argv, hostUrl) {
     "unsupported",
     "unconfirmed",
     "quarantined",
-    "missing-pi-sdk"
+    "missing-pi-sdk",
+    "root-required",
+    "scope-conflict",
+    "workspace-changed",
+    "project-running",
+    "environment-changed"
   ].includes(result.status) || result.status === "absent" && (action === "restart" || action === "stop"))
+    process.exitCode = 1;
+}
+async function projectMain(argv, hostUrl) {
+  if (argv.shift() !== "open")
+    throw new ContractError("invalid");
+  const options = { workspace: process.cwd() };
+  let create = false, selected2 = false;
+  const seen = new Set;
+  while (argv.length) {
+    const flag = argv.shift();
+    if (!flag.startsWith("--") && !selected2) {
+      options.workspace = resolve5(flag);
+      selected2 = true;
+    } else if (!seen.has(flag) && flag === "--create") {
+      seen.add(flag);
+      create = true;
+    } else if (!seen.has(flag) && (flag === "--state-home" || flag === "--agent-dir") && argv[0]) {
+      seen.add(flag);
+      const value = resolve5(argv.shift());
+      if (flag === "--state-home")
+        options.stateHome = value;
+      else
+        options.agentDir = value;
+    } else
+      throw new ContractError("invalid");
+  }
+  if (privateWorkspace(options.workspace, options.stateHome))
+    throw new ContractError("forbidden");
+  if (create)
+    mkdirSync7(options.workspace, { recursive: true });
+  const landing = effectiveWorkspace(options.workspace, options.stateHome);
+  if (landing.redirected) {
+    process.stderr.write(`Cadence workspace: ${landing.workspace} (${options.workspace} contains Cadence's private state)
+`);
+    mkdirSync7(landing.workspace, { recursive: true });
+  }
+  options.workspace = landing.workspace;
+  const c = new ServiceCoordination(options.workspace, options.stateHome);
+  const kept = readHostConfig(c);
+  if (!kept)
+    options.port = 0;
+  const result = await startService(options, false, hostUrl);
+  const alive = result && typeof result === "object" && "status" in result && result.status === "alive";
+  const config = alive ? readHostConfig(c) : undefined;
+  process.stdout.write(`${JSON.stringify({ ...result, workspace: c.store.root, ...config ? { cwd: config.cwd, endpoint: c.localAccess().endpoint } : {} })}
+`);
+  if (alive) {
+    const link = await privateLink(c.store.root, options.stateHome);
+    process.stderr.write(`Project owner ready: ${c.store.root} (task cwd: ${config?.cwd}). No task was created or started.
+`);
+    if (link)
+      process.stderr.write(`Private WebUI link: ${link}
+`);
+    process.stderr.write(`Native entry: open Pi in this project and use /cadence. Stop only this project: cadence stop --workspace ${JSON.stringify(c.store.root)}${options.stateHome ? ` --state-home ${JSON.stringify(options.stateHome)}` : ""}
+`);
+  }
+  if (failedStatus(result))
     process.exitCode = 1;
 }
 async function managementMain(argv, hostUrl) {
@@ -6890,10 +7273,17 @@ async function managementMain(argv, hostUrl) {
     if (command === "--help" && !argv.length) {
       process.stdout.write(`cadence start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--workspace PATH] [--state-home PATH]
 cadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall
-Start is explicit, or the background service that server install registers: a systemd user unit on Linux, started at boot through linger (--no-linger or CADENCE_LINGER=0 keeps it to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file, --server-config (the .env whose CADENCE_PORT and CADENCE_TOKEN the background service uses).
+Linux server options: --system (root, no linger) or --user; --name NAME selects an independent service; install also accepts --port PORT (required for a new named service). Root defaults to --system. No automatic sudo or profile migration.
+cadence project open [PATH] [--create] [--agent-dir PATH] [--state-home PATH]
+Project open explicitly starts/reuses that checkout owner, selecting a private free port for a new project. It never creates or starts a task.
+Start is explicit, or the background service that server install registers: a system/root unit on Linux without linger, or --user with optional linger (--no-linger or CADENCE_LINGER=0 keeps user scope to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file, --server-config (the .env whose CADENCE_PORT and CADENCE_TOKEN the background service uses).
 Return/quit detaches clients; only explicit Cancel/Stop requests stop. Unconfirmed/quarantined is not stopped.
 Recovery resolve requires this local native terminal, exact unchanged dead-owner resources and separate process/credential/storage acknowledgments. No --yes, network recovery, killing, repair or cleanup.
 `);
+      return;
+    }
+    if (command === "project") {
+      await projectMain(argv, hostUrl);
       return;
     }
     if (command === "server") {
@@ -6966,12 +7356,12 @@ Recovery resolve requires this local native terminal, exact unchanged dead-owner
 `);
       options.workspace = landing.workspace;
       if (command === "start")
-        mkdirSync5(landing.workspace, { recursive: true });
+        mkdirSync7(landing.workspace, { recursive: true });
     }
     let result;
     if (command === "start")
       result = await startService(options, foreground, hostUrl);
-    else if (landing.redirected && !existsSync(landing.workspace)) {
+    else if (landing.redirected && !existsSync3(landing.workspace)) {
       if (command !== "status" && command !== "diagnose")
         throw new ContractError("unavailable");
       result = { status: "absent" };

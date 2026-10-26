@@ -22,6 +22,7 @@ it("built browser safety: old task active Cancel, bad/missing builds, manual ref
     buildRefused: false,
     compatibleCancel: false,
     failedReview: false,
+    settlementWaits: [],
   };
   try {
     assert(process.env.CADENCE_BROWSER_PATH);
@@ -65,20 +66,39 @@ it("built browser safety: old task active Cancel, bad/missing builds, manual ref
       return reply.value;
     }
     async function settled(r) {
-      const deadline = Date.now() + 15000;
+      const started = Date.now(),
+        deadline = started + 15000;
+      let last;
+      const observed = (complete) =>
+        receipt.settlementWaits.push({
+          commandId: r.commandId,
+          runId: r.runId,
+          complete,
+          startedAt: started,
+          observedAt: Date.now(),
+          elapsedMs: Date.now() - started,
+          last,
+        });
       while (Date.now() < deadline) {
         const result = await f.client.receipt(r.commandId),
           active = await f.client.activeRuns();
+        // Fixed/public DTO facts before teardown, not provider bodies or thrown
+        // diagnostics. A later explicit Stop must not be mistaken for the cause
+        // of the original assertion/timeout (nor erase its original native facts).
+        last = { receipt: result, active };
         if (
           result.status === "found" &&
           result.receipt.publication === "published" &&
           active.kind === "ok" &&
           active.value.status === "complete" &&
           !active.value.runs.some((a) => a.runId === r.runId)
-        )
+        ) {
+          observed(true);
           return result.receipt;
+        }
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
+      observed(false);
       throw Error("original work did not settle");
     }
     async function create(goal, kind) {
@@ -90,7 +110,7 @@ it("built browser safety: old task active Cancel, bad/missing builds, manual ref
         .click();
       const r = await settled(await command("create"));
       await p
-        .locator(".panel-left")
+        .locator(".task-list > .page-controls")
         .getByRole("button", { name: "Observe a new snapshot" })
         .click();
       await p.getByRole("button", { name: new RegExp(goal) }).click();
@@ -171,6 +191,21 @@ it("built browser safety: old task active Cancel, bad/missing builds, manual ref
     while (!f.contacts() && Date.now() < contactDeadline)
       await new Promise((r) => setTimeout(r, 50));
     assert.equal(f.contacts(), 1);
+    // A running subagent opens as an observation, not another Start. It follows
+    // live watermarks (the bounded reader still requires an explicit update).
+    await p
+      .locator(".running-conversations .session-item")
+      .filter({ hasText: "Subagent" })
+      .first()
+      .click();
+    await p
+      .locator(".conversation-badge")
+      .getByText("Subagent", { exact: true })
+      .waitFor();
+    const selected = new URLSearchParams(new URL(p.url()).hash.slice(1));
+    assert.equal(JSON.parse(selected.get("scope")).kind, "child");
+    assert.equal(selected.has("snapshot"), false);
+    assert.equal(f.contacts(), 1);
     // Two actual browser contexts and a real Pi PTY observe the SAME pending run.
     const secondContext = await browser.newContext({
       viewport: { width: 390, height: 844 },
@@ -180,6 +215,7 @@ it("built browser safety: old task active Cancel, bad/missing builds, manual ref
     second.setDefaultTimeout(15000);
     await second.goto(f.tokenLink);
     await second.goto(`${f.endpoint}/app#task=${live}`);
+    await second.locator(".view-menu > summary").click();
     await second.getByRole("button", { name: "outcomes", exact: true }).click();
     await second.getByText(run.runId, { exact: true }).waitFor();
     receipt.nativeObserver = await nativeObserver(f, run.runId);
@@ -336,6 +372,8 @@ it("built browser safety: old task active Cancel, bad/missing builds, manual ref
     if (page)
       writeFileSync(join(root, "failed-dom.html"), await page.content());
   } finally {
+    receipt.teardownStartedAt = Date.now();
+    receipt.contacts = f.contacts();
     for (const close of [
       () => browser?.close(),
       () => launcher?.close(),
