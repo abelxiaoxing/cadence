@@ -1747,7 +1747,6 @@ summary:focus-visible,
     flex: 1 0 100%;
     justify-content: space-between;
     overflow: visible;
-    /* The secondary menu must escape the navigation row on phones. */
     padding: 4px;
   }
   .tb-tab {
@@ -1937,41 +1936,6 @@ summary:focus-visible,
 
 /* Conversation-first workspace: pi's project/session hierarchy, with Cadence
  * authority and retained-source inspection kept at the edges. */
-.view-menu {
-  position: relative;
-  margin: 0;
-}
-.view-menu > summary {
-  list-style: none;
-}
-.view-menu > summary::-webkit-details-marker {
-  display: none;
-}
-.view-menu-items {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 60;
-  width: 180px;
-  padding: 5px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-elev);
-  box-shadow: 0 8px 24px #0006;
-}
-.view-menu-items button {
-  display: flex;
-  width: 100%;
-  justify-content: flex-start;
-  border: 0;
-  background: transparent;
-  padding: 8px 10px;
-  text-transform: capitalize;
-}
-.view-menu-items button[aria-pressed="true"] {
-  color: var(--accent-text);
-  background: var(--accent-soft);
-}
 .inspector-toggle {
   display: inline-flex;
   align-items: center;
@@ -1984,16 +1948,6 @@ summary:focus-visible,
   .inspector-hidden .main + .resize-handle {
     display: none;
   }
-}
-.lp-new {
-  flex: none;
-  padding: 12px 10px 8px;
-}
-.new-conversation {
-  width: 100%;
-  justify-content: flex-start;
-  padding: 9px 12px;
-  background: var(--bg-elev2);
 }
 .lp-section-heading {
   display: flex;
@@ -2169,14 +2123,6 @@ summary:focus-visible,
   flex: 1;
 }
 
-.view-menu-actions {
-  border-top: 1px solid var(--border-soft);
-  margin-top: 4px;
-  padding-top: 4px;
-}
-.view-menu-actions > button {
-  font-size: 11.5px;
-}
 .msg .detail-pane.message-field {
   padding: 0;
   border: 0;
@@ -2192,4 +2138,553 @@ summary:focus-visible,
 .build-part {
   margin: 0;
   font-size: inherit;
+}
+
+/* ============================================================
+   pi composer, welcome templates and task flow
+   (pi .inputbar / .inputbox / .composer-tools / .btn.send,
+   .empty-templates / .empty-template, .goalbar families)
+   ============================================================ */
+.brand-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 4px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.brand-status .status-dot {
+  margin: 0;
+}
+.chip.new-chat {
+  margin-left: 4px;
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--accent-text);
+}
+.chip.new-chat:hover:not(:disabled),
+.chip.new-chat[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.chip.unset {
+  color: var(--amber-text);
+}
+.chip:disabled,
+.tb-tab:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.chip-model-pick > .chip-label {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inputbar {
+  flex-shrink: 0;
+  padding: 10px var(--chat-inset) 14px;
+  position: relative;
+}
+.composer-hint {
+  margin: 0 2px 8px;
+  font-size: 12px;
+  color: var(--amber-text);
+}
+.inputbox {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--inputbox-bg, var(--bg-elev2));
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 10px;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+  box-shadow:
+    inset 0 1px 0 var(--glow-05),
+    0 4px 18px rgba(0, 0, 0, 0.28);
+}
+.inputbox:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow:
+    inset 0 1px 0 var(--glow-05),
+    0 0 0 3px var(--accent-soft),
+    0 6px 22px rgba(0, 0, 0, 0.32);
+}
+.inputbox textarea {
+  flex: none;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14.5px;
+  line-height: 1.6;
+  max-height: 220px;
+  min-height: 0;
+  padding: 6px 2px;
+  caret-color: var(--accent);
+  overflow: hidden;
+}
+.inputbox textarea:focus {
+  box-shadow: none;
+}
+.inputbox textarea::placeholder {
+  color: var(--text-faint);
+}
+.composer-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-soft);
+}
+.composer-tools-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.composer-tools-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.composer-tools .chip {
+  flex-shrink: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-soft);
+  font-size: 12.5px;
+}
+.composer-tools .chip > svg {
+  flex-shrink: 0;
+}
+.composer-tools .chip > .chip-model {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-select {
+  padding: 0 4px;
+}
+.composer-select > select {
+  height: 26px;
+  min-height: 0;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.composer-select > select:focus {
+  box-shadow: none;
+}
+.composer-select:focus-within {
+  border-color: var(--accent);
+}
+.composer-note {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.inputbox .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  min-height: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  transition:
+    background 0.18s,
+    border-color 0.18s,
+    transform 0.18s,
+    box-shadow 0.18s;
+}
+.inputbox .btn svg {
+  width: 15px;
+  height: 15px;
+}
+.inputbox .btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.inputbox .btn.send {
+  background: var(--send-blue);
+  border-color: var(--send-blue);
+  color: #fff;
+  box-shadow: 0 2px 10px rgba(59, 130, 246, 0.35);
+}
+.inputbox .btn.send:hover:not(:disabled) {
+  background: var(--send-blue-hover);
+  border-color: var(--send-blue-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(59, 130, 246, 0.45);
+}
+
+/* New-task page: pi's empty state with its prompt-template grid. */
+.tab-body.welcome-body {
+  display: flex;
+  flex-direction: column;
+}
+.empty-state.welcome {
+  max-width: 760px;
+  width: 100%;
+}
+.welcome-steps {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 14px;
+  margin: 14px 0 18px;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.welcome-steps > li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.welcome-step-num,
+.flow-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+.empty-state .welcome-note {
+  margin: -6px 0 18px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.empty-templates {
+  width: min(720px, 100%);
+}
+.empty-templates-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.empty-templates-title {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text);
+}
+.empty-templates-hint {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.empty-templates-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+.empty-state .empty-template {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  min-height: 0;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-bg, var(--bg-elev));
+  color: var(--text-dim);
+  text-align: left;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    transform 0.12s;
+}
+.empty-state .empty-template:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--bg-elev2);
+  transform: translateY(-1px);
+}
+.empty-template > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--accent-text);
+}
+.empty-template-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.empty-template-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.empty-template-hint {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-faint);
+}
+
+/* Task flow: pi's goalbar placed in the composer slot. */
+.task-flow {
+  padding-top: 8px;
+}
+.task-flow .goalbar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--inputbox-bg, var(--bg-elev2));
+  box-shadow:
+    inset 0 1px 0 var(--glow-05),
+    0 4px 18px rgba(0, 0, 0, 0.28);
+}
+.flow-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.flow-steps > li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px 2px 4px;
+  border-radius: 999px;
+}
+.flow-steps > li + li::before {
+  content: "";
+  width: 14px;
+  height: 1px;
+  margin-right: 4px;
+  background: var(--border);
+}
+.flow-steps > li > svg {
+  width: 13px;
+  height: 13px;
+}
+.flow-steps > li.done {
+  color: var(--green);
+}
+.flow-steps > li.current {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.flow-steps > li.current .flow-num {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.flow-steps > li.busy .flow-num {
+  border-style: dashed;
+  @media (prefers-reduced-motion: no-preference) {
+    animation: flow-spin 1.2s linear infinite;
+  }
+}
+@keyframes flow-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.goalbar-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+.goalbar-text {
+  flex: 1 1 260px;
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.goalbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 0;
+  padding: 5px 12px;
+  border: 1px solid var(--accent-strong);
+  border-radius: 8px;
+  background: var(--accent-strong);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.goalbar-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.goalbar-btn.ghost {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--text);
+}
+.goalbar-btn.ghost:hover:not(:disabled) {
+  border-color: var(--border);
+  background: var(--bg-elev2);
+  color: var(--text);
+}
+.goalbar-btn.danger {
+  border-color: var(--stop-red);
+  background: var(--stop-red);
+}
+.goalbar-btn.danger:hover:not(:disabled) {
+  border-color: var(--stop-red-hover);
+  background: var(--stop-red-hover);
+}
+.goalbar-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.goalbar-btn > svg {
+  width: 13px;
+  height: 13px;
+}
+.conversation-badge.running {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--green);
+  background: var(--green-soft);
+}
+.conversation-badge.running .status-dot {
+  margin: 0;
+}
+
+/* Right panel guide before a task is selected. */
+.inspector-guide > h3 {
+  margin: 6px 0 10px;
+  font-size: 13px;
+}
+.inspector-guide > ol {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding-inline-start: 20px;
+}
+.inspector-guide li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.inspector-guide li > strong {
+  color: var(--text);
+  font-size: 12.5px;
+}
+.inspector-guide > .panel-hint {
+  padding-inline: 0;
+}
+
+@media (max-width: 900px) {
+  .brand-status-label {
+    display: none;
+  }
+}
+@media (max-width: 640px) {
+  .tb-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+  .chip.new-chat > span,
+  .composer-note {
+    display: none;
+  }
+  .inputbar {
+    padding-bottom: 10px;
+  }
+  .empty-state.welcome {
+    padding-top: 20px;
+  }
+  .goalbar-text {
+    flex-basis: 100%;
+  }
+}
+@media (pointer: coarse) {
+  .inputbox .btn,
+  .goalbar-btn {
+    min-height: 36px;
+  }
+  .inputbox .btn {
+    width: 36px;
+    height: 36px;
+  }
+}
+
+/* Compact receipts: the dl reads as one wrapping row above the composer. */
+.receipt-dock {
+  max-height: 34%;
+  padding-block: 6px;
+}
+.receipt-dock .receipt {
+  margin: 4px 0;
+  padding: 6px 10px;
+  gap: 2px;
+}
+.receipt-dock .receipt > dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 6px;
+  margin: 0;
+  font-size: 11.5px;
+}
+.receipt-dock .receipt > dl > dt {
+  color: var(--text-faint);
+}
+.receipt-dock .receipt > dl > dd {
+  margin: 0 8px 0 0;
+  color: var(--text);
+}
+.receipt-dock .receipt > button {
+  min-height: 0;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+.receipt-older > summary {
+  font-size: 11px;
+  color: var(--text-faint);
 }

@@ -176,7 +176,6 @@ it("built browser reads retained conversation after live task removal and restar
       });
       document.execCommand = () => false;
     });
-    await page.locator(".view-menu > summary").click();
     await page.getByRole("button", { name: "Copy token-free link" }).click();
     await page.getByText("Link copy unavailable.", { exact: false }).waitFor();
     assert.doesNotMatch(

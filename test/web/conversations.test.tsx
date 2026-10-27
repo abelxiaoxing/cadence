@@ -96,6 +96,7 @@ it("an unavailable roster is not empty or inferred from historical lifecycle", (
       onScope={() => {}}
       onNew={() => {}}
       onProject={() => {}}
+      refreshKey={0}
     />,
   );
   for (const label of [
@@ -201,5 +202,14 @@ it("the initial conversation shell renders without a selected snapshot or task",
   const html = renderToStaticMarkup(<App />);
   expect(html).toContain("Cadence");
   expect(html).toContain("Conversation");
-  expect(html).toContain("Details");
+  // pi's new-conversation page: an explicit New task entry, the goal composer
+  // and the workflow guide, with every view tab visible in the topbar.
+  expect(html).toContain('aria-label="New task"');
+  expect(html).toContain('aria-label="Goal"');
+  expect(html).toContain('aria-label="Preview Create (does not Start)"');
+  expect(html).toContain("How a task works");
+  expect(html).toContain("No chat or discovery activates execution.");
+  for (const view of ["tools", "context", "timeline", "runs", "outcomes"])
+    expect(html).toContain(`aria-label="${view}"`);
+  expect(html).not.toContain("view-menu");
 });

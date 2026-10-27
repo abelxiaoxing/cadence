@@ -79,19 +79,18 @@ for (const route of ["loopback", "https"])
       await other
         .getByRole("button", { name: "Observe current state", exact: true })
         .click();
-      await other
-        .getByRole("button", { name: "Create task", exact: true })
-        .click();
+      // With no task selected the phone shows pi's composer directly.
       await other
         .getByLabel("Goal", { exact: true })
         .fill("Local unsent draft");
       await other.waitForFunction(() =>
         [...document.querySelectorAll("button")].some(
           (button) =>
-            button.textContent === "Preview Create (does not Start)" &&
-            !button.disabled,
+            button.getAttribute("aria-label") ===
+              "Preview Create (does not Start)" && !button.disabled,
         ),
       );
+      // A typed draft is local only: neither typing nor Escape requests Create.
       await other.keyboard.press("Escape");
       assert.equal(f.contacts(), 0);
       await p.getByRole("button", { name: "Create task", exact: true }).click();
@@ -143,6 +142,15 @@ for (const route of ["loopback", "https"])
       }
       const created = await published(await confirm("create"));
       const taskId = created.created.taskId;
+      // A confirmed Create opens its own task once published: the header names
+      // the goal and the next-step bar offers the plan, before any sidebar click.
+      await p
+        .getByRole("heading", {
+          name: "Browser independent readonly collaboration",
+          exact: true,
+        })
+        .waitFor();
+      await p.getByRole("button", { name: "Edit plan", exact: true }).waitFor();
       await p
         .locator(".task-list > .page-controls")
         .getByRole("button", { name: "Observe a new snapshot" })
@@ -208,7 +216,6 @@ for (const route of ["loopback", "https"])
       await other
         .getByRole("button", { name: "Observe current state", exact: true })
         .click();
-      await other.locator(".view-menu > summary").click();
       await other
         .getByRole("button", { name: "outcomes", exact: true })
         .click();
@@ -332,7 +339,6 @@ for (const route of ["loopback", "https"])
           await p
             .getByRole("button", { name: /assignment-1.*Subagent.*completed/ })
             .click();
-        await p.locator(".view-menu > summary").click();
         await p.getByRole("button", { name: "Export selected scope" }).click();
         const dialog = p.getByRole("dialog");
         await dialog.getByLabel("Format").selectOption(format);

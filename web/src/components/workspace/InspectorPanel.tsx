@@ -22,7 +22,7 @@ import type {
 } from "../../client/plan-metadata";
 import { PLAN_METADATA_UNAVAILABLE } from "../../client/plan-metadata";
 import { ViewLifetime } from "../../client/view-lifetime";
-import { useT } from "../../i18n/locale";
+import { type MessageKey, useT } from "../../i18n/locale";
 import type {
   Action,
   CheckObligations,
@@ -42,13 +42,42 @@ const INSPECTOR_TABS: readonly (readonly [string, IconType])[] = [
   ["changes", FiGitPullRequest],
   ["review", FiUserCheck],
 ];
+const GUIDE: readonly (readonly [MessageKey, MessageKey])[] = [
+  [
+    "Describe the goal",
+    "Type it in the input box; Create is previewed and confirmed, and starts nothing.",
+  ],
+  [
+    "Write or generate a plan",
+    "The Plan tab holds a readable plan and 1–16 assignments. Save it explicitly.",
+  ],
+  [
+    "Confirm Start",
+    "Start runs the saved graph after its own preview. Runs and subagents appear under the task in the left sidebar.",
+  ],
+  [
+    "Check and review",
+    "Run configured checks, read current changes and record human review here.",
+  ],
+];
 export function InspectorPlaceholder() {
   const { t } = useT();
   return (
     <aside className="panel panel-right">
-      <p className="panel-empty">
-        {t("Select a task to inspect plans, checks, changes and review.")}
-      </p>
+      <div className="inspector-body inspector-guide">
+        <h3>{t("How a task works")}</h3>
+        <ol>
+          {GUIDE.map(([title, text]) => (
+            <li key={title}>
+              <strong>{t(title)}</strong>
+              <span>{t(text)}</span>
+            </li>
+          ))}
+        </ol>
+        <p className="panel-hint">
+          {t("Select a task to inspect plans, checks, changes and review.")}
+        </p>
+      </div>
     </aside>
   );
 }
@@ -60,6 +89,8 @@ export function InspectorPanel({
   canAct,
   onAction,
   planMetadata,
+  tab: shownTab,
+  onTab,
 }: {
   client: ServiceClient;
   context: ContextVersion | null;
@@ -68,6 +99,9 @@ export function InspectorPanel({
   canAct: boolean;
   onAction: (a: Action) => void;
   planMetadata?: PlanMetadataPort;
+  /** Optional owner of the selected tab, so the task flow can open one. */
+  tab?: string;
+  onTab?: (tab: string) => void;
 }) {
   const { t, tx } = useT();
   const contextKey = contextInput ? canonicalJson(contextInput) : "unavailable";
@@ -78,11 +112,13 @@ export function InspectorPanel({
         : decodeContext(parseWireJson(contextKey)),
     [contextKey],
   );
-  const [tab, setTab] = useState("plan"),
-    [draft, setDraft] = useState<PlanDraft>({
-      readablePlan: "",
-      assignments: [],
-    });
+  const [localTab, setLocalTab] = useState("plan");
+  const tab = shownTab ?? localTab,
+    setTab = onTab ?? setLocalTab;
+  const [draft, setDraft] = useState<PlanDraft>({
+    readablePlan: "",
+    assignments: [],
+  });
   const [progress, setProgress] =
     useState<Extract<PlanMetadataRead, { kind: "progress" }>>();
   const [meta, setMeta] = useState<PlanMetadata>(),
@@ -121,6 +157,19 @@ export function InspectorPanel({
       current = false;
     };
   }, [planMetadata, context, contextKey]);
+  // A pristine local draft starts from the observed saved plan. It changes only
+  // this browser's draft; saving still needs its own preview and confirmation.
+  useEffect(() => {
+    if (!meta) return;
+    setDraft((current) =>
+      current.readablePlan || current.assignments.length
+        ? current
+        : {
+            readablePlan: meta.readablePlan,
+            assignments: meta.savedGraph?.assignments ?? [],
+          },
+    );
+  }, [meta]);
   const rememberChecks = useCallback(
     (value: CheckObligations) => setChecks(value),
     [],

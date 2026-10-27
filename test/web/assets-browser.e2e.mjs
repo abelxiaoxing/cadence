@@ -328,12 +328,14 @@ it("built readonly history, exact Unicode/full copy, timeline and drawers across
         await page
           .getByRole("button", { name: /Readonly Unicode fixture/ })
           .click();
-        assert.equal(await page.locator(".tb-tabs > button").count(), 1);
+        // pi's topbar keeps every recorded view as a direct tab (icon-only
+        // on phones), not behind a secondary menu.
+        assert.equal(await page.locator(".tb-tabs > button").count(), 6);
         assert.equal(
           await page
             .getByRole("button", { name: "timeline", exact: true })
             .isVisible(),
-          false,
+          true,
         );
         // Subagent conversations are reachable directly in the left history tree,
         // including when no live snapshot has a recent run projection.
@@ -437,11 +439,10 @@ it("built readonly history, exact Unicode/full copy, timeline and drawers across
           await page.evaluate(() => navigator.clipboard.readText()),
           data.text,
         );
-        await page.locator(".view-menu > summary").click();
-        const menu = await page.locator(".view-menu-items").boundingBox();
+        const tabs = await page.locator(".tb-tabs").boundingBox();
         assert(
-          menu && menu.x >= 0 && menu.x + menu.width <= viewport.width,
-          "secondary menu remains inside viewport",
+          tabs && tabs.x >= 0 && tabs.x + tabs.width <= viewport.width,
+          "view tabs remain inside viewport",
         );
         assert.equal(
           await page
@@ -514,7 +515,6 @@ it("built readonly history, exact Unicode/full copy, timeline and drawers across
         }
         receipt.layouts.push({ ...viewport, ...dimensions });
       }
-      await page.locator(".view-menu > summary").click();
       await page
         .getByRole("button", { name: "Export selected scope", exact: true })
         .click();
@@ -567,7 +567,6 @@ it("built readonly history, exact Unicode/full copy, timeline and drawers across
       await degraded
         .getByRole("button", { name: /Readonly Unicode fixture/ })
         .click();
-      await degraded.locator(".view-menu > summary").click();
       await degraded
         .getByRole("button", { name: "timeline", exact: true })
         .click();
@@ -601,7 +600,6 @@ it("built readonly history, exact Unicode/full copy, timeline and drawers across
       await chinese
         .getByRole("button", { name: /Readonly Unicode fixture/ })
         .click();
-      await chinese.locator(".view-menu > summary").click();
       await chinese
         .getByRole("button", { name: "时间线", exact: true })
         .click();
@@ -618,7 +616,6 @@ it("built readonly history, exact Unicode/full copy, timeline and drawers across
       await chinese
         .getByRole("button", { name: "Switch to English", exact: true })
         .click();
-      await chinese.locator(".view-menu > summary").click();
       await chinese
         .getByRole("button", { name: "timeline", exact: true })
         .waitFor();
