@@ -12,6 +12,7 @@ export const zh = {
   // Conversation-first workspace
   "Build information": "构建信息",
   Conversation: "对话",
+  Details: "详情",
   "Back to task": "返回任务",
   "Task {id}": "任务 {id}",
   "{kind} {id}": "{kind} {id}",
@@ -27,75 +28,6 @@ export const zh = {
   "Running conversations": "运行的对话",
   "Conversation history": "历史对话",
   "Task conversations": "任务对话与子代理",
-  "No tasks yet. Describe a goal in the input box to create one.":
-    "还没有任务。在输入框里描述目标即可创建。",
-
-  // pi-style composer, welcome page and task flow
-  Connected: "已连接",
-  Unavailable: "不可用",
-  Observing: "观察中",
-  "Owner model {model}": "模型 {model}",
-  "No owner model chosen": "未选择模型",
-  "Service unavailable; this page cannot create a task.":
-    "服务不可用；本页面无法创建任务。",
-  "Choose the owner model first: Create needs an exact model choice.":
-    "请先选择所有者模型：创建任务需要明确的模型选择。",
-  "Actions are unavailable right now; observe the current state again.":
-    "当前无法执行操作；请重新观察当前状态。",
-  "Describe the task goal — Enter previews Create, Shift+Enter adds a line":
-    "描述任务目标 — Enter 预览创建，Shift+Enter 换行",
-  "Choose a model first": "先选择模型",
-  "Create does not Start": "创建不会启动",
-  "What should Cadence do in {project}?":
-    "要让 Cadence 在 {project} 里做什么？",
-  "What should Cadence do?": "要让 Cadence 做什么？",
-  "Each task is one conversation: its plan, runs, subagents, checks and review stay together in the left sidebar.":
-    "每个任务就是一个对话：它的计划、运行、子代理、检查和审阅都集中在左侧栏的同一条目下。",
-  "Start from a kind": "从任务类型开始",
-  "A card only fills the input below.": "点击卡片只会填入下方输入框。",
-  "Change code": "修改代码",
-  "Edits the checkout after a saved plan and Start":
-    "保存计划并确认开始后修改工作副本",
-  "Implement: ": "实现：",
-  "Reads and reports; never edits files": "只读取并汇报，不修改文件",
-  "Research: ": "调研：",
-  "Finds a cause without editing or parent checks":
-    "查找原因，不修改文件，也不运行父级检查",
-  "Diagnose: ": "诊断：",
-  "How a task works": "任务如何进行",
-  "Describe the goal": "描述目标",
-  "Type it in the input box; Create is previewed and confirmed, and starts nothing.":
-    "在输入框里输入；创建前会预览并确认，不会启动任何执行。",
-  "Write or generate a plan": "编写或生成计划",
-  "The Plan tab holds a readable plan and 1–16 assignments. Save it explicitly.":
-    "“计划”页包含可读计划和 1–16 个子任务，需要显式保存。",
-  "Confirm Start": "确认开始",
-  "Start runs the saved graph after its own preview. Runs and subagents appear under the task in the left sidebar.":
-    "开始会在单独预览并确认后执行已保存的计划；运行和子代理会出现在左侧栏该任务下方。",
-  "Check and review": "检查与审阅",
-  "Run configured checks, read current changes and record human review here.":
-    "在这里运行已配置的检查、查看当前变更并记录人工审阅。",
-  "Next step": "下一步",
-  Start: "执行",
-  "{kind} is running · {stage}. Leaving this page does not cancel it.":
-    "{kind} 正在运行 · {stage}。离开页面不会取消它。",
-  "Stop this run": "停止这次运行",
-  "Next: write a readable plan with assignments and save it. Code tasks can first ask the model for a readonly proposal.":
-    "下一步：编写包含子任务的可读计划并保存。代码任务可以先让模型只读生成计划建议。",
-  "Generate plan proposal": "生成计划建议",
-  "Edit plan": "编辑计划",
-  "Plan saved (revision {revision}). Nothing runs until you confirm Start.":
-    "计划已保存（第 {revision} 版）。确认开始之前不会执行任何内容。",
-  "Start execution": "开始执行",
-  "Last run settled: {outcome}. Run checks, then record human review.":
-    "上次运行已结束：{outcome}。请运行检查，然后记录人工审阅。",
-  "Run checks": "运行检查",
-  Review: "审阅",
-  "Actions need the current control context; recorded history stays readable.":
-    "操作需要当前控制上下文；已记录的历史仍可阅读。",
-  "No conversation yet. Messages from plan generation and runs appear here as they are recorded.":
-    "还没有对话内容。生成计划和执行时，模型的消息会在记录后显示在这里。",
-  "Earlier command receipts ({count})": "更早的命令回执（{count}）",
 
   // Topbar, drawers and statusbar
   Tasks: "任务",
@@ -132,6 +64,7 @@ export const zh = {
   "· snapshot {seq}.": "· 快照 {seq}。",
   "Pages and old outcomes are historical observations, not renewed consent.":
     "分页内容和旧结果是历史观察，不代表重新授权。",
+  "Open a task or create one explicitly": "打开一个任务，或显式创建一个",
   "Plans, children, checks and human review share one service owner. No chat or discovery activates execution.":
     "计划、子运行、检查和人工审阅共用一个服务所有者。聊天或浏览不会触发执行。",
   "Create task": "创建任务",
@@ -581,7 +514,6 @@ export const zh = {
   "generate-plan": "生成计划",
   "save-plan": "保存计划",
   start: "启动",
-  code: "代码",
   research: "调研",
   diagnosis: "诊断",
   edit: "编辑",

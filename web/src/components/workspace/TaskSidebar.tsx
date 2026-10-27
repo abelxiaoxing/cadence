@@ -1,7 +1,7 @@
 /* Adapted from pi-web-ui LeftPanel.tsx project/current/history sections and
  * nested subagent rows. MIT (c) 2026 xing-shuyin. Navigation only observes the
  * Cadence owner; no session import, cwd mutation, replay or repair. */
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useState } from "react";
 import {
   FiChevronDown,
   FiChevronRight,
@@ -31,13 +31,11 @@ function SidebarSection({
   children,
   className = "",
   count,
-  actions,
 }: {
   title: string;
   children: ReactNode;
   className?: string;
   count?: string;
-  actions?: ReactNode;
 }) {
   const [open, setOpen] = useState(true);
   return (
@@ -57,7 +55,6 @@ function SidebarSection({
           <span className="lp-section-title">{title}</span>
           {count && <span className="lp-count">{count}</span>}
         </button>
-        {actions && <div className="lp-section-actions">{actions}</div>}
       </header>
       <div className="lp-section-body" hidden={!open}>
         {children}
@@ -223,7 +220,6 @@ export function TaskSidebar({
   onScope,
   onNew,
   onProject,
-  refreshKey,
 }: {
   client: ServiceClient;
   workspace: WorkspaceBootstrap;
@@ -239,8 +235,6 @@ export function TaskSidebar({
   onScope: OpenScope;
   onNew: () => void;
   onProject: () => void;
-  /** Changes when this page observed its own published task; reads only. */
-  refreshKey: number;
 }) {
   const { t, tx } = useT();
   const request: ListRequest = {
@@ -270,25 +264,6 @@ export function TaskSidebar({
       ? tasks.page.records.flatMap((r) => (r.kind === "task" ? [r] : []))
       : [];
   const active = activeRuns?.status === "complete" ? activeRuns.runs : [];
-  // A run leaving the roster moves its task into retained history: read a new
-  // snapshot so it stays listed. Observation only; nothing is replayed.
-  const reread = useRef<() => void>(undefined);
-  reread.current = () => {
-    tasks.refresh();
-    conversationPager.refresh();
-  };
-  const activeIds = active.map((run) => run.runId).join(" ");
-  const previousIds = useRef(activeIds);
-  useEffect(() => {
-    const left = previousIds.current
-      .split(" ")
-      .some((runId) => runId && !activeIds.split(" ").includes(runId));
-    previousIds.current = activeIds;
-    if (left) reread.current?.();
-  }, [activeIds]);
-  useEffect(() => {
-    if (refreshKey) reread.current?.();
-  }, [refreshKey]);
   const history = records.filter(
     (r) => !active.some((a) => a.taskId === r.owner.taskId),
   );
@@ -312,11 +287,13 @@ export function TaskSidebar({
     workspace.rootLabel;
   return (
     <aside className="panel panel-left lp-panel">
-      <SidebarSection
-        title={t("Recent projects")}
-        count="1"
-        className="projects"
-      >
+      <div className="lp-new">
+        <button type="button" className="new-conversation" onClick={onNew}>
+          <FiPlus aria-hidden="true" />
+          {t("New task")}
+        </button>
+      </div>
+      <SidebarSection title={t("Recent projects")} className="projects">
         <button
           type="button"
           className="session-item project-item active"
@@ -400,17 +377,6 @@ export function TaskSidebar({
             : "?"
         }
         className="grow"
-        actions={
-          <button
-            type="button"
-            className="lp-section-action"
-            aria-label={t("Create task")}
-            title={t("Create task")}
-            onClick={onNew}
-          >
-            <FiPlus aria-hidden="true" />
-          </button>
-        }
       >
         <nav aria-label={t("Tasks")} className="task-list">
           {history.map((r) => (
@@ -440,13 +406,7 @@ export function TaskSidebar({
             </div>
           ))}
           {tasks.page && !("kind" in tasks.page) && history.length === 0 && (
-            <p className="panel-hint">
-              {tasks.page.next || tasks.canPrevious
-                ? t("No retained task on this page.")
-                : t(
-                    "No tasks yet. Describe a goal in the input box to create one.",
-                  )}
-            </p>
+            <p className="panel-hint">{t("No retained task on this page.")}</p>
           )}
           <PageControls pager={tasks} compact />
         </nav>

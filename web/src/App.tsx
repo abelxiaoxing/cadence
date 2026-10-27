@@ -12,6 +12,7 @@ import {
 import type { IconType } from "react-icons";
 import {
   FiCheckCircle,
+  FiChevronDown,
   FiClock,
   FiCpu,
   FiDownload,
@@ -44,6 +45,7 @@ import {
 import { mergeObservation } from "./client/receipts";
 import { useWorkspace } from "./client/use-workspace";
 import { ViewLifetime } from "./client/view-lifetime";
+import { ActionDialog } from "./components/actions/ActionDialog";
 import { ConfirmAction } from "./components/actions/ConfirmAction";
 import { ModelChooser } from "./components/actions/ModelChooser";
 import { ReceiptPanel } from "./components/actions/ReceiptPanel";
@@ -57,15 +59,12 @@ import { RunBrowser } from "./components/history/RunBrowser";
 import { SearchBar } from "./components/history/SearchBar";
 import { MessageList } from "./components/transcript/MessageList";
 import { ToolCallBlock } from "./components/transcript/ToolCallBlock";
-import { Composer } from "./components/workspace/Composer";
 import {
   InspectorPanel,
   InspectorPlaceholder,
 } from "./components/workspace/InspectorPanel";
 import { RunSummary } from "./components/workspace/RunSummary";
-import { TaskFlow } from "./components/workspace/TaskFlow";
 import { TaskSidebar } from "./components/workspace/TaskSidebar";
-import { Welcome } from "./components/workspace/Welcome";
 import { historyUrl, readHistoryUrl } from "./history/history-url";
 import { usePage } from "./history/use-page";
 import { Template, useT } from "./i18n/locale";
@@ -205,26 +204,15 @@ export function App({
   const [taskTitle, setTaskTitle] = useState("");
   const [scopeTitle, setScopeTitle] = useState("");
   const [inspectorOpen, setInspectorOpen] = useState(true);
+  const viewMenu = useRef<HTMLDetailsElement>(null);
   const [tab, setTab] = useState("messages"),
     [searchOpen, setSearchOpen] = useState(false),
     [exportOpen, setExportOpen] = useState(false);
   const [hit, setHit] = useState<SearchHit>(),
     [detail, setDetail] = useState<ReadCursor | undefined>(initial?.cursor);
-  const [goal, setGoal] = useState(""),
+  const [newOpen, setNewOpen] = useState(false),
+    [goal, setGoal] = useState(""),
     [kind, setKind] = useState<TaskKind>("code");
-  const composer = useRef<HTMLTextAreaElement>(null);
-  const [inspectorTab, setInspectorTab] = useState("plan");
-  // Bumped when this page observes its own published task, so the sidebar
-  // reads a new snapshot. Observation only.
-  const [listVersion, setListVersion] = useState(0);
-  // Bumped by every explicit navigation: a followed Create opens its new task
-  // only while the viewer has not moved elsewhere meanwhile.
-  const navigation = useRef(0);
-  // An observation poll withholds action capability while it reads, which
-  // invalidates an open confirmation. Automatic follow-ups therefore never poll
-  // or navigate while a preview is being prepared or confirmed.
-  const confirming = useRef(false);
-  const createdGoals = useRef(new Map<string, string>());
   const [prepared, setPrepared] = useState<PreparedAction>(),
     [preparing, setPreparing] = useState(false),
     [error, setError] = useState("");
@@ -303,7 +291,6 @@ export function App({
     }
   };
   const selectTask = (id: string, title?: string) => {
-    navigation.current++;
     setTaskTitle(title ?? "");
     setScopeTitle("");
     setSelectedSnapshot(undefined);
@@ -315,32 +302,8 @@ export function App({
     setHit(undefined);
     setDetail(undefined);
     setTab("messages");
-    setInspectorTab("plan");
     closeDrawer();
     history.replaceState(null, "", historyUrl(id));
-  };
-  /** pi's "new conversation": the empty composer for a new task goal. */
-  const openNew = () => {
-    navigation.current++;
-    lifetime.current.depart();
-    setPrepared(undefined);
-    setPreparing(false);
-    setTaskId(null);
-    setScope(null);
-    setTaskTitle("");
-    setScopeTitle("");
-    setDetail(undefined);
-    setHit(undefined);
-    setSelectedSnapshot(undefined);
-    setTab("messages");
-    closeDrawer();
-    history.replaceState(null, "", location.pathname);
-    requestAnimationFrame(() => composer.current?.focus());
-  };
-  const openPanel = (name: string) => {
-    setInspectorTab(name);
-    if (mobile) setDrawer("right");
-    else setInspectorOpen(true);
   };
   useEffect(() => {
     const navigate = () => {
@@ -348,7 +311,6 @@ export function App({
       if (!target) return;
       // Same-document links/back navigation observe the exact new task too.
       // Changing a hash never refreshes a grant or replays an action.
-      navigation.current++;
       lifetime.current.depart();
       setPrepared(undefined);
       setPreparing(false);
@@ -366,7 +328,6 @@ export function App({
     return () => window.removeEventListener("hashchange", navigate);
   }, [closeDrawer]);
   const selectScope = (value: Scope, snapshot?: string, label?: string) => {
-    navigation.current++;
     setSelectedSnapshot(snapshot);
     setScopeTitle(label ?? "");
     lifetime.current.depart();
@@ -415,96 +376,14 @@ export function App({
       : null;
   const runs = current ? (observation.state?.snapshot.runs ?? []) : [];
   const resultTicket = lifetime.current.ticket();
-  const openCreated = (taskId: string, commandId: string) => {
-    setListVersion((version) => version + 1);
-    const created = createdGoals.current.get(commandId);
-    createdGoals.current.delete(commandId);
-    // The submitted draft is done; an edited draft stays for the viewer.
-    if (created !== undefined)
-      setGoal((draft) => (draft === created ? "" : draft));
-    selectTask(taskId, created);
-  };
-  /** Bounded read-only lookups of a metadata command's own receipt until its
-   * publication is known. A lookup never resubmits, renews a grant or retries. */
-  const follow = (commandId: string) => {
-    const moved = navigation.current;
-    let looks = 0;
-    const look = () => {
-      if (!mounted.current || looks++ >= 40) return;
-      api.client.receipt(commandId).then(
-        (lookup) => {
-          if (!mounted.current) return;
-          setReceipt({ commandId, lookup });
-          const found = lookup.status === "found" ? lookup.receipt : undefined;
-          if (found?.publication === "published") {
-            if (!confirming.current) workspace.refresh();
-            if (
-              found.created?.state === "published" &&
-              navigation.current === moved &&
-              !confirming.current
-            )
-              openCreated(found.created.taskId, commandId);
-            else if (found.created?.state === "published")
-              setListVersion((version) => version + 1);
-          } else if (
-            found?.publication !== "conflict" &&
-            found?.publication !== "uncertain"
-          )
-            setTimeout(look, 500);
-        },
-        () => setTimeout(look, 1000),
-      );
-    };
-    setTimeout(look, 250);
-  };
-  // When a run leaves the active roster, look up its own command receipt again
-  // so the dock shows the settled publication. Lookups only; nothing is resent.
-  const followRef = useRef(follow);
-  followRef.current = follow;
-  const receiptsRef = useRef(receipts);
-  receiptsRef.current = receipts;
-  const activeKey =
-    workspace.activeRuns?.status === "complete"
-      ? workspace.activeRuns.runs.map((run) => run.runId).join(" ")
-      : null;
-  const lastActive = useRef(activeKey);
-  useEffect(() => {
-    const before = lastActive.current;
-    lastActive.current = activeKey;
-    if (before === null || activeKey === null) return;
-    const now = activeKey.split(" ");
-    const gone = before.split(" ").filter((id) => id && !now.includes(id));
-    for (const item of receiptsRef.current) {
-      const known =
-        item.receipt ??
-        (item.lookup?.status === "found" ? item.lookup.receipt : undefined);
-      if (
-        known?.runId &&
-        gone.includes(known.runId) &&
-        known.publication === "pending"
-      )
-        followRef.current(item.commandId);
-    }
-  }, [activeKey]);
   const result = (value: CommandObservation) => {
-    const submitted =
-      prepared?.commandId === value.commandId
-        ? prepared.preflight.preview.action
-        : undefined;
-    if (submitted?.kind === "create")
-      createdGoals.current.set(value.commandId, submitted.goal);
     setReceipt(value);
     if (value.receipt && lifetime.current.current(resultTicket)) {
       workspace.refresh();
 
       if (value.receipt.created?.state === "published")
-        openCreated(value.receipt.created.taskId, value.commandId);
+        selectTask(value.receipt.created.taskId);
     }
-    if (
-      value.receipt?.runId === null &&
-      value.receipt.publication === "pending"
-    )
-      follow(value.commandId);
   };
   const cancel = (runId: string) => {
     if (
@@ -553,32 +432,6 @@ export function App({
           });
       });
   };
-  // The roster is the Cancel authority, so a run the snapshot already shows as
-  // settled is only a reason to read the roster again (bounded, read-only).
-  const observedActive =
-    workspace.activeRuns?.status === "complete" && taskId
-      ? workspace.activeRuns.runs.find((run) => run.taskId === taskId)
-      : undefined;
-  const settledActive =
-    !!observedActive &&
-    runs.some(
-      (r) =>
-        r.runId === observedActive.runId &&
-        r.childRunId === null &&
-        r.lifecycle === "settled",
-    );
-  const rereadRoster = useRef(workspace.refresh);
-  rereadRoster.current = workspace.refresh;
-  confirming.current = !!prepared || preparing;
-  useEffect(() => {
-    if (!settledActive) return;
-    const reread = () => {
-      if (!confirming.current) rereadRoster.current();
-    };
-    reread();
-    const timer = setInterval(reread, 2000);
-    return () => clearInterval(timer);
-  }, [settledActive]);
   if (detached)
     return (
       <main className="entry">
@@ -611,54 +464,6 @@ export function App({
       : taskId
         ? "Task snapshot not observed yet"
         : "No task selected");
-  const ownerModel = workspace.workspace?.models[0];
-  const modelLabel = ownerModel
-    ? `${ownerModel.provider}/${ownerModel.model}`
-    : null;
-  const createReady =
-    !!workspace.actions &&
-    workspace.workspace?.context.status === "available" &&
-    !preparing &&
-    !detached;
-  const createBlocked = !workspace.workspace
-    ? t("Service unavailable; this page cannot create a task.")
-    : !modelLabel
-      ? t("Choose the owner model first: Create needs an exact model choice.")
-      : !createReady && !preparing
-        ? t(
-            "Actions are unavailable right now; observe the current state again.",
-          )
-        : undefined;
-  const project =
-    workspace.workspace?.rootLabel.split(/[\\/]/).filter(Boolean).at(-1) ??
-    workspace.workspace?.rootLabel ??
-    "";
-  const taskActive = taskId
-    ? activeRuns.find((run) => run.taskId === taskId)
-    : undefined;
-  // The new-task page keeps only receipts whose publication is still open;
-  // published ones stay with the task views.
-  const docked = taskId
-    ? receipts
-    : receipts.filter(
-        (item) =>
-          (
-            item.receipt ??
-            (item.lookup?.status === "found" ? item.lookup.receipt : undefined)
-          )?.publication !== "published",
-      );
-  const dotState =
-    observation.error || !workspace.workspace
-      ? "error"
-      : observation.transportStatus !== "current"
-        ? "busy"
-        : !observation.state
-          ? workspace.workspace
-            ? "ok"
-            : ""
-          : observation.state.connection === "current"
-            ? "ok"
-            : "busy";
   return (
     <div className={`app${inspectorOpen ? "" : " inspector-hidden"}`}>
       <header className="topbar">
@@ -677,19 +482,6 @@ export function App({
               C
             </span>
             <h1 className="brand-name">Cadence</h1>
-            <span
-              className="brand-status"
-              title={t("Connection freshness is not execution outcome.")}
-            >
-              <span className={`status-dot ${dotState}`} aria-hidden="true" />
-              <span className="brand-status-label">
-                {dotState === "ok"
-                  ? t("Connected")
-                  : dotState === "error"
-                    ? t("Unavailable")
-                    : t("Observing")}
-              </span>
-            </span>
           </span>
           {workspace.workspace && (
             <span
@@ -705,8 +497,6 @@ export function App({
             <button
               type="button"
               className="tb-tab"
-              aria-label={t("Conversation")}
-              title={t("Conversation")}
               aria-pressed={tab === "messages" && !detail}
               onClick={() => {
                 setDetail(undefined);
@@ -715,27 +505,87 @@ export function App({
               }}
             >
               <FiMessageSquare aria-hidden="true" />
-              <span>{t("Conversation")}</span>
+              {t("Conversation")}
             </button>
-            {VIEWS.map(([view, Icon]) => (
-              <button
-                type="button"
-                key={view}
-                className="tb-tab"
-                aria-label={tx(view)}
-                title={tx(view)}
-                aria-pressed={tab === view && !detail}
-                disabled={!seed}
-                onClick={() => {
-                  setDetail(undefined);
-                  setHit(undefined);
-                  setTab(view);
-                }}
-              >
-                <Icon aria-hidden="true" />
-                <span>{tx(view)}</span>
-              </button>
-            ))}
+            <details
+              className="view-menu"
+              ref={viewMenu}
+              onKeyDown={(event) => {
+                if (event.key === "Escape" && viewMenu.current) {
+                  viewMenu.current.open = false;
+                  viewMenu.current.querySelector("summary")?.focus();
+                }
+              }}
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget))
+                  event.currentTarget.open = false;
+              }}
+            >
+              <summary className="chip">
+                {tab === "messages" ? t("Details") : tx(tab)}
+                <FiChevronDown aria-hidden="true" />
+              </summary>
+              <div className="view-menu-items">
+                {VIEWS.map(([view, Icon]) => (
+                  <button
+                    type="button"
+                    key={view}
+                    aria-pressed={tab === view}
+                    onClick={() => {
+                      setDetail(undefined);
+                      setHit(undefined);
+                      setTab(view);
+                      if (viewMenu.current) {
+                        viewMenu.current.open = false;
+                        viewMenu.current.querySelector("summary")?.focus();
+                      }
+                    }}
+                  >
+                    <Icon aria-hidden="true" />
+                    {tx(view)}
+                  </button>
+                ))}
+                <div className="view-menu-actions">
+                  <button
+                    type="button"
+                    aria-label={t("Export selected scope")}
+                    disabled={!seed}
+                    onClick={() => {
+                      if (viewMenu.current) {
+                        viewMenu.current.open = false;
+                        viewMenu.current.querySelector("summary")?.focus();
+                      }
+                      setExportOpen(true);
+                    }}
+                  >
+                    <FiDownload aria-hidden="true" />
+                    {t("Export selected scope")}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={t("Copy token-free link")}
+                    disabled={!taskId}
+                    onClick={() => {
+                      if (taskId)
+                        void copyTextToClipboard(
+                          historyUrl(
+                            taskId,
+                            detail,
+                            scope
+                              ? { scope, snapshotSeq: selectedSnapshot }
+                              : undefined,
+                          ),
+                        ).then((ok) =>
+                          setError(ok ? "" : t("Link copy unavailable.")),
+                        );
+                    }}
+                  >
+                    <FiLink aria-hidden="true" />
+                    {t("Copy token-free link")}
+                  </button>
+                </div>
+              </div>
+            </details>
           </nav>
           <span className="tb-spacer" aria-hidden="true" />
           <div className="tb-actions">
@@ -758,45 +608,12 @@ export function App({
             <button
               type="button"
               className="chip"
-              aria-label={t("Export selected scope")}
-              data-tip={t("Export selected scope")}
-              disabled={!seed}
-              onClick={() => setExportOpen(true)}
-            >
-              <FiDownload aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              className="chip"
-              aria-label={t("Copy token-free link")}
-              data-tip={t("Copy token-free link")}
-              disabled={!taskId}
-              onClick={() => {
-                if (taskId)
-                  void copyTextToClipboard(
-                    historyUrl(
-                      taskId,
-                      detail,
-                      scope
-                        ? { scope, snapshotSeq: selectedSnapshot }
-                        : undefined,
-                    ),
-                  ).then((ok) =>
-                    setError(ok ? "" : t("Link copy unavailable.")),
-                  );
-              }}
-            >
-              <FiLink aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              className={`chip chip-model-pick${modelLabel ? "" : " unset"}`}
               aria-label={t("Choose owner model")}
               data-tip={t("Choose owner model")}
               onClick={() => setModelOpen(true)}
             >
               <FiCpu aria-hidden="true" />
-              <span className="chip-label">{modelLabel ?? t("Model")}</span>
+              <span className="chip-label">{t("Model")}</span>
             </button>
             <button
               type="button"
@@ -827,18 +644,6 @@ export function App({
             >
               <FiGlobe aria-hidden="true" />
               <span>{locale === "zh" ? "EN" : "中文"}</span>
-            </button>
-            <button
-              type="button"
-              className="chip new-chat"
-              aria-label={t("New task")}
-              title={t("New task")}
-              aria-pressed={!taskId}
-              disabled={!workspace.workspace}
-              onClick={openNew}
-            >
-              <FiPlus aria-hidden="true" />
-              <span>{t("New task")}</span>
             </button>
           </div>
         </div>
@@ -920,11 +725,25 @@ export function App({
               cancelCompatible={!!workspace.cancelCompatible}
               canceling={canceling}
               onCancel={cancel}
-              onProject={openNew}
+              onProject={() => {
+                lifetime.current.depart();
+                setPrepared(undefined);
+                setPreparing(false);
+                setTaskId(null);
+                setScope(null);
+                setTaskTitle("");
+                setDetail(undefined);
+                setHit(undefined);
+                setSelectedSnapshot(undefined);
+                closeDrawer();
+                history.replaceState(null, "", location.pathname);
+              }}
               onTask={selectTask}
               onScope={selectScope}
-              onNew={openNew}
-              refreshKey={listVersion}
+              onNew={() => {
+                closeDrawer();
+                setNewOpen(true);
+              }}
             />
           )}
         </section>
@@ -954,23 +773,6 @@ export function App({
                 {scope.kind === "child" && (
                   <span className="conversation-badge">{t("Subagent")}</span>
                 )}
-                {scope.kind === "task" &&
-                  current?.status === "available" &&
-                  current.version.task && (
-                    <span className="conversation-badge">
-                      {current.version.task.kind === "research"
-                        ? t("Readonly research")
-                        : current.version.task.kind === "diagnosis"
-                          ? t("Readonly diagnosis")
-                          : t("Code")}
-                    </span>
-                  )}
-                {taskActive && (
-                  <span className="conversation-badge running">
-                    <span className="status-dot busy" aria-hidden="true" />
-                    {tx(taskActive.kind)}
-                  </span>
-                )}
               </div>
               <details className="conversation-info">
                 <summary>
@@ -987,29 +789,28 @@ export function App({
             </header>
           )}
           <div className="workspace-content">
-            {!seed &&
-              (taskId ? (
-                <p className="panel-empty">{tx(connection)}</p>
-              ) : (
-                <div className="tab-body welcome-body">
-                  <Welcome
-                    project={project}
-                    onStarter={(starterKind, prefix) => {
-                      setKind(starterKind);
-                      setGoal((draft) => (draft.trim() ? draft : prefix));
-                      requestAnimationFrame(() => {
-                        const area = composer.current;
-                        if (!area) return;
-                        area.focus();
-                        area.setSelectionRange(
-                          area.value.length,
-                          area.value.length,
-                        );
-                      });
-                    }}
-                  />
-                </div>
-              ))}
+            {!seed && (
+              <section className="empty-state">
+                <span className="empty-logo" aria-hidden="true">
+                  C
+                </span>
+                <h2>{t("Open a task or create one explicitly")}</h2>
+                <p>
+                  {t(
+                    "Plans, children, checks and human review share one service owner. No chat or discovery activates execution.",
+                  )}
+                </p>
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={!workspace.workspace}
+                  onClick={() => setNewOpen(true)}
+                >
+                  <FiPlus aria-hidden="true" />
+                  {t("Create task")}
+                </button>
+              </section>
+            )}
             {seed && detail ? (
               <div className="tab-body">
                 {hit &&
@@ -1047,17 +848,7 @@ export function App({
                   }
                 >
                   {tab === "messages" && (
-                    <MessageList
-                      client={api.client}
-                      seed={seed}
-                      emptyHint={
-                        scope?.kind === "task"
-                          ? t(
-                              "No conversation yet. Messages from plan generation and runs appear here as they are recorded.",
-                            )
-                          : undefined
-                      }
-                    />
+                    <MessageList client={api.client} seed={seed} />
                   )}
                   {tab === "tools" && <Tools client={api.client} seed={seed} />}
                   {tab === "context" && (
@@ -1099,27 +890,9 @@ export function App({
               )
             )}
           </div>
-          {workspace.workspace && docked.length > 0 && (
+          {workspace.workspace && receipts.length > 0 && (
             <div className="receipt-dock">
-              {/* Every receipt stays observable; older ones fold away. */}
-              {docked.length > 1 && (
-                <details className="receipt-older">
-                  <summary>
-                    {t("Earlier command receipts ({count})", {
-                      count: docked.length - 1,
-                    })}
-                  </summary>
-                  {docked.slice(0, -1).map((receipt) => (
-                    <ReceiptPanel
-                      key={receipt.commandId}
-                      client={api.client}
-                      value={receipt}
-                      onChange={setReceipt}
-                    />
-                  ))}
-                </details>
-              )}
-              {docked.slice(-1).map((receipt) => (
+              {receipts.map((receipt) => (
                 <ReceiptPanel
                   key={receipt.commandId}
                   client={api.client}
@@ -1128,37 +901,6 @@ export function App({
                 />
               ))}
             </div>
-          )}
-          {taskId ? (
-            <TaskFlow
-              context={context}
-              runs={runs}
-              active={taskActive}
-              rosterComplete={roster?.status === "complete"}
-              canAct={!!canAct && !preparing}
-              cancelCompatible={!!workspace.cancelCompatible}
-              canceling={!!taskActive && canceling.has(taskActive.runId)}
-              onGenerate={() => void action({ kind: "generate-plan", taskId })}
-              onStart={() => void action({ kind: "start", taskId })}
-              onPanel={openPanel}
-              onCancel={cancel}
-            />
-          ) : (
-            <Composer
-              inputRef={composer}
-              goal={goal}
-              onGoal={setGoal}
-              kind={kind}
-              onKind={setKind}
-              model={modelLabel}
-              onModel={() => setModelOpen(true)}
-              canSubmit={createReady && !!goal.trim()}
-              blocked={createBlocked}
-              onSubmit={() => {
-                if (goal.trim())
-                  void action({ kind: "create", taskKind: kind, goal });
-              }}
-            />
           )}
         </main>
         <ResizeHandle
@@ -1185,8 +927,6 @@ export function App({
               canAct={canAct && !preparing}
               onAction={(a) => void action(a)}
               planMetadata={metadata}
-              tab={inspectorTab}
-              onTab={setInspectorTab}
             />
           ) : (
             <InspectorPlaceholder />
@@ -1200,7 +940,20 @@ export function App({
             role="status"
             title={t("Connection freshness is not execution outcome.")}
           >
-            <span className={`status-dot ${dotState}`} aria-hidden="true" />
+            <span
+              className={`status-dot ${
+                observation.error || !workspace.workspace
+                  ? "error"
+                  : observation.transportStatus !== "current"
+                    ? "busy"
+                    : !observation.state
+                      ? ""
+                      : observation.state.connection === "current"
+                        ? "ok"
+                        : "busy"
+              }`}
+              aria-hidden="true"
+            />
             {tx(connection)}
             {t(" · transport {status}", {
               status: tx(observation.transportStatus),
@@ -1228,12 +981,6 @@ export function App({
               : t(
                   "Active roster unavailable; absence is not proof of settlement.",
                 )}
-          </span>
-          <span className={`status-item${modelLabel ? "" : " warn"}`}>
-            <FiCpu aria-hidden="true" />{" "}
-            {modelLabel
-              ? t("Owner model {model}", { model: modelLabel })
-              : t("No owner model chosen")}
           </span>
         </div>
         <div className="statusbar-right">
@@ -1279,6 +1026,60 @@ export function App({
             workspace.refresh(true);
           }}
         />
+      )}
+      {newOpen && (
+        <ActionDialog
+          title={t("Create task")}
+          onClose={() => setNewOpen(false)}
+        >
+          <label>
+            {t("Kind")}
+            <select
+              aria-label={t("Kind")}
+              value={kind}
+              onChange={(e) =>
+                setKind(
+                  e.target.value === "research"
+                    ? "research"
+                    : e.target.value === "diagnosis"
+                      ? "diagnosis"
+                      : "code",
+                )
+              }
+            >
+              <option value="code">{t("Code")}</option>
+              <option value="research">{t("Readonly research")}</option>
+              <option value="diagnosis">{t("Readonly diagnosis")}</option>
+            </select>
+          </label>
+          <label>
+            {t("Goal")}
+            <textarea
+              aria-label={t("Goal")}
+              value={goal}
+              onChange={(e) => setGoal(e.target.value)}
+              rows={6}
+            />
+          </label>
+          <footer>
+            <button
+              type="button"
+              className="primary"
+              disabled={
+                !workspace.actions ||
+                workspace.workspace?.context.status !== "available" ||
+                preparing ||
+                !goal.trim()
+              }
+              onClick={() => {
+                setNewOpen(false);
+                void action({ kind: "create", taskKind: kind, goal });
+              }}
+            >
+              {t("Preview Create (does not Start)")}
+            </button>
+          </footer>
+        </ActionDialog>
       )}
       {prepared && (
         <ConfirmAction
