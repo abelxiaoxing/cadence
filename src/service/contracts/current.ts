@@ -55,6 +55,8 @@ export interface CurrentView {
   epoch: string;
   committedSeq: string;
   context: ControlContext;
+  /** Null when no live record is available, even for a non-null request.taskId.
+   * This conveys no retained membership or permission to recreate the task. */
   task: CurrentTask | null;
   roles: RoleSelection[];
   readablePlan: null | {
@@ -131,8 +133,13 @@ function correlate(v: {
   context: ControlContext;
   task: CurrentTask | null;
 }) {
+  // A requested task without a live record (retained-only history) may answer
+  // with task: null while its context reports unavailable for that same task.
+  const taskMatches = v.task
+    ? v.task.id === v.request.taskId
+    : v.request.taskId === null || v.context.status === "unavailable";
   if (
-    v.request.taskId !== (v.task?.id ?? null) ||
+    !taskMatches ||
     controlWorkspace(v.context) !== v.workspaceId ||
     controlTask(v.context) !== v.request.taskId
   )

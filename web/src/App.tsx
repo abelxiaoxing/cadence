@@ -91,6 +91,44 @@ const VIEWS: readonly (readonly [string, IconType])[] = [
   ["runs", FiGitBranch],
   ["outcomes", FiCheckCircle],
 ];
+/** Local operation failures cannot diagnose the service or hide its observation. */
+export function WorkspaceNotice({
+  error,
+  observationError,
+}: {
+  error?: string;
+  observationError?: string;
+}) {
+  const { t, tx } = useT();
+  if (!error && !observationError) return null;
+  return (
+    <p className="banner-notice" role="alert">
+      {error && <>{error} </>}
+      {observationError && (
+        <>
+          {t("{message}.", { message: tx(observationError) })}{" "}
+          {observationError === "stale" ? (
+            t(
+              "Context changed. Observe again and request a fresh confirmation.",
+            )
+          ) : (
+            <Template
+              text={t(
+                "Explicit service guidance: {status} / {start}. No service is started by this page.",
+              )}
+              slots={{
+                status: <code>cadence-service status</code>,
+                start: (
+                  <code>cadence-service start --workspace &lt;path&gt;</code>
+                ),
+              }}
+            />
+          )}
+        </>
+      )}
+    </p>
+  );
+}
 export function App({
   api: provided,
   planMetadata,
@@ -651,37 +689,7 @@ export function App({
           ))}
         </section>
       )}
-      {(error || workspace.error) && (
-        <p className="banner-notice" role="alert">
-          {t("{message}.", { message: error || tx(workspace.error ?? "") })}{" "}
-          {!error && workspace.error === "stale" && (
-            <>
-              <Template
-                text={t(
-                  "The service no longer matches the sources it loaded, for example after Pi's {file} changed; restart it to reload them: {restart} (or {stop} then {start}).",
-                )}
-                slots={{
-                  file: <code>models.json</code>,
-                  restart: <code>systemctl --user restart cadence</code>,
-                  stop: <code>cadence-service stop</code>,
-                  start: <code>start</code>,
-                }}
-              />{" "}
-            </>
-          )}
-          <Template
-            text={t(
-              "Explicit service guidance: {status} / {start}. No service is started by this page.",
-            )}
-            slots={{
-              status: <code>cadence-service status</code>,
-              start: (
-                <code>cadence-service start --workspace &lt;path&gt;</code>
-              ),
-            }}
-          />
-        </p>
-      )}
+      <WorkspaceNotice error={error} observationError={workspace.error} />
       <div
         ref={layout}
         className="layout"

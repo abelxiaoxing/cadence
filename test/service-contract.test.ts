@@ -50,6 +50,7 @@ describe.each([
     decodeContext,
     decodeCoverage,
     decodeCursor,
+    decodeCurrentView,
     decodeDetailPage,
     decodeGraph,
     decodeHandoff,
@@ -1009,6 +1010,93 @@ describe.each([
         decodeSnapshot({ ...value, context: { ...value.context, task: null } }),
       ).toThrow();
     });
+    it("current views permit absent live records only with a correlated unavailable context", () => {
+      const taskId = id(),
+        storeId = id(),
+        workspaceId = id(),
+        epoch = id(),
+        base = {
+          request: { storeId, taskId },
+          workspaceId,
+          epoch,
+          committedSeq: "1",
+          task: null,
+          roles: [
+            "design-explorer",
+            "implementation-worker",
+            "diagnosis-worker",
+          ].map((role) => ({ role, sha256: hash })),
+          readablePlan: null,
+          savedGraph: { status: "none" as const },
+        };
+      const retained = decodeCurrentView({
+        ...base,
+        context: {
+          status: "unavailable",
+          workspaceId,
+          taskId,
+          error: publicError("unavailable"),
+        },
+      });
+      expect(retained.task).toBeNull();
+      expect(retained.context).toMatchObject({ status: "unavailable", taskId });
+      expect(
+        decodeCurrentView({
+          ...retained,
+          request: { storeId, taskId: null },
+          context: { ...retained.context, taskId: null },
+        }).task,
+      ).toBeNull();
+      const live = { id: taskId, kind: "code", revision: 1, identity: hash };
+      const readablePlan = {
+        source: "current-v1",
+        text: "Live plan",
+        editable: true,
+        coverage,
+      };
+      expect(
+        decodeCurrentView({ ...retained, task: live, readablePlan }).task,
+      ).toEqual(live);
+      for (const invalid of [
+        { ...retained, context: { ...retained.context, workspaceId: id() } },
+        { ...retained, task: { ...live, id: id() }, readablePlan },
+        { ...retained, readablePlan },
+        {
+          ...retained,
+          savedGraph: {
+            status: "saved",
+            planRevision: 1,
+            request: {
+              storeId,
+              scope: { kind: "task", id: taskId },
+              snapshotSeq: "1",
+              graph: { recordId: id(), revision: 1, sha256: hash },
+            },
+          },
+        },
+      ])
+        expect(() => decodeCurrentView(invalid)).toThrow();
+      expect(() =>
+        decodeCurrentView({
+          ...base,
+          context: {
+            status: "available",
+            version: { ...context(), workspaceId, epoch, task: null },
+          },
+        }),
+      ).toThrow();
+      expect(() =>
+        decodeCurrentView({
+          ...base,
+          context: {
+            status: "unavailable",
+            workspaceId,
+            taskId: id(),
+            error: publicError("unavailable"),
+          },
+        }),
+      ).toThrow();
+    });
     it("never calls pending receipt/prose/human publication completed execution", () => {
       const r = receipt();
       expect(decodeReceipt(r).execution).toBeNull();
@@ -1037,6 +1125,11 @@ describe.each([
       expect(ERROR_CODES.map(errorStatus)).toContain(507);
       expect(errorStatus("expired-grant")).toBe(410);
       expect(errorStatus("quarantine")).toBe(423);
+      expect(publicError("stale")).toEqual({
+        code: "stale",
+        effect: "none",
+        recovery: "fresh-confirmation",
+      });
       expect(() =>
         decodeReceiptLookup({
           status: "inconclusive",

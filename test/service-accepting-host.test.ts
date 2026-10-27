@@ -1,11 +1,19 @@
 import { createHash, randomUUID } from "node:crypto";
+import { existsSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { proposePlan } from "../src/plan-proposal.ts";
 import { ServiceClient } from "../src/service-client.ts";
-import type { Action, Receipt, Reply } from "../src/service-contract.ts";
+import {
+  type Action,
+  compatibleBuild,
+  type Receipt,
+  type Reply,
+} from "../src/service-contract.ts";
 import { HttpServiceTransport } from "../src/service-http-client.ts";
 import { confirm, prepare } from "../web/src/client/actions.ts";
 import { acceptingFixture } from "./helpers/accepting-fixture.ts";
+import { entityData, historyData } from "./helpers/history-data-read.ts";
 import { nativeBuild } from "./helpers/source-build.ts";
 import { keepOnlyEnvironment } from "./helpers/windows-environment.ts";
 
@@ -259,3 +267,134 @@ it("actual generated accepting host: explicit choice, saved graph, advisory, ove
     }
   }
 }, 120000);
+it("generated HTTP: retained-only history survives restart with no model selected and no live-state repair", async () => {
+  const f = await acceptingFixture("generated");
+  let c = f.client;
+  try {
+    const session = ok(await c.session());
+    const catalog = ok(await c.models());
+    ok(
+      await c.chooseModel({
+        expected: catalog.version,
+        choice: {
+          provider: "fixture",
+          model: "fixed",
+          api: "openai-completions",
+          thinking: "off",
+        },
+      }),
+    );
+    const workspace = ok(
+      await c.current({ storeId: session.storeId, taskId: null }),
+    );
+    if (workspace.context.status !== "available")
+      throw Error(JSON.stringify(workspace));
+    const receipt = ok(
+      await confirm(
+        c,
+        ok(
+          await prepare(c, workspace.context.version, {
+            kind: "create",
+            taskKind: "research",
+            goal: "Retained-only history task",
+          }),
+        ),
+      ),
+    );
+    const taskId = receipt.created?.taskId;
+    if (!taskId) throw Error("missing created task");
+    // The live record is committed by the writer after the command reply
+    // (created.state reserved -> published); delete it only once published.
+    await expect
+      .poll(
+        async () => {
+          const lookup = await c.receipt(receipt.commandId);
+          return (
+            lookup.status === "found" &&
+            lookup.receipt.created?.state === "published"
+          );
+        },
+        { timeout: 15000, interval: 100 },
+      )
+      .toBe(true);
+    const taskPath = join(
+      f.root,
+      ".cadence",
+      "assistant",
+      "tasks",
+      taskId,
+      "task.json",
+    );
+    unlinkSync(taskPath);
+    for (const restart of [false, true]) {
+      if (restart) {
+        const next = await f.restart();
+        expect(next.epoch).not.toBe(session.epoch);
+        c = next.client;
+      }
+      const boot = ok(await c.session());
+      expect(boot.storeId).toBe(session.storeId);
+      expect(compatibleBuild(boot.build, nativeBuild)).toBe(true);
+      expect(boot.capabilities.actions).toBe(!restart);
+      expect(ok(await c.workspace()).context.status).toBe(
+        restart ? "unavailable" : "available",
+      );
+      expect(
+        ok(await c.current({ storeId: session.storeId, taskId: null })).context
+          .status,
+      ).toBe(restart ? "unavailable" : "available");
+      const view = ok(await c.current({ storeId: session.storeId, taskId }));
+      expect(view.context).toMatchObject({
+        status: "unavailable",
+        taskId,
+        error: { code: "unavailable", effect: "none" },
+      });
+      expect(view.task).toBeNull();
+      expect(view.readablePlan).toBeNull();
+      expect(
+        await c.currentChanges({ storeId: session.storeId, taskId }),
+      ).toMatchObject({
+        kind: "error",
+        error: { code: "unavailable", effect: "none" },
+      });
+      expect(await c.checkObligations(taskId)).toMatchObject({
+        kind: "error",
+        error: { code: "unavailable", effect: "none" },
+      });
+      const snapshot = ok(await c.snapshot({ kind: "task", id: taskId }));
+      expect(snapshot.scope).toEqual({ kind: "task", id: taskId });
+      expect(snapshot.context).toEqual(view.context);
+      const inventory = await historyData(async (r) => ok(await c.tasks(r)), {
+        reader: "tasks",
+        storeId: session.storeId,
+        scope: { kind: "workspace", id: workspace.workspaceId },
+        snapshotSeq: null,
+        after: null,
+        limit: 50,
+      });
+      expect(inventory.records).toContainEqual(
+        expect.objectContaining({
+          kind: "task",
+          goal: "Retained-only history task",
+          owner: expect.objectContaining({ taskId }),
+        }),
+      );
+      const entity = await entityData(async (r) => ok(await c.task(r)), {
+        kind: "task",
+        storeId: session.storeId,
+        scope: { kind: "task", id: taskId },
+        snapshotSeq: snapshot.committedSeq,
+        id: taskId,
+        version: 1,
+      });
+      expect(entity.record).toMatchObject({
+        kind: "task",
+        goal: "Retained-only history task",
+      });
+      expect(existsSync(taskPath)).toBe(false);
+      expect(f.contacts()).toBe(0);
+    }
+  } finally {
+    await f.close();
+  }
+}, 60000);

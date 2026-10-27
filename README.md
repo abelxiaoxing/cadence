@@ -323,6 +323,11 @@ Task v1 remains a strict human-readable summary; rich graph/transcript data neve
 `TaskStore.loadSnapshot` includes raw-byte identity; save/publication requires exact expected bytes and revision.
 A same-revision external edit conflicts and remains preserved.
 Summary clipping is labeled and never clips retained detail; a subsequent publication failure remains separate from previously completed execution.
+A retained task may have no live `task.json` (for example after a workspace rebuild).
+Current reads then retain the requested task ID in an unavailable context, with no live task/plan or action authority; history snapshots and retained content remain readable without reconstructing the summary.
+Stable absence is not `stale`; appearance/disappearance or changed identities during an observation still are.
+Generic `stale` requests fresh observation/confirmation, not a diagnosis that `models.json` changed or an instruction to restart; build compatibility is evaluated separately from the session and independently built client identities.
+Local operation errors neither hide an independent observation error nor imply that the service needs to be started.
 
 ### Capture, retained history and privacy
 
@@ -471,6 +476,15 @@ Publish `web/dist` from Node: Vite run under Bun lays out its preload helper dif
 Review the independently enumerated package member list and every emitted body, not a count or an expected list generated from the tar under test.
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
+
+### Release 2.0.12 acceptance snapshot
+
+Full `verify` passed on the 2.0.12 release candidate before this evidence-only paragraph: 1983 root tests in 80 files (27 skipped on Linux), 128 web tests, 6 real-browser scenarios and the 132-member pack audit.
+Observed environment: Linux x86_64, Node26.7.0, Bun1.3.14, Pi SDK0.84.3 and existing Chrome for Testing151.0.7922.34.
+Retained conversations remain readable after their live `task.json` disappears and the owner restarts without a selected model; reads neither reconstruct live state nor grant execution authority, and an unused Start grant from before removal is refused without admission.
+Generic stale guidance asks for fresh observation/confirmation without diagnosing a model-source change; local errors no longer hide that observation or suggest starting the service.
+The local-error banner regression failed against the prior built assets and passed against the rebuilt candidate; a new Chinese assertion was corrected to expect its translated status, and an initial integration attempt stopped at provenance JSON formatting before the final full pass.
+No new Windows/macOS, real service-manager installation or paid-provider qualification is claimed.
 
 ### Release 2.0.11 acceptance snapshot
 
