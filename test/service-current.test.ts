@@ -8,6 +8,7 @@ import {
   readdirSync,
   readFileSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:http";
@@ -29,6 +30,7 @@ import {
   decodeCurrentView,
   decodeWorkspaceBootstrap,
   LIMITS,
+  publicError,
 } from "../src/service-contract.ts";
 import { HttpServiceTransport } from "../src/service-http-client.ts";
 import { captureChanges } from "../src/task-diff.ts";
@@ -517,6 +519,120 @@ it("current text and change body redact real private literals without editable i
   expect(changes.observation.checkoutGeneration).toBe(0);
   expect(decodeCurrentChanges(changes)).toEqual(changes);
   expect(tree(f.h.reader.files.directory)).toEqual(before);
+  expect(f.contacts()).toBe(0);
+});
+
+it("retained-only current/snapshot reads preserve history without granting action authority or repairing live state", async () => {
+  const f = await fixture();
+  f.choose();
+  const id = await f.create();
+  await f.save(id);
+  const prior = f.current(id);
+  expect(prior.savedGraph.status).toBe("saved");
+  if (prior.context.status !== "available") throw Error("context");
+  const action = { kind: "start" as const, taskId: id };
+  const preflight = await f.actions.admission.preflight(
+    { action, expected: prior.context.version },
+    f.caller,
+  );
+  if (preflight.kind !== "ok") throw Error(JSON.stringify(preflight));
+  const path = join(f.root, ".cadence", "assistant", "tasks", id, "task.json");
+  unlinkSync(path);
+  const before = tree(f.h.reader.files.directory),
+    checkout = tree(f.root);
+  const unavailable = {
+    status: "unavailable" as const,
+    workspaceId: f.h.reader.files.format.workspaceId,
+    taskId: id,
+    error: publicError("unavailable"),
+  };
+  const view = f.current(id);
+  expect(view.context).toEqual(unavailable);
+  expect(view.task).toBeNull();
+  expect(view.readablePlan).toBeNull();
+  expect(view.savedGraph).toEqual({ status: "none" });
+  expect(decodeCurrentView(view)).toEqual(view);
+  expect(f.actions.context(id)).toEqual(unavailable);
+  expect(() =>
+    f.actions.currentChanges({ storeId: f.h.reader.storeId, taskId: id }),
+  ).toThrowError("unavailable");
+  expect(() => f.actions.checkObligations(id)).toThrowError("unavailable");
+  // The source host defers actions: exercise the real action callback, not its
+  // always-unavailable fixture fallback (which would pass before the fix).
+  const projection = new HistoryProjection(f.h.reader, {
+    ...f.h.projection.environment,
+    context: (taskId) => f.actions.context(taskId),
+  });
+  const snapshot = await projection.snapshot({ kind: "task", id });
+  expect(snapshot.context).toEqual(unavailable);
+  expect(snapshot.scope).toEqual({ kind: "task", id });
+  const commandId = randomUUID();
+  expect(
+    await f.actions.admission.submit(
+      {
+        commandId,
+        action,
+        expected: prior.context.version,
+        grant: preflight.value.grant,
+      },
+      f.caller,
+    ),
+  ).toMatchObject({ kind: "error", error: { effect: "none" } });
+  expect(await f.h.writer.lookup(commandId)).toMatchObject({
+    status: "absent",
+  });
+  expect(f.actions.activeRuns()).toMatchObject({
+    status: "complete",
+    runs: [],
+  });
+  expect(
+    await f.actions.admission.preflight(
+      {
+        action: { kind: "start", taskId: id },
+        expected: prior.context.version,
+      },
+      f.caller,
+    ),
+  ).toMatchObject({ kind: "error", error: { effect: "none" } });
+  expect(tree(f.h.reader.files.directory)).toEqual(before);
+  expect(tree(f.root)).toEqual(checkout);
+  expect(existsSync(path)).toBe(false);
+  expect(f.contacts()).toBe(0);
+});
+
+it.each(["appears", "disappears"])(
+  "a live task that %s during a current observation still refuses as stale",
+  async (transition) => {
+    const f = await fixture();
+    f.choose();
+    const id = await f.create();
+    const store = f.h.coordination.store,
+      load = store.loadSnapshot.bind(store);
+    const spy = vi.spyOn(store, "loadSnapshot");
+    if (transition === "appears") spy.mockReturnValueOnce(undefined);
+    else {
+      // Initial selection and saved-graph lookup succeed, final revalidation
+      // sees absence. Do not relax that race into a successful available view.
+      spy
+        .mockImplementationOnce(load)
+        .mockImplementationOnce(load)
+        .mockReturnValueOnce(undefined);
+    }
+    expect(() => f.current(id)).toThrowError("stale");
+    spy.mockRestore();
+    expect(f.current(id).context.status).toBe("available");
+    expect(f.contacts()).toBe(0);
+  },
+);
+
+it("malformed live task bytes are not silently downgraded to an absent retained-only task", async () => {
+  const f = await fixture();
+  f.choose();
+  const id = await f.create();
+  const path = join(f.root, ".cadence", "assistant", "tasks", id, "task.json");
+  writeFileSync(path, "{broken");
+  expect(() => f.current(id)).toThrow();
+  expect(readFileSync(path, "utf8")).toBe("{broken");
   expect(f.contacts()).toBe(0);
 });
 

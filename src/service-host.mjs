@@ -3870,7 +3870,8 @@ function savedGraph(v) {
   return { status: "unavailable", error: noEffect2(o.error) };
 }
 function correlate(v) {
-  if (v.request.taskId !== (v.task?.id ?? null) || controlWorkspace(v.context) !== v.workspaceId || controlTask(v.context) !== v.request.taskId)
+  const taskMatches = v.task ? v.task.id === v.request.taskId : v.request.taskId === null || v.context.status === "unavailable";
+  if (!taskMatches || controlWorkspace(v.context) !== v.workspaceId || controlTask(v.context) !== v.request.taskId)
     invalid();
   if (v.context.status === "available") {
     const c = v.context.version;
@@ -22190,8 +22191,6 @@ class TaskActions {
     const access = this.currentAccess();
     const committedSeq = snapshot ?? h.writer.committedSeq;
     const selected2 = taskId ? h.coordination.store.loadSnapshot(taskId) : null;
-    if (taskId && !selected2)
-      throw new ContractError("stale");
     if (selected2 && realpathSync6(selected2.record.cwd) !== this.cwd)
       throw new ContractError("unsupported-context");
     const secrets = this.viewSecrets();
@@ -22204,7 +22203,7 @@ class TaskActions {
     const plan = selected2 ? sanitizeText(selected2.record.plan, secrets) : null;
     const editable = selected2 ? plan === selected2.record.plan : true;
     let descriptor = null;
-    let unavailable2 = null;
+    let unavailable2 = taskId && !selected2 ? publicError("unavailable") : null;
     let saved = { status: "none" };
     if (selected2) {
       try {
@@ -22328,6 +22327,8 @@ class TaskActions {
     if (request.storeId !== this.options.host.reader.storeId)
       throw new ContractError("stale");
     const { view, changes, observation, secrets } = this.observeCurrent(request.taskId);
+    if (!view.task)
+      throw new ContractError("unavailable");
     const text2 = sanitizeText(changes.text, secrets);
     return decodeCurrentChanges({
       request,
@@ -22398,7 +22399,7 @@ class TaskActions {
   checkObligations(taskId) {
     const { view, assertCurrent } = this.observeCurrent(taskId);
     if (!view.task)
-      throw new ContractError("stale");
+      throw new ContractError("unavailable");
     const checks = this.obligationsFor(taskId, view.task.kind, view.context, view.committedSeq).checks;
     assertCurrent();
     return checks;
@@ -22923,7 +22924,7 @@ function refuseAt(stage, step) {
   }
 }
 async function createServiceHost(value, sourceBuild) {
-  const embedded = "c2bb81519387005a71e88a64364dff47d5c39dab17812833ca898bc51055e59d";
+  const embedded = "e9b1ea4bb8d1c275a0cb0cf70947f9ac58e5de0cc438d551dc96809f3e82dd7c";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

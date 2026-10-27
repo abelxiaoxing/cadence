@@ -244,7 +244,7 @@
   "destinations": {
     "licenses/pi-web-ui-reuse.md": "11d04d9b727fbe47b6492d598615c23cb94a1df4280e1f1b1afaa9e8850d7902",
     "web/index.html": "d4f99afb551ce57f3c0c361b176c37540520cd1658ef568c86ef01e0cce9e5b1",
-    "web/src/App.tsx": "605b3142138705da1399058b98429c7f2bf9a1ef75eff8b4daa21f0890a50e24",
+    "web/src/App.tsx": "957b7730da9586b7b0e0f358cd7354048571a223b2f80eb533cbdb86d3893ab5",
     "web/src/client/actions.ts": "192587fe7eee7b7d669a0e93641d0880a4ca33a56a6ca25d0fe4265a8519db88",
     "web/src/client/browser.ts": "3e0645d7603b5c13d68e9ed9785eb519ee44c8b7ec13672950ad2a8b58cd7c14",
     "web/src/client/message-delta.ts": "9133b161d07c0f5ca6a85562d396c36f724982d51f35ea0abae03035d79e4e8b",
@@ -591,6 +591,11 @@
         }
       ],
       "reason": "Review of the restyle: keep the Cadence h1 visible on phones (only the decorative logo yields at ≤360px); repair a moved-rule fragment that turned the search-dialog reset into a dead `.run-strip .gs-modal` selector; let the detached/boundary entry and empty state scroll; wrap scope and statusbar statements instead of clipping or hiding them; derive the status dot from observation connection as well as transport; make drawer-covered topbar tabs/actions inert like <main>; mark page-local task counts with '+'; share the inspector placeholder and single-source episode/tool states; drop unused rules."
+    },
+    {
+      "id": "stale-banner-retained-only",
+      "originalSourcePinPreserved": true,
+      "note": "Retained-only task (history without live task.json) now answers an unavailable current context instead of stale; the generic stale banner no longer claims a service source mismatch or suggests a restart, it asks for a fresh observation/confirmation. Build compatibility remains a separate compatibleBuild status; stale alone cannot diagnose whether sources changed. Local operation errors are shown independently, never masking a stale observation or recommending service startup for a clipboard/preflight failure. Current destination hashes are refreshed; prior source/evidence records remain historical."
     }
   ],
   "testAdaptations": [

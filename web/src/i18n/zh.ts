@@ -53,8 +53,8 @@ export const zh = {
   "Open active task": "打开活动任务",
   "Cancel run — request stop": "取消运行——请求停止",
   "{message}.": "{message}。",
-  "The service no longer matches the sources it loaded, for example after Pi's {file} changed; restart it to reload them: {restart} (or {stop} then {start}).":
-    "服务已与其加载的来源不一致（例如 Pi 的 {file} 已更改）；请重启服务以重新加载：{restart}（或先 {stop} 再 {start}）。",
+  "Context changed. Observe again and request a fresh confirmation.":
+    "上下文已变化。请重新观察并请求新的确认。",
   "Explicit service guidance: {status} / {start}. No service is started by this page.":
     "显式服务操作：{status} / {start}。本页面不会启动任何服务。",
   "Close drawer": "关闭抽屉",

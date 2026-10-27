@@ -430,7 +430,6 @@ export class TaskActions implements AdmissionOwner {
     const access = this.currentAccess();
     const committedSeq = snapshot ?? h.writer.committedSeq;
     const selected = taskId ? h.coordination.store.loadSnapshot(taskId) : null;
-    if (taskId && !selected) throw new ContractError("stale");
     if (selected && realpathSync(selected.record.cwd) !== this.cwd)
       throw new ContractError("unsupported-context");
     const secrets = this.viewSecrets();
@@ -443,7 +442,11 @@ export class TaskActions implements AdmissionOwner {
     const plan = selected ? sanitizeText(selected.record.plan, secrets) : null;
     const editable = selected ? plan === selected.record.plan : true;
     let descriptor: PublishedPlan | null = null;
-    let unavailable: import("../service-contract.ts").PublicError | null = null;
+    // Missing live bytes (e.g. retained-only history) provide no action authority.
+    // Keep the requested identity for history views; never reconstruct a current
+    // task/plan from retained records or mistake stable absence for a version race.
+    let unavailable: import("../service-contract.ts").PublicError | null =
+      taskId && !selected ? publicError("unavailable") : null;
     let saved: SavedGraphSelection = { status: "none" };
     if (selected) {
       try {
@@ -562,6 +565,8 @@ export class TaskActions implements AdmissionOwner {
         throw new ContractError("stale");
       if (choice.selection) h.models.assertCurrent(choice.selection);
       const latest = taskId ? h.coordination.store.loadSnapshot(taskId) : null;
+      // Stable absence is unavailable; appearance/disappearance during this
+      // observation is still stale, just like a raw-byte identity change.
       if (
         latest?.identity !== selected?.identity ||
         canonicalJson(choice) !== canonicalJson(this.choiceSnapshot()) ||
@@ -598,6 +603,7 @@ export class TaskActions implements AdmissionOwner {
     const { view, changes, observation, secrets } = this.observeCurrent(
       request.taskId,
     );
+    if (!view.task) throw new ContractError("unavailable");
     const text = sanitizeText(changes.text, secrets);
     return decodeCurrentChanges({
       request,
@@ -677,7 +683,7 @@ export class TaskActions implements AdmissionOwner {
   }
   checkObligations(taskId: string) {
     const { view, assertCurrent } = this.observeCurrent(taskId);
-    if (!view.task) throw new ContractError("stale");
+    if (!view.task) throw new ContractError("unavailable");
     const checks = this.obligationsFor(
       taskId,
       view.task.kind,
