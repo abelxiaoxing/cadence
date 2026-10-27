@@ -267,7 +267,6 @@ describe("durable reader adaptation", () => {
             previous() {},
             more() {},
             refresh() {},
-            follow() {},
           }}
         />,
       );
