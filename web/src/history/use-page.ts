@@ -77,5 +77,10 @@ export function usePage(client: ServiceClient, seed: ListRequest | null) {
       setBack([]);
       setRequest(seed ? { ...seed } : null);
     },
+    /** Like refresh, but the shown page stays until the new read arrives. */
+    follow: () => {
+      setBack([]);
+      setRequest(seed ? { ...seed } : null);
+    },
   };
 }

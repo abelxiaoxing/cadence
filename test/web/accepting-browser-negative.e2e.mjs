@@ -103,7 +103,9 @@ it("built browser safety: old task active Cancel, bad/missing builds, manual ref
     }
     async function create(goal, kind) {
       await p.getByRole("button", { name: "New task", exact: true }).click();
-      await p.getByRole("dialog").getByLabel("Kind").selectOption(kind);
+      // pi's new-conversation composer: the goal draft and kind live in the
+      // input box; Create still needs its own preview and confirmation.
+      await p.getByLabel("Kind", { exact: true }).selectOption(kind);
       await p.getByLabel("Goal", { exact: true }).fill(goal);
       await p
         .getByRole("button", { name: "Preview Create (does not Start)" })
@@ -215,7 +217,6 @@ it("built browser safety: old task active Cancel, bad/missing builds, manual ref
     second.setDefaultTimeout(15000);
     await second.goto(f.tokenLink);
     await second.goto(`${f.endpoint}/app#task=${live}`);
-    await second.locator(".view-menu > summary").click();
     await second.getByRole("button", { name: "outcomes", exact: true }).click();
     await second.getByText(run.runId, { exact: true }).waitFor();
     receipt.nativeObserver = await nativeObserver(f, run.runId);

@@ -37,6 +37,14 @@ function WindowedMessages({
   const { t } = useT();
   const scrollRef = useRef<HTMLDivElement>(null),
     stickRef = useRef(true);
+  // pi's scroll follow: a reader at the bottom keeps seeing new records.
+  const countRef = useRef(messages.length);
+  useLayoutEffect(() => {
+    const grew = countRef.current > 0 && messages.length > countRef.current;
+    countRef.current = messages.length;
+    const el = scrollRef.current;
+    if (grew && stickRef.current && el) el.scrollTop = el.scrollHeight;
+  }, [messages]);
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
   const hiddenRef = useRef(hidden);
   hiddenRef.current = hidden;
@@ -161,40 +169,58 @@ function WindowedMessages({
 export function MessageList({
   client,
   seed,
+  emptyHint,
 }: {
   client: ServiceClient;
   seed: ListRequest;
+  /** Shown instead of the generic note when the whole conversation is empty. */
+  emptyHint?: string;
 }) {
   const { t } = useT();
   const pager = usePage(client, { ...seed, reader: "messages" }),
     page = pager.page;
+  // A conversation that fits on its first page follows new committed activity
+  // like pi's live transcript; paged history keeps the explicit update button.
+  // Each follow is one bounded read of the newer snapshot, never a replay.
+  const whole = !!page && !("kind" in page) && !page.next && !pager.canPrevious;
+  const behind =
+    !!page &&
+    !("kind" in page) &&
+    seed.snapshotSeq !== null &&
+    page.request.snapshotSeq !== seed.snapshotSeq;
+  const follow = useRef(pager.follow);
+  follow.current = pager.follow;
+  useEffect(() => {
+    if (!whole || !behind || pager.busy || seed.snapshotSeq === null) return;
+    const timer = setTimeout(() => follow.current(), 1200);
+    return () => clearTimeout(timer);
+  }, [whole, behind, pager.busy, seed.snapshotSeq]);
   return (
     <section className="transcript">
       <PageControls pager={pager} compact />
-      {page &&
-        !("kind" in page) &&
-        seed.snapshotSeq !== null &&
-        page.request.snapshotSeq !== seed.snapshotSeq && (
-          <button
-            type="button"
-            className="conversation-update"
-            disabled={pager.busy}
-            onClick={pager.refresh}
-          >
-            {t("New activity — update conversation")}
-          </button>
-        )}
+      {behind && (!whole || !!pager.error) && (
+        <button
+          type="button"
+          className="conversation-update"
+          disabled={pager.busy}
+          onClick={pager.refresh}
+        >
+          {t("New activity — update conversation")}
+        </button>
+      )}
       {page && !("kind" in page) && (
         <>
           {page.records.length === 0 && (
             <p className="empty-note panel-empty">
               {page.next
                 ? t("No message records on this page; more history remains.")
-                : t("No message records on this page.")}
+                : !pager.canPrevious && emptyHint
+                  ? emptyHint
+                  : t("No message records on this page.")}
             </p>
           )}
           <WindowedMessages
-            key={`${page.request.snapshotSeq}:${page.request.after?.recordId ?? "first"}`}
+            key={page.request.after?.recordId ?? "first"}
             messages={page.records.filter(
               (r): r is Extract<HistoryRecord, { kind: "message" }> =>
                 r.kind === "message",

@@ -42,6 +42,10 @@ export class WorkspaceObserver {
     let stopSocket: (() => void) | undefined;
     let timer: ReturnType<typeof setInterval> | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;
+    // A failed read (for example a transient inconclusive answer while the owner
+    // publishes) is observed again soon with doubling delay, up to the 30s cadence.
+    let reread: ReturnType<typeof setTimeout> | undefined;
+    let failures = 0;
     let abort = new AbortController();
     let tracker = new ProjectionTracker();
     let generation = 0;
@@ -66,6 +70,7 @@ export class WorkspaceObserver {
       abort.abort();
       clearInterval(timer);
       clearTimeout(retry);
+      clearTimeout(reread);
       socketVersion++;
       stopSocket?.();
       if (version === this.version) this.pollCurrent = undefined;
@@ -172,6 +177,12 @@ export class WorkspaceObserver {
         reading = false;
         state.actions = succeeded && actionCapability;
         emit();
+        clearTimeout(reread);
+        if (succeeded) failures = 0;
+        else if (current() && attached && !blocked) {
+          const delay = Math.min(30000, 2000 * 2 ** failures++);
+          reread = setTimeout(() => void poll(), delay);
+        }
       }
     };
     const revoke = () => {

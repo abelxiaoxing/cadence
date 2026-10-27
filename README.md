@@ -136,7 +136,10 @@ A token grants workspace access, not action consent.
 Every mutation needs its own context-bound preview/confirmation; stale/duplicate/lost replies do not silently replay work.
 The WebUI provides task/run/assignment navigation, long retained messages and tool detail, exact literal search, timeline and complete scoped NDJSON/Markdown downloads.
 Desktop panes and phone drawers retain cancellation and keyboard controls.
-Its chrome follows pi-web-ui: a compact topbar with view tabs and icon actions, a sectioned task sidebar, pill inspector tabs, transcript/tool cards and a bottom statusbar; phones wrap the topbar into an action row and an icon tab row.
+Its layout follows pi-web-ui: the topbar shows the connection state, every recorded view as a tab, icon actions, the exact owner model and a **New task** chip; the left sidebar lists the project, running conversations and task history, each task's runs and subagents nested under it; the right panel holds the task's plan, checks, changes and review; a statusbar sits below.
+With no task selected the page is pi's new conversation: a welcome page with starter cards above a composer whose Enter previews Create (kind and model chips beside it), and a confirmed Create opens its new task.
+A selected task shows its conversation and, where the composer sits, a next-step bar (goal → plan → start → check and review) whose buttons only open panels or request previews; every effect still needs its own confirmation.
+Phones wrap the topbar into an action row and an icon tab row, with both panels as drawers.
 The interface is in English or Simplified Chinese: it follows the browser's first preferred language, and the topbar's globe chip (`中文` / `EN`) switches it, remembered only in that browser.
 Error codes, identifiers, commands and recorded content stay untranslated.
 
@@ -467,15 +470,27 @@ WebUI text is keyed by its English source: fixed text goes through `useT().t`, w
 The timeline client takes the chosen language from its bridge and is remounted on a switch; browser scenarios pin `locale: "en-US"` so English assertions do not follow the host's `LANG`.
 The browser is conversation-first: the left panel groups the current service project, the actual active roster and retained task conversations, with run/subagent children under their task.
 One service still exposes one checkout; the project section is not a cross-project registry, Pi session importer or cwd switcher.
-The center shows retained message text as Markdown by default; tools/context/timeline/run facts and export/link actions live under Details, while the collapsible right inspector remains bound to the task's current plan/check/change/review context even when viewing a child.
+The center shows retained message text as Markdown by default; tools/context/timeline/run facts are direct topbar tabs beside export/link actions, while the collapsible right inspector remains bound to the task's current plan/check/change/review context even when viewing a child.
+With no task selected the center is the new-task composer; Enter only requests a Create preview, and a followed Create receipt opens its task once published.
+A selected task's next-step bar derives its step from the saved graph revision, observed runs and the active roster (the Cancel authority); it opens inspector tabs or requests Generate/Start previews.
+An observation poll withholds action capability while it reads, which invalidates an open confirmation, so automatic follow-ups (receipt lookups, roster rereads after a run settles) never poll or navigate while a preview is prepared or confirmed.
+A failed poll is observed again after 2s, doubling to the 30s cadence; the owner can answer a read `receipt-inconclusive` briefly while it publishes.
 Historical child links bind exact scope and watermark.
-Bounded history and Back never silently rebase; running conversations offer an explicit new-activity update, and source limitations/progress stay visible even when complete-record metadata is folded.
+Bounded history and Back never silently rebase; a conversation that fits its first page follows newer snapshots with one bounded read at a time, paged history offers an explicit new-activity update, and source limitations/progress stay visible even when complete-record metadata is folded.
 Cancel uses the independent active roster (including the fallback strip when workspace discovery fails); navigation, project selection and hiding panels never cancel or authorize execution.
 
 Publish `web/dist` from Node: Vite run under Bun lays out its preload helper differently, so a Bun build fails a Node `build:web:check`.
 Review the independently enumerated package member list and every emitted body, not a count or an expected list generated from the tar under test.
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
+
+### Release 2.0.13 acceptance snapshot
+
+Full `verify` passed on the 2.0.13 release candidate before this evidence-only paragraph: 1983 root tests in 80 files (27 skipped on Linux), 133 web tests, 6 real-browser scenarios and the 132-member pack audit.
+Observed environment: Linux x86_64, Node22.22.1, Bun1.3.14, Pi SDK0.84.3 and existing Chrome for Testing153.0.8010.12.
+The WebUI follows pi-web-ui's new-conversation layout: a bottom composer whose Enter only previews Create, starter cards that only fill the draft, a next-step bar per task, direct topbar view tabs and a New task chip; a followed Create receipt opens the created task.
+The accepting-browser scenario first failed with Confirm start disabled because automatic follow-ups polled while a confirmation was open; they now skip while a preview is prepared or confirmed.
+Service contracts are unchanged; no new Windows/macOS, real service-manager installation or paid-provider qualification is claimed.
 
 ### Release 2.0.12 acceptance snapshot
 

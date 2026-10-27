@@ -43,7 +43,10 @@
     "web/src/use-chat.ts": "46477a178120807c097dc42cafd3fb4cf81ebb71bfcd6cd99d049f2196941e3c",
     "web/src/use-copy-feedback.ts": "b6f8ca9a67ba61bc66d822c42e06baffbb97461663952b8240d664751984d8a5",
     "web/src/use-swipe-drawer.ts": "6b6136c92ae2247a54e1069965e9b510add4684a74d10cdc06a7eebd1980b8de",
-    "web/vite.config.ts": "1be75f22af7f3d5bbbf6eb10fba64fb444b473e8abb2b6b7348010678b8f82b8"
+    "web/vite.config.ts": "1be75f22af7f3d5bbbf6eb10fba64fb444b473e8abb2b6b7348010678b8f82b8",
+    "web/src/components/ChatInput.tsx": "9c0be0e8a75b9c17e058fc15314f36f0163527036344859f0659957ea3cde83c",
+    "web/src/components/GoalBar.tsx": "ec2f9a16fed1c19044856e362abec041e64b44479875c65ef4b6b46e6560c4be",
+    "web/src/components/PromptTemplates.tsx": "5ff4c785096620f55e4ef04070408c0f35d34858c0b81fd4fbcb3788f32a01b9"
   },
   "groups": [
     {
@@ -70,7 +73,23 @@
         "web/src/layout/ResizeHandle.tsx",
         "web/src/layout/use-drawer-focus.ts"
       ],
-      "modifications": "Three-pane composition and selected coherent CSS rule families; direct sash/swipe algorithms; props narrowed to task/run data. Add keyboard focus and inert drawers. Delete composer, PTY, plugin slots, filesystem tree and model/provider administration. Correct open-drawer drag offset. Chrome restyle: TopBar brand/chip/tb-tab/panel-toggle and data-tip families, lp-section/session-item sidebar rows, pill inspector tabs, msg-meta/body transcript cards, statusbar, empty-state and scrollbar rules; generic controls use zero-specificity :where() so family classes win; phones wrap the topbar into an action row and an icon tab row. Fine-pointer controls follow pi's 24–28px density and coarse pointers keep 32–36px minimum targets; the earlier universal 44px controls were replaced. Accessible names are unchanged and every safety statement stays fully visible, wrapping in the scope bar, statusbar and collapsed episode rows instead of being clipped or hidden; small statements, selected tabs and the primary button use AA-contrast tokens. Interface text, including accessible names, is keyed by its English source and shown in English or Simplified Chinese; a topbar chip switches the language. Alert lines inside action dialogs keep the error colour rather than the dimmed dialog paragraph colour. Conversation-first refinement: one-service project section, independent active roster, paged task/run/subagent history, secondary Details menu and optional task-bound inspector; no cross-project/session import. Default Markdown text with folded complete metadata preserves visible limitations and exact child snapshot links."
+      "modifications": "Three-pane composition and selected coherent CSS rule families; direct sash/swipe algorithms; props narrowed to task/run data. Add keyboard focus and inert drawers. Delete the chat composer, PTY, plugin slots, filesystem tree and model/provider administration. Correct open-drawer drag offset. Chrome restyle: TopBar brand/chip/tb-tab/panel-toggle and data-tip families, lp-section/session-item sidebar rows, pill inspector tabs, msg-meta/body transcript cards, statusbar, empty-state and scrollbar rules; generic controls use zero-specificity :where() so family classes win; phones wrap the topbar into an action row and an icon tab row. Fine-pointer controls follow pi's 24–28px density and coarse pointers keep 32–36px minimum targets; the earlier universal 44px controls were replaced. Accessible names are unchanged and every safety statement stays fully visible, wrapping in the scope bar, statusbar and collapsed episode rows instead of being clipped or hidden; small statements, selected tabs and the primary button use AA-contrast tokens. Interface text, including accessible names, is keyed by its English source and shown in English or Simplified Chinese; a topbar chip switches the language. Alert lines inside action dialogs keep the error colour rather than the dimmed dialog paragraph colour. Conversation-first refinement: one-service project section, independent active roster, paged task/run/subagent history, direct view tabs and optional task-bound inspector; no cross-project/session import. Default Markdown text with folded complete metadata preserves visible limitations and exact child snapshot links. pi new-conversation layout: every recorded view is a direct topbar tab beside a New task chip, connection state and the exact owner model; the Create dialog becomes the pi composer (goal, kind and model chips, Enter previews Create) under a welcome page, and a selected task shows a goalbar-style next-step bar where the composer sits. A Create whose publication is pending is followed by bounded read-only receipt lookups and opens its task; no follow-up polls or navigates while a preview is prepared or confirmed. The sidebar rereads its pages when this page published a task or a run left the roster, and the right panel explains the task workflow before a task is selected."
+    },
+    {
+      "id": "composer-flow",
+      "sources": [
+        "web/src/components/ChatInput.tsx",
+        "web/src/components/GoalBar.tsx",
+        "web/src/components/PromptTemplates.tsx",
+        "web/src/styles.css"
+      ],
+      "destinations": [
+        "web/src/components/workspace/Composer.tsx",
+        "web/src/components/workspace/TaskFlow.tsx",
+        "web/src/components/workspace/Welcome.tsx",
+        "web/src/styles.css"
+      ],
+      "modifications": "inputbar/inputbox/composer-tools/btn.send families, auto-height and IME-safe Enter from ChatInput; goalbar/goalbar-row/goalbar-btn families from GoalBar; empty-state templates grid from PromptTemplates. Only a local goal draft, kind and the owner model chip remain: no attachments, slash commands, quick phrases, plugin slots, queueing or send. Enter requests a Create preview; the next-step bar only opens inspector tabs or requests Generate/Start previews and keeps explicit Stop; starter cards only fill the draft."
     },
     {
       "id": "plan-navigation",
@@ -100,7 +119,7 @@
         "web/src/components/transcript/CollapsibleHead.tsx",
         "web/src/transcript/lazy-window.ts"
       ],
-      "modifications": "Direct lazy-window/height-hysteresis and collapsible card families; readonly Message/Tool composition narrowed to actual HistoryRecord owners/versions/associations. Independent server paging replaces full-array assumptions. No orphan suppression, inline-marker stripping, fork/reask/steer/retry, tool-kill, image/file preview bridge or prose-derived native status."
+      "modifications": "Direct lazy-window/height-hysteresis and collapsible card families; readonly Message/Tool composition narrowed to actual HistoryRecord owners/versions/associations. Independent server paging replaces full-array assumptions. No orphan suppression, inline-marker stripping, fork/reask/steer/retry, tool-kill, image/file preview bridge or prose-derived native status. A conversation that fits on its first page follows newer committed snapshots with one bounded read at a time and keeps the shown page until the read arrives; paged history keeps the explicit update button. A reader at the bottom follows new records."
     },
     {
       "id": "rich",
@@ -186,7 +205,7 @@
         "web/src/components/actions/ConfirmAction.tsx",
         "web/src/components/actions/ReceiptPanel.tsx"
       ],
-      "modifications": "Adapt stale-socket generation/bounded reconnect and immutable same-entity append algorithm. Shared ProjectionTracker alone reduces execution projections; no copied upstream UiState/schema. Native dialog/focus replaces extension response sender. Finite preflight/named command/cancel/exact receipt; no automatic action retry or confirmation renewal. Disconnect/Return detaches, not Cancel."
+      "modifications": "Adapt stale-socket generation/bounded reconnect and immutable same-entity append algorithm. Shared ProjectionTracker alone reduces execution projections; no copied upstream UiState/schema. Native dialog/focus replaces extension response sender. Finite preflight/named command/cancel/exact receipt; no automatic action retry or confirmation renewal. Disconnect/Return detaches, not Cancel. A failed observation poll is observed again after 2s, doubling up to the 30s cadence; it never allocates a session, renews a grant or replays a command."
     },
     {
       "id": "build",
@@ -239,12 +258,13 @@
     "web/vitest.config.ts",
     "web/src/components/actions/ModelChooser.tsx",
     "web/src/components/review/CurrentChangesPanel.tsx",
-    "test/web/conversations.test.tsx"
+    "test/web/conversations.test.tsx",
+    "test/web/task-flow.test.tsx"
   ],
   "destinations": {
     "licenses/pi-web-ui-reuse.md": "11d04d9b727fbe47b6492d598615c23cb94a1df4280e1f1b1afaa9e8850d7902",
     "web/index.html": "d4f99afb551ce57f3c0c361b176c37540520cd1658ef568c86ef01e0cce9e5b1",
-    "web/src/App.tsx": "957b7730da9586b7b0e0f358cd7354048571a223b2f80eb533cbdb86d3893ab5",
+    "web/src/App.tsx": "020d2c3e8c3551c8665a6af56f29b7136ae500c7a1f3b6c610c34c74ca80484a",
     "web/src/client/actions.ts": "192587fe7eee7b7d669a0e93641d0880a4ca33a56a6ca25d0fe4265a8519db88",
     "web/src/client/browser.ts": "3e0645d7603b5c13d68e9ed9785eb519ee44c8b7ec13672950ad2a8b58cd7c14",
     "web/src/client/message-delta.ts": "9133b161d07c0f5ca6a85562d396c36f724982d51f35ea0abae03035d79e4e8b",
@@ -275,16 +295,16 @@
     "web/src/components/transcript/CollapsibleHead.tsx": "5ff6f7f0f442384ff0df6fdc5efdfbd41728b6e0ee8d40659d875931f4406f9f",
     "web/src/components/transcript/LazyMount.tsx": "4c18f96386c2164af00b9811a76ec5016a637810d33f5ba06932268a159b88cc",
     "web/src/components/transcript/Message.tsx": "6826f2c82e9bb2a16d1761ffd7fb74b498581855aa16da8c948f439b998c7383",
-    "web/src/components/transcript/MessageList.tsx": "9299c177e0e9d7ac4d9648f2eb08a2a000f764a0e504a3e6a19026f3536f36b0",
+    "web/src/components/transcript/MessageList.tsx": "dc571eed39e916736fee640264005ce3a052e1a3bf4ddd72462433717ea80f58",
     "web/src/components/transcript/ToolCallBlock.tsx": "d81762bdd1a318de7014e97e0685162016dfa92dba58794c3c23e2f7dab5ec58",
-    "web/src/components/workspace/InspectorPanel.tsx": "5c4b050d94d862adad1e06795d6902bfa729cd33db025f9a7f6aa6b9fc5765b7",
+    "web/src/components/workspace/InspectorPanel.tsx": "09e686aba8ccafc4f7e5a5db3f4fecd07e62bce1e959762869009f1260a52dad",
     "web/src/components/workspace/RunSummary.tsx": "d6a08bb9994aa585a56afe217fe438984894d357365bf7aaed57d1713d0ff7ec",
-    "web/src/components/workspace/TaskSidebar.tsx": "76ef4f9dfefe3894676a667bdb3c17916afe46feceadc38236b1df8c30e4b4fd",
+    "web/src/components/workspace/TaskSidebar.tsx": "57de39e8a1921aedd58b43debb76c2201c9de514f595913cd60ff7428acaa233",
     "web/src/history/download-export.ts": "8444b3f0face7c4e82f24601bc80eddc1e49d5236f352ec9d40d5739f6e9c76e",
     "web/src/history/history-url.ts": "77a2146c7336c311d22313a32b84d1e3a4ce7ae1d4e196874f2112c31534bcb6",
     "web/src/history/readers.ts": "48bed1b8d4d89bc5719b729fcc3b938f9a88a447583b32dd4a71364b2e88c1e0",
     "web/src/history/search-page.ts": "69656774cfd6d11379a74348d15b0249e4b609d066f121ca9d82231cc454302c",
-    "web/src/history/use-page.ts": "26244cc7f1da133ac820ebaab3804aecf943608e2ac65ebeb5b32e84aa2a6d5a",
+    "web/src/history/use-page.ts": "9617b8e7cbba412357d699edafc877fded01bb00933c365b1c3963317cfafc8c",
     "web/src/layout/ResizeHandle.tsx": "d9d5cfece8d3d6e419fb68cd70ce71120fcd82daed64c928c91cc0beb774190f",
     "web/src/layout/panel-sash.ts": "0ce5758e99a8ff77fc1993cff787daa464af3accc5d0cefb5b69a044414da562",
     "web/src/layout/swipe-drawer.ts": "1404d6dacc4e8af0d358e9b9e60b00af81b4a8507eb3adc27e31b27deee6950a",
@@ -298,7 +318,7 @@
     "web/src/rich/remark-backslash-math.ts": "273205bd4694172f14fab2adad28acf9993e35c476c00756cbafb73135516c2e",
     "web/src/rich/stream-markdown.ts": "ce80d88c65bd49b3fdb4586201090c46b5fdbb81850ef321a782929f3a40e41e",
     "web/src/rich/use-copy-feedback.ts": "6df2a9e9e085b516c98816220420e307a24c5b8826049d0d276e08b59e19a321",
-    "web/src/styles.css": "1dc500edebd8f0a89a2544362877baec394df40bf08b8808d0d9d897818b1c2f",
+    "web/src/styles.css": "6c89968dc2c45bdee65e0f0acabc1f240b567861daad1c6096d32ec3b6a7fdcb",
     "web/src/timeline/TimelineView.tsx": "25ade49214cfd160c049a56163bfdf40433d3a7e3b3447a46a1e277423b77d6f",
     "web/src/timeline/timeline-adapter.ts": "4bd061c89c0dc78edea5d9f1b7ce6b6be24f82b6949f84d0d7120d3cafe95dbb",
     "web/src/timeline/timeline-client.d.mts": "c216e4da9c9220ee2e0ce78fa9d40e3daf59d690140331184573e724f900525b",
@@ -309,19 +329,19 @@
     "web/vite.config.ts": "4f372e948d2261f408232612c451a37b3393d3b0d2a14b53984cb04efcd1e5d5",
     "scripts/build-web.mjs": "0334c888aa4c915df9e18cf6e9d62ac939412091d6751754d623201c2f2b9e85",
     "src/service-assets.ts": "ebf42142a64d7c4f00147c19a6e3e05bf4b7a287c68c081695ff0fbb7356ecd5",
-    "test/web/assets-browser.e2e.mjs": "2113ff8005c63a40f88c5393c1df2b52ca89506c2c77992f72814700d2421dc9",
+    "test/web/assets-browser.e2e.mjs": "b89f883c5b80909c68782254c6fc86bde850e01818c88f96c779d475a21fde8c",
     "test/web/assets.test.tsx": "0a817c01d89e12e778dbcf6452727c951d81f44ac2dbc87488f384dbafabfdd4",
     "test/web/fixtures.tsx": "2224fa5c37c5ba352476e96a35170f4d7c5d8c62399418a1a192c6c30f1b3f20",
     "test/web/history-timeline.test.tsx": "dcc99efe7f6f7d9ed72f167c89fc1177f0b4506218fe147c5cd1f2e0d2914851",
     "test/web/lazy-window.test.tsx": "96f1519b79b504e44e7b97a5595783006d463c3dee35877eece5a193c346573c",
     "test/web/observation.test.tsx": "24ab2be751790ded6778a798d2222a075cb8dff134116d4395f7cc3a7b5d4079",
-    "test/web/presentation.test.tsx": "1274a03ca32dfb5fb7cadea2b7459556d81638777d52eae0f28b416efb9854fe",
+    "test/web/presentation.test.tsx": "5b935c144130b65abb62a856f2ace2abde6adc79f11477890109e213046851f3",
     "test/web/stream-markdown.test.tsx": "313d5cc27f9bad97e9fc7fcc280980aa7ba85246e279def955df52b6b1d09d8b",
     "test/web/swipe-drawer.test.tsx": "578069233ef78b985bea3668cdbe31f17236a6b7ca6216ec8da3efdceae9b27d",
     "web/browser.config.ts": "d3c6dd30f7f9caaeea1d48984421ca9d8a5fd2ef9c70a049c89b75d9aa487799",
     "web/build-vis-style.ts": "37e9c8259d75b9b5322d5108ac57e3e51d5ce1212d649f0f0d282f919c72a8c3",
     "web/src/client/build-identity.ts": "00eeda0fc86910d7693cfedb15ba38ffb58a58c9549c138550bba132ea3b7932",
-    "web/src/client/observer.ts": "ac19a887b9ea725c575b68ee653ace463d7802b15251b51fa5fd5df4130b2cd7",
+    "web/src/client/observer.ts": "a720f354ceee3947e4f94e214d0b5e787f26094afb8136c5cbd59e4e4554241a",
     "web/src/client/receipts.ts": "a6b22b6974d95c1bd6a5ca4283aa306c53a7edcc81e6e8c310f2ea7fc309c721",
     "web/src/client/view-lifetime.ts": "3abdedb9393cadb44ed016d81dbf759fc6eab78fa7031f37def222d719de2b06",
     "web/src/history/search-request.ts": "646b3ac1271351fcc8c9fa700c12b88e5a919828215344a4c0553f8f7db24459",
@@ -332,8 +352,12 @@
     "web/vitest.config.ts": "e439a39d4a59c7e279e5eb4b869405699f38ff617f413cb6fe1a70e2b15f4ab5",
     "web/src/components/actions/ModelChooser.tsx": "1e415361e51c478139578790ce41fdd053ef8ebec5a8fb0899178135f492efc7",
     "web/src/components/review/CurrentChangesPanel.tsx": "7feada844a4485d1e63fe1d4a10c73b38757cd07525f636d0c16eb8b1845d2c4",
-    "test/web/conversations.test.tsx": "dcfb3f50612f2cc7f0c52d3db88c05287a3964c525e0fbf7668a9b6101f4b84f",
-    "test/web/accepting-browser-negative.e2e.mjs": "372ffe92a80fa0b95c58eb181839ef432dbc0d644dde4b605e130f0a85067b93"
+    "test/web/conversations.test.tsx": "66273087b3b15f9eece580c0d65121102b928e6c6c97a72346f1716030242305",
+    "test/web/accepting-browser-negative.e2e.mjs": "46d1b7cbf80ae004327b91722e1c096f4f3e418c637fd55f011f0b0b946fe41d",
+    "web/src/components/workspace/Composer.tsx": "51b7a2ecbf4ecd3c54c652ab62d8413b4b7e75041705bb0ddccac9f924aeecd1",
+    "web/src/components/workspace/TaskFlow.tsx": "d86fdb65d49368a081037e6582549b4fefca8ca2fcd047b3b67501ac5c7542da",
+    "web/src/components/workspace/Welcome.tsx": "7b6ba23fbf0142c1826c2cf48dc47f6a2df5cd4ccf860d41c8da5dee131df00d",
+    "test/web/task-flow.test.tsx": "a09f89593bdc0c04cc4e70314b72c512e0e8b2ee5f0b40989aa0e7c46cbb44ae"
   },
   "existingLicense": {
     "path": "licenses/pi-web-ui-MIT.txt",
@@ -596,6 +620,11 @@
       "id": "stale-banner-retained-only",
       "originalSourcePinPreserved": true,
       "note": "Retained-only task (history without live task.json) now answers an unavailable current context instead of stale; the generic stale banner no longer claims a service source mismatch or suggests a restart, it asks for a fresh observation/confirmation. Build compatibility remains a separate compatibleBuild status; stale alone cannot diagnose whether sources changed. Local operation errors are shown independently, never masking a stale observation or recommending service startup for a clipboard/preflight failure. Current destination hashes are refreshed; prior source/evidence records remain historical."
+    },
+    {
+      "id": "pi-composer-layout",
+      "originalSourcePinPreserved": true,
+      "note": "pi new-conversation layout: composer, welcome templates and next-step bar adapted from ChatInput/GoalBar/PromptTemplates at the pinned commit; direct view tabs; followed Create receipts; live first-page transcript follow; bounded re-observation after a failed poll. Destination hashes refreshed."
     }
   ],
   "testAdaptations": [
