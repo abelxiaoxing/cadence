@@ -2,12 +2,20 @@
 import { createRequire } from "node:module";
 var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
-// src/service/host.ts
-import { lstatSync as lstatSync11, opendirSync as opendirSync3 } from "node:fs";
-import { join as join18 } from "node:path";
+// src/service/gateway.ts
+import { randomUUID as randomUUID9 } from "node:crypto";
+import { opendirSync as opendirSync6 } from "node:fs";
+import {
+  createServer as createServer2,
+  request as request2
+} from "node:http";
+import { homedir as homedir4 } from "node:os";
+import { WebSocket, WebSocketServer as WebSocketServer2 } from "ws";
 
-// src/agent-registry.ts
+// src/service-assets.ts
 import { createHash as createHash2 } from "node:crypto";
+import { lstatSync as lstatSync2, readdirSync as readdirSync2 } from "node:fs";
+import { join as join2 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/task-store.ts
@@ -292,9 +300,19 @@ function contains(root, path) {
   const within = relative(root, resolve(path));
   return !within || !within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within);
 }
+function stateHomeInside(root, stateHome = defaultStateHome()) {
+  const canonical = realpathSync(root);
+  return contains(canonical, privateRootFor(canonical, stateHome));
+}
 function privateWorkspace(requested, stateHome = defaultStateHome()) {
   return contains(join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1"), canonicalAmbientRoot(requested));
 }
+function effectiveWorkspace(requested, stateHome, _home) {
+  if (privateWorkspace(requested, stateHome) || stateHomeInside(resolveWorkspace(requested).root, stateHome))
+    throw new Error("Choose a project outside Cadence private state; no default workspace was created");
+  return { workspace: requested, redirected: false };
+}
+
 class TaskStore {
   root;
   tasks;
@@ -501,61 +519,6 @@ class TaskStore {
   }
 }
 var TASK_CONFIG_SCHEMA = "cadence-assistant-checks/1";
-
-// src/agent-registry.ts
-var AGENT_FILES = [
-  "design-explorer.md",
-  "implementation-worker.md",
-  "diagnosis-worker.md"
-];
-function loadAgentDefinitions() {
-  return AGENT_FILES.map((fileName) => {
-    const path = fileURLToPath(new URL(`../agents/${fileName}`, import.meta.url));
-    const data = readBounded(path, 32768, true);
-    if (!data)
-      throw new Error("Missing package Agent");
-    return {
-      role: fileName.replace(/\.md$/, ""),
-      fileName,
-      path,
-      sha256: createHash2("sha256").update(data).digest("hex"),
-      bytes: data.length,
-      content: data.toString("utf8")
-    };
-  });
-}
-
-// src/history/files.ts
-import { createHash as createHash6, randomBytes, randomUUID as randomUUID3 } from "node:crypto";
-import {
-  closeSync as closeSync4,
-  constants as constants4,
-  fstatSync as fstatSync4,
-  fsyncSync as fsyncSync3,
-  lstatSync as lstatSync4,
-  opendirSync,
-  openSync as openSync4,
-  statfsSync
-} from "node:fs";
-import { open } from "node:fs/promises";
-import { dirname as dirname4, join as join3 } from "node:path";
-
-// src/service/private-files.ts
-import { createHash as createHash3, randomUUID as randomUUID2 } from "node:crypto";
-import {
-  closeSync as closeSync2,
-  constants as constants2,
-  fstatSync as fstatSync2,
-  fsyncSync as fsyncSync2,
-  lstatSync as lstatSync2,
-  mkdirSync as mkdirSync2,
-  openSync as openSync2,
-  readSync as readSync2,
-  renameSync as renameSync2,
-  unlinkSync as unlinkSync2,
-  writeFileSync as writeFileSync2
-} from "node:fs";
-import { dirname as dirname2, isAbsolute as isAbsolute2, join as join2, relative as relative2, resolve as resolve2, sep as sep2 } from "node:path";
 
 // src/worker-public.mjs
 var SERVICE_PROTOCOL = 1;
@@ -2134,237 +2097,135 @@ function decodeCommittedBatch(v) {
     coverage: decodeCoverage(o.coverage)
   };
 }
-// src/service/private-files.ts
-var METADATA_BYTES = 16 * 1024;
-var REGISTRY_BYTES = 1024 * 1024;
-var REGISTRY_ENTRIES = 128;
-function refused() {
-  throw new ContractError("corrupt-selected");
-}
-function hash(bytes) {
-  return createHash3("sha256").update(bytes).digest("hex");
-}
-function privateMode(st, ownerOnly = true) {
-  if (process.platform !== "win32" && (ownerOnly && (st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
-    refused();
-}
-function same(a, b) {
-  return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.ctimeMs === b.ctimeMs && a.mtimeMs === b.mtimeMs && a.mode === b.mode && a.uid === b.uid && a.nlink === b.nlink;
-}
-function missing(error) {
-  return error instanceof Error && "code" in error && error.code === "ENOENT";
-}
-var job = 0;
-var advancing = false;
-function currentJob() {
-  if (!advancing) {
-    advancing = true;
-    queueMicrotask(() => {
-      job++;
-      advancing = false;
-    });
-  }
-  return job;
-}
 
-class DirectoryWalks {
-  job = currentJob();
-  walked = new Map;
-  open() {
-    if (this.job === job)
-      return true;
-    this.walked.clear();
-    return false;
-  }
-  remember(path, st) {
-    if (this.open())
-      this.walked.set(path, { dev: st.dev, ino: st.ino });
-  }
-  reuse(path, ownerOnly = true) {
-    const walked = this.open() ? this.walked.get(path) : undefined;
-    if (!walked)
-      return false;
-    let st;
-    try {
-      st = lstatSync2(path);
-    } catch (error) {
-      if (!missing(error))
-        throw error;
-      this.walked.delete(path);
-      return false;
-    }
-    if (!st.isDirectory() || st.isSymbolicLink() || st.dev !== walked.dev || st.ino !== walked.ino) {
-      this.walked.delete(path);
-      return false;
-    }
-    privateMode(st, ownerOnly);
-    return true;
-  }
+// src/service-assets.ts
+var ASSET_MEMBER_BYTES = 16 * 1024 * 1024;
+var ASSET_TOTAL_BYTES = 64 * 1024 * 1024;
+var fixed = new Set([
+  "index.html",
+  "assets/cadence.js",
+  "assets/cadence.css",
+  "assets/react.js",
+  "assets/rolldown-runtime.js",
+  "assets/markdown.js",
+  "assets/timeline-client.js",
+  "assets/vis-timeline.js",
+  "assets/vis-timeline.css"
+]);
+var font = /^assets\/KaTeX_(?:AMS-Regular|Caligraphic-(?:Bold|Regular)|Fraktur-(?:Bold|Regular)|Main-(?:Bold|BoldItalic|Italic|Regular)|Math-(?:BoldItalic|Italic)|SansSerif-(?:Bold|Italic|Regular)|Script-Regular|Size[1-4]-Regular|Typewriter-Regular)\.(?:woff2|woff|ttf)$/;
+function assetMime(name) {
+  if (!fixed.has(name) && !font.test(name))
+    throw new Error("asset-name-refused");
+  if (name === "index.html")
+    return "text/html; charset=utf-8";
+  if (name.endsWith(".js"))
+    return "text/javascript; charset=utf-8";
+  if (name.endsWith(".css"))
+    return "text/css; charset=utf-8";
+  if (name.endsWith(".woff2"))
+    return "font/woff2";
+  if (name.endsWith(".woff"))
+    return "font/woff";
+  return "font/ttf";
 }
-
-class PrivateFiles {
-  namespace;
-  ownerOnly;
-  constructor(namespace, ownerOnly = true) {
-    this.namespace = namespace;
-    this.ownerOnly = ownerOnly;
-  }
-  directory(path, create = false, walks) {
-    const tail = relative2(this.namespace, path);
-    if (isAbsolute2(tail) || tail === ".." || tail.startsWith(`..${sep2}`))
-      refused();
-    if (!create) {
-      const full = resolve2(path);
-      if (walks?.reuse(full, this.ownerOnly))
-        return true;
-      const namespace = resolve2(this.namespace);
-      let inside = false, last;
-      const found = safeDirectory(path, false, (at2, st) => {
-        if (at2 === namespace)
-          inside = true;
-        if (inside)
-          privateMode(st, this.ownerOnly);
-        last = st;
-      });
-      if (found && last)
-        walks?.remember(full, last);
-      return found;
-    }
-    if (!safeDirectory(this.namespace, true))
-      return false;
-    privateMode(lstatSync2(this.namespace), this.ownerOnly);
-    let at = this.namespace;
-    for (const part of tail.split(sep2).filter(Boolean)) {
-      at = join2(at, part);
-      let st;
-      try {
-        st = lstatSync2(at);
-      } catch (error) {
-        if (!missing(error))
-          throw error;
-        try {
-          mkdirSync2(at, { mode: 448 });
-        } catch (mkdirError) {
-          if (!(mkdirError instanceof Error && ("code" in mkdirError) && mkdirError.code === "EEXIST"))
-            throw mkdirError;
-        }
-        st = lstatSync2(at);
-      }
-      if (!st.isDirectory() || st.isSymbolicLink())
-        throw new Error("Unsafe directory");
-      privateMode(st, this.ownerOnly);
-    }
-    return true;
-  }
-  read(path, maximum = METADATA_BYTES, walks) {
-    if (!this.directory(dirname2(path), false, walks))
-      return;
-    let before;
-    try {
-      before = lstatSync2(path);
-    } catch (error) {
-      if (missing(error))
-        return;
-      return refused();
-    }
-    if (!before.isFile() || before.nlink !== 1 || before.size > maximum)
-      refused();
-    privateMode(before, this.ownerOnly);
-    const fd = openSync2(path, constants2.O_RDONLY | (constants2.O_NOFOLLOW ?? 0));
-    try {
-      const opened = fstatSync2(fd);
-      if (!same(before, opened))
-        refused();
-      const buffer = Buffer.alloc(opened.size + 1);
-      let size = 0;
-      while (size < buffer.length) {
-        const n = readSync2(fd, buffer, size, buffer.length - size, null);
-        if (!n)
-          break;
-        size += n;
-      }
-      const bytes = buffer.subarray(0, size);
-      if (size !== opened.size || !same(opened, fstatSync2(fd)) || !same(opened, lstatSync2(path)))
-        refused();
-      return { bytes, identity: hash(bytes), stamp: stamp(opened) };
-    } finally {
-      closeSync2(fd);
-    }
-  }
-  assert(path, expected, maximum = METADATA_BYTES, walks) {
-    const current = this.read(path, maximum, walks);
-    if (current?.identity !== expected?.identity || current?.stamp !== expected?.stamp)
-      throw new ContractError("conflict");
-  }
-  create(path, bytes, maximum = METADATA_BYTES) {
-    if (Buffer.byteLength(bytes) > maximum)
-      throw new ContractError("oversize");
-    this.directory(dirname2(path), true);
-    const fd = retryWindowsFileOperation(() => openSync2(path, "wx", 384));
-    try {
-      writeFileSync2(fd, bytes);
-      fsyncSync2(fd);
-    } finally {
-      closeSync2(fd);
-    }
-    this.syncDirectory(dirname2(path));
-    const result = this.read(path, maximum);
-    if (!result || result.identity !== hash(bytes))
-      refused();
-    return result;
-  }
-  replace(path, expected, bytes, maximum = METADATA_BYTES) {
-    this.assert(path, expected, maximum);
-    const temporary = join2(dirname2(path), `pending-${randomUUID2()}.json`);
-    this.create(temporary, bytes, maximum);
-    this.assert(path, expected, maximum);
-    retryWindowsFileOperation(() => renameSync2(temporary, path), () => this.assert(path, expected, maximum));
-    this.syncDirectory(dirname2(path));
-    const result = this.read(path, maximum);
-    if (!result || result.identity !== hash(bytes))
-      refused();
-    return result;
-  }
-  remove(path, expected, maximum = METADATA_BYTES) {
-    this.assert(path, expected, maximum);
-    retryWindowsFileOperation(() => unlinkSync2(path), () => this.assert(path, expected, maximum));
-    this.syncDirectory(dirname2(path));
-  }
-  syncDirectory(path) {
-    if (process.platform === "win32")
-      return;
-    const fd = openSync2(path, constants2.O_RDONLY | constants2.O_DIRECTORY);
-    try {
-      fsyncSync2(fd);
-    } finally {
-      closeSync2(fd);
-    }
-  }
+function record(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v))
+    throw new Error("asset-manifest-refused");
+  return v;
 }
-function stamp(st) {
+function keys(v, expected) {
+  if (Object.keys(v).sort().join() !== expected.sort().join())
+    throw new Error("asset-manifest-refused");
+}
+function hash(v) {
+  if (typeof v !== "string" || !/^[a-f0-9]{64}$/.test(v))
+    throw new Error("asset-manifest-refused");
+  return v;
+}
+function decodeAssetManifest(input) {
+  const o = record(input);
+  keys(o, ["schema", "sourceHash", "contractHash", "buildId", "assets"]);
+  if (o.schema !== "cadence-web-assets/1" || !Array.isArray(o.assets) || o.assets.length > 128)
+    throw new Error("asset-manifest-refused");
+  let total = 0;
+  const names = new Set;
+  const assets = o.assets.map((value) => {
+    const a = record(value);
+    keys(a, ["name", "bytes", "sha256", "references"]);
+    if (typeof a.name !== "string" || names.has(a.name))
+      throw new Error("asset-name-refused");
+    assetMime(a.name);
+    names.add(a.name);
+    if (typeof a.bytes !== "number" || !Number.isSafeInteger(a.bytes) || a.bytes <= 0 || a.bytes > ASSET_MEMBER_BYTES)
+      throw new Error("asset-size-refused");
+    total += a.bytes;
+    if (total > ASSET_TOTAL_BYTES || !Array.isArray(a.references) || a.references.length > 128 || !a.references.every((r) => typeof r === "string"))
+      throw new Error("asset-closure-refused");
+    return {
+      name: a.name,
+      bytes: a.bytes,
+      sha256: hash(a.sha256),
+      references: a.references
+    };
+  });
+  if ([...fixed].some((name) => !names.has(name)) || assets.filter((a) => font.test(a.name)).length !== 60 || assets.some((a) => new Set(a.references).size !== a.references.length || a.references.some((r) => !names.has(r))))
+    throw new Error("asset-closure-refused");
+  const sourceHash = hash(o.sourceHash), contractHash = hash(o.contractHash), buildId = hash(o.buildId);
+  if (buildId !== createHash2("sha256").update(JSON.stringify({ sourceHash, contractHash })).digest("hex"))
+    throw new Error("asset-identity-refused");
+  return { schema: o.schema, sourceHash, contractHash, buildId, assets };
+}
+function incarnation(st) {
   return [
     st.dev,
     st.ino,
-    st.size,
     st.mode,
-    st.uid,
     st.nlink,
-    st.ctimeMs,
-    st.mtimeMs
+    st.size,
+    st.mtimeMs,
+    st.ctimeMs
   ].join(":");
 }
-function json(snapshot, maximum = METADATA_BYTES) {
-  try {
-    return parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(snapshot.bytes), maximum);
-  } catch {
-    return refused();
-  }
+function loadWebAssets(directory = fileURLToPath(new URL("../web/dist/", import.meta.url))) {
+  if (!safeDirectory(directory) || !safeDirectory(join2(directory, "assets")))
+    throw new Error("assets-unavailable");
+  const observed = new Map;
+  for (const path of [directory, join2(directory, "assets")])
+    observed.set(path, incarnation(lstatSync2(path)));
+  const read = (path, limit) => {
+    const before = incarnation(lstatSync2(path));
+    const body = readBounded(path, limit, true);
+    if (!body || before !== incarnation(lstatSync2(path)))
+      throw new Error("asset-read-changed");
+    observed.set(path, before);
+    return body;
+  };
+  const bytes = read(join2(directory, "manifest.json"), 128 * 1024);
+  const manifest = decodeAssetManifest(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(bytes), 128 * 1024));
+  const members = [
+    ...readdirSync2(directory).filter((n) => n !== "assets"),
+    ...readdirSync2(join2(directory, "assets")).map((n) => `assets/${n}`)
+  ].sort();
+  if (JSON.stringify(members) !== JSON.stringify(["manifest.json", ...manifest.assets.map((a) => a.name)].sort()))
+    throw new Error("asset-members-refused");
+  const assets = manifest.assets.map((a) => {
+    const body = read(join2(directory, a.name), a.bytes);
+    if (!body || body.length !== a.bytes || createHash2("sha256").update(body).digest("hex") !== a.sha256)
+      throw new Error("asset-body-refused");
+    return {
+      path: a.name === "index.html" ? "/app" : `/${a.name}`,
+      contentType: assetMime(a.name),
+      bytes: body
+    };
+  });
+  if (!safeDirectory(directory) || [...observed].some(([path, identity]) => incarnation(lstatSync2(path)) !== identity))
+    throw new Error("asset-read-changed");
+  return {
+    manifest,
+    assets,
+    identity: createHash2("sha256").update(bytes).digest("hex")
+  };
 }
-function encoded(value) {
-  return `${JSON.stringify(value)}
-`;
-}
-
 // src/service/contracts/active.ts
 function decodeActiveRuns(v) {
   canonicalJson({ kind: "ok", value: v }, LIMITS.pageBytes);
@@ -2645,8 +2506,8 @@ function decodeLiveEvent(v) {
       invalid();
     const runs = list(o.runs, LIMITS.maxPageEntries, decodeRunProjection);
     const removed = list(o.removed, LIMITS.maxPageEntries, decodeId);
-    const keys = runs.map((r) => r.childRunId ?? r.runId);
-    if (runs.some((r) => !runInView(r, base.scope, context)) || new Set(keys).size !== keys.length || new Set(removed).size !== removed.length || removed.some((id) => keys.includes(id)))
+    const keys2 = runs.map((r) => r.childRunId ?? r.runId);
+    if (runs.some((r) => !runInView(r, base.scope, context)) || new Set(keys2).size !== keys2.length || new Set(removed).size !== removed.length || removed.some((id) => keys2.includes(id)))
       invalid();
     return { kind, ...base, previousSeq, runs, removed, context };
   }
@@ -3381,30 +3242,30 @@ function decodeHistoryRecord(v) {
 function descriptorFitsOwner(content, owner) {
   return content.kind === "message" || content.kind === "message-final" ? owner.entity.kind === "message" && content.messageId === owner.entity.id : content.kind === "tool" ? owner.entity.kind === "tool" && content.callId === owner.entity.id : owner.entity.kind === "child";
 }
-function recordFits(record, request) {
+function recordFits(record2, request) {
   const { scope, reader } = request;
-  const owner = record.kind === "run" ? {
-    taskId: record.projection.taskId,
-    runId: record.projection.runId,
-    childRunId: record.projection.childRunId
-  } : record.kind === "owner-fact" ? { ...record.link, childRunId: null } : record.kind === "capture-fact" ? record.link : record.owner;
+  const owner = record2.kind === "run" ? {
+    taskId: record2.projection.taskId,
+    runId: record2.projection.runId,
+    childRunId: record2.projection.childRunId
+  } : record2.kind === "owner-fact" ? { ...record2.link, childRunId: null } : record2.kind === "capture-fact" ? record2.link : record2.owner;
   if (scope.kind !== "workspace" && !(scope.kind === "task" ? owner.taskId === scope.id : scope.kind === "run" ? owner.runId === scope.id : owner.childRunId === scope.id))
     return false;
   if (reader === "tasks")
-    return record.kind === "task";
+    return record2.kind === "task";
   if (reader === "runs")
-    return record.kind === "run";
+    return record2.kind === "run";
   if (reader === "messages")
-    return record.kind === "message";
+    return record2.kind === "message";
   if (reader === "tools")
-    return record.kind === "tool";
+    return record2.kind === "tool";
   if (reader === "contents")
-    return record.kind === "content" || record.kind === "omitted";
-  if (record.kind === "capture-fact")
+    return record2.kind === "content" || record2.kind === "omitted";
+  if (record2.kind === "capture-fact")
     return reader === "events";
-  if (record.kind !== "owner-fact")
+  if (record2.kind !== "owner-fact")
     return false;
-  return reader === "events" || reader === "checks" && ["check-start", "check-settled"].includes(record.fact.kind) || reader === "changes" && record.fact.kind === "changes" || reader === "reviews" && record.fact.kind === "review";
+  return reader === "events" || reader === "checks" && ["check-start", "check-settled"].includes(record2.fact.kind) || reader === "changes" && record2.fact.kind === "changes" || reader === "reviews" && record2.fact.kind === "review";
 }
 function decodeHistoryPage(v) {
   canonicalJson({ kind: "ok", value: v }, LIMITS.pageBytes);
@@ -3700,10 +3561,10 @@ function decodeEntityReadRequest(v) {
 }
 function decodeEntityPage(v) {
   canonicalJson({ kind: "ok", value: v }, LIMITS.pageBytes);
-  const o = closed(v, ["request", "record"]), request = decodeEntityReadRequest(o.request), record = decodeHistoryRecord(o.record);
-  if (record.kind !== "task" && record.kind !== "message" && record.kind !== "tool" || record.kind !== request.kind || record.owner.entity.id !== request.id || record.version !== request.version || !ownerInScope(record.owner, request.scope))
+  const o = closed(v, ["request", "record"]), request = decodeEntityReadRequest(o.request), record2 = decodeHistoryRecord(o.record);
+  if (record2.kind !== "task" && record2.kind !== "message" && record2.kind !== "tool" || record2.kind !== request.kind || record2.owner.entity.id !== request.id || record2.version !== request.version || !ownerInScope(record2.owner, request.scope))
     invalid();
-  return { request, record };
+  return { request, record: record2 };
 }
 function decodeEntityReadResult(v) {
   if (Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value !== "progress")
@@ -4049,6 +3910,2501 @@ function decodeModelCatalog(value) {
     withheld
   };
 }
+// src/service/contracts/workbench.ts
+var statuses = [
+  "queued",
+  "running",
+  "completed",
+  "failed",
+  "canceled",
+  "timeout",
+  "unknown"
+];
+function decodeWorkbenchRead(v) {
+  const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
+  switch (kind) {
+    case "conversations":
+    case "projects":
+      closed(v, ["kind"]);
+      return { kind };
+    case "task-origin": {
+      const o = closed(v, ["kind", "taskId"]);
+      return { kind, taskId: decodeId(o.taskId) };
+    }
+    case "conversation": {
+      const o = closed(v, ["kind", "id", "before"]);
+      return { kind, id: decodeId(o.id), before: nullable(o.before, decodeId) };
+    }
+    default: {
+      const o = closed(v, ["kind", "path"]);
+      return {
+        kind: oneOf(o.kind, ["files", "file", "directories"]),
+        path: text(o.path, 4096)
+      };
+    }
+  }
+}
+function decodeWorkbenchCommand(v) {
+  const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
+  if (kind === "link-task") {
+    const o2 = closed(v, [
+      "kind",
+      "commandId",
+      "epoch",
+      "taskId",
+      "conversationId"
+    ]);
+    return {
+      kind,
+      commandId: decodeId(o2.commandId),
+      epoch: decodeId(o2.epoch),
+      taskId: decodeId(o2.taskId),
+      conversationId: decodeId(o2.conversationId)
+    };
+  }
+  if (kind === "send") {
+    const o2 = closed(v, [
+      "kind",
+      "commandId",
+      "conversationId",
+      "head",
+      "text",
+      "model"
+    ]);
+    return {
+      kind,
+      commandId: decodeId(o2.commandId),
+      conversationId: decodeId(o2.conversationId),
+      head: nullable(o2.head, decodeId),
+      text: text(o2.text, 16 * 1024, true),
+      model: decodeChoiceVersion(o2.model)
+    };
+  }
+  if (kind === "interrupt") {
+    const o2 = closed(v, [
+      "kind",
+      "commandId",
+      "conversationId",
+      "turnId",
+      "epoch"
+    ]);
+    return {
+      kind,
+      commandId: decodeId(o2.commandId),
+      conversationId: decodeId(o2.conversationId),
+      turnId: decodeId(o2.turnId),
+      epoch: decodeId(o2.epoch)
+    };
+  }
+  const o = closed(v, ["kind", "commandId", "path", "epoch"]);
+  return {
+    kind: oneOf(o.kind, ["open-project"]),
+    commandId: decodeId(o.commandId),
+    path: text(o.path, 4096, true),
+    epoch: decodeId(o.epoch)
+  };
+}
+function decodeChatTurn(v) {
+  const o = closed(v, ["id", "epoch", "status", "items", "notice"]);
+  return {
+    id: decodeId(o.id),
+    epoch: decodeId(o.epoch),
+    status: oneOf(o.status, statuses),
+    notice: text(o.notice, 1024),
+    items: list(o.items, 256, (v2) => {
+      const i = closed(v2, ["id", "role", "text", "name", "args", "error"]);
+      return {
+        id: text(i.id, 160, true),
+        role: oneOf(i.role, ["user", "assistant", "tool"]),
+        text: text(i.text, 256 * 1024),
+        name: text(i.name, 128),
+        args: text(i.args, 64 * 1024),
+        error: bool(i.error)
+      };
+    })
+  };
+}
+function decodeChatSummary(v) {
+  const o = closed(v, ["id", "title", "head", "status", "updatedAt"]);
+  return {
+    id: decodeId(o.id),
+    title: text(o.title, 512, true),
+    head: decodeId(o.head),
+    status: oneOf(o.status, statuses),
+    updatedAt: integer(o.updatedAt, 0)
+  };
+}
+function decodeWorkbenchResult(v) {
+  canonicalJson(v, 512 * 1024);
+  const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
+  if (kind === "task-origin") {
+    const o2 = closed(v, ["kind", "taskId", "conversationId"]);
+    return {
+      kind,
+      taskId: decodeId(o2.taskId),
+      conversationId: nullable(o2.conversationId, decodeId)
+    };
+  }
+  if (kind === "conversations") {
+    const o2 = closed(v, ["kind", "entries"]);
+    return { kind, entries: list(o2.entries, 200, decodeChatSummary) };
+  }
+  if (kind === "conversation") {
+    const o2 = closed(v, ["kind", "summary", "turns", "before"]);
+    return {
+      kind,
+      summary: nullable(o2.summary, decodeChatSummary),
+      turns: list(o2.turns, 20, decodeChatTurn),
+      before: nullable(o2.before, decodeId)
+    };
+  }
+  if (kind === "files" || kind === "directories") {
+    const o2 = closed(v, ["kind", "path", "parent", "entries", "limited"]);
+    return {
+      kind,
+      path: text(o2.path, 4096),
+      parent: nullable(o2.parent, (p) => text(p, 4096)),
+      limited: bool(o2.limited),
+      entries: list(o2.entries, 200, (v2) => {
+        const e = closed(v2, ["name", "path", "directory"]);
+        return {
+          name: text(e.name, 1024, true),
+          path: text(e.path, 4096, true),
+          directory: bool(e.directory)
+        };
+      })
+    };
+  }
+  if (kind === "file") {
+    const o2 = closed(v, ["kind", "path", "text", "limited"]);
+    return {
+      kind,
+      path: text(o2.path, 4096),
+      text: text(o2.text, 256 * 1024),
+      limited: bool(o2.limited)
+    };
+  }
+  if (kind === "projects") {
+    const o2 = closed(v, ["kind", "entries"]);
+    return {
+      kind,
+      entries: list(o2.entries, 128, (v2) => {
+        const e = closed(v2, ["path", "current"]);
+        return { path: text(e.path, 4096, true), current: bool(e.current) };
+      })
+    };
+  }
+  if (kind === "accepted") {
+    const o2 = closed(v, ["kind", "commandId"]);
+    return { kind, commandId: decodeId(o2.commandId) };
+  }
+  const o = closed(v, ["kind", "commandId", "path", "link"]);
+  return {
+    kind: oneOf(o.kind, ["project"]),
+    commandId: decodeId(o.commandId),
+    path: text(o.path, 4096, true),
+    link: text(o.link, 8192, true)
+  };
+}
+
+// src/service-wire.ts
+var HTTP_ROUTES = {
+  session: "/api/v1/session",
+  workbenchRead: "/api/v1/workbench/read",
+  workbenchCommand: "/api/v1/workbench/command",
+  current: "/api/v1/current",
+  currentChanges: "/api/v1/current-changes",
+  activeRuns: "/api/v1/active-runs",
+  models: "/api/v1/models",
+  chooseModel: "/api/v1/model-choice",
+  workspace: "/api/v1/workspace",
+  tasks: "/api/v1/tasks",
+  runs: "/api/v1/runs",
+  messages: "/api/v1/messages",
+  tools: "/api/v1/tools",
+  contents: "/api/v1/contents",
+  events: "/api/v1/history-events",
+  checks: "/api/v1/checks",
+  changes: "/api/v1/changes",
+  reviews: "/api/v1/reviews",
+  checkObligations: "/api/v1/check-obligations",
+  entity: "/api/v1/entity",
+  graph: "/api/v1/graph",
+  snapshot: "/api/v1/snapshot",
+  detail: "/api/v1/details",
+  search: "/api/v1/search",
+  export: "/api/v1/export",
+  download: "/api/v1/download",
+  preflight: "/api/v1/preflight",
+  command: "/api/v1/commands",
+  cancel: "/api/v1/cancel",
+  receipt: "/api/v1/receipt",
+  detach: "/api/v1/detach"
+};
+var WS_PATH = "/api/v1/events";
+var pageReaders = [
+  "tasks",
+  "runs",
+  "messages",
+  "tools",
+  "contents",
+  "events",
+  "checks",
+  "changes",
+  "reviews"
+];
+function mutation(operation) {
+  return [
+    "preflight",
+    "command",
+    "cancel",
+    "detach",
+    "chooseModel",
+    "workbenchCommand"
+  ].includes(operation);
+}
+function decodeHttpInput(operation, value) {
+  switch (operation) {
+    case "workbenchRead":
+      return decodeWorkbenchRead(value);
+    case "workbenchCommand":
+      return decodeWorkbenchCommand(value);
+    case "session":
+    case "models":
+    case "activeRuns":
+    case "workspace":
+    case "detach":
+      if (value !== null)
+        throw new ContractError("invalid");
+      return null;
+    case "tasks":
+    case "runs":
+    case "messages":
+    case "tools":
+    case "contents":
+    case "events":
+    case "checks":
+    case "changes":
+    case "reviews": {
+      const request = decodeListRequest(value);
+      if (request.reader !== operation)
+        throw new ContractError("invalid");
+      return request;
+    }
+    case "current":
+      return decodeCurrentRequest(value);
+    case "currentChanges":
+      return decodeCurrentChangesRequest(value);
+    case "checkObligations":
+    case "receipt":
+      return decodeId(value);
+    case "entity":
+      return decodeEntityReadRequest(value);
+    case "graph":
+      return decodeGraphReadRequest(value);
+    case "snapshot":
+      return decodeScope(value);
+    case "detail":
+    case "search":
+      return decodeCursor(value);
+    case "export":
+    case "download":
+      return decodeExportRequest(value);
+    case "chooseModel":
+      return decodeChooseModelRequest(value);
+    case "preflight":
+      return decodePreflightRequest(value);
+    case "command":
+      return decodeCommand(value);
+    case "cancel":
+      return decodeCancel(value);
+  }
+}
+function decodeHttpOutput(operation, value) {
+  if (pageReaders.includes(operation))
+    return decodeReply(value, decodeHistoryReadResult);
+  switch (operation) {
+    case "workbenchRead":
+    case "workbenchCommand":
+      return decodeReply(value, decodeWorkbenchResult);
+    case "current":
+      return decodeReply(value, decodeCurrentView);
+    case "currentChanges":
+      return decodeReply(value, decodeCurrentChanges);
+    case "activeRuns":
+      return decodeReply(value, decodeActiveRuns);
+    case "models":
+      return decodeReply(value, decodeModelCatalog);
+    case "chooseModel":
+      return decodeReply(value, decodeModelChoiceState);
+    case "session":
+      return decodeReply(value, decodeSessionBootstrap);
+    case "workspace":
+      return decodeReply(value, decodeWorkspaceBootstrap);
+    case "checkObligations":
+      return decodeReply(value, decodeCheckObligations);
+    case "entity":
+      return decodeReply(value, decodeEntityReadResult);
+    case "graph":
+      return decodeReply(value, decodeGraphReadResult);
+    case "snapshot":
+      return decodeReply(value, decodeSnapshot);
+    case "detail":
+      return decodeReply(value, decodeDetailReadResult);
+    case "search":
+      return decodeReply(value, decodeSearchPage);
+    case "preflight":
+      return decodeReply(value, decodePreflight);
+    case "command":
+    case "cancel":
+      return decodeReply(value, decodeReceipt);
+    case "receipt":
+      return decodeReceiptLookup(value);
+    case "detach":
+      return decodeReply(value, (v) => {
+        if (v !== null)
+          throw new ContractError("invalid");
+        return null;
+      });
+    default:
+      throw new ContractError("invalid");
+  }
+}
+function readonlyBody(operation) {
+  const operations = [
+    ...pageReaders,
+    "workbenchRead",
+    "current",
+    "currentChanges",
+    "checkObligations",
+    "entity",
+    "graph",
+    "snapshot",
+    "detail",
+    "search",
+    "export",
+    "download",
+    "receipt"
+  ];
+  return operations.includes(operation);
+}
+function assertRequestTarget(target) {
+  if (!target.startsWith("/") || target.startsWith("//") || /[\\#\s\u007f-\uffff]/u.test(target) || utf8Bytes(target) > LIMITS.headerBytes)
+    throw new ContractError("invalid");
+  try {
+    decodeURIComponent(target);
+  } catch {
+    throw new ContractError("invalid");
+  }
+}
+function readRoute(target, method) {
+  assertRequestTarget(target);
+  const [path, query] = target.split("?");
+  if (target.split("?").length > 2)
+    throw new ContractError("invalid");
+  const operation = Object.keys(HTTP_ROUTES).find((key) => HTTP_ROUTES[key] === path);
+  if (!operation)
+    return;
+  const body = method === "POST" && (mutation(operation) || readonlyBody(operation));
+  if (!body && (method !== "GET" || mutation(operation)))
+    throw new ContractError("invalid");
+  if (body && query !== undefined)
+    throw new ContractError("invalid");
+  const params = new URLSearchParams(query);
+  if ([...params.keys()].some((key) => key !== "request") || params.getAll("request").length > 1)
+    throw new ContractError("invalid");
+  if (mutation(operation) && query !== undefined)
+    throw new ContractError("invalid");
+  return {
+    operation,
+    input: params.get("request"),
+    source: body ? "body" : "query"
+  };
+}
+function decodeSocketInput(value) {
+  canonicalJson(value, LIMITS.wsClientFrameBytes);
+  const kind = oneOf(Object.getOwnPropertyDescriptor(value, "kind")?.value, [
+    "subscribe",
+    "resync",
+    "ping"
+  ]);
+  if (kind === "ping") {
+    closed(value, ["kind"]);
+    return { kind };
+  }
+  const o = closed(value, ["kind", "scope"]);
+  return { kind, scope: decodeScope(o.scope) };
+}
+
+// src/service/auth.ts
+import {
+  createHash as createHash4,
+  randomBytes,
+  randomUUID as randomUUID3,
+  timingSafeEqual
+} from "node:crypto";
+import { dirname as dirname4, isAbsolute as isAbsolute3, join as join5 } from "node:path";
+
+// src/service/config.ts
+import { isIP } from "node:net";
+function decodeHttpPolicy(value) {
+  const o = closed(value, ["schema", "host", "port", "proxy"]);
+  if (o.host !== "127.0.0.1" && o.host !== "::1")
+    throw new ContractError("invalid");
+  let proxy = null;
+  if (o.proxy !== null) {
+    const p = closed(o.proxy, ["origin", "trustedAddresses"]);
+    const origin = text(p.origin, 256, true);
+    let url;
+    try {
+      url = new URL(origin);
+    } catch {
+      throw new ContractError("invalid");
+    }
+    if (url.protocol !== "https:" || url.origin !== origin || url.username || url.password)
+      throw new ContractError("invalid");
+    const trustedAddresses = list(p.trustedAddresses, 8, (v) => {
+      const address = text(v, 64, true);
+      if (!isIP(address) || !loopbackAddress(address))
+        throw new ContractError("invalid");
+      return address;
+    });
+    if (!trustedAddresses.length || new Set(trustedAddresses).size !== trustedAddresses.length)
+      throw new ContractError("invalid");
+    proxy = { origin, trustedAddresses };
+  }
+  return {
+    schema: literal(o.schema, "cadence-service-http/1"),
+    host: o.host,
+    port: integer(o.port, 0, 65535),
+    proxy
+  };
+}
+function loopbackAddress(host) {
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(host);
+  const h = mapped ? mapped[1] : host;
+  if (h.includes(":"))
+    return h === "::1";
+  const parts = h.split(".");
+  return parts.length === 4 && parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255) && Number(parts[0]) === 127;
+}
+function localOrigin(policy, actualPort) {
+  integer(actualPort, 1, 65535);
+  return `http://${policy.host === "::1" ? "[::1]" : policy.host}:${actualPort}`;
+}
+
+// src/service/private-files.ts
+import { createHash as createHash3, randomUUID as randomUUID2 } from "node:crypto";
+import {
+  closeSync as closeSync2,
+  constants as constants2,
+  fstatSync as fstatSync2,
+  fsyncSync as fsyncSync2,
+  lstatSync as lstatSync3,
+  mkdirSync as mkdirSync2,
+  openSync as openSync2,
+  readSync as readSync2,
+  renameSync as renameSync2,
+  unlinkSync as unlinkSync2,
+  writeFileSync as writeFileSync2
+} from "node:fs";
+import { dirname as dirname2, isAbsolute as isAbsolute2, join as join3, relative as relative2, resolve as resolve2, sep as sep2 } from "node:path";
+var METADATA_BYTES = 16 * 1024;
+var REGISTRY_BYTES = 1024 * 1024;
+var REGISTRY_ENTRIES = 128;
+function refused() {
+  throw new ContractError("corrupt-selected");
+}
+function hash2(bytes) {
+  return createHash3("sha256").update(bytes).digest("hex");
+}
+function privateMode(st, ownerOnly = true) {
+  if (process.platform !== "win32" && (ownerOnly && (st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
+    refused();
+}
+function same(a, b) {
+  return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.ctimeMs === b.ctimeMs && a.mtimeMs === b.mtimeMs && a.mode === b.mode && a.uid === b.uid && a.nlink === b.nlink;
+}
+function missing(error) {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+var job = 0;
+var advancing = false;
+function currentJob() {
+  if (!advancing) {
+    advancing = true;
+    queueMicrotask(() => {
+      job++;
+      advancing = false;
+    });
+  }
+  return job;
+}
+
+class DirectoryWalks {
+  job = currentJob();
+  walked = new Map;
+  open() {
+    if (this.job === job)
+      return true;
+    this.walked.clear();
+    return false;
+  }
+  remember(path, st) {
+    if (this.open())
+      this.walked.set(path, { dev: st.dev, ino: st.ino });
+  }
+  reuse(path, ownerOnly = true) {
+    const walked = this.open() ? this.walked.get(path) : undefined;
+    if (!walked)
+      return false;
+    let st;
+    try {
+      st = lstatSync3(path);
+    } catch (error) {
+      if (!missing(error))
+        throw error;
+      this.walked.delete(path);
+      return false;
+    }
+    if (!st.isDirectory() || st.isSymbolicLink() || st.dev !== walked.dev || st.ino !== walked.ino) {
+      this.walked.delete(path);
+      return false;
+    }
+    privateMode(st, ownerOnly);
+    return true;
+  }
+}
+
+class PrivateFiles {
+  namespace;
+  ownerOnly;
+  constructor(namespace, ownerOnly = true) {
+    this.namespace = namespace;
+    this.ownerOnly = ownerOnly;
+  }
+  directory(path, create = false, walks) {
+    const tail = relative2(this.namespace, path);
+    if (isAbsolute2(tail) || tail === ".." || tail.startsWith(`..${sep2}`))
+      refused();
+    if (!create) {
+      const full = resolve2(path);
+      if (walks?.reuse(full, this.ownerOnly))
+        return true;
+      const namespace = resolve2(this.namespace);
+      let inside = false, last;
+      const found = safeDirectory(path, false, (at2, st) => {
+        if (at2 === namespace)
+          inside = true;
+        if (inside)
+          privateMode(st, this.ownerOnly);
+        last = st;
+      });
+      if (found && last)
+        walks?.remember(full, last);
+      return found;
+    }
+    if (!safeDirectory(this.namespace, true))
+      return false;
+    privateMode(lstatSync3(this.namespace), this.ownerOnly);
+    let at = this.namespace;
+    for (const part of tail.split(sep2).filter(Boolean)) {
+      at = join3(at, part);
+      let st;
+      try {
+        st = lstatSync3(at);
+      } catch (error) {
+        if (!missing(error))
+          throw error;
+        try {
+          mkdirSync2(at, { mode: 448 });
+        } catch (mkdirError) {
+          if (!(mkdirError instanceof Error && ("code" in mkdirError) && mkdirError.code === "EEXIST"))
+            throw mkdirError;
+        }
+        st = lstatSync3(at);
+      }
+      if (!st.isDirectory() || st.isSymbolicLink())
+        throw new Error("Unsafe directory");
+      privateMode(st, this.ownerOnly);
+    }
+    return true;
+  }
+  read(path, maximum = METADATA_BYTES, walks) {
+    if (!this.directory(dirname2(path), false, walks))
+      return;
+    let before;
+    try {
+      before = lstatSync3(path);
+    } catch (error) {
+      if (missing(error))
+        return;
+      return refused();
+    }
+    if (!before.isFile() || before.nlink !== 1 || before.size > maximum)
+      refused();
+    privateMode(before, this.ownerOnly);
+    const fd = openSync2(path, constants2.O_RDONLY | (constants2.O_NOFOLLOW ?? 0));
+    try {
+      const opened = fstatSync2(fd);
+      if (!same(before, opened))
+        refused();
+      const buffer = Buffer.alloc(opened.size + 1);
+      let size = 0;
+      while (size < buffer.length) {
+        const n = readSync2(fd, buffer, size, buffer.length - size, null);
+        if (!n)
+          break;
+        size += n;
+      }
+      const bytes = buffer.subarray(0, size);
+      if (size !== opened.size || !same(opened, fstatSync2(fd)) || !same(opened, lstatSync3(path)))
+        refused();
+      return { bytes, identity: hash2(bytes), stamp: stamp(opened) };
+    } finally {
+      closeSync2(fd);
+    }
+  }
+  assert(path, expected, maximum = METADATA_BYTES, walks) {
+    const current = this.read(path, maximum, walks);
+    if (current?.identity !== expected?.identity || current?.stamp !== expected?.stamp)
+      throw new ContractError("conflict");
+  }
+  create(path, bytes, maximum = METADATA_BYTES) {
+    if (Buffer.byteLength(bytes) > maximum)
+      throw new ContractError("oversize");
+    this.directory(dirname2(path), true);
+    const fd = retryWindowsFileOperation(() => openSync2(path, "wx", 384));
+    try {
+      writeFileSync2(fd, bytes);
+      fsyncSync2(fd);
+    } finally {
+      closeSync2(fd);
+    }
+    this.syncDirectory(dirname2(path));
+    const result = this.read(path, maximum);
+    if (!result || result.identity !== hash2(bytes))
+      refused();
+    return result;
+  }
+  replace(path, expected, bytes, maximum = METADATA_BYTES) {
+    this.assert(path, expected, maximum);
+    const temporary = join3(dirname2(path), `pending-${randomUUID2()}.json`);
+    this.create(temporary, bytes, maximum);
+    this.assert(path, expected, maximum);
+    retryWindowsFileOperation(() => renameSync2(temporary, path), () => this.assert(path, expected, maximum));
+    this.syncDirectory(dirname2(path));
+    const result = this.read(path, maximum);
+    if (!result || result.identity !== hash2(bytes))
+      refused();
+    return result;
+  }
+  remove(path, expected, maximum = METADATA_BYTES) {
+    this.assert(path, expected, maximum);
+    retryWindowsFileOperation(() => unlinkSync2(path), () => this.assert(path, expected, maximum));
+    this.syncDirectory(dirname2(path));
+  }
+  syncDirectory(path) {
+    if (process.platform === "win32")
+      return;
+    const fd = openSync2(path, constants2.O_RDONLY | constants2.O_DIRECTORY);
+    try {
+      fsyncSync2(fd);
+    } finally {
+      closeSync2(fd);
+    }
+  }
+}
+function stamp(st) {
+  return [
+    st.dev,
+    st.ino,
+    st.size,
+    st.mode,
+    st.uid,
+    st.nlink,
+    st.ctimeMs,
+    st.mtimeMs
+  ].join(":");
+}
+function json(snapshot, maximum = METADATA_BYTES) {
+  try {
+    return parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(snapshot.bytes), maximum);
+  } catch {
+    return refused();
+  }
+}
+function encoded(value) {
+  return `${JSON.stringify(value)}
+`;
+}
+
+// src/service/server-config.ts
+import {
+  existsSync,
+  lstatSync as lstatSync4,
+  mkdirSync as mkdirSync3,
+  realpathSync as realpathSync2,
+  statSync
+} from "node:fs";
+import { dirname as dirname3, join as join4 } from "node:path";
+
+// skills/_shared/load-config.mjs
+function parseEnvFile(content) {
+  const values = {};
+  const lines = content.replaceAll(`\r
+`, `
+`).replaceAll("\r", `
+`).split(`
+`);
+  for (let index = 0;index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (!line || line.startsWith("#"))
+      continue;
+    const separator = line.indexOf("=");
+    if (separator <= 0)
+      throw new Error(`Invalid configuration syntax at line ${index + 1}`);
+    const name = line.slice(0, separator).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      throw new Error(`Invalid configuration name at line ${index + 1}`);
+    }
+    let value = line.slice(separator + 1).trim();
+    const quote = value[0];
+    if (quote === '"' || quote === "'") {
+      if (value.at(-1) !== quote) {
+        throw new Error(`Unterminated quoted configuration value at line ${index + 1}`);
+      }
+      value = value.slice(1, -1);
+    }
+    values[name] = value;
+  }
+  return values;
+}
+
+// src/service/server-config.ts
+var PORT_KEY = "CADENCE_PORT";
+var TOKEN_KEY = "CADENCE_TOKEN";
+var CONFIG_BYTES = 64 * 1024;
+var TOKEN_BYTES = 1024;
+function accessToken(value) {
+  const result = text(value, TOKEN_BYTES, true);
+  if (utf8Bytes(result) < 32 || /[\p{Cc}\p{Cf}]/u.test(result))
+    throw new ContractError("invalid");
+  return result;
+}
+function serverConfigPath(home, name) {
+  if (name !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$/.test(name))
+    throw new ContractError("invalid");
+  return name === undefined ? join4(home, ".pi", "agent", "cadence", ".env") : join4(home, ".pi", "agent", "cadence", "servers", `${name}.env`);
+}
+
+class ServerConfigRefusal extends ContractError {
+  path;
+  reason;
+  constructor(path, reason) {
+    super("corrupt-selected");
+    this.path = path;
+    this.reason = reason;
+  }
+}
+
+class Unusable extends Error {
+}
+var unusable = (reason) => {
+  throw new Unusable(reason);
+};
+function syntax(error) {
+  const message = error instanceof Error ? error.message : "";
+  const line = /at line (\d+)$/.exec(message)?.[1];
+  if (!line)
+    return "is not in KEY=value lines";
+  if (message.startsWith("Invalid configuration name"))
+    return `has an invalid name on line ${line} (letters, digits and _ only, no "export")`;
+  if (message.startsWith("Unterminated"))
+    return `has an unterminated quote on line ${line}`;
+  return `has no KEY=value setting on line ${line}`;
+}
+function settings(source) {
+  try {
+    parseEnvFile(source);
+  } catch (error) {
+    unusable(`${syntax(error)}, which the research skills refuse too`);
+  }
+  const parts = source.split(/(\r\n|\r|\n)/);
+  const found = {};
+  for (let at = 0;at < parts.length; at += 2) {
+    const line = parts[at].trim();
+    if (!line || line.startsWith("#"))
+      continue;
+    const separator = line.indexOf("=");
+    const key = line.slice(0, separator).trim();
+    const name = key === PORT_KEY ? "port" : key === TOKEN_KEY ? "token" : undefined;
+    if (!name)
+      continue;
+    const previous = found[name];
+    if (previous)
+      unusable(`sets ${key} twice (lines ${previous.line} and ${at / 2 + 1}); keep one`);
+    let value = line.slice(separator + 1).trim();
+    if (value[0] === '"' || value[0] === "'")
+      value = value.slice(1, -1);
+    found[name] = { at, line: at / 2 + 1, value };
+  }
+  return { parts, ...found };
+}
+function decode(source) {
+  const { port, token } = settings(source);
+  if (!port)
+    unusable(`has no ${PORT_KEY} line`);
+  if (!token)
+    unusable(`has no ${TOKEN_KEY} line`);
+  const p = port, t = token;
+  const number = Number(p.value);
+  if (!/^[1-9][0-9]{0,4}$/.test(p.value) || number > 65535)
+    unusable(`has ${PORT_KEY} on line ${p.line} that is not a whole number from 1 to 65535`);
+  try {
+    return { port: number, token: accessToken(t.value) };
+  } catch {
+    return unusable(`has ${TOKEN_KEY} on line ${t.line} shorter than 32 characters or with control characters`);
+  }
+}
+var code = (error) => error?.code ?? "error";
+function locate(path) {
+  let real;
+  try {
+    real = realpathSync2(path);
+  } catch (error) {
+    if (code(error) !== "ENOENT")
+      unusable(`cannot be read (${code(error)})`);
+    let link = false;
+    try {
+      link = lstatSync4(path).isSymbolicLink();
+    } catch {}
+    return unusable(link ? "is a link to a file that does not exist" : "does not exist");
+  }
+  return { real, files: new PrivateFiles(dirname3(real), false) };
+}
+function explain(real) {
+  const uid = process.getuid?.();
+  try {
+    const st = lstatSync4(real);
+    if (!st.isFile())
+      return "is not a regular file";
+    if (uid !== undefined && st.uid !== uid)
+      return "is not owned by you";
+    if (uid !== undefined && lstatSync4(dirname3(real)).uid !== uid)
+      return `is in ${dirname3(real)}, which is not owned by you`;
+    if (st.nlink !== 1)
+      return "has more than one hard link";
+    if (st.size > CONFIG_BYTES)
+      return "is larger than 64 KiB";
+    return "changed while Cadence read it; try again";
+  } catch (error) {
+    return `cannot be read (${code(error)})`;
+  }
+}
+function load(path) {
+  const { real, files } = locate(path);
+  let snapshot;
+  try {
+    snapshot = files.read(real, CONFIG_BYTES);
+  } catch {
+    return unusable(explain(real));
+  }
+  if (!snapshot)
+    return unusable("does not exist");
+  let source;
+  try {
+    source = decoded(snapshot);
+  } catch {
+    return unusable("is not UTF-8 text");
+  }
+  return { path, real, files, snapshot, source };
+}
+function decoded(snapshot) {
+  return new TextDecoder("utf-8", { fatal: true }).decode(snapshot.bytes);
+}
+function refusing(path, read) {
+  try {
+    return read();
+  } catch (error) {
+    if (error instanceof ServerConfigRefusal)
+      throw error;
+    throw new ServerConfigRefusal(path, error instanceof Unusable ? error.message : `cannot be read (${code(error)})`);
+  }
+}
+function readServerConfig(path) {
+  return refusing(path, () => {
+    const file = load(path);
+    return { ...file, config: decode(file.source) };
+  });
+}
+function withToken(file, token) {
+  const { parts, token: line } = settings(decoded(file.snapshot));
+  if (!line)
+    throw new ContractError("invalid");
+  const indent = /^\s*/.exec(parts[line.at])?.[0] ?? "";
+  parts[line.at] = `${indent}${TOKEN_KEY}=${accessToken(token)}`;
+  return parts.join("");
+}
+
+// src/service/auth.ts
+function sameSecret(candidate, expected) {
+  const a = createHash4("sha256").update(candidate).digest();
+  const b = createHash4("sha256").update(expected).digest();
+  return timingSafeEqual(a, b);
+}
+function buildTokenCookie(name, encodedValue, maxAge, secure) {
+  return `${name}=${encodedValue}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;
+}
+function decodeCookieToken(raw) {
+  if (!raw)
+    return "";
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+function cookieTokens(header, name) {
+  if (!header)
+    return [];
+  let found = false;
+  const out = [];
+  for (const part of header.split(";")) {
+    const [key, ...rest] = part.trim().split("=");
+    if (key !== name)
+      continue;
+    if (found)
+      throw new ContractError("invalid");
+    found = true;
+    const raw = rest.join("=").trim();
+    out.push(raw, decodeCookieToken(raw));
+  }
+  return out;
+}
+function sourceConfig(source) {
+  const given = [source.environment, source.tokenFile, source.serverConfig];
+  if (given.filter((v) => v !== undefined).length > 1)
+    throw new ContractError("invalid");
+  if (source.environment !== undefined)
+    accessToken(source.environment);
+  if (source.serverConfig !== undefined)
+    accessToken(source.token);
+  const path = source.tokenFile ?? source.serverConfig;
+  if (path !== undefined && (!isAbsolute3(path) || path.includes("\x00")))
+    throw new ContractError("invalid");
+  return {
+    schema: "cadence-service-access-config/1",
+    source: source.environment !== undefined ? "environment" : source.tokenFile !== undefined ? "file" : source.serverConfig !== undefined ? "config" : "generated",
+    path: path ?? null
+  };
+}
+function readSource(config) {
+  if (config.source === "file" && config.path)
+    readExternal(config.path);
+}
+function selectedMaterial(files, directory, source) {
+  const config = sourceConfig(source);
+  if (config.source !== "config")
+    throw new ContractError("invalid");
+  const marker = join5(directory, "access-config.json"), access = join5(directory, "access.json");
+  const markerFile = files.read(marker), accessFile = files.read(access);
+  if (!markerFile || !accessFile)
+    throw new ContractError("corrupt-selected");
+  const previous = closed(json(markerFile), ["schema", "source", "path"]);
+  literal(previous.schema, "cadence-service-access-config/1");
+  oneOf(previous.source, ["generated", "environment", "file", "config"]);
+  const r = closed(json(accessFile), ["schema", "generation", "token"]);
+  literal(r.schema, "cadence-service-access/1");
+  const generation = integer(r.generation, 1);
+  if (previous.source === "generated" !== (r.token !== null))
+    throw new ContractError("corrupt-selected");
+  return {
+    config,
+    previous,
+    generation,
+    marker,
+    markerFile,
+    access,
+    accessFile
+  };
+}
+
+class AccessMaterial {
+  files;
+  directory;
+  assertOwner;
+  configFile;
+  accessFile;
+  externalFile;
+  external;
+  record;
+  secret;
+  fenced = false;
+  listeners = new Set;
+  config;
+  static validateSource(source) {
+    readSource(sourceConfig(source));
+  }
+  static initialize(files, directory, source = {}) {
+    const config = sourceConfig(source);
+    const marker = join5(directory, "access-config.json"), access = join5(directory, "access.json");
+    if (files.read(marker) || files.read(access) || files.read(join5(directory, "registration.json")) || files.read(join5(directory, "owner.lock")))
+      throw new ContractError("conflict");
+    readSource(config);
+    files.create(marker, encoded(config));
+    files.create(access, encoded({
+      schema: "cadence-service-access/1",
+      generation: 1,
+      token: config.source === "generated" ? randomBytes(32).toString("base64url") : null
+    }));
+  }
+  static validateReselection(files, directory, source) {
+    selectedMaterial(files, directory, source);
+  }
+  static reselect(files, directory, source) {
+    const m = selectedMaterial(files, directory, source);
+    if (encoded(m.previous) === encoded(m.config))
+      return;
+    files.replace(m.marker, m.markerFile, encoded(m.config));
+    files.replace(m.access, m.accessFile, encoded({
+      schema: "cadence-service-access/1",
+      generation: integer(m.generation + 1, 1),
+      token: null
+    }));
+  }
+  constructor(files, directory, source = {}, assertOwner) {
+    this.files = files;
+    this.directory = directory;
+    this.assertOwner = assertOwner;
+    this.config = sourceConfig(source);
+    const configFile = files.read(join5(directory, "access-config.json"));
+    const accessFile = files.read(join5(directory, "access.json"));
+    if (!configFile || !accessFile)
+      throw new ContractError("corrupt-selected");
+    const c = closed(json(configFile), ["schema", "source", "path"]);
+    if (encoded(c) !== encoded(this.config))
+      throw new ContractError("conflict");
+    const r = closed(json(accessFile), ["schema", "generation", "token"]);
+    this.record = {
+      schema: literal(r.schema, "cadence-service-access/1"),
+      generation: integer(r.generation, 1),
+      token: r.token === null ? null : accessToken(r.token)
+    };
+    if (this.config.source === "generated" !== (this.record.token !== null))
+      throw new ContractError("corrupt-selected");
+    if (this.config.source === "file" && this.config.path) {
+      const loaded = readExternal(this.config.path);
+      this.external = loaded.files;
+      this.externalFile = loaded.file;
+      this.secret = loaded.token;
+    } else
+      this.secret = accessToken(this.record.token ?? source.environment ?? source.token);
+    this.configFile = configFile;
+    this.accessFile = accessFile;
+  }
+  get generation() {
+    return this.record.generation;
+  }
+  get available() {
+    return !this.fenced;
+  }
+  matches(candidate) {
+    return !this.fenced && utf8Bytes(candidate) <= TOKEN_BYTES && sameSecret(candidate, this.secret);
+  }
+  onRevoke(listener) {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+  revoke() {
+    for (const listener of this.listeners) {
+      try {
+        listener();
+      } catch {
+        this.fenced = true;
+      }
+    }
+  }
+  assertCurrent() {
+    try {
+      this.assert();
+    } catch {
+      this.fenced = true;
+      this.revoke();
+      throw new ContractError("quarantine");
+    }
+  }
+  assert() {
+    if (this.fenced)
+      throw new ContractError("quarantine");
+    this.files.assert(join5(this.directory, "access-config.json"), this.configFile);
+    this.files.assert(join5(this.directory, "access.json"), this.accessFile);
+    if (this.config.source === "file" && this.config.path)
+      this.external?.assert(this.config.path, this.externalFile, TOKEN_BYTES);
+  }
+  redactionLiterals() {
+    this.assertCurrent();
+    return [this.secret];
+  }
+  tokenLink(origin) {
+    this.assert();
+    const url = new URL(origin);
+    if (url.origin !== origin)
+      throw new ContractError("invalid");
+    return `${origin}/?token=${encodeURIComponent(this.secret)}`;
+  }
+  assertRotation() {
+    this.assertOwner?.();
+    this.assert();
+  }
+  rotate() {
+    if (this.config.source === "environment")
+      throw new ContractError("unsupported-context");
+    let configured;
+    if (this.config.source === "config" && this.config.path) {
+      configured = readServerConfig(this.config.path);
+      if (!sameSecret(configured.config.token, this.secret))
+        throw new ContractError("conflict");
+    }
+    try {
+      this.assertRotation();
+      const secret = randomBytes(32).toString("base64url");
+      const generation = integer(this.record.generation + 1, 1);
+      if (this.config.path && this.external && this.externalFile)
+        this.externalFile = this.external.replace(this.config.path, this.externalFile, secret, TOKEN_BYTES);
+      if (configured)
+        configured.files.replace(configured.real, configured.snapshot, withToken(configured, secret), CONFIG_BYTES);
+      const record2 = {
+        ...this.record,
+        generation,
+        token: this.config.source === "generated" ? secret : null
+      };
+      this.assertRotation();
+      this.accessFile = this.files.replace(join5(this.directory, "access.json"), this.accessFile, encoded(record2));
+      this.assertRotation();
+      this.record = record2;
+      this.secret = secret;
+      this.revoke();
+      if (this.fenced)
+        throw new ContractError("quarantine");
+    } catch {
+      this.fenced = true;
+      this.revoke();
+      throw new ContractError("quarantine");
+    }
+  }
+}
+function readExternal(path) {
+  const files = new PrivateFiles(dirname4(path));
+  const file = files.read(path, TOKEN_BYTES);
+  if (!file)
+    throw new ContractError("corrupt-selected");
+  try {
+    return {
+      files,
+      file,
+      token: accessToken(new TextDecoder("utf-8", { fatal: true }).decode(file.bytes))
+    };
+  } catch {
+    throw new ContractError("corrupt-selected");
+  }
+}
+function requestBoundary(req, policy, directOrigin) {
+  const headers = new Map;
+  let bytes = 0;
+  for (let i = 0;i < req.rawHeaders.length; i += 2) {
+    const name = req.rawHeaders[i].toLowerCase(), value = req.rawHeaders[i + 1];
+    bytes += Buffer.byteLength(name) + Buffer.byteLength(value) + 4;
+    if (headers.has(name))
+      throw new ContractError("invalid");
+    headers.set(name, value);
+  }
+  if (bytes > LIMITS.headerBytes)
+    throw new ContractError("oversize");
+  const forwarded = [...headers.keys()].filter((n) => n === "forwarded" || n.startsWith("x-forwarded-") || n === "x-real-ip");
+  const address = req.socket.remoteAddress ?? "";
+  if (!loopbackAddress(address))
+    throw new ContractError("forbidden");
+  const proxy = policy.proxy;
+  const proxied = forwarded.length > 0;
+  let origin = directOrigin;
+  if (proxied) {
+    if (!proxy?.trustedAddresses.includes(address) || forwarded.length !== 1 || forwarded[0] !== "x-forwarded-proto" || headers.get("x-forwarded-proto") !== "https")
+      throw new ContractError("forbidden");
+    origin = proxy.origin;
+  }
+  if (headers.get("host") !== new URL(origin).host)
+    throw new ContractError("forbidden");
+  const incomingOrigin = headers.get("origin");
+  if (incomingOrigin !== undefined && incomingOrigin !== origin)
+    throw new ContractError("forbidden");
+  return {
+    origin,
+    secure: proxied,
+    local: !proxied && incomingOrigin === undefined,
+    headers
+  };
+}
+
+class HttpAuthentication {
+  material;
+  epoch;
+  localCapability;
+  csrf = randomUUID3();
+  cookieName;
+  constructor(material, epoch, workspaceId, localCapability) {
+    this.material = material;
+    this.epoch = epoch;
+    this.localCapability = localCapability;
+    decodeId(epoch);
+    decodeId(workspaceId);
+    if (!/^[A-Za-z0-9_-]{43}$/.test(localCapability))
+      throw new ContractError("invalid");
+    this.cookieName = `cadence_${workspaceId.replaceAll("-", "")}`;
+  }
+  bootstrap(value, boundary) {
+    this.material.assertCurrent();
+    const h = boundary.headers;
+    const site = h.get("sec-fetch-site");
+    if (site !== undefined && !["same-origin", "none"].includes(site) && (!["same-site", "cross-site"].includes(site) || h.get("sec-fetch-mode") !== "navigate" || h.get("sec-fetch-dest") !== "document"))
+      throw new ContractError("forbidden");
+    if (!this.material.matches(value))
+      throw new ContractError("unauthenticated");
+    return buildTokenCookie(this.cookieName, encodeURIComponent(value), LIMITS.browserLifetimeMs / 1000, boundary.secure);
+  }
+  authenticate(boundary, attachmentId, mutation2 = false, websocket = false) {
+    this.material.assertCurrent();
+    if (!this.material.available)
+      throw new ContractError("quarantine");
+    const h = boundary.headers;
+    const local = h.get("x-cadence-local");
+    if (local !== undefined) {
+      if (!boundary.local || h.has("cookie") || [...h.keys()].some((name) => name.startsWith("sec-fetch-") && (name !== "sec-fetch-mode" || h.get(name) !== "cors")) || !sameSecret(local, this.localCapability))
+        throw new ContractError("forbidden");
+    } else {
+      if (h.has("authorization") || h.has("x-cadence-token"))
+        throw new ContractError("forbidden");
+      if (!cookieTokens(h.get("cookie"), this.cookieName).some((v) => this.material.matches(v)))
+        throw new ContractError("unauthenticated");
+      if (h.has("sec-fetch-site") && !["same-origin", "none"].includes(h.get("sec-fetch-site") ?? ""))
+        throw new ContractError("forbidden");
+      if ((mutation2 || websocket) && h.get("origin") !== boundary.origin)
+        throw new ContractError("forbidden");
+      if (mutation2 && h.get("x-cadence-csrf") !== this.csrf)
+        throw new ContractError("forbidden");
+    }
+    return {
+      attachmentId: decodeId(attachmentId),
+      authority: local === undefined ? "browser" : "local",
+      accessGeneration: this.material.generation
+    };
+  }
+  current(caller) {
+    this.material.assertCurrent();
+    if (!this.material.available || caller.accessGeneration !== this.material.generation)
+      throw new ContractError("unauthenticated");
+  }
+}
+
+// src/service/cli.ts
+import { spawn } from "node:child_process";
+import { request } from "node:http";
+import { homedir as homedir3 } from "node:os";
+import { dirname as dirname9, join as join11, resolve as resolve5 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+
+// src/sdk-network.ts
+function safeChildEnv() {
+  const env = {};
+  for (const key of [
+    "PATH",
+    "HOME",
+    "USERPROFILE",
+    "SystemRoot",
+    "WINDIR",
+    "COMSPEC",
+    "TMP",
+    "TEMP",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+    "PATHEXT",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432"
+  ])
+    if (process.env[key] !== undefined)
+      env[key] = process.env[key];
+  return {
+    ...env,
+    CADENCE_SUBAGENT_CHILD: "1",
+    PI_OFFLINE: "1",
+    NO_COLOR: "1"
+  };
+}
+var networkKeys = [
+  "http_proxy",
+  "https_proxy",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "all_proxy",
+  "NO_PROXY",
+  "no_proxy",
+  "NODE_USE_ENV_PROXY",
+  "NODE_OPTIONS"
+];
+function networkSnapshot(source) {
+  if (source !== undefined && !object(source))
+    throw new Error("Unsupported network");
+  const facts = {};
+  for (const key of networkKeys) {
+    const descriptor = source === undefined ? undefined : Object.getOwnPropertyDescriptor(source, key);
+    facts[key] = descriptor === undefined ? { present: false } : {
+      present: true,
+      value: "value" in descriptor && typeof descriptor.value === "string" ? descriptor.value : undefined,
+      writable: descriptor.writable,
+      enumerable: descriptor.enumerable,
+      configurable: descriptor.configurable
+    };
+  }
+  return facts;
+}
+function scopedNetwork(request) {
+  const auth = Object.getOwnPropertyDescriptor(request, "auth");
+  if (!auth || !("value" in auth) || !object(auth.value))
+    throw new Error("Unsupported network");
+  const env = Object.getOwnPropertyDescriptor(auth.value, "env");
+  if (env && !("value" in env))
+    throw new Error("Unsupported network");
+  return networkSnapshot(env?.value);
+}
+function sameNetwork(a, b, descriptors = true) {
+  return networkKeys.every((key) => a[key].present === b[key].present && a[key].value === b[key].value && (!descriptors || a[key].writable === b[key].writable && a[key].enumerable === b[key].enumerable && a[key].configurable === b[key].configurable));
+}
+function safeProxyURL(value) {
+  if (Buffer.byteLength(value) > 4096 || /[\s\p{Cc}\p{Cf}\p{Cs}\\@?#]/u.test(value))
+    return false;
+  const raw = /^(https?):\/\/(\[[0-9a-fA-F:.]+\]|[^/:%]+)(?::([0-9]+))?(\/?)$/i.exec(value);
+  if (!raw || raw[3] !== undefined && (Number(raw[3]) < 1 || Number(raw[3]) > 65535))
+    return false;
+  try {
+    const url = new URL(value);
+    return !!url.hostname && !url.username && !url.password && !url.search && !url.hash && (url.pathname === "" || url.pathname === "/");
+  } catch {
+    return false;
+  }
+}
+function sdkNetworkEnvironment(ambient, scoped) {
+  const unsupported = () => {
+    throw new Error("Unsupported network");
+  };
+  const configured = networkKeys.some((key) => key !== "NODE_OPTIONS" && ambient[key].present);
+  let route;
+  if (configured) {
+    for (const key of [
+      "ALL_PROXY",
+      "all_proxy",
+      "NO_PROXY",
+      "no_proxy",
+      "NODE_OPTIONS"
+    ])
+      if (ambient[key].present)
+        unsupported();
+    const scheme = (lower, upper) => {
+      const a = ambient[lower];
+      const b = ambient[upper];
+      if (!a.present && !b.present || a.present && !a.value || b.present && !b.value || a.present && b.present && a.value !== b.value)
+        return unsupported();
+      return (a.present ? a.value : b.value) ?? unsupported();
+    };
+    route = scheme("http_proxy", "HTTP_PROXY");
+    if (route !== scheme("https_proxy", "HTTPS_PROXY") || !safeProxyURL(route) || ambient.NODE_USE_ENV_PROXY.present && ambient.NODE_USE_ENV_PROXY.value !== "1")
+      unsupported();
+    const node = Object.getOwnPropertyDescriptor(process.versions, "node");
+    if (!node || !("value" in node) || typeof node.value !== "string" || !node.value || Object.hasOwn(process.versions, "bun") || process.allowedNodeEnvironmentFlags.has("--use-env-proxy") !== true)
+      unsupported();
+  }
+  for (const key of networkKeys) {
+    const fact = scoped[key];
+    if (!fact.present)
+      continue;
+    if (!route || [
+      "ALL_PROXY",
+      "all_proxy",
+      "NO_PROXY",
+      "no_proxy",
+      "NODE_OPTIONS"
+    ].includes(key) || fact.value !== (key === "NODE_USE_ENV_PROXY" ? "1" : route))
+      unsupported();
+  }
+  const env = safeChildEnv();
+  if (route)
+    Object.assign(env, {
+      HTTP_PROXY: route,
+      HTTPS_PROXY: route,
+      NODE_USE_ENV_PROXY: "1"
+    });
+  return { env, redactionLiterals: route ? [route] : [] };
+}
+
+// src/service/coordination.ts
+import { randomBytes as randomBytes2, randomUUID as randomUUID4 } from "node:crypto";
+import { opendirSync, realpathSync as realpathSync3 } from "node:fs";
+import { hostname as hostname2 } from "node:os";
+import { dirname as dirname5, isAbsolute as isAbsolute4, join as join6, relative as relative3, sep as sep3 } from "node:path";
+var registrationKeys = [
+  "schema",
+  "root",
+  "stateHome",
+  "configIdentity",
+  "endpoint",
+  "epoch",
+  "pid",
+  "host",
+  "ownerToken",
+  "checkoutToken",
+  "phase"
+];
+var reservationKeys = registrationKeys.filter((k) => !["schema", "phase", "checkoutToken"].includes(k));
+function pathValue(value) {
+  const path = text(value, 4096, true);
+  if (!isAbsolute4(path))
+    refused();
+  return path;
+}
+function endpoint(value, allowZero = false) {
+  const s = text(value, 128, true);
+  const match = /^http:\/\/(127\.0\.0\.1|\[::1\]):(0|[1-9][0-9]{0,4})$/.exec(s);
+  if (!match || Number(match[2]) > 65535 || !allowZero && match[2] === "0")
+    refused();
+  return s;
+}
+function endpointMatches(requested, bound) {
+  return requested.endsWith(":0") ? requested.slice(0, -1) === bound.slice(0, bound.lastIndexOf(":") + 1) : requested === bound;
+}
+function decodeOwnerConfig(value) {
+  const o = closed(value, ["schema", "endpoint", "policyIdentity"]);
+  return {
+    schema: literal(o.schema, "cadence-service-owner-config/1"),
+    endpoint: endpoint(o.endpoint, true),
+    policyIdentity: decodeHash(o.policyIdentity)
+  };
+}
+function decodeReservation(value) {
+  const o = closed(value, reservationKeys);
+  return {
+    root: pathValue(o.root),
+    stateHome: pathValue(o.stateHome),
+    configIdentity: decodeHash(o.configIdentity),
+    endpoint: endpoint(o.endpoint),
+    epoch: decodeId(o.epoch),
+    pid: integer(o.pid, 1),
+    host: text(o.host, 255, true),
+    ownerToken: decodeId(o.ownerToken)
+  };
+}
+function reservation(r) {
+  const {
+    schema: _schema,
+    phase: _phase,
+    checkoutToken: _checkout,
+    ...row
+  } = r;
+  return row;
+}
+function decodeRegistration(value) {
+  const o = closed(value, registrationKeys);
+  const row = Object.fromEntries(reservationKeys.map((k) => [k, o[k]]));
+  return {
+    schema: literal(o.schema, "cadence-service-registration/1"),
+    ...decodeReservation(row),
+    checkoutToken: decodeId(o.checkoutToken),
+    phase: oneOf(o.phase, ["idle", "stopping", "quarantined", "stopped"])
+  };
+}
+function rootsOverlap(a, b) {
+  const within = (x, y) => {
+    const r = relative3(x, y);
+    return r === "" || r !== ".." && !r.startsWith(`..${sep3}`) && !isAbsolute4(r);
+  };
+  return within(a, b) || within(b, a);
+}
+function names(path, allowed) {
+  const dir = opendirSync(path);
+  try {
+    let count = 0;
+    for (let entry = dir.readSync();entry; entry = dir.readSync()) {
+      if (++count > allowed.length || !allowed.includes(entry.name))
+        refused();
+    }
+  } finally {
+    dir.closeSync();
+  }
+}
+function recoveryOwnerStatus(pid, host) {
+  if (host !== hostname2())
+    return "ambiguous";
+  try {
+    process.kill(pid, 0);
+    return "live";
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "ESRCH" ? "absent" : "ambiguous";
+  }
+}
+function recoveryDigest(registry, selected) {
+  return hash2(encoded([
+    registry.format.identity,
+    registry.format.stamp,
+    registry.snapshot.identity,
+    registry.snapshot.stamp,
+    selected.capability?.stamp ?? null,
+    ...[
+      selected.manifest,
+      selected.config,
+      selected.hostConfig,
+      selected.registration,
+      selected.owner,
+      selected.checkout
+    ].map((value) => value ? [value.identity, value.stamp] : null)
+  ]));
+}
+
+class ServiceCoordination {
+  store;
+  files;
+  directory;
+  registryDirectory;
+  stateHome;
+  constructor(workspace, stateHome) {
+    this.store = new TaskStore(resolveWorkspace(workspace).root, stateHome);
+    const namespace = dirname5(this.store.privateRoot);
+    this.files = new PrivateFiles(namespace);
+    this.stateHome = dirname5(namespace);
+    this.directory = join6(this.store.privateRoot, "service-v1");
+    this.registryDirectory = join6(namespace, "service-registry-v1");
+  }
+  path(name) {
+    return join6(this.directory, name);
+  }
+  registryPath(name) {
+    return join6(this.registryDirectory, name);
+  }
+  registry() {
+    if (!this.files.directory(this.registryDirectory))
+      return;
+    names(this.registryDirectory, [
+      "format.json",
+      "roots.json",
+      "registry.lock"
+    ]);
+    const format = this.files.read(this.registryPath("format.json"));
+    const snapshot = this.files.read(this.registryPath("roots.json"), REGISTRY_BYTES);
+    if (!format || !snapshot)
+      refused();
+    const f = closed(json(format), ["schema", "stateHome"]);
+    literal(f.schema, "cadence-service-registry-format/1");
+    literal(f.stateHome, this.stateHome);
+    const o = closed(json(snapshot, REGISTRY_BYTES), ["schema", "entries"]);
+    const entries = list(o.entries, REGISTRY_ENTRIES, decodeReservation);
+    for (const [i, row] of entries.entries()) {
+      if (row.stateHome !== this.stateHome || realpathSync3(row.root) !== row.root)
+        refused();
+      if (entries.slice(0, i).some((other) => rootsOverlap(row.root, other.root) || row.endpoint === other.endpoint))
+        refused();
+    }
+    return {
+      format,
+      snapshot,
+      value: {
+        schema: literal(o.schema, "cadence-service-registry/1"),
+        entries
+      }
+    };
+  }
+  assertNamespace(walks) {
+    if (!this.files.directory(this.directory, false, walks))
+      refused();
+    names(this.directory, [
+      "format.json",
+      "config.json",
+      "registration.json",
+      "owner.lock",
+      "local-capability.json",
+      "access-config.json",
+      "access.json",
+      "host-config.json",
+      "history-v2",
+      "conversations-v1"
+    ]);
+    this.files.directory(join6(this.directory, "history-v2"), false, walks);
+  }
+  selected() {
+    const walks = new DirectoryWalks;
+    if (!this.files.directory(this.directory, false, walks))
+      return;
+    this.assertNamespace(walks);
+    const manifest = this.files.read(this.path("format.json"), undefined, walks);
+    const config = this.files.read(this.path("config.json"), undefined, walks);
+    if (!manifest || !config)
+      refused();
+    const f = closed(json(manifest), [
+      "schema",
+      "root",
+      "stateHome",
+      "configIdentity"
+    ]);
+    literal(f.schema, "cadence-service-format/1");
+    literal(f.root, this.store.root);
+    literal(f.stateHome, this.stateHome);
+    literal(f.configIdentity, config.identity);
+    const c = decodeOwnerConfig(json(config));
+    const hostConfig = this.files.read(this.path("host-config.json"), undefined, walks);
+    if (hostConfig && hostConfig.identity !== c.policyIdentity)
+      refused();
+    const registration = this.files.read(this.path("registration.json"), undefined, walks);
+    const owner = this.files.read(this.path("owner.lock"), undefined, walks);
+    const capability = this.files.read(this.path("local-capability.json"), undefined, walks);
+    const checkout = this.files.read(this.store.lockPath, 8192, walks);
+    const value = registration ? decodeRegistration(json(registration)) : undefined;
+    if (value && (value.root !== this.store.root || value.stateHome !== this.stateHome || value.configIdentity !== config.identity || !endpointMatches(c.endpoint, value.endpoint)))
+      refused();
+    if (value && value.phase !== "stopped") {
+      if (!owner || !checkout || !capability)
+        refused();
+      const lock = closed(json(owner), [
+        "schema",
+        "epoch",
+        "token",
+        "pid",
+        "host"
+      ]);
+      literal(lock.schema, "cadence-service-owner-lock/1");
+      literal(lock.epoch, value.epoch);
+      literal(lock.token, value.ownerToken);
+      literal(lock.pid, value.pid);
+      literal(lock.host, value.host);
+      const legacy = this.store.inspectLock();
+      if (!legacy || legacy.token !== value.checkoutToken || legacy.pid !== value.pid || legacy.host !== value.host)
+        refused();
+      const cap = closed(json(capability), ["schema", "epoch", "capability"]);
+      literal(cap.schema, "cadence-service-local-capability/1");
+      literal(cap.epoch, value.epoch);
+      if (!/^[A-Za-z0-9_-]{43}$/.test(text(cap.capability, 43)))
+        refused();
+    } else if (owner || capability || value && checkout)
+      refused();
+    return {
+      config,
+      hostConfig,
+      manifest,
+      registration,
+      owner,
+      capability,
+      checkout,
+      value
+    };
+  }
+  inspect() {
+    try {
+      if (this.files.read(this.registryPath("registry.lock")))
+        return { status: "unavailable" };
+      const registry = this.registry();
+      const selected = this.selected();
+      const row = registry?.value.entries.find((r2) => r2.root === this.store.root);
+      if (!selected)
+        return row ? { status: "unavailable" } : { status: "absent" };
+      if (!selected.value)
+        return row ? { status: "unavailable" } : { status: "stopped", epoch: null };
+      const r = selected.value;
+      if (r.phase === "stopped")
+        return { status: row ? "unavailable" : "stopped", epoch: r.epoch };
+      if (!row || encoded(row) !== encoded(reservation(r)))
+        return { status: "unavailable", epoch: r.epoch };
+      return {
+        status: r.phase === "idle" ? "unavailable" : r.phase,
+        epoch: r.epoch
+      };
+    } catch {
+      return { status: "unavailable" };
+    }
+  }
+  initialize(input) {
+    const config = decodeOwnerConfig(input);
+    const existing = this.selected();
+    if (existing) {
+      if (existing.config.identity !== hash2(encoded(config)))
+        throw new ContractError("conflict");
+      return;
+    }
+    this.files.directory(this.directory, true);
+    const saved = this.files.create(this.path("config.json"), encoded(config));
+    this.files.create(this.path("format.json"), encoded({
+      schema: "cadence-service-format/1",
+      root: this.store.root,
+      stateHome: this.stateHome,
+      configIdentity: saved.identity
+    }));
+  }
+  withRegistry(operation) {
+    this.files.directory(this.registryDirectory, true);
+    names(this.registryDirectory, [
+      "format.json",
+      "roots.json",
+      "registry.lock"
+    ]);
+    const lockPath = this.registryPath("registry.lock");
+    const lock = this.files.create(lockPath, encoded({
+      schema: "cadence-service-registry-lock/1",
+      token: randomUUID4(),
+      pid: process.pid,
+      host: hostname2()
+    }));
+    let dirty = false;
+    try {
+      let format = this.files.read(this.registryPath("format.json"));
+      const roots = this.files.read(this.registryPath("roots.json"), REGISTRY_BYTES);
+      if (!format && !roots) {
+        dirty = true;
+        format = this.files.create(this.registryPath("format.json"), encoded({
+          schema: "cadence-service-registry-format/1",
+          stateHome: this.stateHome
+        }));
+        this.files.create(this.registryPath("roots.json"), encoded({ schema: "cadence-service-registry/1", entries: [] }), REGISTRY_BYTES);
+        dirty = false;
+      }
+      dirty = true;
+      const view = this.registry();
+      if (!view)
+        refused();
+      dirty = false;
+      const result = operation(view, () => {
+        dirty = true;
+      }, () => {
+        this.files.assert(lockPath, lock);
+        this.files.assert(this.registryPath("format.json"), format);
+        names(this.registryDirectory, [
+          "format.json",
+          "roots.json",
+          "registry.lock"
+        ]);
+      });
+      this.files.remove(lockPath, lock);
+      return result;
+    } catch (error) {
+      if (!dirty)
+        this.files.remove(lockPath, lock);
+      throw error;
+    }
+  }
+  acquire(input, resolvedEndpoint = input.endpoint, initializeNew, reselectExisting) {
+    const config = decodeOwnerConfig(input);
+    const bound = endpoint(resolvedEndpoint);
+    if (!endpointMatches(config.endpoint, bound))
+      throw new ContractError("conflict");
+    return this.withRegistry((registry, mutate) => {
+      if (registry.value.entries.some((r) => rootsOverlap(r.root, this.store.root) || r.endpoint === bound))
+        throw new ContractError("conflict");
+      if (registry.value.entries.length >= REGISTRY_ENTRIES)
+        throw new ContractError("capacity");
+      const old = this.selected();
+      if (old?.value && old.value.phase !== "stopped")
+        throw new ContractError("quarantine");
+      if (this.store.inspectLock())
+        throw new ContractError("conflict");
+      const reselect = !!old && old.config.identity !== hash2(encoded(config));
+      if (reselect && (!reselectExisting || !old?.hostConfig))
+        throw new ContractError("conflict");
+      const row = {
+        root: this.store.root,
+        stateHome: this.stateHome,
+        configIdentity: hash2(encoded(config)),
+        endpoint: bound,
+        epoch: randomUUID4(),
+        pid: process.pid,
+        host: hostname2(),
+        ownerToken: randomUUID4()
+      };
+      mutate();
+      this.files.replace(this.registryPath("roots.json"), registry.snapshot, encoded({
+        ...registry.value,
+        entries: [...registry.value.entries, row]
+      }), REGISTRY_BYTES);
+      if (old?.hostConfig && reselect && reselectExisting) {
+        reselectExisting(old.hostConfig);
+        const saved = this.files.replace(this.path("config.json"), old.config, encoded(config));
+        this.files.replace(this.path("format.json"), old.manifest, encoded({
+          schema: "cadence-service-format/1",
+          root: this.store.root,
+          stateHome: this.stateHome,
+          configIdentity: saved.identity
+        }));
+      } else
+        this.initialize(config);
+      if (!old)
+        initializeNew?.();
+      const checkout = this.store.acquire();
+      const checkoutFile = this.files.read(this.store.lockPath, 8192);
+      if (!checkoutFile)
+        refused();
+      const owner = this.files.create(this.path("owner.lock"), encoded({
+        schema: "cadence-service-owner-lock/1",
+        epoch: row.epoch,
+        token: row.ownerToken,
+        pid: row.pid,
+        host: row.host
+      }));
+      const capability = this.files.create(this.path("local-capability.json"), encoded({
+        schema: "cadence-service-local-capability/1",
+        epoch: row.epoch,
+        capability: randomBytes2(32).toString("base64url")
+      }));
+      const value = {
+        schema: "cadence-service-registration/1",
+        ...row,
+        checkoutToken: checkout.token,
+        phase: "idle"
+      };
+      const registration = old?.registration ? this.files.replace(this.path("registration.json"), old.registration, encoded(value)) : this.files.create(this.path("registration.json"), encoded(value));
+      const selected = this.selected();
+      if (!selected)
+        refused();
+      return new OwnerLease(this, checkout, {
+        ...selected,
+        owner,
+        capability,
+        checkout: checkoutFile,
+        registration,
+        value
+      });
+    });
+  }
+  configuration() {
+    const selected = this.selected();
+    return selected ? decodeOwnerConfig(json(selected.config)) : undefined;
+  }
+  localAccess() {
+    if (this.files.read(this.registryPath("registry.lock")))
+      refused();
+    const selected = this.selected(), registry = this.registry();
+    if (!selected?.value || !selected.capability || !registry || selected.value.phase === "stopped" || !registry.value.entries.some((row) => selected.value && encoded(row) === encoded(reservation(selected.value))))
+      throw new ContractError("unavailable");
+    const cap = closed(json(selected.capability), [
+      "schema",
+      "epoch",
+      "capability"
+    ]);
+    return {
+      endpoint: selected.value.endpoint,
+      epoch: selected.value.epoch,
+      capability: text(cap.capability, 43, true)
+    };
+  }
+  release(lease) {
+    this.withRegistry((view, mutate, assertHeld) => {
+      lease.assert();
+      const r = lease.registration;
+      const rows = view.value.entries.filter((row) => row.epoch === r.epoch);
+      if (rows.length !== 1 || encoded(rows[0]) !== encoded(reservation(r)))
+        refused();
+      mutate();
+      lease.phase("stopped");
+      const releasedRegistry = this.files.replace(this.registryPath("roots.json"), view.snapshot, encoded({
+        ...view.value,
+        entries: view.value.entries.filter((row) => row.epoch !== r.epoch)
+      }), REGISTRY_BYTES);
+      lease.removeOwnedFiles(() => {
+        assertHeld();
+        this.files.assert(this.registryPath("roots.json"), releasedRegistry, REGISTRY_BYTES);
+      });
+    });
+  }
+  prepareRecoveryRelease(expected, assertAuthority) {
+    assertAuthority();
+    if (this.recoverySnapshot().digest !== expected)
+      throw new ContractError("conflict");
+    const selected = this.selected();
+    if (!selected?.value || !selected.registration || !selected.owner || !selected.checkout || !selected.capability)
+      throw new ContractError("quarantine");
+    const r = selected.value;
+    const absent2 = () => {
+      assertAuthority();
+      if (recoveryOwnerStatus(r.pid, r.host) !== "absent")
+        throw new ContractError("quarantine");
+    };
+    absent2();
+    let used = false;
+    return (assertDurable) => {
+      if (used)
+        throw new ContractError("consumed-grant");
+      used = true;
+      this.withRegistry((view, mutate, assertHeld) => {
+        let registry = view.snapshot;
+        let registration = selected.registration;
+        let capability = selected.capability;
+        let owner = selected.owner;
+        let checkout = selected.checkout;
+        if (!registration || !capability || !owner || !checkout)
+          throw new ContractError("conflict");
+        if (recoveryDigest(view, selected) !== expected)
+          throw new ContractError("conflict");
+        const assert = () => {
+          absent2();
+          assertHeld();
+          this.assertNamespace();
+          this.files.assert(this.registryPath("roots.json"), registry, REGISTRY_BYTES);
+          for (const [name, snapshot] of [
+            ["format.json", selected.manifest],
+            ["config.json", selected.config],
+            ["host-config.json", selected.hostConfig],
+            ["registration.json", registration],
+            ["local-capability.json", capability],
+            ["owner.lock", owner]
+          ])
+            this.files.assert(this.path(name), snapshot);
+          this.files.assert(this.store.lockPath, checkout, 8192);
+          assertDurable();
+        };
+        assert();
+        const matching = view.value.entries.filter((row) => row.epoch === r.epoch);
+        if (matching.length !== 1 || encoded(matching[0]) !== encoded(reservation(r)))
+          throw new ContractError("conflict");
+        mutate();
+        registration = this.files.replace(this.path("registration.json"), registration, encoded({ ...r, phase: "stopped" }));
+        assert();
+        registry = this.files.replace(this.registryPath("roots.json"), registry, encoded({
+          ...view.value,
+          entries: view.value.entries.filter((row) => row.epoch !== r.epoch)
+        }), REGISTRY_BYTES);
+        assert();
+        this.files.remove(this.path("local-capability.json"), capability);
+        capability = undefined;
+        assert();
+        this.files.remove(this.path("owner.lock"), owner);
+        owner = undefined;
+        assert();
+        this.files.remove(this.store.lockPath, checkout, 8192);
+        checkout = undefined;
+        assert();
+      });
+    };
+  }
+  recoverySnapshot() {
+    if (this.files.read(this.registryPath("registry.lock")))
+      throw new ContractError("quarantine");
+    const registry = this.registry();
+    const selected = this.selected();
+    if (!registry || !selected?.value || !selected.registration || !selected.owner || !selected.checkout)
+      refused();
+    const value = selected.value;
+    const matching = registry.value.entries.filter((row) => row.epoch === value.epoch);
+    if (matching.length !== 1 || encoded(matching[0]) !== encoded(reservation(value)))
+      refused();
+    return {
+      registration: { ...selected.value },
+      digest: recoveryDigest(registry, selected)
+    };
+  }
+}
+
+class OwnerLease {
+  coordination;
+  checkout;
+  selected;
+  released = false;
+  constructor(coordination, checkout, selected) {
+    this.coordination = coordination;
+    this.checkout = checkout;
+    this.selected = selected;
+  }
+  get registration() {
+    return { ...this.selected.value };
+  }
+  assert() {
+    if (this.released || this.selected.value.pid !== process.pid || this.selected.value.host !== hostname2())
+      throw new ContractError("conflict");
+    const c = this.coordination, walks = new DirectoryWalks;
+    c.assertNamespace(walks);
+    for (const [name, snapshot] of [
+      ["config.json", this.selected.config],
+      ["host-config.json", this.selected.hostConfig],
+      ["format.json", this.selected.manifest],
+      ["registration.json", this.selected.registration],
+      ["owner.lock", this.selected.owner],
+      ["local-capability.json", this.selected.capability]
+    ])
+      c.files.assert(c.path(name), snapshot, undefined, walks);
+    c.files.assert(c.store.lockPath, this.selected.checkout, 8192, walks);
+    c.store.assertOwner(this.checkout);
+  }
+  phase(phase) {
+    this.assert();
+    const value = { ...this.selected.value, phase };
+    const registration = this.coordination.files.replace(this.coordination.path("registration.json"), this.selected.registration, encoded(value));
+    this.selected = { ...this.selected, value, registration };
+  }
+  release() {
+    this.assert();
+    this.coordination.release(this);
+    this.released = true;
+  }
+  removeOwnedFiles(assertRegistry) {
+    this.assert();
+    assertRegistry();
+    const c = this.coordination;
+    if (!this.selected.capability || !this.selected.owner)
+      refused();
+    const owner = this.selected.owner;
+    c.files.remove(c.path("local-capability.json"), this.selected.capability);
+    this.selected = { ...this.selected, capability: undefined };
+    this.assert();
+    assertRegistry();
+    c.files.remove(c.path("owner.lock"), owner);
+    this.selected = { ...this.selected, owner: undefined };
+    this.assert();
+    assertRegistry();
+    c.files.assert(c.store.lockPath, this.selected.checkout, 8192);
+    c.store.release(this.checkout);
+  }
+}
+
+// src/service/gateway-store.ts
+import { randomBytes as randomBytes3, randomUUID as randomUUID5 } from "node:crypto";
+import { opendirSync as opendirSync2 } from "node:fs";
+import { join as join7, resolve as resolve3 } from "node:path";
+
+// src/service/contracts/gateway.ts
+function decodeProjectEntry(value) {
+  const o = closed(value, ["id", "path", "cwd", "epoch"]);
+  return {
+    id: decodeHash(o.id),
+    path: text(o.path, 4096, true),
+    cwd: text(o.cwd, 4096, true),
+    epoch: decodeId(o.epoch)
+  };
+}
+
+// src/service/gateway-store.ts
+function decodeGatewayInput(value) {
+  const o = closed(value, [
+    "kind",
+    "serverConfig",
+    "stateHome",
+    "agentDir",
+    "policy"
+  ]);
+  const absolute = (v) => {
+    const p = text(v, 4096, true);
+    if (resolve3(p) !== p)
+      throw new ContractError("invalid");
+    return p;
+  };
+  return {
+    kind: literal(o.kind, "workbench"),
+    serverConfig: absolute(o.serverConfig),
+    stateHome: absolute(o.stateHome),
+    agentDir: absolute(o.agentDir),
+    policy: decodeHttpPolicy(o.policy)
+  };
+}
+function decodeGatewayProject(value) {
+  const project = decodeProjectEntry(value);
+  if (resolve3(project.path) !== project.path || resolve3(project.cwd) !== project.cwd)
+    throw new ContractError("corrupt-selected");
+  return project;
+}
+function registration(value) {
+  const o = closed(value, [
+    "schema",
+    "epoch",
+    "id",
+    "endpoint",
+    "capability",
+    "selection",
+    "pid",
+    "phase"
+  ]);
+  const endpoint2 = text(o.endpoint, 128, true), capability = text(o.capability, 43, true);
+  if (!/^http:\/\/(?:127\.0\.0\.1|\[::1\]):[1-9][0-9]{0,4}$/.test(endpoint2) || !/^[A-Za-z0-9_-]{43}$/.test(capability))
+    throw new ContractError("corrupt-selected");
+  return {
+    schema: literal(o.schema, "cadence-workbench-registration/1"),
+    epoch: decodeId(o.epoch),
+    id: decodeId(o.id),
+    endpoint: endpoint2,
+    capability,
+    selection: decodeHash(o.selection),
+    pid: integer(o.pid, 1),
+    phase: oneOf(o.phase, ["alive", "stopping", "stopped", "quarantined"])
+  };
+}
+
+class GatewayStore {
+  serverConfig;
+  files;
+  directory;
+  stateHome;
+  lock;
+  selected;
+  inputFile;
+  value;
+  constructor(serverConfig, stateHome = defaultStateHome()) {
+    this.serverConfig = serverConfig;
+    this.stateHome = canonicalAmbientRoot(stateHome);
+    this.files = new PrivateFiles(join7(this.stateHome, "cadence-assistant-v1"));
+    this.directory = join7(this.files.namespace, "workbenches-v1", hash2(resolve3(serverConfig)));
+  }
+  path(name) {
+    return join7(this.directory, name);
+  }
+  read() {
+    const file = this.files.read(this.path("gateway.json"));
+    if (!file) {
+      if (this.files.directory(this.directory))
+        throw new ContractError("corrupt-selected");
+      return;
+    }
+    const value = registration(json(file));
+    const selected = this.files.read(this.path("input.json"));
+    if (!selected || hash2(selected.bytes) !== value.selection)
+      throw new ContractError("corrupt-selected");
+    decodeGatewayInput(json(selected));
+    return value;
+  }
+  localAccess() {
+    const value = this.read();
+    if (!value || value.phase === "stopped")
+      throw new ContractError("unavailable");
+    return {
+      endpoint: value.endpoint,
+      epoch: value.epoch,
+      capability: value.capability
+    };
+  }
+  inspect() {
+    const value = this.read();
+    if (!value)
+      return { status: "absent" };
+    return {
+      status: value.phase === "stopped" && this.files.read(this.path("gateway.lock")) ? "stopping" : value.phase,
+      epoch: value.epoch
+    };
+  }
+  acquire(endpoint2, token, input) {
+    const previous = this.read();
+    if (previous && previous.phase !== "stopped")
+      throw new ContractError("quarantine");
+    this.lock = this.files.create(this.path("gateway.lock"), encoded({ epoch: randomUUID5() }));
+    const source = { serverConfig: this.serverConfig, token };
+    if (!previous)
+      AccessMaterial.initialize(this.files, this.directory, source);
+    const access = new AccessMaterial(this.files, this.directory, source, () => this.assert());
+    this.selected = this.files.read(this.path("gateway.json"));
+    if (previous && (!this.selected || encoded(registration(json(this.selected))) !== encoded(previous)))
+      throw new ContractError("conflict");
+    const beforeInput = this.files.read(this.path("input.json"));
+    const inputBytes = encoded(decodeGatewayInput(input));
+    this.inputFile = beforeInput ? this.files.replace(this.path("input.json"), beforeInput, inputBytes) : this.files.create(this.path("input.json"), inputBytes);
+    this.value = {
+      schema: "cadence-workbench-registration/1",
+      epoch: randomUUID5(),
+      id: previous?.id ?? randomUUID5(),
+      endpoint: endpoint2,
+      capability: randomBytes3(32).toString("base64url"),
+      selection: hash2(inputBytes),
+      pid: process.pid,
+      phase: "alive"
+    };
+    this.selected = this.selected ? this.files.replace(this.path("gateway.json"), this.selected, encoded(this.value)) : this.files.create(this.path("gateway.json"), encoded(this.value));
+    return { registration: this.value, access };
+  }
+  assert() {
+    if (!this.lock || !this.selected)
+      throw new ContractError("unavailable");
+    this.files.assert(this.path("gateway.lock"), this.lock);
+    this.files.assert(this.path("input.json"), this.inputFile);
+    this.files.assert(this.path("gateway.json"), this.selected);
+  }
+  phase(phase) {
+    this.assert();
+    this.value = { ...this.value, phase };
+    this.selected = this.files.replace(this.path("gateway.json"), this.selected, encoded(this.value));
+  }
+  release() {
+    this.phase("stopped");
+    this.files.remove(this.path("gateway.lock"), this.lock);
+  }
+  projects() {
+    const directory = this.path("projects");
+    if (!this.files.directory(directory))
+      return [];
+    const stream = opendirSync2(directory), out = [];
+    try {
+      for (let entry = stream.readSync();entry; entry = stream.readSync()) {
+        if (!entry.isFile() || !/^[a-f0-9]{64}\.json$/.test(entry.name) || out.length >= 128)
+          throw new ContractError("corrupt-selected");
+        const file = this.files.read(join7(directory, entry.name));
+        if (!file)
+          throw new ContractError("corrupt-selected");
+        const project = decodeGatewayProject(json(file));
+        if (entry.name !== `${project.id}.json` || hash2(project.path) !== project.id)
+          throw new ContractError("corrupt-selected");
+        out.push(project);
+      }
+    } finally {
+      stream.closeSync();
+    }
+    return out;
+  }
+  saveProject(project) {
+    this.assert();
+    const p = decodeGatewayProject(project), path = this.path(`projects/${p.id}.json`), before = this.files.read(path);
+    if (!before && this.projects().length >= 128)
+      throw new ContractError("capacity");
+    if (before) {
+      const old = decodeGatewayProject(json(before));
+      if (old.id !== p.id || old.path !== p.path)
+        throw new ContractError("conflict");
+      this.files.replace(path, before, encoded(p));
+    } else
+      this.files.create(path, encoded(p));
+  }
+}
+
+// src/service/runtime.ts
+import { homedir as homedir2 } from "node:os";
+import { dirname as dirname6, isAbsolute as isAbsolute5, join as join8, resolve as resolve4 } from "node:path";
+var STARTUP_INPUT_BYTES = 16 * 1024;
+function absolute(value) {
+  const result = text(value, 4096, true);
+  if (!isAbsolute5(result))
+    throw new ContractError("invalid");
+  return result;
+}
+function decodeHostConfig(value) {
+  const o = closed(value, [
+    "schema",
+    "http",
+    "cwd",
+    "agentDir",
+    "tokenSource",
+    "tokenFile"
+  ]);
+  const tokenSource = oneOf(o.tokenSource, [
+    "generated",
+    "environment",
+    "file",
+    "config"
+  ]);
+  const tokenFile = o.tokenFile === null ? null : absolute(o.tokenFile);
+  if ((tokenSource === "file" || tokenSource === "config") !== !!tokenFile)
+    throw new ContractError("invalid");
+  return {
+    schema: literal(o.schema, "cadence-service-host/1"),
+    http: decodeHttpPolicy(o.http),
+    cwd: absolute(o.cwd),
+    agentDir: absolute(o.agentDir),
+    tokenSource,
+    tokenFile
+  };
+}
+function reselectable(old, next) {
+  const kept = (c) => encoded({
+    ...c,
+    http: { ...c.http, port: 0 },
+    tokenSource: null,
+    tokenFile: null
+  });
+  return next.tokenSource === "config" && kept(old) === kept(next);
+}
+function readHostConfig(c) {
+  const owner = c.configuration();
+  if (!owner)
+    return;
+  const snapshot = c.files.read(c.path("host-config.json"));
+  if (!snapshot)
+    throw new ContractError("corrupt-selected");
+  const config = decodeHostConfig(json(snapshot));
+  if (!config.http.port || owner.endpoint !== localOrigin(config.http, config.http.port) || owner.policyIdentity !== hash2(encoded(config)))
+    throw new ContractError("conflict");
+  return config;
+}
+function hostEnvironment(ambient) {
+  let route;
+  const facts = networkSnapshot(ambient);
+  try {
+    if (facts.NODE_OPTIONS.present)
+      throw new Error;
+    route = sdkNetworkEnvironment(facts, networkSnapshot(undefined));
+  } catch {
+    throw new ContractError("unsupported-context");
+  }
+  const result = Object.create(null);
+  for (const key of Object.keys(ambient)) {
+    const d = Object.getOwnPropertyDescriptor(ambient, key);
+    if (!d || !("value" in d) || typeof d.value !== "string")
+      throw new ContractError("invalid");
+    if (/^(?:CADENCE_|PI_|ABEL_|TRELLIS_|GIT_)/i.test(key) || networkKeys.some((name) => name === key))
+      continue;
+    result[key] = d.value;
+  }
+  if (route.redactionLiterals.length) {
+    result.HTTP_PROXY = route.env.HTTP_PROXY;
+    result.HTTPS_PROXY = route.env.HTTPS_PROXY;
+    result.NODE_USE_ENV_PROXY = "1";
+  }
+  result.PI_OFFLINE = "1";
+  result.NO_COLOR = "1";
+  if (!sameNetwork(facts, networkSnapshot(ambient)))
+    throw new ContractError("stale");
+  return result;
+}
+function selectStart(options, ambient) {
+  const workspace = resolveWorkspace(options.workspace), c = new ServiceCoordination(workspace.root, options.stateHome);
+  const old = readHostConfig(c);
+  const env = Object.getOwnPropertyDescriptor(ambient, "CADENCE_WEB_TOKEN");
+  if (env && (!("value" in env) || typeof env.value !== "string"))
+    throw new ContractError("invalid");
+  let fromFile;
+  if (options.config) {
+    const path = resolve4(options.config), f = new PrivateFiles(dirname6(path));
+    const bytes = f.read(path);
+    if (!bytes)
+      throw new ContractError("corrupt-selected");
+    fromFile = decodeHostConfig(json(bytes));
+  }
+  const base = old ?? fromFile ?? decodeHostConfig({
+    schema: "cadence-service-host/1",
+    cwd: workspace.cwd,
+    http: {
+      schema: "cadence-service-http/1",
+      host: options.host ?? "127.0.0.1",
+      port: options.port ?? 17423,
+      proxy: null
+    },
+    agentDir: resolve4(options.agentDir ?? ambient.PI_CODING_AGENT_DIR ?? join8(ambient.HOME ?? ambient.USERPROFILE ?? homedir2(), ".pi", "agent")),
+    tokenSource: options.tokenFile ? "file" : env ? "environment" : "generated",
+    tokenFile: options.tokenFile ? resolve4(options.tokenFile) : null
+  });
+  const server = options.serverConfig !== undefined ? resolve4(options.serverConfig) : old?.tokenSource === "config" ? old.tokenFile : null;
+  let selected = base;
+  if (server) {
+    if (options.tokenFile !== undefined)
+      throw new ContractError("conflict");
+    const { port } = readServerConfig(server).config;
+    selected = decodeHostConfig({
+      ...base,
+      http: { ...base.http, port },
+      tokenSource: "config",
+      tokenFile: server
+    });
+  }
+  if (fromFile && encoded(fromFile) !== encoded(selected) || options.port !== undefined && options.port !== selected.http.port || options.host !== undefined && options.host !== selected.http.host || options.agentDir !== undefined && resolve4(options.agentDir) !== selected.agentDir || options.tokenFile !== undefined && resolve4(options.tokenFile) !== selected.tokenFile || env && selected.tokenSource !== "environment" || selected.tokenSource === "environment" && !env || resolveWorkspace(selected.cwd).root !== workspace.root)
+    throw new ContractError("conflict");
+  return {
+    workspace: workspace.root,
+    stateHome: c.stateHome,
+    config: selected,
+    environmentToken: env?.value ?? null
+  };
+}
+function decodeHostInput(value) {
+  const o = closed(value, [
+    "workspace",
+    "stateHome",
+    "config",
+    "environmentToken"
+  ]);
+  const config = decodeHostConfig(o.config);
+  const environmentToken = o.environmentToken === null ? null : text(o.environmentToken, 1024, true);
+  if (config.tokenSource === "environment" !== (environmentToken !== null))
+    throw new ContractError("invalid");
+  return {
+    workspace: absolute(o.workspace),
+    stateHome: absolute(o.stateHome),
+    config,
+    environmentToken
+  };
+}
+var STARTUP_STAGES = [
+  "package",
+  "pi-agent-directory",
+  "pi-auth",
+  "pi-models",
+  "pi-runtime",
+  "service"
+];
+
+class StartupRefusal extends ContractError {
+  stage;
+  quarantined;
+  constructor(code2, stage, quarantined = false) {
+    super(code2);
+    this.stage = stage;
+    this.quarantined = quarantined;
+  }
+}
+function startupReport(error) {
+  if (error instanceof StartupRefusal)
+    return {
+      status: error.quarantined ? "quarantined" : "refused",
+      error: error.code,
+      stage: error.stage
+    };
+  return {
+    status: "refused",
+    error: error instanceof ContractError ? error.code : "unavailable",
+    stage: "service"
+  };
+}
+function decodeStartupReport(value) {
+  const o = closed(value, ["status", "error", "stage"]);
+  return {
+    status: oneOf(o.status, ["refused", "quarantined"]),
+    error: oneOf(o.error, ERROR_CODES),
+    stage: oneOf(o.stage, STARTUP_STAGES)
+  };
+}
+
+// src/history/recovery.ts
+import { createHash as createHash8, randomUUID as randomUUID7 } from "node:crypto";
+import { lstatSync as lstatSync7, opendirSync as opendirSync4 } from "node:fs";
+import { join as join10, relative as relative4 } from "node:path";
+
+// src/service/recovery.ts
+async function inspectRecovery(coordination, history) {
+  const selected = coordination.recoverySnapshot();
+  const facts = history ? await history.inspect(selected.registration.epoch) : null;
+  if (facts)
+    decodeHash(facts.digest);
+  if (coordination.recoverySnapshot().digest !== selected.digest)
+    throw new ContractError("conflict");
+  return {
+    epoch: selected.registration.epoch,
+    coordinationDigest: selected.digest,
+    history: facts,
+    owner: recoveryOwnerStatus(selected.registration.pid, selected.registration.host),
+    resolution: "local-interactive-only"
+  };
+}
+
+// src/history/files.ts
+import { createHash as createHash7, randomBytes as randomBytes4, randomUUID as randomUUID6 } from "node:crypto";
+import {
+  closeSync as closeSync4,
+  constants as constants4,
+  fstatSync as fstatSync4,
+  fsyncSync as fsyncSync3,
+  lstatSync as lstatSync6,
+  opendirSync as opendirSync3,
+  openSync as openSync4,
+  statfsSync
+} from "node:fs";
+import { open } from "node:fs/promises";
+import { dirname as dirname8, join as join9 } from "node:path";
+
 // src/history/admission.ts
 function decodeRunAdmission(value) {
   const o = closed(value, ["schema", "runId", "identity", "graph"]);
@@ -4061,30 +6417,30 @@ function decodeRunAdmission(value) {
   const { identity, graph } = result;
   if (identity.kind === "start" !== (graph !== null))
     throw new ContractError("invalid");
-  if (graph && (graph.taskId !== identity.context.task?.id || graph.taskKind !== identity.context.task.kind || graph.taskRevision > identity.context.task.revision || graph.revision !== identity.graph?.revision || hash(canonicalJson(graph)) !== identity.graph.sha256 || canonicalJson(graph.assignments.map((a) => a.id)) !== canonicalJson(identity.assignments.map((a) => a.assignmentId)) || graph.assignments.some((a) => canonicalJson(a.model) !== canonicalJson(identity.context.model))))
+  if (graph && (graph.taskId !== identity.context.task?.id || graph.taskKind !== identity.context.task.kind || graph.taskRevision > identity.context.task.revision || graph.revision !== identity.graph?.revision || hash2(canonicalJson(graph)) !== identity.graph.sha256 || canonicalJson(graph.assignments.map((a) => a.id)) !== canonicalJson(identity.assignments.map((a) => a.assignmentId)) || graph.assignments.some((a) => canonicalJson(a.model) !== canonicalJson(identity.context.model))))
     throw new ContractError("conflict");
   return result;
 }
 
 // src/history/read-io.ts
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 import {
   closeSync as closeSync3,
   constants as constants3,
   fstatSync as fstatSync3,
-  lstatSync as lstatSync3,
+  lstatSync as lstatSync5,
   openSync as openSync3,
   readSync as readSync3
 } from "node:fs";
-import { dirname as dirname3 } from "node:path";
+import { dirname as dirname7 } from "node:path";
 function bad() {
   throw new ContractError("corrupt-selected");
 }
 var stamp2 = (s) => [s.dev, s.ino, s.size, s.mode, s.uid, s.nlink, s.ctimeMs, s.mtimeMs].join(":");
 function selected(files, path, read, walks) {
-  if (!files.files.directory(dirname3(path), false, walks))
+  if (!files.files.directory(dirname7(path), false, walks))
     bad();
-  const before = lstatSync3(path);
+  const before = lstatSync5(path);
   if (!before.isFile() || before.nlink !== 1 || process.platform !== "win32" && (before.mode & 63 || process.getuid && before.uid !== process.getuid()))
     bad();
   const fd = openSync3(path, constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0));
@@ -4092,7 +6448,7 @@ function selected(files, path, read, walks) {
     if (stamp2(fstatSync3(fd)) !== stamp2(before))
       bad();
     const result = read(fd, before.size, stamp2(before));
-    if (stamp2(fstatSync3(fd)) !== stamp2(before) || stamp2(lstatSync3(path)) !== stamp2(before))
+    if (stamp2(fstatSync3(fd)) !== stamp2(before) || stamp2(lstatSync5(path)) !== stamp2(before))
       bad();
     return result;
   } finally {
@@ -4105,7 +6461,7 @@ function assertIncarnation(files, path, expected) {
       bad();
   });
 }
-function incarnation(files, path, maximum) {
+function incarnation2(files, path, maximum) {
   return selected(files, path, (_fd, size, stamp3) => {
     if (size > maximum)
       bad();
@@ -4113,13 +6469,13 @@ function incarnation(files, path, maximum) {
   });
 }
 function reproveAppend(files, path, expected, length, sha256, budget) {
-  const current = incarnation(files, path, Number.MAX_SAFE_INTEGER), a = expected.split(":"), b = current.stamp.split(":");
+  const current = incarnation2(files, path, Number.MAX_SAFE_INTEGER), a = expected.split(":"), b = current.stamp.split(":");
   if (current.stamp === expected)
     return expected;
   if (b.slice(0, 2).join(":") !== a.slice(0, 2).join(":") || b.slice(3, 6).join(":") !== a.slice(3, 6).join(":") || Number(b[2]) <= Number(a[2]))
     bad();
   const bytes = readRange(files, path, 0, length, budget);
-  if (createHash4("sha256").update(bytes).digest("hex") !== sha256)
+  if (createHash5("sha256").update(bytes).digest("hex") !== sha256)
     bad();
   assertIncarnation(files, path, current.stamp);
   return current.stamp;
@@ -4151,7 +6507,7 @@ function readRange(files, path, offset, length, budget) {
 }
 
 // src/history/types.ts
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 var RECORD_BYTES = LIMITS.controlBytes + 64 * 1024;
 var LEGACY_FORMAT = "cadence-history-store/2";
 var FORMAT = "cadence-history-store/3";
@@ -4396,13 +6752,13 @@ function decodeJournalValue(value) {
         "intent",
         "record",
         ...hasPolicy ? ["policy"] : []
-      ]), intent = decodeAdmissionIntent(o.intent), record = decodeStoredCommand(o.record);
-      if (record.receipt.commandId !== intent.commandId || record.receipt.operationId !== intent.operationId || record.receipt.runId !== intent.runId || canonicalJson(record.identity) !== canonicalJson(intent.identity) || (record.receipt.created?.taskId ?? null) !== intent.createdTaskId)
+      ]), intent = decodeAdmissionIntent(o.intent), record2 = decodeStoredCommand(o.record);
+      if (record2.receipt.commandId !== intent.commandId || record2.receipt.operationId !== intent.operationId || record2.receipt.runId !== intent.runId || canonicalJson(record2.identity) !== canonicalJson(intent.identity) || (record2.receipt.created?.taskId ?? null) !== intent.createdTaskId)
         invalid();
       const policy = hasPolicy ? decodeResourcePolicy(o.policy) : undefined;
       if (policy && intent.identity.kind === "action" && policy.generation !== intent.identity.expected.configRev)
         invalid();
-      return { kind, intent, record, ...policy ? { policy } : {} };
+      return { kind, intent, record: record2, ...policy ? { policy } : {} };
     }
     case "auth-preparation": {
       const o = closed(value, ["kind", "intent"]);
@@ -4517,7 +6873,7 @@ function batchArtifacts(rows) {
 }
 var decodedLines = new Map;
 var decodedBytes = 0;
-var lineKey = (text2) => createHash5("sha256").update(text2).digest("hex");
+var lineKey = (text2) => createHash6("sha256").update(text2).digest("hex");
 function remember(text2, value) {
   const key = lineKey(text2);
   if (decodedLines.has(key))
@@ -4538,13 +6894,13 @@ function remember(text2, value) {
 function compactAdmission(value) {
   if (value.kind !== "record" || value.value.kind !== "admission")
     return value;
-  const { intent, record, policy } = value.value;
+  const { intent, record: record2, policy } = value.value;
   return {
     ...value,
     value: {
       kind: "admission-compact",
       intent,
-      receipt: record.receipt,
+      receipt: record2.receipt,
       ...policy ? { policy } : {}
     }
   };
@@ -4616,7 +6972,7 @@ async function retryStalled(read) {
     } catch (error) {
       if (!(error instanceof StalledQuantum) || retry >= STALL_RETRIES)
         throw error;
-      await new Promise((resolve3) => setImmediate(resolve3));
+      await new Promise((resolve5) => setImmediate(resolve5));
     }
   }
 }
@@ -4637,18 +6993,18 @@ class HistoryFiles {
     this.coordination = coordination;
     this.format = format;
     this.formatSnapshot = formatSnapshot;
-    this.directory = join3(coordination.directory, "history-v2");
+    this.directory = join9(coordination.directory, "history-v2");
     this.files = coordination.files;
   }
   static open(coordination) {
-    const dir = join3(coordination.directory, "history-v2");
+    const dir = join9(coordination.directory, "history-v2");
     if (!coordination.files.directory(dir))
       return;
-    const file = coordination.files.read(join3(dir, "format.json"));
+    const file = coordination.files.read(join9(dir, "format.json"));
     if (!file)
       corrupt();
     const format = decodeFormat(json(file));
-    if (format.rootIdentity !== hash(coordination.store.root))
+    if (format.rootIdentity !== hash2(coordination.store.root))
       corrupt();
     return new HistoryFiles(coordination, format, file);
   }
@@ -4660,29 +7016,29 @@ class HistoryFiles {
       existing.assertWritable();
       return existing;
     }
-    const dir = join3(c.directory, "history-v2");
+    const dir = join9(c.directory, "history-v2");
     const format = {
       schema: FORMAT,
-      storeId: randomUUID3(),
-      workspaceId: randomUUID3(),
-      rootIdentity: hash(c.store.root)
+      storeId: randomUUID6(),
+      workspaceId: randomUUID6(),
+      rootIdentity: hash2(c.store.root)
     };
     c.files.directory(dir, true);
     for (const name of ["commands", "ledger", "runs", "indexes"]) {
       lease.assert();
-      c.files.directory(join3(dir, name), true);
+      c.files.directory(join9(dir, name), true);
     }
     lease.assert();
-    const keyPath = join3(dir, "read-proof-key.json");
+    const keyPath = join9(dir, "read-proof-key.json");
     c.files.create(keyPath, encoded({
       schema: "cadence-history-read-key/1",
       storeId: format.storeId,
-      key: randomBytes(32).toString("base64url")
+      key: randomBytes4(32).toString("base64url")
     }));
     lease.assert();
-    const snapshot = c.files.create(join3(dir, "format.json"), encoded(format));
+    const snapshot = c.files.create(join9(dir, "format.json"), encoded(format));
     const result = new HistoryFiles(c, format, snapshot);
-    result.syncParents(join3(dir, "format.json"));
+    result.syncParents(join9(dir, "format.json"));
     result.assertWritable();
     return result;
   }
@@ -4717,7 +7073,7 @@ class HistoryFiles {
       throw new ContractError("quarantine");
   }
   assertFormat() {
-    this.files.assert(join3(this.directory, "format.json"), this.formatSnapshot);
+    this.files.assert(join9(this.directory, "format.json"), this.formatSnapshot);
   }
   readProofMaterial(budget) {
     if (this.format.schema !== FORMAT)
@@ -4726,15 +7082,15 @@ class HistoryFiles {
       this.assertReadFormat(budget);
     else
       this.assertFormat();
-    const selected2 = this.readBudgeted(join3(this.directory, "read-proof-key.json"), 512, budget);
+    const selected2 = this.readBudgeted(join9(this.directory, "read-proof-key.json"), 512, budget);
     if (!selected2 || this.proofSnapshot && (selected2.identity !== this.proofSnapshot.identity || selected2.stamp !== this.proofSnapshot.stamp))
       corrupt();
     try {
-      const record = closed(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(selected2.bytes), 512), ["schema", "storeId", "key"]);
-      literal(record.schema, "cadence-history-read-key/1");
-      if (decodeId(record.storeId) !== this.format.storeId)
+      const record2 = closed(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(selected2.bytes), 512), ["schema", "storeId", "key"]);
+      literal(record2.schema, "cadence-history-read-key/1");
+      if (decodeId(record2.storeId) !== this.format.storeId)
         corrupt();
-      const value = text(record.key, 43, true), key = Buffer.from(value, "base64url");
+      const value = text(record2.key, 43, true), key = Buffer.from(value, "base64url");
       if (!/^[A-Za-z0-9_-]{43}$/.test(value) || key.length !== 32 || key.toString("base64url") !== value)
         corrupt();
       this.proofSnapshot ??= selected2;
@@ -4754,17 +7110,17 @@ class HistoryFiles {
       return;
     }
     this.assertFormat();
-    assertIncarnation(this, join3(this.directory, "read-proof-key.json"), this.proofSnapshot.stamp);
+    assertIncarnation(this, join9(this.directory, "read-proof-key.json"), this.proofSnapshot.stamp);
   }
   segmentPath(segment) {
-    return join3(this.directory, "ledger", `${String(segment).padStart(12, "0")}.jsonl`);
+    return join9(this.directory, "ledger", `${String(segment).padStart(12, "0")}.jsonl`);
   }
   artifactPath(ref) {
-    return join3(this.directory, "runs", ref.runId, "artifacts", ref.artifactId, `${ref.part}.part`);
+    return join9(this.directory, "runs", ref.runId, "artifacts", ref.artifactId, `${ref.part}.part`);
   }
   admissionPath(runId) {
     decodeId(runId);
-    return join3(this.directory, "runs", runId, "admission.json");
+    return join9(this.directory, "runs", runId, "admission.json");
   }
   writeAdmission(lease, input) {
     lease.assert();
@@ -4778,7 +7134,7 @@ class HistoryFiles {
       return this.files.read(path, maximum);
     let size;
     try {
-      size = lstatSync4(path).size;
+      size = lstatSync6(path).size;
     } catch {
       return this.files.read(path, 0, budget.walks);
     }
@@ -4790,10 +7146,10 @@ class HistoryFiles {
   readCommand(commandId, budget) {
     decodeId(commandId);
     this.assertReadFormat(budget);
-    return this.readBudgeted(join3(this.directory, "commands", commandId, "intent.json"), RECORD_BYTES, budget);
+    return this.readBudgeted(join9(this.directory, "commands", commandId, "intent.json"), RECORD_BYTES, budget);
   }
   readAdmission(runId, identity, budget) {
-    return this.readAdmissionIdentity(runId, hash(canonicalJson(identity)), budget);
+    return this.readAdmissionIdentity(runId, hash2(canonicalJson(identity)), budget);
   }
   readAdmissionIdentity(runId, identity, budget) {
     if (budget)
@@ -4804,14 +7160,14 @@ class HistoryFiles {
     if (!file)
       corrupt();
     const value = decodeRunAdmission(json(file, RECORD_BYTES));
-    if (value.runId !== runId || hash(canonicalJson(value.identity)) !== identity)
+    if (value.runId !== runId || hash2(canonicalJson(value.identity)) !== identity)
       corrupt();
     return value;
   }
   syncParents(file) {
     if (process.platform === "win32")
       return;
-    for (let path = dirname4(file);; path = dirname4(path)) {
+    for (let path = dirname8(file);; path = dirname8(path)) {
       if (!this.files.directory(path))
         corrupt();
       const fd = openSync4(path, constants4.O_RDONLY | constants4.O_DIRECTORY);
@@ -4822,13 +7178,13 @@ class HistoryFiles {
       }
       if (path === this.coordination.directory)
         break;
-      if (path === dirname4(path))
+      if (path === dirname8(path))
         corrupt();
     }
   }
   assertReadFormat(budget) {
     budget.reserve(this.formatSnapshot.bytes.length);
-    this.files.assert(join3(this.directory, "format.json"), this.formatSnapshot, this.formatSnapshot.bytes.length);
+    this.files.assert(join9(this.directory, "format.json"), this.formatSnapshot, this.formatSnapshot.bytes.length);
   }
   assertPublished(segment, end, seq) {
     const fence = publicationFences.get(this.directory);
@@ -4853,7 +7209,7 @@ class HistoryFiles {
   writeArtifact(lease, ref, text2) {
     lease.assert();
     this.assertWritable();
-    if (Buffer.byteLength(text2) !== ref.bytes || hash(text2) !== ref.sha256)
+    if (Buffer.byteLength(text2) !== ref.bytes || hash2(text2) !== ref.sha256)
       corrupt();
     this.files.create(this.artifactPath(ref), text2, LIMITS.artifactPartBytes);
     this.syncParents(this.artifactPath(ref));
@@ -4863,10 +7219,10 @@ class HistoryFiles {
       if (depth > 8 || !this.files.directory(path))
         corrupt();
       let bytes = 0;
-      const dir = opendirSync(path);
+      const dir = opendirSync3(path);
       try {
         for (let e = dir.readSync();e; e = dir.readSync()) {
-          const p = join3(path, e.name), st = lstatSync4(p);
+          const p = join9(path, e.name), st = lstatSync6(p);
           if (st.isDirectory())
             bytes += walk(p, depth + 1);
           else {
@@ -4901,10 +7257,10 @@ class HistoryFiles {
     state.bytes = 0;
     state.identity = null;
     let count = 0;
-    const ledger = join3(this.directory, "ledger");
+    const ledger = join9(this.directory, "ledger");
     if (!this.files.directory(ledger))
       corrupt();
-    const dir = opendirSync(ledger);
+    const dir = opendirSync3(ledger);
     try {
       for (let e = dir.readSync();e; e = dir.readSync()) {
         budget?.reserve(0);
@@ -4927,9 +7283,9 @@ class HistoryFiles {
         if (file.bytes.length < fence.bytes)
           corrupt();
         const bytes = file.bytes.subarray(0, fence.bytes);
-        if (hash(bytes) !== fence.identity)
+        if (hash2(bytes) !== fence.identity)
           corrupt();
-        file = { ...file, bytes, identity: hash(bytes) };
+        file = { ...file, bytes, identity: hash2(bytes) };
       }
       const preceding = { ...state };
       state.segment = n;
@@ -4938,7 +7294,7 @@ class HistoryFiles {
       state.bytes = file.bytes.length;
       state.identity = file.identity;
       state.records = 0;
-      let at = 0, pending = [], pendingBytes = 0, checksum = createHash6("sha256");
+      let at = 0, pending = [], pendingBytes = 0, checksum = createHash7("sha256");
       while (at < file.bytes.length) {
         budget?.reserve(0);
         const end = file.bytes.indexOf(10, at);
@@ -4949,9 +7305,9 @@ class HistoryFiles {
         const line = file.bytes.subarray(at, end + 1);
         if (line.length > RECORD_BYTES)
           corrupt();
-        let decoded;
+        let decoded2;
         try {
-          decoded = decodeJournalText(new TextDecoder("utf-8", { fatal: true }).decode(line));
+          decoded2 = decodeJournalText(new TextDecoder("utf-8", { fatal: true }).decode(line));
         } catch {
           corrupt();
         }
@@ -4959,29 +7315,29 @@ class HistoryFiles {
         state.records++;
         if (state.records > LIMITS.segmentRecords)
           corrupt();
-        if (decoded.kind === "record") {
+        if (decoded2.kind === "record") {
           let base = state.committedSeq;
-          if (decoded.value.kind === "recovery") {
-            if (pending.length || at !== line.length || n !== decoded.value.previous.segment + 1)
+          if (decoded2.value.kind === "recovery") {
+            if (pending.length || at !== line.length || n !== decoded2.value.previous.segment + 1)
               corrupt();
-            if (decoded.value.previous.segment !== preceding.segment || decoded.value.previous.bytes !== preceding.bytes || decoded.value.previous.sha256 !== (preceding.identity ?? hash("")) || decoded.value.previous.committedSeq !== preceding.committedSeq || decoded.value.previous.highSeq !== (preceding.highSeq ?? preceding.committedSeq) || decoded.value.previous.committedBytes !== (preceding.committedBytes ?? 0))
+            if (decoded2.value.previous.segment !== preceding.segment || decoded2.value.previous.bytes !== preceding.bytes || decoded2.value.previous.sha256 !== (preceding.identity ?? hash2("")) || decoded2.value.previous.committedSeq !== preceding.committedSeq || decoded2.value.previous.highSeq !== (preceding.highSeq ?? preceding.committedSeq) || decoded2.value.previous.committedBytes !== (preceding.committedBytes ?? 0))
               corrupt();
-            base = decoded.value.previous.highSeq;
+            base = decoded2.value.previous.highSeq;
           } else if (preceding.tail && state.committedBytes === 0)
             corrupt();
           const next = BigInt(base) + BigInt(pending.length) + 1n;
-          if (decoded.seq !== String(next))
+          if (decoded2.seq !== String(next))
             corrupt();
-          state.highSeq = decoded.seq;
+          state.highSeq = decoded2.seq;
           pendingBytes += line.length;
           if (pendingBytes > 2 * RECORD_BYTES)
             corrupt();
-          pending.push(decoded);
+          pending.push(decoded2);
           checksum.update(line);
           continue;
         }
         const artifacts = batchArtifacts(pending);
-        if (!pending.length || !validBatchSequence(pending, decoded.previous) || decoded.previous !== state.committedSeq || decoded.first !== pending[0].seq || decoded.last !== pending.at(-1)?.seq || decoded.count !== pending.length || decoded.sha256 !== checksum.digest("hex") || canonicalJson(decoded.artifacts, RECORD_BYTES) !== canonicalJson(artifacts, RECORD_BYTES))
+        if (!pending.length || !validBatchSequence(pending, decoded2.previous) || decoded2.previous !== state.committedSeq || decoded2.first !== pending[0].seq || decoded2.last !== pending.at(-1)?.seq || decoded2.count !== pending.length || decoded2.sha256 !== checksum.digest("hex") || canonicalJson(decoded2.artifacts, RECORD_BYTES) !== canonicalJson(artifacts, RECORD_BYTES))
           corrupt();
         if (verifyArtifacts)
           for (const artifact of artifacts)
@@ -4994,19 +7350,19 @@ class HistoryFiles {
             if (e.kind === "owner" && e.value.kind === "fact" && e.value.fact.kind === "parent-admitted")
               this.readAdmission(e.value.fact.runId, e.value.fact.identity, budget);
         }
-        state.committedSeq = decoded.last;
+        state.committedSeq = decoded2.last;
         state.committedBytes = at;
-        state.navigationRoot = decoded.navigationRoot;
+        state.navigationRoot = decoded2.navigationRoot;
         yield {
           rows: pending,
-          marker: decoded,
+          marker: decoded2,
           segment: n,
           identity: file.identity,
           segmentBytes: file.bytes.length
         };
         pending = [];
         pendingBytes = 0;
-        checksum = createHash6("sha256");
+        checksum = createHash7("sha256");
       }
       if (pending.length)
         state.tail = true;
@@ -5025,7 +7381,7 @@ class HistoryFiles {
   validateRecovery(bridge, budget) {
     const p = bridge.previous;
     if (p.segment === 0) {
-      if (p.bytes || p.committedBytes || p.committedSeq !== "0" || p.highSeq !== "0" || p.sha256 !== hash(""))
+      if (p.bytes || p.committedBytes || p.committedSeq !== "0" || p.highSeq !== "0" || p.sha256 !== hash2(""))
         corrupt();
       return;
     }
@@ -5043,7 +7399,7 @@ class HistoryFiles {
       corrupt();
     const row = decodeJournalText(new TextDecoder("utf-8", { fatal: true }).decode(next.bytes.subarray(0, first + 1)));
     const marker = decodeJournalText(new TextDecoder("utf-8", { fatal: true }).decode(next.bytes.subarray(first + 1, second + 1)));
-    if (row.kind !== "record" || row.value.kind !== "recovery" || marker.kind !== "commit" || row.value.previous.segment !== segment || row.value.previous.committedBytes !== committedOffset || marker.count !== 1 || marker.first !== row.seq || marker.last !== row.seq || !validBatchSequence([row], marker.previous) || marker.sha256 !== hash(next.bytes.subarray(0, first + 1)) || marker.artifacts.length)
+    if (row.kind !== "record" || row.value.kind !== "recovery" || marker.kind !== "commit" || row.value.previous.segment !== segment || row.value.previous.committedBytes !== committedOffset || marker.count !== 1 || marker.first !== row.seq || marker.last !== row.seq || !validBatchSequence([row], marker.previous) || marker.sha256 !== hash2(next.bytes.subarray(0, first + 1)) || marker.artifacts.length)
       corrupt();
     this.validateRecovery(row.value, budget);
     this.assertPublished(segment + 1, second + 1, marker.last);
@@ -5066,11 +7422,11 @@ class HistoryFiles {
     let committed;
     const fd = await open(path, constants4.O_WRONLY | constants4.O_APPEND | (constants4.O_NOFOLLOW ?? 0));
     const assertOriginal = (bytes) => {
-      const original = fstatSync4(fd.fd), selected2 = lstatSync4(path);
+      const original = fstatSync4(fd.fd), selected2 = lstatSync6(path);
       if (original.dev !== selected2.dev || original.ino !== selected2.ino || original.nlink !== 1)
         corrupt();
       const snapshot = this.files.read(path, LIMITS.segmentBytes);
-      if (!snapshot || snapshot.identity !== hash(bytes))
+      if (!snapshot || snapshot.identity !== hash2(bytes))
         corrupt();
       return snapshot;
     };
@@ -5110,7 +7466,7 @@ class HistoryFiles {
         tail: false,
         bytes: Buffer.byteLength(body + trailer),
         committedBytes: Buffer.byteLength(body + trailer),
-        identity: hash(body + trailer),
+        identity: hash2(body + trailer),
         navigationRoot: undefined
       }
     };
@@ -5134,7 +7490,7 @@ class HistoryFiles {
       first: rows[0].seq,
       last: rows[rows.length - 1].seq,
       count: rows.length,
-      sha256: hash(body),
+      sha256: hash2(body),
       artifacts: batchArtifacts(rows)
     };
     const trailer = encodeJournalText(marker);
@@ -5183,7 +7539,7 @@ class HistoryFiles {
     try {
       lease.assert();
       this.files.assert(path, before, LIMITS.segmentBytes);
-      const opened = await fd.stat(), selected2 = lstatSync4(path);
+      const opened = await fd.stat(), selected2 = lstatSync6(path);
       if (opened.ino !== selected2.ino || opened.dev !== selected2.dev || opened.nlink !== 1)
         corrupt();
       beforeEffect?.();
@@ -5198,7 +7554,7 @@ class HistoryFiles {
       lease.assert();
       this.assertWritable();
       const after = this.files.read(path, LIMITS.segmentBytes);
-      if (!after || after.identity !== createHash6("sha256").update(before.bytes).update(body).update(trailer).digest("hex"))
+      if (!after || after.identity !== createHash7("sha256").update(before.bytes).update(body).update(trailer).digest("hex"))
         corrupt();
       return {
         committedSeq: marker.last,
@@ -5218,7 +7574,7 @@ class HistoryFiles {
   checkpoint(lease, state) {
     lease.assert();
     this.assertWritable();
-    const path = join3(this.directory, "checkpoint.json"), old = this.files.read(path);
+    const path = join9(this.directory, "checkpoint.json"), old = this.files.read(path);
     const body = encoded({
       schema: "cadence-history-checkpoint/2",
       storeId: this.format.storeId,
@@ -5240,434 +7596,6 @@ function emptyScan() {
     bytes: 0,
     identity: null
   };
-}
-
-// src/history/live.ts
-function scopedSnapshot(source, scope) {
-  if (scope.kind === "task" || source.scope.kind === "child")
-    return;
-  if (!source.runs.some((run) => scope.kind === "run" ? run.runId === scope.id && run.childRunId === null : run.childRunId === scope.id))
-    return;
-  return decodeSnapshot({
-    ...source,
-    scope,
-    runs: source.runs.filter((run) => scope.kind === "run" ? run.runId === scope.id : run.childRunId === scope.id),
-    horizon: {
-      ...source.horizon,
-      historicalRuns: { ...source.horizon.historicalRuns, scope }
-    }
-  });
-}
-
-class HistoryLive {
-  writer;
-  projection;
-  viewers = new Set;
-  rings = new Map;
-  pending = new Map;
-  scheduled = false;
-  closed = false;
-  detach;
-  detachSnapshots;
-  constructor(writer, projection) {
-    this.writer = writer;
-    this.projection = projection;
-    this.detachSnapshots = projection.observeSnapshots((snapshot) => {
-      for (const viewer of this.viewers)
-        if (viewer.keys === null && canonicalJson(viewer.scope) === canonicalJson(snapshot.scope)) {
-          viewer.keys = new Set(snapshot.keys);
-          viewer.seq = snapshot.committedSeq;
-        }
-    });
-    this.detach = writer.subscribeCommitted((notice) => {
-      if (this.closed)
-        return;
-      if (notice.gap)
-        for (const v of this.viewers)
-          this.enqueue(v, this.watermark(v.scope));
-      for (const id of notice.runs)
-        this.pending.set(`run/${id}`, { kind: "run", id });
-      for (const id of notice.tasks)
-        this.pending.set(`task/${id}`, { kind: "task", id });
-      for (const v of this.viewers)
-        this.pending.set(`${v.scope.kind}/${v.scope.id}`, v.scope);
-      if (this.pending.size > LIMITS.maxPageEntries) {
-        this.pending.clear();
-        for (const v of this.viewers)
-          this.enqueue(v, this.watermark(v.scope));
-      }
-      if (!this.scheduled) {
-        this.scheduled = true;
-        setImmediate(() => {
-          this.drain();
-        });
-      }
-    });
-  }
-  watermark = (input) => {
-    const scope = decodeScope(input), session = this.projection.environment.session();
-    return decodeLiveEvent({
-      kind: "heartbeat",
-      storeId: this.writer.files.format.storeId,
-      epoch: session.epoch,
-      scope,
-      committedSeq: this.writer.committedSeq
-    });
-  };
-  subscribe = (input, callback) => {
-    if (this.closed || this.viewers.size >= LIMITS.viewers)
-      throw new ContractError("capacity");
-    const scope = decodeScope(input), viewer = {
-      scope,
-      callback,
-      seq: this.writer.committedSeq,
-      closed: false,
-      queue: [],
-      bytes: 0,
-      scheduled: false,
-      keys: null
-    };
-    this.viewers.add(viewer);
-    return () => {
-      viewer.closed = true;
-      viewer.queue = [];
-      viewer.bytes = 0;
-      this.viewers.delete(viewer);
-    };
-  };
-  enqueue(v, event) {
-    if (v.closed)
-      return;
-    const bytes = Buffer.byteLength(canonicalJson(event));
-    if (v.queue.length >= LIMITS.viewerMessages || v.bytes + bytes > LIMITS.viewerBytes) {
-      v.queue = [this.watermark(v.scope)];
-      v.bytes = Buffer.byteLength(canonicalJson(v.queue[0]));
-    } else {
-      v.queue.push(event);
-      v.bytes += bytes;
-    }
-    if (v.scheduled)
-      return;
-    v.scheduled = true;
-    setImmediate(() => {
-      this.pump(v);
-    });
-  }
-  async pump(v) {
-    try {
-      while (!v.closed && v.queue.length) {
-        const event = v.queue.shift();
-        if (!event)
-          break;
-        v.bytes -= Buffer.byteLength(canonicalJson(event));
-        await v.callback(event);
-      }
-    } catch {
-      v.closed = true;
-      this.viewers.delete(v);
-      v.queue = [];
-      v.bytes = 0;
-    } finally {
-      v.scheduled = false;
-    }
-  }
-  async drain() {
-    const order = { task: 0, run: 1, child: 2 };
-    const scopes = [...this.pending.values()].sort((a, b) => order[a.kind] - order[b.kind]);
-    this.pending.clear();
-    const sources = [];
-    try {
-      for (const scope of scopes) {
-        if (this.closed)
-          return;
-        if (scope.kind !== "run" && ![...this.viewers].some((v) => canonicalJson(v.scope) === canonicalJson(scope)))
-          continue;
-        let snapshot;
-        for (let i = sources.length - 1;i >= 0 && !snapshot; i--)
-          snapshot = scopedSnapshot(sources[i], scope);
-        const reused = snapshot !== undefined;
-        try {
-          snapshot ??= await this.projection.snapshot(scope);
-        } catch {
-          for (const v of this.viewers)
-            if (v.scope.id === scope.id)
-              this.enqueue(v, this.watermark(v.scope));
-          continue;
-        }
-        if (!reused && sources.length < LIMITS.viewers && (scope.kind === "task" || scopes.some((s) => s.kind === "child" && snapshot.runs.some((r) => r.childRunId === s.id))))
-          sources.push(snapshot);
-        const key = `${scope.kind}/${scope.id}`, old = this.rings.get(key);
-        const update = (previousSeq, selected2 = scope, previousKeys) => decodeLiveEvent({
-          kind: "update",
-          storeId: snapshot.storeId,
-          epoch: snapshot.epoch,
-          scope: selected2,
-          previousSeq,
-          committedSeq: snapshot.committedSeq,
-          context: snapshot.context,
-          runs: snapshot.runs.filter((r) => selected2.kind !== "child" || r.childRunId === selected2.id),
-          removed: [
-            ...previousKeys ?? new Set((old?.snapshot.runs ?? []).map((r) => r.childRunId ?? r.runId))
-          ].filter((id) => !snapshot.runs.some((r) => (r.childRunId ?? r.runId) === id))
-        });
-        if (old && old.snapshot.committedSeq === snapshot.committedSeq)
-          continue;
-        if (scope.kind === "run") {
-          const event = update(old?.snapshot.committedSeq ?? "0"), bytes = Buffer.byteLength(canonicalJson(event));
-          const ring = old ?? { events: [], bytes: 0, snapshot };
-          while (ring.events.length && (ring.events.length >= LIMITS.ringEvents || ring.bytes + bytes > LIMITS.ringBytes))
-            ring.bytes -= Buffer.byteLength(canonicalJson(ring.events.shift()));
-          ring.events.push(event);
-          ring.bytes += bytes;
-          ring.snapshot = snapshot;
-          this.rings.set(key, ring);
-          while (this.rings.size > LIMITS.maxPageEntries || [...this.rings.values()].reduce((n, r) => n + r.bytes, 0) > 32 * 1024 * 1024) {
-            const first = this.rings.keys().next().value;
-            if (first)
-              this.rings.delete(first);
-            else
-              break;
-          }
-        }
-        for (const v of this.viewers) {
-          const matches = v.scope.kind === scope.kind && v.scope.id === scope.id || scope.kind === "run" && v.scope.kind === "child" && snapshot.runs.some((r) => r.childRunId === v.scope.id);
-          if (!matches || BigInt(v.seq) >= BigInt(snapshot.committedSeq))
-            continue;
-          try {
-            if (!v.keys) {
-              this.enqueue(v, this.watermark(v.scope));
-              continue;
-            }
-            const event = update(v.seq, v.scope, v.keys);
-            v.keys = new Set(snapshot.runs.filter((r) => v.scope.kind !== "child" || r.childRunId === v.scope.id).map((r) => r.childRunId ?? r.runId));
-            v.seq = snapshot.committedSeq;
-            this.enqueue(v, event);
-          } catch {
-            this.enqueue(v, this.watermark(v.scope));
-          }
-        }
-      }
-    } catch {
-      for (const viewer of this.viewers) {
-        try {
-          this.enqueue(viewer, this.watermark(viewer.scope));
-        } catch {
-          viewer.closed = true;
-          this.viewers.delete(viewer);
-        }
-      }
-    } finally {
-      this.scheduled = false;
-      if (!this.closed && this.pending.size) {
-        this.scheduled = true;
-        setImmediate(() => {
-          this.drain();
-        });
-      }
-    }
-  }
-  replay(runId, after) {
-    const ring = this.rings.get(`run/${runId}`);
-    if (!ring)
-      return null;
-    if (after === ring.snapshot.committedSeq)
-      return [];
-    const at = ring.events.findIndex((e) => e.kind === "update" && e.previousSeq === after);
-    return at < 0 ? null : structuredClone(ring.events.slice(at));
-  }
-  close() {
-    this.closed = true;
-    this.detach();
-    this.detachSnapshots();
-    this.pending.clear();
-    this.rings.clear();
-    for (const v of this.viewers) {
-      v.closed = true;
-      v.queue = [];
-    }
-    this.viewers.clear();
-  }
-}
-
-// src/history/navigation.ts
-import { createHash as createHash7 } from "node:crypto";
-import { lstatSync as lstatSync6 } from "node:fs";
-import { dirname as dirname5, join as join5 } from "node:path";
-
-// src/history/index-tree.ts
-import { lstatSync as lstatSync5 } from "node:fs";
-import { join as join4 } from "node:path";
-var MAX_NODE = 16 * 1024;
-var ACTIVE_KEY = "active";
-function chainHash(seq, previous, previousHash) {
-  return hash(canonicalJson({ seq, previous, previousHash }));
-}
-function decodeNode(value) {
-  if (!value || typeof value !== "object" || !("kind" in value))
-    throw new ContractError("receipt-inconclusive");
-  if (value.kind === "leaf") {
-    const o2 = closed(value, ["kind", "entries"]);
-    if (!o2.entries || typeof o2.entries !== "object" || Array.isArray(o2.entries))
-      throw new ContractError("receipt-inconclusive");
-    const entries = {};
-    for (const [id, v] of Object.entries(o2.entries)) {
-      if (id !== ACTIVE_KEY)
-        decodeId(id.startsWith("roster:") ? id.slice(7) : id);
-      const h = closed(v, ["seq", "hash"]);
-      entries[id] = { seq: decodeSequence(h.seq), hash: decodeHash(h.hash) };
-    }
-    if (Object.keys(entries).length > 32)
-      throw new ContractError("receipt-inconclusive");
-    return { kind: "leaf", entries };
-  }
-  const o = closed(value, ["kind", "children"]);
-  if (o.kind !== "branch" || !o.children || typeof o.children !== "object" || Array.isArray(o.children))
-    throw new ContractError("receipt-inconclusive");
-  const children = {};
-  for (const [key, v] of Object.entries(o.children)) {
-    if (!/^[0-9a-f]$/.test(key))
-      throw new ContractError("receipt-inconclusive");
-    children[key] = decodeHash(v);
-  }
-  return { kind: "branch", children };
-}
-
-class IndexTree {
-  files;
-  cache = new Map;
-  constructor(files) {
-    this.files = files;
-  }
-  path(id) {
-    return join4(this.files.directory, "indexes", "nodes", id.slice(0, 2), `${id}.json`);
-  }
-  load(id, budget, unit) {
-    decodeHash(id);
-    const remembered = unit?.get(id);
-    if (remembered)
-      return remembered;
-    const old = this.cache.get(id);
-    if (budget && old?.budget === budget)
-      return old.node;
-    try {
-      let bytes;
-      if (budget) {
-        const path = this.path(id);
-        budget.reserve(0);
-        const selected2 = lstatSync5(path).size;
-        if (selected2 > MAX_NODE)
-          throw new ContractError("receipt-inconclusive");
-        bytes = readRange(this.files, path, 0, selected2, budget);
-      } else {
-        const file = this.files.files.read(this.path(id), MAX_NODE);
-        if (!file)
-          throw new ContractError("receipt-inconclusive");
-        bytes = file.bytes;
-      }
-      if (hash(bytes) !== id)
-        throw new ContractError("receipt-inconclusive");
-      const node = decodeNode(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
-      if (this.cache.size >= 128) {
-        const first = this.cache.keys().next().value;
-        if (first)
-          this.cache.delete(first);
-      }
-      this.cache.set(id, { node, budget });
-      if (unit) {
-        if (unit.size >= 128) {
-          const first = unit.keys().next().value;
-          if (first)
-            unit.delete(first);
-        }
-        unit.set(id, node);
-      }
-      return node;
-    } catch {
-      throw new ContractError("receipt-inconclusive");
-    }
-  }
-  head(root, id, budget) {
-    return this.find(root, id, budget);
-  }
-  find(root, id, budget, unit) {
-    if (id !== ACTIVE_KEY)
-      decodeId(id.startsWith("roster:") ? id.slice(7) : id);
-    let selected2 = root, depth = 0;
-    const key = hash(id);
-    while (selected2) {
-      if (depth > 64)
-        throw new ContractError("receipt-inconclusive");
-      const node = this.load(selected2, budget, unit);
-      if (node.kind === "leaf")
-        return node.entries[id];
-      selected2 = node.children[key[depth++]] ?? null;
-    }
-  }
-  heads(root, ids) {
-    const unit = new Map, heads = new Map;
-    for (const id of ids) {
-      const head = this.find(root, id, undefined, unit);
-      if (head)
-        heads.set(id, head);
-    }
-    return heads;
-  }
-  update(lease, root, updates, charge) {
-    if (!updates.size)
-      return root;
-    const put = (node) => {
-      const body = canonicalJson(node, MAX_NODE), id = hash(body), path = this.path(id);
-      lease.assert();
-      const previous = this.files.files.read(path, MAX_NODE);
-      if (previous) {
-        if (previous.identity !== id)
-          throw new ContractError("corrupt-selected");
-        return id;
-      }
-      charge(Buffer.byteLength(body));
-      this.files.files.create(path, body, Buffer.byteLength(body));
-      return id;
-    };
-    const write = (old, changes, depth) => {
-      if (depth > 64)
-        throw new ContractError("capacity");
-      const node = old ? this.load(old) : { kind: "leaf", entries: {} };
-      if (node.kind === "leaf") {
-        const entries = { ...node.entries, ...Object.fromEntries(changes) };
-        if (Object.keys(entries).length <= 32)
-          return put({ kind: "leaf", entries });
-        const groups2 = new Map;
-        for (const [id, value] of Object.entries(entries)) {
-          const digit = hash(id)[depth];
-          if (!digit)
-            throw new ContractError("capacity");
-          const group = groups2.get(digit) ?? new Map;
-          group.set(id, value);
-          groups2.set(digit, group);
-        }
-        return put({
-          kind: "branch",
-          children: Object.fromEntries([...groups2].map(([digit, group]) => [
-            digit,
-            write(null, group, depth + 1)
-          ]))
-        });
-      }
-      const children = { ...node.children }, groups = new Map;
-      for (const [id, value] of changes) {
-        const digit = hash(id)[depth];
-        if (!digit)
-          throw new ContractError("capacity");
-        const group = groups.get(digit) ?? new Map;
-        group.set(id, value);
-        groups.set(digit, group);
-      }
-      for (const [digit, group] of groups)
-        children[digit] = write(children[digit] ?? null, group, depth + 1);
-      return put({ kind: "branch", children });
-    };
-    return write(root, updates, 0);
-  }
 }
 
 // src/history/run-state.ts
@@ -6231,6 +8159,2900 @@ function projectRunObservation(runId, epoch, o, child) {
   };
 }
 
+// src/history/recovery.ts
+function digestHistory(files, exclude) {
+  files.assertFormat();
+  const digest = createHash8("sha256");
+  let count = 0;
+  const walk = (path, depth) => {
+    if (depth > 8 || !files.files.directory(path))
+      throw new ContractError("corrupt-selected");
+    const directory = lstatSync7(path);
+    digest.update(`incarnation:${directory.dev}:${directory.ino}
+`);
+    const dir = opendirSync4(path), names2 = [];
+    try {
+      for (let e = dir.readSync();e; e = dir.readSync()) {
+        if (++count > LIMITS.dataFrames)
+          throw new ContractError("capacity");
+        names2.push(e.name);
+      }
+    } finally {
+      dir.closeSync();
+    }
+    for (const name of names2.sort()) {
+      const selected2 = join10(path, name);
+      if (selected2 === exclude)
+        continue;
+      const rel = relative4(files.directory, selected2);
+      if (lstatSync7(selected2).isDirectory()) {
+        digest.update(`directory:${Buffer.byteLength(rel)}:${rel}
+`);
+        walk(selected2, depth + 1);
+      } else {
+        const value = files.files.read(selected2, LIMITS.segmentBytes);
+        if (!value)
+          throw new ContractError("conflict");
+        digest.update(`file:${Buffer.byteLength(rel)}:${rel}:${value.stamp}:${value.bytes.length}:`).update(value.bytes);
+      }
+    }
+  };
+  walk(files.directory, 0);
+  files.assertFormat();
+  return digest.digest("hex");
+}
+
+class HistoryRecovery {
+  coordination;
+  committed = new WeakMap;
+  constructor(coordination) {
+    this.coordination = coordination;
+  }
+  files() {
+    const files = HistoryFiles.open(this.coordination);
+    if (!files)
+      throw new ContractError("unavailable");
+    return files;
+  }
+  assertCommitted(fact) {
+    const assert = this.committed.get(fact);
+    if (!assert)
+      throw new ContractError("conflict");
+    assert();
+  }
+  async inspect(epoch) {
+    decodeId(epoch);
+    const files = this.files(), before = digestHistory(files), state = emptyScan();
+    const auth = new Set, processes = new Set, publication = new Set, unfinished = new Set, metadata = new Set, runs = new Map;
+    for (const batch of files.scan(state))
+      for (const row of batch.rows) {
+        const v = row.value;
+        if (v.kind === "recovery") {
+          auth.clear();
+          processes.clear();
+          publication.clear();
+          unfinished.clear();
+          metadata.clear();
+          runs.clear();
+        }
+        if (v.kind === "admission" && v.intent.identity.kind === "action") {
+          if (v.intent.runId) {
+            if (runs.size >= LIMITS.episodes || runs.has(v.intent.runId))
+              throw new ContractError("corrupt-selected");
+            runs.set(v.intent.runId, new RunState(v.intent.runId));
+          } else
+            metadata.add(v.intent.operationId);
+        }
+        for (const [id, state2] of runs) {
+          state2.apply(row, batch.marker.last);
+          if (state2.drained)
+            runs.delete(id);
+        }
+        if (v.kind === "capture" || v.kind === "owner")
+          for (const e of v.events) {
+            if (e.kind === "capture" && e.value.event.kind === "detail-begin" && v.kind === "capture")
+              unfinished.add(`worker/${v.link.childRunId}/${e.value.event.detailId}`);
+            if (e.kind === "owner" && e.value.kind === "content-begin" && v.kind === "owner")
+              unfinished.add(`owner/${v.link.operationId}/${e.value.detailId}`);
+            if (e.kind === "end")
+              unfinished.delete(`${e.detail.origin.kind}/${e.detail.origin.id}/${e.detail.detailId}`);
+          }
+        if (v.kind === "auth-preparation")
+          auth.add(v.intent.operationId);
+        if (v.kind === "auth-settlement")
+          auth.delete(v.result.operationId);
+        if (v.kind === "launch")
+          processes.add(v.link.childRunId);
+        if (v.kind === "settlement" && v.completion.native.closure !== "unconfirmed")
+          processes.delete(v.link.childRunId);
+        if (v.kind === "owner") {
+          for (const e of v.events)
+            if (e.kind === "owner" && e.value.kind === "fact") {
+              const f = e.value.fact;
+              if (f.kind === "check-start")
+                processes.add(f.checkId);
+              if (f.kind === "check-settled" && f.native.closure !== "unconfirmed")
+                processes.delete(f.checkId);
+              if (f.kind === "publication-intent")
+                publication.add(f.publicationId);
+              if (f.kind === "publication-settled") {
+                if (f.status === "published") {
+                  publication.delete(f.publicationId);
+                  metadata.delete(v.link.operationId);
+                } else
+                  publication.add(f.publicationId);
+              }
+            }
+        }
+      }
+    if (before !== digestHistory(files))
+      throw new ContractError("conflict");
+    return {
+      digest: before,
+      processes: processes.size ? "unknown" : "externally-resolved",
+      credentials: auth.size ? "unknown" : "independently-resolved",
+      storage: state.tail || publication.size || unfinished.size || metadata.size || runs.size ? "unknown" : "independently-resolved"
+    };
+  }
+  async append(confirmation, observeWrite) {
+    if (typeof confirmation.assertLocalAuthority !== "function" || confirmation.acknowledgeEscapedProcesses !== true || confirmation.processes !== "externally-resolved" || confirmation.credentials !== "independently-resolved" || confirmation.storage !== "independently-resolved")
+      throw new ContractError("forbidden");
+    const expected = structuredClone(confirmation.expected), files = this.files();
+    files.assertWritable();
+    if (!expected.history || expected.owner !== "absent")
+      throw new ContractError("quarantine");
+    const current = await inspectRecovery(this.coordination, this);
+    if (JSON.stringify(current) !== JSON.stringify(expected))
+      throw new ContractError("conflict");
+    const state = files.inspect(), recoveryId = randomUUID7();
+    const bridge = {
+      kind: "recovery",
+      recoveryId,
+      epoch: expected.epoch,
+      coordinationDigest: expected.coordinationDigest,
+      historyDigest: expected.history.digest,
+      previous: {
+        segment: state.segment,
+        bytes: state.bytes,
+        sha256: state.identity ?? hash2(""),
+        committedBytes: state.committedBytes ?? state.bytes,
+        committedSeq: state.committedSeq,
+        highSeq: state.highSeq ?? state.committedSeq
+      },
+      acknowledgments: { processes: true, credentials: true, storage: true }
+    };
+    const path = files.segmentPath(state.segment + 1);
+    const assertCurrent = async () => {
+      await confirmation.assertLocalAuthority(structuredClone(expected));
+      const selected2 = await inspectRecovery(this.coordination);
+      if (selected2.owner !== "absent")
+        throw new ContractError("quarantine");
+      if (selected2.epoch !== expected.epoch || selected2.coordinationDigest !== expected.coordinationDigest || digestHistory(files, path) !== expected.history?.digest || this.coordination.recoverySnapshot().digest !== expected.coordinationDigest)
+        throw new ContractError("conflict");
+    };
+    await confirmation.assertLocalAuthority(structuredClone(expected));
+    if (digestHistory(files) !== expected.history.digest)
+      throw new ContractError("conflict");
+    const row = {
+      kind: "record",
+      id: randomUUID7(),
+      seq: String(BigInt(bridge.previous.highSeq) + 1n),
+      value: bridge
+    };
+    let quota = LIMITS.checkoutQuotaBytes;
+    for (const batch of files.scan())
+      for (const row2 of batch.rows)
+        if (row2.value.kind === "admission" && row2.value.policy)
+          quota = row2.value.policy.quotaBytes;
+    const bytes = Buffer.byteLength(files.encodeBatch(state, [row]).body + files.encodeBatch(state, [row]).trailer);
+    if (files.usage() + bytes > quota || files.freeBytes() < LIMITS.freeSpaceFloorBytes + bytes)
+      throw new ContractError("recording-exhausted");
+    const after = await files.appendRecovery(state, row, assertCurrent, observeWrite);
+    const assert = () => {
+      files.assertWritable();
+      files.assertRecoveryIdle();
+      files.files.assert(path, after.snapshot, LIMITS.segmentBytes);
+      if (digestHistory(files, path) !== expected.history?.digest)
+        throw new ContractError("conflict");
+    };
+    assert();
+    const fact = {
+      recoveryId,
+      committedSeq: after.state.committedSeq,
+      epoch: expected.epoch,
+      coordinationDigest: expected.coordinationDigest,
+      historyDigest: expected.history.digest,
+      segmentIdentity: after.state.identity ?? ""
+    };
+    this.committed.set(fact, assert);
+    return fact;
+  }
+}
+
+// src/service/cli.ts
+function nativeCall(c, operation, reveal = false, controlBody) {
+  const access = c.localAccess();
+  const url = new URL(`${access.endpoint}/local/v1/admin/${operation}`);
+  const write2 = !["status", "diagnose"].includes(operation);
+  const body = write2 ? JSON.stringify(controlBody ?? (reveal ? { reveal: true } : {})) : undefined;
+  return new Promise((resolve6, reject) => {
+    let timer;
+    const fail = () => {
+      clearTimeout(timer);
+      reject(new ContractError("unavailable"));
+    };
+    const req = request(url, {
+      method: write2 ? "POST" : "GET",
+      agent: false,
+      headers: {
+        "X-Cadence-Local": access.capability,
+        Connection: "close",
+        ...body ? {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body)
+        } : {}
+      }
+    }, (res) => {
+      let bytes = 0;
+      const chunks = [];
+      res.on("error", fail);
+      res.on("data", (chunk) => {
+        bytes += chunk.length;
+        if (bytes > 16384) {
+          res.destroy();
+          fail();
+        } else
+          chunks.push(chunk);
+      });
+      res.on("end", () => {
+        try {
+          if (res.statusCode !== 200)
+            throw new ContractError("unavailable");
+          const reply = closed(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)), 16384), ["kind", "value"]);
+          if (reply.kind !== "ok")
+            throw new ContractError("unavailable");
+          if (["status", "diagnose", "stop"].includes(operation)) {
+            if (!reply.value || typeof reply.value !== "object" || !("epoch" in reply.value) || reply.value.epoch !== access.epoch)
+              throw new ContractError("stale");
+          }
+          clearTimeout(timer);
+          resolve6(reply.value);
+        } catch {
+          fail();
+        }
+      });
+    });
+    timer = setTimeout(() => {
+      fail();
+      req.destroy();
+    }, 2000);
+    req.on("error", fail);
+    req.on("close", fail);
+    req.end(body);
+  });
+}
+var pause = (ms) => new Promise((resolve6) => setTimeout(resolve6, ms));
+async function serviceStatus(c, diagnose = false) {
+  const observed = c.inspect();
+  if (observed.status === "absent" || observed.status === "stopped")
+    return observed;
+  try {
+    return await nativeCall(c, diagnose ? "diagnose" : "status");
+  } catch {
+    return {
+      status: observed.status === "quarantined" ? "quarantined" : "unavailable"
+    };
+  }
+}
+async function stopService(c) {
+  let epoch;
+  try {
+    const reply = closed(await nativeCall(c, "stop"), ["status", "epoch"]);
+    if (reply.status !== "accepted")
+      throw new ContractError("unavailable");
+    epoch = decodeId(reply.epoch);
+  } catch {
+    return { status: "unconfirmed" };
+  }
+  const deadline = performance.now() + LIMITS.stopWaitMs;
+  while (performance.now() < deadline) {
+    const observed = c.inspect();
+    if ("epoch" in observed && observed.epoch === epoch && observed.status === "stopped")
+      return { status: "stopped", epoch };
+    if (observed.status === "quarantined")
+      return { status: "quarantined", epoch };
+    if ("epoch" in observed && observed.epoch !== null && observed.epoch !== epoch)
+      return { status: "unconfirmed", epoch };
+    await pause(25);
+  }
+  return { status: "unconfirmed", epoch };
+}
+function failedStatus(result) {
+  return !!(result && typeof result === "object" && ("status" in result) && ["unconfirmed", "unavailable", "quarantined", "refused"].includes(String(result.status)));
+}
+function serverConfigHint(error) {
+  return `Cadence changed nothing: ${error.path} ${error.reason}.
+Fix it and run the command again; the file holds the WebUI port and token as ${PORT_KEY}=<1-65535> and ${TOKEN_KEY}=<at least 32 characters>, one line each.
+`;
+}
+function startupGuidance(result, input) {
+  let report;
+  try {
+    report = decodeStartupReport(result);
+  } catch {
+    return "";
+  }
+  const agent = input.config.agentDir;
+  const inspect = `Inspect: cadence-service diagnose|recover inspect --workspace ${JSON.stringify(input.workspace)}
+`;
+  switch (report.stage) {
+    case "package":
+      return `Cadence refused its installed package files (web/dist or agents); reinstall the package rather than editing it.
+`;
+    case "pi-agent-directory":
+      return `Pi's agent directory ${agent} must be an existing real directory (not a symlink) owned by you.
+`;
+    case "pi-auth":
+      return `${join11(agent, "auth.json")} must be your own single-link regular file holding valid Pi credentials; log in to Pi first.
+`;
+    case "pi-models":
+      return `${join11(agent, "models.json")} must be your own single-link regular file using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.
+`;
+    case "pi-runtime":
+      return `Loading Pi's SDK model runtime failed after the owner registered (optional SDK packages missing, or sources the SDK refuses); it stays quarantined.
+${inspect}`;
+    default:
+      return report.status === "quarantined" ? `The owner registered, then refused; it stays quarantined.
+${inspect}` : "";
+  }
+}
+async function startService(options, foreground, hostUrl) {
+  const network = networkSnapshot(process.env);
+  const env = hostEnvironment(process.env);
+  let input;
+  try {
+    input = decodeHostInput(selectStart(options, process.env));
+  } catch (error) {
+    if (error instanceof ServerConfigRefusal)
+      process.stderr.write(serverConfigHint(error));
+    throw error;
+  }
+  const serialized = `${JSON.stringify(input)}
+`;
+  if (Buffer.byteLength(serialized) > STARTUP_INPUT_BYTES)
+    throw new ContractError("oversize");
+  const c = new ServiceCoordination(input.workspace, input.stateHome);
+  const existing = await serviceStatus(c);
+  if (existing && typeof existing === "object" && "status" in existing && existing.status === "alive") {
+    const running = readHostConfig(c);
+    if (running && encoded(running) !== encoded(input.config))
+      throw new ContractError("conflict");
+    return existing;
+  }
+  return launchHost(input, c, foreground, hostUrl, input.config.cwd, env, network);
+}
+async function launchHost(input, c, foreground, hostUrl, cwd, env, network) {
+  const serialized = `${JSON.stringify(input)}
+`;
+  if (Buffer.byteLength(serialized) > STARTUP_INPUT_BYTES)
+    throw new ContractError("oversize");
+  if (!sameNetwork(network, networkSnapshot(process.env)))
+    throw new ContractError("stale");
+  const child = spawn(process.execPath, [
+    ...env.NODE_USE_ENV_PROXY === "1" ? ["--use-env-proxy"] : [],
+    fileURLToPath2(hostUrl)
+  ], {
+    cwd,
+    env,
+    detached: !foreground,
+    windowsHide: true,
+    stdio: ["pipe", "pipe", "ignore"]
+  });
+  let completed = false;
+  const closure = new Promise((resolve6) => child.once("close", (code2, signal) => {
+    completed = true;
+    if (foreground && (code2 !== 0 || signal !== null))
+      process.exitCode = 1;
+    resolve6();
+  }));
+  const startup = new Promise((resolve6) => {
+    let bytes = "", resolved = false;
+    const finish = (value) => {
+      if (!resolved) {
+        resolved = true;
+        resolve6(value);
+      }
+    };
+    child.on("error", () => finish({ status: "unconfirmed" }));
+    child.stdin.on("error", () => finish({ status: "unconfirmed" }));
+    child.stdout.on("error", () => finish({ status: "unconfirmed" }));
+    child.stdout.on("data", (chunk) => {
+      if (Buffer.byteLength(bytes) + chunk.length > 4096) {
+        finish({ status: "unconfirmed" });
+        return;
+      }
+      bytes += chunk.toString("utf8");
+      if (!bytes.endsWith(`
+`))
+        return;
+      try {
+        const line = parseWireJson(bytes, 4096);
+        if (line && typeof line === "object" && "status" in line && line.status !== "ready") {
+          finish(decodeStartupReport(line));
+          return;
+        }
+        const ready = closed(line, ["status", "epoch"]);
+        if (ready.status !== "ready")
+          throw new ContractError("unavailable");
+        const epoch = decodeId(ready.epoch);
+        nativeCall(c, "status").then((reply) => {
+          if (!reply || typeof reply !== "object" || !("epoch" in reply) || reply.epoch !== epoch)
+            throw new ContractError("stale");
+          finish(reply);
+        }).catch(() => finish({ status: "unconfirmed" }));
+      } catch {
+        finish({ status: "unconfirmed" });
+      }
+    });
+    child.once("close", () => finish({ status: "unconfirmed" }));
+  });
+  child.stdin.end(serialized);
+  let timer;
+  const result = await Promise.race([
+    startup,
+    new Promise((resolve6) => {
+      timer = setTimeout(() => resolve6({ status: "unconfirmed" }), LIMITS.startWaitMs);
+    })
+  ]);
+  clearTimeout(timer);
+  const guidance = "kind" in input ? "" : startupGuidance(result, input);
+  if (guidance)
+    process.stderr.write(guidance);
+  child.stdout.destroy();
+  child.stdin.destroy();
+  if (!foreground)
+    child.unref();
+  else if (!completed) {
+    if (failedStatus(result))
+      process.exitCode = 1;
+    process.stdout.write(`${JSON.stringify(result)}
+`);
+    await closure;
+    return null;
+  }
+  return result;
+}
+async function privateLink(workspace, stateHome, config) {
+  try {
+    const value = closed(await nativeCall(workspace === null ? new GatewayStore(config ?? serverConfigPath(homedir3()), stateHome) : new ServiceCoordination(workspace, stateHome), "token-link", true), ["link"]);
+    return text(value.link, 4096, true);
+  } catch {
+    return;
+  }
+}
+class ProjectOpenRefusal extends ContractError {
+  noOwner;
+  constructor(noOwner) {
+    super("unavailable");
+    this.noOwner = noOwner;
+  }
+}
+async function openProjectDirectory(workspace, stateHome, agentDir, hostUrl) {
+  if (privateWorkspace(workspace, stateHome))
+    throw new ContractError("forbidden");
+  effectiveWorkspace(workspace, stateHome);
+  const c = new ServiceCoordination(workspace, stateHome);
+  const kept = readHostConfig(c);
+  const options = {
+    workspace,
+    stateHome,
+    ...!kept ? { port: 0, agentDir } : {}
+  };
+  const result = await startService(options, false, hostUrl);
+  if (!result || typeof result !== "object" || !("status" in result) || result.status !== "alive")
+    throw new ProjectOpenRefusal(!!result && typeof result === "object" && "status" in result && result.status === "refused" && c.inspect().status === "absent");
+  const link = await privateLink(c.store.root, stateHome);
+  if (!link)
+    throw new ContractError("unavailable");
+  return { path: c.store.root, link };
+}
+
+// src/service/http.ts
+import { createHash as createHash9, randomUUID as randomUUID8 } from "node:crypto";
+import {
+  createServer
+} from "node:http";
+import { WebSocketServer } from "ws";
+function refusal(code2 = "invalid", uncertain = false) {
+  return {
+    kind: "error",
+    error: publicError(code2, uncertain ? "uncertain" : "none")
+  };
+}
+function fixedHeaders(response) {
+  response.setHeader("Cache-Control", "no-store");
+  response.setHeader("Referrer-Policy", "no-referrer");
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  response.setHeader("X-Frame-Options", "DENY");
+  response.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+}
+function send(response, status, value) {
+  if (response.destroyed || response.writableEnded)
+    return;
+  response.statusCode = status;
+  response.setHeader("Content-Type", "application/json; charset=utf-8");
+  response.end(canonicalJson(value, LIMITS.controlBytes));
+}
+function unavailable() {
+  throw new ContractError("unavailable");
+}
+
+class ServiceHttpServer {
+  server;
+  policy;
+  origin = "";
+  accepting = false;
+  stopped = false;
+  closePromise;
+  sockets = new Set;
+  serving = new Set;
+  requests = new Set;
+  attachments = new Map;
+  viewers = new Set;
+  bodies = 0;
+  reads = 0;
+  exports = 0;
+  searches = 0;
+  assets = new Map;
+  wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: LIMITS.wsClientFrameBytes,
+    perMessageDeflate: false,
+    clientTracking: false
+  });
+  unRevoke;
+  configuration;
+  get options() {
+    if (!this.configuration)
+      unavailable();
+    return this.configuration;
+  }
+  heartbeat;
+  constructor(options) {
+    this.policy = decodeHttpPolicy(options.policy);
+    let total = 0;
+    for (const asset of options.assets ?? []) {
+      total += asset.bytes.byteLength;
+      if (!/^\/(?:app|assets\/[a-zA-Z0-9_-]+\.(?:js|css|woff2|woff|ttf|svg))$/.test(asset.path) || this.assets.has(asset.path) || asset.bytes.byteLength > 16 * 1024 * 1024 || total > 64 * 1024 * 1024)
+        throw new ContractError("invalid");
+      this.assets.set(asset.path, {
+        ...asset,
+        bytes: Uint8Array.from(asset.bytes),
+        etag: `"${createHash9("sha256").update(asset.bytes).digest("hex")}"`
+      });
+    }
+    this.server = createServer({
+      maxHeaderSize: LIMITS.headerBytes,
+      headersTimeout: 1e4,
+      requestTimeout: 30000,
+      keepAliveTimeout: 5000
+    }, (req, res) => {
+      this.handle(req, res);
+    });
+    this.server.maxConnections = 64;
+    this.server.on("connection", (socket) => {
+      this.sockets.add(socket);
+      socket.on("error", () => socket.destroy());
+      socket.on("close", () => this.sockets.delete(socket));
+    });
+    this.server.on("clientError", (_error, socket) => {
+      socket.end(`HTTP/1.1 400 Bad Request\r
+Connection: close\r
+Content-Length: 0\r
+\r
+`);
+    });
+    this.server.on("checkContinue", (_req, res) => {
+      fixedHeaders(res);
+      send(res, 400, refusal());
+    });
+    this.server.on("upgrade", (req, socket, head) => {
+      if (this.serving.has(req.socket)) {
+        socket.destroy();
+        return;
+      }
+      try {
+        if (!this.accepting)
+          unavailable();
+        const boundary = requestBoundary(req, this.policy, this.origin);
+        assertRequestTarget(req.url ?? "");
+        const url = new URL(req.url ?? "", this.origin);
+        if (req.method !== "GET" || url.pathname !== WS_PATH || req.url !== `${WS_PATH}?attachment=${url.searchParams.get("attachment")}`)
+          throw new ContractError("invalid");
+        const id = decodeId(url.searchParams.get("attachment"));
+        const caller = this.options.auth.authenticate(boundary, id, false, true);
+        const attachment = this.attachment(caller);
+        if (attachment.socket || this.viewers.size >= LIMITS.viewers)
+          throw new ContractError("capacity");
+        if (!this.options.adapters.projection || !this.options.adapters.live)
+          unavailable();
+        this.wss.handleUpgrade(req, socket, head, (ws) => this.openViewer(ws, attachment));
+      } catch (error) {
+        const status = errorStatus(error instanceof ContractError ? error.code : "unavailable");
+        socket.end(`HTTP/1.1 ${status} Refused\r
+Connection: close\r
+Cache-Control: no-store\r
+Referrer-Policy: no-referrer\r
+Content-Length: 0\r
+\r
+`);
+      }
+    });
+    if (options.auth || options.adapters) {
+      if (!options.auth || !options.adapters)
+        throw new ContractError("invalid");
+      this.configure({
+        auth: options.auth,
+        adapters: options.adapters,
+        management: options.management,
+        build: options.build
+      });
+    }
+  }
+  configure(options) {
+    if (this.configuration || this.accepting || this.stopped)
+      throw new ContractError("conflict");
+    this.configuration = {
+      ...options,
+      ...options.build ? { build: decodeServiceBuild(options.build) } : {}
+    };
+    this.unRevoke = options.auth.material.onRevoke(() => {
+      options.adapters.admission?.revokeGrants();
+      for (const attachment of [...this.attachments.values()])
+        this.detach(attachment);
+      for (const request2 of this.requests)
+        request2.abort();
+    });
+  }
+  async listen() {
+    if (this.origin || this.stopped)
+      throw new ContractError("conflict");
+    await new Promise((resolve6, reject) => {
+      const failed = () => {
+        this.server.off("listening", ready);
+        reject(new ContractError("unavailable"));
+      };
+      const ready = () => {
+        this.server.off("error", failed);
+        resolve6();
+      };
+      this.server.once("error", failed);
+      this.server.once("listening", ready);
+      this.server.listen({
+        host: this.policy.host,
+        port: this.policy.port,
+        exclusive: true
+      });
+    });
+    this.server.on("error", () => this.quiesce());
+    const address = this.server.address();
+    if (!address || typeof address === "string")
+      unavailable();
+    this.origin = localOrigin(this.policy, address.port);
+    return this.origin;
+  }
+  admit() {
+    if (!this.origin || this.stopped || !this.options.auth.material.available)
+      unavailable();
+    this.accepting = true;
+    this.heartbeat ??= setInterval(() => this.tick(), LIMITS.heartbeatMs);
+  }
+  quiesce() {
+    this.accepting = false;
+    this.configuration?.adapters.admission?.revokeGrants();
+  }
+  close() {
+    if (this.closePromise)
+      return this.closePromise;
+    let resolve6;
+    let reject;
+    this.closePromise = new Promise((yes, no) => {
+      resolve6 = yes;
+      reject = no;
+    });
+    this.closeTransport().then(resolve6, () => reject(new ContractError("unavailable")));
+    return this.closePromise;
+  }
+  async closeTransport() {
+    this.stopped = true;
+    this.quiesce();
+    clearInterval(this.heartbeat);
+    this.unRevoke?.();
+    for (const request2 of this.requests)
+      request2.abort();
+    for (const attachment of [...this.attachments.values()])
+      this.detach(attachment);
+    const closedSockets = [...this.sockets].map((socket) => new Promise((resolve6) => {
+      if (socket.closed)
+        resolve6();
+      else {
+        socket.once("close", () => resolve6());
+        socket.destroy();
+      }
+    }));
+    const listener = new Promise((resolve6, reject) => {
+      this.server.close((error) => error ? reject(new ContractError("unavailable")) : resolve6());
+    });
+    const upgrades = new Promise((resolve6) => this.wss.close(() => resolve6()));
+    await Promise.all([listener, upgrades, ...closedSockets]);
+  }
+  attachment(caller) {
+    this.options.auth.current(caller);
+    const attachment = this.attachments.get(caller.attachmentId);
+    if (!attachment || attachment.caller.authority !== caller.authority || attachment.caller.accessGeneration !== caller.accessGeneration)
+      throw new ContractError("stale");
+    attachment.lastSeen = Date.now();
+    return attachment;
+  }
+  detach(attachment) {
+    if (this.attachments.get(attachment.caller.attachmentId) !== attachment)
+      return;
+    this.attachments.delete(attachment.caller.attachmentId);
+    this.options.adapters.admission?.detach(attachment.caller.attachmentId);
+    if (attachment.socket) {
+      for (const viewer of this.viewers)
+        if (viewer.attachment === attachment)
+          this.closeViewer(viewer);
+    }
+  }
+  async body(req, signal) {
+    if (this.bodies >= LIMITS.admissionCount)
+      throw new ContractError("capacity");
+    this.bodies++;
+    try {
+      if (req.headers["content-type"] !== "application/json" || req.headers["content-encoding"] !== undefined)
+        throw new ContractError("invalid");
+      const length = req.headers["content-length"];
+      if (length !== undefined && (!/^(0|[1-9][0-9]*)$/.test(length) || Number(length) > LIMITS.controlBytes))
+        throw new ContractError("oversize");
+      const chunks = [];
+      let bytes = 0;
+      for await (const value of req.iterator({ destroyOnReturn: false })) {
+        if (signal.aborted)
+          throw new ContractError("unavailable");
+        const chunk = value;
+        bytes += chunk.length;
+        if (bytes > LIMITS.controlBytes)
+          throw new ContractError("oversize");
+        chunks.push(chunk);
+      }
+      try {
+        return parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)), LIMITS.controlBytes);
+      } catch (e) {
+        if (e instanceof ContractError)
+          throw e;
+        throw new ContractError("invalid");
+      }
+    } finally {
+      this.bodies--;
+    }
+  }
+  async handle(req, res) {
+    if (this.serving.has(req.socket)) {
+      req.socket.destroy();
+      return;
+    }
+    this.serving.add(req.socket);
+    res.once("close", () => this.serving.delete(req.socket));
+    fixedHeaders(res);
+    const abort = new AbortController;
+    let counted = false;
+    let dispatched = false;
+    let createdAttachment;
+    const abortRead = () => abort.abort();
+    res.once("close", abortRead);
+    const timer = setTimeout(() => {
+      abort.abort();
+      res.destroy();
+    }, LIMITS.downloadIdleMs);
+    const resetIdle = () => timer.refresh();
+    try {
+      const boundary = requestBoundary(req, this.policy, this.origin);
+      const target = req.url ?? "";
+      assertRequestTarget(target);
+      const url = new URL(target, this.origin);
+      if (url.searchParams.has("token")) {
+        if (req.method !== "GET" || !target.startsWith("/?token=") || [...url.searchParams.keys()].length !== 1)
+          throw new ContractError("invalid");
+        if (!this.accepting)
+          unavailable();
+        res.setHeader("Set-Cookie", this.options.auth.bootstrap(url.searchParams.get("token") ?? "", boundary));
+        res.statusCode = 303;
+        res.setHeader("Location", "/app");
+        res.end();
+        return;
+      }
+      if (target === "/healthz" && req.method === "GET") {
+        send(res, 200, { status: "ok" });
+        return;
+      }
+      if (target === "/" && req.method === "GET") {
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.end("Cadence: enter with the private link that `cadence server install` printed, http://127.0.0.1:<CADENCE_PORT>/?token=<CADENCE_TOKEN> from ~/.pi/agent/cadence/.env, or that `cadence token-link --workspace <path> --reveal` prints on this machine.\n");
+        return;
+      }
+      if (target.startsWith("/local/v1/admin/")) {
+        await this.manage(req, res, boundary, abort.signal);
+        return;
+      }
+      if (!this.accepting)
+        unavailable();
+      const route = readRoute(target, req.method ?? "");
+      const attachmentId = boundary.headers.get("x-cadence-attachment") ?? randomUUID8();
+      const caller = this.options.auth.authenticate(boundary, attachmentId, route?.source === "body");
+      if (!route || !mutation(route.operation)) {
+        if (this.reads >= 32)
+          throw new ContractError("capacity");
+        this.reads++;
+        counted = true;
+      }
+      this.requests.add(abort);
+      if (!route) {
+        const asset = this.assets.get(target);
+        if (!asset || req.method !== "GET")
+          throw new ContractError("invalid");
+        this.options.auth.current(caller);
+        res.setHeader("Content-Type", asset.contentType);
+        if (target !== "/app") {
+          res.setHeader("Cache-Control", "private, no-cache");
+          res.setHeader("ETag", asset.etag);
+          if (boundary.headers.get("if-none-match") === asset.etag) {
+            res.statusCode = 304;
+            res.end();
+            return;
+          }
+        }
+        res.end(asset.bytes);
+        return;
+      }
+      let attachment;
+      if (route.operation === "session") {
+        attachment = this.attachments.get(attachmentId);
+        if (attachment)
+          this.attachment(caller);
+        else {
+          for (const value2 of this.attachments.values())
+            if (!value2.socket && Date.now() - value2.lastSeen > LIMITS.browserLifetimeMs)
+              this.detach(value2);
+          if (this.attachments.size >= LIMITS.viewers)
+            throw new ContractError("capacity");
+          attachment = { caller, lastSeen: Date.now() };
+          createdAttachment = attachment;
+          this.attachments.set(attachmentId, attachment);
+        }
+        res.setHeader("X-Cadence-Attachment", attachmentId);
+      } else if (route.source === "body")
+        attachment = this.attachment(caller);
+      const input = route.source === "body" ? await this.body(req, abort.signal) : route.input === null ? null : parseWireJson(route.input);
+      if (route.source !== "body" && (req.headers["content-encoding"] !== undefined || req.headers["transfer-encoding"] || req.headers["content-length"] && req.headers["content-length"] !== "0"))
+        throw new ContractError("invalid");
+      decodeHttpInput(route.operation, input);
+      this.options.auth.current(caller);
+      if (abort.signal.aborted || !this.accepting)
+        unavailable();
+      if (attachment && this.attachment(caller) !== attachment)
+        throw new ContractError("stale");
+      if (route.operation === "export" || route.operation === "download") {
+        await this.export(route.operation, input, caller, abort.signal, res, resetIdle);
+        return;
+      }
+      const rawBuild = boundary.headers.get("x-cadence-build");
+      const clientBuild = rawBuild === undefined ? null : decodeClientBuild(parseWireJson(rawBuild, 1024));
+      if (caller.authority === "browser" && clientBuild?.kind === "native")
+        throw new ContractError("forbidden");
+      if ([
+        "preflight",
+        "command",
+        "chooseModel",
+        "cancel",
+        "workbenchCommand"
+      ].includes(route.operation) && !compatibleBuild(this.options.build, clientBuild, route.operation === "cancel" || route.operation === "workbenchCommand" && decodeWorkbenchCommand(input).kind === "interrupt"))
+        throw new ContractError("unsupported-context");
+      dispatched = route.operation === "command" || route.operation === "cancel" || route.operation === "chooseModel" || route.operation === "workbenchCommand";
+      const value = await this.dispatch(route.operation, input, caller, abort.signal, clientBuild);
+      this.options.auth.current(caller);
+      if (abort.signal.aborted)
+        unavailable();
+      if (route.operation === "session")
+        this.attachment(caller);
+      const decoded2 = decodeHttpOutput(route.operation, value);
+      const status = value && typeof value === "object" && "kind" in value && value.kind === "error" && "error" in value ? errorStatus(decodePublicError(value.error).code) : 200;
+      send(res, status, decoded2);
+    } catch (e) {
+      if (createdAttachment)
+        this.detach(createdAttachment);
+      if (!res.headersSent)
+        res.removeHeader("X-Cadence-Attachment");
+      if (res.headersSent)
+        res.destroy();
+      else {
+        const code2 = e instanceof ContractError ? e.code : "unavailable";
+        res.setHeader("Connection", "close");
+        send(res, errorStatus(code2), refusal(code2, dispatched));
+      }
+    } finally {
+      clearTimeout(timer);
+      res.off("close", abortRead);
+      this.requests.delete(abort);
+      if (counted)
+        this.reads--;
+    }
+  }
+  async manage(req, res, boundary, signal) {
+    const operation = req.url?.slice("/local/v1/admin/".length);
+    if (![
+      "status",
+      "diagnose",
+      "stop",
+      "token-link",
+      "token-rotate",
+      "detach-viewers"
+    ].includes(operation ?? ""))
+      throw new ContractError("invalid");
+    const write2 = operation !== "status" && operation !== "diagnose";
+    const caller = this.options.auth.authenticate(boundary, randomUUID8(), write2);
+    if (caller.authority !== "local")
+      throw new ContractError("forbidden");
+    if (req.method !== (write2 ? "POST" : "GET"))
+      throw new ContractError("invalid");
+    if (write2) {
+      const body = closed(await this.body(req, signal), operation === "token-link" ? ["reveal"] : operation === "detach-viewers" ? ["attachments"] : []);
+      if (operation === "detach-viewers") {
+        const ids = list(body.attachments, LIMITS.viewers, decodeId);
+        this.options.auth.current(caller);
+        if (signal.aborted)
+          unavailable();
+        for (const id of ids) {
+          const attachment = this.attachments.get(id);
+          if (attachment?.caller.authority === "browser")
+            this.detach(attachment);
+        }
+        send(res, 200, {
+          kind: "ok",
+          value: { status: "detached", epoch: this.options.auth.epoch }
+        });
+        return;
+      }
+      if (operation === "token-link" && body.reveal !== true)
+        throw new ContractError("forbidden");
+    } else if (req.headers["transfer-encoding"] || req.headers["content-encoding"] || req.headers["content-length"] && req.headers["content-length"] !== "0")
+      throw new ContractError("invalid");
+    this.options.auth.current(caller);
+    if (signal.aborted || !this.options.management)
+      unavailable();
+    const value = this.options.management.invoke(operation);
+    send(res, 200, { kind: "ok", value });
+  }
+  async dispatch(operation, input, caller, signal, build2) {
+    const a = this.options.adapters, p = a.projection;
+    switch (operation) {
+      case "workbenchRead":
+        if (!a.workbench)
+          unavailable();
+        return {
+          kind: "ok",
+          value: a.workbench.read(decodeWorkbenchRead(input))
+        };
+      case "workbenchCommand":
+        if (!a.workbench)
+          unavailable();
+        return {
+          kind: "ok",
+          value: await a.workbench.command(decodeWorkbenchCommand(input))
+        };
+      case "current":
+        if (!a.current)
+          unavailable();
+        return {
+          kind: "ok",
+          value: await a.current.current(decodeCurrentRequest(input), signal)
+        };
+      case "currentChanges":
+        if (!a.current)
+          unavailable();
+        return {
+          kind: "ok",
+          value: await a.current.currentChanges(decodeCurrentChangesRequest(input), signal)
+        };
+      case "activeRuns":
+        if (!a.current)
+          unavailable();
+        return { kind: "ok", value: await a.current.activeRuns(signal) };
+      case "models":
+        if (!a.models)
+          unavailable();
+        return { kind: "ok", value: a.models.catalog() };
+      case "chooseModel":
+        if (!a.modelChoice)
+          unavailable();
+        return {
+          kind: "ok",
+          value: a.modelChoice.choose(decodeChooseModelRequest(input))
+        };
+      case "detach":
+        this.detach(this.attachment(caller));
+        return { kind: "ok", value: null };
+      case "preflight":
+        return a.admission?.preflight(decodePreflightRequest(input), caller) ?? unavailable();
+      case "command":
+        return a.admission?.submit(decodeCommand(input), caller) ?? unavailable();
+      case "cancel":
+        return a.admission?.cancel(decodeCancel(input), caller) ?? unavailable();
+      case "receipt":
+        return a.receipts ? decodeReceiptLookup(await a.receipts(decodeId(input))) : {
+          status: "inconclusive",
+          error: publicError("receipt-inconclusive", "uncertain")
+        };
+    }
+    if (!p)
+      unavailable();
+    let value;
+    switch (operation) {
+      case "session": {
+        const original = decodeSessionBootstrap(await p.session());
+        if (original.epoch !== this.options.auth.epoch || original.accessGeneration !== caller.accessGeneration)
+          throw new ContractError("stale");
+        value = decodeSessionBootstrap({
+          ...original,
+          ...this.options.build ? { build: this.options.build } : {},
+          authority: caller.authority,
+          csrf: caller.authority === "browser" ? this.options.auth.csrf : null,
+          capabilities: {
+            actions: original.capabilities.actions && !!a.admission && compatibleBuild(this.options.build, build2),
+            manualChecks: original.capabilities.manualChecks && caller.authority === "local" && !!a.admission && compatibleBuild(this.options.build, build2),
+            history: original.capabilities.history
+          }
+        });
+        break;
+      }
+      case "workspace":
+        value = await p.workspace();
+        break;
+      case "tasks":
+      case "runs":
+      case "messages":
+      case "tools":
+      case "contents":
+      case "events":
+      case "checks":
+      case "changes":
+      case "reviews":
+        value = await p[operation](decodeListRequest(input));
+        break;
+      case "checkObligations":
+        value = await p.checkObligations(decodeId(input));
+        break;
+      case "entity":
+        value = await p.entity(decodeEntityReadRequest(input));
+        break;
+      case "graph":
+        value = await p.graph(decodeGraphReadRequest(input));
+        break;
+      case "snapshot":
+        value = await p.snapshot(decodeScope(input));
+        break;
+      case "detail":
+      case "search": {
+        const cursor = decodeCursor(input);
+        if (operation === "search" && this.searches >= LIMITS.searchReaders)
+          throw new ContractError("capacity");
+        if (operation === "search")
+          this.searches++;
+        try {
+          const valid = await p.validateCursor(cursor);
+          this.options.auth.current(caller);
+          if (signal.aborted)
+            unavailable();
+          if (valid.status === "refused")
+            return { kind: "error", error: valid.error };
+          value = await p[operation](cursor);
+        } finally {
+          if (operation === "search")
+            this.searches--;
+        }
+        break;
+      }
+      default:
+        throw new ContractError("invalid");
+    }
+    return { kind: "ok", value };
+  }
+  async export(operation, input, caller, signal, res, activity2) {
+    const p = this.options.adapters.projection;
+    if (!p)
+      unavailable();
+    if (this.exports >= LIMITS.exportReaders)
+      throw new ContractError("capacity");
+    this.exports++;
+    const request2 = decodeExportRequest(input), tracker = new ExportTracker(request2);
+    try {
+      res.setHeader("Content-Type", operation === "download" && request2.format === "markdown" ? "text/markdown; charset=utf-8" : "application/x-ndjson; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="cadence-export.${operation === "download" && request2.format === "markdown" ? "md" : "ndjson"}"`);
+      let trailer;
+      const digest = createHash9("sha256");
+      const write2 = async (frame) => {
+        const data = Buffer.from(operation === "download" ? encodeExportFrame(frame, request2.format) : `${canonicalJson(frame)}
+`);
+        for (let offset = 0;offset < data.length; offset += LIMITS.detailPageBytes) {
+          this.options.auth.current(caller);
+          if (signal.aborted || res.destroyed)
+            unavailable();
+          const chunk = data.subarray(offset, offset + LIMITS.detailPageBytes);
+          await new Promise((resolve6, reject) => {
+            const stop = () => {
+              res.destroy();
+              reject(new ContractError("unavailable"));
+            };
+            signal.addEventListener("abort", stop, { once: true });
+            res.write(chunk, (error) => {
+              signal.removeEventListener("abort", stop);
+              error ? reject(new ContractError("unavailable")) : resolve6();
+            });
+          });
+          activity2();
+        }
+      };
+      for await (const value of p.export(request2, signal)) {
+        this.options.auth.current(caller);
+        if (signal.aborted)
+          unavailable();
+        const frame = tracker.receive(value);
+        if (frame.event.kind === "trailer")
+          trailer = frame;
+        else {
+          digest.update(encodeExportFrame(frame, request2.format));
+          await write2(frame);
+          this.options.auth.current(caller);
+          if (signal.aborted)
+            unavailable();
+        }
+      }
+      this.options.auth.current(caller);
+      if (signal.aborted || !trailer || trailer.event.kind !== "trailer" || trailer.event.sha256 !== digest.digest("hex"))
+        unavailable();
+      await write2(trailer);
+      res.end();
+    } finally {
+      this.exports--;
+    }
+  }
+  openViewer(socket, attachment) {
+    const viewer = {
+      socket,
+      attachment,
+      subscription: 0,
+      pending: [],
+      bytes: 0,
+      sentBytes: 0,
+      sentMessages: 0,
+      reading: false,
+      closed: false,
+      lastPing: Date.now(),
+      lastReconcile: Date.now()
+    };
+    attachment.socket = socket;
+    this.viewers.add(viewer);
+    socket.on("error", () => this.closeViewer(viewer));
+    socket.on("close", () => this.closeViewer(viewer));
+    socket.on("message", (data, binary) => {
+      try {
+        this.attachment(attachment.caller);
+        if (binary || Array.isArray(data))
+          throw new ContractError("invalid");
+        const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
+        if (bytes.byteLength > LIMITS.wsClientFrameBytes)
+          throw new ContractError("oversize");
+        const command = decodeSocketInput(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(bytes), LIMITS.wsClientFrameBytes));
+        viewer.lastPing = Date.now();
+        if (command.kind === "ping")
+          this.heartbeatViewer(viewer);
+        else if (viewer.reading)
+          this.closeViewer(viewer);
+        else
+          this.subscribe(viewer, command.scope);
+      } catch {
+        this.closeViewer(viewer);
+      }
+    });
+  }
+  closeViewer(viewer) {
+    if (viewer.closed)
+      return;
+    viewer.closed = true;
+    viewer.subscription++;
+    try {
+      viewer.unsubscribe?.();
+    } catch {}
+    viewer.pending = [];
+    viewer.bytes = 0;
+    this.viewers.delete(viewer);
+    viewer.socket.terminate();
+    this.detach(viewer.attachment);
+  }
+  sendViewer(viewer, output) {
+    try {
+      this.attachment(viewer.attachment.caller);
+      const data = canonicalJson(output, LIMITS.viewerBytes), bytes = Buffer.byteLength(data);
+      if (viewer.closed || viewer.sentMessages + viewer.pending.length >= LIMITS.viewerMessages || viewer.sentBytes + viewer.bytes + bytes > LIMITS.viewerBytes || viewer.socket.bufferedAmount > LIMITS.viewerBytes)
+        throw new ContractError("capacity");
+      viewer.sentMessages++;
+      viewer.sentBytes += bytes;
+      viewer.socket.send(data, (error) => {
+        viewer.sentMessages--;
+        viewer.sentBytes -= bytes;
+        if (error)
+          this.closeViewer(viewer);
+      });
+      return true;
+    } catch {
+      this.closeViewer(viewer);
+      return false;
+    }
+  }
+  async subscribe(viewer, scope) {
+    const p = this.options.adapters.projection, live = this.options.adapters.live;
+    if (viewer.closed)
+      return;
+    if (!p || !live) {
+      this.closeViewer(viewer);
+      return;
+    }
+    if (this.reads >= 32) {
+      this.closeViewer(viewer);
+      return;
+    }
+    this.reads++;
+    const generation = ++viewer.subscription;
+    viewer.reading = true;
+    viewer.scope = scope;
+    viewer.snapshot = undefined;
+    viewer.pending = [];
+    viewer.bytes = 0;
+    try {
+      viewer.unsubscribe?.();
+      viewer.unsubscribe = live.subscribe(scope, (value) => {
+        if (viewer.closed || viewer.subscription !== generation)
+          return;
+        try {
+          this.attachment(viewer.attachment.caller);
+          const event = decodeLiveEvent(value);
+          const bytes = Buffer.byteLength(canonicalJson(event, LIMITS.pageBytes));
+          if (viewer.reading) {
+            if (viewer.pending.length + viewer.sentMessages >= LIMITS.viewerMessages || viewer.bytes + viewer.sentBytes + bytes > LIMITS.viewerBytes)
+              throw new ContractError("capacity");
+            viewer.pending.push(event);
+            viewer.bytes += bytes;
+          } else
+            this.deliver(viewer, event);
+        } catch {
+          this.closeViewer(viewer);
+        }
+      });
+      if (viewer.closed) {
+        viewer.unsubscribe();
+        return;
+      }
+      const snapshot = decodeSnapshot(await p.snapshot(scope));
+      if (viewer.closed || viewer.subscription !== generation)
+        return;
+      this.attachment(viewer.attachment.caller);
+      if (snapshot.epoch !== this.options.auth.epoch || canonicalJson(snapshot.scope) !== canonicalJson(scope))
+        throw new ContractError("stale");
+      viewer.snapshot = snapshot;
+      if (!this.sendViewer(viewer, { kind: "snapshot", snapshot }))
+        return;
+      viewer.reading = false;
+      viewer.lastReconcile = Date.now();
+      for (const event of viewer.pending.splice(0)) {
+        viewer.bytes -= Buffer.byteLength(canonicalJson(event));
+        this.deliver(viewer, event);
+        if (viewer.closed || viewer.subscription !== generation)
+          break;
+      }
+    } catch {
+      this.closeViewer(viewer);
+    } finally {
+      if (viewer.subscription === generation)
+        viewer.reading = false;
+      this.reads--;
+    }
+  }
+  deliver(viewer, event) {
+    const snapshot = viewer.snapshot;
+    if (!snapshot || viewer.closed)
+      return;
+    if (event.epoch !== snapshot.epoch || event.storeId !== snapshot.storeId || canonicalJson(event.scope) !== canonicalJson(snapshot.scope)) {
+      this.resync(viewer);
+      return;
+    }
+    const cmp = compareSequence(event.committedSeq, snapshot.committedSeq);
+    if (cmp < 0 || cmp === 0 && event.kind !== "heartbeat")
+      return;
+    if (event.kind === "update" && event.previousSeq !== snapshot.committedSeq || event.kind === "heartbeat" && cmp > 0) {
+      this.resync(viewer);
+      return;
+    }
+    if (this.sendViewer(viewer, { kind: "event", event }))
+      snapshot.committedSeq = event.committedSeq;
+  }
+  resync(viewer) {
+    if (!viewer.reading && viewer.scope) {
+      this.sendViewer(viewer, { kind: "resync" });
+      this.subscribe(viewer, viewer.scope);
+    }
+  }
+  heartbeatViewer(viewer) {
+    if (!viewer.scope || viewer.reading)
+      return;
+    try {
+      const event = decodeLiveEvent(this.options.adapters.live?.watermark(viewer.scope));
+      if (event.kind !== "heartbeat")
+        throw new ContractError("invalid");
+      this.deliver(viewer, event);
+    } catch {
+      this.closeViewer(viewer);
+    }
+  }
+  tick() {
+    for (const viewer of this.viewers) {
+      if (Date.now() - viewer.lastPing >= LIMITS.staleMs)
+        this.closeViewer(viewer);
+      else if (Date.now() - viewer.lastReconcile >= LIMITS.reconcileMs)
+        this.resync(viewer);
+      else
+        this.heartbeatViewer(viewer);
+    }
+  }
+}
+
+// src/service/workbench-files.ts
+import {
+  closeSync as closeSync5,
+  constants as constants5,
+  fstatSync as fstatSync5,
+  lstatSync as lstatSync8,
+  opendirSync as opendirSync5,
+  openSync as openSync5,
+  readSync as readSync4,
+  realpathSync as realpathSync4
+} from "node:fs";
+import { dirname as dirname10, isAbsolute as isAbsolute6, join as join12, relative as relative5, resolve as resolve6, sep as sep4 } from "node:path";
+
+// src/worker-redaction.mjs
+var marker = "[redacted]";
+var sensitive = /^(?:authorization|proxy-authorization|cookie|set-cookie|password|passwd|secret|token|api[-_]?key|access[-_]?token|refresh[-_]?token|credentials|headers|env)$/i;
+class TextSanitizer {
+  constructor(secrets = []) {
+    if (secrets.some((s) => typeof s !== "string") || secrets.reduce((n, s) => n + utf8Bytes(s), 0) > LIMITS.workerRequestBytes * 2)
+      throw new ContractError("oversize");
+    this.secrets = [];
+    this.addSecrets(secrets);
+    this.pending = "";
+    this.heuristic = "";
+    this.escape = "";
+    this.skipping = false;
+    this.redacted = false;
+    this.ended = false;
+  }
+  addSecrets(secrets) {
+    if (this.ended || !Array.isArray(secrets))
+      throw new ContractError;
+    let incoming = 0;
+    for (const s of secrets) {
+      if (typeof s !== "string")
+        throw new ContractError;
+      incoming += utf8Bytes(s);
+      if (incoming > LIMITS.workerRequestBytes * 2)
+        throw new ContractError("oversize");
+    }
+    let bytes = this.secrets.reduce((n, s) => n + utf8Bytes(s), 0);
+    const added = new Set;
+    for (const s of secrets) {
+      if (!s || this.secrets.includes(s) || added.has(s))
+        continue;
+      bytes += utf8Bytes(s);
+      if (bytes > LIMITS.workerRequestBytes * 2)
+        throw new ContractError("oversize");
+      added.add(s);
+    }
+    this.secrets = this.secrets.concat([...added]).sort((a, b) => b.length - a.length);
+  }
+  get retainedBytes() {
+    return utf8Bytes(this.pending + this.heuristic + this.escape);
+  }
+  write(input, final = false) {
+    if (this.ended || typeof input !== "string")
+      throw new ContractError;
+    let plain = "";
+    for (const ch of input) {
+      if (this.escape) {
+        this.escape += ch;
+        if (this.escape.length > 8192)
+          throw new ContractError("oversize");
+        if (this.escape.startsWith("\x1B[") && this.escape.length > 2 && /[@-~]/.test(ch) || this.escape.startsWith("\x1B]") && (ch === "\x07" || this.escape.endsWith("\x1B\\")) || this.escape.length === 2 && !"[]".includes(ch))
+          this.escape = "";
+        this.redacted = true;
+      } else if (ch === "\x1B")
+        this.escape = ch;
+      else if (/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/.test(ch))
+        this.redacted = true;
+      else
+        plain += ch;
+    }
+    this.pending += plain;
+    let literal2 = "";
+    let at = 0;
+    while (at < this.pending.length) {
+      const rest = this.pending.slice(at);
+      if (!final && this.secrets.some((s) => s.length > rest.length && s.startsWith(rest)))
+        break;
+      const match = this.secrets.find((s) => rest.startsWith(s));
+      if (match) {
+        literal2 += marker;
+        at += match.length;
+        this.redacted = true;
+      } else {
+        const code2 = this.pending.charCodeAt(at);
+        if (!final && at + 1 === this.pending.length && code2 >= 55296 && code2 <= 56319)
+          break;
+        const cp = this.pending.codePointAt(at);
+        if (cp >= 55296 && cp <= 57343)
+          throw new ContractError;
+        literal2 += String.fromCodePoint(cp);
+        at += cp > 65535 ? 2 : 1;
+      }
+    }
+    this.pending = this.pending.slice(at);
+    this.heuristic += literal2;
+    let output = "";
+    while (this.heuristic) {
+      if (this.skipping) {
+        const end = this.heuristic.search(/[\s,;"'<>]/);
+        if (end < 0) {
+          this.heuristic = "";
+          break;
+        }
+        this.heuristic = this.heuristic.slice(end);
+        this.skipping = false;
+      }
+      const match = /\b(?:Bearer\s+|(?:api[-_]?key|access[-_]?token|refresh[-_]?token|password|passwd|secret|token|authorization)\s*[:=]\s*)/i.exec(this.heuristic);
+      const url = /https?:\/\//i.exec(this.heuristic);
+      if (url && (!match || url.index < match.index)) {
+        output += this.heuristic.slice(0, url.index);
+        this.heuristic = this.heuristic.slice(url.index);
+        const start = url[0].length;
+        const end = this.heuristic.slice(start).search(/[/\s?#"'<>]/);
+        if (end < 0 && !final) {
+          if (utf8Bytes(this.heuristic) > 8192)
+            throw new ContractError("oversize");
+          break;
+        }
+        const size = end < 0 ? this.heuristic.length : start + end;
+        const authority = this.heuristic.slice(start, size);
+        const pos = authority.lastIndexOf("@");
+        output += this.heuristic.slice(0, start) + (pos < 0 ? authority : `${marker}@${authority.slice(pos + 1)}`);
+        this.redacted ||= pos >= 0;
+        this.heuristic = this.heuristic.slice(size);
+      } else if (match) {
+        output += this.heuristic.slice(0, match.index) + match[0] + marker;
+        this.heuristic = this.heuristic.slice(match.index + match[0].length);
+        this.skipping = true;
+        this.redacted = true;
+      } else {
+        const candidate = /(?:Bearer|api[-_]?key|access[-_]?token|refresh[-_]?token|password|passwd|secret|token|authorization)\s*$/i.exec(this.heuristic);
+        const keep = final ? 0 : Math.max(64, candidate ? this.heuristic.length - candidate.index : 0);
+        if (keep > 8192)
+          throw new ContractError("oversize");
+        let take = Math.max(0, this.heuristic.length - keep);
+        const before = this.heuristic.charCodeAt(take - 1);
+        if (before >= 55296 && before <= 56319)
+          take--;
+        output += this.heuristic.slice(0, take);
+        this.heuristic = this.heuristic.slice(take);
+        break;
+      }
+    }
+    if (final) {
+      this.ended = true;
+      this.escape = "";
+    }
+    return output;
+  }
+  end() {
+    return this.write("", true);
+  }
+}
+function sanitizeText(value, secrets = []) {
+  const sanitizer = new TextSanitizer(secrets);
+  return sanitizer.write(value, true);
+}
+class DetailSanitizer {
+  constructor(encoding, secrets = [], partial = false) {
+    this.encoding = encoding;
+    this.secrets = secrets;
+    this.partial = partial;
+    this.limited = false;
+    this.text = new TextSanitizer(secrets);
+    this.stack = [];
+    this.root = "value";
+    this.inString = false;
+    this.escape = "";
+    this.key = "";
+    this.keyMode = false;
+    this.suppressed = false;
+    this.token = "";
+    this.redacted = false;
+  }
+  get retainedBytes() {
+    return this.text.retainedBytes + utf8Bytes(this.escape + this.key + this.token) + this.stack.reduce((sum, entry) => sum + utf8Bytes(entry.lastKey ?? "") + utf8Bytes(entry.lastOutputKey ?? ""), 0);
+  }
+  write(input, final = false) {
+    if (this.limited)
+      return "";
+    try {
+      return this.project(input, final);
+    } catch (error) {
+      if (!this.partial || error instanceof ContractError && error.code === "oversize")
+        throw error;
+      this.limited = true;
+      this.redacted = true;
+      return "[redacted: unsupported partial arguments]";
+    }
+  }
+  project(input, final = false) {
+    if (this.encoding === "utf8") {
+      const output2 = this.text.write(input, final);
+      this.redacted = this.text.redacted;
+      return output2;
+    }
+    let output = "";
+    const encoded2 = (s) => JSON.stringify(s).slice(1, -1);
+    const top = () => this.stack.at(-1);
+    const done = () => {
+      if (top()) {
+        top().expect = "comma";
+        top().sensitive = false;
+        top().count++;
+      } else
+        this.root = "done";
+    };
+    const begin = () => {
+      const parent = top();
+      if ((parent?.expect ?? this.root) !== "value")
+        throw new ContractError;
+      const hide = !!parent?.hide || !!parent?.sensitive;
+      if (parent?.sensitive && !parent.hide) {
+        output += JSON.stringify(marker);
+        this.redacted = true;
+      }
+      return hide;
+    };
+    const primitive = () => {
+      if (!/^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)$/.test(this.token)) {
+        if (!this.partial)
+          throw new ContractError;
+        if (!this.suppressed)
+          output += marker;
+        this.redacted = true;
+        this.limited = true;
+        this.token = "";
+        done();
+        return;
+      }
+      const value = JSON.parse(this.token);
+      if (typeof value === "number" && !Number.isFinite(value))
+        throw new ContractError;
+      if (!this.suppressed)
+        output += this.token;
+      this.token = "";
+      done();
+    };
+    for (const ch of input) {
+      if (this.inString) {
+        let decoded2 = ch;
+        if (this.escape) {
+          this.escape += ch;
+          if (this.escape === "\\u" || this.escape.startsWith("\\u") && this.escape.length < 6)
+            continue;
+          decoded2 = JSON.parse(`"${this.escape}"`);
+          this.escape = "";
+        } else if (ch === "\\") {
+          this.escape = ch;
+          continue;
+        } else if (ch === '"') {
+          if (this.keyMode) {
+            const parent2 = top();
+            if (!this.partial && parent2.lastKey !== undefined && this.key <= parent2.lastKey)
+              throw new ContractError;
+            parent2.lastKey = this.key;
+            parent2.sensitive = sensitive.test(this.key);
+            parent2.expect = "colon";
+            if (!parent2.hide) {
+              const safeKey = sanitizeText(this.key, this.secrets);
+              if (!this.partial && parent2.lastOutputKey !== undefined && safeKey <= parent2.lastOutputKey)
+                throw new ContractError;
+              parent2.lastOutputKey = safeKey;
+              this.redacted ||= safeKey !== this.key;
+              output += JSON.stringify(safeKey);
+            }
+            this.key = "";
+          } else {
+            if (!this.suppressed)
+              output += `${encoded2(this.text.end())}"`;
+            this.redacted ||= this.text.redacted;
+            done();
+          }
+          this.inString = false;
+          continue;
+        }
+        if (this.keyMode) {
+          this.key += decoded2;
+          if (utf8Bytes(this.key) > 8192)
+            throw new ContractError("oversize");
+        } else if (!this.suppressed)
+          output += encoded2(this.text.write(decoded2));
+        continue;
+      }
+      if (this.token && /[\s,\]}]/.test(ch))
+        primitive();
+      if (this.token) {
+        this.token += ch;
+        if (this.token.length > 128)
+          throw new ContractError("oversize");
+        continue;
+      }
+      if (/\s/.test(ch))
+        continue;
+      const parent = top();
+      if (ch === '"') {
+        this.keyMode = parent?.kind === "object" && parent.expect === "key";
+        this.suppressed = this.keyMode ? parent.hide : begin();
+        this.inString = true;
+        this.text = new TextSanitizer(this.secrets);
+        if (!this.keyMode && !this.suppressed)
+          output += '"';
+      } else if (ch === "{" || ch === "[") {
+        const hide = begin();
+        if (!hide)
+          output += ch;
+        if (this.stack.length >= 64)
+          throw new ContractError("oversize");
+        this.stack.push({
+          kind: ch === "{" ? "object" : "array",
+          expect: ch === "{" ? "key" : "value",
+          hide,
+          sensitive: false,
+          count: 0,
+          lastKey: undefined,
+          lastOutputKey: undefined
+        });
+      } else if (ch === "}" || ch === "]") {
+        if (!parent || ch === "}" !== (parent.kind === "object"))
+          throw new ContractError;
+        if (parent.expect !== "comma" && !(parent.count === 0 && parent.expect === (parent.kind === "object" ? "key" : "value")))
+          throw new ContractError;
+        if (!parent.hide)
+          output += ch;
+        this.stack.pop();
+        done();
+      } else if (ch === ":") {
+        if (parent?.expect !== "colon")
+          throw new ContractError;
+        parent.expect = "value";
+        if (!parent.hide)
+          output += ch;
+      } else if (ch === ",") {
+        if (parent?.expect !== "comma")
+          throw new ContractError;
+        parent.expect = parent.kind === "object" ? "key" : "value";
+        parent.count = Math.max(1, parent.count);
+        if (!parent.hide)
+          output += ch;
+      } else {
+        this.suppressed = begin();
+        this.token = ch;
+      }
+    }
+    if (final) {
+      if (this.token)
+        primitive();
+      if (this.partial) {
+        if (this.inString && !this.suppressed) {
+          output += this.keyMode ? JSON.stringify(sanitizeText(this.key, this.secrets)).slice(0, -1) : encoded2(this.text.end());
+        }
+        if (this.escape) {
+          output += marker;
+          this.redacted = true;
+          this.limited = true;
+        }
+      } else if (this.inString || this.escape || this.stack.length || this.root !== "done")
+        throw new ContractError;
+      this.redacted ||= this.text.redacted;
+    }
+    return output;
+  }
+  end() {
+    return this.write("", true);
+  }
+}
+
+// src/service/workbench-files.ts
+function inside(root, path) {
+  const r = relative5(root, path);
+  return r === "" || !isAbsolute6(r) && r !== ".." && !r.startsWith(`..${sep4}`);
+}
+var sensitive2 = (name) => /^\.(?:git|ssh|aws|azure|gnupg|kube|npmrc|pypirc|netrc)$/i.test(name) || /^\.env(?:\.|$)/i.test(name) || /^(?:auth|models|credentials|service-account)\.json$/i.test(name) || /^id_(?:rsa|dsa|ecdsa|ed25519)(?:\.|$)/i.test(name) || /\.(?:pem|key|p12|pfx)$/i.test(name);
+
+class WorkbenchFiles {
+  secrets;
+  root;
+  excluded;
+  constructor(root, excluded, secrets) {
+    this.secrets = secrets;
+    this.root = realpathSync4(root);
+    this.excluded = excluded.flatMap((path) => [
+      resolve6(path),
+      canonicalAmbientRoot(path)
+    ]);
+  }
+  allowed(path) {
+    if (path.split(/[\\/]/).some(sensitive2) || this.excluded.some((root) => inside(root, path)))
+      throw new ContractError("forbidden");
+    const stat = lstatSync8(path);
+    if (stat.isSymbolicLink() || stat.isFile() && stat.nlink !== 1 || process.platform !== "win32" && process.getuid && stat.uid !== process.getuid())
+      throw new ContractError("forbidden");
+  }
+  directory(path) {
+    if (!isAbsolute6(path) || !safeDirectory(path))
+      throw new ContractError("invalid");
+    const canonical = realpathSync4(path);
+    this.allowed(canonical);
+    return canonical;
+  }
+  selected(path) {
+    if (isAbsolute6(path) || path.split(/[\\/]/).some((part) => part === ".." || sensitive2(part)))
+      throw new ContractError("forbidden");
+    const target = resolve6(this.root, path);
+    if (!inside(this.root, target) || !safeDirectory(dirname10(target)))
+      throw new ContractError("forbidden");
+    this.allowed(target);
+    if (lstatSync8(target).isSymbolicLink())
+      throw new ContractError("forbidden");
+    return target;
+  }
+  list(path, directories = false) {
+    const selected2 = directories ? this.directory(path || this.root) : this.selected(path);
+    if (!safeDirectory(selected2) || sanitizeText(selected2, this.secrets()) !== selected2)
+      throw new ContractError("forbidden");
+    const entries = [], dir = opendirSync5(selected2);
+    let limited = false, scanned = 0;
+    try {
+      for (let entry = dir.readSync();entry; entry = dir.readSync()) {
+        if (++scanned > 2000) {
+          limited = true;
+          break;
+        }
+        if (sensitive2(entry.name) || entry.isSymbolicLink() || !entry.isFile() && !entry.isDirectory() || directories && !entry.isDirectory())
+          continue;
+        const absolute2 = join12(selected2, entry.name);
+        try {
+          this.allowed(absolute2);
+        } catch {
+          continue;
+        }
+        const wire = directories ? absolute2 : relative5(this.root, absolute2).split(sep4).join("/");
+        if (sanitizeText(wire, this.secrets()) !== wire)
+          continue;
+        if (entries.length >= 200) {
+          limited = true;
+          break;
+        }
+        entries.push({
+          name: entry.name,
+          path: wire,
+          directory: entry.isDirectory()
+        });
+      }
+    } finally {
+      dir.closeSync();
+    }
+    entries.sort((a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name));
+    const parent = dirname10(selected2);
+    return {
+      kind: directories ? "directories" : "files",
+      path: directories ? selected2 : path,
+      parent: directories ? parent === selected2 ? null : parent : selected2 === this.root ? null : relative5(this.root, parent).split(sep4).join("/"),
+      entries,
+      limited
+    };
+  }
+  read(path) {
+    const selected2 = this.selected(path), before = lstatSync8(selected2);
+    if (!before.isFile())
+      throw new ContractError("forbidden");
+    const fd = openSync5(selected2, constants5.O_RDONLY | (constants5.O_NOFOLLOW ?? 0));
+    try {
+      const opened = fstatSync5(fd);
+      if (!opened.isFile() || opened.nlink !== 1 || before.dev !== opened.dev || before.ino !== opened.ino)
+        throw new ContractError("stale");
+      const buffer = Buffer.alloc(Math.min(opened.size, 128 * 1024));
+      let at = 0;
+      while (at < buffer.length) {
+        const n = readSync4(fd, buffer, at, buffer.length - at, at);
+        if (!n)
+          break;
+        at += n;
+      }
+      const after = fstatSync5(fd), current = lstatSync8(selected2);
+      if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.nlink !== 1 || current.isSymbolicLink() || current.nlink !== 1 || current.ino !== opened.ino || current.dev !== opened.dev)
+        throw new ContractError("stale");
+      const decoded2 = new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, at), { stream: at < opened.size });
+      if (decoded2.includes("\x00"))
+        throw new ContractError("unsupported-context");
+      return {
+        kind: "file",
+        path,
+        text: new TextSanitizer(this.secrets()).write(decoded2, at === opened.size),
+        limited: at < opened.size
+      };
+    } finally {
+      closeSync5(fd);
+    }
+  }
+}
+
+// src/service/gateway.ts
+async function joinProjectStops(projects, stopProject) {
+  let uncertain = false;
+  for (const project of projects) {
+    try {
+      await stopProject(project);
+    } catch {
+      uncertain = true;
+    }
+  }
+  if (uncertain)
+    throw new ContractError("quarantine");
+}
+async function createGateway(value, hostUrl, source) {
+  const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
+  const web = loadWebAssets(source?.webDirectory);
+  const build2 = {
+    contractHash: "9c917c085d034e08764de359cee49aea748c395a63ed629fe67d149b97850fa1",
+    assets: {
+      sourceHash: web.manifest.sourceHash,
+      contractHash: web.manifest.contractHash,
+      buildId: web.manifest.buildId
+    }
+  };
+  const configured = readServerConfig(input.serverConfig).config;
+  if (configured.port !== input.policy.port)
+    throw new ContractError("conflict");
+  const assets = new Map(web.assets.map((asset) => [asset.path, asset]));
+  const connections = new Set, relays = new Set;
+  const opens = new Map;
+  const retirements = new Set;
+  const attachments = new Map;
+  const bindings = new Map;
+  const wss = new WebSocketServer2({
+    noServer: true,
+    clientTracking: false,
+    perMessageDeflate: false,
+    maxPayload: LIMITS.wsClientFrameBytes
+  });
+  let accepting = false, stopping;
+  let auth;
+  let pending = 0;
+  let opening = false;
+  const server = createServer2({
+    maxHeaderSize: LIMITS.headerBytes,
+    headersTimeout: 1e4,
+    requestTimeout: 30000,
+    keepAliveTimeout: 5000
+  }, (req, res) => {
+    handle(req, res);
+  });
+  server.maxConnections = 64;
+  server.on("connection", (socket) => {
+    connections.add(socket);
+    socket.on("error", () => socket.destroy());
+    socket.on("close", () => connections.delete(socket));
+  });
+  server.on("clientError", (_error, socket) => socket.end(`HTTP/1.1 400 Refused\r
+Connection: close\r
+Content-Length: 0\r
+\r
+`));
+  server.on("checkContinue", (_req, res) => reply(res, 400, { kind: "error", error: publicError("invalid") }));
+  await new Promise((resolve7, reject) => {
+    server.once("error", reject);
+    server.listen(input.policy.port, input.policy.host, () => {
+      server.off("error", reject);
+      resolve7();
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === "string")
+    throw new ContractError("unavailable");
+  const endpoint2 = localOrigin(input.policy, address.port);
+  let acquired;
+  try {
+    acquired = store.acquire(endpoint2, configured.token, input);
+    auth = new HttpAuthentication(acquired.access, acquired.registration.epoch, acquired.registration.id, acquired.registration.capability);
+    acquired.access.onRevoke(() => {
+      for (const close of relays)
+        close();
+      bindings.clear();
+      const grouped = new Map;
+      for (const [id, project] of attachments)
+        grouped.set(project, [...grouped.get(project) ?? [], id]);
+      attachments.clear();
+      const original = (async () => {
+        for (const [id, ids] of grouped) {
+          const project = store.projects().find((p) => p.id === id);
+          if (!project)
+            throw new ContractError("unavailable");
+          const c = new ServiceCoordination(project.path, input.stateHome);
+          if (c.inspect().status === "stopped")
+            continue;
+          if (c.localAccess().epoch !== project.epoch)
+            throw new ContractError("stale");
+          for (let offset = 0;offset < ids.length; offset += LIMITS.viewers) {
+            const result = closed(await nativeCall(c, "detach-viewers", false, {
+              attachments: ids.slice(offset, offset + LIMITS.viewers)
+            }), ["status", "epoch"]);
+            if (result.status !== "detached" || result.epoch !== project.epoch)
+              throw new ContractError("unavailable");
+          }
+        }
+      })();
+      retirements.add(original);
+      original.then(() => retirements.delete(original), () => {});
+    });
+    accepting = true;
+  } catch (error) {
+    server.close();
+    throw error;
+  }
+  const files = new WorkbenchFiles(homedir4(), [store.files.namespace, input.agentDir], () => acquired.access.redactionLiterals());
+  const assert = () => {
+    store.assert();
+    if (!accepting)
+      throw new ContractError("quarantine");
+  };
+  async function open2(path, id, epoch) {
+    assert();
+    if (epoch !== auth.epoch)
+      throw new ContractError("stale");
+    const identity = canonicalJson({ path, epoch }), previous = opens.get(id);
+    if (previous) {
+      if (previous.identity !== identity)
+        throw new ContractError("conflict");
+      return previous.result;
+    }
+    const intentPath = store.path(`commands/${id}.json`), kept = store.files.read(intentPath);
+    if (kept) {
+      if (kept.bytes.toString("utf8") !== identity)
+        throw new ContractError("conflict");
+      const settled = store.files.read(store.path(`commands/${id}.result.json`));
+      if (!settled)
+        throw new ContractError("receipt-inconclusive");
+      return decodeProjectEntry(json(settled));
+    }
+    if (opening)
+      throw new ContractError("capacity");
+    if (opens.size >= 128 || store.projects().length >= 128)
+      throw new ContractError("capacity");
+    const commands = store.path("commands");
+    if (store.files.directory(commands)) {
+      const dir = opendirSync6(commands);
+      let count = 0;
+      try {
+        while (dir.readSync())
+          if (++count >= 2048)
+            throw new ContractError("capacity");
+      } finally {
+        dir.closeSync();
+      }
+    }
+    const directory = files.directory(path);
+    effectiveWorkspace(directory, input.stateHome);
+    store.files.create(intentPath, identity);
+    opening = true;
+    const result = Promise.resolve().then(async () => {
+      const opened = await openProjectDirectory(directory, input.stateHome, input.agentDir, hostUrl);
+      const c = new ServiceCoordination(opened.path, input.stateHome), access = c.localAccess();
+      const project = {
+        id: hash2(c.store.root),
+        path: c.store.root,
+        cwd: readHostConfig(c)?.cwd ?? directory,
+        epoch: access.epoch
+      };
+      store.saveProject(project);
+      bindings.delete(project.id);
+      store.files.create(store.path(`commands/${id}.result.json`), encoded(project));
+      return project;
+    });
+    opens.set(id, { identity, result });
+    result.then(() => {
+      opens.delete(id);
+      opening = false;
+    }, () => {
+      opening = false;
+    });
+    return result;
+  }
+  function binding(id) {
+    const project = store.projects().find((p) => p.id === id);
+    if (!project)
+      throw new ContractError("unavailable");
+    const c = new ServiceCoordination(project.path, input.stateHome), local = c.localAccess();
+    if (c.store.root !== project.path || local.epoch !== project.epoch)
+      throw new ContractError("stale");
+    const previous = bindings.get(id);
+    if (previous)
+      return previous;
+    const result = (async () => {
+      const raw = closed(await nativeCall(c, "token-link", true), ["link"]), link = new URL(text(raw.link, 4096, true));
+      const secret = link.searchParams.get("token");
+      if (!secret)
+        throw new ContractError("unavailable");
+      const cookie = await new Promise((resolve7, reject) => {
+        const req = request2(`${local.endpoint}/?token=${encodeURIComponent(secret)}`, { agent: false }, (res) => {
+          const cookie2 = res.headers["set-cookie"];
+          res.resume();
+          if (res.statusCode !== 303 || cookie2?.length !== 1)
+            reject(new ContractError("unavailable"));
+          else
+            resolve7(cookie2[0].split(";")[0]);
+        });
+        req.setTimeout(2000, () => req.destroy(new Error));
+        req.on("error", () => reject(new ContractError("unavailable")));
+        req.end();
+      });
+      if (c.localAccess().epoch !== project.epoch)
+        throw new ContractError("stale");
+      return { project, endpoint: local.endpoint, cookie };
+    })();
+    bindings.set(id, result);
+    return result;
+  }
+  function stop() {
+    if (stopping)
+      return;
+    accepting = false;
+    store.phase("stopping");
+    stopping = (async () => {
+      const originals = await Promise.allSettled([...opens.values()].map((o) => o.result));
+      const uncertainOpening = originals.some((r) => r.status === "rejected" && !(r.reason instanceof ProjectOpenRefusal && r.reason.noOwner));
+      const retired = await Promise.allSettled([...retirements]);
+      const targets = store.projects();
+      await joinProjectStops(targets, async (p) => {
+        const c = new ServiceCoordination(p.path, input.stateHome), observed = await serviceStatus(c);
+        const status = observed && typeof observed === "object" && "status" in observed ? observed.status : "unavailable";
+        if (status === "stopped") {
+          if (!(observed && typeof observed === "object" && ("epoch" in observed) && observed.epoch === p.epoch))
+            throw new ContractError("stale");
+          return;
+        }
+        if (status !== "alive" || c.localAccess().epoch !== p.epoch)
+          throw new ContractError("quarantine");
+        if ((await stopService(c)).status !== "stopped")
+          throw new ContractError("quarantine");
+      });
+      if (uncertainOpening || retired.some((r) => r.status === "rejected"))
+        throw new ContractError("quarantine");
+      store.release();
+      for (const close of relays)
+        close();
+      wss.close();
+      server.close();
+      for (const socket of connections)
+        socket.end();
+    })().catch(() => {
+      try {
+        store.phase("quarantined");
+      } catch {}
+    });
+  }
+  async function body(req, maximum = 16384) {
+    if (req.headers["content-type"] !== "application/json" || req.headers["content-encoding"] || req.headers["transfer-encoding"])
+      throw new ContractError("invalid");
+    const chunks = [];
+    let count = 0;
+    for await (const chunk of req.iterator({ destroyOnReturn: false })) {
+      count += chunk.length;
+      if (count > maximum)
+        throw new ContractError("oversize");
+      chunks.push(chunk);
+    }
+    return parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)), maximum);
+  }
+  function reply(res, code2, value2) {
+    if (res.destroyed || res.writableEnded)
+      return;
+    fixedHeaders(res);
+    res.statusCode = code2;
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.end(canonicalJson(value2));
+  }
+  function target(raw) {
+    const match = /^\/projects\/([a-f0-9]{64})(\/.*)$/.exec(raw);
+    return match ? { id: decodeHash(match[1]), tail: match[2] } : null;
+  }
+  async function handle(req, res) {
+    let effect = false;
+    if (++pending > 64) {
+      pending--;
+      reply(res, 429, { kind: "error", error: publicError("capacity") });
+      return;
+    }
+    fixedHeaders(res);
+    try {
+      const boundary = requestBoundary(req, input.policy, endpoint2), raw = req.url ?? "";
+      assertRequestTarget(raw);
+      const url = new URL(raw, endpoint2);
+      if (raw === "/healthz" && req.method === "GET") {
+        reply(res, 200, { status: "ok" });
+        return;
+      }
+      store.assert();
+      if (url.searchParams.has("token")) {
+        if (req.method !== "GET" || !raw.startsWith("/?token=") || [...url.searchParams.keys()].length !== 1)
+          throw new ContractError("invalid");
+        res.setHeader("Set-Cookie", auth.bootstrap(url.searchParams.get("token") ?? "", boundary));
+        res.statusCode = 303;
+        res.setHeader("Location", "/app");
+        res.end();
+        return;
+      }
+      if (raw === "/" && req.method === "GET") {
+        res.end(`Cadence workbench: open the private link. No default workspace is created.
+`);
+        return;
+      }
+      if (raw.startsWith("/local/v1/admin/")) {
+        const caller2 = auth.authenticate(boundary, randomUUID9(), req.method === "POST");
+        if (caller2.authority !== "local")
+          throw new ContractError("forbidden");
+        const operation = raw.slice("/local/v1/admin/".length);
+        if (["status", "diagnose"].includes(operation) && req.method === "GET") {
+          reply(res, 200, {
+            kind: "ok",
+            value: {
+              ...store.inspect(),
+              projects: store.projects().length
+            }
+          });
+          return;
+        }
+        if (req.method !== "POST")
+          throw new ContractError("invalid");
+        const value2 = await body(req);
+        if (operation === "token-link") {
+          const o = closed(value2, ["reveal"]);
+          if (o.reveal !== true)
+            throw new ContractError("forbidden");
+          reply(res, 200, {
+            kind: "ok",
+            value: {
+              link: acquired.access.tokenLink(input.policy.proxy?.origin ?? endpoint2)
+            }
+          });
+          return;
+        }
+        closed(value2, []);
+        if (operation === "stop") {
+          reply(res, 200, {
+            kind: "ok",
+            value: { status: "accepted", epoch: auth.epoch }
+          });
+          stop();
+          return;
+        }
+        if (operation === "token-rotate") {
+          acquired.access.rotate();
+          await Promise.all([...retirements]);
+          reply(res, 200, {
+            kind: "ok",
+            value: { status: "rotated", epoch: auth.epoch }
+          });
+          return;
+        }
+        throw new ContractError("invalid");
+      }
+      assert();
+      if (boundary.headers.has("x-cadence-local"))
+        throw new ContractError("forbidden");
+      const project = target(raw);
+      const caller = auth.authenticate(boundary, randomUUID9(), !project && req.method === "POST");
+      if (project) {
+        const route = readRoute(project.tail, req.method ?? "");
+        if (!route)
+          throw new ContractError("invalid");
+        const attachment = boundary.headers.get("x-cadence-attachment");
+        if (attachment && attachments.get(attachment) !== project.id || req.method === "POST" && !attachment)
+          throw new ContractError("stale");
+        if (route.operation === "session" && !attachment && attachments.size >= 2048)
+          throw new ContractError("capacity");
+        if (req.method === "POST" && boundary.headers.get("origin") !== boundary.origin)
+          throw new ContractError("forbidden");
+        if (req.headers["content-encoding"] || req.headers["transfer-encoding"] || Number(req.headers["content-length"] ?? 0) > LIMITS.controlBytes)
+          throw new ContractError("oversize");
+        let commandBody;
+        if (route.operation === "workbenchCommand") {
+          const command = decodeWorkbenchCommand(await body(req, LIMITS.controlBytes));
+          if (command.kind === "open-project")
+            throw new ContractError("forbidden");
+          commandBody = canonicalJson(command, LIMITS.controlBytes);
+        }
+        const b = await binding(project.id);
+        auth.current(caller);
+        assert();
+        const headers = {
+          Cookie: b.cookie,
+          Origin: b.endpoint
+        };
+        for (const key of [
+          "content-type",
+          "content-length",
+          "x-cadence-build",
+          "x-cadence-attachment",
+          "x-cadence-csrf"
+        ]) {
+          const value2 = boundary.headers.get(key);
+          if (value2 !== undefined)
+            headers[key] = value2;
+        }
+        if (commandBody !== undefined)
+          headers["content-length"] = String(Buffer.byteLength(commandBody));
+        await new Promise((resolve7) => {
+          const upstream = request2(`${b.endpoint}${project.tail}`, { method: req.method, headers, agent: false }, (incoming) => {
+            try {
+              auth.current(caller);
+            } catch {
+              close();
+              return;
+            }
+            if (route.operation === "session" && incoming.statusCode === 200) {
+              try {
+                attachments.set(decodeId(incoming.headers["x-cadence-attachment"]), project.id);
+              } catch {
+                close();
+                return;
+              }
+            }
+            if (route.operation === "detach" && incoming.statusCode === 200 && attachment)
+              attachments.delete(attachment);
+            res.statusCode = incoming.statusCode ?? 502;
+            for (const key of [
+              "content-type",
+              "content-disposition",
+              "x-cadence-attachment"
+            ]) {
+              const value2 = incoming.headers[key];
+              if (value2 !== undefined)
+                res.setHeader(key, value2);
+            }
+            incoming.on("error", close);
+            incoming.pipe(res);
+            res.once("finish", done);
+          });
+          function done() {
+            relays.delete(close);
+            res.off("close", close);
+            res.off("finish", done);
+            resolve7();
+          }
+          function close() {
+            upstream.destroy();
+            res.destroy();
+            done();
+          }
+          relays.add(close);
+          res.once("close", close);
+          upstream.setTimeout(LIMITS.downloadIdleMs, close);
+          upstream.on("error", () => {
+            if (!res.headersSent)
+              reply(res, 502, {
+                kind: "error",
+                error: publicError("unavailable", req.method === "POST" ? "uncertain" : "none")
+              });
+            else
+              res.destroy();
+            done();
+          });
+          if (commandBody === undefined)
+            req.pipe(upstream);
+          else
+            upstream.end(commandBody);
+        });
+        return;
+      }
+      if (raw === "/workbench/v1" && req.method === "GET") {
+        reply(res, 200, {
+          kind: "workbench",
+          epoch: auth.epoch,
+          csrf: auth.csrf,
+          home: homedir4(),
+          projects: store.projects(),
+          build: build2
+        });
+        return;
+      }
+      if (url.pathname === "/workbench/v1/directories" && req.method === "GET" && [...url.searchParams.keys()].join() === "path") {
+        reply(res, 200, files.list(text(url.searchParams.get("path"), 4096, true), true));
+        return;
+      }
+      if (raw === "/workbench/v1/open" && req.method === "POST") {
+        const clientBuild = decodeClientBuild(parseWireJson(boundary.headers.get("x-cadence-build") ?? "null", 1024));
+        if (clientBuild.kind !== "browser" || !compatibleBuild(build2, clientBuild))
+          throw new ContractError("unsupported-context");
+        const o = closed(await body(req), ["commandId", "path", "epoch"]);
+        const id = decodeId(o.commandId), path = text(o.path, 4096, true), epoch = decodeId(o.epoch);
+        auth.current(caller);
+        effect = true;
+        const project2 = await open2(path, id, epoch);
+        auth.current(caller);
+        reply(res, 200, { kind: "project", project: project2 });
+        return;
+      }
+      const app = url.pathname === "/app" && (raw === "/app" || /^[a-f0-9]{64}$/.test(url.searchParams.get("project") ?? "") && [...url.searchParams.keys()].join() === "project");
+      const asset = assets.get(app ? "/app" : raw);
+      if (req.method !== "GET" || !asset)
+        throw new ContractError("invalid");
+      res.setHeader("Content-Type", asset.contentType);
+      res.end(asset.bytes);
+    } catch (error) {
+      const code2 = error instanceof ContractError ? error.code : "unavailable";
+      if (res.headersSent)
+        res.destroy();
+      else
+        reply(res, code2 === "unauthenticated" ? 401 : code2 === "forbidden" ? 403 : 400, {
+          kind: "error",
+          error: publicError(code2, effect ? "uncertain" : "none")
+        });
+    } finally {
+      pending--;
+    }
+  }
+  server.on("upgrade", (req, socket, head) => {
+    (async () => {
+      try {
+        assert();
+        const boundary = requestBoundary(req, input.policy, endpoint2), raw = req.url ?? "";
+        assertRequestTarget(raw);
+        if (boundary.headers.has("x-cadence-local"))
+          throw new ContractError("forbidden");
+        const caller = auth.authenticate(boundary, randomUUID9(), false, true), t = target(raw);
+        if (req.method !== "GET" || !t)
+          throw new ContractError("invalid");
+        const url = new URL(t.tail, endpoint2), attachment = decodeId(url.searchParams.get("attachment"));
+        if (attachments.get(attachment) !== t.id || t.tail !== `${WS_PATH}?attachment=${attachment}`)
+          throw new ContractError("invalid");
+        const b = await binding(t.id);
+        auth.current(caller);
+        assert();
+        const upstream = new WebSocket(`${b.endpoint.replace("http:", "ws:")}${t.tail}`, {
+          headers: { Cookie: b.cookie, Origin: b.endpoint },
+          agent: false,
+          maxPayload: LIMITS.controlBytes,
+          handshakeTimeout: 5000,
+          perMessageDeflate: false
+        });
+        const abort = () => {
+          upstream.terminate();
+          socket.destroy();
+          relays.delete(abort);
+        };
+        relays.add(abort);
+        socket.once("close", abort);
+        upstream.once("error", abort);
+        upstream.once("close", abort);
+        upstream.once("open", () => {
+          try {
+            auth.current(caller);
+            assert();
+          } catch {
+            abort();
+            return;
+          }
+          wss.handleUpgrade(req, socket, head, (client) => {
+            const forward = (to, data, binary) => {
+              try {
+                auth.current(caller);
+                if (to.bufferedAmount > LIMITS.controlBytes)
+                  throw new Error;
+                to.send(data, { binary });
+              } catch {
+                abort();
+              }
+            };
+            client.on("message", (data, binary) => forward(upstream, data, binary));
+            upstream.on("message", (data, binary) => forward(client, data, binary));
+            client.on("error", abort);
+            client.on("close", abort);
+          });
+        });
+      } catch {
+        socket.end(`HTTP/1.1 403 Refused\r
+Connection: close\r
+Content-Length: 0\r
+\r
+`);
+      }
+    })();
+  });
+  return { store, endpoint: endpoint2, epoch: acquired.registration.epoch, stop };
+}
+
+// src/service/host.ts
+import { lstatSync as lstatSync14, opendirSync as opendirSync9 } from "node:fs";
+import { join as join24 } from "node:path";
+
+// src/agent-registry.ts
+import { createHash as createHash10 } from "node:crypto";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
+var AGENT_FILES = [
+  "design-explorer.md",
+  "implementation-worker.md",
+  "diagnosis-worker.md"
+];
+function loadAgentDefinitions() {
+  return AGENT_FILES.map((fileName) => {
+    const path = fileURLToPath3(new URL(`../agents/${fileName}`, import.meta.url));
+    const data = readBounded(path, 32768, true);
+    if (!data)
+      throw new Error("Missing package Agent");
+    return {
+      role: fileName.replace(/\.md$/, ""),
+      fileName,
+      path,
+      sha256: createHash10("sha256").update(data).digest("hex"),
+      bytes: data.length,
+      content: data.toString("utf8")
+    };
+  });
+}
+
+// src/history/live.ts
+function scopedSnapshot(source, scope) {
+  if (scope.kind === "task" || source.scope.kind === "child")
+    return;
+  if (!source.runs.some((run) => scope.kind === "run" ? run.runId === scope.id && run.childRunId === null : run.childRunId === scope.id))
+    return;
+  return decodeSnapshot({
+    ...source,
+    scope,
+    runs: source.runs.filter((run) => scope.kind === "run" ? run.runId === scope.id : run.childRunId === scope.id),
+    horizon: {
+      ...source.horizon,
+      historicalRuns: { ...source.horizon.historicalRuns, scope }
+    }
+  });
+}
+
+class HistoryLive {
+  writer;
+  projection;
+  viewers = new Set;
+  rings = new Map;
+  pending = new Map;
+  scheduled = false;
+  closed = false;
+  detach;
+  detachSnapshots;
+  constructor(writer, projection) {
+    this.writer = writer;
+    this.projection = projection;
+    this.detachSnapshots = projection.observeSnapshots((snapshot) => {
+      for (const viewer of this.viewers)
+        if (viewer.keys === null && canonicalJson(viewer.scope) === canonicalJson(snapshot.scope)) {
+          viewer.keys = new Set(snapshot.keys);
+          viewer.seq = snapshot.committedSeq;
+        }
+    });
+    this.detach = writer.subscribeCommitted((notice) => {
+      if (this.closed)
+        return;
+      if (notice.gap)
+        for (const v of this.viewers)
+          this.enqueue(v, this.watermark(v.scope));
+      for (const id of notice.runs)
+        this.pending.set(`run/${id}`, { kind: "run", id });
+      for (const id of notice.tasks)
+        this.pending.set(`task/${id}`, { kind: "task", id });
+      for (const v of this.viewers)
+        this.pending.set(`${v.scope.kind}/${v.scope.id}`, v.scope);
+      if (this.pending.size > LIMITS.maxPageEntries) {
+        this.pending.clear();
+        for (const v of this.viewers)
+          this.enqueue(v, this.watermark(v.scope));
+      }
+      if (!this.scheduled) {
+        this.scheduled = true;
+        setImmediate(() => {
+          this.drain();
+        });
+      }
+    });
+  }
+  watermark = (input) => {
+    const scope = decodeScope(input), session = this.projection.environment.session();
+    return decodeLiveEvent({
+      kind: "heartbeat",
+      storeId: this.writer.files.format.storeId,
+      epoch: session.epoch,
+      scope,
+      committedSeq: this.writer.committedSeq
+    });
+  };
+  subscribe = (input, callback) => {
+    if (this.closed || this.viewers.size >= LIMITS.viewers)
+      throw new ContractError("capacity");
+    const scope = decodeScope(input), viewer = {
+      scope,
+      callback,
+      seq: this.writer.committedSeq,
+      closed: false,
+      queue: [],
+      bytes: 0,
+      scheduled: false,
+      keys: null
+    };
+    this.viewers.add(viewer);
+    return () => {
+      viewer.closed = true;
+      viewer.queue = [];
+      viewer.bytes = 0;
+      this.viewers.delete(viewer);
+    };
+  };
+  enqueue(v, event) {
+    if (v.closed)
+      return;
+    const bytes = Buffer.byteLength(canonicalJson(event));
+    if (v.queue.length >= LIMITS.viewerMessages || v.bytes + bytes > LIMITS.viewerBytes) {
+      v.queue = [this.watermark(v.scope)];
+      v.bytes = Buffer.byteLength(canonicalJson(v.queue[0]));
+    } else {
+      v.queue.push(event);
+      v.bytes += bytes;
+    }
+    if (v.scheduled)
+      return;
+    v.scheduled = true;
+    setImmediate(() => {
+      this.pump(v);
+    });
+  }
+  async pump(v) {
+    try {
+      while (!v.closed && v.queue.length) {
+        const event = v.queue.shift();
+        if (!event)
+          break;
+        v.bytes -= Buffer.byteLength(canonicalJson(event));
+        await v.callback(event);
+      }
+    } catch {
+      v.closed = true;
+      this.viewers.delete(v);
+      v.queue = [];
+      v.bytes = 0;
+    } finally {
+      v.scheduled = false;
+    }
+  }
+  async drain() {
+    const order = { task: 0, run: 1, child: 2 };
+    const scopes = [...this.pending.values()].sort((a, b) => order[a.kind] - order[b.kind]);
+    this.pending.clear();
+    const sources = [];
+    try {
+      for (const scope of scopes) {
+        if (this.closed)
+          return;
+        if (scope.kind !== "run" && ![...this.viewers].some((v) => canonicalJson(v.scope) === canonicalJson(scope)))
+          continue;
+        let snapshot;
+        for (let i = sources.length - 1;i >= 0 && !snapshot; i--)
+          snapshot = scopedSnapshot(sources[i], scope);
+        const reused = snapshot !== undefined;
+        try {
+          snapshot ??= await this.projection.snapshot(scope);
+        } catch {
+          for (const v of this.viewers)
+            if (v.scope.id === scope.id)
+              this.enqueue(v, this.watermark(v.scope));
+          continue;
+        }
+        if (!reused && sources.length < LIMITS.viewers && (scope.kind === "task" || scopes.some((s) => s.kind === "child" && snapshot.runs.some((r) => r.childRunId === s.id))))
+          sources.push(snapshot);
+        const key = `${scope.kind}/${scope.id}`, old = this.rings.get(key);
+        const update = (previousSeq, selected2 = scope, previousKeys) => decodeLiveEvent({
+          kind: "update",
+          storeId: snapshot.storeId,
+          epoch: snapshot.epoch,
+          scope: selected2,
+          previousSeq,
+          committedSeq: snapshot.committedSeq,
+          context: snapshot.context,
+          runs: snapshot.runs.filter((r) => selected2.kind !== "child" || r.childRunId === selected2.id),
+          removed: [
+            ...previousKeys ?? new Set((old?.snapshot.runs ?? []).map((r) => r.childRunId ?? r.runId))
+          ].filter((id) => !snapshot.runs.some((r) => (r.childRunId ?? r.runId) === id))
+        });
+        if (old && old.snapshot.committedSeq === snapshot.committedSeq)
+          continue;
+        if (scope.kind === "run") {
+          const event = update(old?.snapshot.committedSeq ?? "0"), bytes = Buffer.byteLength(canonicalJson(event));
+          const ring = old ?? { events: [], bytes: 0, snapshot };
+          while (ring.events.length && (ring.events.length >= LIMITS.ringEvents || ring.bytes + bytes > LIMITS.ringBytes))
+            ring.bytes -= Buffer.byteLength(canonicalJson(ring.events.shift()));
+          ring.events.push(event);
+          ring.bytes += bytes;
+          ring.snapshot = snapshot;
+          this.rings.set(key, ring);
+          while (this.rings.size > LIMITS.maxPageEntries || [...this.rings.values()].reduce((n, r) => n + r.bytes, 0) > 32 * 1024 * 1024) {
+            const first = this.rings.keys().next().value;
+            if (first)
+              this.rings.delete(first);
+            else
+              break;
+          }
+        }
+        for (const v of this.viewers) {
+          const matches = v.scope.kind === scope.kind && v.scope.id === scope.id || scope.kind === "run" && v.scope.kind === "child" && snapshot.runs.some((r) => r.childRunId === v.scope.id);
+          if (!matches || BigInt(v.seq) >= BigInt(snapshot.committedSeq))
+            continue;
+          try {
+            if (!v.keys) {
+              this.enqueue(v, this.watermark(v.scope));
+              continue;
+            }
+            const event = update(v.seq, v.scope, v.keys);
+            v.keys = new Set(snapshot.runs.filter((r) => v.scope.kind !== "child" || r.childRunId === v.scope.id).map((r) => r.childRunId ?? r.runId));
+            v.seq = snapshot.committedSeq;
+            this.enqueue(v, event);
+          } catch {
+            this.enqueue(v, this.watermark(v.scope));
+          }
+        }
+      }
+    } catch {
+      for (const viewer of this.viewers) {
+        try {
+          this.enqueue(viewer, this.watermark(viewer.scope));
+        } catch {
+          viewer.closed = true;
+          this.viewers.delete(viewer);
+        }
+      }
+    } finally {
+      this.scheduled = false;
+      if (!this.closed && this.pending.size) {
+        this.scheduled = true;
+        setImmediate(() => {
+          this.drain();
+        });
+      }
+    }
+  }
+  replay(runId, after) {
+    const ring = this.rings.get(`run/${runId}`);
+    if (!ring)
+      return null;
+    if (after === ring.snapshot.committedSeq)
+      return [];
+    const at = ring.events.findIndex((e) => e.kind === "update" && e.previousSeq === after);
+    return at < 0 ? null : structuredClone(ring.events.slice(at));
+  }
+  close() {
+    this.closed = true;
+    this.detach();
+    this.detachSnapshots();
+    this.pending.clear();
+    this.rings.clear();
+    for (const v of this.viewers) {
+      v.closed = true;
+      v.queue = [];
+    }
+    this.viewers.clear();
+  }
+}
+
+// src/history/navigation.ts
+import { createHash as createHash11 } from "node:crypto";
+import { lstatSync as lstatSync10 } from "node:fs";
+import { dirname as dirname11, join as join14 } from "node:path";
+
+// src/history/index-tree.ts
+import { lstatSync as lstatSync9 } from "node:fs";
+import { join as join13 } from "node:path";
+var MAX_NODE = 16 * 1024;
+var ACTIVE_KEY = "active";
+function chainHash(seq, previous, previousHash) {
+  return hash2(canonicalJson({ seq, previous, previousHash }));
+}
+function decodeNode(value) {
+  if (!value || typeof value !== "object" || !("kind" in value))
+    throw new ContractError("receipt-inconclusive");
+  if (value.kind === "leaf") {
+    const o2 = closed(value, ["kind", "entries"]);
+    if (!o2.entries || typeof o2.entries !== "object" || Array.isArray(o2.entries))
+      throw new ContractError("receipt-inconclusive");
+    const entries = {};
+    for (const [id, v] of Object.entries(o2.entries)) {
+      if (id !== ACTIVE_KEY)
+        decodeId(id.startsWith("roster:") ? id.slice(7) : id);
+      const h = closed(v, ["seq", "hash"]);
+      entries[id] = { seq: decodeSequence(h.seq), hash: decodeHash(h.hash) };
+    }
+    if (Object.keys(entries).length > 32)
+      throw new ContractError("receipt-inconclusive");
+    return { kind: "leaf", entries };
+  }
+  const o = closed(value, ["kind", "children"]);
+  if (o.kind !== "branch" || !o.children || typeof o.children !== "object" || Array.isArray(o.children))
+    throw new ContractError("receipt-inconclusive");
+  const children = {};
+  for (const [key, v] of Object.entries(o.children)) {
+    if (!/^[0-9a-f]$/.test(key))
+      throw new ContractError("receipt-inconclusive");
+    children[key] = decodeHash(v);
+  }
+  return { kind: "branch", children };
+}
+
+class IndexTree {
+  files;
+  cache = new Map;
+  constructor(files) {
+    this.files = files;
+  }
+  path(id) {
+    return join13(this.files.directory, "indexes", "nodes", id.slice(0, 2), `${id}.json`);
+  }
+  load(id, budget, unit) {
+    decodeHash(id);
+    const remembered = unit?.get(id);
+    if (remembered)
+      return remembered;
+    const old = this.cache.get(id);
+    if (budget && old?.budget === budget)
+      return old.node;
+    try {
+      let bytes;
+      if (budget) {
+        const path = this.path(id);
+        budget.reserve(0);
+        const selected2 = lstatSync9(path).size;
+        if (selected2 > MAX_NODE)
+          throw new ContractError("receipt-inconclusive");
+        bytes = readRange(this.files, path, 0, selected2, budget);
+      } else {
+        const file = this.files.files.read(this.path(id), MAX_NODE);
+        if (!file)
+          throw new ContractError("receipt-inconclusive");
+        bytes = file.bytes;
+      }
+      if (hash2(bytes) !== id)
+        throw new ContractError("receipt-inconclusive");
+      const node = decodeNode(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
+      if (this.cache.size >= 128) {
+        const first = this.cache.keys().next().value;
+        if (first)
+          this.cache.delete(first);
+      }
+      this.cache.set(id, { node, budget });
+      if (unit) {
+        if (unit.size >= 128) {
+          const first = unit.keys().next().value;
+          if (first)
+            unit.delete(first);
+        }
+        unit.set(id, node);
+      }
+      return node;
+    } catch {
+      throw new ContractError("receipt-inconclusive");
+    }
+  }
+  head(root, id, budget) {
+    return this.find(root, id, budget);
+  }
+  find(root, id, budget, unit) {
+    if (id !== ACTIVE_KEY)
+      decodeId(id.startsWith("roster:") ? id.slice(7) : id);
+    let selected2 = root, depth = 0;
+    const key = hash2(id);
+    while (selected2) {
+      if (depth > 64)
+        throw new ContractError("receipt-inconclusive");
+      const node = this.load(selected2, budget, unit);
+      if (node.kind === "leaf")
+        return node.entries[id];
+      selected2 = node.children[key[depth++]] ?? null;
+    }
+  }
+  heads(root, ids) {
+    const unit = new Map, heads = new Map;
+    for (const id of ids) {
+      const head = this.find(root, id, undefined, unit);
+      if (head)
+        heads.set(id, head);
+    }
+    return heads;
+  }
+  update(lease, root, updates, charge) {
+    if (!updates.size)
+      return root;
+    const put = (node) => {
+      const body = canonicalJson(node, MAX_NODE), id = hash2(body), path = this.path(id);
+      lease.assert();
+      const previous = this.files.files.read(path, MAX_NODE);
+      if (previous) {
+        if (previous.identity !== id)
+          throw new ContractError("corrupt-selected");
+        return id;
+      }
+      charge(Buffer.byteLength(body));
+      this.files.files.create(path, body, Buffer.byteLength(body));
+      return id;
+    };
+    const write2 = (old, changes, depth) => {
+      if (depth > 64)
+        throw new ContractError("capacity");
+      const node = old ? this.load(old) : { kind: "leaf", entries: {} };
+      if (node.kind === "leaf") {
+        const entries = { ...node.entries, ...Object.fromEntries(changes) };
+        if (Object.keys(entries).length <= 32)
+          return put({ kind: "leaf", entries });
+        const groups2 = new Map;
+        for (const [id, value] of Object.entries(entries)) {
+          const digit = hash2(id)[depth];
+          if (!digit)
+            throw new ContractError("capacity");
+          const group = groups2.get(digit) ?? new Map;
+          group.set(id, value);
+          groups2.set(digit, group);
+        }
+        return put({
+          kind: "branch",
+          children: Object.fromEntries([...groups2].map(([digit, group]) => [
+            digit,
+            write2(null, group, depth + 1)
+          ]))
+        });
+      }
+      const children = { ...node.children }, groups = new Map;
+      for (const [id, value] of changes) {
+        const digit = hash2(id)[depth];
+        if (!digit)
+          throw new ContractError("capacity");
+        const group = groups.get(digit) ?? new Map;
+        group.set(id, value);
+        groups.set(digit, group);
+      }
+      for (const [digit, group] of groups)
+        children[digit] = write2(children[digit] ?? null, group, depth + 1);
+      return put({ kind: "branch", children });
+    };
+    return write2(root, updates, 0);
+  }
+}
+
 // src/history/source-row.ts
 function decodeSourceRow(value) {
   const o = closed(value, ["segment", "offset", "bytes", "sha256", "seq"]);
@@ -6282,8 +11104,8 @@ class SourceRows {
       assertIncarnation(this.files, path, old.stamp);
       return old.row;
     }
-    const { stamp: stamp3 } = incarnation(this.files, path, LIMITS.segmentBytes), bytes = readRange(this.files, path, source.offset, source.bytes, this.budget);
-    if (hash(bytes) !== source.sha256)
+    const { stamp: stamp3 } = incarnation2(this.files, path, LIMITS.segmentBytes), bytes = readRange(this.files, path, source.offset, source.bytes, this.budget);
+    if (hash2(bytes) !== source.sha256)
       throw new ContractError("corrupt-selected");
     const row = decodeJournalText(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
     if (row.kind !== "record" || BigInt(row.seq) > BigInt(source.seq))
@@ -6322,7 +11144,7 @@ function sourceLocator(bytes, p, index, count) {
     segment: p.segment,
     offset: p.offset + start,
     bytes: end - start,
-    sha256: hash(bytes.subarray(start, end)),
+    sha256: hash2(bytes.subarray(start, end)),
     seq: p.seq
   };
 }
@@ -6355,7 +11177,7 @@ class HistoryNavigation {
   cacheBytes = 0;
   blocks = new Map;
   block(path, at, size, budget) {
-    const start = Math.floor(at / (1024 * 1024)) * 1024 * 1024, key = `${path}/${start}`, st = stamp3(lstatSync6(path));
+    const start = Math.floor(at / (1024 * 1024)) * 1024 * 1024, key = `${path}/${start}`, st = stamp3(lstatSync10(path));
     let old = this.blocks.get(key);
     if (!old || old.budget !== budget || old.stamp !== st) {
       const bytes = readRange(this.files, path, start, Math.min(1024 * 1024, size - start), budget);
@@ -6381,26 +11203,26 @@ class HistoryNavigation {
     const root = state.navigationRoot ?? null, heads = new Map, updates = new Map, auth = new Map(this.authRuns), seq = rows.at(-1)?.seq;
     if (!seq)
       throw new ContractError("invalid");
-    const keys = new Set;
+    const keys2 = new Set;
     for (const row of rows) {
       for (const key of navigationKeys(row))
-        keys.add(key);
+        keys2.add(key);
       if (row.value.kind === "owner") {
         for (const e of row.value.events)
           if (e.kind === "owner" && e.value.kind === "fact" && e.value.fact.kind === "parent-admitted")
-            keys.add(`roster:${row.value.link.taskId}`);
+            keys2.add(`roster:${row.value.link.taskId}`);
       }
       if (row.value.kind === "auth-preparation")
         auth.set(row.value.intent.operationId, row.value.intent.runId);
       if (row.value.kind === "auth-settlement") {
         const run = auth.get(row.value.result.operationId);
         if (run)
-          keys.add(run);
+          keys2.add(run);
         auth.delete(row.value.result.operationId);
       }
     }
-    const previousHeads = this.tree.heads(root, [...keys, ACTIVE_KEY]);
-    for (const id of keys) {
+    const previousHeads = this.tree.heads(root, [...keys2, ACTIVE_KEY]);
+    for (const id of keys2) {
       const previous = previousHeads.get(id);
       const head = {
         seq,
@@ -6411,7 +11233,7 @@ class HistoryNavigation {
       heads.set(id, head);
       updates.set(id, { seq, hash: head.hash });
     }
-    const activeHash = hash(canonicalJson(active));
+    const activeHash = hash2(canonicalJson(active));
     if (previousHeads.get(ACTIVE_KEY)?.hash !== activeHash)
       updates.set(ACTIVE_KEY, { seq, hash: activeHash });
     return { root: this.tree.update(lease, root, updates, charge), heads };
@@ -6433,7 +11255,7 @@ class HistoryNavigation {
     }
   }
   indexPath(group, id) {
-    return join5(this.files.directory, "indexes", group, `${id}.json`);
+    return join14(this.files.directory, "indexes", group, `${id}.json`);
   }
   hintKey(group, id) {
     return `${this.files.directory}/${this.files.format.storeId}/${group}/${id}`;
@@ -6490,9 +11312,9 @@ class HistoryNavigation {
       return structuredClone(source.value);
     }
     try {
-      if (!this.files.files.directory(dirname5(path), false, budget.walks))
+      if (!this.files.files.directory(dirname11(path), false, budget.walks))
         return source ? structuredClone(source.value) : undefined;
-      const size = lstatSync6(path).size;
+      const size = lstatSync10(path).size;
       if (size > RECORD_BYTES)
         return source ? structuredClone(source.value) : undefined;
       return parseWireJson(readRange(this.files, path, 0, size, budget).toString("utf8"), RECORD_BYTES);
@@ -6511,7 +11333,7 @@ class HistoryNavigation {
     const previous = this.files.files.read(path, RECORD_BYTES);
     if (previous) {
       if (!replace) {
-        if (previous.identity !== hash(body))
+        if (previous.identity !== hash2(body))
           bad2();
         return;
       }
@@ -6548,7 +11370,7 @@ class HistoryNavigation {
     }
     for (const [id, count] of partHeads)
       this.write(lease, "part-heads", id, { count }, charge, true);
-    const keys = new Set, runKeys = new Set, rosters = new Set;
+    const keys2 = new Set, runKeys = new Set, rosters = new Set;
     for (const row of rows) {
       const v = row.value;
       if (v.kind === "admission" && v.intent.runId)
@@ -6567,19 +11389,19 @@ class HistoryNavigation {
             rosters.add(v.link.taskId);
       }
       for (const key of navigationKeys(row))
-        keys.add(key);
+        keys2.add(key);
       if (row.value.kind === "auth-preparation")
         this.authRuns.set(row.value.intent.operationId, row.value.intent.runId);
       if (row.value.kind === "auth-settlement") {
         const run = this.authRuns.get(row.value.result.operationId);
         if (run) {
-          keys.add(run);
+          keys2.add(run);
           runKeys.add(run);
         }
         this.authRuns.delete(row.value.result.operationId);
       }
     }
-    for (const key of keys) {
+    for (const key of keys2) {
       const head = prepared?.heads.get(key);
       const old = head ? undefined : this.files.files.read(this.indexPath("entities", key));
       const previous = head?.previous ?? (old ? decodeSequence(closed(parseWireJson(old.bytes.toString("utf8")), ["seq"]).seq) : null);
@@ -6624,18 +11446,18 @@ class HistoryNavigation {
   }
   batch(p, budget) {
     const key = canonicalJson(p), cached = this.cache.get(key), path = this.files.segmentPath(p.segment);
-    if (cached && cached.budget === budget && cached.stamp === stamp3(lstatSync6(path))) {
+    if (cached && cached.budget === budget && cached.stamp === stamp3(lstatSync10(path))) {
       this.validateBridge(cached.batch.rows, p, budget);
       this.rememberBoundary(p, cached.batch.navigationRoot, budget);
       return cached.batch;
     }
     const bytes = readRange(this.files, path, p.offset, p.bytes, budget);
-    const identity = hash(bytes);
+    const identity = hash2(bytes);
     if (cached) {
       if (cached.identity !== identity)
         bad2();
       cached.budget = budget;
-      cached.stamp = stamp3(lstatSync6(path));
+      cached.stamp = stamp3(lstatSync10(path));
       this.files.assertPublished(p.segment, p.offset + p.bytes, p.seq);
       this.validateBridge(cached.batch.rows, p, budget);
       this.rememberBoundary(p, cached.batch.navigationRoot, budget);
@@ -6660,7 +11482,7 @@ class HistoryNavigation {
     if (!last)
       bad2();
     const m = decodeJournalText(last);
-    if (m.kind !== "commit" || !rows.length || m.last !== p.seq || m.count !== rows.length || m.first !== rows[0].seq || m.last !== rows.at(-1)?.seq || m.sha256 !== hash(bytes.subarray(0, used)) || canonicalJson(m.artifacts, RECORD_BYTES) !== canonicalJson(batchArtifacts(rows), RECORD_BYTES))
+    if (m.kind !== "commit" || !rows.length || m.last !== p.seq || m.count !== rows.length || m.first !== rows[0].seq || m.last !== rows.at(-1)?.seq || m.sha256 !== hash2(bytes.subarray(0, used)) || canonicalJson(m.artifacts, RECORD_BYTES) !== canonicalJson(batchArtifacts(rows), RECORD_BYTES))
       bad2();
     if (!validBatchSequence(rows, m.previous))
       bad2();
@@ -6686,7 +11508,7 @@ class HistoryNavigation {
         identity,
         batch,
         bytes: bytes.length,
-        stamp: stamp3(lstatSync6(path)),
+        stamp: stamp3(lstatSync10(path)),
         budget
       });
       this.cacheBytes += bytes.length;
@@ -6703,7 +11525,7 @@ class HistoryNavigation {
       const path = this.files.segmentPath(segment);
       let size;
       try {
-        size = lstatSync6(path).size;
+        size = lstatSync10(path).size;
       } catch (e) {
         if (e instanceof Error && "code" in e && e.code === "ENOENT")
           return null;
@@ -6717,7 +11539,7 @@ class HistoryNavigation {
         continue;
       }
       let pending = Buffer.alloc(0), at = offset, bodyBytes = 0;
-      const checksum = createHash7("sha256"), rows = [];
+      const checksum = createHash11("sha256"), rows = [];
       while (at < size) {
         const chunk = this.block(path, at, size, budget);
         at += chunk.length;
@@ -6935,7 +11757,7 @@ class HistoryNavigation {
         throw new ContractError("receipt-inconclusive");
       const o = closed(value, ["seq", "runs"]);
       const expected = this.anchoredHead(ACTIVE_KEY, snapshot, budget);
-      if (!expected || expected.hash !== hash(canonicalJson(o.runs)))
+      if (!expected || expected.hash !== hash2(canonicalJson(o.runs)))
         throw new ContractError("receipt-inconclusive");
       if (BigInt(decodeSequence(o.seq)) > BigInt(snapshot) || BigInt(decodeSequence(o.seq)) < BigInt(expected.seq) || !Array.isArray(o.runs) || o.runs.length > LIMITS.episodes)
         throw new ContractError("receipt-inconclusive");
@@ -7142,85 +11964,85 @@ class HistoryNavigation {
   }
 }
 function navigationKeys(row) {
-  const v = row.value, keys = new Set;
+  const v = row.value, keys2 = new Set;
   if (v.kind === "admission") {
-    keys.add(v.intent.commandId);
-    keys.add(v.intent.operationId);
+    keys2.add(v.intent.commandId);
+    keys2.add(v.intent.operationId);
     if (v.intent.runId)
-      keys.add(v.intent.runId);
+      keys2.add(v.intent.runId);
     if (v.intent.identity.kind === "action") {
       const t = v.intent.createdTaskId ?? v.intent.identity.expected.task?.id;
       if (t)
-        keys.add(t);
+        keys2.add(t);
       if (v.intent.identity.action.kind === "create")
-        keys.add(v.intent.identity.expected.workspaceId);
+        keys2.add(v.intent.identity.expected.workspaceId);
     }
   }
   if (v.kind === "auth-preparation") {
-    keys.add(v.intent.runId);
-    keys.add(v.intent.operationId);
+    keys2.add(v.intent.runId);
+    keys2.add(v.intent.operationId);
   }
   if (v.kind === "auth-settlement")
-    keys.add(v.result.operationId);
+    keys2.add(v.result.operationId);
   if (v.kind === "launch" || v.kind === "settlement") {
-    keys.add(v.link.runId);
-    keys.add(v.link.childRunId);
+    keys2.add(v.link.runId);
+    keys2.add(v.link.childRunId);
   }
   if (v.kind === "owner") {
-    keys.add(v.link.operationId);
+    keys2.add(v.link.operationId);
     if (v.events.some((e) => e.kind === "owner" && e.value.kind === "fact")) {
-      keys.add(v.link.taskId);
+      keys2.add(v.link.taskId);
       if (v.link.runId)
-        keys.add(v.link.runId);
+        keys2.add(v.link.runId);
     }
   }
   if (v.kind === "owner" || v.kind === "capture")
     for (const e of v.events) {
       if (e.kind === "end") {
         if (v.kind === "capture")
-          keys.add(v.link.runId);
-        keys.add(e.detail.owner.entity.id);
-        keys.add(e.detail.content.recordId);
+          keys2.add(v.link.runId);
+        keys2.add(e.detail.owner.entity.id);
+        keys2.add(e.detail.content.recordId);
       }
       if (e.kind === "capture") {
         const event = e.value.event;
         if ("messageId" in event)
-          keys.add(event.messageId);
+          keys2.add(event.messageId);
         if ("callId" in event)
-          keys.add(event.callId);
+          keys2.add(event.callId);
         if (event.kind === "detail-begin" || event.kind === "omitted-block") {
           const o = event.kind === "detail-begin" ? event.descriptor.owner : event.block.owner;
           if ("messageId" in o)
-            keys.add(o.messageId);
+            keys2.add(o.messageId);
           if ("callId" in o)
-            keys.add(o.callId);
+            keys2.add(o.callId);
         }
         if (["ready", "final", "worker-failure", "capture-status"].includes(event.kind) && v.kind === "capture") {
-          keys.add(v.link.runId);
-          keys.add(v.link.childRunId);
+          keys2.add(v.link.runId);
+          keys2.add(v.link.childRunId);
         }
       }
       if (e.kind === "owner" && e.value.kind === "fact") {
         const f = e.value.fact;
         if (f.kind === "parent-admitted") {
           if (f.identity.graph)
-            keys.add(f.identity.graph.recordId);
+            keys2.add(f.identity.graph.recordId);
           for (const a of f.identity.assignments)
-            keys.add(a.childRunId);
+            keys2.add(a.childRunId);
         }
         if ("checkId" in f)
-          keys.add(f.checkId);
+          keys2.add(f.checkId);
         if ("observationId" in f)
-          keys.add(f.observationId);
+          keys2.add(f.observationId);
         if ("reviewId" in f)
-          keys.add(f.reviewId);
+          keys2.add(f.reviewId);
       }
     }
-  return [...keys];
+  return [...keys2];
 }
 
 // src/history/projection.ts
-import { createHash as createHash13 } from "node:crypto";
+import { createHash as createHash17 } from "node:crypto";
 
 // src/history/task-folds.ts
 var TASKS = 1024;
@@ -7487,7 +12309,7 @@ function materializeEntity(s, sources) {
   if (!s.first || !s.last)
     return;
   const first = sources.read(s.first).value, last = sources.read(s.last).value;
-  let record;
+  let record2;
   if (s.kind === "task") {
     if (first.kind !== "admission" || first.intent.identity.kind !== "action" || first.intent.identity.action.kind !== "create")
       bad3();
@@ -7496,7 +12318,7 @@ function materializeEntity(s, sources) {
       if (last.kind !== "admission" || last.intent.identity.kind !== "action" || last.intent.identity.action.kind !== "save-plan" || plan?.kind !== "end" || canonicalJson(plan.detail.content) !== canonicalJson(last.intent.identity.action.graph.plan) || plan.detail.owner.entity.kind !== "task" || plan.detail.owner.entity.version !== last.intent.identity.action.graph.planRevision)
         bad3();
     }
-    record = {
+    record2 = {
       kind: "task",
       owner: {
         taskId: s.id,
@@ -7526,7 +12348,7 @@ function materializeEntity(s, sources) {
       const end = b.value.event, detail = s.detail ? sources.event(s.detail).event : null;
       if (s.detailId && detail?.kind !== "end")
         bad3();
-      record = {
+      record2 = {
         kind: "message",
         owner,
         version: s.version,
@@ -7543,7 +12365,7 @@ function materializeEntity(s, sources) {
         bad3();
       if (result && (result.kind !== "capture" || result.value.event.kind !== "tool-end"))
         bad3();
-      record = {
+      record2 = {
         kind: "tool",
         owner,
         version: s.version,
@@ -7556,25 +12378,25 @@ function materializeEntity(s, sources) {
       };
     }
   }
-  const decoded = decodeHistoryRecord(record);
-  if (decoded.kind !== "task" && decoded.kind !== "message" && decoded.kind !== "tool")
+  const decoded2 = decodeHistoryRecord(record2);
+  if (decoded2.kind !== "task" && decoded2.kind !== "message" && decoded2.kind !== "tool")
     bad3();
-  return decoded;
+  return decoded2;
 }
 
 // src/history/export.ts
-import { createHash as createHash11, randomUUID as randomUUID4 } from "node:crypto";
+import { createHash as createHash15, randomUUID as randomUUID10 } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 // src/history/search.ts
-import { createHash as createHash10 } from "node:crypto";
+import { createHash as createHash14 } from "node:crypto";
 
 // src/history/read-proof.ts
 import {
   createCipheriv,
   createDecipheriv,
-  createHash as createHash8,
-  randomBytes as randomBytes2
+  createHash as createHash12,
+  randomBytes as randomBytes5
 } from "node:crypto";
 var PREFIX = "rp1.";
 var READ_PROOF_PLAINTEXT_BYTES = 6000;
@@ -7614,8 +12436,8 @@ class HistoryReadProof {
     };
   }
   aad(context, material) {
-    const request = context.purpose === "list" ? decodeListRequest(context.request) : context.purpose === "entity" ? decodeEntityReadRequest(context.request) : context.purpose === "graph" ? decodeGraphReadRequest(context.request) : decodeCursor(context.request);
-    if (request.storeId !== this.files.format.storeId || !["list", "search", "detail", "graph", "entity"].includes(context.purpose))
+    const request3 = context.purpose === "list" ? decodeListRequest(context.request) : context.purpose === "entity" ? decodeEntityReadRequest(context.request) : context.purpose === "graph" ? decodeGraphReadRequest(context.request) : decodeCursor(context.request);
+    if (request3.storeId !== this.files.format.storeId || !["list", "search", "detail", "graph", "entity"].includes(context.purpose))
       refuse();
     return Buffer.from(canonicalJson({
       domain: "cadence-history-read-progress/1",
@@ -7625,14 +12447,14 @@ class HistoryReadProof {
       root: this.files.format.rootIdentity,
       format: material.formatStamp,
       key: material.keyStamp,
-      request: createHash8("sha256").update(canonicalJson(readIdentity(request))).digest("hex")
+      request: createHash12("sha256").update(canonicalJson(readIdentity(request3))).digest("hex")
     }));
   }
   seal(context, plaintext, budget) {
     try {
       if (!plaintext.byteLength || plaintext.byteLength > READ_PROOF_PLAINTEXT_BYTES)
         refuse();
-      const material = this.files.readProofMaterial(budget), nonce = randomBytes2(12);
+      const material = this.files.readProofMaterial(budget), nonce = randomBytes5(12);
       const cipher = createCipheriv("aes-256-gcm", material.key, nonce, {
         authTagLength: 16
       });
@@ -8063,7 +12885,7 @@ class ForwardValidator {
         case "select": {
           let selected2;
           try {
-            selected2 = incarnation(this.files, this.files.segmentPath(s.segment), LIMITS.segmentBytes);
+            selected2 = incarnation2(this.files, this.files.segmentPath(s.segment), LIMITS.segmentBytes);
           } catch (e) {
             if (e && typeof e === "object" && "code" in e && e.code === "ENOENT") {
               s.phase = "done";
@@ -8140,9 +12962,9 @@ class ForwardValidator {
           break;
         }
         case "members": {
-          const { marker, refs } = this.marker(budget);
+          const { marker: marker2, refs } = this.marker(budget);
           if (s.member === s.marker) {
-            if (s.reference !== marker.artifacts.length - 1)
+            if (s.reference !== marker2.artifacts.length - 1)
               bad4();
             s.phase = "commit";
             break;
@@ -8170,14 +12992,14 @@ class ForwardValidator {
           const e = events[s.event];
           if (e.kind === "chunk") {
             const i = refs.get(key(e.artifact));
-            if (i === undefined || i > s.reference + 1 || canonicalJson(e.artifact) !== canonicalJson(marker.artifacts[i]))
+            if (i === undefined || i > s.reference + 1 || canonicalJson(e.artifact) !== canonicalJson(marker2.artifacts[i]))
               bad4();
             s.reference = Math.max(s.reference, i);
           }
           if (e.kind === "owner" && e.value.kind === "fact" && e.value.fact.kind === "parent-admitted") {
             s.admission = {
               runId: e.value.fact.runId,
-              hash: hash(canonicalJson(e.value.fact.identity))
+              hash: hash2(canonicalJson(e.value.fact.identity))
             };
             s.phase = "admission";
           } else
@@ -8254,24 +13076,24 @@ class ForwardValidator {
     this.assertCurrent();
     const bytes = readRange(this.files, this.files.segmentPath(p.segment), p.offset, p.bytes, budget);
     const rows = [];
-    let at = 0, marker;
+    let at = 0, marker2;
     while (at < bytes.length) {
       const start = at, end = bytes.indexOf(10, at);
       if (end < 0)
         bad4();
-      const decode = () => decodeJournalText(new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(start, end + 1)));
+      const decode2 = () => decodeJournalText(new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(start, end + 1)));
       if (end + 1 === bytes.length) {
-        const r = decode();
+        const r = decode2();
         if (r.kind !== "commit")
           bad4();
-        marker = r;
+        marker2 = r;
       } else {
         let row;
         Object.defineProperty(rows, rows.length, {
           enumerable: true,
           get() {
             if (!row) {
-              const r = decode();
+              const r = decode2();
               if (r.kind !== "record")
                 bad4();
               row = r;
@@ -8282,16 +13104,16 @@ class ForwardValidator {
       }
       at = end + 1;
     }
-    if (!marker || marker.last !== p.seq)
+    if (!marker2 || marker2.last !== p.seq)
       bad4();
     this.files.assertPublished(p.segment, p.offset + p.bytes, p.seq);
     return {
       pointer: { ...p },
       sourceRow: (index) => sourceLocator(bytes, p, index, rows.length),
       rows,
-      previous: marker.previous,
+      previous: marker2.previous,
       next: { segment: p.segment, offset: p.offset + p.bytes },
-      navigationRoot: marker.navigationRoot
+      navigationRoot: marker2.navigationRoot
     };
   }
 }
@@ -8397,11 +13219,11 @@ function decodeRetainedProgress(value) {
 }
 
 // src/history/retained-traversal.ts
-import { createHash as createHash9 } from "node:crypto";
+import { createHash as createHash13 } from "node:crypto";
 function bad5() {
   throw new ContractError("corrupt-selected");
 }
-var fingerprint = (v) => createHash9("sha256").update(canonicalJson(v)).digest("hex");
+var fingerprint = (v) => createHash13("sha256").update(canonicalJson(v)).digest("hex");
 var ready = (v) => {
   const s = v.state;
   if (s.phase !== "ready")
@@ -8757,11 +13579,11 @@ var digits = (id) => {
   return s.slice(0, 12) + s.slice(13, 16) + s.slice(17);
 };
 var publicTextRef = (id, label, text2, field, batch, row, slot) => ({
-  recordId: uuid(address(batch.pointer).toString(16).padStart(14, "0") + createHash10("sha256").update(`${id}/${label}`).digest("hex").slice(0, 16)),
+  recordId: uuid(address(batch.pointer).toString(16).padStart(14, "0") + createHash14("sha256").update(`${id}/${label}`).digest("hex").slice(0, 16)),
   version: batch.rows.indexOf(row) * EVENT_SLOTS + slot + 1,
   field,
   bytes: Buffer.byteLength(text2),
-  sha256: createHash10("sha256").update(text2).digest("hex")
+  sha256: createHash14("sha256").update(text2).digest("hex")
 });
 var initial = () => ({
   pos: { segment: 1, offset: 0 },
@@ -8777,7 +13599,7 @@ function scanCursor(base, p) {
   const snapshot = p.snapshot.toString(16).padStart(14, "0");
   if (snapshot.length !== 14)
     throw new ContractError("capacity");
-  const binding = createHash10("sha256").update(canonicalJson({
+  const binding = createHash14("sha256").update(canonicalJson({
     ...readIdentity(base),
     recordId: null,
     recordVersion: version,
@@ -8825,20 +13647,20 @@ class RetainedScan {
   ends = new Map;
   admission;
   coverage = { ...COMPLETE, omissions: [] };
-  constructor(reader, request, budget, progress) {
+  constructor(reader, request3, budget, progress) {
     this.reader = reader;
-    this.request = request;
+    this.request = request3;
     this.budget = budget;
     this.request = {
-      storeId: request.storeId,
-      scope: { ...request.scope },
-      snapshotSeq: request.snapshotSeq
+      storeId: request3.storeId,
+      scope: { ...request3.scope },
+      snapshotSeq: request3.snapshotSeq
     };
-    if (request.storeId !== reader.storeId)
+    if (request3.storeId !== reader.storeId)
       bad6();
     this.nav = new HistoryNavigation(reader.files);
     if (progress) {
-      this.traversal = new RetainedTraversal(reader.files, request.snapshotSeq, budget, progress === true ? undefined : progress);
+      this.traversal = new RetainedTraversal(reader.files, request3.snapshotSeq, budget, progress === true ? undefined : progress);
       this.coverage = this.traversal.state.coverage;
     }
   }
@@ -9118,7 +13940,7 @@ class RetainedScan {
             graph: {
               recordId: v.intent.operationId,
               revision: graph.revision,
-              sha256: createHash10("sha256").update(canonicalJson(graph)).digest("hex")
+              sha256: createHash14("sha256").update(canonicalJson(graph)).digest("hex")
             }
           },
           graph
@@ -9417,14 +14239,14 @@ async function searchQuantum(reader, value, limit = LIMITS.pageEntries) {
 // src/history/export.ts
 var exporterIdentity;
 function buildIdentity() {
-  exporterIdentity ??= createHash11("sha256").update(readFileSync(new URL(import.meta.url))).digest("hex");
+  exporterIdentity ??= createHash15("sha256").update(readFileSync(new URL(import.meta.url))).digest("hex");
   return exporterIdentity;
 }
 function aborted(signal) {
   if (signal.aborted)
     throw new ContractError("unavailable");
 }
-var yieldTurn = () => new Promise((resolve3) => setImmediate(resolve3));
+var yieldTurn = () => new Promise((resolve7) => setImmediate(resolve7));
 function* textChunks(text2) {
   const bytes = Buffer.from(text2);
   for (let at = 0;at < bytes.length; ) {
@@ -9435,18 +14257,18 @@ function* textChunks(text2) {
     at = end;
   }
 }
-function recordTitle(record) {
-  switch (record.kind) {
+function recordTitle(record2) {
+  switch (record2.kind) {
     case "task":
-      return `Task ${record.owner.taskId}`;
+      return `Task ${record2.owner.taskId}`;
     case "run":
-      return `Recorded ${record.projection.childRunId ? "child" : "run"} ${record.projection.childRunId ?? record.projection.runId}`;
+      return `Recorded ${record2.projection.childRunId ? "child" : "run"} ${record2.projection.childRunId ?? record2.projection.runId}`;
     case "owner-fact":
-      return `Owner observation: ${record.fact.kind}`;
+      return `Owner observation: ${record2.fact.kind}`;
     case "capture-fact":
-      return `Captured observation: ${record.capture.event.kind}`;
+      return `Captured observation: ${record2.capture.event.kind}`;
     default:
-      return `Retained ${record.kind}`;
+      return `Retained ${record2.kind}`;
   }
 }
 function* markdown(event) {
@@ -9477,13 +14299,13 @@ Coverage: ${canonicalJson(event.coverage)}
   }
 }
 async function* exportHistory(projection, input, signal) {
-  const request = decodeExportRequest(input), exportId = randomUUID4(), digest = createHash11("sha256");
+  const request3 = decodeExportRequest(input), exportId = randomUUID10(), digest = createHash15("sha256");
   let ordinal = 0, encodedBytes = 0, coverage = { ...COMPLETE, omissions: [] };
   const frame = (event) => {
     aborted(signal);
     const f = decodeExportFrame({ exportId, ordinal: ++ordinal, event });
     if (event.kind !== "trailer") {
-      const encoded2 = encodeExportFrame(f, request.format);
+      const encoded2 = encodeExportFrame(f, request3.format);
       digest.update(encoded2);
       encodedBytes += Buffer.byteLength(encoded2);
       if (!Number.isSafeInteger(encodedBytes))
@@ -9492,7 +14314,7 @@ async function* exportHistory(projection, input, signal) {
     return f;
   };
   const emit = function* (event) {
-    if (request.format === "ndjson")
+    if (request3.format === "ndjson")
       yield frame(event);
     else
       for (const text2 of markdown(event))
@@ -9505,7 +14327,7 @@ async function* exportHistory(projection, input, signal) {
     byte: 0,
     snapshot: 0
   };
-  const scan = new RetainedScan(projection.reader, request, new HistoryReadBudget, true);
+  const scan = new RetainedScan(projection.reader, request3, new HistoryReadBudget, true);
   for (let stalls2 = 0;; ) {
     aborted(signal);
     const before = canonicalJson({ point, state: scan.checkpoint() });
@@ -9527,7 +14349,7 @@ async function* exportHistory(projection, input, signal) {
   yield frame({
     kind: "manifest",
     schema: EXPORT_SCHEMA,
-    request,
+    request: request3,
     coverage,
     serviceProtocol: 1,
     workerProtocol: 2,
@@ -9546,7 +14368,7 @@ async function* exportHistory(projection, input, signal) {
       const { detail, owner } = item, original = open2.get(detail.content.recordId);
       if (detail.content.bytes ? !original || original.bytes !== detail.content.bytes || original.content !== canonicalJson(detail.content) : original !== undefined)
         throw new ContractError("corrupt-selected");
-      if ((original?.hash ?? createHash11("sha256")).digest("hex") !== detail.content.sha256)
+      if ((original?.hash ?? createHash15("sha256")).digest("hex") !== detail.content.sha256)
         throw new ContractError("corrupt-selected");
       open2.delete(detail.content.recordId);
       const events = [];
@@ -9577,7 +14399,7 @@ async function* exportHistory(projection, input, signal) {
     coverage = combineCoverage(coverage, item.coverage);
     const length = Buffer.byteLength(item.text);
     if (item.inline) {
-      if (item.start !== 0 || length !== item.content.bytes || createHash11("sha256").update(item.text).digest("hex") !== item.content.sha256)
+      if (item.start !== 0 || length !== item.content.bytes || createHash15("sha256").update(item.text).digest("hex") !== item.content.sha256)
         throw new ContractError("corrupt-selected");
     } else {
       let original = open2.get(item.content.recordId);
@@ -9587,7 +14409,7 @@ async function* exportHistory(projection, input, signal) {
         original = {
           bytes: 0,
           content: canonicalJson(item.content),
-          hash: createHash11("sha256")
+          hash: createHash15("sha256")
         };
         open2.set(item.content.recordId, original);
       }
@@ -9635,7 +14457,7 @@ async function* exportHistory(projection, input, signal) {
             for (const [id, state] of runs)
               if (state.drained || v.kind === "recovery") {
                 runs.delete(id);
-                for (const projectionRecord of projection.projectRun(state, request.scope)) {
+                for (const projectionRecord of projection.projectRun(state, request3.scope)) {
                   coverage = combineCoverage(coverage, projectionRecord.coverage);
                   yield* emit({
                     kind: "record",
@@ -9655,7 +14477,7 @@ async function* exportHistory(projection, input, signal) {
             }
           }
         }
-        if (batch.pointer.seq === request.snapshotSeq) {
+        if (batch.pointer.seq === request3.snapshotSeq) {
           finished = true;
           break;
         }
@@ -9683,7 +14505,7 @@ async function* exportHistory(projection, input, signal) {
   if (open2.size)
     throw new ContractError("corrupt-selected");
   for (const state of runs.values())
-    for (const projectionRecord of projection.projectRun(state, request.scope)) {
+    for (const projectionRecord of projection.projectRun(state, request3.scope)) {
       coverage = combineCoverage(coverage, projectionRecord.coverage);
       yield* emit({
         kind: "record",
@@ -9696,13 +14518,13 @@ async function* exportHistory(projection, input, signal) {
     frames: ordinal,
     encodedBytes,
     sha256: digest.digest("hex"),
-    committedSeq: request.snapshotSeq,
+    committedSeq: request3.snapshotSeq,
     coverage
   });
 }
 
 // src/history/list-progress.ts
-import { createHash as createHash12 } from "node:crypto";
+import { createHash as createHash16 } from "node:crypto";
 
 // src/history/detail-progress.ts
 function bad7() {
@@ -10088,12 +14910,12 @@ var initial2 = () => ({
   snapshot: 0
 });
 var count = (row) => row.value.kind === "capture" || row.value.kind === "owner" ? row.value.events.length : 1;
-function fresh(request) {
+function fresh(request3) {
   const traversal = freshProgress();
-  if (request.snapshotSeq === null)
+  if (request3.snapshotSeq === null)
     traversal.phase = "output";
   return {
-    phase: request.snapshotSeq === null ? "discover" : "read",
+    phase: request3.snapshotSeq === null ? "discover" : "read",
     traversal,
     point: initial2(),
     target: null,
@@ -10175,37 +14997,37 @@ function current(v, budget) {
 function fits(link, scope) {
   return scope.kind === "workspace" || (scope.kind === "task" ? link.taskId === scope.id : scope.kind === "run" ? link.runId === scope.id : link.childRunId === scope.id);
 }
-function nextAfter(request, n) {
-  const h = createHash12("sha256").update(canonicalJson({ ...readIdentity(request), after: null, ordinal: n })).digest("hex");
+function nextAfter(request3, n) {
+  const h = createHash16("sha256").update(canonicalJson({ ...readIdentity(request3), after: null, ordinal: n })).digest("hex");
   return {
     recordId: `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`,
     version: 1,
     offset: n
   };
 }
-function listPreparation(request, completion, start) {
-  const state = fresh(request);
+function listPreparation(request3, completion, start) {
+  const state = fresh(request3);
   if (start)
     state.seek = start;
   const next = {
-    ...readIdentity(request),
-    navigation: completion.seal({ purpose: "list", request }, Buffer.from(canonicalJson(state, 6000)))
+    ...readIdentity(request3),
+    navigation: completion.seal({ purpose: "list", request: request3 }, Buffer.from(canonicalJson(state, 6000)))
   };
   return decodeHistoryReadResult({
     kind: "progress",
-    request,
+    request: request3,
     next,
     coverage: COMPLETE
   });
 }
-function entityPreparation(request, completion) {
+function entityPreparation(request3, completion) {
   const next = {
-    ...readIdentity(request),
-    navigation: completion.seal({ purpose: "entity", request }, Buffer.from(canonicalJson(fresh(request), 6000)))
+    ...readIdentity(request3),
+    navigation: completion.seal({ purpose: "entity", request: request3 }, Buffer.from(canonicalJson(fresh(request3), 6000)))
   };
   return decodeEntityReadResult({
     kind: "progress",
-    request,
+    request: request3,
     next,
     coverage: COMPLETE
   });
@@ -10273,28 +15095,28 @@ function advanceTarget(p, t, snapshot, budget, sources) {
       return materializeRun(t.run, sources, p.readEpoch());
     if (!t.entity)
       bad9();
-    const record = materializeEntity(t.entity, sources);
-    if (t.entity.wanted !== null && record?.version !== t.entity.wanted)
+    const record2 = materializeEntity(t.entity, sources);
+    if (t.entity.wanted !== null && record2?.version !== t.entity.wanted)
       return;
-    return record;
+    return record2;
   } finally {
     if (!reset)
       t.proof = v.checkpoint();
   }
 }
-async function readRetainedList(p, request) {
-  return retryStalled(() => read(p, request, false));
+async function readRetainedList(p, request3) {
+  return retryStalled(() => read(p, request3, false));
 }
-async function readRetainedEntity(p, request) {
-  return retryStalled(() => read(p, request, true));
+async function readRetainedEntity(p, request3) {
+  return retryStalled(() => read(p, request3, true));
 }
-async function read(p, request, entity) {
+async function read(p, request3, entity) {
   const budget = new HistoryReadBudget, proof = new HistoryReadProof(p.reader.files), completion = proof.prepareCompletion(budget);
   const context = (r) => ("reader" in r) ? { purpose: "list", request: r } : { purpose: "entity", request: r };
-  let s = fresh(request);
-  if (request.navigation)
-    s = decodeState(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(proof.open(context(request), request.navigation, budget)), 6000));
-  if (request.storeId !== p.reader.storeId || "reader" in request && request.scope.kind === "workspace" && request.scope.id !== p.reader.files.format.workspaceId)
+  let s = fresh(request3);
+  if (request3.navigation)
+    s = decodeState(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(proof.open(context(request3), request3.navigation, budget)), 6000));
+  if (request3.storeId !== p.reader.storeId || "reader" in request3 && request3.scope.kind === "workspace" && request3.scope.id !== p.reader.files.format.workspaceId)
     bad9();
   const sources = new SourceRows(p.reader.files, budget);
   const collected = [];
@@ -10316,22 +15138,22 @@ async function read(p, request, entity) {
   const progress = () => {
     if (coordinate() === before)
       noProgress(budget);
-    const next = seal(request);
+    const next = seal(request3);
     return entity ? decodeEntityReadResult({
       kind: "progress",
-      request,
+      request: request3,
       next,
       coverage: s.traversal.coverage
     }) : decodeHistoryReadResult({
       kind: "progress",
-      request,
+      request: request3,
       next,
       coverage: s.traversal.coverage
     });
   };
   try {
     if (s.phase === "discover") {
-      if (!("reader" in request) || request.snapshotSeq !== null)
+      if (!("reader" in request3) || request3.snapshotSeq !== null)
         bad9();
       discovery = new ForwardValidator(p.reader.files, s.traversal.proof);
       discovery.revalidate(budget);
@@ -10359,37 +15181,37 @@ async function read(p, request, entity) {
       s.phase = "read";
       s.traversal.phase = "output";
       s.traversal.proof = freshValidator();
-      const next = seal({ ...readIdentity(request), snapshotSeq });
+      const next = seal({ ...readIdentity(request3), snapshotSeq });
       return decodeHistoryReadResult({
         kind: "snapshot",
-        request,
+        request: request3,
         next,
         coverage: s.traversal.coverage
       });
     }
-    if (request.snapshotSeq === null)
+    if (request3.snapshotSeq === null)
       bad9();
-    traversal = new RetainedTraversal(p.reader.files, request.snapshotSeq, budget, s.traversal);
+    traversal = new RetainedTraversal(p.reader.files, request3.snapshotSeq, budget, s.traversal);
     traversal.prepare(s.point);
-    if ("reader" in request && request.reader === "tasks" && request.after?.version === Number.MAX_SAFE_INTEGER && s.phase === "read") {
+    if ("reader" in request3 && request3.reader === "tasks" && request3.after?.version === Number.MAX_SAFE_INTEGER && s.phase === "read") {
       s.phase = "legacy";
-      s.legacy = request.after.offset;
+      s.legacy = request3.after.offset;
     }
     if (entity) {
-      if (!("kind" in request))
+      if (!("kind" in request3))
         bad9();
-      s.target ??= target(freshEntity(request.kind, request.id, request.version), null);
-      const record = advanceTarget(p, s.target, request.snapshotSeq, budget, sources);
-      let selected2 = record;
-      if (!selected2 && request.kind === "task")
-        selected2 = legacyEntity(p, request.id, request.version, budget);
-      if (!selected2 || !("owner" in selected2) || !ownerInScope(selected2.owner, request.scope))
+      s.target ??= target(freshEntity(request3.kind, request3.id, request3.version), null);
+      const record2 = advanceTarget(p, s.target, request3.snapshotSeq, budget, sources);
+      let selected2 = record2;
+      if (!selected2 && request3.kind === "task")
+        selected2 = legacyEntity(p, request3.id, request3.version, budget);
+      if (!selected2 || !("owner" in selected2) || !ownerInScope(selected2.owner, request3.scope))
         bad9();
       validate();
       completion.validate();
-      return decodeEntityReadResult({ request, record: selected2 });
+      return decodeEntityReadResult({ request: request3, record: selected2 });
     }
-    if (!("reader" in request))
+    if (!("reader" in request3))
       bad9();
     const finish = () => {
       if (!traversal)
@@ -10399,15 +15221,15 @@ async function read(p, request, entity) {
       if (s.phase !== "done") {
         s.ordinal += collected.length || 1;
         next = seal({
-          ...readIdentity(request),
-          after: nextAfter(request, s.ordinal)
+          ...readIdentity(request3),
+          after: nextAfter(request3, s.ordinal)
         });
       } else {
         validate();
         completion.validate();
       }
       return decodeHistoryReadResult({
-        request,
+        request: request3,
         records: collected,
         next,
         coverage: s.traversal.coverage
@@ -10418,7 +15240,7 @@ async function read(p, request, entity) {
       const b = traversal.next(s.point);
       if (!b) {
         traversal.finish();
-        s.phase = request.reader === "tasks" ? "legacy" : "done";
+        s.phase = request3.reader === "tasks" ? "legacy" : "done";
         break;
       }
       if (s.seek) {
@@ -10426,7 +15248,7 @@ async function read(p, request, entity) {
         if (b.pointer.segment > seek.pos.segment || b.pointer.segment === seek.pos.segment && b.pointer.offset > seek.pos.offset)
           bad9();
         if (b.pointer.segment !== seek.pos.segment || b.pointer.offset !== seek.pos.offset) {
-          if (b.pointer.seq === request.snapshotSeq)
+          if (b.pointer.seq === request3.snapshotSeq)
             bad9();
           s.point.pos = b.next;
           s.point.row = 0;
@@ -10442,15 +15264,15 @@ async function read(p, request, entity) {
         for (;s.point.event < count(row) * SLOTS; s.point.event++) {
           budget.reserve(0);
           const index = Math.floor(s.point.event / SLOTS), ordinal = s.point.event % SLOTS, event = value.kind === "owner" || value.kind === "capture" ? value.events[index] : null;
-          let record;
+          let record2;
           if (s.target) {
-            record = advanceTarget(p, s.target, request.snapshotSeq, budget, sources);
-            if (request.reader === "tools" && s.target.entity?.first && canonicalJson(s.target.entity.first) !== canonicalJson(sourceAt(b, s.point.row, index)))
-              record = undefined;
-            if (request.reader === "contents" && event?.kind === "capture" && event.value.event.kind === "omitted-block" && value.kind === "capture")
-              record = omitted(value.link, event.value.event.block, record && "version" in record ? record.version : 1);
+            record2 = advanceTarget(p, s.target, request3.snapshotSeq, budget, sources);
+            if (request3.reader === "tools" && s.target.entity?.first && canonicalJson(s.target.entity.first) !== canonicalJson(sourceAt(b, s.point.row, index)))
+              record2 = undefined;
+            if (request3.reader === "contents" && event?.kind === "capture" && event.value.event.kind === "omitted-block" && value.kind === "capture")
+              record2 = omitted(value.link, event.value.event.block, record2 && "version" in record2 ? record2.version : 1);
             s.target = null;
-          } else if (request.reader === "tasks" && ordinal === 0 && value.kind === "admission" && value.intent.createdTaskId && value.intent.identity.kind === "action" && value.intent.identity.action.kind === "create") {
+          } else if (request3.reader === "tasks" && ordinal === 0 && value.kind === "admission" && value.intent.createdTaskId && value.intent.identity.kind === "action" && value.intent.identity.action.kind === "create") {
             s.target = target(freshEntity("task", value.intent.createdTaskId, null), null);
             s.target.proof = traversal.checkpoint().proof;
             s.target.row = s.point.row;
@@ -10458,9 +15280,9 @@ async function read(p, request, entity) {
           } else if ((value.kind === "capture" || value.kind === "owner") && fits({
             ...value.link,
             childRunId: value.kind === "capture" ? value.link.childRunId : null
-          }, request.scope)) {
-            if (ordinal === 0 && request.reader === "contents" && event?.kind === "end" && event.detail.descriptor)
-              record = {
+          }, request3.scope)) {
+            if (ordinal === 0 && request3.reader === "contents" && event?.kind === "end" && event.detail.descriptor)
+              record2 = {
                 kind: "content",
                 owner: event.detail.owner,
                 version: event.detail.content.version,
@@ -10471,36 +15293,36 @@ async function read(p, request, entity) {
               };
             if (ordinal === 0 && event?.kind === "capture" && value.kind === "capture") {
               const e = event.value.event;
-              if (request.reader === "events")
-                record = {
+              if (request3.reader === "events")
+                record2 = {
                   kind: "capture-fact",
                   recordId: event.id,
                   committedSeq: row.seq,
                   link: value.link,
                   capture: event.value
                 };
-              if (request.reader === "messages" && e.kind === "message-start") {
+              if (request3.reader === "messages" && e.kind === "message-start") {
                 s.target = target(freshEntity("message", e.messageId, null), null);
                 s.target.proof = traversal.checkpoint().proof;
                 s.target.row = s.point.row;
                 s.target.event = index;
               }
-              if (request.reader === "tools" && (e.kind === "call-declaration" || e.kind === "tool-start" || e.kind === "tool-end"))
+              if (request3.reader === "tools" && (e.kind === "call-declaration" || e.kind === "tool-start" || e.kind === "tool-end"))
                 s.target = target(freshEntity("tool", e.callId, null), null);
-              if (request.reader === "contents" && e.kind === "omitted-block") {
+              if (request3.reader === "contents" && e.kind === "omitted-block") {
                 const o = e.block.owner;
                 if ("messageId" in o)
                   s.target = target(freshEntity("message", o.messageId, null), null, event.id);
                 else if ("callId" in o)
                   s.target = target(freshEntity("tool", o.callId, null), null, event.id);
                 else
-                  record = omitted(value.link, e.block, 1);
+                  record2 = omitted(value.link, e.block, 1);
               }
             }
             if (ordinal === 0 && event?.kind === "owner" && event.value.kind === "fact" && value.kind === "owner") {
               const fact = event.value.fact;
-              if (request.reader === "events" || request.reader === "checks" && ["check-start", "check-settled"].includes(fact.kind) || request.reader === "changes" && fact.kind === "changes" || request.reader === "reviews" && fact.kind === "review")
-                record = {
+              if (request3.reader === "events" || request3.reader === "checks" && ["check-start", "check-settled"].includes(fact.kind) || request3.reader === "changes" && fact.kind === "changes" || request3.reader === "reviews" && fact.kind === "review")
+                record2 = {
                   kind: "owner-fact",
                   recordId: event.id,
                   committedSeq: row.seq,
@@ -10510,23 +15332,23 @@ async function read(p, request, entity) {
                 };
             }
           }
-          if (!s.target && !record && request.reader === "runs" && value.kind === "owner" && event?.kind === "owner" && event.value.kind === "fact" && event.value.fact.kind === "parent-admitted") {
+          if (!s.target && !record2 && request3.reader === "runs" && value.kind === "owner" && event?.kind === "owner" && event.value.kind === "fact" && event.value.fact.kind === "parent-admitted") {
             const f = event.value.fact, child = ordinal ? f.identity.assignments[ordinal - 1]?.childRunId : null;
-            if ((ordinal === 0 || child) && fits({ ...value.link, childRunId: child }, request.scope))
+            if ((ordinal === 0 || child) && fits({ ...value.link, childRunId: child }, request3.scope))
               s.target = target(null, freshRun(f.runId, child ?? null, ordinal));
           }
           if (s.target) {
             s.point.event--;
             continue;
           }
-          if (record) {
-            const decoded = decodeHistoryRecord(record);
+          if (record2) {
+            const decoded2 = decodeHistoryRecord(record2);
             const value2 = {
-              request,
-              records: [...collected, decoded],
+              request: request3,
+              records: [...collected, decoded2],
               next: {
-                ...readIdentity(request),
-                after: nextAfter(request, s.ordinal + collected.length + 1),
+                ...readIdentity(request3),
+                after: nextAfter(request3, s.ordinal + collected.length + 1),
                 navigation: "x".repeat(LIMITS.navigationBytes)
               },
               coverage: traversal.state.coverage
@@ -10537,19 +15359,19 @@ async function read(p, request, entity) {
                 throw new ContractError("oversize");
               return finish();
             }
-            collected.push(decoded);
-            if (record.kind === "content")
-              traversal.state.coverage = combineCoverage(traversal.state.coverage, record.coverage);
-            if (collected.length === request.limit) {
+            collected.push(decoded2);
+            if (record2.kind === "content")
+              traversal.state.coverage = combineCoverage(traversal.state.coverage, record2.coverage);
+            if (collected.length === request3.limit) {
               s.point.event++;
               return finish();
             }
           }
         }
       }
-      if (b.pointer.seq === request.snapshotSeq) {
+      if (b.pointer.seq === request3.snapshotSeq) {
         traversal.finish();
-        s.phase = request.reader === "tasks" ? "legacy" : "done";
+        s.phase = request3.reader === "tasks" ? "legacy" : "done";
         break;
       }
       s.point.pos = b.next;
@@ -10560,7 +15382,7 @@ async function read(p, request, entity) {
       const tasks = [...p.environment.legacyTasks(budget)].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
       if (tasks.length > 1000)
         throw new ContractError("capacity");
-      const sum = createHash12("sha256");
+      const sum = createHash16("sha256");
       for (const task2 of tasks) {
         budget.reserve(0);
         sum.update(JSON.stringify({
@@ -10572,14 +15394,14 @@ async function read(p, request, entity) {
       const identity = sum.digest("hex");
       if (s.legacy > tasks.length)
         bad9();
-      if (!s.legacyIdentity && request.after?.version === Number.MAX_SAFE_INTEGER) {
-        const h = createHash12("sha256").update(canonicalJson({
-          ...readIdentity(request),
+      if (!s.legacyIdentity && request3.after?.version === Number.MAX_SAFE_INTEGER) {
+        const h = createHash16("sha256").update(canonicalJson({
+          ...readIdentity(request3),
           after: null,
           legacy: s.legacy === 0 ? "begin" : identity,
           offset: s.legacy
         })).digest("hex");
-        if (request.after.recordId !== `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`)
+        if (request3.after.recordId !== `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`)
           bad9();
       }
       if (s.legacyIdentity && s.legacyIdentity !== identity)
@@ -10742,18 +15564,18 @@ class HistoryProjection {
     const state = freshEntity(kind, id, version ?? null);
     const selected2 = new Map;
     const remember2 = (batch, row) => {
-      const keys = [
+      const keys2 = [
         state.first,
         state.last,
         state.result,
         state.detail
       ].flatMap((source2) => source2 ? [`${source2.segment}/${source2.offset}`] : []);
       for (const key3 of selected2.keys())
-        if (!keys.includes(key3))
+        if (!keys2.includes(key3))
           selected2.delete(key3);
       const source = sourceAt(batch, row);
       const key2 = `${source.segment}/${source.offset}`;
-      if (keys.includes(key2))
+      if (keys2.includes(key2))
         selected2.set(key2, { batch, row });
     };
     const sources = new SourceRows(this.reader.files, budget, (source) => {
@@ -10801,15 +15623,15 @@ class HistoryProjection {
       if (!state.detail)
         throw new ContractError("receipt-inconclusive");
     }
-    let record = materializeEntity(state, sources);
+    let record2 = materializeEntity(state, sources);
     sources.assertCurrent();
-    if (!record && kind === "task") {
+    if (!record2 && kind === "task") {
       const tasks = this.environment.legacyTasks(budget);
       if (tasks.length > 1000)
         throw new ContractError("capacity");
       const legacy = tasks.find((t) => t.id === id);
       if (legacy)
-        record = {
+        record2 = {
           kind,
           owner: {
             taskId: id,
@@ -10822,39 +15644,39 @@ class HistoryProjection {
           plan: null
         };
     }
-    const result = version === undefined || version === record?.version ? record : undefined;
+    const result = version === undefined || version === record2?.version ? record2 : undefined;
     return result ? decodeHistoryRecord(result) : undefined;
   }
   acceleratedEntity = async (value, budget) => {
-    const request = decodeEntityReadRequest(value);
-    if (request.storeId !== this.reader.storeId)
+    const request3 = decodeEntityReadRequest(value);
+    if (request3.storeId !== this.reader.storeId)
       fail();
-    this.navigation.snapshot(request.snapshotSeq, budget);
-    const record = this.entityAt(request.id, request.kind, request.snapshotSeq, budget, request.version);
-    if (!record || !ownerInScope(record.owner, request.scope))
+    this.navigation.snapshot(request3.snapshotSeq, budget);
+    const record2 = this.entityAt(request3.id, request3.kind, request3.snapshotSeq, budget, request3.version);
+    if (!record2 || !ownerInScope(record2.owner, request3.scope))
       fail();
-    return decodeEntityPage({ request, record });
+    return decodeEntityPage({ request: request3, record: record2 });
   };
   entity = async (value) => {
-    const request = decodeEntityReadRequest(value);
-    if (request.navigation)
-      return readRetainedEntity(this, request);
+    const request3 = decodeEntityReadRequest(value);
+    if (request3.navigation)
+      return readRetainedEntity(this, request3);
     const budget = new HistoryReadBudget;
     const completion = this.reader.files.format.schema === FORMAT ? new HistoryReadProof(this.reader.files).prepareCompletion(budget) : null;
     try {
-      const page = await this.acceleratedEntity(request, budget);
+      const page = await this.acceleratedEntity(request3, budget);
       completion?.validate();
       return page;
     } catch (error) {
       if (!completion || !(error instanceof ContractError) || error.code !== "receipt-inconclusive")
         throw error;
-      return entityPreparation(request, completion);
+      return entityPreparation(request3, completion);
     }
   };
-  cursor(request, pos, row, item) {
+  cursor(request3, pos, row, item) {
     const offset = pos.offset * (LIMITS.segmentRecords + 1) * ROW_SLOTS + row * ROW_SLOTS + item;
-    const digest = createHash13("sha256").update(canonicalJson({
-      ...readIdentity(request),
+    const digest = createHash17("sha256").update(canonicalJson({
+      ...readIdentity(request3),
       after: null,
       position: { ...pos, row, item }
     })).digest("hex");
@@ -10864,38 +15686,38 @@ class HistoryProjection {
       offset
     };
   }
-  parseCursor(request) {
-    const a = request.after;
+  parseCursor(request3) {
+    const a = request3.after;
     if (!a)
       return { pos: { segment: 1, offset: 0 }, row: 0, item: 0 };
     const unit = (LIMITS.segmentRecords + 1) * ROW_SLOTS, pos = { segment: a.version, offset: Math.floor(a.offset / unit) }, row = Math.floor(a.offset % unit / ROW_SLOTS), item = a.offset % ROW_SLOTS;
-    if (!equal3(a, this.cursor(request, pos, row, item)))
+    if (!equal3(a, this.cursor(request3, pos, row, item)))
       fail();
     return { pos, row, item };
   }
-  *records(row, request, budget, from) {
-    const v = row.value, snapshot = request.snapshotSeq;
+  *records(row, request3, budget, from) {
+    const v = row.value, snapshot = request3.snapshotSeq;
     if (snapshot === null)
       fail();
-    if (request.reader === "tasks" && v.kind === "admission" && v.intent.identity.kind === "action" && v.intent.identity.action.kind === "create" && v.intent.createdTaskId) {
-      const record = this.entityAt(v.intent.createdTaskId, "task", snapshot, budget);
-      if (record && from === 0)
-        yield { item: 0, record };
+    if (request3.reader === "tasks" && v.kind === "admission" && v.intent.identity.kind === "action" && v.intent.identity.action.kind === "create" && v.intent.createdTaskId) {
+      const record2 = this.entityAt(v.intent.createdTaskId, "task", snapshot, budget);
+      if (record2 && from === 0)
+        yield { item: 0, record: record2 };
       return;
     }
     if (v.kind !== "capture" && v.kind !== "owner")
       return;
-    if (!(request.reader === "runs" && request.scope.kind === "child") && !fits2({
+    if (!(request3.reader === "runs" && request3.scope.kind === "child") && !fits2({
       ...v.link,
       childRunId: v.kind === "capture" ? v.link.childRunId : null
-    }, request.scope))
+    }, request3.scope))
       return;
     if (from > v.events.length * RECORD_SLOTS)
       fail();
     for (let index = Math.floor(from / RECORD_SLOTS);index < v.events.length; index++) {
       budget.reserve(0);
       const e = v.events[index], out = [];
-      if (e.kind === "end" && e.detail.descriptor && request.reader === "contents")
+      if (e.kind === "end" && e.detail.descriptor && request3.reader === "contents")
         out.push(decodeHistoryRecord({
           kind: "content",
           owner: e.detail.owner,
@@ -10907,7 +15729,7 @@ class HistoryProjection {
         }));
       if (e.kind === "capture" && v.kind === "capture") {
         const event = e.value.event;
-        if (request.reader === "events")
+        if (request3.reader === "events")
           out.push({
             kind: "capture-fact",
             recordId: e.id,
@@ -10915,12 +15737,12 @@ class HistoryProjection {
             link: v.link,
             capture: e.value
           });
-        if (request.reader === "messages" && event.kind === "message-start") {
+        if (request3.reader === "messages" && event.kind === "message-start") {
           const r = this.entityAt(event.messageId, "message", snapshot, budget);
           if (r)
             out.push(r);
         }
-        if (request.reader === "tools" && (event.kind === "call-declaration" || event.kind === "tool-start" || event.kind === "tool-end")) {
+        if (request3.reader === "tools" && (event.kind === "call-declaration" || event.kind === "tool-start" || event.kind === "tool-end")) {
           const rows = this.batches(event.callId, snapshot, budget);
           const initial3 = rows.flatMap((b) => b.rows).find((r) => r.value.kind === "capture" && r.value.events.some((x) => x.kind === "capture" && ("callId" in x.value.event) && x.value.event.callId === event.callId));
           if (initial3?.id === row.id && v.events.findIndex((x) => x.kind === "capture" && ["call-declaration", "tool-start", "tool-end"].includes(x.value.event.kind) && ("callId" in x.value.event) && x.value.event.callId === event.callId) === index) {
@@ -10929,7 +15751,7 @@ class HistoryProjection {
               out.push(r);
           }
         }
-        if (request.reader === "contents" && event.kind === "omitted-block") {
+        if (request3.reader === "contents" && event.kind === "omitted-block") {
           const o = event.block.owner, kind = "messageId" in o ? "message" : ("callId" in o) ? "tool" : "child", id = "messageId" in o ? o.messageId : ("callId" in o) ? o.callId : v.link.childRunId;
           const version = kind === "child" ? 1 : this.entityAt(id, kind, snapshot, budget, undefined, e.id)?.version ?? 1;
           out.push(decodeHistoryRecord({
@@ -10947,9 +15769,9 @@ class HistoryProjection {
       }
       if (e.kind === "owner" && e.value.kind === "fact" && v.kind === "owner") {
         const fact = e.value.fact;
-        if (request.reader === "runs" && fact.kind === "parent-admitted")
-          out.push(...this.runState(fact.runId, snapshot, budget).projections(this.readEpoch()).filter((r) => fits2(r, request.scope)).map((projection) => ({ kind: "run", projection })));
-        if (request.reader === "events" || request.reader === "checks" && ["check-start", "check-settled"].includes(fact.kind) || request.reader === "changes" && fact.kind === "changes" || request.reader === "reviews" && fact.kind === "review")
+        if (request3.reader === "runs" && fact.kind === "parent-admitted")
+          out.push(...this.runState(fact.runId, snapshot, budget).projections(this.readEpoch()).filter((r) => fits2(r, request3.scope)).map((projection) => ({ kind: "run", projection })));
+        if (request3.reader === "events" || request3.reader === "checks" && ["check-start", "check-settled"].includes(fact.kind) || request3.reader === "changes" && fact.kind === "changes" || request3.reader === "reviews" && fact.kind === "review")
           out.push({
             kind: "owner-fact",
             recordId: e.id,
@@ -10959,27 +15781,27 @@ class HistoryProjection {
             fact
           });
       }
-      for (const [ordinal, record] of out.entries()) {
+      for (const [ordinal, record2] of out.entries()) {
         const item = index * RECORD_SLOTS + ordinal;
         if (item >= from)
-          yield { item, record };
+          yield { item, record: record2 };
       }
     }
   }
   async acceleratedPage(value, kind, budget = new HistoryReadBudget) {
-    let request = decodeListRequest(value);
-    if (request.navigation !== undefined)
+    let request3 = decodeListRequest(value);
+    if (request3.navigation !== undefined)
       fail();
-    if (request.reader !== kind || request.storeId !== this.reader.storeId || request.scope.kind === "workspace" && request.scope.id !== this.reader.files.format.workspaceId)
+    if (request3.reader !== kind || request3.storeId !== this.reader.storeId || request3.scope.kind === "workspace" && request3.scope.id !== this.reader.files.format.workspaceId)
       fail();
-    const snapshot = request.snapshotSeq ?? this.navigation.latest(budget);
+    const snapshot = request3.snapshotSeq ?? this.navigation.latest(budget);
     this.navigation.snapshot(snapshot, budget);
-    request = { ...request, snapshotSeq: snapshot };
-    let { pos, row: rowIndex, item: itemIndex } = this.parseCursor(request);
+    request3 = { ...request3, snapshotSeq: snapshot };
+    let { pos, row: rowIndex, item: itemIndex } = this.parseCursor(request3);
     const records = [];
     let bytes = 2048, next = null, coverage = this.navigation.hasTail(snapshot, budget) ? { ...GAP, omissions: [...GAP.omissions] } : { ...COMPLETE, omissions: [...COMPLETE.omissions] };
     if (snapshot === "0")
-      return decodeHistoryPage({ request, records, next, coverage });
+      return decodeHistoryPage({ request: request3, records, next, coverage });
     try {
       for (;; ) {
         const b = this.navigation.next(pos, budget);
@@ -10988,21 +15810,21 @@ class HistoryProjection {
         if (rowIndex > b.rows.length)
           fail();
         for (;rowIndex < b.rows.length; rowIndex++, itemIndex = 0) {
-          for (const item of this.records(b.rows[rowIndex], request, budget, itemIndex)) {
+          for (const item of this.records(b.rows[rowIndex], request3, budget, itemIndex)) {
             itemIndex = item.item;
-            const record = item.record, size = Buffer.byteLength(canonicalJson(record));
-            if (records.length >= request.limit || bytes + size > LIMITS.pageBytes) {
+            const record2 = item.record, size = Buffer.byteLength(canonicalJson(record2));
+            if (records.length >= request3.limit || bytes + size > LIMITS.pageBytes) {
               next = {
-                ...request,
-                after: this.cursor(request, pos, rowIndex, itemIndex)
+                ...request3,
+                after: this.cursor(request3, pos, rowIndex, itemIndex)
               };
-              return decodeHistoryPage({ request, records, next, coverage });
+              return decodeHistoryPage({ request: request3, records, next, coverage });
             }
             bytes += size;
-            records.push(record);
+            records.push(record2);
             itemIndex++;
-            if (record.kind === "content")
-              coverage = combineCoverage(coverage, record.coverage);
+            if (record2.kind === "content")
+              coverage = combineCoverage(coverage, record2.coverage);
           }
         }
         if (b.pointer.seq === snapshot)
@@ -11010,21 +15832,21 @@ class HistoryProjection {
         pos = b.next;
         rowIndex = 0;
         itemIndex = 0;
-        next = { ...request, after: this.cursor(request, pos, 0, 0) };
+        next = { ...request3, after: this.cursor(request3, pos, 0, 0) };
       }
       next = null;
     } catch (e) {
       if (!(e instanceof ContractError) || e.code !== "receipt-inconclusive")
         throw e;
       next = {
-        ...request,
-        after: this.cursor(request, pos, rowIndex, itemIndex)
+        ...request3,
+        after: this.cursor(request3, pos, rowIndex, itemIndex)
       };
-      if (equal3(next.after, request.after))
+      if (equal3(next.after, request3.after))
         throw e;
       coverage = combineCoverage(coverage, GAP);
     }
-    return decodeHistoryPage({ request, records, next, coverage });
+    return decodeHistoryPage({ request: request3, records, next, coverage });
   }
   acceleratedTasks = async (value, budget) => {
     const initial3 = decodeListRequest(value);
@@ -11040,11 +15862,11 @@ class HistoryProjection {
     const snapshot = privatePage?.request.snapshotSeq ?? initial3.snapshotSeq;
     if (snapshot === null)
       fail();
-    const request = { ...initial3, snapshotSeq: snapshot };
+    const request3 = { ...initial3, snapshotSeq: snapshot };
     if (legacyPhase)
       this.navigation.snapshot(snapshot, budget);
     const cursor = (offset2, identity2) => {
-      const digest2 = createHash13("sha256").update(canonicalJson({ ...request, after: null, legacy: identity2, offset: offset2 })).digest("hex");
+      const digest2 = createHash17("sha256").update(canonicalJson({ ...request3, after: null, legacy: identity2, offset: offset2 })).digest("hex");
       return {
         recordId: `${digest2.slice(0, 8)}-${digest2.slice(8, 12)}-4${digest2.slice(13, 16)}-8${digest2.slice(17, 20)}-${digest2.slice(20, 32)}`,
         version: legacyVersion,
@@ -11053,12 +15875,12 @@ class HistoryProjection {
     };
     const records = [...privatePage?.records ?? []];
     const transition = () => decodeHistoryPage({
-      request,
+      request: request3,
       records,
-      next: { ...request, after: cursor(0, "begin") },
+      next: { ...request3, after: cursor(0, "begin") },
       coverage: combineCoverage(privatePage?.coverage ?? COMPLETE, GAP)
     });
-    if (records.length === request.limit)
+    if (records.length === request3.limit)
       return transition();
     let legacy;
     try {
@@ -11071,7 +15893,7 @@ class HistoryProjection {
     }
     if (legacy.length > 1000)
       throw new ContractError("capacity");
-    const items = [...legacy].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0), digest = createHash13("sha256");
+    const items = [...legacy].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0), digest = createHash17("sha256");
     for (const item of items) {
       budget.reserve(0);
       if (Buffer.byteLength(item.goal) > 8192)
@@ -11088,10 +15910,10 @@ class HistoryProjection {
       fail();
     let bytes = 2048 + records.reduce((n, r) => n + Buffer.byteLength(JSON.stringify(r)), 0);
     try {
-      while (offset < items.length && records.length < request.limit) {
+      while (offset < items.length && records.length < request3.limit) {
         budget.reserve(0);
         const task = items[offset];
-        const record = decodeHistoryRecord({
+        const record2 = decodeHistoryRecord({
           kind: "task",
           owner: {
             taskId: task.id,
@@ -11103,11 +15925,11 @@ class HistoryProjection {
           goal: task.goal,
           plan: null
         });
-        const size = Buffer.byteLength(JSON.stringify(record));
+        const size = Buffer.byteLength(JSON.stringify(record2));
         if (bytes + size > LIMITS.pageBytes)
           break;
         bytes += size;
-        records.push(record);
+        records.push(record2);
         offset++;
       }
     } catch (error) {
@@ -11115,31 +15937,31 @@ class HistoryProjection {
         throw error;
     }
     return decodeHistoryPage({
-      request,
+      request: request3,
       records,
       next: offset < items.length ? {
-        ...request,
+        ...request3,
         after: cursor(offset, offset === 0 ? "begin" : identity)
       } : null,
       coverage: legacy.length ? combineCoverage(privatePage?.coverage ?? COMPLETE, GAP) : privatePage?.coverage ?? COMPLETE
     });
   };
   async page(value, kind) {
-    const request = decodeListRequest(value);
-    if (request.reader !== kind || request.storeId !== this.reader.storeId)
+    const request3 = decodeListRequest(value);
+    if (request3.reader !== kind || request3.storeId !== this.reader.storeId)
       fail();
-    if (request.navigation)
-      return readRetainedList(this, request);
+    if (request3.navigation)
+      return readRetainedList(this, request3);
     const budget = new HistoryReadBudget, completion = this.reader.files.format.schema === FORMAT ? new HistoryReadProof(this.reader.files).prepareCompletion(budget) : null;
     try {
-      const result = kind === "tasks" ? await this.acceleratedTasks(request, budget) : await this.acceleratedPage(request, kind, budget);
+      const result = kind === "tasks" ? await this.acceleratedTasks(request3, budget) : await this.acceleratedPage(request3, kind, budget);
       completion?.validate();
       return result;
     } catch (error) {
       if (!completion || !(error instanceof ContractError) || error.code !== "receipt-inconclusive")
         throw error;
-      const c = request.after && request.after.version !== Number.MAX_SAFE_INTEGER ? this.parseCursor(request) : null;
-      return listPreparation(request, completion, c ? { pos: c.pos, row: c.row, event: c.item, byte: 0, snapshot: 0 } : undefined);
+      const c = request3.after && request3.after.version !== Number.MAX_SAFE_INTEGER ? this.parseCursor(request3) : null;
+      return listPreparation(request3, completion, c ? { pos: c.pos, row: c.row, event: c.item, byte: 0, snapshot: 0 } : undefined);
     }
   }
   tasks = (r) => this.page(r, "tasks");
@@ -11152,7 +15974,7 @@ class HistoryProjection {
   changes = (r) => this.page(r, "changes");
   reviews = (r) => this.page(r, "reviews");
   search = (cursor) => searchHistory(this.reader, cursor);
-  export = (request, signal) => exportHistory(this, request, signal);
+  export = (request3, signal) => exportHistory(this, request3, signal);
   graph = (r) => this.reader.graph(r);
   detail = (r) => this.reader.readDetail(r);
   validateCursor = async (cursor) => {
@@ -11261,9 +16083,9 @@ class HistoryProjection {
 }
 
 // src/history/reader.ts
-import { createHash as createHash14 } from "node:crypto";
-import { existsSync } from "node:fs";
-import { join as join6 } from "node:path";
+import { createHash as createHash18 } from "node:crypto";
+import { existsSync as existsSync2 } from "node:fs";
+import { join as join15 } from "node:path";
 
 // src/history/saved-graph-state.ts
 var freshSavedGraph = () => ({
@@ -11297,22 +16119,22 @@ function accepted(state, sources) {
     bad10();
   return { row, intent: v.intent, action: v.intent.identity.action };
 }
-function collectSavedGraph(state, request, batch, rowIndex, index, files, budget) {
-  if (request.scope.kind !== "task")
+function collectSavedGraph(state, request3, batch, rowIndex, index, files, budget) {
+  if (request3.scope.kind !== "task")
     return;
   const v = batch.rows[rowIndex].value;
-  if (index === 0 && v.kind === "admission" && v.intent.operationId === request.graph.recordId) {
+  if (index === 0 && v.kind === "admission" && v.intent.operationId === request3.graph.recordId) {
     if (state.accepted || v.intent.identity.kind !== "action" || v.intent.identity.action.kind !== "save-plan")
       bad10();
     const a2 = v.intent.identity.action;
-    if (a2.taskId !== request.scope.id || a2.graph.revision !== request.graph.revision || hash(canonicalJson(a2.graph)) !== request.graph.sha256)
+    if (a2.taskId !== request3.scope.id || a2.graph.revision !== request3.graph.revision || hash2(canonicalJson(a2.graph)) !== request3.graph.sha256)
       bad10();
     state.accepted = sourceAt(batch, rowIndex);
     return;
   }
-  if (!state.accepted || v.kind !== "owner" || v.link.operationId !== request.graph.recordId)
+  if (!state.accepted || v.kind !== "owner" || v.link.operationId !== request3.graph.recordId)
     return;
-  if (v.link.runId !== null || v.link.taskId !== request.scope.id)
+  if (v.link.runId !== null || v.link.taskId !== request3.scope.id)
     bad10();
   const sources = new SourceRows(files, budget), a = accepted(state, sources);
   if (!a)
@@ -11323,7 +16145,7 @@ function collectSavedGraph(state, request, batch, rowIndex, index, files, budget
   if (!e)
     return;
   if (e.kind === "owner" && e.value.kind === "content-begin" && e.value.field === "plan") {
-    if (state.detailId || e.value.owner.entity.kind !== "task" || e.value.owner.entity.id !== request.scope.id || e.value.owner.entity.version !== a.action.graph.planRevision)
+    if (state.detailId || e.value.owner.entity.kind !== "task" || e.value.owner.entity.id !== request3.scope.id || e.value.owner.entity.version !== a.action.graph.planRevision)
       bad10();
     state.detailId = e.value.detailId;
   }
@@ -11336,7 +16158,7 @@ function collectSavedGraph(state, request, batch, rowIndex, index, files, budget
     state.bytes += e.length;
   }
   if (e.kind === "end" && e.detail.detailId === state.detailId) {
-    if (state.ended || state.bytes !== Buffer.byteLength(a.action.plan) || e.detail.origin.kind !== "owner" || e.detail.origin.id !== request.graph.recordId || canonicalJson(e.detail.content) !== canonicalJson(a.action.graph.plan))
+    if (state.ended || state.bytes !== Buffer.byteLength(a.action.plan) || e.detail.origin.kind !== "owner" || e.detail.origin.id !== request3.graph.recordId || canonicalJson(e.detail.content) !== canonicalJson(a.action.graph.plan))
       bad10();
     state.ended = true;
   }
@@ -11354,13 +16176,13 @@ function collectSavedGraph(state, request, batch, rowIndex, index, files, budget
   }
   sources.assertCurrent();
 }
-function materializeSavedGraph(state, request, files, budget) {
+function materializeSavedGraph(state, request3, files, budget) {
   if (!state.accepted || !state.publication || !state.settled || !state.ended)
     return null;
   const sources = new SourceRows(files, budget), a = accepted(state, sources);
   if (!a)
     bad10();
-  const operation = new OperationState(request.graph.recordId);
+  const operation = new OperationState(request3.graph.recordId);
   operation.apply(a.row, state.accepted.seq);
   operation.apply(sources.read(state.publication), state.publication.seq);
   if (state.settled.sha256 !== state.publication.sha256)
@@ -11379,29 +16201,29 @@ var initial3 = () => ({
   byte: 0,
   snapshot: 0
 });
-function graphPreparation(request, completion) {
+function graphPreparation(request3, completion) {
   const state = freshProgress(), point = initial3();
   const next = {
-    ...readIdentity(request),
-    navigation: completion.seal({ purpose: "graph", request }, Buffer.from(canonicalJson({ point, state, saved: freshSavedGraph() }, 6000)))
+    ...readIdentity(request3),
+    navigation: completion.seal({ purpose: "graph", request: request3 }, Buffer.from(canonicalJson({ point, state, saved: freshSavedGraph() }, 6000)))
   };
   return decodeGraphReadResult({
     kind: "progress",
-    request,
+    request: request3,
     next,
     coverage: state.coverage
   });
 }
-async function readRetainedGraph(reader, request) {
-  return retryStalled(() => graphQuantum(reader, request));
+async function readRetainedGraph(reader, request3) {
+  return retryStalled(() => graphQuantum(reader, request3));
 }
-async function graphQuantum(reader, request) {
-  if (request.storeId !== reader.storeId)
+async function graphQuantum(reader, request3) {
+  if (request3.storeId !== reader.storeId)
     throw new ContractError("corrupt-selected");
   const budget = new HistoryReadBudget, proof = new HistoryReadProof(reader.files), completion = proof.prepareCompletion(budget);
   let point = initial3(), state = freshProgress(), saved = freshSavedGraph();
-  if (request.navigation) {
-    const parsed = parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(proof.open({ purpose: "graph", request }, request.navigation, budget)), 6000);
+  if (request3.navigation) {
+    const parsed = parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(proof.open({ purpose: "graph", request: request3 }, request3.navigation, budget)), 6000);
     const o = closed(parsed, [
       "point",
       "state",
@@ -11411,7 +16233,7 @@ async function graphQuantum(reader, request) {
     state = decodeRetainedProgress(o.state);
     saved = o.saved === undefined ? freshSavedGraph() : decodeSavedGraphState(o.saved);
   }
-  const traversal = new RetainedTraversal(reader.files, request.snapshotSeq, budget, state);
+  const traversal = new RetainedTraversal(reader.files, request3.snapshotSeq, budget, state);
   const coordinate = () => canonicalJson({ point, state: traversal.checkpoint(), saved }, 6000), before = coordinate();
   try {
     traversal.prepare(point);
@@ -11423,7 +16245,7 @@ async function graphQuantum(reader, request) {
         const value = batch.rows[point.row].value;
         const count2 = value.kind === "owner" ? value.events.length : 1;
         for (;point.event < count2; point.event++) {
-          collectSavedGraph(saved, request, batch, point.row, point.event, reader.files, budget);
+          collectSavedGraph(saved, request3, batch, point.row, point.event, reader.files, budget);
           if (value.kind !== "owner")
             continue;
           budget.reserve(0);
@@ -11431,24 +16253,24 @@ async function graphQuantum(reader, request) {
           if (event.kind !== "owner" || event.value.kind !== "fact" || event.value.fact.kind !== "parent-admitted")
             continue;
           const fact = event.value.fact;
-          const fits3 = request.scope.kind === "task" ? fact.identity.context.task?.id === request.scope.id : request.scope.kind === "run" ? fact.runId === request.scope.id : fact.identity.assignments.some((a) => a.childRunId === request.scope.id);
-          if (!fits3 || canonicalJson(fact.identity.graph) !== canonicalJson(request.graph))
+          const fits3 = request3.scope.kind === "task" ? fact.identity.context.task?.id === request3.scope.id : request3.scope.kind === "run" ? fact.runId === request3.scope.id : fact.identity.assignments.some((a) => a.childRunId === request3.scope.id);
+          if (!fits3 || canonicalJson(fact.identity.graph) !== canonicalJson(request3.graph))
             continue;
           const admitted = reader.files.readAdmission(fact.runId, fact.identity, budget);
           if (!admitted.graph)
             throw new ContractError("corrupt-selected");
           traversal.assertCurrent();
           completion.validate();
-          return decodeGraphPage({ request, graph: admitted.graph });
+          return decodeGraphPage({ request: request3, graph: admitted.graph });
         }
       }
-      const graph = materializeSavedGraph(saved, request, reader.files, budget);
+      const graph = materializeSavedGraph(saved, request3, reader.files, budget);
       if (graph) {
         traversal.assertCurrent();
         completion.validate();
-        return decodeGraphPage({ request, graph });
+        return decodeGraphPage({ request: request3, graph });
       }
-      if (batch.pointer.seq === request.snapshotSeq)
+      if (batch.pointer.seq === request3.snapshotSeq)
         throw new ContractError("corrupt-selected");
       point.pos = batch.next;
       point.row = 0;
@@ -11461,12 +16283,12 @@ async function graphQuantum(reader, request) {
       noProgress(budget);
     traversal.assertCurrent();
     const next = {
-      ...readIdentity(request),
-      navigation: completion.seal({ purpose: "graph", request }, Buffer.from(coordinate()))
+      ...readIdentity(request3),
+      navigation: completion.seal({ purpose: "graph", request: request3 }, Buffer.from(coordinate()))
     };
     const result = decodeGraphReadResult({
       kind: "progress",
-      request,
+      request: request3,
       next,
       coverage: traversal.state.coverage
     });
@@ -11493,7 +16315,7 @@ class PlanFold {
         if (value.intent.runId !== null)
           throw new ContractError("corrupt-selected");
         this.operation = new OperationState(value.intent.operationId);
-        this.graphIdentity = hash(canonicalJson(value.intent.identity.action.graph));
+        this.graphIdentity = hash2(canonicalJson(value.intent.identity.action.graph));
         this.savePlanAt = { pointer: batch.pointer, row: index };
       }
       this.operation?.apply(row, batch.pointer.seq);
@@ -11530,7 +16352,7 @@ class PlanFold {
       return fold;
     }
     const v = read2(state.savePlan.at).value;
-    if (v.kind !== "admission" || v.intent.identity.kind !== "action" || v.intent.identity.action.kind !== "save-plan" || hash(canonicalJson(v.intent.identity.action.graph)) !== state.graphIdentity)
+    if (v.kind !== "admission" || v.intent.identity.kind !== "action" || v.intent.identity.action.kind !== "save-plan" || hash2(canonicalJson(v.intent.identity.action.graph)) !== state.graphIdentity)
       throw new ContractError("invalid");
     fold.operation = OperationState.resumed(v.intent.operationId, { intent: v.intent, record: v.record }, state.savePlan);
     fold.savePlanAt = state.savePlan.at;
@@ -11634,7 +16456,7 @@ class HistoryReader {
       reference: {
         recordId: operation.operationId,
         revision: graph.revision,
-        sha256: hash(canonicalJson(graph))
+        sha256: hash2(canonicalJson(graph))
       },
       publication: {
         revision: publication.revision,
@@ -11684,47 +16506,47 @@ class HistoryReader {
     return { run, graph, readablePlan: bytes.toString("utf8") };
   }
   async graph(value) {
-    const request = decodeGraphReadRequest(value);
-    if (request.navigation !== undefined)
-      return readRetainedGraph(this, request);
+    const request3 = decodeGraphReadRequest(value);
+    if (request3.navigation !== undefined)
+      return readRetainedGraph(this, request3);
     const budget = new HistoryReadBudget;
     if (this.files.format.schema !== FORMAT)
-      return this.graphData(request, budget);
+      return this.graphData(request3, budget);
     const completion = new HistoryReadProof(this.files).prepareCompletion(budget);
     try {
-      const page = this.graphData(request, budget);
+      const page = this.graphData(request3, budget);
       completion.validate();
       return page;
     } catch (error) {
       if (!(error instanceof ContractError) || error.code !== "receipt-inconclusive")
         throw error;
-      return graphPreparation(request, completion);
+      return graphPreparation(request3, completion);
     }
   }
-  graphData(request, budget) {
-    if (request.storeId !== this.storeId)
+  graphData(request3, budget) {
+    if (request3.storeId !== this.storeId)
       throw new ContractError("corrupt-selected");
-    if (request.scope.kind === "task") {
-      this.navigation.snapshot(request.snapshotSeq, budget);
+    if (request3.scope.kind === "task") {
+      this.navigation.snapshot(request3.snapshotSeq, budget);
       const state = freshSavedGraph();
-      const batches = this.navigation.entityBatches(request.graph.recordId, request.snapshotSeq, budget) ?? this.navigation.scanSnapshot(request.snapshotSeq, budget);
+      const batches = this.navigation.entityBatches(request3.graph.recordId, request3.snapshotSeq, budget) ?? this.navigation.scanSnapshot(request3.snapshotSeq, budget);
       for (const batch of batches) {
         for (let row = 0;row < batch.rows.length; row++) {
           const v = batch.rows[row].value;
           const count2 = v.kind === "owner" ? v.events.length : 1;
           for (let index = 0;index < count2; index++)
-            collectSavedGraph(state, request, batch, row, index, this.files, budget);
+            collectSavedGraph(state, request3, batch, row, index, this.files, budget);
         }
-        const graph = materializeSavedGraph(state, request, this.files, budget);
+        const graph = materializeSavedGraph(state, request3, this.files, budget);
         if (graph)
-          return decodeGraphPage({ request, graph });
+          return decodeGraphPage({ request: request3, graph });
       }
       if (state.accepted)
         throw new ContractError("corrupt-selected");
     }
-    let selected2, found = request.snapshotSeq === "0";
-    this.navigation.snapshot(request.snapshotSeq, budget);
-    const indexed = this.navigation.entityBatches(request.graph.recordId, request.snapshotSeq, budget);
+    let selected2, found = request3.snapshotSeq === "0";
+    this.navigation.snapshot(request3.snapshotSeq, budget);
+    const indexed = this.navigation.entityBatches(request3.graph.recordId, request3.snapshotSeq, budget);
     if (indexed) {
       for (const batch of indexed)
         for (const row of batch.rows)
@@ -11732,18 +16554,18 @@ class HistoryReader {
             for (const e of row.value.events)
               if (e.kind === "owner" && e.value.kind === "fact" && e.value.fact.kind === "parent-admitted") {
                 const f = e.value.fact;
-                const fits3 = request.scope.kind === "task" ? f.identity.context.task?.id === request.scope.id : request.scope.kind === "run" ? f.runId === request.scope.id : f.identity.assignments.some((a) => a.childRunId === request.scope.id);
-                if (fits3 && canonicalJson(f.identity.graph) === canonicalJson(request.graph))
+                const fits3 = request3.scope.kind === "task" ? f.identity.context.task?.id === request3.scope.id : request3.scope.kind === "run" ? f.runId === request3.scope.id : f.identity.assignments.some((a) => a.childRunId === request3.scope.id);
+                if (fits3 && canonicalJson(f.identity.graph) === canonicalJson(request3.graph))
                   selected2 = this.files.readAdmission(f.runId, f.identity, budget);
               }
           }
       if (!selected2?.graph)
         throw new ContractError("corrupt-selected");
-      return decodeGraphPage({ request, graph: selected2.graph });
+      return decodeGraphPage({ request: request3, graph: selected2.graph });
     }
-    if (request.snapshotSeq !== "0")
+    if (request3.snapshotSeq !== "0")
       for (const batch of this.files.scan(emptyScan(), false, budget)) {
-        if (BigInt(batch.marker.last) > BigInt(request.snapshotSeq))
+        if (BigInt(batch.marker.last) > BigInt(request3.snapshotSeq))
           throw new ContractError("corrupt-selected");
         for (const row of batch.rows) {
           const v = row.value;
@@ -11753,19 +16575,19 @@ class HistoryReader {
             if (e.kind !== "owner" || e.value.kind !== "fact" || e.value.fact.kind !== "parent-admitted")
               continue;
             const fact = e.value.fact;
-            const fits3 = request.scope.kind === "task" ? fact.identity.context.task?.id === request.scope.id : request.scope.kind === "run" ? fact.runId === request.scope.id : fact.identity.assignments.some((a) => a.childRunId === request.scope.id);
-            if (fits3 && canonicalJson(fact.identity.graph) === canonicalJson(request.graph))
+            const fits3 = request3.scope.kind === "task" ? fact.identity.context.task?.id === request3.scope.id : request3.scope.kind === "run" ? fact.runId === request3.scope.id : fact.identity.assignments.some((a) => a.childRunId === request3.scope.id);
+            if (fits3 && canonicalJson(fact.identity.graph) === canonicalJson(request3.graph))
               selected2 = this.files.readAdmission(fact.runId, fact.identity, budget);
           }
         }
-        if (batch.marker.last === request.snapshotSeq) {
+        if (batch.marker.last === request3.snapshotSeq) {
           found = true;
           break;
         }
       }
     if (!found || !selected2?.graph)
       throw new ContractError("corrupt-selected");
-    return decodeGraphPage({ request, graph: selected2.graph });
+    return decodeGraphPage({ request: request3, graph: selected2.graph });
   }
   get storeId() {
     return this.files.format.storeId;
@@ -11923,7 +16745,7 @@ class HistoryReader {
         }
       }
       const text2 = Buffer.concat(pieces);
-      if (end !== detail.content.bytes || createHash14("sha256").update(text2).digest("hex") !== detail.content.sha256)
+      if (end !== detail.content.bytes || createHash18("sha256").update(text2).digest("hex") !== detail.content.sha256)
         return;
       return { detail, bytes: text2 };
     } catch {
@@ -11955,10 +16777,10 @@ class HistoryReader {
       throw new ContractError("corrupt-selected");
     for (const [segment, expected] of locator.segments) {
       const current2 = budget ? readRange(this.files, this.files.segmentPath(segment), 0, expected.bytes, budget) : this.files.files.read(this.files.segmentPath(segment), LIMITS.segmentBytes)?.bytes;
-      if (!current2 || current2.length < expected.bytes || hash(current2.subarray(0, expected.bytes)) !== expected.identity)
+      if (!current2 || current2.length < expected.bytes || hash2(current2.subarray(0, expected.bytes)) !== expected.identity)
         throw new ContractError("corrupt-selected");
     }
-    const checksum = createHash14("sha256");
+    const checksum = createHash18("sha256");
     let bytes = 0;
     let cached;
     for (const e of locator.chunks) {
@@ -12031,7 +16853,7 @@ class HistoryReader {
   }
   async readDetail(value) {
     const cursor = decodeCursor(value);
-    if (cursor.navigation !== undefined || this.files.format.schema === FORMAT && !existsSync(join6(this.files.directory, "indexes", "heads", "latest.json")))
+    if (cursor.navigation !== undefined || this.files.format.schema === FORMAT && !existsSync2(join15(this.files.directory, "indexes", "heads", "latest.json")))
       return readRetainedDetail(this, cursor);
     if (this.files.format.schema !== FORMAT)
       return this.detail(cursor);
@@ -12104,7 +16926,7 @@ class HistoryReader {
     let end = cursor.offset;
     if (detail.content.bytes) {
       const count2 = nav.partCount(detail.content.recordId, budget);
-      const load = (part) => {
+      const load2 = (part) => {
         const c = nav.part(detail.content.recordId, part, cursor.snapshotSeq, budget);
         if (!c)
           throw new ContractError("receipt-inconclusive");
@@ -12122,7 +16944,7 @@ class HistoryReader {
       for (let part = lo;part < count2 && !full && end - cursor.offset < LIMITS.detailPageBytes; part++) {
         let chunks, bytes;
         try {
-          chunks = load(part);
+          chunks = load2(part);
           const last = chunks.at(-1);
           if (!last || chunks[0].offset > end || last.offset + last.length <= end || last.offset + last.length > detail.content.bytes)
             throw new ContractError("corrupt-selected");
@@ -12214,407 +17036,49 @@ class HistoryReader {
     }
   }
   async page(value) {
-    const request = decodeListRequest(value);
-    if (request.reader !== "events" && request.reader !== "contents")
+    const request3 = decodeListRequest(value);
+    if (request3.reader !== "events" && request3.reader !== "contents")
       throw new ContractError("unsupported-context");
-    const unavailable = () => {
+    const unavailable2 = () => {
       throw new ContractError("unavailable");
     };
     const projection = new HistoryProjection(this, {
-      session: unavailable,
-      workspace: unavailable,
-      context: unavailable,
-      checks: unavailable,
-      legacyTasks: unavailable
+      session: unavailable2,
+      workspace: unavailable2,
+      context: unavailable2,
+      checks: unavailable2,
+      legacyTasks: unavailable2
     });
-    return projection[request.reader](request);
+    return projection[request3.reader](request3);
   }
 }
 
 // src/history/writer.ts
-import { createHash as createHash16, randomUUID as randomUUID6 } from "node:crypto";
-import { join as join8 } from "node:path";
-
-// src/worker-redaction.mjs
-var marker = "[redacted]";
-var sensitive = /^(?:authorization|proxy-authorization|cookie|set-cookie|password|passwd|secret|token|api[-_]?key|access[-_]?token|refresh[-_]?token|credentials|headers|env)$/i;
-class TextSanitizer {
-  constructor(secrets = []) {
-    if (secrets.some((s) => typeof s !== "string") || secrets.reduce((n, s) => n + utf8Bytes(s), 0) > LIMITS.workerRequestBytes * 2)
-      throw new ContractError("oversize");
-    this.secrets = [];
-    this.addSecrets(secrets);
-    this.pending = "";
-    this.heuristic = "";
-    this.escape = "";
-    this.skipping = false;
-    this.redacted = false;
-    this.ended = false;
-  }
-  addSecrets(secrets) {
-    if (this.ended || !Array.isArray(secrets))
-      throw new ContractError;
-    let incoming = 0;
-    for (const s of secrets) {
-      if (typeof s !== "string")
-        throw new ContractError;
-      incoming += utf8Bytes(s);
-      if (incoming > LIMITS.workerRequestBytes * 2)
-        throw new ContractError("oversize");
-    }
-    let bytes = this.secrets.reduce((n, s) => n + utf8Bytes(s), 0);
-    const added = new Set;
-    for (const s of secrets) {
-      if (!s || this.secrets.includes(s) || added.has(s))
-        continue;
-      bytes += utf8Bytes(s);
-      if (bytes > LIMITS.workerRequestBytes * 2)
-        throw new ContractError("oversize");
-      added.add(s);
-    }
-    this.secrets = this.secrets.concat([...added]).sort((a, b) => b.length - a.length);
-  }
-  get retainedBytes() {
-    return utf8Bytes(this.pending + this.heuristic + this.escape);
-  }
-  write(input, final = false) {
-    if (this.ended || typeof input !== "string")
-      throw new ContractError;
-    let plain = "";
-    for (const ch of input) {
-      if (this.escape) {
-        this.escape += ch;
-        if (this.escape.length > 8192)
-          throw new ContractError("oversize");
-        if (this.escape.startsWith("\x1B[") && this.escape.length > 2 && /[@-~]/.test(ch) || this.escape.startsWith("\x1B]") && (ch === "\x07" || this.escape.endsWith("\x1B\\")) || this.escape.length === 2 && !"[]".includes(ch))
-          this.escape = "";
-        this.redacted = true;
-      } else if (ch === "\x1B")
-        this.escape = ch;
-      else if (/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/.test(ch))
-        this.redacted = true;
-      else
-        plain += ch;
-    }
-    this.pending += plain;
-    let literal2 = "";
-    let at = 0;
-    while (at < this.pending.length) {
-      const rest = this.pending.slice(at);
-      if (!final && this.secrets.some((s) => s.length > rest.length && s.startsWith(rest)))
-        break;
-      const match = this.secrets.find((s) => rest.startsWith(s));
-      if (match) {
-        literal2 += marker;
-        at += match.length;
-        this.redacted = true;
-      } else {
-        const code = this.pending.charCodeAt(at);
-        if (!final && at + 1 === this.pending.length && code >= 55296 && code <= 56319)
-          break;
-        const cp = this.pending.codePointAt(at);
-        if (cp >= 55296 && cp <= 57343)
-          throw new ContractError;
-        literal2 += String.fromCodePoint(cp);
-        at += cp > 65535 ? 2 : 1;
-      }
-    }
-    this.pending = this.pending.slice(at);
-    this.heuristic += literal2;
-    let output = "";
-    while (this.heuristic) {
-      if (this.skipping) {
-        const end = this.heuristic.search(/[\s,;"'<>]/);
-        if (end < 0) {
-          this.heuristic = "";
-          break;
-        }
-        this.heuristic = this.heuristic.slice(end);
-        this.skipping = false;
-      }
-      const match = /\b(?:Bearer\s+|(?:api[-_]?key|access[-_]?token|refresh[-_]?token|password|passwd|secret|token|authorization)\s*[:=]\s*)/i.exec(this.heuristic);
-      const url = /https?:\/\//i.exec(this.heuristic);
-      if (url && (!match || url.index < match.index)) {
-        output += this.heuristic.slice(0, url.index);
-        this.heuristic = this.heuristic.slice(url.index);
-        const start = url[0].length;
-        const end = this.heuristic.slice(start).search(/[/\s?#"'<>]/);
-        if (end < 0 && !final) {
-          if (utf8Bytes(this.heuristic) > 8192)
-            throw new ContractError("oversize");
-          break;
-        }
-        const size = end < 0 ? this.heuristic.length : start + end;
-        const authority = this.heuristic.slice(start, size);
-        const pos = authority.lastIndexOf("@");
-        output += this.heuristic.slice(0, start) + (pos < 0 ? authority : `${marker}@${authority.slice(pos + 1)}`);
-        this.redacted ||= pos >= 0;
-        this.heuristic = this.heuristic.slice(size);
-      } else if (match) {
-        output += this.heuristic.slice(0, match.index) + match[0] + marker;
-        this.heuristic = this.heuristic.slice(match.index + match[0].length);
-        this.skipping = true;
-        this.redacted = true;
-      } else {
-        const candidate = /(?:Bearer|api[-_]?key|access[-_]?token|refresh[-_]?token|password|passwd|secret|token|authorization)\s*$/i.exec(this.heuristic);
-        const keep = final ? 0 : Math.max(64, candidate ? this.heuristic.length - candidate.index : 0);
-        if (keep > 8192)
-          throw new ContractError("oversize");
-        let take = Math.max(0, this.heuristic.length - keep);
-        const before = this.heuristic.charCodeAt(take - 1);
-        if (before >= 55296 && before <= 56319)
-          take--;
-        output += this.heuristic.slice(0, take);
-        this.heuristic = this.heuristic.slice(take);
-        break;
-      }
-    }
-    if (final) {
-      this.ended = true;
-      this.escape = "";
-    }
-    return output;
-  }
-  end() {
-    return this.write("", true);
-  }
-}
-function sanitizeText(value, secrets = []) {
-  const sanitizer = new TextSanitizer(secrets);
-  return sanitizer.write(value, true);
-}
-class DetailSanitizer {
-  constructor(encoding, secrets = [], partial = false) {
-    this.encoding = encoding;
-    this.secrets = secrets;
-    this.partial = partial;
-    this.limited = false;
-    this.text = new TextSanitizer(secrets);
-    this.stack = [];
-    this.root = "value";
-    this.inString = false;
-    this.escape = "";
-    this.key = "";
-    this.keyMode = false;
-    this.suppressed = false;
-    this.token = "";
-    this.redacted = false;
-  }
-  get retainedBytes() {
-    return this.text.retainedBytes + utf8Bytes(this.escape + this.key + this.token) + this.stack.reduce((sum, entry) => sum + utf8Bytes(entry.lastKey ?? "") + utf8Bytes(entry.lastOutputKey ?? ""), 0);
-  }
-  write(input, final = false) {
-    if (this.limited)
-      return "";
-    try {
-      return this.project(input, final);
-    } catch (error) {
-      if (!this.partial || error instanceof ContractError && error.code === "oversize")
-        throw error;
-      this.limited = true;
-      this.redacted = true;
-      return "[redacted: unsupported partial arguments]";
-    }
-  }
-  project(input, final = false) {
-    if (this.encoding === "utf8") {
-      const output2 = this.text.write(input, final);
-      this.redacted = this.text.redacted;
-      return output2;
-    }
-    let output = "";
-    const encoded2 = (s) => JSON.stringify(s).slice(1, -1);
-    const top = () => this.stack.at(-1);
-    const done = () => {
-      if (top()) {
-        top().expect = "comma";
-        top().sensitive = false;
-        top().count++;
-      } else
-        this.root = "done";
-    };
-    const begin = () => {
-      const parent = top();
-      if ((parent?.expect ?? this.root) !== "value")
-        throw new ContractError;
-      const hide = !!parent?.hide || !!parent?.sensitive;
-      if (parent?.sensitive && !parent.hide) {
-        output += JSON.stringify(marker);
-        this.redacted = true;
-      }
-      return hide;
-    };
-    const primitive = () => {
-      if (!/^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)$/.test(this.token)) {
-        if (!this.partial)
-          throw new ContractError;
-        if (!this.suppressed)
-          output += marker;
-        this.redacted = true;
-        this.limited = true;
-        this.token = "";
-        done();
-        return;
-      }
-      const value = JSON.parse(this.token);
-      if (typeof value === "number" && !Number.isFinite(value))
-        throw new ContractError;
-      if (!this.suppressed)
-        output += this.token;
-      this.token = "";
-      done();
-    };
-    for (const ch of input) {
-      if (this.inString) {
-        let decoded = ch;
-        if (this.escape) {
-          this.escape += ch;
-          if (this.escape === "\\u" || this.escape.startsWith("\\u") && this.escape.length < 6)
-            continue;
-          decoded = JSON.parse(`"${this.escape}"`);
-          this.escape = "";
-        } else if (ch === "\\") {
-          this.escape = ch;
-          continue;
-        } else if (ch === '"') {
-          if (this.keyMode) {
-            const parent2 = top();
-            if (!this.partial && parent2.lastKey !== undefined && this.key <= parent2.lastKey)
-              throw new ContractError;
-            parent2.lastKey = this.key;
-            parent2.sensitive = sensitive.test(this.key);
-            parent2.expect = "colon";
-            if (!parent2.hide) {
-              const safeKey = sanitizeText(this.key, this.secrets);
-              if (!this.partial && parent2.lastOutputKey !== undefined && safeKey <= parent2.lastOutputKey)
-                throw new ContractError;
-              parent2.lastOutputKey = safeKey;
-              this.redacted ||= safeKey !== this.key;
-              output += JSON.stringify(safeKey);
-            }
-            this.key = "";
-          } else {
-            if (!this.suppressed)
-              output += `${encoded2(this.text.end())}"`;
-            this.redacted ||= this.text.redacted;
-            done();
-          }
-          this.inString = false;
-          continue;
-        }
-        if (this.keyMode) {
-          this.key += decoded;
-          if (utf8Bytes(this.key) > 8192)
-            throw new ContractError("oversize");
-        } else if (!this.suppressed)
-          output += encoded2(this.text.write(decoded));
-        continue;
-      }
-      if (this.token && /[\s,\]}]/.test(ch))
-        primitive();
-      if (this.token) {
-        this.token += ch;
-        if (this.token.length > 128)
-          throw new ContractError("oversize");
-        continue;
-      }
-      if (/\s/.test(ch))
-        continue;
-      const parent = top();
-      if (ch === '"') {
-        this.keyMode = parent?.kind === "object" && parent.expect === "key";
-        this.suppressed = this.keyMode ? parent.hide : begin();
-        this.inString = true;
-        this.text = new TextSanitizer(this.secrets);
-        if (!this.keyMode && !this.suppressed)
-          output += '"';
-      } else if (ch === "{" || ch === "[") {
-        const hide = begin();
-        if (!hide)
-          output += ch;
-        if (this.stack.length >= 64)
-          throw new ContractError("oversize");
-        this.stack.push({
-          kind: ch === "{" ? "object" : "array",
-          expect: ch === "{" ? "key" : "value",
-          hide,
-          sensitive: false,
-          count: 0,
-          lastKey: undefined,
-          lastOutputKey: undefined
-        });
-      } else if (ch === "}" || ch === "]") {
-        if (!parent || ch === "}" !== (parent.kind === "object"))
-          throw new ContractError;
-        if (parent.expect !== "comma" && !(parent.count === 0 && parent.expect === (parent.kind === "object" ? "key" : "value")))
-          throw new ContractError;
-        if (!parent.hide)
-          output += ch;
-        this.stack.pop();
-        done();
-      } else if (ch === ":") {
-        if (parent?.expect !== "colon")
-          throw new ContractError;
-        parent.expect = "value";
-        if (!parent.hide)
-          output += ch;
-      } else if (ch === ",") {
-        if (parent?.expect !== "comma")
-          throw new ContractError;
-        parent.expect = parent.kind === "object" ? "key" : "value";
-        parent.count = Math.max(1, parent.count);
-        if (!parent.hide)
-          output += ch;
-      } else {
-        this.suppressed = begin();
-        this.token = ch;
-      }
-    }
-    if (final) {
-      if (this.token)
-        primitive();
-      if (this.partial) {
-        if (this.inString && !this.suppressed) {
-          output += this.keyMode ? JSON.stringify(sanitizeText(this.key, this.secrets)).slice(0, -1) : encoded2(this.text.end());
-        }
-        if (this.escape) {
-          output += marker;
-          this.redacted = true;
-          this.limited = true;
-        }
-      } else if (this.inString || this.escape || this.stack.length || this.root !== "done")
-        throw new ContractError;
-      this.redacted ||= this.text.redacted;
-    }
-    return output;
-  }
-  end() {
-    return this.write("", true);
-  }
-}
+import { createHash as createHash20, randomUUID as randomUUID12 } from "node:crypto";
+import { join as join17 } from "node:path";
 
 // src/history/plans.ts
-import { createHash as createHash15, randomUUID as randomUUID5 } from "node:crypto";
+import { createHash as createHash19, randomUUID as randomUUID11 } from "node:crypto";
 function assertPlanContent(plan, reference, secrets) {
   text(plan, 32768);
   const ref = decodeContentRef(reference);
-  if (ref.field !== "plan" || ref.bytes !== Buffer.byteLength(plan) || ref.sha256 !== createHash15("sha256").update(plan).digest("hex") || sanitizeText(plan, secrets) !== plan)
+  if (ref.field !== "plan" || ref.bytes !== Buffer.byteLength(plan) || ref.sha256 !== createHash19("sha256").update(plan).digest("hex") || sanitizeText(plan, secrets) !== plan)
     throw new ContractError("invalid");
 }
 function proposePlanContent(plan, version, secrets) {
   text(plan, 32768);
   const reference = decodeContentRef({
-    recordId: randomUUID5(),
+    recordId: randomUUID11(),
     version,
     field: "plan",
     bytes: Buffer.byteLength(plan),
-    sha256: createHash15("sha256").update(plan).digest("hex")
+    sha256: createHash19("sha256").update(plan).digest("hex")
   });
   assertPlanContent(plan, reference, secrets);
   return reference;
 }
 function planRecording(plan, graph, operationId, epoch) {
-  const detailId = randomUUID5();
+  const detailId = randomUUID11();
   const input = {
     link: { epoch, taskId: graph.taskId, runId: null, operationId },
     observedMs: 0,
@@ -12664,13 +17128,13 @@ function planRecording(plan, graph, operationId, epoch) {
 
 // src/history/publication.ts
 import {
-  closeSync as closeSync5,
-  constants as constants5,
+  closeSync as closeSync6,
+  constants as constants6,
   fsyncSync as fsyncSync4,
-  openSync as openSync5,
-  realpathSync as realpathSync2
+  openSync as openSync6,
+  realpathSync as realpathSync5
 } from "node:fs";
-import { dirname as dirname6, isAbsolute as isAbsolute3, join as join7, relative as relative3, sep as sep3 } from "node:path";
+import { dirname as dirname12, isAbsolute as isAbsolute7, join as join16, relative as relative6, sep as sep5 } from "node:path";
 function summary(text2, maximum, runId) {
   const label = `[Cadence summary${runId ? `; run ${runId}` : ""}; retained history is separate]
 `;
@@ -12703,7 +17167,7 @@ function publicationPhase(run) {
 function bad11() {
   throw new ContractError("conflict");
 }
-function publicationRecord(store, reader, intent, link, run, request, expected, facts, snapshotSeq) {
+function publicationRecord(store, reader, intent, link, run, request3, expected, facts, snapshotSeq) {
   const identity = intent.identity;
   if (identity.kind !== "action")
     bad11();
@@ -12713,16 +17177,16 @@ function publicationRecord(store, reader, intent, link, run, request, expected, 
   const action = identity.action;
   if (action.kind === "create" !== !current2)
     bad11();
-  let record;
+  let record2;
   if (current2)
-    record = structuredClone(current2.record);
+    record2 = structuredClone(current2.record);
   else {
-    if (action.kind !== "create" || !request.cwd || store.list().length >= 1000)
+    if (action.kind !== "create" || !request3.cwd || store.list().length >= 1000)
       bad11();
-    const cwd = realpathSync2(request.cwd), within = relative3(store.root, cwd);
-    if (isAbsolute3(within) || within === ".." || within.startsWith(`..${sep3}`))
+    const cwd = realpathSync5(request3.cwd), within = relative6(store.root, cwd);
+    if (isAbsolute7(within) || within === ".." || within.startsWith(`..${sep5}`))
       bad11();
-    record = {
+    record2 = {
       schema: TASK_SCHEMA,
       id: link.taskId,
       revision: 0,
@@ -12782,15 +17246,15 @@ function publicationRecord(store, reader, intent, link, run, request, expected, 
     const bytes = Buffer.concat([...reader.parts(detail, snapshotSeq)].map((p) => p.bytes));
     if (bytes.toString("utf8") !== action.plan)
       bad11();
-    record.plan = action.plan;
-    record.phase = "planning";
-    delete record.review;
+    record2.plan = action.plan;
+    record2.phase = "planning";
+    delete record2.review;
   }
   if (run) {
-    record.phase = publicationPhase(run);
-    delete record.review;
-    let result = request.result ? retained(request.result, "result") : "";
-    if (!request.result)
+    record2.phase = publicationPhase(run);
+    delete record2.review;
+    let result = request3.result ? retained(request3.result, "result") : "";
+    if (!request3.result)
       for (const child of run.children.values()) {
         if (child.completion?.recording.status === "committed") {
           const text2 = retained(child.completion.recording.detail.content, "result");
@@ -12806,19 +17270,19 @@ ${result}`;
     if (run.admission?.kind === "generate-plan")
       result = `Advisory plan proposal only; not saved or authorized for Start. Explicitly edit/accept and Save a plan before a separate Start.
 ${result}`;
-    record.result = summary(result, 16384, link.runId);
+    record2.result = summary(result, 16384, link.runId);
     if (action.kind === "check" && run.check && run.settlement?.kind === "check") {
-      if (record.checks.length >= 32)
+      if (record2.checks.length >= 32)
         bad11();
       const s = run.settlement;
       const fact = facts.findLast(({ link: l, fact: f }) => l.runId === link.runId && f.kind === "check-settled")?.fact;
       if (fact?.kind !== "check-settled")
         bad11();
-      record.checks.push({
+      record2.checks.push({
         name: run.check.selection.name,
         command: run.check.selection.command,
         timeoutMs: run.check.selection.timeoutMs,
-        cwd: record.cwd,
+        cwd: record2.cwd,
         exitCode: s.native.exitCode,
         durationMs: s.native.durationMs,
         status: fact.status,
@@ -12826,53 +17290,53 @@ ${result}`;
       });
     }
   }
-  if (request.baseline)
-    record.baseline = summary(retained(request.baseline, "baseline"), 16384, link.runId);
+  if (request3.baseline)
+    record2.baseline = summary(retained(request3.baseline, "baseline"), 16384, link.runId);
   if (action.kind === "review") {
     const reviewed = facts.findLast(({ link: l, fact: f }) => l.operationId === intent.operationId && f.kind === "review");
     if (reviewed?.fact.kind !== "review")
       bad11();
-    record.phase = "done";
-    record.review = {
+    record2.phase = "done";
+    record2.review = {
       fingerprint: reviewed.fact.changesIdentity,
       outcome: reviewed.fact.outcome
     };
   }
-  record.revision = expected.revision + 1;
-  record.activity = [
-    ...record.activity.slice(-63),
+  record2.revision = expected.revision + 1;
+  record2.activity = [
+    ...record2.activity.slice(-63),
     {
       at: new Date().toISOString(),
-      text: `Cadence ${action.kind}${link.runId ? `; run ${link.runId}` : ""}; phase ${record.phase}. History/check/review facts remain separate.`
+      text: `Cadence ${action.kind}${link.runId ? `; run ${link.runId}` : ""}; phase ${record2.phase}. History/check/review facts remain separate.`
     }
   ];
-  record = decodeTask(record);
-  if (Buffer.byteLength(`${JSON.stringify(record, null, 2)}
+  record2 = decodeTask(record2);
+  if (Buffer.byteLength(`${JSON.stringify(record2, null, 2)}
 `) > MAX_RECORD_BYTES)
     throw new ContractError("capacity");
-  return record;
+  return record2;
 }
 function syncTaskPublication(store, taskId) {
   if (process.platform === "win32")
     return;
-  for (let path = join7(store.tasks, taskId);; path = dirname6(path)) {
+  for (let path = join16(store.tasks, taskId);; path = dirname12(path)) {
     if (!safeDirectory(path))
       throw new ContractError("conflict");
-    const fd = openSync5(path, constants5.O_RDONLY | constants5.O_DIRECTORY);
+    const fd = openSync6(path, constants6.O_RDONLY | constants6.O_DIRECTORY);
     try {
       fsyncSync4(fd);
     } finally {
-      closeSync5(fd);
+      closeSync6(fd);
     }
     if (path === store.root)
       return;
-    if (dirname6(path) === path)
+    if (dirname12(path) === path)
       throw new ContractError("conflict");
   }
 }
 
 // src/history/review.ts
-function reviewIssues(run, current2, code, epoch) {
+function reviewIssues(run, current2, code2, epoch) {
   const issues = new Set;
   if (!current2.observation.complete)
     issues.add("incomplete-observation");
@@ -12881,7 +17345,7 @@ function reviewIssues(run, current2, code, epoch) {
     issues.add("partial-results");
   if (projections.some((p) => p.coverage.observed !== "complete" || p.coverage.source !== "complete" || p.coverage.omissions.length))
     issues.add("recording-incomplete");
-  if (code) {
+  if (code2) {
     if (current2.recordingIncomplete)
       issues.add("recording-incomplete");
     const recorded = current2.recorded ?? [];
@@ -13204,7 +17668,7 @@ class HistoryWriter {
             kind: "fact",
             fact: {
               kind: "publication-settled",
-              publicationId: last?.kind === "publication-intent" ? last.publicationId : randomUUID6(),
+              publicationId: last?.kind === "publication-intent" ? last.publicationId : randomUUID12(),
               status: "uncertain",
               observed: null
             }
@@ -13260,9 +17724,9 @@ class HistoryWriter {
       settled?.();
       return Promise.resolve(failure(false));
     }
-    let resolve3;
+    let resolve7;
     const original = new Promise((yes) => {
-      resolve3 = yes;
+      resolve7 = yes;
     });
     this.originals.add(original);
     original.then(() => {
@@ -13274,7 +17738,7 @@ class HistoryWriter {
       this.options.onOriginal?.(original, safety || continuation);
     } catch {
       this.fence();
-      resolve3(failure(false));
+      resolve7(failure(false));
       return original;
     }
     if (this.queue.length && this.queue.reduce((n, j) => n + j.bytes, 0) + bytes > LIMITS.progressBatchBytes)
@@ -13282,7 +17746,7 @@ class HistoryWriter {
     this.queue.push({
       build: build2,
       bytes,
-      resolve: resolve3,
+      resolve: resolve7,
       safety,
       continuation,
       control: immediate
@@ -13334,7 +17798,7 @@ class HistoryWriter {
             const row = {
               kind: "record",
               seq: seq2,
-              id: randomUUID6(),
+              id: randomUUID12(),
               value
             };
             rows.push(row);
@@ -13365,7 +17829,7 @@ class HistoryWriter {
           this.assertReviews(rows);
           for (const part of this.partWrites) {
             const text2 = part.text.join("");
-            part.artifact.sha256 = hash(text2);
+            part.artifact.sha256 = hash2(text2);
             this.charge(part.artifact.bytes, part.artifact.runId, false);
             this.files.writeArtifact(this.lease, part.artifact, text2);
           }
@@ -13608,7 +18072,7 @@ class HistoryWriter {
     try {
       const budget = HistoryReadBudget.authority();
       const intent = this.files.readCommand(commandId, budget);
-      const directoryExists = this.files.files.directory(join8(this.files.directory, "commands", commandId));
+      const directoryExists = this.files.files.directory(join17(this.files.directory, "commands", commandId));
       const wanted = intent ? decodeAdmissionIntent(json(intent, RECORD_BYTES)) : null;
       let found = null;
       let run = null;
@@ -13687,7 +18151,7 @@ class HistoryWriter {
   }
   async commit(input) {
     const intent = decodeAdmissionIntent(input);
-    let record, existing = false, refused2;
+    let record2, existing = false, refused2;
     const outcome = await this.enqueue(async (seq2) => {
       this.assertOrdinary();
       const lookup = await this.lookupCommitted(intent.commandId);
@@ -13695,7 +18159,7 @@ class HistoryWriter {
         if (canonicalJson(lookup.record.identity) !== canonicalJson(intent.identity))
           refused2 = { status: "refused", error: publicError("conflict") };
         else {
-          record = lookup.record;
+          record2 = lookup.record;
           existing = true;
         }
         return;
@@ -13733,7 +18197,7 @@ class HistoryWriter {
         }
       }
       this.used = Math.max(this.used, this.files.usage());
-      record = decodeStoredCommand({
+      record2 = decodeStoredCommand({
         identity: intent.identity,
         receipt: {
           commandId: intent.commandId,
@@ -13754,17 +18218,17 @@ class HistoryWriter {
       this.assertOrdinary();
       const bytes = encoded(intent);
       this.charge(Buffer.byteLength(bytes), intent.runId, true);
-      this.files.files.create(join8(this.files.directory, "commands", intent.commandId, "intent.json"), bytes, RECORD_BYTES);
-      this.files.syncParents(join8(this.files.directory, "commands", intent.commandId, "intent.json"));
+      this.files.files.create(join17(this.files.directory, "commands", intent.commandId, "intent.json"), bytes, RECORD_BYTES);
+      this.files.syncParents(join17(this.files.directory, "commands", intent.commandId, "intent.json"));
       await this.options.observeWrite?.("intent");
       const policy = this.resourcePolicy(intent.identity.kind === "action" ? intent.identity.expected.configRev : 1);
-      return { kind: "admission", intent, record, policy };
+      return { kind: "admission", intent, record: record2, policy };
     }, Buffer.byteLength(canonicalJson(intent)), true);
     if (outcome.status !== "committed")
       return refused2 ?? { status: "uncertain" };
-    return refused2 ?? (record ? {
+    return refused2 ?? (record2 ? {
       status: existing ? "existing" : "committed",
-      record: decodeStoredCommand(record)
+      record: decodeStoredCommand(record2)
     } : { status: "uncertain" });
   }
   retainAcceptedPlan(operationId, secrets) {
@@ -13785,11 +18249,11 @@ class HistoryWriter {
     }
     let begun = false;
     let refused2;
-    const refuse2 = (code) => {
+    const refuse2 = (code2) => {
       refused2 = {
         status: "refused",
         durability: "none",
-        error: publicError(code)
+        error: publicError(code2)
       };
       return;
     };
@@ -13836,9 +18300,9 @@ class HistoryWriter {
       if (collision || this.prior((v) => v.kind === "admission" && v.intent.operationId !== operationId && v.intent.identity.kind === "action" && v.intent.identity.action.kind === "save-plan" && v.intent.identity.action.graph.plan.recordId === ref.recordId || (v.kind === "owner" || v.kind === "capture") && v.events.some((e) => e.kind === "end" && e.detail.content.recordId === ref.recordId || e.kind === "chunk" && e.artifact.artifactId === ref.recordId)))
         return refuse2("conflict");
       const input = planRecording(action.plan, action.graph, operationId, expected.epoch);
-      const decoded = lease.beginOwner(input);
+      const decoded2 = lease.beginOwner(input);
       begun = true;
-      return this.ownerValue(decoded, null, ref);
+      return this.ownerValue(decoded2, null, ref);
     }, lease.budget.retainedBytes + lease.budget.outputBytes, true, () => begun ? lease.settled() : lease.release()).then((result) => refused2 ?? result);
   }
   retainAcceptedRunPlan(operationId, graph, secrets) {
@@ -13863,7 +18327,7 @@ class HistoryWriter {
         throw new ContractError("conflict");
       const expected = intent.identity.expected, task = expected.task, snapshot = task ? this.lease.coordination.store.loadSnapshot(task.id) : undefined;
       const current2 = task ? this.contexts.get(task.id) : undefined;
-      if (!snapshot || !task || expected.epoch !== this.lease.registration.epoch || snapshot.identity !== task.identity || snapshot.record.revision !== task.revision || selected2.taskId !== task.id || selected2.taskKind !== task.kind || selected2.taskRevision !== task.revision || selected2.revision !== task.graphRevision || hash(canonicalJson(selected2)) !== task.graphIdentity || !current2 || canonicalJson({
+      if (!snapshot || !task || expected.epoch !== this.lease.registration.epoch || snapshot.identity !== task.identity || snapshot.record.revision !== task.revision || selected2.taskId !== task.id || selected2.taskKind !== task.kind || selected2.taskRevision !== task.revision || selected2.revision !== task.graphRevision || hash2(canonicalJson(selected2)) !== task.graphIdentity || !current2 || canonicalJson({
         ...current2,
         accessGeneration: expected.accessGeneration
       }) !== canonicalJson({ ...expected, controlRev: expected.controlRev + 1 }))
@@ -13899,10 +18363,10 @@ class HistoryWriter {
       } catch {}
     }
   }
-  async publishTask(request) {
-    request = structuredClone(request);
-    decodeId(request.operationId);
-    if (this.publishing.has(request.operationId))
+  async publishTask(request3) {
+    request3 = structuredClone(request3);
+    decodeId(request3.operationId);
+    if (this.publishing.has(request3.operationId))
       return {
         status: "refused",
         publicationId: null,
@@ -13919,10 +18383,10 @@ class HistoryWriter {
         observed: null
       };
     }
-    this.publishing.add(request.operationId);
-    const publicationId = randomUUID6();
+    this.publishing.add(request3.operationId);
+    const publicationId = randomUUID12();
     let link;
-    let record;
+    let record2;
     let expected;
     let observed = null;
     let status = "uncertain";
@@ -13930,7 +18394,7 @@ class HistoryWriter {
     try {
       const prepared = await this.enqueue(() => {
         this.assertWritable(false, true);
-        const operation = readOperationStateForPublication(this.files, request.operationId);
+        const operation = readOperationStateForPublication(this.files, request3.operationId);
         const intent = operation.intent;
         if (operation.recovered)
           throw new ContractError("stale");
@@ -13947,7 +18411,7 @@ class HistoryWriter {
           if (!latest || canonicalJson(latest) !== canonicalJson(current2))
             throw new ContractError("stale");
           if (identity.action.kind === "review") {
-            const review = this.options.reviewContext?.(taskId, this.reviews.get(request.operationId)?.published);
+            const review = this.options.reviewContext?.(taskId, this.reviews.get(request3.operationId)?.published);
             if (!review || review.observation.identity !== identity.action.changesIdentity || review.checks.revision !== identity.action.checksRevision)
               throw new ContractError("stale");
           }
@@ -13966,8 +18430,8 @@ class HistoryWriter {
         const reader = HistoryReader.open(this.lease.coordination);
         if (!reader)
           throw new ContractError("unavailable");
-        record = publicationRecord(this.lease.coordination.store, reader, intent, link, run, request, expected, operation.facts, this.state.committedSeq);
-        this.charge(2 * Buffer.byteLength(`${JSON.stringify(record, null, 2)}
+        record2 = publicationRecord(this.lease.coordination.store, reader, intent, link, run, request3, expected, operation.facts, this.state.committedSeq);
+        this.charge(2 * Buffer.byteLength(`${JSON.stringify(record2, null, 2)}
 `), intent.runId, true);
         return this.ownerValue({
           link,
@@ -13980,14 +18444,14 @@ class HistoryWriter {
                 publicationId,
                 expectedRevision: expected.revision,
                 expectedIdentity: expected.identity,
-                nextRevision: record.revision,
-                nextIdentity: savedRecordIdentity(record)
+                nextRevision: record2.revision,
+                nextIdentity: savedRecordIdentity(record2)
               }
             }
           ]
         });
       }, 16384, true, undefined, false, true);
-      if (prepared.status !== "committed" || !record || !expected || !link) {
+      if (prepared.status !== "committed" || !record2 || !expected || !link) {
         if (!link)
           return {
             status: "refused",
@@ -14018,7 +18482,7 @@ class HistoryWriter {
           observed: null
         };
       }
-      const selected2 = record, before = expected, owner = link;
+      const selected2 = record2, before = expected, owner = link;
       const outcome = await this.enqueue(async () => {
         await this.options.observeWrite?.("publication-before-save");
         this.assertWritable(false, true);
@@ -14029,7 +18493,7 @@ class HistoryWriter {
           assertContext();
           store.save(selected2, before.revision, this.lease.checkout, before.identity ?? undefined);
           syncTaskPublication(store, selected2.id);
-          const review = this.reviews.get(request.operationId);
+          const review = this.reviews.get(request3.operationId);
           if (review)
             review.published = {
               revision: selected2.revision,
@@ -14084,9 +18548,9 @@ class HistoryWriter {
         observed
       };
     } finally {
-      this.publishing.delete(request.operationId);
+      this.publishing.delete(request3.operationId);
       if (["published"].includes(status) && !this.fenced && this.pendingWrites === 0)
-        this.reviews.delete(request.operationId);
+        this.reviews.delete(request3.operationId);
     }
   }
   retainedRun(runId) {
@@ -14206,12 +18670,12 @@ class HistoryWriter {
               },
               release: () => lease.release(),
               commit: (value) => {
-                const decoded = lease.beginWorker(value);
-                if (canonicalJson(decoded.link) !== canonicalJson(link)) {
+                const decoded2 = lease.beginWorker(value);
+                if (canonicalJson(decoded2.link) !== canonicalJson(link)) {
                   lease.settled();
                   throw new ContractError("conflict");
                 }
-                return this.enqueue(() => this.captureValue(decoded), Buffer.byteLength(canonicalJson(decoded)), lease.budget.lane === "control", () => lease.settled(), false, true);
+                return this.enqueue(() => this.captureValue(decoded2), Buffer.byteLength(canonicalJson(decoded2)), lease.budget.lane === "control", () => lease.settled(), false, true);
               }
             }
           };
@@ -14272,10 +18736,10 @@ class HistoryWriter {
       owner,
       descriptor,
       field,
-      recordId: randomUUID6(),
+      recordId: randomUUID12(),
       version: 1,
       bytes: 0,
-      hash: createHash16("sha256"),
+      hash: createHash20("sha256"),
       parts: 0,
       ended: null,
       committedSeq: null
@@ -14395,7 +18859,7 @@ class HistoryWriter {
           throw new ContractError("invalid");
         child.final = { messageId: event.messageId, detailId: event.detailId };
       }
-      events.push({ kind: "capture", id: randomUUID6(), value: item });
+      events.push({ kind: "capture", id: randomUUID12(), value: item });
     }
     return { kind: "capture", link: input.link, source: input.source, events };
   }
@@ -14521,12 +18985,12 @@ class HistoryWriter {
         candidate.apply({
           kind: "record",
           seq: "1",
-          id: randomUUID6(),
+          id: randomUUID12(),
           value: {
             kind: "owner",
             link: value.link,
             observedMs: value.observedMs,
-            events: [{ kind: "owner", id: randomUUID6(), value: event }]
+            events: [{ kind: "owner", id: randomUUID12(), value: event }]
           }
         }, this.state.committedSeq);
         const children = new Set(identity.assignments.map((a) => a.childRunId));
@@ -14608,7 +19072,7 @@ class HistoryWriter {
           events.push(ended);
         }
       } else
-        events.push({ kind: "owner", id: randomUUID6(), value: event });
+        events.push({ kind: "owner", id: randomUUID12(), value: event });
     }
     return {
       kind: "owner",
@@ -14648,894 +19112,6 @@ function readOperationStateForPublication(files, operationId) {
   if (!intent)
     throw new ContractError("conflict");
   return { intent, state, facts, recovered, publication };
-}
-
-// src/service-assets.ts
-import { createHash as createHash17 } from "node:crypto";
-import { lstatSync as lstatSync7, readdirSync as readdirSync2 } from "node:fs";
-import { join as join9 } from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
-var ASSET_MEMBER_BYTES = 16 * 1024 * 1024;
-var ASSET_TOTAL_BYTES = 64 * 1024 * 1024;
-var fixed = new Set([
-  "index.html",
-  "assets/cadence.js",
-  "assets/cadence.css",
-  "assets/react.js",
-  "assets/rolldown-runtime.js",
-  "assets/markdown.js",
-  "assets/timeline-client.js",
-  "assets/vis-timeline.js",
-  "assets/vis-timeline.css"
-]);
-var font = /^assets\/KaTeX_(?:AMS-Regular|Caligraphic-(?:Bold|Regular)|Fraktur-(?:Bold|Regular)|Main-(?:Bold|BoldItalic|Italic|Regular)|Math-(?:BoldItalic|Italic)|SansSerif-(?:Bold|Italic|Regular)|Script-Regular|Size[1-4]-Regular|Typewriter-Regular)\.(?:woff2|woff|ttf)$/;
-function assetMime(name) {
-  if (!fixed.has(name) && !font.test(name))
-    throw new Error("asset-name-refused");
-  if (name === "index.html")
-    return "text/html; charset=utf-8";
-  if (name.endsWith(".js"))
-    return "text/javascript; charset=utf-8";
-  if (name.endsWith(".css"))
-    return "text/css; charset=utf-8";
-  if (name.endsWith(".woff2"))
-    return "font/woff2";
-  if (name.endsWith(".woff"))
-    return "font/woff";
-  return "font/ttf";
-}
-function record(v) {
-  if (!v || typeof v !== "object" || Array.isArray(v))
-    throw new Error("asset-manifest-refused");
-  return v;
-}
-function keys(v, expected) {
-  if (Object.keys(v).sort().join() !== expected.sort().join())
-    throw new Error("asset-manifest-refused");
-}
-function hash2(v) {
-  if (typeof v !== "string" || !/^[a-f0-9]{64}$/.test(v))
-    throw new Error("asset-manifest-refused");
-  return v;
-}
-function decodeAssetManifest(input) {
-  const o = record(input);
-  keys(o, ["schema", "sourceHash", "contractHash", "buildId", "assets"]);
-  if (o.schema !== "cadence-web-assets/1" || !Array.isArray(o.assets) || o.assets.length > 128)
-    throw new Error("asset-manifest-refused");
-  let total = 0;
-  const names = new Set;
-  const assets = o.assets.map((value) => {
-    const a = record(value);
-    keys(a, ["name", "bytes", "sha256", "references"]);
-    if (typeof a.name !== "string" || names.has(a.name))
-      throw new Error("asset-name-refused");
-    assetMime(a.name);
-    names.add(a.name);
-    if (typeof a.bytes !== "number" || !Number.isSafeInteger(a.bytes) || a.bytes <= 0 || a.bytes > ASSET_MEMBER_BYTES)
-      throw new Error("asset-size-refused");
-    total += a.bytes;
-    if (total > ASSET_TOTAL_BYTES || !Array.isArray(a.references) || a.references.length > 128 || !a.references.every((r) => typeof r === "string"))
-      throw new Error("asset-closure-refused");
-    return {
-      name: a.name,
-      bytes: a.bytes,
-      sha256: hash2(a.sha256),
-      references: a.references
-    };
-  });
-  if ([...fixed].some((name) => !names.has(name)) || assets.filter((a) => font.test(a.name)).length !== 60 || assets.some((a) => new Set(a.references).size !== a.references.length || a.references.some((r) => !names.has(r))))
-    throw new Error("asset-closure-refused");
-  const sourceHash = hash2(o.sourceHash), contractHash = hash2(o.contractHash), buildId = hash2(o.buildId);
-  if (buildId !== createHash17("sha256").update(JSON.stringify({ sourceHash, contractHash })).digest("hex"))
-    throw new Error("asset-identity-refused");
-  return { schema: o.schema, sourceHash, contractHash, buildId, assets };
-}
-function incarnation2(st) {
-  return [
-    st.dev,
-    st.ino,
-    st.mode,
-    st.nlink,
-    st.size,
-    st.mtimeMs,
-    st.ctimeMs
-  ].join(":");
-}
-function loadWebAssets(directory = fileURLToPath2(new URL("../web/dist/", import.meta.url))) {
-  if (!safeDirectory(directory) || !safeDirectory(join9(directory, "assets")))
-    throw new Error("assets-unavailable");
-  const observed = new Map;
-  for (const path of [directory, join9(directory, "assets")])
-    observed.set(path, incarnation2(lstatSync7(path)));
-  const read2 = (path, limit) => {
-    const before = incarnation2(lstatSync7(path));
-    const body = readBounded(path, limit, true);
-    if (!body || before !== incarnation2(lstatSync7(path)))
-      throw new Error("asset-read-changed");
-    observed.set(path, before);
-    return body;
-  };
-  const bytes = read2(join9(directory, "manifest.json"), 128 * 1024);
-  const manifest = decodeAssetManifest(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(bytes), 128 * 1024));
-  const members = [
-    ...readdirSync2(directory).filter((n) => n !== "assets"),
-    ...readdirSync2(join9(directory, "assets")).map((n) => `assets/${n}`)
-  ].sort();
-  if (JSON.stringify(members) !== JSON.stringify(["manifest.json", ...manifest.assets.map((a) => a.name)].sort()))
-    throw new Error("asset-members-refused");
-  const assets = manifest.assets.map((a) => {
-    const body = read2(join9(directory, a.name), a.bytes);
-    if (!body || body.length !== a.bytes || createHash17("sha256").update(body).digest("hex") !== a.sha256)
-      throw new Error("asset-body-refused");
-    return {
-      path: a.name === "index.html" ? "/app" : `/${a.name}`,
-      contentType: assetMime(a.name),
-      bytes: body
-    };
-  });
-  if (!safeDirectory(directory) || [...observed].some(([path, identity]) => incarnation2(lstatSync7(path)) !== identity))
-    throw new Error("asset-read-changed");
-  return {
-    manifest,
-    assets,
-    identity: createHash17("sha256").update(bytes).digest("hex")
-  };
-}
-
-// src/service/auth.ts
-import {
-  createHash as createHash18,
-  randomBytes as randomBytes3,
-  randomUUID as randomUUID7,
-  timingSafeEqual
-} from "node:crypto";
-import { dirname as dirname8, isAbsolute as isAbsolute4, join as join11 } from "node:path";
-
-// src/service/config.ts
-import { isIP } from "node:net";
-function decodeHttpPolicy(value) {
-  const o = closed(value, ["schema", "host", "port", "proxy"]);
-  if (o.host !== "127.0.0.1" && o.host !== "::1")
-    throw new ContractError("invalid");
-  let proxy = null;
-  if (o.proxy !== null) {
-    const p = closed(o.proxy, ["origin", "trustedAddresses"]);
-    const origin = text(p.origin, 256, true);
-    let url;
-    try {
-      url = new URL(origin);
-    } catch {
-      throw new ContractError("invalid");
-    }
-    if (url.protocol !== "https:" || url.origin !== origin || url.username || url.password)
-      throw new ContractError("invalid");
-    const trustedAddresses = list(p.trustedAddresses, 8, (v) => {
-      const address2 = text(v, 64, true);
-      if (!isIP(address2) || !loopbackAddress(address2))
-        throw new ContractError("invalid");
-      return address2;
-    });
-    if (!trustedAddresses.length || new Set(trustedAddresses).size !== trustedAddresses.length)
-      throw new ContractError("invalid");
-    proxy = { origin, trustedAddresses };
-  }
-  return {
-    schema: literal(o.schema, "cadence-service-http/1"),
-    host: o.host,
-    port: integer(o.port, 0, 65535),
-    proxy
-  };
-}
-function loopbackAddress(host) {
-  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(host);
-  const h = mapped ? mapped[1] : host;
-  if (h.includes(":"))
-    return h === "::1";
-  const parts = h.split(".");
-  return parts.length === 4 && parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255) && Number(parts[0]) === 127;
-}
-function localOrigin(policy, actualPort) {
-  integer(actualPort, 1, 65535);
-  return `http://${policy.host === "::1" ? "[::1]" : policy.host}:${actualPort}`;
-}
-
-// src/service/server-config.ts
-import {
-  existsSync as existsSync2,
-  lstatSync as lstatSync8,
-  mkdirSync as mkdirSync3,
-  realpathSync as realpathSync3,
-  statSync
-} from "node:fs";
-import { dirname as dirname7, join as join10 } from "node:path";
-
-// skills/_shared/load-config.mjs
-function parseEnvFile(content) {
-  const values = {};
-  const lines = content.replaceAll(`\r
-`, `
-`).replaceAll("\r", `
-`).split(`
-`);
-  for (let index = 0;index < lines.length; index += 1) {
-    const line = lines[index].trim();
-    if (!line || line.startsWith("#"))
-      continue;
-    const separator = line.indexOf("=");
-    if (separator <= 0)
-      throw new Error(`Invalid configuration syntax at line ${index + 1}`);
-    const name = line.slice(0, separator).trim();
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-      throw new Error(`Invalid configuration name at line ${index + 1}`);
-    }
-    let value = line.slice(separator + 1).trim();
-    const quote = value[0];
-    if (quote === '"' || quote === "'") {
-      if (value.at(-1) !== quote) {
-        throw new Error(`Unterminated quoted configuration value at line ${index + 1}`);
-      }
-      value = value.slice(1, -1);
-    }
-    values[name] = value;
-  }
-  return values;
-}
-
-// src/service/server-config.ts
-var PORT_KEY = "CADENCE_PORT";
-var TOKEN_KEY = "CADENCE_TOKEN";
-var CONFIG_BYTES = 64 * 1024;
-var TOKEN_BYTES = 1024;
-function accessToken(value) {
-  const result = text(value, TOKEN_BYTES, true);
-  if (utf8Bytes(result) < 32 || /[\p{Cc}\p{Cf}]/u.test(result))
-    throw new ContractError("invalid");
-  return result;
-}
-class ServerConfigRefusal extends ContractError {
-  path;
-  reason;
-  constructor(path, reason) {
-    super("corrupt-selected");
-    this.path = path;
-    this.reason = reason;
-  }
-}
-
-class Unusable extends Error {
-}
-var unusable = (reason) => {
-  throw new Unusable(reason);
-};
-function syntax(error) {
-  const message = error instanceof Error ? error.message : "";
-  const line = /at line (\d+)$/.exec(message)?.[1];
-  if (!line)
-    return "is not in KEY=value lines";
-  if (message.startsWith("Invalid configuration name"))
-    return `has an invalid name on line ${line} (letters, digits and _ only, no "export")`;
-  if (message.startsWith("Unterminated"))
-    return `has an unterminated quote on line ${line}`;
-  return `has no KEY=value setting on line ${line}`;
-}
-function settings(source) {
-  try {
-    parseEnvFile(source);
-  } catch (error) {
-    unusable(`${syntax(error)}, which the research skills refuse too`);
-  }
-  const parts = source.split(/(\r\n|\r|\n)/);
-  const found = {};
-  for (let at = 0;at < parts.length; at += 2) {
-    const line = parts[at].trim();
-    if (!line || line.startsWith("#"))
-      continue;
-    const separator = line.indexOf("=");
-    const key2 = line.slice(0, separator).trim();
-    const name = key2 === PORT_KEY ? "port" : key2 === TOKEN_KEY ? "token" : undefined;
-    if (!name)
-      continue;
-    const previous = found[name];
-    if (previous)
-      unusable(`sets ${key2} twice (lines ${previous.line} and ${at / 2 + 1}); keep one`);
-    let value = line.slice(separator + 1).trim();
-    if (value[0] === '"' || value[0] === "'")
-      value = value.slice(1, -1);
-    found[name] = { at, line: at / 2 + 1, value };
-  }
-  return { parts, ...found };
-}
-function decode(source) {
-  const { port, token } = settings(source);
-  if (!port)
-    unusable(`has no ${PORT_KEY} line`);
-  if (!token)
-    unusable(`has no ${TOKEN_KEY} line`);
-  const p = port, t = token;
-  const number = Number(p.value);
-  if (!/^[1-9][0-9]{0,4}$/.test(p.value) || number > 65535)
-    unusable(`has ${PORT_KEY} on line ${p.line} that is not a whole number from 1 to 65535`);
-  try {
-    return { port: number, token: accessToken(t.value) };
-  } catch {
-    return unusable(`has ${TOKEN_KEY} on line ${t.line} shorter than 32 characters or with control characters`);
-  }
-}
-var code = (error) => error?.code ?? "error";
-function locate(path) {
-  let real;
-  try {
-    real = realpathSync3(path);
-  } catch (error) {
-    if (code(error) !== "ENOENT")
-      unusable(`cannot be read (${code(error)})`);
-    let link = false;
-    try {
-      link = lstatSync8(path).isSymbolicLink();
-    } catch {}
-    return unusable(link ? "is a link to a file that does not exist" : "does not exist");
-  }
-  return { real, files: new PrivateFiles(dirname7(real), false) };
-}
-function explain(real) {
-  const uid = process.getuid?.();
-  try {
-    const st = lstatSync8(real);
-    if (!st.isFile())
-      return "is not a regular file";
-    if (uid !== undefined && st.uid !== uid)
-      return "is not owned by you";
-    if (uid !== undefined && lstatSync8(dirname7(real)).uid !== uid)
-      return `is in ${dirname7(real)}, which is not owned by you`;
-    if (st.nlink !== 1)
-      return "has more than one hard link";
-    if (st.size > CONFIG_BYTES)
-      return "is larger than 64 KiB";
-    return "changed while Cadence read it; try again";
-  } catch (error) {
-    return `cannot be read (${code(error)})`;
-  }
-}
-function load(path) {
-  const { real, files } = locate(path);
-  let snapshot;
-  try {
-    snapshot = files.read(real, CONFIG_BYTES);
-  } catch {
-    return unusable(explain(real));
-  }
-  if (!snapshot)
-    return unusable("does not exist");
-  let source;
-  try {
-    source = decoded(snapshot);
-  } catch {
-    return unusable("is not UTF-8 text");
-  }
-  return { path, real, files, snapshot, source };
-}
-function decoded(snapshot) {
-  return new TextDecoder("utf-8", { fatal: true }).decode(snapshot.bytes);
-}
-function refusing(path, read2) {
-  try {
-    return read2();
-  } catch (error) {
-    if (error instanceof ServerConfigRefusal)
-      throw error;
-    throw new ServerConfigRefusal(path, error instanceof Unusable ? error.message : `cannot be read (${code(error)})`);
-  }
-}
-function readServerConfig(path) {
-  return refusing(path, () => {
-    const file = load(path);
-    return { ...file, config: decode(file.source) };
-  });
-}
-function withToken(file, token) {
-  const { parts, token: line } = settings(decoded(file.snapshot));
-  if (!line)
-    throw new ContractError("invalid");
-  const indent = /^\s*/.exec(parts[line.at])?.[0] ?? "";
-  parts[line.at] = `${indent}${TOKEN_KEY}=${accessToken(token)}`;
-  return parts.join("");
-}
-
-// src/service/auth.ts
-function sameSecret(candidate, expected) {
-  const a = createHash18("sha256").update(candidate).digest();
-  const b = createHash18("sha256").update(expected).digest();
-  return timingSafeEqual(a, b);
-}
-function buildTokenCookie(name, encodedValue, maxAge, secure) {
-  return `${name}=${encodedValue}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;
-}
-function decodeCookieToken(raw) {
-  if (!raw)
-    return "";
-  try {
-    return decodeURIComponent(raw);
-  } catch {
-    return raw;
-  }
-}
-function cookieTokens(header, name) {
-  if (!header)
-    return [];
-  let found = false;
-  const out = [];
-  for (const part of header.split(";")) {
-    const [key2, ...rest] = part.trim().split("=");
-    if (key2 !== name)
-      continue;
-    if (found)
-      throw new ContractError("invalid");
-    found = true;
-    const raw = rest.join("=").trim();
-    out.push(raw, decodeCookieToken(raw));
-  }
-  return out;
-}
-function sourceConfig(source) {
-  const given = [source.environment, source.tokenFile, source.serverConfig];
-  if (given.filter((v) => v !== undefined).length > 1)
-    throw new ContractError("invalid");
-  if (source.environment !== undefined)
-    accessToken(source.environment);
-  if (source.serverConfig !== undefined)
-    accessToken(source.token);
-  const path = source.tokenFile ?? source.serverConfig;
-  if (path !== undefined && (!isAbsolute4(path) || path.includes("\x00")))
-    throw new ContractError("invalid");
-  return {
-    schema: "cadence-service-access-config/1",
-    source: source.environment !== undefined ? "environment" : source.tokenFile !== undefined ? "file" : source.serverConfig !== undefined ? "config" : "generated",
-    path: path ?? null
-  };
-}
-function readSource(config) {
-  if (config.source === "file" && config.path)
-    readExternal(config.path);
-}
-function selectedMaterial(files, directory, source) {
-  const config = sourceConfig(source);
-  if (config.source !== "config")
-    throw new ContractError("invalid");
-  const marker2 = join11(directory, "access-config.json"), access = join11(directory, "access.json");
-  const markerFile = files.read(marker2), accessFile = files.read(access);
-  if (!markerFile || !accessFile)
-    throw new ContractError("corrupt-selected");
-  const previous = closed(json(markerFile), ["schema", "source", "path"]);
-  literal(previous.schema, "cadence-service-access-config/1");
-  oneOf(previous.source, ["generated", "environment", "file", "config"]);
-  const r = closed(json(accessFile), ["schema", "generation", "token"]);
-  literal(r.schema, "cadence-service-access/1");
-  const generation = integer(r.generation, 1);
-  if (previous.source === "generated" !== (r.token !== null))
-    throw new ContractError("corrupt-selected");
-  return {
-    config,
-    previous,
-    generation,
-    marker: marker2,
-    markerFile,
-    access,
-    accessFile
-  };
-}
-
-class AccessMaterial {
-  files;
-  directory;
-  assertOwner;
-  configFile;
-  accessFile;
-  externalFile;
-  external;
-  record;
-  secret;
-  fenced = false;
-  listeners = new Set;
-  config;
-  static validateSource(source) {
-    readSource(sourceConfig(source));
-  }
-  static initialize(files, directory, source = {}) {
-    const config = sourceConfig(source);
-    const marker2 = join11(directory, "access-config.json"), access = join11(directory, "access.json");
-    if (files.read(marker2) || files.read(access) || files.read(join11(directory, "registration.json")) || files.read(join11(directory, "owner.lock")))
-      throw new ContractError("conflict");
-    readSource(config);
-    files.create(marker2, encoded(config));
-    files.create(access, encoded({
-      schema: "cadence-service-access/1",
-      generation: 1,
-      token: config.source === "generated" ? randomBytes3(32).toString("base64url") : null
-    }));
-  }
-  static validateReselection(files, directory, source) {
-    selectedMaterial(files, directory, source);
-  }
-  static reselect(files, directory, source) {
-    const m = selectedMaterial(files, directory, source);
-    if (encoded(m.previous) === encoded(m.config))
-      return;
-    files.replace(m.marker, m.markerFile, encoded(m.config));
-    files.replace(m.access, m.accessFile, encoded({
-      schema: "cadence-service-access/1",
-      generation: integer(m.generation + 1, 1),
-      token: null
-    }));
-  }
-  constructor(files, directory, source = {}, assertOwner) {
-    this.files = files;
-    this.directory = directory;
-    this.assertOwner = assertOwner;
-    this.config = sourceConfig(source);
-    const configFile = files.read(join11(directory, "access-config.json"));
-    const accessFile = files.read(join11(directory, "access.json"));
-    if (!configFile || !accessFile)
-      throw new ContractError("corrupt-selected");
-    const c = closed(json(configFile), ["schema", "source", "path"]);
-    if (encoded(c) !== encoded(this.config))
-      throw new ContractError("conflict");
-    const r = closed(json(accessFile), ["schema", "generation", "token"]);
-    this.record = {
-      schema: literal(r.schema, "cadence-service-access/1"),
-      generation: integer(r.generation, 1),
-      token: r.token === null ? null : accessToken(r.token)
-    };
-    if (this.config.source === "generated" !== (this.record.token !== null))
-      throw new ContractError("corrupt-selected");
-    if (this.config.source === "file" && this.config.path) {
-      const loaded = readExternal(this.config.path);
-      this.external = loaded.files;
-      this.externalFile = loaded.file;
-      this.secret = loaded.token;
-    } else
-      this.secret = accessToken(this.record.token ?? source.environment ?? source.token);
-    this.configFile = configFile;
-    this.accessFile = accessFile;
-  }
-  get generation() {
-    return this.record.generation;
-  }
-  get available() {
-    return !this.fenced;
-  }
-  matches(candidate) {
-    return !this.fenced && utf8Bytes(candidate) <= TOKEN_BYTES && sameSecret(candidate, this.secret);
-  }
-  onRevoke(listener) {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  }
-  revoke() {
-    for (const listener of this.listeners) {
-      try {
-        listener();
-      } catch {
-        this.fenced = true;
-      }
-    }
-  }
-  assertCurrent() {
-    try {
-      this.assert();
-    } catch {
-      this.fenced = true;
-      this.revoke();
-      throw new ContractError("quarantine");
-    }
-  }
-  assert() {
-    if (this.fenced)
-      throw new ContractError("quarantine");
-    this.files.assert(join11(this.directory, "access-config.json"), this.configFile);
-    this.files.assert(join11(this.directory, "access.json"), this.accessFile);
-    if (this.config.source === "file" && this.config.path)
-      this.external?.assert(this.config.path, this.externalFile, TOKEN_BYTES);
-  }
-  redactionLiterals() {
-    this.assertCurrent();
-    return [this.secret];
-  }
-  tokenLink(origin) {
-    this.assert();
-    const url = new URL(origin);
-    if (url.origin !== origin)
-      throw new ContractError("invalid");
-    return `${origin}/?token=${encodeURIComponent(this.secret)}`;
-  }
-  assertRotation() {
-    this.assertOwner?.();
-    this.assert();
-  }
-  rotate() {
-    if (this.config.source === "environment")
-      throw new ContractError("unsupported-context");
-    let configured;
-    if (this.config.source === "config" && this.config.path) {
-      configured = readServerConfig(this.config.path);
-      if (!sameSecret(configured.config.token, this.secret))
-        throw new ContractError("conflict");
-    }
-    try {
-      this.assertRotation();
-      const secret = randomBytes3(32).toString("base64url");
-      const generation = integer(this.record.generation + 1, 1);
-      if (this.config.path && this.external && this.externalFile)
-        this.externalFile = this.external.replace(this.config.path, this.externalFile, secret, TOKEN_BYTES);
-      if (configured)
-        configured.files.replace(configured.real, configured.snapshot, withToken(configured, secret), CONFIG_BYTES);
-      const record2 = {
-        ...this.record,
-        generation,
-        token: this.config.source === "generated" ? secret : null
-      };
-      this.assertRotation();
-      this.accessFile = this.files.replace(join11(this.directory, "access.json"), this.accessFile, encoded(record2));
-      this.assertRotation();
-      this.record = record2;
-      this.secret = secret;
-      this.revoke();
-      if (this.fenced)
-        throw new ContractError("quarantine");
-    } catch {
-      this.fenced = true;
-      this.revoke();
-      throw new ContractError("quarantine");
-    }
-  }
-}
-function readExternal(path) {
-  const files = new PrivateFiles(dirname8(path));
-  const file = files.read(path, TOKEN_BYTES);
-  if (!file)
-    throw new ContractError("corrupt-selected");
-  try {
-    return {
-      files,
-      file,
-      token: accessToken(new TextDecoder("utf-8", { fatal: true }).decode(file.bytes))
-    };
-  } catch {
-    throw new ContractError("corrupt-selected");
-  }
-}
-function requestBoundary(req, policy, directOrigin) {
-  const headers = new Map;
-  let bytes = 0;
-  for (let i = 0;i < req.rawHeaders.length; i += 2) {
-    const name = req.rawHeaders[i].toLowerCase(), value = req.rawHeaders[i + 1];
-    bytes += Buffer.byteLength(name) + Buffer.byteLength(value) + 4;
-    if (headers.has(name))
-      throw new ContractError("invalid");
-    headers.set(name, value);
-  }
-  if (bytes > LIMITS.headerBytes)
-    throw new ContractError("oversize");
-  const forwarded = [...headers.keys()].filter((n) => n === "forwarded" || n.startsWith("x-forwarded-") || n === "x-real-ip");
-  const address2 = req.socket.remoteAddress ?? "";
-  if (!loopbackAddress(address2))
-    throw new ContractError("forbidden");
-  const proxy = policy.proxy;
-  const proxied = forwarded.length > 0;
-  let origin = directOrigin;
-  if (proxied) {
-    if (!proxy?.trustedAddresses.includes(address2) || forwarded.length !== 1 || forwarded[0] !== "x-forwarded-proto" || headers.get("x-forwarded-proto") !== "https")
-      throw new ContractError("forbidden");
-    origin = proxy.origin;
-  }
-  if (headers.get("host") !== new URL(origin).host)
-    throw new ContractError("forbidden");
-  const incomingOrigin = headers.get("origin");
-  if (incomingOrigin !== undefined && incomingOrigin !== origin)
-    throw new ContractError("forbidden");
-  return {
-    origin,
-    secure: proxied,
-    local: !proxied && incomingOrigin === undefined,
-    headers
-  };
-}
-
-class HttpAuthentication {
-  material;
-  epoch;
-  localCapability;
-  csrf = randomUUID7();
-  cookieName;
-  constructor(material, epoch, workspaceId, localCapability) {
-    this.material = material;
-    this.epoch = epoch;
-    this.localCapability = localCapability;
-    decodeId(epoch);
-    decodeId(workspaceId);
-    if (!/^[A-Za-z0-9_-]{43}$/.test(localCapability))
-      throw new ContractError("invalid");
-    this.cookieName = `cadence_${workspaceId.replaceAll("-", "")}`;
-  }
-  bootstrap(value, boundary) {
-    this.material.assertCurrent();
-    const h = boundary.headers;
-    const site = h.get("sec-fetch-site");
-    if (site !== undefined && !["same-origin", "none"].includes(site) && (!["same-site", "cross-site"].includes(site) || h.get("sec-fetch-mode") !== "navigate" || h.get("sec-fetch-dest") !== "document"))
-      throw new ContractError("forbidden");
-    if (!this.material.matches(value))
-      throw new ContractError("unauthenticated");
-    return buildTokenCookie(this.cookieName, encodeURIComponent(value), LIMITS.browserLifetimeMs / 1000, boundary.secure);
-  }
-  authenticate(boundary, attachmentId, mutation = false, websocket = false) {
-    this.material.assertCurrent();
-    if (!this.material.available)
-      throw new ContractError("quarantine");
-    const h = boundary.headers;
-    const local = h.get("x-cadence-local");
-    if (local !== undefined) {
-      if (!boundary.local || h.has("cookie") || [...h.keys()].some((name) => name.startsWith("sec-fetch-") && (name !== "sec-fetch-mode" || h.get(name) !== "cors")) || !sameSecret(local, this.localCapability))
-        throw new ContractError("forbidden");
-    } else {
-      if (h.has("authorization") || h.has("x-cadence-token"))
-        throw new ContractError("forbidden");
-      if (!cookieTokens(h.get("cookie"), this.cookieName).some((v) => this.material.matches(v)))
-        throw new ContractError("unauthenticated");
-      if (h.has("sec-fetch-site") && !["same-origin", "none"].includes(h.get("sec-fetch-site") ?? ""))
-        throw new ContractError("forbidden");
-      if ((mutation || websocket) && h.get("origin") !== boundary.origin)
-        throw new ContractError("forbidden");
-      if (mutation && h.get("x-cadence-csrf") !== this.csrf)
-        throw new ContractError("forbidden");
-    }
-    return {
-      attachmentId: decodeId(attachmentId),
-      authority: local === undefined ? "browser" : "local",
-      accessGeneration: this.material.generation
-    };
-  }
-  current(caller) {
-    this.material.assertCurrent();
-    if (!this.material.available || caller.accessGeneration !== this.material.generation)
-      throw new ContractError("unauthenticated");
-  }
-}
-
-// src/sdk-network.ts
-function safeChildEnv() {
-  const env = {};
-  for (const key2 of [
-    "PATH",
-    "HOME",
-    "USERPROFILE",
-    "SystemRoot",
-    "WINDIR",
-    "COMSPEC",
-    "TMP",
-    "TEMP",
-    "TMPDIR",
-    "LANG",
-    "LC_ALL",
-    "PATHEXT",
-    "ProgramFiles",
-    "ProgramFiles(x86)",
-    "ProgramW6432"
-  ])
-    if (process.env[key2] !== undefined)
-      env[key2] = process.env[key2];
-  return {
-    ...env,
-    CADENCE_SUBAGENT_CHILD: "1",
-    PI_OFFLINE: "1",
-    NO_COLOR: "1"
-  };
-}
-var networkKeys = [
-  "http_proxy",
-  "https_proxy",
-  "HTTP_PROXY",
-  "HTTPS_PROXY",
-  "ALL_PROXY",
-  "all_proxy",
-  "NO_PROXY",
-  "no_proxy",
-  "NODE_USE_ENV_PROXY",
-  "NODE_OPTIONS"
-];
-function networkSnapshot(source) {
-  if (source !== undefined && !object(source))
-    throw new Error("Unsupported network");
-  const facts = {};
-  for (const key2 of networkKeys) {
-    const descriptor = source === undefined ? undefined : Object.getOwnPropertyDescriptor(source, key2);
-    facts[key2] = descriptor === undefined ? { present: false } : {
-      present: true,
-      value: "value" in descriptor && typeof descriptor.value === "string" ? descriptor.value : undefined,
-      writable: descriptor.writable,
-      enumerable: descriptor.enumerable,
-      configurable: descriptor.configurable
-    };
-  }
-  return facts;
-}
-function scopedNetwork(request) {
-  const auth = Object.getOwnPropertyDescriptor(request, "auth");
-  if (!auth || !("value" in auth) || !object(auth.value))
-    throw new Error("Unsupported network");
-  const env = Object.getOwnPropertyDescriptor(auth.value, "env");
-  if (env && !("value" in env))
-    throw new Error("Unsupported network");
-  return networkSnapshot(env?.value);
-}
-function sameNetwork(a, b, descriptors = true) {
-  return networkKeys.every((key2) => a[key2].present === b[key2].present && a[key2].value === b[key2].value && (!descriptors || a[key2].writable === b[key2].writable && a[key2].enumerable === b[key2].enumerable && a[key2].configurable === b[key2].configurable));
-}
-function safeProxyURL(value) {
-  if (Buffer.byteLength(value) > 4096 || /[\s\p{Cc}\p{Cf}\p{Cs}\\@?#]/u.test(value))
-    return false;
-  const raw = /^(https?):\/\/(\[[0-9a-fA-F:.]+\]|[^/:%]+)(?::([0-9]+))?(\/?)$/i.exec(value);
-  if (!raw || raw[3] !== undefined && (Number(raw[3]) < 1 || Number(raw[3]) > 65535))
-    return false;
-  try {
-    const url = new URL(value);
-    return !!url.hostname && !url.username && !url.password && !url.search && !url.hash && (url.pathname === "" || url.pathname === "/");
-  } catch {
-    return false;
-  }
-}
-function sdkNetworkEnvironment(ambient, scoped) {
-  const unsupported = () => {
-    throw new Error("Unsupported network");
-  };
-  const configured = networkKeys.some((key2) => key2 !== "NODE_OPTIONS" && ambient[key2].present);
-  let route;
-  if (configured) {
-    for (const key2 of [
-      "ALL_PROXY",
-      "all_proxy",
-      "NO_PROXY",
-      "no_proxy",
-      "NODE_OPTIONS"
-    ])
-      if (ambient[key2].present)
-        unsupported();
-    const scheme = (lower, upper) => {
-      const a = ambient[lower];
-      const b = ambient[upper];
-      if (!a.present && !b.present || a.present && !a.value || b.present && !b.value || a.present && b.present && a.value !== b.value)
-        return unsupported();
-      return (a.present ? a.value : b.value) ?? unsupported();
-    };
-    route = scheme("http_proxy", "HTTP_PROXY");
-    if (route !== scheme("https_proxy", "HTTPS_PROXY") || !safeProxyURL(route) || ambient.NODE_USE_ENV_PROXY.present && ambient.NODE_USE_ENV_PROXY.value !== "1")
-      unsupported();
-    const node = Object.getOwnPropertyDescriptor(process.versions, "node");
-    if (!node || !("value" in node) || typeof node.value !== "string" || !node.value || Object.hasOwn(process.versions, "bun") || process.allowedNodeEnvironmentFlags.has("--use-env-proxy") !== true)
-      unsupported();
-  }
-  for (const key2 of networkKeys) {
-    const fact = scoped[key2];
-    if (!fact.present)
-      continue;
-    if (!route || [
-      "ALL_PROXY",
-      "all_proxy",
-      "NO_PROXY",
-      "no_proxy",
-      "NODE_OPTIONS"
-    ].includes(key2) || fact.value !== (key2 === "NODE_USE_ENV_PROXY" ? "1" : route))
-      unsupported();
-  }
-  const env = safeChildEnv();
-  if (route)
-    Object.assign(env, {
-      HTTP_PROXY: route,
-      HTTPS_PROXY: route,
-      NODE_USE_ENV_PROXY: "1"
-    });
-  return { env, redactionLiterals: route ? [route] : [] };
 }
 
 // src/service/auth-network.ts
@@ -15609,1663 +19185,15 @@ class AuthNetwork {
   }
 }
 
-// src/service/coordination.ts
-import { randomBytes as randomBytes4, randomUUID as randomUUID8 } from "node:crypto";
-import { opendirSync as opendirSync2, realpathSync as realpathSync4 } from "node:fs";
-import { hostname as hostname2 } from "node:os";
-import { dirname as dirname9, isAbsolute as isAbsolute5, join as join12, relative as relative4, sep as sep4 } from "node:path";
-var registrationKeys = [
-  "schema",
-  "root",
-  "stateHome",
-  "configIdentity",
-  "endpoint",
-  "epoch",
-  "pid",
-  "host",
-  "ownerToken",
-  "checkoutToken",
-  "phase"
-];
-var reservationKeys = registrationKeys.filter((k) => !["schema", "phase", "checkoutToken"].includes(k));
-function pathValue(value) {
-  const path = text(value, 4096, true);
-  if (!isAbsolute5(path))
-    refused();
-  return path;
-}
-function endpoint(value, allowZero = false) {
-  const s = text(value, 128, true);
-  const match = /^http:\/\/(127\.0\.0\.1|\[::1\]):(0|[1-9][0-9]{0,4})$/.exec(s);
-  if (!match || Number(match[2]) > 65535 || !allowZero && match[2] === "0")
-    refused();
-  return s;
-}
-function endpointMatches(requested, bound) {
-  return requested.endsWith(":0") ? requested.slice(0, -1) === bound.slice(0, bound.lastIndexOf(":") + 1) : requested === bound;
-}
-function decodeOwnerConfig(value) {
-  const o = closed(value, ["schema", "endpoint", "policyIdentity"]);
-  return {
-    schema: literal(o.schema, "cadence-service-owner-config/1"),
-    endpoint: endpoint(o.endpoint, true),
-    policyIdentity: decodeHash(o.policyIdentity)
-  };
-}
-function decodeReservation(value) {
-  const o = closed(value, reservationKeys);
-  return {
-    root: pathValue(o.root),
-    stateHome: pathValue(o.stateHome),
-    configIdentity: decodeHash(o.configIdentity),
-    endpoint: endpoint(o.endpoint),
-    epoch: decodeId(o.epoch),
-    pid: integer(o.pid, 1),
-    host: text(o.host, 255, true),
-    ownerToken: decodeId(o.ownerToken)
-  };
-}
-function reservation(r) {
-  const {
-    schema: _schema,
-    phase: _phase,
-    checkoutToken: _checkout,
-    ...row
-  } = r;
-  return row;
-}
-function decodeRegistration(value) {
-  const o = closed(value, registrationKeys);
-  const row = Object.fromEntries(reservationKeys.map((k) => [k, o[k]]));
-  return {
-    schema: literal(o.schema, "cadence-service-registration/1"),
-    ...decodeReservation(row),
-    checkoutToken: decodeId(o.checkoutToken),
-    phase: oneOf(o.phase, ["idle", "stopping", "quarantined", "stopped"])
-  };
-}
-function rootsOverlap(a, b) {
-  const within = (x, y) => {
-    const r = relative4(x, y);
-    return r === "" || r !== ".." && !r.startsWith(`..${sep4}`) && !isAbsolute5(r);
-  };
-  return within(a, b) || within(b, a);
-}
-function names(path, allowed) {
-  const dir = opendirSync2(path);
-  try {
-    let count2 = 0;
-    for (let entry = dir.readSync();entry; entry = dir.readSync()) {
-      if (++count2 > allowed.length || !allowed.includes(entry.name))
-        refused();
-    }
-  } finally {
-    dir.closeSync();
-  }
-}
-function recoveryOwnerStatus(pid, host) {
-  if (host !== hostname2())
-    return "ambiguous";
-  try {
-    process.kill(pid, 0);
-    return "live";
-  } catch (error) {
-    return error instanceof Error && "code" in error && error.code === "ESRCH" ? "absent" : "ambiguous";
-  }
-}
-function recoveryDigest(registry, selected2) {
-  return hash(encoded([
-    registry.format.identity,
-    registry.format.stamp,
-    registry.snapshot.identity,
-    registry.snapshot.stamp,
-    selected2.capability?.stamp ?? null,
-    ...[
-      selected2.manifest,
-      selected2.config,
-      selected2.hostConfig,
-      selected2.registration,
-      selected2.owner,
-      selected2.checkout
-    ].map((value) => value ? [value.identity, value.stamp] : null)
-  ]));
-}
-
-class ServiceCoordination {
-  store;
-  files;
-  directory;
-  registryDirectory;
-  stateHome;
-  constructor(workspace, stateHome) {
-    this.store = new TaskStore(resolveWorkspace(workspace).root, stateHome);
-    const namespace = dirname9(this.store.privateRoot);
-    this.files = new PrivateFiles(namespace);
-    this.stateHome = dirname9(namespace);
-    this.directory = join12(this.store.privateRoot, "service-v1");
-    this.registryDirectory = join12(namespace, "service-registry-v1");
-  }
-  path(name) {
-    return join12(this.directory, name);
-  }
-  registryPath(name) {
-    return join12(this.registryDirectory, name);
-  }
-  registry() {
-    if (!this.files.directory(this.registryDirectory))
-      return;
-    names(this.registryDirectory, [
-      "format.json",
-      "roots.json",
-      "registry.lock"
-    ]);
-    const format = this.files.read(this.registryPath("format.json"));
-    const snapshot = this.files.read(this.registryPath("roots.json"), REGISTRY_BYTES);
-    if (!format || !snapshot)
-      refused();
-    const f = closed(json(format), ["schema", "stateHome"]);
-    literal(f.schema, "cadence-service-registry-format/1");
-    literal(f.stateHome, this.stateHome);
-    const o = closed(json(snapshot, REGISTRY_BYTES), ["schema", "entries"]);
-    const entries = list(o.entries, REGISTRY_ENTRIES, decodeReservation);
-    for (const [i, row] of entries.entries()) {
-      if (row.stateHome !== this.stateHome || realpathSync4(row.root) !== row.root)
-        refused();
-      if (entries.slice(0, i).some((other) => rootsOverlap(row.root, other.root) || row.endpoint === other.endpoint))
-        refused();
-    }
-    return {
-      format,
-      snapshot,
-      value: {
-        schema: literal(o.schema, "cadence-service-registry/1"),
-        entries
-      }
-    };
-  }
-  assertNamespace(walks) {
-    if (!this.files.directory(this.directory, false, walks))
-      refused();
-    names(this.directory, [
-      "format.json",
-      "config.json",
-      "registration.json",
-      "owner.lock",
-      "local-capability.json",
-      "access-config.json",
-      "access.json",
-      "host-config.json",
-      "history-v2"
-    ]);
-    this.files.directory(join12(this.directory, "history-v2"), false, walks);
-  }
-  selected() {
-    const walks = new DirectoryWalks;
-    if (!this.files.directory(this.directory, false, walks))
-      return;
-    this.assertNamespace(walks);
-    const manifest = this.files.read(this.path("format.json"), undefined, walks);
-    const config = this.files.read(this.path("config.json"), undefined, walks);
-    if (!manifest || !config)
-      refused();
-    const f = closed(json(manifest), [
-      "schema",
-      "root",
-      "stateHome",
-      "configIdentity"
-    ]);
-    literal(f.schema, "cadence-service-format/1");
-    literal(f.root, this.store.root);
-    literal(f.stateHome, this.stateHome);
-    literal(f.configIdentity, config.identity);
-    const c = decodeOwnerConfig(json(config));
-    const hostConfig = this.files.read(this.path("host-config.json"), undefined, walks);
-    if (hostConfig && hostConfig.identity !== c.policyIdentity)
-      refused();
-    const registration = this.files.read(this.path("registration.json"), undefined, walks);
-    const owner = this.files.read(this.path("owner.lock"), undefined, walks);
-    const capability = this.files.read(this.path("local-capability.json"), undefined, walks);
-    const checkout = this.files.read(this.store.lockPath, 8192, walks);
-    const value = registration ? decodeRegistration(json(registration)) : undefined;
-    if (value && (value.root !== this.store.root || value.stateHome !== this.stateHome || value.configIdentity !== config.identity || !endpointMatches(c.endpoint, value.endpoint)))
-      refused();
-    if (value && value.phase !== "stopped") {
-      if (!owner || !checkout || !capability)
-        refused();
-      const lock = closed(json(owner), [
-        "schema",
-        "epoch",
-        "token",
-        "pid",
-        "host"
-      ]);
-      literal(lock.schema, "cadence-service-owner-lock/1");
-      literal(lock.epoch, value.epoch);
-      literal(lock.token, value.ownerToken);
-      literal(lock.pid, value.pid);
-      literal(lock.host, value.host);
-      const legacy = this.store.inspectLock();
-      if (!legacy || legacy.token !== value.checkoutToken || legacy.pid !== value.pid || legacy.host !== value.host)
-        refused();
-      const cap = closed(json(capability), ["schema", "epoch", "capability"]);
-      literal(cap.schema, "cadence-service-local-capability/1");
-      literal(cap.epoch, value.epoch);
-      if (!/^[A-Za-z0-9_-]{43}$/.test(text(cap.capability, 43)))
-        refused();
-    } else if (owner || capability || value && checkout)
-      refused();
-    return {
-      config,
-      hostConfig,
-      manifest,
-      registration,
-      owner,
-      capability,
-      checkout,
-      value
-    };
-  }
-  inspect() {
-    try {
-      if (this.files.read(this.registryPath("registry.lock")))
-        return { status: "unavailable" };
-      const registry = this.registry();
-      const selected2 = this.selected();
-      const row = registry?.value.entries.find((r2) => r2.root === this.store.root);
-      if (!selected2)
-        return row ? { status: "unavailable" } : { status: "absent" };
-      if (!selected2.value)
-        return row ? { status: "unavailable" } : { status: "stopped", epoch: null };
-      const r = selected2.value;
-      if (r.phase === "stopped")
-        return { status: row ? "unavailable" : "stopped", epoch: r.epoch };
-      if (!row || encoded(row) !== encoded(reservation(r)))
-        return { status: "unavailable", epoch: r.epoch };
-      return {
-        status: r.phase === "idle" ? "unavailable" : r.phase,
-        epoch: r.epoch
-      };
-    } catch {
-      return { status: "unavailable" };
-    }
-  }
-  initialize(input) {
-    const config = decodeOwnerConfig(input);
-    const existing = this.selected();
-    if (existing) {
-      if (existing.config.identity !== hash(encoded(config)))
-        throw new ContractError("conflict");
-      return;
-    }
-    this.files.directory(this.directory, true);
-    const saved = this.files.create(this.path("config.json"), encoded(config));
-    this.files.create(this.path("format.json"), encoded({
-      schema: "cadence-service-format/1",
-      root: this.store.root,
-      stateHome: this.stateHome,
-      configIdentity: saved.identity
-    }));
-  }
-  withRegistry(operation) {
-    this.files.directory(this.registryDirectory, true);
-    names(this.registryDirectory, [
-      "format.json",
-      "roots.json",
-      "registry.lock"
-    ]);
-    const lockPath = this.registryPath("registry.lock");
-    const lock = this.files.create(lockPath, encoded({
-      schema: "cadence-service-registry-lock/1",
-      token: randomUUID8(),
-      pid: process.pid,
-      host: hostname2()
-    }));
-    let dirty = false;
-    try {
-      let format = this.files.read(this.registryPath("format.json"));
-      const roots = this.files.read(this.registryPath("roots.json"), REGISTRY_BYTES);
-      if (!format && !roots) {
-        dirty = true;
-        format = this.files.create(this.registryPath("format.json"), encoded({
-          schema: "cadence-service-registry-format/1",
-          stateHome: this.stateHome
-        }));
-        this.files.create(this.registryPath("roots.json"), encoded({ schema: "cadence-service-registry/1", entries: [] }), REGISTRY_BYTES);
-        dirty = false;
-      }
-      dirty = true;
-      const view = this.registry();
-      if (!view)
-        refused();
-      dirty = false;
-      const result = operation(view, () => {
-        dirty = true;
-      }, () => {
-        this.files.assert(lockPath, lock);
-        this.files.assert(this.registryPath("format.json"), format);
-        names(this.registryDirectory, [
-          "format.json",
-          "roots.json",
-          "registry.lock"
-        ]);
-      });
-      this.files.remove(lockPath, lock);
-      return result;
-    } catch (error) {
-      if (!dirty)
-        this.files.remove(lockPath, lock);
-      throw error;
-    }
-  }
-  acquire(input, resolvedEndpoint = input.endpoint, initializeNew, reselectExisting) {
-    const config = decodeOwnerConfig(input);
-    const bound = endpoint(resolvedEndpoint);
-    if (!endpointMatches(config.endpoint, bound))
-      throw new ContractError("conflict");
-    return this.withRegistry((registry, mutate) => {
-      if (registry.value.entries.some((r) => rootsOverlap(r.root, this.store.root) || r.endpoint === bound))
-        throw new ContractError("conflict");
-      if (registry.value.entries.length >= REGISTRY_ENTRIES)
-        throw new ContractError("capacity");
-      const old = this.selected();
-      if (old?.value && old.value.phase !== "stopped")
-        throw new ContractError("quarantine");
-      if (this.store.inspectLock())
-        throw new ContractError("conflict");
-      const reselect = !!old && old.config.identity !== hash(encoded(config));
-      if (reselect && (!reselectExisting || !old?.hostConfig))
-        throw new ContractError("conflict");
-      const row = {
-        root: this.store.root,
-        stateHome: this.stateHome,
-        configIdentity: hash(encoded(config)),
-        endpoint: bound,
-        epoch: randomUUID8(),
-        pid: process.pid,
-        host: hostname2(),
-        ownerToken: randomUUID8()
-      };
-      mutate();
-      this.files.replace(this.registryPath("roots.json"), registry.snapshot, encoded({
-        ...registry.value,
-        entries: [...registry.value.entries, row]
-      }), REGISTRY_BYTES);
-      if (old?.hostConfig && reselect && reselectExisting) {
-        reselectExisting(old.hostConfig);
-        const saved = this.files.replace(this.path("config.json"), old.config, encoded(config));
-        this.files.replace(this.path("format.json"), old.manifest, encoded({
-          schema: "cadence-service-format/1",
-          root: this.store.root,
-          stateHome: this.stateHome,
-          configIdentity: saved.identity
-        }));
-      } else
-        this.initialize(config);
-      if (!old)
-        initializeNew?.();
-      const checkout = this.store.acquire();
-      const checkoutFile = this.files.read(this.store.lockPath, 8192);
-      if (!checkoutFile)
-        refused();
-      const owner = this.files.create(this.path("owner.lock"), encoded({
-        schema: "cadence-service-owner-lock/1",
-        epoch: row.epoch,
-        token: row.ownerToken,
-        pid: row.pid,
-        host: row.host
-      }));
-      const capability = this.files.create(this.path("local-capability.json"), encoded({
-        schema: "cadence-service-local-capability/1",
-        epoch: row.epoch,
-        capability: randomBytes4(32).toString("base64url")
-      }));
-      const value = {
-        schema: "cadence-service-registration/1",
-        ...row,
-        checkoutToken: checkout.token,
-        phase: "idle"
-      };
-      const registration = old?.registration ? this.files.replace(this.path("registration.json"), old.registration, encoded(value)) : this.files.create(this.path("registration.json"), encoded(value));
-      const selected2 = this.selected();
-      if (!selected2)
-        refused();
-      return new OwnerLease(this, checkout, {
-        ...selected2,
-        owner,
-        capability,
-        checkout: checkoutFile,
-        registration,
-        value
-      });
-    });
-  }
-  configuration() {
-    const selected2 = this.selected();
-    return selected2 ? decodeOwnerConfig(json(selected2.config)) : undefined;
-  }
-  localAccess() {
-    if (this.files.read(this.registryPath("registry.lock")))
-      refused();
-    const selected2 = this.selected(), registry = this.registry();
-    if (!selected2?.value || !selected2.capability || !registry || selected2.value.phase === "stopped" || !registry.value.entries.some((row) => selected2.value && encoded(row) === encoded(reservation(selected2.value))))
-      throw new ContractError("unavailable");
-    const cap = closed(json(selected2.capability), [
-      "schema",
-      "epoch",
-      "capability"
-    ]);
-    return {
-      endpoint: selected2.value.endpoint,
-      epoch: selected2.value.epoch,
-      capability: text(cap.capability, 43, true)
-    };
-  }
-  release(lease) {
-    this.withRegistry((view, mutate, assertHeld) => {
-      lease.assert();
-      const r = lease.registration;
-      const rows = view.value.entries.filter((row) => row.epoch === r.epoch);
-      if (rows.length !== 1 || encoded(rows[0]) !== encoded(reservation(r)))
-        refused();
-      mutate();
-      lease.phase("stopped");
-      const releasedRegistry = this.files.replace(this.registryPath("roots.json"), view.snapshot, encoded({
-        ...view.value,
-        entries: view.value.entries.filter((row) => row.epoch !== r.epoch)
-      }), REGISTRY_BYTES);
-      lease.removeOwnedFiles(() => {
-        assertHeld();
-        this.files.assert(this.registryPath("roots.json"), releasedRegistry, REGISTRY_BYTES);
-      });
-    });
-  }
-  prepareRecoveryRelease(expected, assertAuthority) {
-    assertAuthority();
-    if (this.recoverySnapshot().digest !== expected)
-      throw new ContractError("conflict");
-    const selected2 = this.selected();
-    if (!selected2?.value || !selected2.registration || !selected2.owner || !selected2.checkout || !selected2.capability)
-      throw new ContractError("quarantine");
-    const r = selected2.value;
-    const absent2 = () => {
-      assertAuthority();
-      if (recoveryOwnerStatus(r.pid, r.host) !== "absent")
-        throw new ContractError("quarantine");
-    };
-    absent2();
-    let used = false;
-    return (assertDurable) => {
-      if (used)
-        throw new ContractError("consumed-grant");
-      used = true;
-      this.withRegistry((view, mutate, assertHeld) => {
-        let registry = view.snapshot;
-        let registration = selected2.registration;
-        let capability = selected2.capability;
-        let owner = selected2.owner;
-        let checkout = selected2.checkout;
-        if (!registration || !capability || !owner || !checkout)
-          throw new ContractError("conflict");
-        if (recoveryDigest(view, selected2) !== expected)
-          throw new ContractError("conflict");
-        const assert = () => {
-          absent2();
-          assertHeld();
-          this.assertNamespace();
-          this.files.assert(this.registryPath("roots.json"), registry, REGISTRY_BYTES);
-          for (const [name, snapshot] of [
-            ["format.json", selected2.manifest],
-            ["config.json", selected2.config],
-            ["host-config.json", selected2.hostConfig],
-            ["registration.json", registration],
-            ["local-capability.json", capability],
-            ["owner.lock", owner]
-          ])
-            this.files.assert(this.path(name), snapshot);
-          this.files.assert(this.store.lockPath, checkout, 8192);
-          assertDurable();
-        };
-        assert();
-        const matching = view.value.entries.filter((row) => row.epoch === r.epoch);
-        if (matching.length !== 1 || encoded(matching[0]) !== encoded(reservation(r)))
-          throw new ContractError("conflict");
-        mutate();
-        registration = this.files.replace(this.path("registration.json"), registration, encoded({ ...r, phase: "stopped" }));
-        assert();
-        registry = this.files.replace(this.registryPath("roots.json"), registry, encoded({
-          ...view.value,
-          entries: view.value.entries.filter((row) => row.epoch !== r.epoch)
-        }), REGISTRY_BYTES);
-        assert();
-        this.files.remove(this.path("local-capability.json"), capability);
-        capability = undefined;
-        assert();
-        this.files.remove(this.path("owner.lock"), owner);
-        owner = undefined;
-        assert();
-        this.files.remove(this.store.lockPath, checkout, 8192);
-        checkout = undefined;
-        assert();
-      });
-    };
-  }
-  recoverySnapshot() {
-    if (this.files.read(this.registryPath("registry.lock")))
-      throw new ContractError("quarantine");
-    const registry = this.registry();
-    const selected2 = this.selected();
-    if (!registry || !selected2?.value || !selected2.registration || !selected2.owner || !selected2.checkout)
-      refused();
-    const value = selected2.value;
-    const matching = registry.value.entries.filter((row) => row.epoch === value.epoch);
-    if (matching.length !== 1 || encoded(matching[0]) !== encoded(reservation(value)))
-      refused();
-    return {
-      registration: { ...selected2.value },
-      digest: recoveryDigest(registry, selected2)
-    };
-  }
-}
-
-class OwnerLease {
-  coordination;
-  checkout;
-  selected;
-  released = false;
-  constructor(coordination, checkout, selected2) {
-    this.coordination = coordination;
-    this.checkout = checkout;
-    this.selected = selected2;
-  }
-  get registration() {
-    return { ...this.selected.value };
-  }
-  assert() {
-    if (this.released || this.selected.value.pid !== process.pid || this.selected.value.host !== hostname2())
-      throw new ContractError("conflict");
-    const c = this.coordination, walks = new DirectoryWalks;
-    c.assertNamespace(walks);
-    for (const [name, snapshot] of [
-      ["config.json", this.selected.config],
-      ["host-config.json", this.selected.hostConfig],
-      ["format.json", this.selected.manifest],
-      ["registration.json", this.selected.registration],
-      ["owner.lock", this.selected.owner],
-      ["local-capability.json", this.selected.capability]
-    ])
-      c.files.assert(c.path(name), snapshot, undefined, walks);
-    c.files.assert(c.store.lockPath, this.selected.checkout, 8192, walks);
-    c.store.assertOwner(this.checkout);
-  }
-  phase(phase) {
-    this.assert();
-    const value = { ...this.selected.value, phase };
-    const registration = this.coordination.files.replace(this.coordination.path("registration.json"), this.selected.registration, encoded(value));
-    this.selected = { ...this.selected, value, registration };
-  }
-  release() {
-    this.assert();
-    this.coordination.release(this);
-    this.released = true;
-  }
-  removeOwnedFiles(assertRegistry) {
-    this.assert();
-    assertRegistry();
-    const c = this.coordination;
-    if (!this.selected.capability || !this.selected.owner)
-      refused();
-    const owner = this.selected.owner;
-    c.files.remove(c.path("local-capability.json"), this.selected.capability);
-    this.selected = { ...this.selected, capability: undefined };
-    this.assert();
-    assertRegistry();
-    c.files.remove(c.path("owner.lock"), owner);
-    this.selected = { ...this.selected, owner: undefined };
-    this.assert();
-    assertRegistry();
-    c.files.assert(c.store.lockPath, this.selected.checkout, 8192);
-    c.store.release(this.checkout);
-  }
-}
-
-// src/service/http.ts
-import { createHash as createHash19, randomUUID as randomUUID9 } from "node:crypto";
-import {
-  createServer
-} from "node:http";
-import { WebSocketServer } from "ws";
-
-// src/service-wire.ts
-var HTTP_ROUTES = {
-  session: "/api/v1/session",
-  current: "/api/v1/current",
-  currentChanges: "/api/v1/current-changes",
-  activeRuns: "/api/v1/active-runs",
-  models: "/api/v1/models",
-  chooseModel: "/api/v1/model-choice",
-  workspace: "/api/v1/workspace",
-  tasks: "/api/v1/tasks",
-  runs: "/api/v1/runs",
-  messages: "/api/v1/messages",
-  tools: "/api/v1/tools",
-  contents: "/api/v1/contents",
-  events: "/api/v1/history-events",
-  checks: "/api/v1/checks",
-  changes: "/api/v1/changes",
-  reviews: "/api/v1/reviews",
-  checkObligations: "/api/v1/check-obligations",
-  entity: "/api/v1/entity",
-  graph: "/api/v1/graph",
-  snapshot: "/api/v1/snapshot",
-  detail: "/api/v1/details",
-  search: "/api/v1/search",
-  export: "/api/v1/export",
-  download: "/api/v1/download",
-  preflight: "/api/v1/preflight",
-  command: "/api/v1/commands",
-  cancel: "/api/v1/cancel",
-  receipt: "/api/v1/receipt",
-  detach: "/api/v1/detach"
-};
-var WS_PATH = "/api/v1/events";
-var pageReaders = [
-  "tasks",
-  "runs",
-  "messages",
-  "tools",
-  "contents",
-  "events",
-  "checks",
-  "changes",
-  "reviews"
-];
-function mutation(operation) {
-  return ["preflight", "command", "cancel", "detach", "chooseModel"].includes(operation);
-}
-function decodeHttpInput(operation, value) {
-  switch (operation) {
-    case "session":
-    case "models":
-    case "activeRuns":
-    case "workspace":
-    case "detach":
-      if (value !== null)
-        throw new ContractError("invalid");
-      return null;
-    case "tasks":
-    case "runs":
-    case "messages":
-    case "tools":
-    case "contents":
-    case "events":
-    case "checks":
-    case "changes":
-    case "reviews": {
-      const request = decodeListRequest(value);
-      if (request.reader !== operation)
-        throw new ContractError("invalid");
-      return request;
-    }
-    case "current":
-      return decodeCurrentRequest(value);
-    case "currentChanges":
-      return decodeCurrentChangesRequest(value);
-    case "checkObligations":
-    case "receipt":
-      return decodeId(value);
-    case "entity":
-      return decodeEntityReadRequest(value);
-    case "graph":
-      return decodeGraphReadRequest(value);
-    case "snapshot":
-      return decodeScope(value);
-    case "detail":
-    case "search":
-      return decodeCursor(value);
-    case "export":
-    case "download":
-      return decodeExportRequest(value);
-    case "chooseModel":
-      return decodeChooseModelRequest(value);
-    case "preflight":
-      return decodePreflightRequest(value);
-    case "command":
-      return decodeCommand(value);
-    case "cancel":
-      return decodeCancel(value);
-  }
-}
-function decodeHttpOutput(operation, value) {
-  if (pageReaders.includes(operation))
-    return decodeReply(value, decodeHistoryReadResult);
-  switch (operation) {
-    case "current":
-      return decodeReply(value, decodeCurrentView);
-    case "currentChanges":
-      return decodeReply(value, decodeCurrentChanges);
-    case "activeRuns":
-      return decodeReply(value, decodeActiveRuns);
-    case "models":
-      return decodeReply(value, decodeModelCatalog);
-    case "chooseModel":
-      return decodeReply(value, decodeModelChoiceState);
-    case "session":
-      return decodeReply(value, decodeSessionBootstrap);
-    case "workspace":
-      return decodeReply(value, decodeWorkspaceBootstrap);
-    case "checkObligations":
-      return decodeReply(value, decodeCheckObligations);
-    case "entity":
-      return decodeReply(value, decodeEntityReadResult);
-    case "graph":
-      return decodeReply(value, decodeGraphReadResult);
-    case "snapshot":
-      return decodeReply(value, decodeSnapshot);
-    case "detail":
-      return decodeReply(value, decodeDetailReadResult);
-    case "search":
-      return decodeReply(value, decodeSearchPage);
-    case "preflight":
-      return decodeReply(value, decodePreflight);
-    case "command":
-    case "cancel":
-      return decodeReply(value, decodeReceipt);
-    case "receipt":
-      return decodeReceiptLookup(value);
-    case "detach":
-      return decodeReply(value, (v) => {
-        if (v !== null)
-          throw new ContractError("invalid");
-        return null;
-      });
-    default:
-      throw new ContractError("invalid");
-  }
-}
-function readonlyBody(operation) {
-  const operations = [
-    ...pageReaders,
-    "current",
-    "currentChanges",
-    "checkObligations",
-    "entity",
-    "graph",
-    "snapshot",
-    "detail",
-    "search",
-    "export",
-    "download",
-    "receipt"
-  ];
-  return operations.includes(operation);
-}
-function assertRequestTarget(target2) {
-  if (!target2.startsWith("/") || target2.startsWith("//") || /[\\#\s\u007f-\uffff]/u.test(target2) || utf8Bytes(target2) > LIMITS.headerBytes)
-    throw new ContractError("invalid");
-  try {
-    decodeURIComponent(target2);
-  } catch {
-    throw new ContractError("invalid");
-  }
-}
-function readRoute(target2, method) {
-  assertRequestTarget(target2);
-  const [path, query] = target2.split("?");
-  if (target2.split("?").length > 2)
-    throw new ContractError("invalid");
-  const operation = Object.keys(HTTP_ROUTES).find((key2) => HTTP_ROUTES[key2] === path);
-  if (!operation)
-    return;
-  const body = method === "POST" && (mutation(operation) || readonlyBody(operation));
-  if (!body && (method !== "GET" || mutation(operation)))
-    throw new ContractError("invalid");
-  if (body && query !== undefined)
-    throw new ContractError("invalid");
-  const params = new URLSearchParams(query);
-  if ([...params.keys()].some((key2) => key2 !== "request") || params.getAll("request").length > 1)
-    throw new ContractError("invalid");
-  if (mutation(operation) && query !== undefined)
-    throw new ContractError("invalid");
-  return {
-    operation,
-    input: params.get("request"),
-    source: body ? "body" : "query"
-  };
-}
-function decodeSocketInput(value) {
-  canonicalJson(value, LIMITS.wsClientFrameBytes);
-  const kind = oneOf(Object.getOwnPropertyDescriptor(value, "kind")?.value, [
-    "subscribe",
-    "resync",
-    "ping"
-  ]);
-  if (kind === "ping") {
-    closed(value, ["kind"]);
-    return { kind };
-  }
-  const o = closed(value, ["kind", "scope"]);
-  return { kind, scope: decodeScope(o.scope) };
-}
-
-// src/service/http.ts
-function refusal(code2 = "invalid", uncertain = false) {
-  return {
-    kind: "error",
-    error: publicError(code2, uncertain ? "uncertain" : "none")
-  };
-}
-function fixedHeaders(response) {
-  response.setHeader("Cache-Control", "no-store");
-  response.setHeader("Referrer-Policy", "no-referrer");
-  response.setHeader("X-Content-Type-Options", "nosniff");
-  response.setHeader("X-Frame-Options", "DENY");
-  response.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
-}
-function send(response, status, value) {
-  if (response.destroyed || response.writableEnded)
-    return;
-  response.statusCode = status;
-  response.setHeader("Content-Type", "application/json; charset=utf-8");
-  response.end(canonicalJson(value, LIMITS.controlBytes));
-}
-function unavailable() {
-  throw new ContractError("unavailable");
-}
-
-class ServiceHttpServer {
-  server;
-  policy;
-  origin = "";
-  accepting = false;
-  stopped = false;
-  closePromise;
-  sockets = new Set;
-  serving = new Set;
-  requests = new Set;
-  attachments = new Map;
-  viewers = new Set;
-  bodies = 0;
-  reads = 0;
-  exports = 0;
-  searches = 0;
-  assets = new Map;
-  wss = new WebSocketServer({
-    noServer: true,
-    maxPayload: LIMITS.wsClientFrameBytes,
-    perMessageDeflate: false,
-    clientTracking: false
-  });
-  unRevoke;
-  configuration;
-  get options() {
-    if (!this.configuration)
-      unavailable();
-    return this.configuration;
-  }
-  heartbeat;
-  constructor(options) {
-    this.policy = decodeHttpPolicy(options.policy);
-    let total = 0;
-    for (const asset of options.assets ?? []) {
-      total += asset.bytes.byteLength;
-      if (!/^\/(?:app|assets\/[a-zA-Z0-9_-]+\.(?:js|css|woff2|woff|ttf|svg))$/.test(asset.path) || this.assets.has(asset.path) || asset.bytes.byteLength > 16 * 1024 * 1024 || total > 64 * 1024 * 1024)
-        throw new ContractError("invalid");
-      this.assets.set(asset.path, {
-        ...asset,
-        bytes: Uint8Array.from(asset.bytes),
-        etag: `"${createHash19("sha256").update(asset.bytes).digest("hex")}"`
-      });
-    }
-    this.server = createServer({
-      maxHeaderSize: LIMITS.headerBytes,
-      headersTimeout: 1e4,
-      requestTimeout: 30000,
-      keepAliveTimeout: 5000
-    }, (req, res) => {
-      this.handle(req, res);
-    });
-    this.server.maxConnections = 64;
-    this.server.on("connection", (socket) => {
-      this.sockets.add(socket);
-      socket.on("error", () => socket.destroy());
-      socket.on("close", () => this.sockets.delete(socket));
-    });
-    this.server.on("clientError", (_error, socket) => {
-      socket.end(`HTTP/1.1 400 Bad Request\r
-Connection: close\r
-Content-Length: 0\r
-\r
-`);
-    });
-    this.server.on("checkContinue", (_req, res) => {
-      fixedHeaders(res);
-      send(res, 400, refusal());
-    });
-    this.server.on("upgrade", (req, socket, head) => {
-      if (this.serving.has(req.socket)) {
-        socket.destroy();
-        return;
-      }
-      try {
-        if (!this.accepting)
-          unavailable();
-        const boundary = requestBoundary(req, this.policy, this.origin);
-        assertRequestTarget(req.url ?? "");
-        const url = new URL(req.url ?? "", this.origin);
-        if (req.method !== "GET" || url.pathname !== WS_PATH || req.url !== `${WS_PATH}?attachment=${url.searchParams.get("attachment")}`)
-          throw new ContractError("invalid");
-        const id = decodeId(url.searchParams.get("attachment"));
-        const caller = this.options.auth.authenticate(boundary, id, false, true);
-        const attachment = this.attachment(caller);
-        if (attachment.socket || this.viewers.size >= LIMITS.viewers)
-          throw new ContractError("capacity");
-        if (!this.options.adapters.projection || !this.options.adapters.live)
-          unavailable();
-        this.wss.handleUpgrade(req, socket, head, (ws) => this.openViewer(ws, attachment));
-      } catch (error) {
-        const status = errorStatus(error instanceof ContractError ? error.code : "unavailable");
-        socket.end(`HTTP/1.1 ${status} Refused\r
-Connection: close\r
-Cache-Control: no-store\r
-Referrer-Policy: no-referrer\r
-Content-Length: 0\r
-\r
-`);
-      }
-    });
-    if (options.auth || options.adapters) {
-      if (!options.auth || !options.adapters)
-        throw new ContractError("invalid");
-      this.configure({
-        auth: options.auth,
-        adapters: options.adapters,
-        management: options.management,
-        build: options.build
-      });
-    }
-  }
-  configure(options) {
-    if (this.configuration || this.accepting || this.stopped)
-      throw new ContractError("conflict");
-    this.configuration = {
-      ...options,
-      ...options.build ? { build: decodeServiceBuild(options.build) } : {}
-    };
-    this.unRevoke = options.auth.material.onRevoke(() => {
-      options.adapters.admission?.revokeGrants();
-      for (const attachment of [...this.attachments.values()])
-        this.detach(attachment);
-      for (const request of this.requests)
-        request.abort();
-    });
-  }
-  async listen() {
-    if (this.origin || this.stopped)
-      throw new ContractError("conflict");
-    await new Promise((resolve3, reject) => {
-      const failed = () => {
-        this.server.off("listening", ready2);
-        reject(new ContractError("unavailable"));
-      };
-      const ready2 = () => {
-        this.server.off("error", failed);
-        resolve3();
-      };
-      this.server.once("error", failed);
-      this.server.once("listening", ready2);
-      this.server.listen({
-        host: this.policy.host,
-        port: this.policy.port,
-        exclusive: true
-      });
-    });
-    this.server.on("error", () => this.quiesce());
-    const address2 = this.server.address();
-    if (!address2 || typeof address2 === "string")
-      unavailable();
-    this.origin = localOrigin(this.policy, address2.port);
-    return this.origin;
-  }
-  admit() {
-    if (!this.origin || this.stopped || !this.options.auth.material.available)
-      unavailable();
-    this.accepting = true;
-    this.heartbeat ??= setInterval(() => this.tick(), LIMITS.heartbeatMs);
-  }
-  quiesce() {
-    this.accepting = false;
-    this.configuration?.adapters.admission?.revokeGrants();
-  }
-  close() {
-    if (this.closePromise)
-      return this.closePromise;
-    let resolve3;
-    let reject;
-    this.closePromise = new Promise((yes, no) => {
-      resolve3 = yes;
-      reject = no;
-    });
-    this.closeTransport().then(resolve3, () => reject(new ContractError("unavailable")));
-    return this.closePromise;
-  }
-  async closeTransport() {
-    this.stopped = true;
-    this.quiesce();
-    clearInterval(this.heartbeat);
-    this.unRevoke?.();
-    for (const request of this.requests)
-      request.abort();
-    for (const attachment of [...this.attachments.values()])
-      this.detach(attachment);
-    const closedSockets = [...this.sockets].map((socket) => new Promise((resolve3) => {
-      if (socket.closed)
-        resolve3();
-      else {
-        socket.once("close", () => resolve3());
-        socket.destroy();
-      }
-    }));
-    const listener = new Promise((resolve3, reject) => {
-      this.server.close((error) => error ? reject(new ContractError("unavailable")) : resolve3());
-    });
-    const upgrades = new Promise((resolve3) => this.wss.close(() => resolve3()));
-    await Promise.all([listener, upgrades, ...closedSockets]);
-  }
-  attachment(caller) {
-    this.options.auth.current(caller);
-    const attachment = this.attachments.get(caller.attachmentId);
-    if (!attachment || attachment.caller.authority !== caller.authority || attachment.caller.accessGeneration !== caller.accessGeneration)
-      throw new ContractError("stale");
-    attachment.lastSeen = Date.now();
-    return attachment;
-  }
-  detach(attachment) {
-    if (this.attachments.get(attachment.caller.attachmentId) !== attachment)
-      return;
-    this.attachments.delete(attachment.caller.attachmentId);
-    this.options.adapters.admission?.detach(attachment.caller.attachmentId);
-    if (attachment.socket) {
-      for (const viewer of this.viewers)
-        if (viewer.attachment === attachment)
-          this.closeViewer(viewer);
-    }
-  }
-  async body(req, signal) {
-    if (this.bodies >= LIMITS.admissionCount)
-      throw new ContractError("capacity");
-    this.bodies++;
-    try {
-      if (req.headers["content-type"] !== "application/json" || req.headers["content-encoding"] !== undefined)
-        throw new ContractError("invalid");
-      const length = req.headers["content-length"];
-      if (length !== undefined && (!/^(0|[1-9][0-9]*)$/.test(length) || Number(length) > LIMITS.controlBytes))
-        throw new ContractError("oversize");
-      const chunks = [];
-      let bytes = 0;
-      for await (const value of req.iterator({ destroyOnReturn: false })) {
-        if (signal.aborted)
-          throw new ContractError("unavailable");
-        const chunk = value;
-        bytes += chunk.length;
-        if (bytes > LIMITS.controlBytes)
-          throw new ContractError("oversize");
-        chunks.push(chunk);
-      }
-      try {
-        return parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)), LIMITS.controlBytes);
-      } catch (e) {
-        if (e instanceof ContractError)
-          throw e;
-        throw new ContractError("invalid");
-      }
-    } finally {
-      this.bodies--;
-    }
-  }
-  async handle(req, res) {
-    if (this.serving.has(req.socket)) {
-      req.socket.destroy();
-      return;
-    }
-    this.serving.add(req.socket);
-    res.once("close", () => this.serving.delete(req.socket));
-    fixedHeaders(res);
-    const abort = new AbortController;
-    let counted = false;
-    let dispatched = false;
-    let createdAttachment;
-    const abortRead = () => abort.abort();
-    res.once("close", abortRead);
-    const timer = setTimeout(() => {
-      abort.abort();
-      res.destroy();
-    }, LIMITS.downloadIdleMs);
-    const resetIdle = () => timer.refresh();
-    try {
-      const boundary = requestBoundary(req, this.policy, this.origin);
-      const target2 = req.url ?? "";
-      assertRequestTarget(target2);
-      const url = new URL(target2, this.origin);
-      if (url.searchParams.has("token")) {
-        if (req.method !== "GET" || !target2.startsWith("/?token=") || [...url.searchParams.keys()].length !== 1)
-          throw new ContractError("invalid");
-        if (!this.accepting)
-          unavailable();
-        res.setHeader("Set-Cookie", this.options.auth.bootstrap(url.searchParams.get("token") ?? "", boundary));
-        res.statusCode = 303;
-        res.setHeader("Location", "/app");
-        res.end();
-        return;
-      }
-      if (target2 === "/healthz" && req.method === "GET") {
-        send(res, 200, { status: "ok" });
-        return;
-      }
-      if (target2 === "/" && req.method === "GET") {
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.end("Cadence: enter with the private link that `cadence server install` printed, http://127.0.0.1:<CADENCE_PORT>/?token=<CADENCE_TOKEN> from ~/.pi/agent/cadence/.env, or that `cadence token-link --workspace <path> --reveal` prints on this machine.\n");
-        return;
-      }
-      if (target2.startsWith("/local/v1/admin/")) {
-        await this.manage(req, res, boundary, abort.signal);
-        return;
-      }
-      if (!this.accepting)
-        unavailable();
-      const route = readRoute(target2, req.method ?? "");
-      const attachmentId = boundary.headers.get("x-cadence-attachment") ?? randomUUID9();
-      const caller = this.options.auth.authenticate(boundary, attachmentId, route?.source === "body");
-      if (!route || !mutation(route.operation)) {
-        if (this.reads >= 32)
-          throw new ContractError("capacity");
-        this.reads++;
-        counted = true;
-      }
-      this.requests.add(abort);
-      if (!route) {
-        const asset = this.assets.get(target2);
-        if (!asset || req.method !== "GET")
-          throw new ContractError("invalid");
-        this.options.auth.current(caller);
-        res.setHeader("Content-Type", asset.contentType);
-        if (target2 !== "/app") {
-          res.setHeader("Cache-Control", "private, no-cache");
-          res.setHeader("ETag", asset.etag);
-          if (boundary.headers.get("if-none-match") === asset.etag) {
-            res.statusCode = 304;
-            res.end();
-            return;
-          }
-        }
-        res.end(asset.bytes);
-        return;
-      }
-      let attachment;
-      if (route.operation === "session") {
-        attachment = this.attachments.get(attachmentId);
-        if (attachment)
-          this.attachment(caller);
-        else {
-          for (const value2 of this.attachments.values())
-            if (!value2.socket && Date.now() - value2.lastSeen > LIMITS.browserLifetimeMs)
-              this.detach(value2);
-          if (this.attachments.size >= LIMITS.viewers)
-            throw new ContractError("capacity");
-          attachment = { caller, lastSeen: Date.now() };
-          createdAttachment = attachment;
-          this.attachments.set(attachmentId, attachment);
-        }
-        res.setHeader("X-Cadence-Attachment", attachmentId);
-      } else if (route.source === "body")
-        attachment = this.attachment(caller);
-      const input = route.source === "body" ? await this.body(req, abort.signal) : route.input === null ? null : parseWireJson(route.input);
-      if (route.source !== "body" && (req.headers["content-encoding"] !== undefined || req.headers["transfer-encoding"] || req.headers["content-length"] && req.headers["content-length"] !== "0"))
-        throw new ContractError("invalid");
-      decodeHttpInput(route.operation, input);
-      this.options.auth.current(caller);
-      if (abort.signal.aborted || !this.accepting)
-        unavailable();
-      if (attachment && this.attachment(caller) !== attachment)
-        throw new ContractError("stale");
-      if (route.operation === "export" || route.operation === "download") {
-        await this.export(route.operation, input, caller, abort.signal, res, resetIdle);
-        return;
-      }
-      const rawBuild = boundary.headers.get("x-cadence-build");
-      const clientBuild = rawBuild === undefined ? null : decodeClientBuild(parseWireJson(rawBuild, 1024));
-      if (caller.authority === "browser" && clientBuild?.kind === "native")
-        throw new ContractError("forbidden");
-      if (["preflight", "command", "chooseModel", "cancel"].includes(route.operation) && !compatibleBuild(this.options.build, clientBuild, route.operation === "cancel"))
-        throw new ContractError("unsupported-context");
-      dispatched = route.operation === "command" || route.operation === "cancel" || route.operation === "chooseModel";
-      const value = await this.dispatch(route.operation, input, caller, abort.signal, clientBuild);
-      this.options.auth.current(caller);
-      if (abort.signal.aborted)
-        unavailable();
-      if (route.operation === "session")
-        this.attachment(caller);
-      const decoded2 = decodeHttpOutput(route.operation, value);
-      const status = value && typeof value === "object" && "kind" in value && value.kind === "error" && "error" in value ? errorStatus(decodePublicError(value.error).code) : 200;
-      send(res, status, decoded2);
-    } catch (e) {
-      if (createdAttachment)
-        this.detach(createdAttachment);
-      if (!res.headersSent)
-        res.removeHeader("X-Cadence-Attachment");
-      if (res.headersSent)
-        res.destroy();
-      else {
-        const code2 = e instanceof ContractError ? e.code : "unavailable";
-        res.setHeader("Connection", "close");
-        send(res, errorStatus(code2), refusal(code2, dispatched));
-      }
-    } finally {
-      clearTimeout(timer);
-      res.off("close", abortRead);
-      this.requests.delete(abort);
-      if (counted)
-        this.reads--;
-    }
-  }
-  async manage(req, res, boundary, signal) {
-    const operation = req.url?.slice("/local/v1/admin/".length);
-    if (!["status", "diagnose", "stop", "token-link", "token-rotate"].includes(operation ?? ""))
-      throw new ContractError("invalid");
-    const write = operation !== "status" && operation !== "diagnose";
-    const caller = this.options.auth.authenticate(boundary, randomUUID9(), write);
-    if (caller.authority !== "local")
-      throw new ContractError("forbidden");
-    if (req.method !== (write ? "POST" : "GET"))
-      throw new ContractError("invalid");
-    if (write) {
-      const body = closed(await this.body(req, signal), operation === "token-link" ? ["reveal"] : []);
-      if (operation === "token-link" && body.reveal !== true)
-        throw new ContractError("forbidden");
-    } else if (req.headers["transfer-encoding"] || req.headers["content-encoding"] || req.headers["content-length"] && req.headers["content-length"] !== "0")
-      throw new ContractError("invalid");
-    this.options.auth.current(caller);
-    if (signal.aborted || !this.options.management)
-      unavailable();
-    const value = this.options.management.invoke(operation);
-    send(res, 200, { kind: "ok", value });
-  }
-  async dispatch(operation, input, caller, signal, build2) {
-    const a = this.options.adapters, p = a.projection;
-    switch (operation) {
-      case "current":
-        if (!a.current)
-          unavailable();
-        return {
-          kind: "ok",
-          value: await a.current.current(decodeCurrentRequest(input), signal)
-        };
-      case "currentChanges":
-        if (!a.current)
-          unavailable();
-        return {
-          kind: "ok",
-          value: await a.current.currentChanges(decodeCurrentChangesRequest(input), signal)
-        };
-      case "activeRuns":
-        if (!a.current)
-          unavailable();
-        return { kind: "ok", value: await a.current.activeRuns(signal) };
-      case "models":
-        if (!a.models)
-          unavailable();
-        return { kind: "ok", value: a.models.catalog() };
-      case "chooseModel":
-        if (!a.modelChoice)
-          unavailable();
-        return {
-          kind: "ok",
-          value: a.modelChoice.choose(decodeChooseModelRequest(input))
-        };
-      case "detach":
-        this.detach(this.attachment(caller));
-        return { kind: "ok", value: null };
-      case "preflight":
-        return a.admission?.preflight(decodePreflightRequest(input), caller) ?? unavailable();
-      case "command":
-        return a.admission?.submit(decodeCommand(input), caller) ?? unavailable();
-      case "cancel":
-        return a.admission?.cancel(decodeCancel(input), caller) ?? unavailable();
-      case "receipt":
-        return a.receipts ? decodeReceiptLookup(await a.receipts(decodeId(input))) : {
-          status: "inconclusive",
-          error: publicError("receipt-inconclusive", "uncertain")
-        };
-    }
-    if (!p)
-      unavailable();
-    let value;
-    switch (operation) {
-      case "session": {
-        const original = decodeSessionBootstrap(await p.session());
-        if (original.epoch !== this.options.auth.epoch || original.accessGeneration !== caller.accessGeneration)
-          throw new ContractError("stale");
-        value = decodeSessionBootstrap({
-          ...original,
-          ...this.options.build ? { build: this.options.build } : {},
-          authority: caller.authority,
-          csrf: caller.authority === "browser" ? this.options.auth.csrf : null,
-          capabilities: {
-            actions: original.capabilities.actions && !!a.admission && compatibleBuild(this.options.build, build2),
-            manualChecks: original.capabilities.manualChecks && caller.authority === "local" && !!a.admission && compatibleBuild(this.options.build, build2),
-            history: original.capabilities.history
-          }
-        });
-        break;
-      }
-      case "workspace":
-        value = await p.workspace();
-        break;
-      case "tasks":
-      case "runs":
-      case "messages":
-      case "tools":
-      case "contents":
-      case "events":
-      case "checks":
-      case "changes":
-      case "reviews":
-        value = await p[operation](decodeListRequest(input));
-        break;
-      case "checkObligations":
-        value = await p.checkObligations(decodeId(input));
-        break;
-      case "entity":
-        value = await p.entity(decodeEntityReadRequest(input));
-        break;
-      case "graph":
-        value = await p.graph(decodeGraphReadRequest(input));
-        break;
-      case "snapshot":
-        value = await p.snapshot(decodeScope(input));
-        break;
-      case "detail":
-      case "search": {
-        const cursor = decodeCursor(input);
-        if (operation === "search" && this.searches >= LIMITS.searchReaders)
-          throw new ContractError("capacity");
-        if (operation === "search")
-          this.searches++;
-        try {
-          const valid = await p.validateCursor(cursor);
-          this.options.auth.current(caller);
-          if (signal.aborted)
-            unavailable();
-          if (valid.status === "refused")
-            return { kind: "error", error: valid.error };
-          value = await p[operation](cursor);
-        } finally {
-          if (operation === "search")
-            this.searches--;
-        }
-        break;
-      }
-      default:
-        throw new ContractError("invalid");
-    }
-    return { kind: "ok", value };
-  }
-  async export(operation, input, caller, signal, res, activity2) {
-    const p = this.options.adapters.projection;
-    if (!p)
-      unavailable();
-    if (this.exports >= LIMITS.exportReaders)
-      throw new ContractError("capacity");
-    this.exports++;
-    const request = decodeExportRequest(input), tracker = new ExportTracker(request);
-    try {
-      res.setHeader("Content-Type", operation === "download" && request.format === "markdown" ? "text/markdown; charset=utf-8" : "application/x-ndjson; charset=utf-8");
-      res.setHeader("Content-Disposition", `attachment; filename="cadence-export.${operation === "download" && request.format === "markdown" ? "md" : "ndjson"}"`);
-      let trailer;
-      const digest = createHash19("sha256");
-      const write = async (frame) => {
-        const data = Buffer.from(operation === "download" ? encodeExportFrame(frame, request.format) : `${canonicalJson(frame)}
-`);
-        for (let offset = 0;offset < data.length; offset += LIMITS.detailPageBytes) {
-          this.options.auth.current(caller);
-          if (signal.aborted || res.destroyed)
-            unavailable();
-          const chunk = data.subarray(offset, offset + LIMITS.detailPageBytes);
-          await new Promise((resolve3, reject) => {
-            const stop = () => {
-              res.destroy();
-              reject(new ContractError("unavailable"));
-            };
-            signal.addEventListener("abort", stop, { once: true });
-            res.write(chunk, (error) => {
-              signal.removeEventListener("abort", stop);
-              error ? reject(new ContractError("unavailable")) : resolve3();
-            });
-          });
-          activity2();
-        }
-      };
-      for await (const value of p.export(request, signal)) {
-        this.options.auth.current(caller);
-        if (signal.aborted)
-          unavailable();
-        const frame = tracker.receive(value);
-        if (frame.event.kind === "trailer")
-          trailer = frame;
-        else {
-          digest.update(encodeExportFrame(frame, request.format));
-          await write(frame);
-          this.options.auth.current(caller);
-          if (signal.aborted)
-            unavailable();
-        }
-      }
-      this.options.auth.current(caller);
-      if (signal.aborted || !trailer || trailer.event.kind !== "trailer" || trailer.event.sha256 !== digest.digest("hex"))
-        unavailable();
-      await write(trailer);
-      res.end();
-    } finally {
-      this.exports--;
-    }
-  }
-  openViewer(socket, attachment) {
-    const viewer = {
-      socket,
-      attachment,
-      subscription: 0,
-      pending: [],
-      bytes: 0,
-      sentBytes: 0,
-      sentMessages: 0,
-      reading: false,
-      closed: false,
-      lastPing: Date.now(),
-      lastReconcile: Date.now()
-    };
-    attachment.socket = socket;
-    this.viewers.add(viewer);
-    socket.on("error", () => this.closeViewer(viewer));
-    socket.on("close", () => this.closeViewer(viewer));
-    socket.on("message", (data, binary) => {
-      try {
-        this.attachment(attachment.caller);
-        if (binary || Array.isArray(data))
-          throw new ContractError("invalid");
-        const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
-        if (bytes.byteLength > LIMITS.wsClientFrameBytes)
-          throw new ContractError("oversize");
-        const command = decodeSocketInput(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(bytes), LIMITS.wsClientFrameBytes));
-        viewer.lastPing = Date.now();
-        if (command.kind === "ping")
-          this.heartbeatViewer(viewer);
-        else if (viewer.reading)
-          this.closeViewer(viewer);
-        else
-          this.subscribe(viewer, command.scope);
-      } catch {
-        this.closeViewer(viewer);
-      }
-    });
-  }
-  closeViewer(viewer) {
-    if (viewer.closed)
-      return;
-    viewer.closed = true;
-    viewer.subscription++;
-    try {
-      viewer.unsubscribe?.();
-    } catch {}
-    viewer.pending = [];
-    viewer.bytes = 0;
-    this.viewers.delete(viewer);
-    viewer.socket.terminate();
-    this.detach(viewer.attachment);
-  }
-  sendViewer(viewer, output) {
-    try {
-      this.attachment(viewer.attachment.caller);
-      const data = canonicalJson(output, LIMITS.viewerBytes), bytes = Buffer.byteLength(data);
-      if (viewer.closed || viewer.sentMessages + viewer.pending.length >= LIMITS.viewerMessages || viewer.sentBytes + viewer.bytes + bytes > LIMITS.viewerBytes || viewer.socket.bufferedAmount > LIMITS.viewerBytes)
-        throw new ContractError("capacity");
-      viewer.sentMessages++;
-      viewer.sentBytes += bytes;
-      viewer.socket.send(data, (error) => {
-        viewer.sentMessages--;
-        viewer.sentBytes -= bytes;
-        if (error)
-          this.closeViewer(viewer);
-      });
-      return true;
-    } catch {
-      this.closeViewer(viewer);
-      return false;
-    }
-  }
-  async subscribe(viewer, scope) {
-    const p = this.options.adapters.projection, live = this.options.adapters.live;
-    if (viewer.closed)
-      return;
-    if (!p || !live) {
-      this.closeViewer(viewer);
-      return;
-    }
-    if (this.reads >= 32) {
-      this.closeViewer(viewer);
-      return;
-    }
-    this.reads++;
-    const generation = ++viewer.subscription;
-    viewer.reading = true;
-    viewer.scope = scope;
-    viewer.snapshot = undefined;
-    viewer.pending = [];
-    viewer.bytes = 0;
-    try {
-      viewer.unsubscribe?.();
-      viewer.unsubscribe = live.subscribe(scope, (value) => {
-        if (viewer.closed || viewer.subscription !== generation)
-          return;
-        try {
-          this.attachment(viewer.attachment.caller);
-          const event = decodeLiveEvent(value);
-          const bytes = Buffer.byteLength(canonicalJson(event, LIMITS.pageBytes));
-          if (viewer.reading) {
-            if (viewer.pending.length + viewer.sentMessages >= LIMITS.viewerMessages || viewer.bytes + viewer.sentBytes + bytes > LIMITS.viewerBytes)
-              throw new ContractError("capacity");
-            viewer.pending.push(event);
-            viewer.bytes += bytes;
-          } else
-            this.deliver(viewer, event);
-        } catch {
-          this.closeViewer(viewer);
-        }
-      });
-      if (viewer.closed) {
-        viewer.unsubscribe();
-        return;
-      }
-      const snapshot = decodeSnapshot(await p.snapshot(scope));
-      if (viewer.closed || viewer.subscription !== generation)
-        return;
-      this.attachment(viewer.attachment.caller);
-      if (snapshot.epoch !== this.options.auth.epoch || canonicalJson(snapshot.scope) !== canonicalJson(scope))
-        throw new ContractError("stale");
-      viewer.snapshot = snapshot;
-      if (!this.sendViewer(viewer, { kind: "snapshot", snapshot }))
-        return;
-      viewer.reading = false;
-      viewer.lastReconcile = Date.now();
-      for (const event of viewer.pending.splice(0)) {
-        viewer.bytes -= Buffer.byteLength(canonicalJson(event));
-        this.deliver(viewer, event);
-        if (viewer.closed || viewer.subscription !== generation)
-          break;
-      }
-    } catch {
-      this.closeViewer(viewer);
-    } finally {
-      if (viewer.subscription === generation)
-        viewer.reading = false;
-      this.reads--;
-    }
-  }
-  deliver(viewer, event) {
-    const snapshot = viewer.snapshot;
-    if (!snapshot || viewer.closed)
-      return;
-    if (event.epoch !== snapshot.epoch || event.storeId !== snapshot.storeId || canonicalJson(event.scope) !== canonicalJson(snapshot.scope)) {
-      this.resync(viewer);
-      return;
-    }
-    const cmp = compareSequence(event.committedSeq, snapshot.committedSeq);
-    if (cmp < 0 || cmp === 0 && event.kind !== "heartbeat")
-      return;
-    if (event.kind === "update" && event.previousSeq !== snapshot.committedSeq || event.kind === "heartbeat" && cmp > 0) {
-      this.resync(viewer);
-      return;
-    }
-    if (this.sendViewer(viewer, { kind: "event", event }))
-      snapshot.committedSeq = event.committedSeq;
-  }
-  resync(viewer) {
-    if (!viewer.reading && viewer.scope) {
-      this.sendViewer(viewer, { kind: "resync" });
-      this.subscribe(viewer, viewer.scope);
-    }
-  }
-  heartbeatViewer(viewer) {
-    if (!viewer.scope || viewer.reading)
-      return;
-    try {
-      const event = decodeLiveEvent(this.options.adapters.live?.watermark(viewer.scope));
-      if (event.kind !== "heartbeat")
-        throw new ContractError("invalid");
-      this.deliver(viewer, event);
-    } catch {
-      this.closeViewer(viewer);
-    }
-  }
-  tick() {
-    for (const viewer of this.viewers) {
-      if (Date.now() - viewer.lastPing >= LIMITS.staleMs)
-        this.closeViewer(viewer);
-      else if (Date.now() - viewer.lastReconcile >= LIMITS.reconcileMs)
-        this.resync(viewer);
-      else
-        this.heartbeatViewer(viewer);
-    }
-  }
-}
-
 // src/service/model-choice.ts
-import { randomUUID as randomUUID10 } from "node:crypto";
+import { randomUUID as randomUUID13 } from "node:crypto";
 var choiceOwners = new WeakSet;
 
 class OwnerModelChoice {
   options;
   selection = null;
   revision;
-  catalogId = randomUUID10();
+  catalogId = randomUUID13();
   installing = false;
   constructor(options) {
     this.options = options;
@@ -17299,7 +19227,7 @@ class OwnerModelChoice {
     return decodeModelCatalog({ ...before, ...catalog });
   }
   choose(value) {
-    const request = decodeChooseModelRequest(value);
+    const request3 = decodeChooseModelRequest(value);
     if (this.installing)
       throw new ContractError("conflict");
     const assertCurrent = () => {
@@ -17309,20 +19237,20 @@ class OwnerModelChoice {
         throw new ContractError("quarantine");
       if (writer.accounting.owner.leases || writer.accounting.children.some((pool) => pool.leases) || writer.pendingWrites || writer.accounting.episodes.count || models.pending || models.loading)
         throw new ContractError("conflict");
-      if (this.revision < writer.configurationRevisionFloor || canonicalJson(request.expected) !== canonicalJson(this.snapshot().version))
+      if (this.revision < writer.configurationRevisionFloor || canonicalJson(request3.expected) !== canonicalJson(this.snapshot().version))
         throw new ContractError("stale");
     };
     assertCurrent();
     const { sourceSelectionId: _id, ...previous } = this.selection ?? {};
-    if (canonicalJson(previous) !== canonicalJson(request.choice) && !Number.isSafeInteger(this.revision + 1))
+    if (canonicalJson(previous) !== canonicalJson(request3.choice) && !Number.isSafeInteger(this.revision + 1))
       throw new ContractError("capacity");
     this.installing = true;
     try {
-      const selected2 = this.options.models.replaceSelection(request.choice, assertCurrent);
+      const selected2 = this.options.models.replaceSelection(request3.choice, assertCurrent);
       if (this.selection?.sourceSelectionId !== selected2.sourceSelectionId) {
         this.selection = selected2;
         ++this.revision;
-        this.catalogId = randomUUID10();
+        this.catalogId = randomUUID13();
         this.options.owner.configurationInstalled();
       }
       return this.snapshot();
@@ -17333,8 +19261,8 @@ class OwnerModelChoice {
 }
 
 // src/service/model-config.ts
-import { lstatSync as lstatSync9, realpathSync as realpathSync5 } from "node:fs";
-import { dirname as dirname10, isAbsolute as isAbsolute6, join as join13, resolve as resolve3 } from "node:path";
+import { lstatSync as lstatSync11, realpathSync as realpathSync6 } from "node:fs";
+import { dirname as dirname13, isAbsolute as isAbsolute8, join as join18, resolve as resolve7 } from "node:path";
 var CONFIG_BYTES2 = 1024 * 1024;
 var ENTRY_LIMIT = 256;
 function refuse2() {
@@ -17399,16 +19327,16 @@ function captureEnvironment(value) {
   return Object.freeze(out);
 }
 function piSource(agentDir, home, cwd, env) {
-  if (!isAbsolute6(home) || !isAbsolute6(cwd))
+  if (!isAbsolute8(home) || !isAbsolute8(cwd))
     refuse2();
-  let selected2 = agentDir ?? env.PI_CODING_AGENT_DIR ?? join13(home, ".pi", "agent");
+  let selected2 = agentDir ?? env.PI_CODING_AGENT_DIR ?? join18(home, ".pi", "agent");
   if (!selected2 || selected2.includes("\x00"))
     refuse2();
   if (selected2 === "~" || selected2.startsWith("~/"))
     selected2 = home + selected2.slice(1);
-  selected2 = resolve3(cwd, selected2);
-  const directory = join13(realpathSync5(dirname10(selected2)), selected2.slice(dirname10(selected2).length + 1));
-  if (!lstatSync9(directory).isDirectory() || lstatSync9(directory).isSymbolicLink())
+  selected2 = resolve7(cwd, selected2);
+  const directory = join18(realpathSync6(dirname13(selected2)), selected2.slice(dirname13(selected2).length + 1));
+  if (!lstatSync11(directory).isDirectory() || lstatSync11(directory).isSymbolicLink())
     refuse2();
   const files = new PrivateFiles(directory, false);
   if (!files.directory(directory))
@@ -17416,8 +19344,8 @@ function piSource(agentDir, home, cwd, env) {
   return {
     directory,
     files,
-    authPath: join13(directory, "auth.json"),
-    modelsPath: join13(directory, "models.json")
+    authPath: join18(directory, "auth.json"),
+    modelsPath: join18(directory, "models.json")
   };
 }
 function templateNames(value) {
@@ -17860,7 +19788,7 @@ function clonePrivate(value) {
 }
 
 // src/service/model-context.ts
-import { randomUUID as randomUUID11 } from "node:crypto";
+import { randomUUID as randomUUID14 } from "node:crypto";
 function committed(result) {
   if (result.status !== "committed")
     throw new ContractError("recording-exhausted");
@@ -18165,7 +20093,7 @@ class OwnerModelContext {
     const current2 = this.catalogSource();
     const validated = this.validateModel(selector, current2);
     this.#options.owner.assertQuiescent();
-    const selection = { sourceSelectionId: randomUUID11(), ...selector };
+    const selection = { sourceSelectionId: randomUUID14(), ...selector };
     const selected2 = {
       ...validated,
       model: clonePrivate(validated.model),
@@ -18247,7 +20175,7 @@ class OwnerModelContext {
       throw new ContractError("capacity");
     const selector = decodeModelSelector(input);
     const validated = this.validateModel(selector, this.catalogSource());
-    const selection = { sourceSelectionId: randomUUID11(), ...selector };
+    const selection = { sourceSelectionId: randomUUID14(), ...selector };
     this.#selected.set(selection.sourceSelectionId, {
       ...validated,
       model: clonePrivate(validated.model),
@@ -18333,6 +20261,24 @@ class OwnerModelContext {
       writes.push(original);
       return report;
     };
+    const recordPreparation = async (intent) => {
+      if (input.journal)
+        input.journal.preparation(intent);
+      else
+        committed(await this.trackedWrite(retainWrite(this.#options.accounting.preparation(intent))));
+    };
+    const recordSettlement = async (result) => {
+      if (input.journal) {
+        input.journal.settlement(result);
+        return null;
+      }
+      return retainWrite(this.#options.accounting.settlement(result));
+    };
+    const taskResult = (result) => {
+      if (result === null)
+        throw new ContractError("recording-exhausted");
+      return result;
+    };
     let closed2 = input.signal.aborted;
     let effectStarted = false;
     const current2 = () => {
@@ -18347,10 +20293,10 @@ class OwnerModelContext {
       closed2 = true;
     };
     let reportClosed;
-    const closedWait = new Promise((resolve4) => {
+    const closedWait = new Promise((resolve8) => {
       reportClosed = () => {
         close();
-        resolve4(refusal2(new ContractError("auth-unavailable"), effectStarted ? "uncertain" : "none"));
+        resolve8(refusal2(new ContractError("auth-unavailable"), effectStarted ? "uncertain" : "none"));
       };
     });
     input.signal.addEventListener("abort", reportClosed, { once: true });
@@ -18360,7 +20306,7 @@ class OwnerModelContext {
     const previous = this.#tail;
     const operation = (async () => {
       try {
-        const request = decodeWorkerPublicRequest(input.request);
+        const request3 = decodeWorkerPublicRequest(input.request);
         const operationId = decodeId(input.operationId);
         const epoch = decodeId(input.epoch);
         if (epoch !== this.#options.owner.lease.registration.epoch)
@@ -18369,8 +20315,8 @@ class OwnerModelContext {
           throw new ContractError("invalid");
         const validityMs = input.timeoutMs + LIMITS.authValidityMarginMs;
         const generation = this.#generation;
-        const selected2 = this.#selected.get(request.model.sourceSelectionId);
-        if (!selected2 || JSON.stringify(selected2.selection) !== JSON.stringify(request.model))
+        const selected2 = this.#selected.get(request3.model.sourceSelectionId);
+        if (!selected2 || JSON.stringify(selected2.selection) !== JSON.stringify(request3.model))
           throw new ContractError("stale");
         const check = () => {
           if (closed2 || input.signal.aborted)
@@ -18383,25 +20329,27 @@ class OwnerModelContext {
         await previous;
         check();
         effectStarted = true;
-        const intent = this.#options.accounting.preparation({
+        await recordPreparation({
           operationId,
           epoch,
-          runId: request.runId,
-          childRunId: request.childRunId,
-          sourceSelectionId: request.model.sourceSelectionId,
+          runId: request3.runId,
+          childRunId: request3.childRunId,
+          sourceSelectionId: request3.model.sourceSelectionId,
           validityMs
         });
-        committed(await this.trackedWrite(retainWrite(intent)));
         let initial4;
         try {
           initial4 = check();
         } catch (error) {
-          const write = this.#options.accounting.settlement({
+          const result = {
             operationId,
             outcome: "refused",
             admissionClosed: true
-          });
-          committed(await this.trackedWrite(retainWrite(write)));
+          };
+          if (input.journal)
+            input.journal.settlement(result);
+          else
+            committed(await this.trackedWrite(retainWrite(this.#options.accounting.settlement(result))));
           throw error;
         }
         const runtime = this.#runtime;
@@ -18432,7 +20380,7 @@ class OwnerModelContext {
             const projected = authProjection(auth);
             this.authRoute(projected.env ?? {});
             material = {
-              request,
+              request: request3,
               cwd: this.#options.cwd,
               model: {
                 ...selected2.model,
@@ -18450,27 +20398,29 @@ class OwnerModelContext {
             failure2 = error;
             outcome = "refused";
           }
-          return retainWrite(this.#options.accounting.settlement({
+          return recordSettlement({
             operationId,
             outcome,
             admissionClosed: closed2 || input.signal.aborted || !current2() || this.#options.owner.state !== "idle"
-          }));
+          });
         }, () => {
           failure2 = new ContractError("auth-unavailable");
-          return retainWrite(this.#options.accounting.settlement({
+          return recordSettlement({
             operationId,
             outcome: "failed",
             admissionClosed: closed2 || input.signal.aborted || !current2() || this.#options.owner.state !== "idle"
-          }));
+          });
         });
         recorded.catch(() => {});
         let trackingFailed = false;
         try {
-          this.#options.owner.trackAuth(original, this.#options.accounting.lifetimeTracked ? undefined : recorded);
+          this.#options.owner.trackAuth(original, input.journal || this.#options.accounting.lifetimeTracked ? undefined : recorded.then(taskResult));
         } catch {
           trackingFailed = true;
         }
-        committed(await recorded);
+        const record2 = await recorded;
+        if (!input.journal)
+          committed(taskResult(record2));
         if (trackingFailed)
           throw new ContractError("quarantine");
         check();
@@ -18585,6 +20535,9 @@ class ServiceOwner {
   trackAccepted(original) {
     this.track("work", original, (value) => value.status === "settled");
   }
+  trackConversation(original, requestStop) {
+    this.track("work", original, (value) => value.status === "settled", requestStop);
+  }
   get acceptedPending() {
     return [...this.activities].filter((a) => a.kind === "work").length;
   }
@@ -18623,6 +20576,9 @@ class ServiceOwner {
       const completion = decodeWorkerCompletion(value);
       return completion.native.closure !== "unconfirmed" && completion.recording.status !== "uncertain" && (completion.recording.status !== "refused" || completion.native.closure === "not-launched") && !(completion.recording.status === "pending" && completion.selected !== null);
     }, requestStop);
+  }
+  trackConversationProcess(original, requestStop) {
+    this.track("process", original, (value) => decodeNativeSettlement(value).closure !== "unconfirmed", requestStop);
   }
   trackCheck(original, requestStop) {
     this.track("process", original, (value) => decodeCheckNativeSettlement(value).closure !== "unconfirmed", requestStop);
@@ -18763,8 +20719,8 @@ class ServiceOwner {
     if (!this.attempt) {
       this.reportingExpired = false;
       let complete;
-      this.attempt = new Promise((resolve4) => {
-        complete = resolve4;
+      this.attempt = new Promise((resolve8) => {
+        complete = resolve8;
       });
       const finish = () => {
         this.attempt = undefined;
@@ -18782,11 +20738,11 @@ class ServiceOwner {
     try {
       await Promise.race([
         this.attempt,
-        new Promise((resolve4) => {
+        new Promise((resolve8) => {
           timer = setTimeout(() => {
             this.reportingExpired = true;
             this.persistPhase("quarantined");
-            resolve4();
+            resolve8();
           }, waitMs);
         })
       ]);
@@ -18815,147 +20771,19 @@ class ServiceOwner {
   }
 }
 
-// src/service/runtime.ts
-import { dirname as dirname11, isAbsolute as isAbsolute7, join as join14, resolve as resolve4 } from "node:path";
-var STARTUP_INPUT_BYTES = 16 * 1024;
-function absolute(value) {
-  const result = text(value, 4096, true);
-  if (!isAbsolute7(result))
-    throw new ContractError("invalid");
-  return result;
-}
-function decodeHostConfig(value) {
-  const o = closed(value, [
-    "schema",
-    "http",
-    "cwd",
-    "agentDir",
-    "tokenSource",
-    "tokenFile"
-  ]);
-  const tokenSource = oneOf(o.tokenSource, [
-    "generated",
-    "environment",
-    "file",
-    "config"
-  ]);
-  const tokenFile = o.tokenFile === null ? null : absolute(o.tokenFile);
-  if ((tokenSource === "file" || tokenSource === "config") !== !!tokenFile)
-    throw new ContractError("invalid");
-  return {
-    schema: literal(o.schema, "cadence-service-host/1"),
-    http: decodeHttpPolicy(o.http),
-    cwd: absolute(o.cwd),
-    agentDir: absolute(o.agentDir),
-    tokenSource,
-    tokenFile
-  };
-}
-function reselectable(old, next) {
-  const kept = (c) => encoded({
-    ...c,
-    http: { ...c.http, port: 0 },
-    tokenSource: null,
-    tokenFile: null
-  });
-  return next.tokenSource === "config" && kept(old) === kept(next);
-}
-function readHostConfig(c) {
-  const owner = c.configuration();
-  if (!owner)
-    return;
-  const snapshot = c.files.read(c.path("host-config.json"));
-  if (!snapshot)
-    throw new ContractError("corrupt-selected");
-  const config = decodeHostConfig(json(snapshot));
-  if (!config.http.port || owner.endpoint !== localOrigin(config.http, config.http.port) || owner.policyIdentity !== hash(encoded(config)))
-    throw new ContractError("conflict");
-  return config;
-}
-function hostEnvironment(ambient) {
-  let route;
-  const facts = networkSnapshot(ambient);
-  try {
-    if (facts.NODE_OPTIONS.present)
-      throw new Error;
-    route = sdkNetworkEnvironment(facts, networkSnapshot(undefined));
-  } catch {
-    throw new ContractError("unsupported-context");
-  }
-  const result = Object.create(null);
-  for (const key2 of Object.keys(ambient)) {
-    const d = Object.getOwnPropertyDescriptor(ambient, key2);
-    if (!d || !("value" in d) || typeof d.value !== "string")
-      throw new ContractError("invalid");
-    if (/^(?:CADENCE_|PI_|ABEL_|TRELLIS_|GIT_)/i.test(key2) || networkKeys.some((name) => name === key2))
-      continue;
-    result[key2] = d.value;
-  }
-  if (route.redactionLiterals.length) {
-    result.HTTP_PROXY = route.env.HTTP_PROXY;
-    result.HTTPS_PROXY = route.env.HTTPS_PROXY;
-    result.NODE_USE_ENV_PROXY = "1";
-  }
-  result.PI_OFFLINE = "1";
-  result.NO_COLOR = "1";
-  if (!sameNetwork(facts, networkSnapshot(ambient)))
-    throw new ContractError("stale");
-  return result;
-}
-function decodeHostInput(value) {
-  const o = closed(value, [
-    "workspace",
-    "stateHome",
-    "config",
-    "environmentToken"
-  ]);
-  const config = decodeHostConfig(o.config);
-  const environmentToken = o.environmentToken === null ? null : text(o.environmentToken, 1024, true);
-  if (config.tokenSource === "environment" !== (environmentToken !== null))
-    throw new ContractError("invalid");
-  return {
-    workspace: absolute(o.workspace),
-    stateHome: absolute(o.stateHome),
-    config,
-    environmentToken
-  };
-}
-class StartupRefusal extends ContractError {
-  stage;
-  quarantined;
-  constructor(code2, stage, quarantined = false) {
-    super(code2);
-    this.stage = stage;
-    this.quarantined = quarantined;
-  }
-}
-function startupReport(error) {
-  if (error instanceof StartupRefusal)
-    return {
-      status: error.quarantined ? "quarantined" : "refused",
-      error: error.code,
-      stage: error.stage
-    };
-  return {
-    status: "refused",
-    error: error instanceof ContractError ? error.code : "unavailable",
-    stage: "service"
-  };
-}
-
 // src/service/task-actions.ts
-import { randomUUID as randomUUID15 } from "node:crypto";
-import { realpathSync as realpathSync6 } from "node:fs";
+import { randomUUID as randomUUID18 } from "node:crypto";
+import { realpathSync as realpathSync7 } from "node:fs";
 
 // src/task-diff.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
-import { createHash as createHash20 } from "node:crypto";
-import { lstatSync as lstatSync10, readdirSync as readdirSync3, readlinkSync } from "node:fs";
-import { join as join15, relative as relative5 } from "node:path";
+import { createHash as createHash21 } from "node:crypto";
+import { lstatSync as lstatSync12, readdirSync as readdirSync3, readlinkSync } from "node:fs";
+import { join as join19, relative as relative7 } from "node:path";
 var admin = (path) => path === ".cadence/assistant/tasks" || path.startsWith(".cadence/assistant/tasks/");
 function captureChanges(root) {
   const deadline = Date.now() + 3000;
-  const hash3 = createHash20("sha256");
+  const hash3 = createHash21("sha256");
   const parts = [];
   let complete = true;
   const limits = [];
@@ -18992,8 +20820,8 @@ function captureChanges(root) {
       return;
     }
     try {
-      const path = join15(root, name);
-      const st = lstatSync10(path);
+      const path = join19(root, name);
+      const st = lstatSync12(path);
       add(name, `${st.mode}:${st.size}`);
       if (st.isSymbolicLink()) {
         add(name, readlinkSync(path));
@@ -19012,7 +20840,7 @@ function captureChanges(root) {
       fileBytes += data2.length;
       add(name, data2);
       const binary = data2.includes(0);
-      parts.push(`${name} (${binary ? "binary" : "text"}, ${data2.length} bytes, sha256 ${createHash20("sha256").update(data2).digest("hex")})`);
+      parts.push(`${name} (${binary ? "binary" : "text"}, ${data2.length} bytes, sha256 ${createHash21("sha256").update(data2).digest("hex")})`);
     } catch {
       complete = false;
       limits.push(`Unreadable/changing: ${name}`);
@@ -19128,8 +20956,8 @@ ${data2.toString("utf8")}`);
         return;
       }
       for (const name of names2) {
-        const path = join15(dir, name);
-        const rel = relative5(root, path).split("\\").join("/");
+        const path = join19(dir, name);
+        const rel = relative7(root, path).split("\\").join("/");
         if (rel === ".git" || admin(rel))
           continue;
         if (++fileCount > 2000 || Date.now() >= deadline) {
@@ -19137,7 +20965,7 @@ ${data2.toString("utf8")}`);
           break;
         }
         try {
-          const st = lstatSync10(path);
+          const st = lstatSync12(path);
           if (st.isDirectory())
             walk(path, depth + 1);
           else
@@ -19362,16 +21190,16 @@ class ActionAdmission {
     return this.reserved("ordinary", (pending) => this.preflightReserved(input, caller, pending));
   }
   async preflightReserved(input, caller, pending) {
-    let request;
+    let request3;
     try {
-      request = decodePreflightRequest(input);
+      request3 = decodePreflightRequest(input);
     } catch (e) {
       return failure2(e);
     }
     caller = { ...caller };
     const lease = { valid: true };
     try {
-      this.access(caller, request.expected.epoch, request.expected.accessGeneration);
+      this.access(caller, request3.expected.epoch, request3.expected.accessGeneration);
       this.detach(caller.attachmentId);
       const now = this.clock.now();
       for (const g of this.grants.values())
@@ -19389,7 +21217,7 @@ class ActionAdmission {
           throw new ContractError("stale");
         if (this.fenced)
           throw new ContractError("quarantine");
-        const preview = await this.observe(request.action, request.expected, caller, pending);
+        const preview = await this.observe(request3.action, request3.expected, caller, pending);
         if (!lease.valid)
           throw new ContractError("stale");
         if (this.fenced)
@@ -19690,9 +21518,9 @@ class ActionAdmission {
 }
 
 // src/service/graph.ts
-import { createHash as createHash21 } from "node:crypto";
-import { join as join16 } from "node:path";
-var hash3 = (text2) => createHash21("sha256").update(text2).digest("hex");
+import { createHash as createHash22 } from "node:crypto";
+import { join as join20 } from "node:path";
+var hash3 = (text2) => createHash22("sha256").update(text2).digest("hex");
 
 class GraphContext {
   root;
@@ -19701,7 +21529,7 @@ class GraphContext {
   identity;
   constructor(root) {
     this.root = root;
-    const bytes = readBounded(join16(root, "AGENTS.md"), 32768);
+    const bytes = readBounded(join20(root, "AGENTS.md"), 32768);
     this.hints = bytes ? new TextDecoder("utf-8", { fatal: true }).decode(bytes) : "";
     this.identity = hash3(canonicalJson({
       hints: bytes === undefined ? null : hash3(bytes),
@@ -19834,15 +21662,94 @@ function dependencyHandoff(reader, graph, identity2, runId, assignment, snapshot
 }
 
 // src/service/scheduler.ts
-import { randomUUID as randomUUID14 } from "node:crypto";
+import { randomUUID as randomUUID17 } from "node:crypto";
 
 // src/subagent-process.ts
-import { spawn } from "node:child_process";
-import { join as join17 } from "node:path";
+import { spawn as spawn2 } from "node:child_process";
+import { join as join21 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { fileURLToPath as fileURLToPath3 } from "node:url";
+import { fileURLToPath as fileURLToPath4 } from "node:url";
+
+// src/conversation-context.mjs
+var CONTEXT_BYTES = 2 * 1024 * 1024;
+var clean = (s, secrets, max = CONTEXT_BYTES) => sanitizeText(text(s, max), secrets);
+function argumentsData(value, secrets) {
+  const sanitizer = new DetailSanitizer("canonical-json", secrets);
+  const source = sanitizer.write(canonicalJson(value, 64 * 1024)) + sanitizer.end();
+  if (sanitizer.limited)
+    throw new Error("Unsupported context arguments");
+  return parseWireJson(source, 64 * 1024);
+}
+function conversationMessages(messages, secrets = []) {
+  return list(messages, 4096, (message) => {
+    if (!message || typeof message !== "object")
+      throw new Error("Invalid context");
+    const role2 = oneOf(message.role, ["user", "assistant", "toolResult"]);
+    const timestamp = integer(message.timestamp, 0);
+    const content = typeof message.content === "string" ? [{ type: "text", text: clean(message.content, secrets) }] : list(message.content, 256, (block) => {
+      if (block.type === "text")
+        return { type: "text", text: clean(block.text, secrets) };
+      if (role2 === "assistant" && block.type === "toolCall")
+        return {
+          type: "toolCall",
+          id: clean(block.id, secrets, 512),
+          name: clean(block.name, secrets, 128),
+          arguments: argumentsData(block.arguments, secrets)
+        };
+      return null;
+    }).filter(Boolean);
+    if (role2 === "user")
+      return { role: role2, timestamp, content };
+    if (role2 === "toolResult")
+      return {
+        role: role2,
+        timestamp,
+        content,
+        toolCallId: clean(message.toolCallId, secrets, 512),
+        toolName: clean(message.toolName, secrets, 128),
+        isError: message.isError === true
+      };
+    const usage = closed(message.usage, [
+      "input",
+      "output",
+      "cacheRead",
+      "cacheWrite",
+      "totalTokens",
+      "cost"
+    ]);
+    const cost = closed(usage.cost, [
+      "input",
+      "output",
+      "cacheRead",
+      "cacheWrite",
+      "total"
+    ]);
+    for (const value of [
+      ...Object.values(usage).filter((v) => typeof v !== "object"),
+      ...Object.values(cost)
+    ])
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0)
+        throw new Error("Invalid usage");
+    return {
+      role: role2,
+      timestamp,
+      content,
+      api: clean(message.api, secrets, 128),
+      provider: clean(message.provider, secrets, 128),
+      model: clean(message.model, secrets, 256),
+      usage,
+      stopReason: oneOf(message.stopReason, [
+        "stop",
+        "length",
+        "toolUse",
+        "error",
+        "aborted"
+      ])
+    };
+  });
+}
 // src/worker-capture.mjs
-import { createHash as createHash22, randomUUID as randomUUID12 } from "node:crypto";
+import { createHash as createHash23, randomUUID as randomUUID15 } from "node:crypto";
 var completeCoverage = () => ({
   observed: "complete",
   source: "complete",
@@ -19865,7 +21772,7 @@ function requireFact2(condition) {
 }
 
 class CaptureState {
-  constructor(childRunId, request) {
+  constructor(childRunId, request3) {
     this.position = {
       childRunId: decodeId(childRunId),
       workerSeq: 0,
@@ -19882,7 +21789,7 @@ class CaptureState {
     this.coverage = completeCoverage();
     this.selected = null;
     this.failed = false;
-    this.request = request;
+    this.request = request3;
     this.contexts = new Set;
     this.handoffs = new Set;
   }
@@ -19928,7 +21835,7 @@ class CaptureState {
           final: null,
           stopReason: null,
           finalIndices: new Set,
-          finalHash: createHash22("sha256"),
+          finalHash: createHash23("sha256"),
           finalBytes: 0,
           finalIndex: -1
         });
@@ -19955,7 +21862,7 @@ class CaptureState {
         }
         this.details.set(e.detailId, {
           descriptor: e.descriptor,
-          hash: createHash22("sha256"),
+          hash: createHash23("sha256"),
           bytes: 0,
           ended: false,
           preview: ""
@@ -20357,11 +22264,11 @@ class WorkerRecording {
       try {
         await Promise.race([
           ...this.pending,
-          new Promise((resolve5) => {
-            abort = resolve5;
+          new Promise((resolve8) => {
+            abort = resolve8;
             signal.addEventListener("abort", abort, { once: true });
             if (signal.aborted)
-              resolve5();
+              resolve8();
           })
         ]);
       } finally {
@@ -20389,11 +22296,11 @@ class WorkerRecording {
     let timer;
     await Promise.race([
       Promise.all([...this.pending]),
-      new Promise((resolve5) => {
+      new Promise((resolve8) => {
         timer = setTimeout(() => {
           this.failure = "uncertain";
           this.stop();
-          resolve5();
+          resolve8();
         }, LIMITS.recordingStallMs);
       })
     ]);
@@ -20423,7 +22330,7 @@ class WorkerRecording {
 // src/subagent-process.ts
 function terminateWindowsTree(pid, fallback) {
   const root = process.env.SystemRoot;
-  const taskkill = spawn(root ? join17(root, "System32", "taskkill.exe") : "taskkill.exe", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
+  const taskkill = spawn2(root ? join21(root, "System32", "taskkill.exe") : "taskkill.exe", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore", windowsHide: true });
   taskkill.once("error", fallback);
   taskkill.once("close", (code2) => {
     if (code2 !== 0)
@@ -20457,15 +22364,23 @@ function runProcess(spec) {
     throw new Error("Invalid service check context");
   if (spec.input !== undefined && Buffer.byteLength(spec.input) > 128 * 1024)
     return Promise.resolve(early("failed", "Worker input exceeds bound"));
-  return new Promise((resolve5) => {
-    const child = spawn(spec.command, spec.args, {
+  return new Promise((resolve8) => {
+    const child = spawn2(spec.command, spec.args, {
       cwd: spec.cwd,
       env: spec.env ?? safeChildEnv(),
       detached: process.platform !== "win32",
       windowsHide: true,
       windowsVerbatimArguments: spec.windowsVerbatimArguments,
-      stdio: [spec.input === undefined ? "ignore" : "pipe", "pipe", "pipe"]
+      stdio: [
+        spec.input === undefined ? "ignore" : "pipe",
+        "pipe",
+        "pipe",
+        ...spec.onContext ? ["pipe"] : []
+      ]
     });
+    const contextStream = spec.onContext ? child.stdio[3] : null;
+    let contextEnded = false, contextBytes = 0;
+    const contextChunks = [];
     let settled = false;
     let nativeClosed = false;
     let launched = false;
@@ -20487,7 +22402,7 @@ function runProcess(spec) {
     const stderrDecoder = new StringDecoder("utf8");
     let killTimer;
     let unknownTimer;
-    const clean = (text2, max = 65536) => diagnosticText(text2, max, spec.secrets);
+    const clean2 = (text2, max = 65536) => diagnosticText(text2, max, spec.secrets);
     const finish = (closed2, exitCode, signal) => {
       if (settled)
         return;
@@ -20524,14 +22439,14 @@ function runProcess(spec) {
           omissions: ["gap"]
         }
       }, capture);
-      resolve5({
+      resolve8({
         outcome,
         closed: closed2,
         exitCode,
         signal,
         durationMs: Date.now() - started,
-        text: clean(outcome === "completed" && spec.protocol ? final ?? "" : `${outcome}${closed2 ? " (direct child closed; escaped descendants not proven stopped)" : ": stop unconfirmed; coordination lock retained"}`, 16384),
-        output: clean(output),
+        text: clean2(outcome === "completed" && spec.protocol ? final ?? "" : `${outcome}${closed2 ? " (direct child closed; escaped descendants not proven stopped)" : ": stop unconfirmed; coordination lock retained"}`, 16384),
+        output: clean2(output),
         truncated
       });
       if (!closed2) {
@@ -20539,6 +22454,7 @@ function runProcess(spec) {
         child.stdout.destroy();
         child.stderr.destroy();
         child.stdin?.destroy();
+        contextStream?.destroy();
       }
     };
     const signalChild = (signal) => {
@@ -20577,12 +22493,13 @@ function runProcess(spec) {
         if (!capture)
           capture = new CaptureState(spec.childRunId ?? decodeCaptureFrame(value).childRunId, spec.expectedRequest);
         const decoded2 = capture.accept(value, Buffer.byteLength(line) + 1);
+        spec.onFrame?.(decoded2);
         if (decoded2.event.kind === "ready") {
           ready2 = true;
           spec.onProgress?.("Agent ready");
         }
         if (decoded2.event.kind === "tool-start")
-          spec.onProgress?.(clean(`Tool: ${decoded2.event.name}`, 128));
+          spec.onProgress?.(clean2(`Tool: ${decoded2.event.name}`, 128));
         if (decoded2.event.kind === "final")
           final = capture.preview;
         if (lease) {
@@ -20648,6 +22565,20 @@ function runProcess(spec) {
         }
       }
     };
+    contextStream?.on("data", (chunk) => {
+      if (settled || stopping)
+        return;
+      contextBytes += chunk.length;
+      if (contextBytes > CONTEXT_BYTES) {
+        stop("failed");
+        return;
+      }
+      contextChunks.push(chunk);
+    });
+    contextStream?.once("end", () => {
+      contextEnded = true;
+    });
+    contextStream?.on("error", () => stop("failed"));
     let stdoutWork = Promise.resolve();
     let stderrWork = Promise.resolve();
     let stdoutEnded = false, stderrEnded = false;
@@ -20694,6 +22625,15 @@ function runProcess(spec) {
       clearTimeout(killTimer);
       clearTimeout(unknownTimer);
       const close = () => {
+        if (spec.onContext && !stopping && code2 === 0) {
+          try {
+            if (!contextEnded)
+              throw new Error("Context EOF missing");
+            spec.onContext(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(contextChunks)));
+          } catch {
+            stopping = "failed";
+          }
+        }
         if (!spec.protocol)
           output += stdoutDecoder.end();
         else {
@@ -20760,7 +22700,7 @@ function launchEncoded(encoded2, signal, timeoutMs, extra = {}) {
     throw new Error("network");
   return runProcess({
     command: process.execPath,
-    args: [fileURLToPath3(new URL("./sdk-worker.mjs", import.meta.url))],
+    args: [fileURLToPath4(new URL("./sdk-worker.mjs", import.meta.url))],
     cwd: encoded2.material.cwd,
     input: encoded2.input,
     env: encoded2.selected.env,
@@ -20773,8 +22713,8 @@ function launchEncoded(encoded2, signal, timeoutMs, extra = {}) {
     ...extra
   });
 }
-function preparedWorker(prepared, request, link, ownerSecrets, timeoutMs = LIMITS.workerMs, maySignal) {
-  const expected = decodeWorkerPublicRequest(request);
+function preparedWorker(prepared, request3, link, ownerSecrets, timeoutMs = LIMITS.workerMs, maySignal) {
+  const expected = decodeWorkerPublicRequest(request3);
   link = decodeRecordingLink(link);
   if (expected.childRunId !== link.childRunId || expected.runId !== link.runId || expected.taskId !== link.taskId)
     throw new Error("Invalid recording identity");
@@ -20850,6 +22790,35 @@ function preparedWorker(prepared, request, link, ownerSecrets, timeoutMs = LIMIT
     }
   };
 }
+function launchConversation(prepared, conversation, signal, options) {
+  let encoded2;
+  return prepared.consume((material) => {
+    encoded2 = encodeEnvelope({ ...material, model: { ...material.model } });
+    encoded2.input = JSON.stringify({ ...encoded2.material, conversation });
+    return encoded2.input;
+  }, (input) => {
+    if (!encoded2 || encoded2.input !== input)
+      throw new Error("Invalid chat launch");
+    const secrets = encoded2.secrets;
+    return launchEncoded(encoded2, signal, options.timeoutMs, {
+      maySignal: options.maySignal,
+      onNative: options.onNative,
+      onFrame: (frame) => options.onFrame(frame, secrets),
+      onContext: (source) => {
+        const value = closed(parseWireJson(source, CONTEXT_BYTES), [
+          "schema",
+          "messages"
+        ]);
+        if (value.schema !== "cadence-conversation-context/1")
+          throw new Error("Invalid checkpoint");
+        options.onContext(conversationMessages(value.messages, [
+          ...options.ownerSecrets(),
+          ...secrets
+        ]));
+      }
+    });
+  });
+}
 function runCheck(check, cwd, signal, service) {
   return runProcess({
     command: process.platform === "win32" ? (service?.environment ?? process.env).COMSPEC ?? "cmd.exe" : "/bin/sh",
@@ -20871,7 +22840,7 @@ function runCheck(check, cwd, signal, service) {
 }
 
 // src/service/check-recording.ts
-import { randomUUID as randomUUID13 } from "node:crypto";
+import { randomUUID as randomUUID16 } from "node:crypto";
 var CHECK_RAW_BYTES = 16 * 1024 * 1024;
 
 class CheckRecording {
@@ -20879,7 +22848,7 @@ class CheckRecording {
   link;
   checkId;
   source;
-  detailId = randomUUID13();
+  detailId = randomUUID16();
   raw = 0;
   bytes = 0;
   failed = false;
@@ -21161,18 +23130,39 @@ class TaskScheduler {
     if (this.episodes.size >= LIMITS.episodes || this.accounting.queued + assignments > LIMITS.queuedAssignments)
       throw new ContractError("capacity");
   }
-  reviewBarrier(operationId) {
+  reviewBarrier(operationId, signal) {
+    return this.acquireBarrier(operationId, false, signal);
+  }
+  conversationBarrier(operationId, signal) {
+    return this.acquireBarrier(operationId, true, signal);
+  }
+  acquireBarrier(operationId, conversation, signal) {
+    if (signal?.aborted)
+      throw new ContractError("stale");
     if (this.closed || this.options.owner.state !== "idle")
       throw new ContractError("quarantine");
     if (this.barriers.length >= 16 || this.barrier === operationId || this.barriers.some((b) => b.id === operationId))
       throw new ContractError("capacity");
-    const promise = new Promise((resolve5, reject) => {
+    const promise = new Promise((resolve8, reject) => {
+      const abort = () => {
+        const index = this.barriers.findIndex((row) => row.id === operationId);
+        if (index >= 0)
+          this.barriers.splice(index, 1)[0].reject(new ContractError("stale"));
+      };
       this.barriers.push({
         id: operationId,
         order: ++this.sequence,
-        resolve: resolve5,
-        reject
+        conversation,
+        resolve: (value) => {
+          signal?.removeEventListener("abort", abort);
+          resolve8(value);
+        },
+        reject: (error2) => {
+          signal?.removeEventListener("abort", abort);
+          reject(error2);
+        }
       });
+      signal?.addEventListener("abort", abort, { once: true });
     });
     this.pump();
     return promise;
@@ -21228,7 +23218,7 @@ class TaskScheduler {
     }
     const assignments = input.kind === "start" ? input.graph.assignments : input.kind === "generate-plan" ? [input.sources.planningAssignment(intent.identity.expected.model)] : [null];
     const nodes = assignments.map((assignment) => {
-      const childRunId = randomUUID14();
+      const childRunId = randomUUID17();
       return {
         assignment,
         childRunId,
@@ -21302,8 +23292,8 @@ class TaskScheduler {
     await Promise.resolve();
     this.job(e, () => this.initialize(e));
     while (e.jobs.size || !e.finished && e.target.state !== "unknown")
-      await new Promise((resolve5) => {
-        e.wake = resolve5;
+      await new Promise((resolve8) => {
+        e.wake = resolve8;
       });
     if (e.target.state === "settled")
       return { status: "settled" };
@@ -21466,7 +23456,7 @@ class TaskScheduler {
               throw new ContractError("quarantine");
           },
           release: () => {
-            if (this.barrier !== b.id || this.options.writer.quarantined || this.options.writer.pendingWrites)
+            if (this.barrier !== b.id || this.options.writer.quarantined || !b.conversation && this.options.writer.pendingWrites)
               throw new ContractError("quarantine");
             this.barrier = null;
             this.pump();
@@ -21558,13 +23548,13 @@ class TaskScheduler {
         await this.close(e, e.reason ?? "stale-dependency");
         return;
       }
-      let request;
+      let request3;
       try {
         if (e.input.kind === "generate-plan") {
-          request = e.input.sources.planningRequest(e.input.task, e.identity.context.model, e.target.runId, n.childRunId);
+          request3 = e.input.sources.planningRequest(e.input.task, e.identity.context.model, e.target.runId, n.childRunId);
         } else {
           const handoff = dependencyHandoff(this.options.reader, e.input.graph, e.identity, e.target.runId, n.assignment, this.options.writer.committedSeq, before, e.after);
-          request = e.input.sources.request(e.input.task, e.input.graph, e.target.runId, n.childRunId, n.assignment, handoff);
+          request3 = e.input.sources.request(e.input.task, e.input.graph, e.target.runId, n.childRunId, n.assignment, handoff);
           await this.fact(e, {
             kind: "handoff",
             childRunId: n.childRunId,
@@ -21591,8 +23581,8 @@ class TaskScheduler {
         return;
       }
       const auth = this.options.models.prepareTracked({
-        request,
-        operationId: randomUUID14(),
+        request: request3,
+        operationId: randomUUID17(),
         epoch: e.link.epoch,
         timeoutMs: this.timeout,
         signal: n.abort.signal,
@@ -21619,7 +23609,7 @@ class TaskScheduler {
       const launch = await this.options.writer.processes.launchIntent(link, e.link.operationId);
       if (launch.status !== "committed")
         throw new ContractError("recording-exhausted");
-      const worker = preparedWorker(prepared.prepared, request, link, this.options.ownerSecrets, this.timeout, () => this.owned());
+      const worker = preparedWorker(prepared.prepared, request3, link, this.options.ownerSecrets, this.timeout, () => this.owned());
       const original = worker.launch(n.abort.signal, this.options.writer.capture(link));
       this.options.owner.trackWorker(original, () => {
         if (this.owned())
@@ -21803,7 +23793,7 @@ class TaskScheduler {
       throw new ContractError("capacity");
     let consumed = false;
     try {
-      const text2 = sanitizeText(view.text, this.options.ownerSecrets), bytes = Buffer.from(text2), detailId = randomUUID14(), observationId = randomUUID14();
+      const text2 = sanitizeText(view.text, this.options.ownerSecrets), bytes = Buffer.from(text2), detailId = randomUUID17(), observationId = randomUUID17();
       const events = [
         {
           kind: "content-begin",
@@ -21934,7 +23924,7 @@ class TaskActions {
   cwd;
   launchCwd;
   checkEnvironment;
-  cwdId = randomUUID15();
+  cwdId = randomUUID18();
   generation = 0;
   checkEnvGeneration = 1;
   legacyConfigRev;
@@ -21957,9 +23947,9 @@ class TaskActions {
       selection: structuredClone(options.selection),
       ownerSecrets: [...options.ownerSecrets]
     };
-    this.cwd = realpathSync6(options.cwd);
+    this.cwd = realpathSync7(options.cwd);
     const config = readHostConfig(options.host.coordination);
-    if (!config || realpathSync6(config.cwd) !== this.cwd)
+    if (!config || realpathSync7(config.cwd) !== this.cwd)
       throw new ContractError("unsupported-context");
     this.launchCwd = config.cwd;
     this.checkEnvironment = options.host.checkEnvironment;
@@ -21984,7 +23974,7 @@ class TaskActions {
       lookup: (id) => options.host.writer.lookup(id),
       lookupForAdmission: (id) => options.host.writer.lookupForAdmission(id),
       commit: (intent) => this.commit(intent)
-    }, this, { now: () => Date.now(), uuid: () => randomUUID15() });
+    }, this, { now: () => Date.now(), uuid: () => randomUUID18() });
     options.host.writer.bindReviewContext((taskId, published) => {
       const current2 = this.reviewing.get(taskId);
       if (!current2)
@@ -22062,6 +24052,14 @@ class TaskActions {
     h.owner.trackAccepted(original);
     return result;
   }
+  conversationBoundary(barrier) {
+    barrier.assertHeld();
+    this.options.host.owner.lease.assert();
+    if (!Number.isSafeInteger(this.generation + 1))
+      throw new ContractError("capacity");
+    ++this.generation;
+    this.admission.revokeGrants();
+  }
   async settledAll() {
     await Promise.all([...this.accepted.values()].map((a) => a.original));
   }
@@ -22075,7 +24073,7 @@ class TaskActions {
     if (this.closed || this.options.host.owner.state !== "idle" || this.options.host.writer.quarantined)
       throw new ContractError("quarantine");
     this.options.host.owner.lease.assert();
-    if (!this.sources.current() || realpathSync6(this.cwd) !== this.cwd || realpathSync6(this.launchCwd) !== this.cwd || this.options.host.checkEnvironment !== this.checkEnvironment)
+    if (!this.sources.current() || realpathSync7(this.cwd) !== this.cwd || realpathSync7(this.launchCwd) !== this.cwd || this.options.host.checkEnvironment !== this.checkEnvironment)
       throw new ContractError("stale");
   }
   choiceSnapshot() {
@@ -22191,7 +24189,7 @@ class TaskActions {
     const access = this.currentAccess();
     const committedSeq = snapshot ?? h.writer.committedSeq;
     const selected2 = taskId ? h.coordination.store.loadSnapshot(taskId) : null;
-    if (selected2 && realpathSync6(selected2.record.cwd) !== this.cwd)
+    if (selected2 && realpathSync7(selected2.record.cwd) !== this.cwd)
       throw new ContractError("unsupported-context");
     const secrets = this.viewSecrets();
     const roles = this.sources.roles.map(({ role: role2, sha256 }) => ({
@@ -22256,7 +24254,7 @@ class TaskActions {
           revision: selected2.record.revision,
           identity: selected2.identity,
           graphRevision: graph?.revision ?? null,
-          graphIdentity: graph ? hash(canonicalJson(graph)) : null
+          graphIdentity: graph ? hash2(canonicalJson(graph)) : null
         } : null
       }
     } : {
@@ -22313,25 +24311,25 @@ class TaskActions {
     };
   }
   current(input, signal) {
-    const request = decodeCurrentRequest(input);
+    const request3 = decodeCurrentRequest(input);
     if (signal?.aborted)
       throw new ContractError("unavailable");
-    if (request.storeId !== this.options.host.reader.storeId)
+    if (request3.storeId !== this.options.host.reader.storeId)
       throw new ContractError("stale");
-    return this.observeCurrent(request.taskId).view;
+    return this.observeCurrent(request3.taskId).view;
   }
   currentChanges(input, signal) {
-    const request = decodeCurrentChangesRequest(input);
+    const request3 = decodeCurrentChangesRequest(input);
     if (signal?.aborted)
       throw new ContractError("unavailable");
-    if (request.storeId !== this.options.host.reader.storeId)
+    if (request3.storeId !== this.options.host.reader.storeId)
       throw new ContractError("stale");
-    const { view, changes, observation, secrets } = this.observeCurrent(request.taskId);
+    const { view, changes, observation, secrets } = this.observeCurrent(request3.taskId);
     if (!view.task)
       throw new ContractError("unavailable");
     const text2 = sanitizeText(changes.text, secrets);
     return decodeCurrentChanges({
-      request,
+      request: request3,
       workspaceId: view.workspaceId,
       epoch: view.epoch,
       committedSeq: view.committedSeq,
@@ -22461,7 +24459,7 @@ class TaskActions {
       if (selected2?.record.kind !== "code")
         throw new ContractError("forbidden");
       this.scheduler.assertCapacity(1);
-      this.sources.planningRequest(selected2.record, selection, randomUUID15(), randomUUID15());
+      this.sources.planningRequest(selected2.record, selection, randomUUID18(), randomUUID18());
     }
     if (action.kind === "check") {
       if (selected2?.record.kind !== "code")
@@ -22478,7 +24476,7 @@ class TaskActions {
       this.sources.validate(graph, selection);
       this.scheduler.assertCapacity(graph.assignments.length);
       for (const assignment of graph.assignments)
-        this.sources.request(selected2.record, graph, randomUUID15(), randomUUID15(), assignment, { graphRevision: graph.revision, inputs: [] });
+        this.sources.request(selected2.record, graph, randomUUID18(), randomUUID18(), assignment, { graphRevision: graph.revision, inputs: [] });
     }
     const checks = taskId ? this.checks(taskId).selections : this.configuredChecks();
     if (sanitizeText(canonicalJson(checks), current2.secrets) !== canonicalJson(checks))
@@ -22513,7 +24511,7 @@ class TaskActions {
     if (selected2?.identity !== version.task.identity || selected2.record.revision !== version.task.revision)
       return false;
     const saved = this.savedGraph(version.task.id);
-    return !!saved && canonicalJson(saved.graph) === canonicalJson(graph) && hash(canonicalJson(graph)) === version.task.graphIdentity;
+    return !!saved && canonicalJson(saved.graph) === canonicalJson(graph) && hash2(canonicalJson(graph)) === version.task.graphIdentity;
   }
   run(id) {
     return this.scheduler.run(id);
@@ -22588,7 +24586,7 @@ class TaskActions {
     if (!selected2 || selected2.identity !== expected.task.identity)
       throw new ContractError("stale");
     const graph = action.kind === "start" ? plan?.graph ?? this.defaultGraph(selected2.record, selected2.identity, expected.model) : null;
-    if (graph && hash(canonicalJson(graph)) !== expected.task.graphIdentity)
+    if (graph && hash2(canonicalJson(graph)) !== expected.task.graphIdentity)
       throw new ContractError("stale");
     let own2 = {
       revision: selected2.record.revision,
@@ -22690,14 +24688,14 @@ class TaskActions {
         throw new ContractError("stale");
       const graph = this.savedGraph(task.id, snapshot);
       const currentGraph = graph?.graph ?? (this.options.choice ? this.defaultGraph(selected2.record, selected2.identity, expected.model) : null);
-      if ((currentGraph ? hash(canonicalJson(currentGraph)) : null) !== task.graphIdentity || (currentGraph?.revision ?? null) !== task.graphRevision)
+      if ((currentGraph ? hash2(canonicalJson(currentGraph)) : null) !== task.graphIdentity || (currentGraph?.revision ?? null) !== task.graphRevision)
         throw new ContractError("stale");
       const reads = snapshotReads();
       const validate = (published) => {
         this.assertChoice(expected);
         held.assertHeld();
         const actual = h.coordination.store.loadSnapshot(task.id), want = published ?? task;
-        if (!actual || actual.identity !== want.identity || actual.record.revision !== want.revision || realpathSync6(actual.record.cwd) !== this.cwd || this.generation !== expected.checkoutGeneration || h.writer.controlRevision(task.id) !== expected.controlRev + 1 || this.scheduler.activeTask(task.id))
+        if (!actual || actual.identity !== want.identity || actual.record.revision !== want.revision || realpathSync7(actual.record.cwd) !== this.cwd || this.generation !== expected.checkoutGeneration || h.writer.controlRevision(task.id) !== expected.controlRev + 1 || this.scheduler.activeTask(task.id))
           throw new ContractError("stale");
         const changes2 = captureChanges(h.coordination.store.root);
         if (changes2.fingerprint !== expected.observation.identity || changes2.complete !== expected.observation.complete)
@@ -22707,7 +24705,7 @@ class TaskActions {
           identity: selected2.identity,
           plan: selected2.record.plan
         }));
-        if ((proven?.reference.sha256 ?? (currentGraph ? hash(canonicalJson(currentGraph)) : null)) !== task.graphIdentity)
+        if ((proven?.reference.sha256 ?? (currentGraph ? hash2(canonicalJson(currentGraph)) : null)) !== task.graphIdentity)
           throw new ContractError("stale");
         const current3 = this.reviewObservation(action.runId, expected, snapshot, reads);
         if (current3.checks.revision !== action.checksRevision || current3.issues.length && !action.acceptIssues)
@@ -22723,7 +24721,7 @@ class TaskActions {
         runId: action.runId,
         operationId: intent.operationId
       };
-      const view = captureChanges(h.coordination.store.root), observationId = randomUUID15();
+      const view = captureChanges(h.coordination.store.root), observationId = randomUUID18();
       const changes = await this.reviewContent(port, link, "changes", observationId, view.text, view.complete);
       validate();
       await recordOwner(h.writer, link, [
@@ -22739,7 +24737,7 @@ class TaskActions {
         }
       ]);
       validate();
-      const reviewId = randomUUID15();
+      const reviewId = randomUUID18();
       const reviewedRun = h.reader.reviewRun(task.id, action.runId, snapshot);
       const text2 = canonicalJson({
         kind: "human-review",
@@ -22804,7 +24802,7 @@ class TaskActions {
       throw new ContractError("capacity");
     let consumed = false;
     try {
-      const text2 = sanitizeText(source, this.checkSecrets()), bytes = Buffer.from(text2), detailId = randomUUID15();
+      const text2 = sanitizeText(source, this.checkSecrets()), bytes = Buffer.from(text2), detailId = randomUUID18();
       const events = [
         {
           kind: "content-begin",
@@ -22876,6 +24874,745 @@ class TaskActions {
   }
 }
 
+// src/service/workbench.ts
+import { opendirSync as opendirSync8 } from "node:fs";
+import { join as join23 } from "node:path";
+
+// src/service/conversations.ts
+import { randomUUID as randomUUID19 } from "node:crypto";
+import { lstatSync as lstatSync13, opendirSync as opendirSync7, realpathSync as realpathSync8, statfsSync as statfsSync2 } from "node:fs";
+import { dirname as dirname14, join as join22 } from "node:path";
+var TURN_BYTES = 384 * 1024;
+var META_BYTES = 64 * 1024;
+var SESSION_LIMIT = 200;
+
+class ConversationCapture {
+  turn;
+  save;
+  secrets;
+  details = new Map;
+  messageText = new Map;
+  constructor(turn, save, secrets) {
+    this.turn = turn;
+    this.save = save;
+    this.secrets = secrets;
+  }
+  item(id, role2) {
+    let item = this.turn.items.find((i) => i.id === id);
+    if (!item) {
+      if (this.turn.items.length >= 256)
+        throw new ContractError("capacity");
+      item = { id, role: role2, text: "", name: "", args: "", error: false };
+      this.turn.items.push(item);
+      try {
+        canonicalJson(this.turn, TURN_BYTES - 2048);
+      } catch (error2) {
+        this.turn.items.pop();
+        this.turn.notice = "Conversation capture limit exceeded.";
+        throw error2;
+      }
+    }
+    return item;
+  }
+  update(item, field, value, maximum) {
+    const before = item[field];
+    try {
+      if (Buffer.byteLength(value) > maximum)
+        throw new ContractError("capacity");
+      item[field] = value;
+      canonicalJson(this.turn, TURN_BYTES - 2048);
+    } catch (error2) {
+      item[field] = before;
+      this.turn.notice = "Conversation capture limit exceeded.";
+      throw error2;
+    }
+  }
+  accept(frame) {
+    const e = frame.event;
+    if (e.kind === "detail-begin") {
+      if (e.descriptor.owner.kind === "context" || e.descriptor.owner.kind === "handoff")
+        return;
+      if (this.details.size >= 64)
+        throw new ContractError("capacity");
+      this.details.set(e.detailId, {
+        descriptor: e.descriptor,
+        sanitizer: new DetailSanitizer(e.descriptor.encoding, this.secrets()),
+        text: ""
+      });
+    } else if (e.kind === "detail-chunk" || e.kind === "detail-end") {
+      const d = this.details.get(e.detailId);
+      if (!d)
+        return;
+      d.text += e.kind === "detail-chunk" ? d.sanitizer.write(e.text) : d.sanitizer.end();
+      if (Buffer.byteLength(d.text) > 256 * 1024)
+        throw new ContractError("capacity");
+      const o = d.descriptor.owner;
+      if (o.kind === "message") {
+        const role2 = this.turn.items.find((i) => i.id === o.messageId)?.role;
+        if (role2 === "assistant" && o.stage === "stream") {
+          this.messageText.set(o.blockId, {
+            messageId: o.messageId,
+            text: d.text
+          });
+          this.update(this.item(o.messageId, "assistant"), "text", [...this.messageText.values()].filter((block) => block.messageId === o.messageId).map((block) => block.text).join(""), 256 * 1024);
+        }
+      } else if (o.kind === "message-final") {
+        const item = this.turn.items.find((i) => i.id === o.messageId);
+        if (item?.role === "assistant")
+          this.update(item, "text", d.text, 256 * 1024);
+      } else if (o.kind === "tool") {
+        const item = this.item(o.callId, "tool");
+        if (o.stage === "execution-arguments" || o.stage === "arguments-final")
+          this.update(item, "args", d.text, 64 * 1024);
+        if (o.stage === "result" || o.stage === "update-snapshot")
+          this.update(item, "text", d.text, 256 * 1024);
+      }
+      if (e.kind === "detail-end")
+        this.details.delete(e.detailId);
+    } else if (e.kind === "message-start" && e.role === "assistant") {
+      this.item(e.messageId, "assistant");
+    } else if (e.kind === "tool-start" || e.kind === "tool-end") {
+      const item = this.item(e.callId, "tool");
+      this.update(item, "name", sanitizeText(e.name, this.secrets()), 128);
+      if (e.kind === "tool-end")
+        item.error = e.isError;
+    } else if (e.kind === "worker-failure")
+      this.turn.notice = `worker-failure: ${e.code}`;
+    else if (e.kind === "omitted-block")
+      this.turn.notice = "Hidden thinking, signatures and media are not retained.";
+    if ([...this.details.values()].reduce((size, detail) => size + Buffer.byteLength(detail.text) + detail.sanitizer.retainedBytes, 0) > TURN_BYTES)
+      throw new ContractError("capacity");
+    canonicalJson(this.turn, TURN_BYTES);
+    if (e.kind === "message-end") {
+      for (const [id, block] of this.messageText)
+        if (block.messageId === e.messageId)
+          this.messageText.delete(id);
+    }
+    if (e.kind === "message-end" || e.kind === "tool-end")
+      this.save();
+  }
+}
+
+class Conversations {
+  o;
+  root;
+  cwd;
+  active = new Map;
+  constructor(o) {
+    this.o = o;
+    this.root = join22(o.coordination.directory, "conversations-v1");
+    this.cwd = realpathSync8(o.cwd);
+  }
+  currentDirectory() {
+    const current2 = resolveWorkspace(this.o.cwd);
+    return current2.root === this.o.coordination.store.root && current2.cwd === this.cwd;
+  }
+  get files() {
+    return this.o.coordination.files;
+  }
+  path(id, name) {
+    return join22(this.root, "turns", decodeId(id), name);
+  }
+  identityPath(id) {
+    return join22(this.root, "identities", `${decodeId(id)}.json`);
+  }
+  metadataPath(id) {
+    return join22(this.root, "sessions", `${decodeId(id)}.json`);
+  }
+  read(path, max) {
+    const value = this.files.read(path, max);
+    return value ? parseWireJson(value.bytes.toString("utf8"), max) : undefined;
+  }
+  write(path, value, max, expected) {
+    this.o.owner.lease.assert();
+    const source = canonicalJson(value, max);
+    try {
+      return expected ? this.files.replace(path, expected, source, max) : this.files.create(path, source, max);
+    } catch (error2) {
+      this.o.owner.quarantine();
+      throw error2;
+    }
+  }
+  metadata(id) {
+    const value = this.read(this.metadataPath(id), META_BYTES);
+    if (value === undefined)
+      return null;
+    const identity2 = closed(this.read(this.identityPath(id), META_BYTES), [
+      "schema",
+      "id",
+      "cwd"
+    ]);
+    if (identity2.schema !== "cadence-conversation/1" || identity2.id !== id || identity2.cwd !== this.cwd)
+      throw new ContractError("corrupt-selected");
+    const m = closed(value, ["id", "title", "turns", "checkpoint"]);
+    const turns = list(m.turns, 1000, decodeId);
+    if (!turns.length || new Set(turns).size !== turns.length || m.id !== id || m.checkpoint !== null && !turns.includes(decodeId(m.checkpoint)))
+      throw new ContractError("corrupt-selected");
+    return {
+      id,
+      title: text(m.title, 512, true),
+      turns,
+      checkpoint: m.checkpoint === null ? null : decodeId(m.checkpoint)
+    };
+  }
+  turn(id) {
+    const live = this.active.get(id);
+    const turn = live?.turn ?? decodeChatTurn(this.read(this.path(id, "turn.json"), TURN_BYTES));
+    if (turn.id !== id)
+      throw new ContractError("corrupt-selected");
+    return !live && ["queued", "running"].includes(turn.status) ? {
+      ...turn,
+      status: "unknown",
+      notice: "Original work is not observed. No automatic replay."
+    } : turn;
+  }
+  summary(meta) {
+    const head = meta.turns.at(-1), turn = this.turn(head);
+    const accepted2 = closed(this.read(this.path(head, "accepted.json"), META_BYTES), ["command", "at"]);
+    const command = decodeWorkbenchCommand(accepted2.command);
+    if (command.kind !== "send" || command.commandId !== head || command.conversationId !== meta.id || command.model.epoch !== turn.epoch)
+      throw new ContractError("corrupt-selected");
+    return {
+      id: meta.id,
+      title: meta.title,
+      head,
+      status: turn.status,
+      updatedAt: integer(accepted2.at, 0)
+    };
+  }
+  liveSummary(live) {
+    return {
+      id: live.conversationId,
+      title: live.title,
+      head: live.turn.id,
+      status: live.turn.status,
+      updatedAt: live.acceptedAt
+    };
+  }
+  list() {
+    this.o.owner.lease.assert();
+    const dir = join22(this.root, "sessions");
+    if (!this.files.directory(dir))
+      return {
+        kind: "conversations",
+        entries: [...this.active.values()].map((live) => this.liveSummary(live))
+      };
+    const entries = [], opened = opendirSync7(dir);
+    try {
+      for (let e = opened.readSync();e; e = opened.readSync()) {
+        if (!e.isFile() || !e.name.endsWith(".json") || entries.length >= SESSION_LIMIT)
+          throw new ContractError("capacity");
+        const meta = this.metadata(decodeId(e.name.slice(0, -5)));
+        if (!meta)
+          throw new ContractError("corrupt-selected");
+        entries.push(this.summary(meta));
+      }
+    } finally {
+      opened.closeSync();
+    }
+    for (const live of this.active.values()) {
+      const at = entries.findIndex((entry) => entry.id === live.conversationId);
+      if (at < 0)
+        entries.push(this.liveSummary(live));
+      else
+        entries[at] = this.liveSummary(live);
+    }
+    return {
+      kind: "conversations",
+      entries: entries.sort((a, b) => b.updatedAt - a.updatedAt)
+    };
+  }
+  view(id, before) {
+    this.o.owner.lease.assert();
+    const meta = this.metadata(id);
+    if (!meta) {
+      const live = before === null ? [...this.active.values()].find((turn) => turn.conversationId === id) : undefined;
+      return {
+        kind: "conversation",
+        summary: live ? this.liveSummary(live) : null,
+        turns: live ? [
+          {
+            ...structuredClone(live.turn),
+            notice: [
+              "Current metadata unavailable; showing the active turn only. No state was reconstructed.",
+              live.turn.notice
+            ].filter(Boolean).join(`
+`)
+          }
+        ] : [],
+        before: null
+      };
+    }
+    let end = before === null ? meta.turns.length : meta.turns.indexOf(before);
+    if (end < 0)
+      throw new ContractError("stale");
+    const turns = [];
+    let bytes = 0;
+    while (end > 0 && turns.length < 20) {
+      const turn = this.turn(meta.turns[end - 1]), size = Buffer.byteLength(canonicalJson(turn, TURN_BYTES));
+      if (bytes + size > 400 * 1024)
+        break;
+      bytes += size;
+      turns.unshift(structuredClone(turn));
+      --end;
+    }
+    return {
+      kind: "conversation",
+      summary: this.summary(meta),
+      turns,
+      before: end > 0 ? turns[0].id : null
+    };
+  }
+  capacity() {
+    let bytes = 0, count2 = 0;
+    const visit = (directory, depth) => {
+      if (depth > 4 || !this.files.directory(directory))
+        return;
+      const dir = opendirSync7(directory);
+      try {
+        for (let entry = dir.readSync();entry; entry = dir.readSync()) {
+          if (++count2 > 1e4)
+            throw new ContractError("capacity");
+          const path = join22(directory, entry.name);
+          if (entry.isDirectory())
+            visit(path, depth + 1);
+          else if (entry.isFile())
+            bytes += lstatSync13(path).size;
+          else
+            throw new ContractError("corrupt-selected");
+          if (bytes + (this.active.size + 1) * (CONTEXT_BYTES + TURN_BYTES + 128 * 1024) > 512 * 1024 * 1024)
+            throw new ContractError("capacity");
+        }
+      } finally {
+        dir.closeSync();
+      }
+    };
+    visit(this.root, 0);
+  }
+  send(input) {
+    this.o.owner.lease.assert();
+    const command = {
+      ...input,
+      text: sanitizeText(input.text, this.o.secrets())
+    };
+    const prior = this.read(this.path(input.commandId, "accepted.json"), META_BYTES);
+    if (prior !== undefined) {
+      const saved = closed(prior, ["command", "at"]);
+      if (canonicalJson(saved.command) !== canonicalJson(command))
+        throw new ContractError("conflict");
+      return { kind: "accepted", commandId: input.commandId };
+    }
+    if (this.files.directory(dirname14(this.path(input.commandId, "accepted.json"))))
+      throw new ContractError("corrupt-selected");
+    if (this.o.owner.state !== "idle")
+      throw new ContractError("quarantine");
+    const choice = this.o.choice.snapshot();
+    if (!choice.selected || canonicalJson(choice.version) !== canonicalJson(input.model))
+      throw new ContractError("stale");
+    this.o.models.assertCurrent(choice.selected);
+    if (!this.currentDirectory())
+      throw new ContractError("stale");
+    const beforeMeta = this.files.read(this.metadataPath(input.conversationId), META_BYTES);
+    const meta = this.metadata(input.conversationId);
+    this.files.assert(this.metadataPath(input.conversationId), beforeMeta, META_BYTES);
+    if (!meta && this.files.read(this.identityPath(input.conversationId), META_BYTES))
+      throw new ContractError("corrupt-selected");
+    if ((meta?.turns.at(-1) ?? null) !== input.head)
+      throw new ContractError("stale");
+    if (meta && this.turn(input.head).status !== "completed")
+      throw new ContractError("conflict");
+    if (this.active.size >= 8 || (meta?.turns.length ?? 0) >= 1000 || !meta && this.list().entries.length >= SESSION_LIMIT)
+      throw new ContractError("capacity");
+    if (!input.text.trim())
+      throw new ContractError("invalid");
+    if (this.list().entries.some((entry) => entry.status === "unknown"))
+      throw new ContractError("quarantine");
+    this.capacity();
+    const space = statfsSync2(this.o.coordination.directory);
+    if (space.bavail * space.bsize < LIMITS.freeSpaceFloorBytes)
+      throw new ContractError("capacity");
+    const turn = {
+      id: input.commandId,
+      epoch: input.model.epoch,
+      status: "queued",
+      notice: "",
+      items: [
+        {
+          id: "user",
+          role: "user",
+          text: command.text,
+          name: "",
+          args: "",
+          error: false
+        }
+      ]
+    };
+    const next = meta ?? {
+      id: input.conversationId,
+      title: [...command.text.trim()].slice(0, 100).join("") || "Conversation",
+      turns: [],
+      checkpoint: null
+    };
+    const previous = next.checkpoint ? this.path(next.checkpoint, "context.json") : null;
+    const previousFile = previous ? this.files.read(previous, CONTEXT_BYTES) : undefined;
+    if (previous && !previousFile)
+      throw new ContractError("corrupt-selected");
+    const abort = new AbortController;
+    let begin;
+    const ready2 = new Promise((resolve8) => {
+      begin = resolve8;
+    });
+    const original = ready2.then(() => this.run(command, turn, previous, previousFile, next, abort));
+    const live = {
+      turn,
+      abort,
+      original,
+      conversationId: next.id,
+      title: next.title,
+      acceptedAt: Date.now(),
+      turnFile: null,
+      metaFile: null
+    };
+    this.active.set(turn.id, live);
+    this.o.owner.trackConversation(original, () => abort.abort());
+    try {
+      if (!meta)
+        this.write(this.identityPath(next.id), { schema: "cadence-conversation/1", id: next.id, cwd: this.cwd }, META_BYTES);
+      this.write(this.path(turn.id, "accepted.json"), { command, at: live.acceptedAt }, META_BYTES);
+      live.turnFile = this.write(this.path(turn.id, "turn.json"), turn, TURN_BYTES);
+      next.turns.push(turn.id);
+      live.metaFile = this.write(this.metadataPath(next.id), next, META_BYTES, beforeMeta);
+    } catch (error2) {
+      abort.abort();
+      begin();
+      throw error2;
+    }
+    begin();
+    return { kind: "accepted", commandId: turn.id };
+  }
+  origin(taskId) {
+    this.o.owner.lease.assert();
+    const value = this.read(join22(this.root, "task-links", `${decodeId(taskId)}.json`), META_BYTES);
+    if (value === undefined)
+      return { kind: "task-origin", taskId, conversationId: null };
+    const row = closed(value, ["conversationId"]);
+    return {
+      kind: "task-origin",
+      taskId,
+      conversationId: decodeId(row.conversationId)
+    };
+  }
+  link(taskId, conversationId, epoch) {
+    this.o.owner.lease.assert();
+    if (epoch !== this.o.owner.lease.registration.epoch || this.o.owner.state !== "idle")
+      throw new ContractError("stale");
+    if (!this.metadata(conversationId) || !this.o.coordination.store.load(taskId))
+      throw new ContractError("unavailable");
+    const existing = this.origin(taskId).conversationId;
+    if (existing !== null && existing !== conversationId)
+      throw new ContractError("conflict");
+    if (existing === null)
+      this.write(join22(this.root, "task-links", `${decodeId(taskId)}.json`), { conversationId }, META_BYTES);
+  }
+  interrupt(id, turnId, epoch) {
+    this.o.owner.lease.assert();
+    const live = this.active.get(turnId);
+    if (live) {
+      if (live.conversationId !== id || live.turn.epoch !== epoch)
+        throw new ContractError("stale");
+      live.abort.abort();
+      return;
+    }
+    const meta = this.metadata(id);
+    if (!meta?.turns.includes(turnId))
+      throw new ContractError("invalid");
+    if (this.turn(turnId).epoch !== epoch)
+      throw new ContractError("stale");
+    this.active.get(turnId)?.abort.abort();
+  }
+  async run(command, turn, previous, previousFile, meta, abort) {
+    let barrier;
+    let authSettled;
+    let uncertain = false;
+    let native = {
+      outcome: "failed",
+      closure: "not-launched",
+      exitCode: null,
+      signal: null,
+      durationMs: 0,
+      stdin: "not-required",
+      final: "missing",
+      cleanup: "settled",
+      capture: {
+        observed: "incomplete",
+        source: "unavailable",
+        redacted: false,
+        omissions: ["gap"]
+      }
+    };
+    const live = this.active.get(turn.id);
+    const save = () => {
+      if (!live?.turnFile)
+        throw new ContractError("corrupt-selected");
+      live.turnFile = this.write(this.path(turn.id, "turn.json"), turn, TURN_BYTES, live.turnFile);
+    };
+    const current2 = () => {
+      if (abort.signal.aborted || this.o.owner.state !== "idle" || !this.currentDirectory())
+        return false;
+      if (previous)
+        this.files.assert(previous, previousFile, CONTEXT_BYTES);
+      return true;
+    };
+    try {
+      if (!current2())
+        throw new ContractError("stale");
+      barrier = await this.o.actions.scheduler.conversationBarrier(turn.id, abort.signal);
+      barrier.assertHeld();
+      this.o.actions.conversationBoundary(barrier);
+      if (!current2())
+        throw new ContractError("stale");
+      const choice = this.o.choice.snapshot(), selected2 = choice.selected;
+      if (!selected2 || command.model.epoch !== choice.version.epoch || command.model.configRev !== choice.version.configRev || command.model.catalogId !== choice.version.catalogId)
+        throw new ContractError("stale");
+      const request3 = decodeWorkerPublicRequest({
+        protocol: 2,
+        taskId: meta.id,
+        taskKind: "code",
+        runId: turn.id,
+        childRunId: randomUUID19(),
+        assignmentId: "conversation",
+        purpose: "edit",
+        model: selected2,
+        role: {
+          role: "implementation-worker",
+          sha256: hash2("Ordinary conversation.")
+        },
+        context: "",
+        instructions: "Ordinary conversation.",
+        prompt: command.text,
+        handoff: { graphRevision: 1, inputs: [] }
+      });
+      const auth = this.o.models.prepareTracked({
+        request: request3,
+        operationId: randomUUID19(),
+        epoch: turn.epoch,
+        timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
+        signal: abort.signal,
+        current: current2,
+        journal: {
+          preparation: (value) => this.write(this.path(turn.id, "auth-intent.json"), value, META_BYTES),
+          settlement: (value) => this.write(this.path(turn.id, "auth-settled.json"), value, META_BYTES)
+        }
+      });
+      authSettled = auth.settled;
+      const prepared = await auth.result;
+      if (prepared.status !== "prepared" || !current2())
+        throw new ContractError("auth-unavailable");
+      turn.status = "running";
+      save();
+      this.write(this.path(turn.id, "launch.json"), { epoch: turn.epoch, childRunId: request3.childRunId }, META_BYTES);
+      let credentials = [];
+      let checkpoint;
+      const capture = new ConversationCapture(turn, save, () => [
+        ...this.o.secrets(),
+        ...credentials
+      ]);
+      const running = Promise.resolve().then(() => launchConversation(prepared.prepared, {
+        previous,
+        agentDir: this.o.agentDir
+      }, abort.signal, {
+        timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
+        ownerSecrets: this.o.secrets,
+        onContext: (messages) => {
+          checkpoint = messages;
+        },
+        maySignal: () => {
+          try {
+            this.o.owner.lease.assert();
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        onNative: (value) => {
+          native = value;
+        },
+        onFrame: (frame, secrets) => {
+          credentials = secrets;
+          capture.accept(frame);
+        }
+      }));
+      const tracked = running.then(() => native);
+      this.o.owner.trackConversationProcess(tracked, () => abort.abort());
+      const result = await running;
+      uncertain = !result.closed;
+      turn.status = result.outcome;
+      if (result.outcome === "completed") {
+        if (!checkpoint)
+          throw new ContractError("corrupt-selected");
+        this.write(this.path(turn.id, "context.json"), { schema: "cadence-conversation-context/1", messages: checkpoint }, CONTEXT_BYTES);
+        meta.checkpoint = turn.id;
+        if (!live?.metaFile)
+          throw new ContractError("corrupt-selected");
+        live.metaFile = this.write(this.metadataPath(meta.id), meta, META_BYTES, live.metaFile);
+      }
+    } catch (error2) {
+      uncertain ||= this.o.owner.state === "quarantined";
+      turn.status = uncertain ? "unknown" : abort.signal.aborted ? "canceled" : "failed";
+      turn.notice ||= error2 instanceof ContractError ? error2.code : "Conversation failed.";
+    } finally {
+      await authSettled;
+      uncertain ||= this.o.owner.state === "quarantined";
+      if (uncertain)
+        turn.status = "unknown";
+      try {
+        this.write(this.path(turn.id, "native.json"), native, META_BYTES);
+        if (barrier && !uncertain && this.o.owner.state === "idle")
+          this.o.actions.conversationBoundary(barrier);
+        if (turn.status !== "completed")
+          turn.notice = [
+            turn.notice,
+            "Start a new conversation; incomplete context is not replayed."
+          ].filter(Boolean).join(`
+`);
+        save();
+      } catch {
+        uncertain = true;
+      }
+      if (uncertain)
+        this.o.owner.quarantine();
+      else if (this.o.owner.state === "idle")
+        barrier?.release();
+      this.active.delete(turn.id);
+    }
+    return { status: uncertain ? "uncertain" : "settled" };
+  }
+}
+
+// src/service/workbench.ts
+class Workbench {
+  o;
+  conversations;
+  files;
+  projectRoot;
+  opening = new Map;
+  constructor(o) {
+    this.o = o;
+    this.conversations = new Conversations(o);
+    if (this.conversations.list().entries.some((entry) => entry.status === "unknown"))
+      throw new ContractError("quarantine");
+    this.files = new WorkbenchFiles(o.cwd, [o.coordination.files.namespace, o.agentDir], o.secrets);
+    this.projectRoot = join23(o.coordination.files.namespace, "workbench-projects-v1");
+  }
+  read(value) {
+    const request3 = decodeWorkbenchRead(value);
+    this.o.owner.lease.assert();
+    switch (request3.kind) {
+      case "task-origin":
+        return this.conversations.origin(request3.taskId);
+      case "conversations":
+        return this.conversations.list();
+      case "conversation":
+        return this.conversations.view(request3.id, request3.before);
+      case "files":
+        return this.files.list(request3.path);
+      case "file":
+        return this.files.read(request3.path);
+      case "directories":
+        return this.files.list(request3.path, true);
+      case "projects":
+        return this.projects();
+    }
+  }
+  projects() {
+    const secrets = this.o.secrets();
+    if (sanitizeText(this.o.cwd, secrets) !== this.o.cwd)
+      throw new ContractError("forbidden");
+    const entries = [{ path: this.o.cwd, current: true }], files = this.o.coordination.files;
+    if (!files.directory(this.projectRoot))
+      return { kind: "projects", entries };
+    const directory = opendirSync8(this.projectRoot);
+    try {
+      for (let e = directory.readSync();e; e = directory.readSync()) {
+        if (!e.isFile() || !/^[a-f0-9]{64}\.json$/.test(e.name) || entries.length > 128)
+          throw new ContractError("corrupt-selected");
+        const saved = files.read(join23(this.projectRoot, e.name));
+        if (!saved)
+          throw new ContractError("corrupt-selected");
+        const row = closed(parseWireJson(saved.bytes.toString("utf8")), [
+          "path"
+        ]), path = text(row.path, 4096, true);
+        if (`${hash2(path)}.json` !== e.name)
+          throw new ContractError("corrupt-selected");
+        if (path !== this.o.cwd && sanitizeText(path, secrets) === path)
+          entries.push({ path, current: false });
+      }
+    } finally {
+      directory.closeSync();
+    }
+    return { kind: "projects", entries };
+  }
+  command(value) {
+    const request3 = decodeWorkbenchCommand(value);
+    if (request3.kind === "send")
+      return this.conversations.send(request3);
+    if (request3.kind === "link-task") {
+      this.conversations.link(request3.taskId, request3.conversationId, request3.epoch);
+      return { kind: "accepted", commandId: request3.commandId };
+    }
+    if (request3.kind === "interrupt") {
+      this.conversations.interrupt(request3.conversationId, request3.turnId, request3.epoch);
+      return { kind: "accepted", commandId: request3.commandId };
+    }
+    this.o.owner.lease.assert();
+    if (!this.o.projectsEnabled)
+      throw new ContractError("unsupported-context");
+    if (this.o.owner.state !== "idle")
+      throw new ContractError("quarantine");
+    if (request3.epoch !== this.o.owner.lease.registration.epoch)
+      throw new ContractError("stale");
+    const identity2 = canonicalJson(request3), old = this.opening.get(request3.commandId);
+    if (old) {
+      if (old.identity !== identity2)
+        throw new ContractError("conflict");
+      return old.result;
+    }
+    if (this.opening.size >= 64)
+      throw new ContractError("capacity");
+    const path = this.files.directory(request3.path);
+    const marker2 = join23(this.o.coordination.directory, "conversations-v1", "project-commands", `${request3.commandId}.json`);
+    const files = this.o.coordination.files;
+    if (files.read(marker2))
+      throw new ContractError("receipt-inconclusive");
+    if (this.projects().entries.length >= 128)
+      throw new ContractError("capacity");
+    const result = Promise.resolve().then(async () => {
+      this.o.owner.lease.assert();
+      if (this.o.owner.state !== "idle")
+        throw new ContractError("quarantine");
+      try {
+        files.create(marker2, identity2);
+      } catch (error2) {
+        this.o.owner.quarantine();
+        throw error2;
+      }
+      const opened = await openProjectDirectory(path, this.o.coordination.stateHome, this.o.agentDir, this.o.hostUrl);
+      for (const root of [this.o.cwd, opened.path]) {
+        const entry = join23(this.projectRoot, `${hash2(root)}.json`);
+        const saved = files.read(entry);
+        if (!saved)
+          files.create(entry, canonicalJson({ path: root }));
+        else if (saved.bytes.toString("utf8") !== canonicalJson({ path: root }))
+          throw new ContractError("conflict");
+      }
+      return { kind: "project", commandId: request3.commandId, ...opened };
+    });
+    this.opening.set(request3.commandId, { identity: identity2, result });
+    this.o.owner.trackAccepted(result.then(() => ({ status: "settled" }), () => ({ status: "settled" })));
+    return result;
+  }
+}
+
 // src/service/host.ts
 function legacy(store, budget, reader) {
   if (!safeDirectory(store.tasks))
@@ -22892,7 +25629,7 @@ function legacy(store, budget, reader) {
           throw new ContractError("capacity");
       }
     }
-  const dir = opendirSync3(store.tasks), records = [];
+  const dir = opendirSync9(store.tasks), records = [];
   let entries = 0;
   try {
     for (let entry = dir.readSync();entry; entry = dir.readSync()) {
@@ -22901,8 +25638,8 @@ function legacy(store, budget, reader) {
       decodeId(entry.name);
       if (created.has(entry.name))
         continue;
-      const path = join18(store.tasks, entry.name, "task.json");
-      const size = lstatSync11(path).size;
+      const path = join24(store.tasks, entry.name, "task.json");
+      const size = lstatSync14(path).size;
       if (size > 128 * 1024)
         throw new ContractError("corrupt-selected");
       budget.reserve(size);
@@ -22924,7 +25661,7 @@ function refuseAt(stage, step) {
   }
 }
 async function createServiceHost(value, sourceBuild) {
-  const embedded = "e9b1ea4bb8d1c275a0cb0cf70947f9ac58e5de0cc438d551dc96809f3e82dd7c";
+  const embedded = "9c917c085d034e08764de359cee49aea748c395a63ed629fe67d149b97850fa1";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);
@@ -22985,12 +25722,12 @@ async function createServiceHost(value, sourceBuild) {
     const lease = c.acquire({
       schema: "cadence-service-owner-config/1",
       endpoint: endpoint2,
-      policyIdentity: hash(encoded(resolved))
+      policyIdentity: hash2(encoded(resolved))
     }, endpoint2, () => {
       c.files.create(c.path("host-config.json"), encoded(resolved));
       AccessMaterial.initialize(c.files, c.directory, source);
     }, reselect && old ? (previous) => {
-      if (previous.identity !== hash(encoded(old)))
+      if (previous.identity !== hash2(encoded(old)))
         throw new ContractError("conflict");
       AccessMaterial.reselect(c.files, c.directory, source);
       c.files.replace(c.path("host-config.json"), previous, encoded(resolved));
@@ -23058,6 +25795,24 @@ async function createServiceHost(value, sourceBuild) {
       ],
       workerTimeoutMs: sourceBuild?.workerTimeoutMs
     });
+    const workbench = actions ? new Workbench({
+      coordination: c,
+      owner,
+      models,
+      choice,
+      actions,
+      cwd: input.config.cwd,
+      agentDir: input.config.agentDir,
+      projectsEnabled: !input.config.http.proxy,
+      hostUrl: new URL(sourceBuild ? "../service-host.mjs" : "./service-host.mjs", import.meta.url),
+      secrets: () => [
+        ...access.redactionLiterals(),
+        native.capability,
+        ...network.literals,
+        ...models.viewRedactionLiterals()
+      ],
+      timeoutMs: sourceBuild?.workerTimeoutMs
+    }) : null;
     const unavailable2 = (taskId) => ({
       status: "unavailable",
       workspaceId: reader.files.format.workspaceId,
@@ -23116,6 +25871,7 @@ async function createServiceHost(value, sourceBuild) {
       auth,
       build: build2,
       adapters: {
+        workbench: workbench ?? undefined,
         admission: actions?.admission ?? null,
         models: choice,
         modelChoice: actions ? choice : undefined,
@@ -23184,6 +25940,7 @@ async function createServiceHost(value, sourceBuild) {
     http.admit();
     return {
       actions,
+      workbench,
       coordination: c,
       owner,
       writer,
@@ -23226,8 +25983,8 @@ try {
     chunks2.push(chunk);
   }
   const input = parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks2)), STARTUP_INPUT_BYTES);
-  const host = await createServiceHost(input);
-  process.stdout.write(`${JSON.stringify({ status: "ready", epoch: host.owner.lease.registration.epoch })}
+  const host = input.kind === "workbench" ? await createGateway(input, new URL("./service-host.mjs", import.meta.url)) : await createServiceHost(input);
+  process.stdout.write(`${JSON.stringify({ status: "ready", epoch: "epoch" in host ? host.epoch : host.owner.lease.registration.epoch })}
 `);
 } catch (error2) {
   process.stdout.write(`${JSON.stringify(startupReport(error2))}

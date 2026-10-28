@@ -2193,3 +2193,436 @@ summary:focus-visible,
   margin: 0;
   font-size: inherit;
 }
+
+/* pi-web-ui conversation workbench: persistent lower-left agents, file browser,
+ * compact composer and cwd picker. Presentation only, no upstream runtimes. */
+.workspace-content[hidden] {
+  display: none;
+}
+.drawer-left {
+  flex-direction: column;
+}
+.drawer-left > .lp-panel {
+  flex: 1;
+  min-height: 0;
+}
+.lp-new {
+  display: flex;
+  gap: 6px;
+}
+.lp-new .new-conversation {
+  flex: 1;
+}
+.new-task-shortcut {
+  flex: none;
+  padding: 6px;
+}
+.project-open {
+  margin: 6px 10px;
+  background: transparent;
+  border-style: dashed;
+}
+.workbench-right {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+.workbench-right > .panel {
+  flex: 1;
+}
+.agent-dock {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 42px;
+  height: 190px;
+  max-height: 35%;
+  overflow: hidden;
+  resize: vertical;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+.agent-dock.collapsed {
+  height: auto;
+  resize: none;
+}
+.agent-dock-heading {
+  flex: none;
+  justify-content: flex-start;
+  border: 0;
+  border-radius: 0;
+  padding: 10px 12px;
+  width: 100%;
+  background: transparent;
+  font-size: 12px;
+}
+.agent-dock-heading .lp-count {
+  margin-left: auto;
+}
+.agent-dock-body {
+  overflow-y: auto;
+  min-height: 0;
+  overscroll-behavior: contain;
+  padding: 2px 6px 8px;
+}
+.agent-dock-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 7px;
+  gap: 8px;
+}
+.agent-dock-label {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.agent-dock-label strong {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+.agent-dot.running,
+.agent-dot.preparing {
+  background: var(--accent-text);
+  box-shadow: 0 0 8px var(--accent-soft);
+}
+.agent-dot.completed {
+  background: var(--green);
+}
+.agent-dot.failed,
+.agent-dot.unknown {
+  background: var(--red);
+}
+.chat-workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+.chat-messages {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  padding: 16px clamp(16px, 4vw, 56px) 28px;
+}
+.chat-messages > .empty-state {
+  min-height: 40vh;
+}
+.chat-turn {
+  max-width: 920px;
+  margin: 0 auto 20px;
+}
+.chat-message {
+  margin: 0 0 18px;
+  min-width: 0;
+}
+.chat-message.user {
+  margin-left: 8%;
+  padding: 12px 16px;
+  background: var(--bg-elev2);
+  border: 1px solid var(--border-soft);
+  border-radius: 14px 14px 4px 14px;
+}
+.chat-message-role {
+  color: var(--text-faint);
+  font-size: 11px;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+.chat-message .md {
+  line-height: 1.75;
+}
+.chat-tool {
+  border: 1px solid var(--border-soft);
+  background: var(--bg-elev);
+  border-radius: 8px;
+  padding: 7px 10px;
+  margin: 8px 0;
+}
+.chat-tool > summary {
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.chat-tool > summary .ep-state {
+  float: right;
+}
+.chat-tool pre {
+  max-height: 320px;
+}
+.chat-composer {
+  flex: none;
+  margin: 0 18px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elev);
+  box-shadow: 0 6px 24px #0002;
+}
+.chat-composer:focus-within {
+  border-color: var(--accent);
+}
+.chat-composer textarea {
+  display: block;
+  width: 100%;
+  border: 0;
+  outline: none;
+  box-shadow: none;
+  resize: vertical;
+  min-height: 80px;
+  max-height: 240px;
+  padding: 14px 16px 6px;
+  background: transparent;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  padding: 6px 10px 10px;
+}
+.composer-toolbar select {
+  width: auto;
+  max-width: 180px;
+  font-size: 11px;
+  background: transparent;
+}
+.composer-hint {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+.composer-toolbar > .primary,
+.composer-toolbar > .danger {
+  margin-left: auto;
+  flex: none;
+}
+.chat-scroll-bottom {
+  position: absolute;
+  right: 26px;
+  bottom: 160px;
+  border-radius: 50%;
+  background: var(--bg-elev2);
+}
+.files-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.files-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.files-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 11px var(--mono);
+}
+.file-list {
+  flex: 1;
+  min-height: 100px;
+  overflow: auto;
+  padding: 6px;
+  overscroll-behavior: contain;
+}
+.file-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border-radius: 5px;
+}
+.file-row:hover {
+  background: var(--bg-elev2);
+}
+.file-name {
+  flex: 1;
+  justify-content: flex-start;
+  min-width: 0;
+  max-width: 100%;
+  padding: 6px;
+  border: 0;
+  background: transparent;
+  border-radius: 4px;
+}
+.file-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-name.selected {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+.file-action {
+  flex: none;
+  border: 0;
+  padding: 4px;
+  background: transparent;
+  color: var(--text-faint);
+}
+.file-preview {
+  flex: 0 1 55%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+  overflow: hidden;
+}
+.file-preview > header {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  gap: 8px;
+  font: 11px var(--mono);
+}
+.file-preview > header span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-preview pre {
+  border-radius: 0;
+  margin: 0;
+  border: 0;
+  padding: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.files-policy {
+  margin: 0;
+  padding: 7px 10px;
+  font-size: 10px;
+  color: var(--text-faint);
+  border-top: 1px solid var(--border-soft);
+}
+.status-cwd {
+  order: 2;
+  min-width: 0;
+  max-width: min(45vw, 460px);
+  background: transparent;
+  border: 0;
+  font: 11px var(--mono);
+  padding: 0 4px;
+  min-height: 22px;
+}
+.status-cwd span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cwd-input {
+  display: flex;
+  gap: 8px;
+}
+.cwd-input input {
+  flex: 1;
+  min-width: 0;
+}
+.cwd-picker-list {
+  display: flex;
+  flex-direction: column;
+  height: 280px;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  margin: 12px 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+.cwd-picker-list > button {
+  justify-content: flex-start;
+  flex: none;
+  border: 0;
+  background: transparent;
+  padding: 8px 12px;
+}
+.cwd-picker-list > button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 900px) {
+  .chat-composer {
+    margin: 0 10px 10px;
+  }
+  .composer-hint {
+    display: none;
+  }
+  .composer-toolbar {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .chat-messages {
+    padding: 12px 16px;
+  }
+  .chat-message.user {
+    margin-left: 4%;
+  }
+  .statusbar-left > .status-item {
+    font-size: 10px;
+  }
+  .status-cwd {
+    max-width: 80vw;
+  }
+}
+
+.workbench-landing {
+  flex: 1;
+  overflow: auto;
+  width: min(100%, 1000px);
+  margin: 0 auto;
+  padding: 40px 20px;
+  display: grid;
+  align-content: start;
+  gap: 32px;
+  box-sizing: border-box;
+}
+.workbench-entry {
+  min-width: 0;
+}
+.workbench-projects {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.workbench-projects > button {
+  display: flex;
+  gap: 12px;
+  text-align: left;
+  min-width: 0;
+  padding: 12px;
+}
+.workbench-projects > button > span {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}

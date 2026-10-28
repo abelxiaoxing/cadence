@@ -22,7 +22,9 @@ export function useDrawerFocus(
     // After restart/model absence the inspector can contain only disabled
     // controls. Focus its programmatic target so Escape/Tab still reach this
     // drawer rather than leaving focus behind the inert overlay.
-    (focusable()[0] ?? panel)?.focus();
+    // Focus while a drawer is still translating must not scroll the layout
+    // horizontally to its off-screen starting position.
+    (focusable()[0] ?? panel)?.focus({ preventScroll: true });
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -38,10 +40,10 @@ export function useDrawerFocus(
         }
         if (e.shiftKey && document.activeElement === first) {
           e.preventDefault();
-          last.focus();
+          last.focus({ preventScroll: true });
         } else if (!e.shiftKey && document.activeElement === last) {
           e.preventDefault();
-          first.focus();
+          first.focus({ preventScroll: true });
         }
       }
     };
@@ -49,7 +51,7 @@ export function useDrawerFocus(
     return () => {
       panel?.removeEventListener("keydown", key);
       if (previous instanceof HTMLElement && previous.isConnected)
-        previous.focus();
+        previous.focus({ preventScroll: true });
     };
   }, [container, side, mobile, close]);
 }

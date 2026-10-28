@@ -2,6 +2,85 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
+  // Dual conversation workbench
+  "Task created, but its conversation link was not confirmed.":
+    "任务已创建，但与普通对话的关联尚未确认。",
+  "Workbench projects": "工作台项目",
+  "Your workbench, your projects": "你的工作台，你的项目",
+  "No default workspace is created. Open an existing folder to use ordinary conversations and Cadence tasks.":
+    "不会创建默认工作区。打开已有文件夹，即可使用普通对话和 Cadence 任务。",
+  "Opening a project never starts a task. Switching projects keeps admitted work running in its original directory.":
+    "打开项目不会启动任务。切换项目后，已接纳的工作仍在原目录中继续。",
+  "Selected project is unavailable. Choose a project explicitly; no directory was reconstructed.":
+    "所选项目不可用，请明确选择项目；未重建任何目录。",
+  "No projects associated yet.": "尚未关联任何项目。",
+  "Chat ready": "可以开始对话",
+  "Conversation capture limit exceeded.": "对话记录已达到容量上限。",
+  "Start a new conversation; incomplete context is not replayed.":
+    "请新建对话；不会重放不完整的上下文。",
+  "Current metadata unavailable; showing the active turn only. No state was reconstructed.":
+    "当前对话元数据不可用，仅显示仍在运行的轮次，未重建任何状态。",
+  "Send unavailable. Check the message limit (16 KiB); observe any pending command before sending again.":
+    "暂时无法发送。请检查消息是否超过 16 KiB；如有待确认的命令，请先观察其结果，不要重复发送。",
+  Files: "文件",
+  "File list": "文件列表",
+  "Workspace panels": "工作区面板",
+  "Task details": "任务详情",
+  "Switch working folder": "切换工作文件夹",
+  "Open working folder": "打开工作文件夹",
+  "Open this project": "打开此项目",
+  "Opening project…": "正在打开项目…",
+  "Folder path": "文件夹路径",
+  Browse: "浏览",
+  "Parent folder": "上级文件夹",
+  "Choose a folder on the service host. Opening reuses or starts that project's independent service; current work keeps running.":
+    "选择服务所在主机上的文件夹。打开时将复用或启动该项目的独立服务，当前工作会继续运行。",
+  "New conversation": "新对话",
+  Ordinary: "普通对话",
+  "Ordinary conversation": "普通对话",
+  "Cadence task": "Cadence 任务",
+  "Conversation mode": "对话模式",
+  "Back to ordinary conversation": "返回普通对话",
+  "What would you like to work on?": "今天想做些什么？",
+  "Chat normally, or start with /cadence to prepare a task. Nothing starts until you send.":
+    "直接聊天，或以 /cadence 开头准备任务。发送前不会启动任何工作。",
+  "Message, or /cadence followed by a task…":
+    "输入消息，或使用 /cadence 描述任务…",
+  Message: "消息",
+  Send: "发送",
+  "Stop response": "停止回复",
+  "Prepare task": "准备任务",
+  "Prepare a plan first; Start requires confirmation.":
+    "先准备计划，执行需另行确认 Start。",
+  "Direct host tools · no Cadence task":
+    "直接使用主机工具 · 不创建 Cadence 任务",
+  "Conversation turn": "对话轮次",
+  You: "你",
+  Tool: "工具",
+  "Earlier messages": "较早的消息",
+  "Latest messages": "最新消息",
+  "Send outcome not yet observed:": "尚未观察到此次发送的结果：",
+  "Observe this send before sending again. No automatic retry.":
+    "请先观察此次发送的结果，不会自动重试。",
+  "This turn has no complete continuation context. Start a new conversation; retained messages are preserved.":
+    "此轮没有完整的续聊上下文。请新建对话，已记录的消息会保留。",
+  Subagents: "子代理",
+  "Subagent roster unavailable": "暂时无法观察子代理列表",
+  "Cadence subagents appear here when a task runs.":
+    "Cadence 任务运行时，子代理会显示在这里。",
+  "Refresh files": "刷新文件",
+  "Reference {path}": "引用 {path}",
+  "Copy path {path}": "复制路径 {path}",
+  "No visible files": "没有可显示的文件",
+  "Close preview": "关闭预览",
+  "Bounded listing; narrow the directory to see more.":
+    "列表已达到显示上限，请进入更具体的目录查看。",
+  "File preview is limited; this is not the complete file.":
+    "文件预览已截断，并非完整内容。",
+  "Readonly preview · references send paths, not file contents":
+    "只读预览 · 引用只发送路径，不自动注入文件内容",
+  "Hidden thinking, signatures and media are not retained.":
+    "隐藏思考、签名和媒体内容不予保留。",
   // Document and fallback page
   "Cadence task workspace": "Cadence 任务工作区",
   "Presentation unavailable": "界面无法显示",

@@ -1,7 +1,7 @@
 import { Component, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { App } from "./App";
 import { LocaleProvider, useT } from "./i18n/locale";
+import { Workbench } from "./Workbench";
 import "./styles.css";
 
 function PresentationUnavailable() {
@@ -41,7 +41,7 @@ if (!root) throw new Error("Application root unavailable");
 createRoot(root).render(
   <LocaleProvider>
     <PresentationBoundary>
-      <App />
+      <Workbench />
     </PresentationBoundary>
   </LocaleProvider>,
 );

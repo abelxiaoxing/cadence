@@ -26,7 +26,7 @@ import {
   win32,
 } from "node:path";
 import { ContractError } from "../service-contract.ts";
-import { effectiveWorkspace, LANDING_WORKSPACE } from "../task-store.ts";
+import { effectiveWorkspace } from "../task-store.ts";
 import { serverConfigPath } from "./server-config.ts";
 
 export const UNIT = "cadence.service";
@@ -37,9 +37,9 @@ type Command = { status: number | null; stdout: string };
 export interface OwnerControl {
   /** Orderly Stop of the workspace's owner; "stopped" also when none runs.
    * Anything else (unconfirmed, quarantined, unavailable) is not a stop. */
-  stopOwner(workspace: string): Promise<string>;
+  stopOwner(workspace: string | null, serverConfig?: string): Promise<string>;
   /** The authenticated status ("alive", "absent", ...) of the workspace's owner. */
-  ownerStatus(workspace: string): Promise<string>;
+  ownerStatus(workspace: string | null, serverConfig?: string): Promise<string>;
 }
 export interface AutostartSystem extends OwnerControl {
   platform: NodeJS.Platform;
@@ -71,7 +71,7 @@ export type LingerState = "on" | "enabled" | "off" | "refused";
 export interface AutostartResult {
   status: string;
   unit?: string;
-  workspace?: string;
+  workspace?: string | null;
   redirectedFrom?: string;
   enabled?: string;
   linger?: LingerState;
@@ -296,7 +296,7 @@ export interface UnitInput {
   system?: boolean;
   node: string;
   cli: string;
-  workspace: string;
+  workspace: string | null;
   /** The port and token file `server install` creates. */
   serverConfig: string;
   agentDir: string;
@@ -316,20 +316,27 @@ export function buildUnit(u: UnitInput): string {
     "Documentation=https://github.com/abelxiaoxing/cadence/blob/main/docs/service-management.md",
     `ConditionPathExists=${specifiers(u.cli)}`,
     // A new owner without Pi's auth source or SDK would quarantine; wait instead.
-    `ConditionPathExists=${specifiers(join(u.agentDir, "auth.json"))}`,
-    ...u.sdk.map((path) => `ConditionPathExists=${specifiers(path)}`),
+    ...(u.workspace === null
+      ? []
+      : [`ConditionPathExists=${specifiers(join(u.agentDir, "auth.json"))}`]),
+    ...(u.workspace === null ? [] : u.sdk).map(
+      (path) => `ConditionPathExists=${specifiers(path)}`,
+    ),
     "StartLimitIntervalSec=300",
     "StartLimitBurst=3",
     "",
     "[Service]",
     "Type=simple",
     ...(u.system ? ["User=root"] : []),
-    `WorkingDirectory=${specifiers(u.workspace)}`,
+    ...(u.workspace === null
+      ? ["# Cadence workbench gateway; no project workspace"]
+      : []),
+    `WorkingDirectory=${specifiers(u.workspace ?? dirname(dirname(u.cli)))}`,
     ...u.environment.map(([k, v]) => `Environment=${quoted(`${k}=${v}`)}`),
-    `ExecStart=${command(["start", "--foreground", "--workspace", u.workspace, "--server-config", u.serverConfig])}`,
+    `ExecStart=${command([...(u.workspace === null ? ["workbench", "start", "--foreground"] : ["start", "--foreground", "--workspace", u.workspace]), "--server-config", u.serverConfig])}`,
     // Authenticated orderly Stop first. Mixed mode signals only the management
     // client, so a settling owner is never sent SIGTERM by systemd.
-    `ExecStop=-${command(["stop", "--workspace", u.workspace])}`,
+    `ExecStop=-${command(u.workspace === null ? ["workbench", "stop", "--server-config", u.serverConfig] : ["stop", "--workspace", u.workspace])}`,
     "KillMode=mixed",
     "TimeoutStopSec=90",
     "Restart=on-failure",
@@ -359,7 +366,11 @@ export function readGenerated(
     throw error;
   }
 }
-export function unitWorkspace(text: string | undefined): string | undefined {
+export function unitWorkspace(
+  text: string | undefined,
+): string | null | undefined {
+  if (text?.includes("# Cadence workbench gateway; no project workspace"))
+    return null;
   return text?.match(/^WorkingDirectory=(.+)$/m)?.[1].replaceAll("%%", "%");
 }
 function directory(path: string): boolean {
@@ -382,27 +393,21 @@ function serviceStateHome(s: AutostartSystem): string {
           : [".local", "state"]),
       );
 }
-/** An explicit workspace, else the one the existing definition runs, else ~/cadence. */
+/** No implicit project or mkdir. Existing project definitions retain their exact
+ * selection; a missing one is refused, never replaced with a fallback. */
 export function selectWorkspace(
   s: AutostartSystem,
   requested: string | undefined,
-  kept: string | undefined,
-  create = true,
-): { workspace: string; redirectedFrom?: string } {
-  let chosen: string | undefined;
-  if (requested) {
-    chosen = expandHome(requested, s.home);
-    if (!directory(chosen)) throw new ContractError("invalid");
-    chosen = resolve(chosen);
-  } else if (kept && directory(kept)) chosen = kept;
-  const landing = chosen
-    ? effectiveWorkspace(chosen, serviceStateHome(s), s.home)
-    : { workspace: join(s.home, LANDING_WORKSPACE), redirected: false };
-  if (create && landing.workspace !== chosen)
-    mkdirSync(landing.workspace, { recursive: true });
-  return landing.redirected
-    ? { workspace: landing.workspace, redirectedFrom: chosen }
-    : { workspace: landing.workspace };
+  kept: string | null | undefined,
+  _create = false,
+): { workspace: string | null; redirectedFrom?: string } {
+  const chosen = requested ? expandHome(requested, s.home) : kept;
+  if (!chosen) return { workspace: null };
+  if (!directory(chosen)) throw new ContractError("invalid");
+  return {
+    workspace: effectiveWorkspace(resolve(chosen), serviceStateHome(s))
+      .workspace,
+  };
 }
 export function write(path: string, content: string | Buffer): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -425,10 +430,10 @@ export function regularFile(path: string): boolean {
  * authenticated Stop, so stop it orderly first; undefined once nothing runs. */
 export async function settle(
   s: AutostartSystem,
-  workspace: string | undefined,
+  workspace: string | null | undefined,
 ): Promise<AutostartResult | undefined> {
-  if (!workspace) return;
-  const status = await s.stopOwner(workspace);
+  if (workspace === undefined) return;
+  const status = await s.stopOwner(workspace, serviceConfigPath(s));
   if (status === "stopped") return;
   // Anything but a confirmed Stop, including one still settling, is a refusal.
   return {
@@ -475,12 +480,14 @@ export function configureAutostart(
   if (mode === "restart" && previous === undefined) return { status: "absent" };
   // Written only when the SDK resolves; an owner without it would quarantine.
   const sdk = sdkPackages(s.root);
-  if (!sdk) return { status: "missing-pi-sdk" };
   const { workspace, redirectedFrom } = selectWorkspace(
     s,
     requested,
-    unitWorkspace(previous),
+    mode === "install" && requested === undefined
+      ? null
+      : unitWorkspace(previous),
   );
+  if (workspace !== null && !sdk) return { status: "missing-pi-sdk" };
   const agentDir = agentDirectory(s);
   const content = buildUnit({
     node: s.node,
@@ -488,7 +495,7 @@ export function configureAutostart(
     workspace,
     serverConfig: serviceConfigPath(s),
     agentDir,
-    sdk,
+    sdk: sdk ?? [],
     environment: serviceEnvironment(s),
   });
   const enabled = s.systemctl(["is-enabled", s.unit]).stdout.trim();
@@ -518,7 +525,7 @@ export function configureAutostart(
   // Linger may prompt, so it runs after the start: an interrupted prompt must
   // not leave the owner stopped above.
   const boot = () => (mode === "install" ? bootStart(s, linger) : {});
-  if (!regularFile(join(agentDir, "auth.json")))
+  if (workspace !== null && !regularFile(join(agentDir, "auth.json")))
     return { status: "waiting-for-pi-login", ...result, ...boot() };
   s.systemctl(["reset-failed", s.unit]);
   const started = s.systemctl(["start", s.unit]).status === 0;

@@ -1,3 +1,7 @@
+import type {
+  WorkbenchCommand,
+  WorkbenchRead,
+} from "./service/contracts/workbench.ts";
 import type { ServiceTransport } from "./service-client.ts";
 import {
   type CancelCommand,
@@ -63,6 +67,8 @@ export class HttpServiceTransport implements ServiceTransport {
   constructor(
     private readonly options: {
       origin: string;
+      /** Authenticated same-origin project routing; never an arbitrary URL. */
+      project?: string;
       build?: ClientBuild;
       fetch?: typeof fetch;
       /** Optional total bound for finite replies only, never streaming export. */
@@ -78,11 +84,25 @@ export class HttpServiceTransport implements ServiceTransport {
         !/^http:\/\/(?:127\.0\.0\.1|\[::1\]):[1-9][0-9]*$/.test(options.origin))
     )
       throw new ContractError("invalid");
+    if (
+      options.project !== undefined &&
+      !/^[a-f0-9]{64}$/.test(options.project)
+    )
+      throw new ContractError("invalid");
     this.origin = options.origin;
     if (options.build) options.build = decodeClientBuild(options.build);
     // Native browser fetch requires its Window receiver. Node/injected arrow
     // fetchers tolerate the wrong `this`, so HTTP-only fixtures miss this bug.
     this.fetcher = options.fetch ?? globalThis.fetch.bind(globalThis);
+  }
+  workbenchRead(
+    request: WorkbenchRead,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    return this.request("workbenchRead", request, signal);
+  }
+  workbenchCommand(request: WorkbenchCommand): Promise<unknown> {
+    return this.request("workbenchCommand", request);
   }
   private headers(write: boolean): Record<string, string> {
     const headers: Record<string, string> = { "Cache-Control": "no-store" };
@@ -109,20 +129,23 @@ export class HttpServiceTransport implements ServiceTransport {
       write = wire.method === "POST";
     // No automatic session/preflight refresh, changed command ID, mutation retry,
     // credential query or redirect follow after an uncertain HTTP outcome.
-    const response = await this.fetcher(`${this.origin}${wire.path}`, {
-      method: wire.method,
-      headers: this.headers(write),
-      credentials: "same-origin",
-      redirect: "error",
-      signal:
-        this.options.requestTimeoutMs === undefined
-          ? signal
-          : AbortSignal.any([
-              ...(signal ? [signal] : []),
-              AbortSignal.timeout(this.options.requestTimeoutMs),
-            ]),
-      ...(write ? { body: wire.body } : {}),
-    });
+    const response = await this.fetcher(
+      `${this.origin}${this.options.project ? `/projects/${this.options.project}` : ""}${wire.path}`,
+      {
+        method: wire.method,
+        headers: this.headers(write),
+        credentials: "same-origin",
+        redirect: "error",
+        signal:
+          this.options.requestTimeoutMs === undefined
+            ? signal
+            : AbortSignal.any([
+                ...(signal ? [signal] : []),
+                AbortSignal.timeout(this.options.requestTimeoutMs),
+              ]),
+        ...(write ? { body: wire.body } : {}),
+      },
+    );
     // Keep a known allocation even if its original response body is lost or
     // malformed. Without a validated CSRF challenge detach may remain blocked;
     // never silently forget that slot and acquire 16 replacement sessions.
@@ -273,14 +296,17 @@ export class HttpServiceTransport implements ServiceTransport {
   ): AsyncGenerator<unknown> {
     const request = decodeExportRequest(input),
       wire = wireRequest("export", request);
-    const response = await this.fetcher(`${this.origin}${wire.path}`, {
-      method: wire.method,
-      headers: this.headers(wire.method === "POST"),
-      ...(wire.body === undefined ? {} : { body: wire.body }),
-      credentials: "same-origin",
-      redirect: "error",
-      signal,
-    });
+    const response = await this.fetcher(
+      `${this.origin}${this.options.project ? `/projects/${this.options.project}` : ""}${wire.path}`,
+      {
+        method: wire.method,
+        headers: this.headers(wire.method === "POST"),
+        ...(wire.body === undefined ? {} : { body: wire.body }),
+        credentials: "same-origin",
+        redirect: "error",
+        signal,
+      },
+    );
     if (!response.ok || !response.body) {
       await response.body?.cancel();
       throw new ContractError("unavailable");
@@ -336,7 +362,7 @@ export class HttpServiceTransport implements ServiceTransport {
     if (!this.attachment || !this.options.socket)
       throw new ContractError("unavailable");
     const socket = this.options.socket(
-      `${this.origin.replace(/^http/, "ws")}${WS_PATH}?attachment=${this.attachment}`,
+      `${this.origin.replace(/^http/, "ws")}${this.options.project ? `/projects/${this.options.project}` : ""}${WS_PATH}?attachment=${this.attachment}`,
     );
     let active = false,
       closed = false,
@@ -401,7 +427,7 @@ export class HttpServiceTransport implements ServiceTransport {
     return stop;
   }
 }
-async function boundedText(
+export async function boundedText(
   response: Response,
   maximum: number,
 ): Promise<string> {

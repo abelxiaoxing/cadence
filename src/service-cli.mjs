@@ -3,10 +3,11 @@
 
 // src/service/cli.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync3, mkdirSync as mkdirSync7 } from "node:fs";
+import { mkdirSync as mkdirSync6 } from "node:fs";
 import { request } from "node:http";
-import { dirname as dirname9, join as join12, resolve as resolve5 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { homedir as homedir6 } from "node:os";
+import { dirname as dirname13, join as join15, resolve as resolve7 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/install-config.mjs
 import { closeSync, constants, mkdirSync, openSync, writeSync } from "node:fs";
@@ -2303,13 +2304,10 @@ function stateHomeInside(root, stateHome = defaultStateHome()) {
 function privateWorkspace(requested, stateHome = defaultStateHome()) {
   return contains(join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1"), canonicalAmbientRoot(requested));
 }
-var LANDING_WORKSPACE = "cadence";
-function effectiveWorkspace(requested, stateHome, home = homedir2()) {
-  if (privateWorkspace(requested, stateHome))
-    throw new Error("Private state cannot be a workspace");
-  if (!stateHomeInside(resolveWorkspace(requested).root, stateHome))
-    return { workspace: requested, redirected: false };
-  return { workspace: join(home, LANDING_WORKSPACE), redirected: true };
+function effectiveWorkspace(requested, stateHome, _home) {
+  if (privateWorkspace(requested, stateHome) || stateHomeInside(resolveWorkspace(requested).root, stateHome))
+    throw new Error("Choose a project outside Cadence private state; no default workspace was created");
+  return { workspace: requested, redirected: false };
 }
 
 class TaskStore {
@@ -2993,6 +2991,14 @@ function readServerConfig(path2) {
     return { ...file, config: decode(file.source) };
   });
 }
+function withToken(file, token) {
+  const { parts, token: line } = settings(decoded(file.snapshot));
+  if (!line)
+    throw new ContractError("invalid");
+  const indent = /^\s*/.exec(parts[line.at])?.[0] ?? "";
+  parts[line.at] = `${indent}${TOKEN_KEY}=${accessToken(token)}`;
+  return parts.join("");
+}
 function ensureServerConfig(home, options = {}) {
   const path2 = serverConfigPath(home, options.name);
   if (options.port !== undefined && (!Number.isInteger(options.port) || options.port < 1 || options.port > 65535))
@@ -3210,18 +3216,19 @@ function buildUnit(u) {
     "Description=Cadence shared task service and WebUI",
     "Documentation=https://github.com/abelxiaoxing/cadence/blob/main/docs/service-management.md",
     `ConditionPathExists=${specifiers(u.cli)}`,
-    `ConditionPathExists=${specifiers(join4(u.agentDir, "auth.json"))}`,
-    ...u.sdk.map((path2) => `ConditionPathExists=${specifiers(path2)}`),
+    ...u.workspace === null ? [] : [`ConditionPathExists=${specifiers(join4(u.agentDir, "auth.json"))}`],
+    ...(u.workspace === null ? [] : u.sdk).map((path2) => `ConditionPathExists=${specifiers(path2)}`),
     "StartLimitIntervalSec=300",
     "StartLimitBurst=3",
     "",
     "[Service]",
     "Type=simple",
     ...u.system ? ["User=root"] : [],
-    `WorkingDirectory=${specifiers(u.workspace)}`,
+    ...u.workspace === null ? ["# Cadence workbench gateway; no project workspace"] : [],
+    `WorkingDirectory=${specifiers(u.workspace ?? dirname4(dirname4(u.cli)))}`,
     ...u.environment.map(([k, v]) => `Environment=${quoted(`${k}=${v}`)}`),
-    `ExecStart=${command(["start", "--foreground", "--workspace", u.workspace, "--server-config", u.serverConfig])}`,
-    `ExecStop=-${command(["stop", "--workspace", u.workspace])}`,
+    `ExecStart=${command([...u.workspace === null ? ["workbench", "start", "--foreground"] : ["start", "--foreground", "--workspace", u.workspace], "--server-config", u.serverConfig])}`,
+    `ExecStop=-${command(u.workspace === null ? ["workbench", "stop", "--server-config", u.serverConfig] : ["stop", "--workspace", u.workspace])}`,
     "KillMode=mixed",
     "TimeoutStopSec=90",
     "Restart=on-failure",
@@ -3247,6 +3254,8 @@ function readGenerated(path2, marker) {
   }
 }
 function unitWorkspace(text2) {
+  if (text2?.includes("# Cadence workbench gateway; no project workspace"))
+    return null;
   return text2?.match(/^WorkingDirectory=(.+)$/m)?.[1].replaceAll("%%", "%");
 }
 function directory(path2) {
@@ -3260,19 +3269,15 @@ function serviceStateHome(s) {
   const state = s.platform === "win32" ? s.env.LOCALAPPDATA : s.env.XDG_STATE_HOME;
   return state && isAbsolute3(state) ? state : join4(s.home, ...s.platform === "win32" ? ["AppData", "Local"] : [".local", "state"]);
 }
-function selectWorkspace(s, requested, kept, create = true) {
-  let chosen;
-  if (requested) {
-    chosen = expandHome(requested, s.home);
-    if (!directory(chosen))
-      throw new ContractError("invalid");
-    chosen = resolve3(chosen);
-  } else if (kept && directory(kept))
-    chosen = kept;
-  const landing = chosen ? effectiveWorkspace(chosen, serviceStateHome(s), s.home) : { workspace: join4(s.home, LANDING_WORKSPACE), redirected: false };
-  if (create && landing.workspace !== chosen)
-    mkdirSync5(landing.workspace, { recursive: true });
-  return landing.redirected ? { workspace: landing.workspace, redirectedFrom: chosen } : { workspace: landing.workspace };
+function selectWorkspace(s, requested, kept, _create = false) {
+  const chosen = requested ? expandHome(requested, s.home) : kept;
+  if (!chosen)
+    return { workspace: null };
+  if (!directory(chosen))
+    throw new ContractError("invalid");
+  return {
+    workspace: effectiveWorkspace(resolve3(chosen), serviceStateHome(s)).workspace
+  };
 }
 function write(path2, content) {
   mkdirSync5(dirname4(path2), { recursive: true });
@@ -3292,9 +3297,9 @@ function regularFile(path2) {
   }
 }
 async function settle(s, workspace) {
-  if (!workspace)
+  if (workspace === undefined)
     return;
-  const status = await s.stopOwner(workspace);
+  const status = await s.stopOwner(workspace, serviceConfigPath(s));
   if (status === "stopped")
     return;
   return {
@@ -3326,9 +3331,9 @@ function configureAutostart(s, mode, requested, linger = false) {
   if (mode === "restart" && previous === undefined)
     return { status: "absent" };
   const sdk = sdkPackages(s.root);
-  if (!sdk)
+  const { workspace, redirectedFrom } = selectWorkspace(s, requested, mode === "install" && requested === undefined ? null : unitWorkspace(previous));
+  if (workspace !== null && !sdk)
     return { status: "missing-pi-sdk" };
-  const { workspace, redirectedFrom } = selectWorkspace(s, requested, unitWorkspace(previous));
   const agentDir = agentDirectory(s);
   const content = buildUnit({
     node: s.node,
@@ -3336,7 +3341,7 @@ function configureAutostart(s, mode, requested, linger = false) {
     workspace,
     serverConfig: serviceConfigPath(s),
     agentDir,
-    sdk,
+    sdk: sdk ?? [],
     environment: serviceEnvironment(s)
   });
   const enabled = s.systemctl(["is-enabled", s.unit]).stdout.trim();
@@ -3359,7 +3364,7 @@ function configureAutostart(s, mode, requested, linger = false) {
   if (mode === "install" && enabled !== "enabled" && s.systemctl(["enable", s.unit]).status !== 0)
     return { status: "failed", ...result };
   const boot = () => mode === "install" ? bootStart(s, linger) : {};
-  if (!regularFile(join4(agentDir, "auth.json")))
+  if (workspace !== null && !regularFile(join4(agentDir, "auth.json")))
     return { status: "waiting-for-pi-login", ...result, ...boot() };
   s.systemctl(["reset-failed", s.unit]);
   const started = s.systemctl(["start", s.unit]).status === 0;
@@ -3604,7 +3609,8 @@ class ServiceCoordination {
       "access-config.json",
       "access.json",
       "host-config.json",
-      "history-v2"
+      "history-v2",
+      "conversations-v1"
     ]);
     this.files.directory(join5(this.directory, "history-v2"), false, walks);
   }
@@ -4037,14 +4043,865 @@ class OwnerLease {
   }
 }
 
+// src/service/gateway-cli.ts
+import { homedir as homedir5 } from "node:os";
+import { dirname as dirname8, join as join9, resolve as resolve6 } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// src/service/config.ts
+import { isIP } from "node:net";
+function decodeHttpPolicy(value) {
+  const o = closed(value, ["schema", "host", "port", "proxy"]);
+  if (o.host !== "127.0.0.1" && o.host !== "::1")
+    throw new ContractError("invalid");
+  let proxy = null;
+  if (o.proxy !== null) {
+    const p = closed(o.proxy, ["origin", "trustedAddresses"]);
+    const origin = text(p.origin, 256, true);
+    let url;
+    try {
+      url = new URL(origin);
+    } catch {
+      throw new ContractError("invalid");
+    }
+    if (url.protocol !== "https:" || url.origin !== origin || url.username || url.password)
+      throw new ContractError("invalid");
+    const trustedAddresses = list(p.trustedAddresses, 8, (v) => {
+      const address = text(v, 64, true);
+      if (!isIP(address) || !loopbackAddress(address))
+        throw new ContractError("invalid");
+      return address;
+    });
+    if (!trustedAddresses.length || new Set(trustedAddresses).size !== trustedAddresses.length)
+      throw new ContractError("invalid");
+    proxy = { origin, trustedAddresses };
+  }
+  return {
+    schema: literal(o.schema, "cadence-service-http/1"),
+    host: o.host,
+    port: integer(o.port, 0, 65535),
+    proxy
+  };
+}
+function loopbackAddress(host) {
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(host);
+  const h = mapped ? mapped[1] : host;
+  if (h.includes(":"))
+    return h === "::1";
+  const parts = h.split(".");
+  return parts.length === 4 && parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255) && Number(parts[0]) === 127;
+}
+function localOrigin(policy, actualPort) {
+  integer(actualPort, 1, 65535);
+  return `http://${policy.host === "::1" ? "[::1]" : policy.host}:${actualPort}`;
+}
+
+// src/service/gateway-store.ts
+import { randomBytes as randomBytes4, randomUUID as randomUUID5 } from "node:crypto";
+import { opendirSync as opendirSync2 } from "node:fs";
+import { join as join7, resolve as resolve4 } from "node:path";
+
+// src/service/auth.ts
+import {
+  createHash as createHash3,
+  randomBytes as randomBytes3,
+  randomUUID as randomUUID4,
+  timingSafeEqual
+} from "node:crypto";
+import { dirname as dirname6, isAbsolute as isAbsolute5, join as join6 } from "node:path";
+function sameSecret(candidate, expected) {
+  const a = createHash3("sha256").update(candidate).digest();
+  const b = createHash3("sha256").update(expected).digest();
+  return timingSafeEqual(a, b);
+}
+function buildTokenCookie(name, encodedValue, maxAge, secure) {
+  return `${name}=${encodedValue}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;
+}
+function decodeCookieToken(raw) {
+  if (!raw)
+    return "";
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+function cookieTokens(header, name) {
+  if (!header)
+    return [];
+  let found = false;
+  const out = [];
+  for (const part of header.split(";")) {
+    const [key, ...rest] = part.trim().split("=");
+    if (key !== name)
+      continue;
+    if (found)
+      throw new ContractError("invalid");
+    found = true;
+    const raw = rest.join("=").trim();
+    out.push(raw, decodeCookieToken(raw));
+  }
+  return out;
+}
+function sourceConfig(source) {
+  const given = [source.environment, source.tokenFile, source.serverConfig];
+  if (given.filter((v) => v !== undefined).length > 1)
+    throw new ContractError("invalid");
+  if (source.environment !== undefined)
+    accessToken(source.environment);
+  if (source.serverConfig !== undefined)
+    accessToken(source.token);
+  const path2 = source.tokenFile ?? source.serverConfig;
+  if (path2 !== undefined && (!isAbsolute5(path2) || path2.includes("\x00")))
+    throw new ContractError("invalid");
+  return {
+    schema: "cadence-service-access-config/1",
+    source: source.environment !== undefined ? "environment" : source.tokenFile !== undefined ? "file" : source.serverConfig !== undefined ? "config" : "generated",
+    path: path2 ?? null
+  };
+}
+function readSource(config) {
+  if (config.source === "file" && config.path)
+    readExternal(config.path);
+}
+function selectedMaterial(files, directory2, source) {
+  const config = sourceConfig(source);
+  if (config.source !== "config")
+    throw new ContractError("invalid");
+  const marker = join6(directory2, "access-config.json"), access = join6(directory2, "access.json");
+  const markerFile = files.read(marker), accessFile = files.read(access);
+  if (!markerFile || !accessFile)
+    throw new ContractError("corrupt-selected");
+  const previous = closed(json(markerFile), ["schema", "source", "path"]);
+  literal(previous.schema, "cadence-service-access-config/1");
+  oneOf(previous.source, ["generated", "environment", "file", "config"]);
+  const r = closed(json(accessFile), ["schema", "generation", "token"]);
+  literal(r.schema, "cadence-service-access/1");
+  const generation = integer(r.generation, 1);
+  if (previous.source === "generated" !== (r.token !== null))
+    throw new ContractError("corrupt-selected");
+  return {
+    config,
+    previous,
+    generation,
+    marker,
+    markerFile,
+    access,
+    accessFile
+  };
+}
+
+class AccessMaterial {
+  files;
+  directory;
+  assertOwner;
+  configFile;
+  accessFile;
+  externalFile;
+  external;
+  record;
+  secret;
+  fenced = false;
+  listeners = new Set;
+  config;
+  static validateSource(source) {
+    readSource(sourceConfig(source));
+  }
+  static initialize(files, directory2, source = {}) {
+    const config = sourceConfig(source);
+    const marker = join6(directory2, "access-config.json"), access = join6(directory2, "access.json");
+    if (files.read(marker) || files.read(access) || files.read(join6(directory2, "registration.json")) || files.read(join6(directory2, "owner.lock")))
+      throw new ContractError("conflict");
+    readSource(config);
+    files.create(marker, encoded(config));
+    files.create(access, encoded({
+      schema: "cadence-service-access/1",
+      generation: 1,
+      token: config.source === "generated" ? randomBytes3(32).toString("base64url") : null
+    }));
+  }
+  static validateReselection(files, directory2, source) {
+    selectedMaterial(files, directory2, source);
+  }
+  static reselect(files, directory2, source) {
+    const m = selectedMaterial(files, directory2, source);
+    if (encoded(m.previous) === encoded(m.config))
+      return;
+    files.replace(m.marker, m.markerFile, encoded(m.config));
+    files.replace(m.access, m.accessFile, encoded({
+      schema: "cadence-service-access/1",
+      generation: integer(m.generation + 1, 1),
+      token: null
+    }));
+  }
+  constructor(files, directory2, source = {}, assertOwner) {
+    this.files = files;
+    this.directory = directory2;
+    this.assertOwner = assertOwner;
+    this.config = sourceConfig(source);
+    const configFile = files.read(join6(directory2, "access-config.json"));
+    const accessFile = files.read(join6(directory2, "access.json"));
+    if (!configFile || !accessFile)
+      throw new ContractError("corrupt-selected");
+    const c = closed(json(configFile), ["schema", "source", "path"]);
+    if (encoded(c) !== encoded(this.config))
+      throw new ContractError("conflict");
+    const r = closed(json(accessFile), ["schema", "generation", "token"]);
+    this.record = {
+      schema: literal(r.schema, "cadence-service-access/1"),
+      generation: integer(r.generation, 1),
+      token: r.token === null ? null : accessToken(r.token)
+    };
+    if (this.config.source === "generated" !== (this.record.token !== null))
+      throw new ContractError("corrupt-selected");
+    if (this.config.source === "file" && this.config.path) {
+      const loaded = readExternal(this.config.path);
+      this.external = loaded.files;
+      this.externalFile = loaded.file;
+      this.secret = loaded.token;
+    } else
+      this.secret = accessToken(this.record.token ?? source.environment ?? source.token);
+    this.configFile = configFile;
+    this.accessFile = accessFile;
+  }
+  get generation() {
+    return this.record.generation;
+  }
+  get available() {
+    return !this.fenced;
+  }
+  matches(candidate) {
+    return !this.fenced && utf8Bytes(candidate) <= TOKEN_BYTES && sameSecret(candidate, this.secret);
+  }
+  onRevoke(listener) {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+  revoke() {
+    for (const listener of this.listeners) {
+      try {
+        listener();
+      } catch {
+        this.fenced = true;
+      }
+    }
+  }
+  assertCurrent() {
+    try {
+      this.assert();
+    } catch {
+      this.fenced = true;
+      this.revoke();
+      throw new ContractError("quarantine");
+    }
+  }
+  assert() {
+    if (this.fenced)
+      throw new ContractError("quarantine");
+    this.files.assert(join6(this.directory, "access-config.json"), this.configFile);
+    this.files.assert(join6(this.directory, "access.json"), this.accessFile);
+    if (this.config.source === "file" && this.config.path)
+      this.external?.assert(this.config.path, this.externalFile, TOKEN_BYTES);
+  }
+  redactionLiterals() {
+    this.assertCurrent();
+    return [this.secret];
+  }
+  tokenLink(origin) {
+    this.assert();
+    const url = new URL(origin);
+    if (url.origin !== origin)
+      throw new ContractError("invalid");
+    return `${origin}/?token=${encodeURIComponent(this.secret)}`;
+  }
+  assertRotation() {
+    this.assertOwner?.();
+    this.assert();
+  }
+  rotate() {
+    if (this.config.source === "environment")
+      throw new ContractError("unsupported-context");
+    let configured;
+    if (this.config.source === "config" && this.config.path) {
+      configured = readServerConfig(this.config.path);
+      if (!sameSecret(configured.config.token, this.secret))
+        throw new ContractError("conflict");
+    }
+    try {
+      this.assertRotation();
+      const secret = randomBytes3(32).toString("base64url");
+      const generation = integer(this.record.generation + 1, 1);
+      if (this.config.path && this.external && this.externalFile)
+        this.externalFile = this.external.replace(this.config.path, this.externalFile, secret, TOKEN_BYTES);
+      if (configured)
+        configured.files.replace(configured.real, configured.snapshot, withToken(configured, secret), CONFIG_BYTES);
+      const record = {
+        ...this.record,
+        generation,
+        token: this.config.source === "generated" ? secret : null
+      };
+      this.assertRotation();
+      this.accessFile = this.files.replace(join6(this.directory, "access.json"), this.accessFile, encoded(record));
+      this.assertRotation();
+      this.record = record;
+      this.secret = secret;
+      this.revoke();
+      if (this.fenced)
+        throw new ContractError("quarantine");
+    } catch {
+      this.fenced = true;
+      this.revoke();
+      throw new ContractError("quarantine");
+    }
+  }
+}
+function readExternal(path2) {
+  const files = new PrivateFiles(dirname6(path2));
+  const file = files.read(path2, TOKEN_BYTES);
+  if (!file)
+    throw new ContractError("corrupt-selected");
+  try {
+    return {
+      files,
+      file,
+      token: accessToken(new TextDecoder("utf-8", { fatal: true }).decode(file.bytes))
+    };
+  } catch {
+    throw new ContractError("corrupt-selected");
+  }
+}
+class HttpAuthentication {
+  material;
+  epoch;
+  localCapability;
+  csrf = randomUUID4();
+  cookieName;
+  constructor(material, epoch, workspaceId, localCapability) {
+    this.material = material;
+    this.epoch = epoch;
+    this.localCapability = localCapability;
+    decodeId(epoch);
+    decodeId(workspaceId);
+    if (!/^[A-Za-z0-9_-]{43}$/.test(localCapability))
+      throw new ContractError("invalid");
+    this.cookieName = `cadence_${workspaceId.replaceAll("-", "")}`;
+  }
+  bootstrap(value, boundary) {
+    this.material.assertCurrent();
+    const h = boundary.headers;
+    const site = h.get("sec-fetch-site");
+    if (site !== undefined && !["same-origin", "none"].includes(site) && (!["same-site", "cross-site"].includes(site) || h.get("sec-fetch-mode") !== "navigate" || h.get("sec-fetch-dest") !== "document"))
+      throw new ContractError("forbidden");
+    if (!this.material.matches(value))
+      throw new ContractError("unauthenticated");
+    return buildTokenCookie(this.cookieName, encodeURIComponent(value), LIMITS.browserLifetimeMs / 1000, boundary.secure);
+  }
+  authenticate(boundary, attachmentId, mutation = false, websocket = false) {
+    this.material.assertCurrent();
+    if (!this.material.available)
+      throw new ContractError("quarantine");
+    const h = boundary.headers;
+    const local = h.get("x-cadence-local");
+    if (local !== undefined) {
+      if (!boundary.local || h.has("cookie") || [...h.keys()].some((name) => name.startsWith("sec-fetch-") && (name !== "sec-fetch-mode" || h.get(name) !== "cors")) || !sameSecret(local, this.localCapability))
+        throw new ContractError("forbidden");
+    } else {
+      if (h.has("authorization") || h.has("x-cadence-token"))
+        throw new ContractError("forbidden");
+      if (!cookieTokens(h.get("cookie"), this.cookieName).some((v) => this.material.matches(v)))
+        throw new ContractError("unauthenticated");
+      if (h.has("sec-fetch-site") && !["same-origin", "none"].includes(h.get("sec-fetch-site") ?? ""))
+        throw new ContractError("forbidden");
+      if ((mutation || websocket) && h.get("origin") !== boundary.origin)
+        throw new ContractError("forbidden");
+      if (mutation && h.get("x-cadence-csrf") !== this.csrf)
+        throw new ContractError("forbidden");
+    }
+    return {
+      attachmentId: decodeId(attachmentId),
+      authority: local === undefined ? "browser" : "local",
+      accessGeneration: this.material.generation
+    };
+  }
+  current(caller) {
+    this.material.assertCurrent();
+    if (!this.material.available || caller.accessGeneration !== this.material.generation)
+      throw new ContractError("unauthenticated");
+  }
+}
+
+// src/service/contracts/gateway.ts
+function decodeProjectEntry(value) {
+  const o = closed(value, ["id", "path", "cwd", "epoch"]);
+  return {
+    id: decodeHash(o.id),
+    path: text(o.path, 4096, true),
+    cwd: text(o.cwd, 4096, true),
+    epoch: decodeId(o.epoch)
+  };
+}
+
+// src/service/gateway-store.ts
+function decodeGatewayInput(value) {
+  const o = closed(value, [
+    "kind",
+    "serverConfig",
+    "stateHome",
+    "agentDir",
+    "policy"
+  ]);
+  const absolute = (v) => {
+    const p = text(v, 4096, true);
+    if (resolve4(p) !== p)
+      throw new ContractError("invalid");
+    return p;
+  };
+  return {
+    kind: literal(o.kind, "workbench"),
+    serverConfig: absolute(o.serverConfig),
+    stateHome: absolute(o.stateHome),
+    agentDir: absolute(o.agentDir),
+    policy: decodeHttpPolicy(o.policy)
+  };
+}
+function decodeGatewayProject(value) {
+  const project = decodeProjectEntry(value);
+  if (resolve4(project.path) !== project.path || resolve4(project.cwd) !== project.cwd)
+    throw new ContractError("corrupt-selected");
+  return project;
+}
+function registration(value) {
+  const o = closed(value, [
+    "schema",
+    "epoch",
+    "id",
+    "endpoint",
+    "capability",
+    "selection",
+    "pid",
+    "phase"
+  ]);
+  const endpoint2 = text(o.endpoint, 128, true), capability = text(o.capability, 43, true);
+  if (!/^http:\/\/(?:127\.0\.0\.1|\[::1\]):[1-9][0-9]{0,4}$/.test(endpoint2) || !/^[A-Za-z0-9_-]{43}$/.test(capability))
+    throw new ContractError("corrupt-selected");
+  return {
+    schema: literal(o.schema, "cadence-workbench-registration/1"),
+    epoch: decodeId(o.epoch),
+    id: decodeId(o.id),
+    endpoint: endpoint2,
+    capability,
+    selection: decodeHash(o.selection),
+    pid: integer(o.pid, 1),
+    phase: oneOf(o.phase, ["alive", "stopping", "stopped", "quarantined"])
+  };
+}
+
+class GatewayStore {
+  serverConfig;
+  files;
+  directory;
+  stateHome;
+  lock;
+  selected;
+  inputFile;
+  value;
+  constructor(serverConfig, stateHome = defaultStateHome()) {
+    this.serverConfig = serverConfig;
+    this.stateHome = canonicalAmbientRoot(stateHome);
+    this.files = new PrivateFiles(join7(this.stateHome, "cadence-assistant-v1"));
+    this.directory = join7(this.files.namespace, "workbenches-v1", hash(resolve4(serverConfig)));
+  }
+  path(name) {
+    return join7(this.directory, name);
+  }
+  read() {
+    const file = this.files.read(this.path("gateway.json"));
+    if (!file) {
+      if (this.files.directory(this.directory))
+        throw new ContractError("corrupt-selected");
+      return;
+    }
+    const value = registration(json(file));
+    const selected = this.files.read(this.path("input.json"));
+    if (!selected || hash(selected.bytes) !== value.selection)
+      throw new ContractError("corrupt-selected");
+    decodeGatewayInput(json(selected));
+    return value;
+  }
+  localAccess() {
+    const value = this.read();
+    if (!value || value.phase === "stopped")
+      throw new ContractError("unavailable");
+    return {
+      endpoint: value.endpoint,
+      epoch: value.epoch,
+      capability: value.capability
+    };
+  }
+  inspect() {
+    const value = this.read();
+    if (!value)
+      return { status: "absent" };
+    return {
+      status: value.phase === "stopped" && this.files.read(this.path("gateway.lock")) ? "stopping" : value.phase,
+      epoch: value.epoch
+    };
+  }
+  acquire(endpoint2, token, input) {
+    const previous = this.read();
+    if (previous && previous.phase !== "stopped")
+      throw new ContractError("quarantine");
+    this.lock = this.files.create(this.path("gateway.lock"), encoded({ epoch: randomUUID5() }));
+    const source = { serverConfig: this.serverConfig, token };
+    if (!previous)
+      AccessMaterial.initialize(this.files, this.directory, source);
+    const access = new AccessMaterial(this.files, this.directory, source, () => this.assert());
+    this.selected = this.files.read(this.path("gateway.json"));
+    if (previous && (!this.selected || encoded(registration(json(this.selected))) !== encoded(previous)))
+      throw new ContractError("conflict");
+    const beforeInput = this.files.read(this.path("input.json"));
+    const inputBytes = encoded(decodeGatewayInput(input));
+    this.inputFile = beforeInput ? this.files.replace(this.path("input.json"), beforeInput, inputBytes) : this.files.create(this.path("input.json"), inputBytes);
+    this.value = {
+      schema: "cadence-workbench-registration/1",
+      epoch: randomUUID5(),
+      id: previous?.id ?? randomUUID5(),
+      endpoint: endpoint2,
+      capability: randomBytes4(32).toString("base64url"),
+      selection: hash(inputBytes),
+      pid: process.pid,
+      phase: "alive"
+    };
+    this.selected = this.selected ? this.files.replace(this.path("gateway.json"), this.selected, encoded(this.value)) : this.files.create(this.path("gateway.json"), encoded(this.value));
+    return { registration: this.value, access };
+  }
+  assert() {
+    if (!this.lock || !this.selected)
+      throw new ContractError("unavailable");
+    this.files.assert(this.path("gateway.lock"), this.lock);
+    this.files.assert(this.path("input.json"), this.inputFile);
+    this.files.assert(this.path("gateway.json"), this.selected);
+  }
+  phase(phase) {
+    this.assert();
+    this.value = { ...this.value, phase };
+    this.selected = this.files.replace(this.path("gateway.json"), this.selected, encoded(this.value));
+  }
+  release() {
+    this.phase("stopped");
+    this.files.remove(this.path("gateway.lock"), this.lock);
+  }
+  projects() {
+    const directory2 = this.path("projects");
+    if (!this.files.directory(directory2))
+      return [];
+    const stream = opendirSync2(directory2), out = [];
+    try {
+      for (let entry = stream.readSync();entry; entry = stream.readSync()) {
+        if (!entry.isFile() || !/^[a-f0-9]{64}\.json$/.test(entry.name) || out.length >= 128)
+          throw new ContractError("corrupt-selected");
+        const file = this.files.read(join7(directory2, entry.name));
+        if (!file)
+          throw new ContractError("corrupt-selected");
+        const project = decodeGatewayProject(json(file));
+        if (entry.name !== `${project.id}.json` || hash(project.path) !== project.id)
+          throw new ContractError("corrupt-selected");
+        out.push(project);
+      }
+    } finally {
+      stream.closeSync();
+    }
+    return out;
+  }
+  saveProject(project) {
+    this.assert();
+    const p = decodeGatewayProject(project), path2 = this.path(`projects/${p.id}.json`), before = this.files.read(path2);
+    if (!before && this.projects().length >= 128)
+      throw new ContractError("capacity");
+    if (before) {
+      const old = decodeGatewayProject(json(before));
+      if (old.id !== p.id || old.path !== p.path)
+        throw new ContractError("conflict");
+      this.files.replace(path2, before, encoded(p));
+    } else
+      this.files.create(path2, encoded(p));
+  }
+}
+
+// src/service/runtime.ts
+import { homedir as homedir4 } from "node:os";
+import { dirname as dirname7, isAbsolute as isAbsolute6, join as join8, resolve as resolve5 } from "node:path";
+var STARTUP_INPUT_BYTES = 16 * 1024;
+function absolute(value) {
+  const result = text(value, 4096, true);
+  if (!isAbsolute6(result))
+    throw new ContractError("invalid");
+  return result;
+}
+function decodeHostConfig(value) {
+  const o = closed(value, [
+    "schema",
+    "http",
+    "cwd",
+    "agentDir",
+    "tokenSource",
+    "tokenFile"
+  ]);
+  const tokenSource = oneOf(o.tokenSource, [
+    "generated",
+    "environment",
+    "file",
+    "config"
+  ]);
+  const tokenFile = o.tokenFile === null ? null : absolute(o.tokenFile);
+  if ((tokenSource === "file" || tokenSource === "config") !== !!tokenFile)
+    throw new ContractError("invalid");
+  return {
+    schema: literal(o.schema, "cadence-service-host/1"),
+    http: decodeHttpPolicy(o.http),
+    cwd: absolute(o.cwd),
+    agentDir: absolute(o.agentDir),
+    tokenSource,
+    tokenFile
+  };
+}
+function readHostConfig(c) {
+  const owner = c.configuration();
+  if (!owner)
+    return;
+  const snapshot = c.files.read(c.path("host-config.json"));
+  if (!snapshot)
+    throw new ContractError("corrupt-selected");
+  const config = decodeHostConfig(json(snapshot));
+  if (!config.http.port || owner.endpoint !== localOrigin(config.http, config.http.port) || owner.policyIdentity !== hash(encoded(config)))
+    throw new ContractError("conflict");
+  return config;
+}
+function hostEnvironment(ambient) {
+  let route;
+  const facts = networkSnapshot(ambient);
+  try {
+    if (facts.NODE_OPTIONS.present)
+      throw new Error;
+    route = sdkNetworkEnvironment(facts, networkSnapshot(undefined));
+  } catch {
+    throw new ContractError("unsupported-context");
+  }
+  const result = Object.create(null);
+  for (const key of Object.keys(ambient)) {
+    const d = Object.getOwnPropertyDescriptor(ambient, key);
+    if (!d || !("value" in d) || typeof d.value !== "string")
+      throw new ContractError("invalid");
+    if (/^(?:CADENCE_|PI_|ABEL_|TRELLIS_|GIT_)/i.test(key) || networkKeys.some((name) => name === key))
+      continue;
+    result[key] = d.value;
+  }
+  if (route.redactionLiterals.length) {
+    result.HTTP_PROXY = route.env.HTTP_PROXY;
+    result.HTTPS_PROXY = route.env.HTTPS_PROXY;
+    result.NODE_USE_ENV_PROXY = "1";
+  }
+  result.PI_OFFLINE = "1";
+  result.NO_COLOR = "1";
+  if (!sameNetwork(facts, networkSnapshot(ambient)))
+    throw new ContractError("stale");
+  return result;
+}
+function selectStart(options, ambient) {
+  const workspace = resolveWorkspace(options.workspace), c = new ServiceCoordination(workspace.root, options.stateHome);
+  const old = readHostConfig(c);
+  const env = Object.getOwnPropertyDescriptor(ambient, "CADENCE_WEB_TOKEN");
+  if (env && (!("value" in env) || typeof env.value !== "string"))
+    throw new ContractError("invalid");
+  let fromFile;
+  if (options.config) {
+    const path2 = resolve5(options.config), f = new PrivateFiles(dirname7(path2));
+    const bytes = f.read(path2);
+    if (!bytes)
+      throw new ContractError("corrupt-selected");
+    fromFile = decodeHostConfig(json(bytes));
+  }
+  const base = old ?? fromFile ?? decodeHostConfig({
+    schema: "cadence-service-host/1",
+    cwd: workspace.cwd,
+    http: {
+      schema: "cadence-service-http/1",
+      host: options.host ?? "127.0.0.1",
+      port: options.port ?? 17423,
+      proxy: null
+    },
+    agentDir: resolve5(options.agentDir ?? ambient.PI_CODING_AGENT_DIR ?? join8(ambient.HOME ?? ambient.USERPROFILE ?? homedir4(), ".pi", "agent")),
+    tokenSource: options.tokenFile ? "file" : env ? "environment" : "generated",
+    tokenFile: options.tokenFile ? resolve5(options.tokenFile) : null
+  });
+  const server = options.serverConfig !== undefined ? resolve5(options.serverConfig) : old?.tokenSource === "config" ? old.tokenFile : null;
+  let selected = base;
+  if (server) {
+    if (options.tokenFile !== undefined)
+      throw new ContractError("conflict");
+    const { port } = readServerConfig(server).config;
+    selected = decodeHostConfig({
+      ...base,
+      http: { ...base.http, port },
+      tokenSource: "config",
+      tokenFile: server
+    });
+  }
+  if (fromFile && encoded(fromFile) !== encoded(selected) || options.port !== undefined && options.port !== selected.http.port || options.host !== undefined && options.host !== selected.http.host || options.agentDir !== undefined && resolve5(options.agentDir) !== selected.agentDir || options.tokenFile !== undefined && resolve5(options.tokenFile) !== selected.tokenFile || env && selected.tokenSource !== "environment" || selected.tokenSource === "environment" && !env || resolveWorkspace(selected.cwd).root !== workspace.root)
+    throw new ContractError("conflict");
+  return {
+    workspace: workspace.root,
+    stateHome: c.stateHome,
+    config: selected,
+    environmentToken: env?.value ?? null
+  };
+}
+function decodeHostInput(value) {
+  const o = closed(value, [
+    "workspace",
+    "stateHome",
+    "config",
+    "environmentToken"
+  ]);
+  const config = decodeHostConfig(o.config);
+  const environmentToken = o.environmentToken === null ? null : text(o.environmentToken, 1024, true);
+  if (config.tokenSource === "environment" !== (environmentToken !== null))
+    throw new ContractError("invalid");
+  return {
+    workspace: absolute(o.workspace),
+    stateHome: absolute(o.stateHome),
+    config,
+    environmentToken
+  };
+}
+function portValue(value) {
+  if (!/^(0|[1-9][0-9]{0,4})$/.test(value))
+    throw new ContractError("invalid");
+  return integer(Number(value), 0, 65535);
+}
+var STARTUP_STAGES = [
+  "package",
+  "pi-agent-directory",
+  "pi-auth",
+  "pi-models",
+  "pi-runtime",
+  "service"
+];
+function decodeStartupReport(value) {
+  const o = closed(value, ["status", "error", "stage"]);
+  return {
+    status: oneOf(o.status, ["refused", "quarantined"]),
+    error: oneOf(o.error, ERROR_CODES),
+    stage: oneOf(o.stage, STARTUP_STAGES)
+  };
+}
+
+// src/service/gateway-cli.ts
+async function gatewayMain(argv, hostUrl) {
+  const operation = argv.shift();
+  if (![
+    "start",
+    "status",
+    "diagnose",
+    "stop",
+    "token-link",
+    "token-rotate"
+  ].includes(operation ?? ""))
+    throw new ContractError("invalid");
+  let config = serverConfigPath(homedir5()), stateHome = defaultStateHome(), agentDir, policyFile;
+  let foreground = false, reveal = false;
+  const seen = new Set;
+  while (argv.length) {
+    const key = argv.shift();
+    if (seen.has(key))
+      throw new ContractError("invalid");
+    seen.add(key);
+    if (key === "--foreground" && operation === "start")
+      foreground = true;
+    else if (key === "--reveal" && operation === "token-link")
+      reveal = true;
+    else if (argv[0] && ["--server-config", "--state-home", "--agent-dir", "--config"].includes(key)) {
+      const value = resolve6(argv.shift());
+      if (key === "--server-config")
+        config = value;
+      if (key === "--state-home")
+        stateHome = value;
+      if (key === "--agent-dir")
+        agentDir = value;
+      if (key === "--config")
+        policyFile = value;
+    } else
+      throw new ContractError("invalid");
+  }
+  const store = new GatewayStore(config, stateHome);
+  let result;
+  if (operation === "start") {
+    const network = networkSnapshot(process.env), env = hostEnvironment(process.env);
+    if (!seen.has("--server-config"))
+      ensureServerConfig(homedir5());
+    const server = readServerConfig(config).config;
+    const selectedFile = store.files.read(store.path("input.json"));
+    const selected = selectedFile ? decodeGatewayInput(json(selectedFile)) : undefined;
+    let policy = selected?.policy ?? decodeHttpPolicy({
+      schema: "cadence-service-http/1",
+      host: "127.0.0.1",
+      port: server.port,
+      proxy: null
+    });
+    if (policyFile) {
+      const file = new PrivateFiles(dirname8(policyFile)).read(policyFile);
+      if (!file)
+        throw new ContractError("invalid");
+      policy = decodeHttpPolicy(json(file));
+    }
+    const input = decodeGatewayInput({
+      kind: "workbench",
+      serverConfig: config,
+      stateHome: store.stateHome,
+      agentDir: agentDir ?? selected?.agentDir ?? resolve6(process.env.PI_CODING_AGENT_DIR ?? join9(homedir5(), ".pi", "agent")),
+      policy: { ...policy, port: server.port }
+    });
+    const status = await serviceStatus(store);
+    if (status && typeof status === "object" && "status" in status && status.status === "alive") {
+      if (!selected || encoded(selected) !== encoded(input))
+        throw new ContractError("conflict");
+      result = status;
+    } else
+      result = await launchHost(input, store, foreground, hostUrl, dirname8(dirname8(fileURLToPath(hostUrl))), env, network);
+    if (!foreground && result && typeof result === "object" && "status" in result && result.status === "alive") {
+      const reply = closed(await nativeCall(store, "token-link", true), [
+        "link"
+      ]);
+      process.stderr.write(`Cadence workbench: ${text(reply.link, 4096, true)}
+No project or default workspace was created.
+`);
+    }
+  } else if (operation === "stop")
+    result = await stopService(store);
+  else if (operation === "status" || operation === "diagnose")
+    result = await serviceStatus(store, operation === "diagnose");
+  else {
+    if (operation === "token-link" && !reveal)
+      throw new ContractError("forbidden");
+    result = await nativeCall(store, operation, reveal);
+  }
+  if (result !== null)
+    process.stdout.write(`${JSON.stringify(result)}
+`);
+  if (result && typeof result === "object" && "status" in result && ["unconfirmed", "unavailable", "quarantined", "refused"].includes(String(result.status)))
+    process.exitCode = 1;
+}
+
 // src/service/launchd.ts
 import { rmSync as rmSync2 } from "node:fs";
-import { join as join6 } from "node:path";
+import { dirname as dirname9, join as join10 } from "node:path";
 var LABEL = "com.abelxiaoxing.cadence";
 var MARKER2 = `<?xml version="1.0" encoding="UTF-8"?>
 <!-- Generated by @abelxiaoxing/cadence`;
 function plistPath(s) {
-  return join6(s.home, "Library", "LaunchAgents", `${LABEL}.plist`);
+  return join10(s.home, "Library", "LaunchAgents", `${LABEL}.plist`);
 }
 var xml = (value) => checked(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 function buildPlist(u) {
@@ -4062,16 +4919,14 @@ function buildPlist(u) {
     ...[
       u.node,
       u.cli,
-      "start",
-      "--foreground",
-      "--workspace",
-      u.workspace,
+      ...u.workspace === null ? ["workbench", "start", "--foreground"] : ["start", "--foreground", "--workspace", u.workspace],
       "--server-config",
       u.serverConfig
     ].map(string),
     "\t</array>",
+    ...u.workspace === null ? ["<!-- Cadence workbench gateway; no project workspace -->"] : [],
     "\t<key>WorkingDirectory</key>",
-    `	<string>${xml(u.workspace)}</string>`,
+    `	<string>${xml(u.workspace ?? dirname9(dirname9(u.cli)))}</string>`,
     "\t<key>EnvironmentVariables</key>",
     "\t<dict>",
     ...u.environment.flatMap(([k, v]) => [
@@ -4094,6 +4949,8 @@ function buildPlist(u) {
 `);
 }
 function plistWorkspace(text2) {
+  if (text2?.includes("<!-- Cadence workbench gateway; no project workspace -->"))
+    return null;
   const m = text2?.match(/^\t<key>WorkingDirectory<\/key>\n\t<string>([^<]*)<\/string>$/m);
   return m?.[1].replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
 }
@@ -4113,10 +4970,10 @@ async function configureLaunchAgent(s, mode, requested) {
   if (mode === "restart" && previous === undefined)
     return { status: "absent" };
   const sdk = sdkPackages(s.root);
-  if (!sdk)
-    return { status: "missing-pi-sdk" };
   const kept = plistWorkspace(previous);
-  const { workspace, redirectedFrom } = selectWorkspace(s, requested, kept);
+  const { workspace, redirectedFrom } = selectWorkspace(s, requested, mode === "install" && requested === undefined ? null : kept);
+  if (workspace !== null && !sdk)
+    return { status: "missing-pi-sdk" };
   const refused2 = await settle(s, kept);
   if (refused2)
     return { ...refused2, unit: path2 };
@@ -4124,11 +4981,11 @@ async function configureLaunchAgent(s, mode, requested) {
     s.launchctl(["bootout", target(s)]);
   write(path2, buildPlist({
     node: s.node,
-    cli: join6(s.root, "src", "service-cli.mjs"),
+    cli: join10(s.root, "src", "service-cli.mjs"),
     workspace,
     serverConfig: serverConfigPath(s.home),
     environment: serviceEnvironment(s),
-    log: join6(s.home, "Library", "Logs", "cadence.log")
+    log: join10(s.home, "Library", "Logs", "cadence.log")
   }));
   const result = {
     unit: path2,
@@ -4139,7 +4996,7 @@ async function configureLaunchAgent(s, mode, requested) {
     s.launchctl(["enable", target(s)]);
   else if (disabled(s))
     return { status: "disabled", ...result };
-  if (!regularFile(join6(agentDirectory(s), "auth.json")))
+  if (workspace !== null && !regularFile(join10(agentDirectory(s), "auth.json")))
     return { status: "waiting-for-pi-login", ...result };
   const started = s.launchctl(["bootstrap", domain(s), path2]).status === 0;
   return { status: started ? "started" : "failed", ...result };
@@ -4188,14 +5045,14 @@ function launchAgentStatus(s) {
 
 // src/service/login-run.ts
 import { rmSync as rmSync3 } from "node:fs";
-import { isAbsolute as isAbsolute5, join as join7 } from "node:path";
+import { dirname as dirname10, isAbsolute as isAbsolute7, join as join11 } from "node:path";
 var RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 var APPROVED_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
 var RUN_VALUE = "Cadence";
 var MARKER3 = "' Generated by @abelxiaoxing/cadence";
 function launcherPath(s) {
   const local = s.env.LOCALAPPDATA;
-  return join7(local && isAbsolute5(local) ? local : join7(s.home, "AppData", "Local"), "cadence-server", "cadence.vbs");
+  return join11(local && isAbsolute7(local) ? local : join11(s.home, "AppData", "Local"), "cadence-server", "cadence.vbs");
 }
 var literal2 = (value) => `"${checked(value).replaceAll('"', '""')}"`;
 function argument2(value) {
@@ -4204,14 +5061,15 @@ function argument2(value) {
   return `"${value}"`;
 }
 function buildLauncher(u) {
-  const command = `${argument2(u.node)} ${argument2(u.cli)} start --workspace ${argument2(u.workspace)} --server-config ${argument2(u.serverConfig)}`;
+  const command = `${argument2(u.node)} ${argument2(u.cli)} ${u.workspace === null ? "workbench start" : `start --workspace ${argument2(u.workspace)}`} --server-config ${argument2(u.serverConfig)}`;
   return [
     `${MARKER3}; \`cadence server install\` and \`restart\` rewrite this file.`,
     `' Started at login by ${RUN_KEY}\\${RUN_VALUE}; window style 0 hides the console.`,
     'Set shell = CreateObject("WScript.Shell")',
     ...u.environment.length ? ['Set env = shell.Environment("Process")'] : [],
     ...u.environment.map(([k, v]) => `env(${literal2(k)}) = ${literal2(v)}`),
-    `shell.CurrentDirectory = ${literal2(u.workspace)}`,
+    ...u.workspace === null ? ["' Cadence workbench gateway; no project workspace"] : [],
+    `shell.CurrentDirectory = ${literal2(u.workspace ?? dirname10(dirname10(u.cli)))}`,
     `shell.Run ${literal2(command)}, 0, False`,
     ""
   ].join(`\r
@@ -4219,6 +5077,8 @@ function buildLauncher(u) {
 }
 var utf16 = (text2) => Buffer.concat([Buffer.from([255, 254]), Buffer.from(text2, "utf16le")]);
 function launcherWorkspace(text2) {
+  if (text2?.includes("' Cadence workbench gateway; no project workspace"))
+    return null;
   return text2?.match(/^shell\.CurrentDirectory = "((?:[^"]|"")*)"\r?$/m)?.[1].replaceAll('""', '"');
 }
 var runEntry = (path2, s) => `"${wscript(s.env)}" "${path2}"`;
@@ -4238,17 +5098,17 @@ async function configureLoginRun(s, mode, requested) {
   if (mode === "restart" && previous === undefined)
     return { status: "absent" };
   const sdk = sdkPackages(s.root);
-  if (!sdk)
-    return { status: "missing-pi-sdk" };
   const kept = launcherWorkspace(previous);
-  const { workspace, redirectedFrom } = selectWorkspace(s, requested, kept);
+  const { workspace, redirectedFrom } = selectWorkspace(s, requested, mode === "install" && requested === undefined ? null : kept);
+  if (workspace !== null && !sdk)
+    return { status: "missing-pi-sdk" };
   const refused2 = await settle(s, kept);
   if (refused2)
     return { ...refused2, unit: path2 };
   const environment = s.env.PI_CODING_AGENT_DIR ? [["PI_CODING_AGENT_DIR", agentDirectory(s)]] : [];
   write(path2, utf16(buildLauncher({
     node: s.node,
-    cli: join7(s.root, "src", "service-cli.mjs"),
+    cli: join11(s.root, "src", "service-cli.mjs"),
     workspace,
     serverConfig: serverConfigPath(s.home),
     environment
@@ -4264,7 +5124,7 @@ async function configureLoginRun(s, mode, requested) {
       return { status: "failed", ...result };
     s.reg(["delete", APPROVED_KEY, "/v", RUN_VALUE, "/f"]);
   }
-  if (!regularFile(join7(agentDirectory(s), "auth.json")))
+  if (workspace !== null && !regularFile(join11(agentDirectory(s), "auth.json")))
     return { status: "waiting-for-pi-login", ...result };
   return { status: s.launch(path2) ? "started" : "failed", ...result };
 }
@@ -4303,7 +5163,7 @@ async function loginRunStatus(s) {
   if (previous === undefined)
     return { status: "absent" };
   const workspace = launcherWorkspace(previous);
-  const owner = workspace ? await s.ownerStatus(workspace) : "unavailable";
+  const owner = workspace !== undefined ? await s.ownerStatus(workspace, serverConfigPath(s.home)) : "unavailable";
   return {
     status: owner === "alive" ? "active" : "inactive",
     enabled: present(s, RUN_KEY) && !approvedOff(s) ? "enabled" : "disabled",
@@ -4316,9 +5176,9 @@ async function loginRunStatus(s) {
 import { isatty } from "node:tty";
 
 // src/history/recovery.ts
-import { createHash as createHash5, randomUUID as randomUUID5 } from "node:crypto";
-import { lstatSync as lstatSync7, opendirSync as opendirSync3 } from "node:fs";
-import { join as join9, relative as relative4 } from "node:path";
+import { createHash as createHash6, randomUUID as randomUUID7 } from "node:crypto";
+import { lstatSync as lstatSync7, opendirSync as opendirSync4 } from "node:fs";
+import { join as join13, relative as relative4 } from "node:path";
 
 // src/service/recovery.ts
 async function inspectRecovery(coordination, history) {
@@ -4366,19 +5226,19 @@ async function resolveRecovery(coordination, confirmation, history) {
 }
 
 // src/history/files.ts
-import { createHash as createHash4, randomBytes as randomBytes3, randomUUID as randomUUID4 } from "node:crypto";
+import { createHash as createHash5, randomBytes as randomBytes5, randomUUID as randomUUID6 } from "node:crypto";
 import {
   closeSync as closeSync5,
   constants as constants5,
   fstatSync as fstatSync4,
   fsyncSync as fsyncSync3,
   lstatSync as lstatSync6,
-  opendirSync as opendirSync2,
+  opendirSync as opendirSync3,
   openSync as openSync5,
   statfsSync
 } from "node:fs";
 import { open } from "node:fs/promises";
-import { dirname as dirname7, join as join8 } from "node:path";
+import { dirname as dirname12, join as join12 } from "node:path";
 
 // src/history/admission.ts
 function decodeRunAdmission(value) {
@@ -4406,13 +5266,13 @@ import {
   openSync as openSync4,
   readSync as readSync3
 } from "node:fs";
-import { dirname as dirname6 } from "node:path";
+import { dirname as dirname11 } from "node:path";
 function bad() {
   throw new ContractError("corrupt-selected");
 }
 var stamp2 = (s) => [s.dev, s.ino, s.size, s.mode, s.uid, s.nlink, s.ctimeMs, s.mtimeMs].join(":");
 function selected(files, path2, read, walks) {
-  if (!files.files.directory(dirname6(path2), false, walks))
+  if (!files.files.directory(dirname11(path2), false, walks))
     bad();
   const before = lstatSync5(path2);
   if (!before.isFile() || before.nlink !== 1 || process.platform !== "win32" && (before.mode & 63 || process.getuid && before.uid !== process.getuid()))
@@ -4444,7 +5304,7 @@ function statSize(files, path2, maximum) {
 }
 
 // src/history/types.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 var RECORD_BYTES = LIMITS.controlBytes + 64 * 1024;
 var LEGACY_FORMAT = "cadence-history-store/2";
 var FORMAT = "cadence-history-store/3";
@@ -4810,7 +5670,7 @@ function batchArtifacts(rows) {
 }
 var decodedLines = new Map;
 var decodedBytes = 0;
-var lineKey = (text2) => createHash3("sha256").update(text2).digest("hex");
+var lineKey = (text2) => createHash4("sha256").update(text2).digest("hex");
 function remember(text2, value) {
   const key = lineKey(text2);
   if (decodedLines.has(key))
@@ -4909,14 +5769,14 @@ class HistoryFiles {
     this.coordination = coordination;
     this.format = format;
     this.formatSnapshot = formatSnapshot;
-    this.directory = join8(coordination.directory, "history-v2");
+    this.directory = join12(coordination.directory, "history-v2");
     this.files = coordination.files;
   }
   static open(coordination) {
-    const dir = join8(coordination.directory, "history-v2");
+    const dir = join12(coordination.directory, "history-v2");
     if (!coordination.files.directory(dir))
       return;
-    const file = coordination.files.read(join8(dir, "format.json"));
+    const file = coordination.files.read(join12(dir, "format.json"));
     if (!file)
       corrupt();
     const format = decodeFormat(json(file));
@@ -4932,29 +5792,29 @@ class HistoryFiles {
       existing.assertWritable();
       return existing;
     }
-    const dir = join8(c.directory, "history-v2");
+    const dir = join12(c.directory, "history-v2");
     const format = {
       schema: FORMAT,
-      storeId: randomUUID4(),
-      workspaceId: randomUUID4(),
+      storeId: randomUUID6(),
+      workspaceId: randomUUID6(),
       rootIdentity: hash(c.store.root)
     };
     c.files.directory(dir, true);
     for (const name of ["commands", "ledger", "runs", "indexes"]) {
       lease.assert();
-      c.files.directory(join8(dir, name), true);
+      c.files.directory(join12(dir, name), true);
     }
     lease.assert();
-    const keyPath = join8(dir, "read-proof-key.json");
+    const keyPath = join12(dir, "read-proof-key.json");
     c.files.create(keyPath, encoded({
       schema: "cadence-history-read-key/1",
       storeId: format.storeId,
-      key: randomBytes3(32).toString("base64url")
+      key: randomBytes5(32).toString("base64url")
     }));
     lease.assert();
-    const snapshot = c.files.create(join8(dir, "format.json"), encoded(format));
+    const snapshot = c.files.create(join12(dir, "format.json"), encoded(format));
     const result = new HistoryFiles(c, format, snapshot);
-    result.syncParents(join8(dir, "format.json"));
+    result.syncParents(join12(dir, "format.json"));
     result.assertWritable();
     return result;
   }
@@ -4989,7 +5849,7 @@ class HistoryFiles {
       throw new ContractError("quarantine");
   }
   assertFormat() {
-    this.files.assert(join8(this.directory, "format.json"), this.formatSnapshot);
+    this.files.assert(join12(this.directory, "format.json"), this.formatSnapshot);
   }
   readProofMaterial(budget) {
     if (this.format.schema !== FORMAT)
@@ -4998,7 +5858,7 @@ class HistoryFiles {
       this.assertReadFormat(budget);
     else
       this.assertFormat();
-    const selected2 = this.readBudgeted(join8(this.directory, "read-proof-key.json"), 512, budget);
+    const selected2 = this.readBudgeted(join12(this.directory, "read-proof-key.json"), 512, budget);
     if (!selected2 || this.proofSnapshot && (selected2.identity !== this.proofSnapshot.identity || selected2.stamp !== this.proofSnapshot.stamp))
       corrupt();
     try {
@@ -5026,17 +5886,17 @@ class HistoryFiles {
       return;
     }
     this.assertFormat();
-    assertIncarnation(this, join8(this.directory, "read-proof-key.json"), this.proofSnapshot.stamp);
+    assertIncarnation(this, join12(this.directory, "read-proof-key.json"), this.proofSnapshot.stamp);
   }
   segmentPath(segment) {
-    return join8(this.directory, "ledger", `${String(segment).padStart(12, "0")}.jsonl`);
+    return join12(this.directory, "ledger", `${String(segment).padStart(12, "0")}.jsonl`);
   }
   artifactPath(ref) {
-    return join8(this.directory, "runs", ref.runId, "artifacts", ref.artifactId, `${ref.part}.part`);
+    return join12(this.directory, "runs", ref.runId, "artifacts", ref.artifactId, `${ref.part}.part`);
   }
   admissionPath(runId) {
     decodeId(runId);
-    return join8(this.directory, "runs", runId, "admission.json");
+    return join12(this.directory, "runs", runId, "admission.json");
   }
   writeAdmission(lease, input) {
     lease.assert();
@@ -5062,7 +5922,7 @@ class HistoryFiles {
   readCommand(commandId, budget) {
     decodeId(commandId);
     this.assertReadFormat(budget);
-    return this.readBudgeted(join8(this.directory, "commands", commandId, "intent.json"), RECORD_BYTES, budget);
+    return this.readBudgeted(join12(this.directory, "commands", commandId, "intent.json"), RECORD_BYTES, budget);
   }
   readAdmission(runId, identity, budget) {
     return this.readAdmissionIdentity(runId, hash(canonicalJson(identity)), budget);
@@ -5083,7 +5943,7 @@ class HistoryFiles {
   syncParents(file) {
     if (process.platform === "win32")
       return;
-    for (let path2 = dirname7(file);; path2 = dirname7(path2)) {
+    for (let path2 = dirname12(file);; path2 = dirname12(path2)) {
       if (!this.files.directory(path2))
         corrupt();
       const fd = openSync5(path2, constants5.O_RDONLY | constants5.O_DIRECTORY);
@@ -5094,13 +5954,13 @@ class HistoryFiles {
       }
       if (path2 === this.coordination.directory)
         break;
-      if (path2 === dirname7(path2))
+      if (path2 === dirname12(path2))
         corrupt();
     }
   }
   assertReadFormat(budget) {
     budget.reserve(this.formatSnapshot.bytes.length);
-    this.files.assert(join8(this.directory, "format.json"), this.formatSnapshot, this.formatSnapshot.bytes.length);
+    this.files.assert(join12(this.directory, "format.json"), this.formatSnapshot, this.formatSnapshot.bytes.length);
   }
   assertPublished(segment, end, seq) {
     const fence = publicationFences.get(this.directory);
@@ -5135,10 +5995,10 @@ class HistoryFiles {
       if (depth > 8 || !this.files.directory(path2))
         corrupt();
       let bytes = 0;
-      const dir = opendirSync2(path2);
+      const dir = opendirSync3(path2);
       try {
         for (let e = dir.readSync();e; e = dir.readSync()) {
-          const p = join8(path2, e.name), st = lstatSync6(p);
+          const p = join12(path2, e.name), st = lstatSync6(p);
           if (st.isDirectory())
             bytes += walk(p, depth + 1);
           else {
@@ -5173,10 +6033,10 @@ class HistoryFiles {
     state.bytes = 0;
     state.identity = null;
     let count = 0;
-    const ledger = join8(this.directory, "ledger");
+    const ledger = join12(this.directory, "ledger");
     if (!this.files.directory(ledger))
       corrupt();
-    const dir = opendirSync2(ledger);
+    const dir = opendirSync3(ledger);
     try {
       for (let e = dir.readSync();e; e = dir.readSync()) {
         budget?.reserve(0);
@@ -5210,7 +6070,7 @@ class HistoryFiles {
       state.bytes = file.bytes.length;
       state.identity = file.identity;
       state.records = 0;
-      let at = 0, pending = [], pendingBytes = 0, checksum = createHash4("sha256");
+      let at = 0, pending = [], pendingBytes = 0, checksum = createHash5("sha256");
       while (at < file.bytes.length) {
         budget?.reserve(0);
         const end = file.bytes.indexOf(10, at);
@@ -5278,7 +6138,7 @@ class HistoryFiles {
         };
         pending = [];
         pendingBytes = 0;
-        checksum = createHash4("sha256");
+        checksum = createHash5("sha256");
       }
       if (pending.length)
         state.tail = true;
@@ -5470,7 +6330,7 @@ class HistoryFiles {
       lease.assert();
       this.assertWritable();
       const after = this.files.read(path2, LIMITS.segmentBytes);
-      if (!after || after.identity !== createHash4("sha256").update(before.bytes).update(body).update(trailer).digest("hex"))
+      if (!after || after.identity !== createHash5("sha256").update(before.bytes).update(body).update(trailer).digest("hex"))
         corrupt();
       return {
         committedSeq: marker.last,
@@ -5490,7 +6350,7 @@ class HistoryFiles {
   checkpoint(lease, state) {
     lease.assert();
     this.assertWritable();
-    const path2 = join8(this.directory, "checkpoint.json"), old = this.files.read(path2);
+    const path2 = join12(this.directory, "checkpoint.json"), old = this.files.read(path2);
     const body = encoded({
       schema: "cadence-history-checkpoint/2",
       storeId: this.format.storeId,
@@ -5898,7 +6758,7 @@ function projectRunObservation(runId, epoch, o, child) {
 // src/history/recovery.ts
 function digestHistory(files, exclude) {
   files.assertFormat();
-  const digest = createHash5("sha256");
+  const digest = createHash6("sha256");
   let count = 0;
   const walk = (path2, depth) => {
     if (depth > 8 || !files.files.directory(path2))
@@ -5906,7 +6766,7 @@ function digestHistory(files, exclude) {
     const directory2 = lstatSync7(path2);
     digest.update(`incarnation:${directory2.dev}:${directory2.ino}
 `);
-    const dir = opendirSync3(path2), names2 = [];
+    const dir = opendirSync4(path2), names2 = [];
     try {
       for (let e = dir.readSync();e; e = dir.readSync()) {
         if (++count > LIMITS.dataFrames)
@@ -5917,7 +6777,7 @@ function digestHistory(files, exclude) {
       dir.closeSync();
     }
     for (const name of names2.sort()) {
-      const selected2 = join9(path2, name);
+      const selected2 = join13(path2, name);
       if (selected2 === exclude)
         continue;
       const rel = relative4(files.directory, selected2);
@@ -6040,7 +6900,7 @@ class HistoryRecovery {
     const current = await inspectRecovery(this.coordination, this);
     if (JSON.stringify(current) !== JSON.stringify(expected))
       throw new ContractError("conflict");
-    const state = files.inspect(), recoveryId = randomUUID5();
+    const state = files.inspect(), recoveryId = randomUUID7();
     const bridge = {
       kind: "recovery",
       recoveryId,
@@ -6071,7 +6931,7 @@ class HistoryRecovery {
       throw new ContractError("conflict");
     const row = {
       kind: "record",
-      id: randomUUID5(),
+      id: randomUUID7(),
       seq: String(BigInt(bridge.previous.highSeq) + 1n),
       value: bridge
     };
@@ -6135,7 +6995,7 @@ async function confirm(expected) {
       `resolve ${expected.epoch}`
     ]
   ];
-  await new Promise((resolve4, reject) => {
+  await new Promise((resolve7, reject) => {
     let index = 0, line = "", done = false;
     const raw = process.stdin.isRaw;
     const finish = (ok) => {
@@ -6151,7 +7011,7 @@ async function confirm(expected) {
       process.stdout.write(`\x1B[?2004l
 `);
       if (ok)
-        resolve4();
+        resolve7();
       else
         reject(new ContractError("forbidden"));
     };
@@ -6196,12 +7056,12 @@ async function localRecovery(c, operation) {
     native();
   const history = new HistoryRecovery(c);
   const expected = await inspectRecovery(c, history);
-  const registration = c.recoverySnapshot().registration;
+  const registration2 = c.recoverySnapshot().registration;
   const view = {
     ...expected,
     process: {
-      pid: registration.pid,
-      host: diagnosticText(registration.host, 255)
+      pid: registration2.pid,
+      host: diagnosticText(registration2.host, 255)
     },
     notice: warning
   };
@@ -6226,227 +7086,9 @@ async function localRecovery(c, operation) {
   }, history);
 }
 
-// src/service/runtime.ts
-import { homedir as homedir4 } from "node:os";
-import { dirname as dirname8, isAbsolute as isAbsolute6, join as join10, resolve as resolve4 } from "node:path";
-
-// src/service/config.ts
-import { isIP } from "node:net";
-function decodeHttpPolicy(value) {
-  const o = closed(value, ["schema", "host", "port", "proxy"]);
-  if (o.host !== "127.0.0.1" && o.host !== "::1")
-    throw new ContractError("invalid");
-  let proxy = null;
-  if (o.proxy !== null) {
-    const p = closed(o.proxy, ["origin", "trustedAddresses"]);
-    const origin = text(p.origin, 256, true);
-    let url;
-    try {
-      url = new URL(origin);
-    } catch {
-      throw new ContractError("invalid");
-    }
-    if (url.protocol !== "https:" || url.origin !== origin || url.username || url.password)
-      throw new ContractError("invalid");
-    const trustedAddresses = list(p.trustedAddresses, 8, (v) => {
-      const address = text(v, 64, true);
-      if (!isIP(address) || !loopbackAddress(address))
-        throw new ContractError("invalid");
-      return address;
-    });
-    if (!trustedAddresses.length || new Set(trustedAddresses).size !== trustedAddresses.length)
-      throw new ContractError("invalid");
-    proxy = { origin, trustedAddresses };
-  }
-  return {
-    schema: literal(o.schema, "cadence-service-http/1"),
-    host: o.host,
-    port: integer(o.port, 0, 65535),
-    proxy
-  };
-}
-function loopbackAddress(host) {
-  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(host);
-  const h = mapped ? mapped[1] : host;
-  if (h.includes(":"))
-    return h === "::1";
-  const parts = h.split(".");
-  return parts.length === 4 && parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255) && Number(parts[0]) === 127;
-}
-function localOrigin(policy, actualPort) {
-  integer(actualPort, 1, 65535);
-  return `http://${policy.host === "::1" ? "[::1]" : policy.host}:${actualPort}`;
-}
-
-// src/service/runtime.ts
-var STARTUP_INPUT_BYTES = 16 * 1024;
-function absolute(value) {
-  const result = text(value, 4096, true);
-  if (!isAbsolute6(result))
-    throw new ContractError("invalid");
-  return result;
-}
-function decodeHostConfig(value) {
-  const o = closed(value, [
-    "schema",
-    "http",
-    "cwd",
-    "agentDir",
-    "tokenSource",
-    "tokenFile"
-  ]);
-  const tokenSource = oneOf(o.tokenSource, [
-    "generated",
-    "environment",
-    "file",
-    "config"
-  ]);
-  const tokenFile = o.tokenFile === null ? null : absolute(o.tokenFile);
-  if ((tokenSource === "file" || tokenSource === "config") !== !!tokenFile)
-    throw new ContractError("invalid");
-  return {
-    schema: literal(o.schema, "cadence-service-host/1"),
-    http: decodeHttpPolicy(o.http),
-    cwd: absolute(o.cwd),
-    agentDir: absolute(o.agentDir),
-    tokenSource,
-    tokenFile
-  };
-}
-function readHostConfig(c) {
-  const owner = c.configuration();
-  if (!owner)
-    return;
-  const snapshot = c.files.read(c.path("host-config.json"));
-  if (!snapshot)
-    throw new ContractError("corrupt-selected");
-  const config = decodeHostConfig(json(snapshot));
-  if (!config.http.port || owner.endpoint !== localOrigin(config.http, config.http.port) || owner.policyIdentity !== hash(encoded(config)))
-    throw new ContractError("conflict");
-  return config;
-}
-function hostEnvironment(ambient) {
-  let route;
-  const facts = networkSnapshot(ambient);
-  try {
-    if (facts.NODE_OPTIONS.present)
-      throw new Error;
-    route = sdkNetworkEnvironment(facts, networkSnapshot(undefined));
-  } catch {
-    throw new ContractError("unsupported-context");
-  }
-  const result = Object.create(null);
-  for (const key of Object.keys(ambient)) {
-    const d = Object.getOwnPropertyDescriptor(ambient, key);
-    if (!d || !("value" in d) || typeof d.value !== "string")
-      throw new ContractError("invalid");
-    if (/^(?:CADENCE_|PI_|ABEL_|TRELLIS_|GIT_)/i.test(key) || networkKeys.some((name) => name === key))
-      continue;
-    result[key] = d.value;
-  }
-  if (route.redactionLiterals.length) {
-    result.HTTP_PROXY = route.env.HTTP_PROXY;
-    result.HTTPS_PROXY = route.env.HTTPS_PROXY;
-    result.NODE_USE_ENV_PROXY = "1";
-  }
-  result.PI_OFFLINE = "1";
-  result.NO_COLOR = "1";
-  if (!sameNetwork(facts, networkSnapshot(ambient)))
-    throw new ContractError("stale");
-  return result;
-}
-function selectStart(options, ambient) {
-  const workspace = resolveWorkspace(options.workspace), c = new ServiceCoordination(workspace.root, options.stateHome);
-  const old = readHostConfig(c);
-  const env = Object.getOwnPropertyDescriptor(ambient, "CADENCE_WEB_TOKEN");
-  if (env && (!("value" in env) || typeof env.value !== "string"))
-    throw new ContractError("invalid");
-  let fromFile;
-  if (options.config) {
-    const path2 = resolve4(options.config), f = new PrivateFiles(dirname8(path2));
-    const bytes = f.read(path2);
-    if (!bytes)
-      throw new ContractError("corrupt-selected");
-    fromFile = decodeHostConfig(json(bytes));
-  }
-  const base = old ?? fromFile ?? decodeHostConfig({
-    schema: "cadence-service-host/1",
-    cwd: workspace.cwd,
-    http: {
-      schema: "cadence-service-http/1",
-      host: options.host ?? "127.0.0.1",
-      port: options.port ?? 17423,
-      proxy: null
-    },
-    agentDir: resolve4(options.agentDir ?? ambient.PI_CODING_AGENT_DIR ?? join10(ambient.HOME ?? ambient.USERPROFILE ?? homedir4(), ".pi", "agent")),
-    tokenSource: options.tokenFile ? "file" : env ? "environment" : "generated",
-    tokenFile: options.tokenFile ? resolve4(options.tokenFile) : null
-  });
-  const server = options.serverConfig !== undefined ? resolve4(options.serverConfig) : old?.tokenSource === "config" ? old.tokenFile : null;
-  let selected2 = base;
-  if (server) {
-    if (options.tokenFile !== undefined)
-      throw new ContractError("conflict");
-    const { port } = readServerConfig(server).config;
-    selected2 = decodeHostConfig({
-      ...base,
-      http: { ...base.http, port },
-      tokenSource: "config",
-      tokenFile: server
-    });
-  }
-  if (fromFile && encoded(fromFile) !== encoded(selected2) || options.port !== undefined && options.port !== selected2.http.port || options.host !== undefined && options.host !== selected2.http.host || options.agentDir !== undefined && resolve4(options.agentDir) !== selected2.agentDir || options.tokenFile !== undefined && resolve4(options.tokenFile) !== selected2.tokenFile || env && selected2.tokenSource !== "environment" || selected2.tokenSource === "environment" && !env || resolveWorkspace(selected2.cwd).root !== workspace.root)
-    throw new ContractError("conflict");
-  return {
-    workspace: workspace.root,
-    stateHome: c.stateHome,
-    config: selected2,
-    environmentToken: env?.value ?? null
-  };
-}
-function decodeHostInput(value) {
-  const o = closed(value, [
-    "workspace",
-    "stateHome",
-    "config",
-    "environmentToken"
-  ]);
-  const config = decodeHostConfig(o.config);
-  const environmentToken = o.environmentToken === null ? null : text(o.environmentToken, 1024, true);
-  if (config.tokenSource === "environment" !== (environmentToken !== null))
-    throw new ContractError("invalid");
-  return {
-    workspace: absolute(o.workspace),
-    stateHome: absolute(o.stateHome),
-    config,
-    environmentToken
-  };
-}
-function portValue(value) {
-  if (!/^(0|[1-9][0-9]{0,4})$/.test(value))
-    throw new ContractError("invalid");
-  return integer(Number(value), 0, 65535);
-}
-var STARTUP_STAGES = [
-  "package",
-  "pi-agent-directory",
-  "pi-auth",
-  "pi-models",
-  "pi-runtime",
-  "service"
-];
-function decodeStartupReport(value) {
-  const o = closed(value, ["status", "error", "stage"]);
-  return {
-    status: oneOf(o.status, ["refused", "quarantined"]),
-    error: oneOf(o.error, ERROR_CODES),
-    stage: oneOf(o.stage, STARTUP_STAGES)
-  };
-}
-
 // src/service/system-service.ts
-import { existsSync as existsSync2, mkdirSync as mkdirSync6, realpathSync as realpathSync5, rmSync as rmSync4 } from "node:fs";
-import { isAbsolute as isAbsolute7, join as join11 } from "node:path";
+import { existsSync as existsSync2, realpathSync as realpathSync5, rmSync as rmSync4 } from "node:fs";
+import { isAbsolute as isAbsolute8, join as join14 } from "node:path";
 var MARKER4 = "# Generated by @abelxiaoxing/cadence";
 function boundary(s) {
   if (s.platform !== "linux" || s.scope !== "system")
@@ -6460,7 +7102,7 @@ function legacyPath(s) {
 function observed(s) {
   const path2 = unitPath(s);
   let previous = readGenerated(path2, MARKER4);
-  if (typeof previous === "string" && (!isAbsolute7(unitWorkspace(previous) ?? "") || !previous.includes(`
+  if (typeof previous === "string" && (unitWorkspace(previous) !== null && !isAbsolute8(unitWorkspace(previous) ?? "") || !previous.includes(`
 User=root
 `)))
     previous = null;
@@ -6489,13 +7131,13 @@ function sameStateEnvironment(s, previous) {
       values.set(key, value.slice(at + 1).replaceAll("%%", "%"));
     }
     const state = s.env.XDG_STATE_HOME;
-    return values.get("HOME") === s.home && values.get("XDG_STATE_HOME") === (state && isAbsolute7(state) ? state : undefined);
+    return values.get("HOME") === s.home && values.get("XDG_STATE_HOME") === (state && isAbsolute8(state) ? state : undefined);
   } catch {
     return false;
   }
 }
 async function ownerBoundary(s, workspace, managed) {
-  const status = await s.ownerStatus(workspace);
+  const status = await s.ownerStatus(workspace, serviceConfigPath(s));
   if (managed) {
     if (status === "absent")
       return { status: "unavailable", workspace };
@@ -6522,21 +7164,21 @@ async function configureSystemService(s, mode, requested) {
   if (mode === "restart" && previous === undefined)
     return { status: "absent", scope: "system" };
   const sdk = sdkPackages(s.root);
-  if (!sdk)
-    return { status: "missing-pi-sdk", scope: "system" };
-  if (previous && !existsSync2(unitWorkspace(previous)))
+  if (previous && unitWorkspace(previous) && !existsSync2(unitWorkspace(previous)))
     return { status: "workspace-changed", ...result };
-  const selected2 = selectWorkspace(s, requested, unitWorkspace(previous), false);
-  const selectedReal = existsSync2(selected2.workspace) ? realpathSync5(selected2.workspace) : undefined;
+  const selected2 = selectWorkspace(s, requested, mode === "install" && requested === undefined ? null : unitWorkspace(previous), false);
+  if (selected2.workspace !== null && !sdk)
+    return { status: "missing-pi-sdk", scope: "system" };
+  const selectedReal = selected2.workspace && existsSync2(selected2.workspace) ? realpathSync5(selected2.workspace) : undefined;
   const agentDir = agentDirectory(s);
   const content = buildUnit({
     system: true,
     node: s.node,
-    cli: join11(s.root, "src", "service-cli.mjs"),
+    cli: join14(s.root, "src", "service-cli.mjs"),
     workspace: selected2.workspace,
     serverConfig: serviceConfigPath(s),
     agentDir,
-    sdk,
+    sdk: sdk ?? [],
     environment: serviceEnvironment(s)
   });
   if (previous && !sameStateEnvironment(s, previous))
@@ -6546,13 +7188,13 @@ async function configureSystemService(s, mode, requested) {
     return { status: "unavailable", ...result };
   if (active.status === 0 && previous === undefined)
     return { status: "foreign", ...result };
-  if (selectedReal && (previous === undefined || selected2.workspace !== unitWorkspace(previous))) {
+  if ((selected2.workspace === null || selectedReal) && (previous === undefined || selected2.workspace !== unitWorkspace(previous))) {
     const target2 = await ownerBoundary(s, selected2.workspace, false);
     if (target2)
       return { ...selected2, ...target2, ...result };
   }
   const workspace = unitWorkspace(previous);
-  if (workspace) {
+  if (workspace !== undefined) {
     const refused3 = await ownerBoundary(s, workspace, active.status === 0);
     if (refused3)
       return { ...refused3, ...result };
@@ -6562,7 +7204,7 @@ async function configureSystemService(s, mode, requested) {
     return { ...unsettled, ...result };
   if (readGenerated(path2, MARKER4) !== previous)
     return { status: "foreign", ...result };
-  if (selectedReal) {
+  if (selectedReal && selected2.workspace) {
     try {
       if (realpathSync5(selected2.workspace) !== selectedReal)
         return { status: "workspace-changed", ...result };
@@ -6576,13 +7218,12 @@ async function configureSystemService(s, mode, requested) {
       workspace: unitWorkspace(previous),
       ...result
     };
-  mkdirSync6(selected2.workspace, { recursive: true });
   write(path2, content);
   if (s.systemctl(["daemon-reload"]).status !== 0)
     return { status: "failed", ...result, ...selected2 };
   if (mode === "install" && s.systemctl(["enable", s.unit]).status !== 0)
     return { status: "failed", ...result, ...selected2 };
-  if (!regularFile(join11(agentDir, "auth.json")))
+  if (selected2.workspace !== null && !regularFile(join14(agentDir, "auth.json")))
     return { status: "waiting-for-pi-login", ...result, ...selected2 };
   s.systemctl(["reset-failed", s.unit]);
   return {
@@ -6651,12 +7292,12 @@ function systemServiceStatus(s) {
 }
 
 // src/service/cli.ts
-function nativeCall(c, operation, reveal = false) {
+function nativeCall(c, operation, reveal = false, controlBody) {
   const access = c.localAccess();
   const url = new URL(`${access.endpoint}/local/v1/admin/${operation}`);
   const write2 = !["status", "diagnose"].includes(operation);
-  const body = write2 ? JSON.stringify(reveal ? { reveal: true } : {}) : undefined;
-  return new Promise((resolve6, reject) => {
+  const body = write2 ? JSON.stringify(controlBody ?? (reveal ? { reveal: true } : {})) : undefined;
+  return new Promise((resolve8, reject) => {
     let timer;
     const fail = () => {
       clearTimeout(timer);
@@ -6697,7 +7338,7 @@ function nativeCall(c, operation, reveal = false) {
               throw new ContractError("stale");
           }
           clearTimeout(timer);
-          resolve6(reply.value);
+          resolve8(reply.value);
         } catch {
           fail();
         }
@@ -6712,7 +7353,7 @@ function nativeCall(c, operation, reveal = false) {
     req.end(body);
   });
 }
-var pause = (ms) => new Promise((resolve6) => setTimeout(resolve6, ms));
+var pause = (ms) => new Promise((resolve8) => setTimeout(resolve8, ms));
 async function serviceStatus(c, diagnose = false) {
   const observed2 = c.inspect();
   if (observed2.status === "absent" || observed2.status === "stopped")
@@ -6774,10 +7415,10 @@ function startupGuidance(result, input) {
       return `Pi's agent directory ${agent} must be an existing real directory (not a symlink) owned by you.
 `;
     case "pi-auth":
-      return `${join12(agent, "auth.json")} must be your own single-link regular file holding valid Pi credentials; log in to Pi first.
+      return `${join15(agent, "auth.json")} must be your own single-link regular file holding valid Pi credentials; log in to Pi first.
 `;
     case "pi-models":
-      return `${join12(agent, "models.json")} must be your own single-link regular file using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.
+      return `${join15(agent, "models.json")} must be your own single-link regular file using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.
 `;
     case "pi-runtime":
       return `Loading Pi's SDK model runtime failed after the owner registered (optional SDK packages missing, or sources the SDK refuses); it stays quarantined.
@@ -6810,31 +7451,38 @@ async function startService(options, foreground, hostUrl) {
       throw new ContractError("conflict");
     return existing;
   }
+  return launchHost(input, c, foreground, hostUrl, input.config.cwd, env, network);
+}
+async function launchHost(input, c, foreground, hostUrl, cwd, env, network) {
+  const serialized = `${JSON.stringify(input)}
+`;
+  if (Buffer.byteLength(serialized) > STARTUP_INPUT_BYTES)
+    throw new ContractError("oversize");
   if (!sameNetwork(network, networkSnapshot(process.env)))
     throw new ContractError("stale");
   const child = spawn(process.execPath, [
     ...env.NODE_USE_ENV_PROXY === "1" ? ["--use-env-proxy"] : [],
-    fileURLToPath(hostUrl)
+    fileURLToPath2(hostUrl)
   ], {
-    cwd: input.config.cwd,
+    cwd,
     env,
     detached: !foreground,
     windowsHide: true,
     stdio: ["pipe", "pipe", "ignore"]
   });
   let completed = false;
-  const closure = new Promise((resolve6) => child.once("close", (code2, signal) => {
+  const closure = new Promise((resolve8) => child.once("close", (code2, signal) => {
     completed = true;
     if (foreground && (code2 !== 0 || signal !== null))
       process.exitCode = 1;
-    resolve6();
+    resolve8();
   }));
-  const startup = new Promise((resolve6) => {
+  const startup = new Promise((resolve8) => {
     let bytes = "", resolved = false;
     const finish = (value) => {
       if (!resolved) {
         resolved = true;
-        resolve6(value);
+        resolve8(value);
       }
     };
     child.on("error", () => finish({ status: "unconfirmed" }));
@@ -6874,12 +7522,12 @@ async function startService(options, foreground, hostUrl) {
   let timer;
   const result = await Promise.race([
     startup,
-    new Promise((resolve6) => {
-      timer = setTimeout(() => resolve6({ status: "unconfirmed" }), LIMITS.startWaitMs);
+    new Promise((resolve8) => {
+      timer = setTimeout(() => resolve8({ status: "unconfirmed" }), LIMITS.startWaitMs);
     })
   ]);
   clearTimeout(timer);
-  const guidance = startupGuidance(result, input);
+  const guidance = "kind" in input ? "" : startupGuidance(result, input);
   if (guidance)
     process.stderr.write(guidance);
   child.stdout.destroy();
@@ -6896,12 +7544,12 @@ async function startService(options, foreground, hostUrl) {
   }
   return result;
 }
-async function observeStarted(workspace) {
+async function observeStarted(workspace, config) {
   const deadline = performance.now() + LIMITS.startWaitMs + 2000;
   let service = "unconfirmed";
   while (performance.now() < deadline) {
     try {
-      const c = new ServiceCoordination(workspace);
+      const c = workspace === null ? new GatewayStore(config ?? serverConfigPath(homedir6())) : new ServiceCoordination(workspace);
       const observed2 = await serviceStatus(c);
       if (observed2 && typeof observed2 === "object" && "status" in observed2)
         service = String(observed2.status);
@@ -6914,26 +7562,26 @@ async function observeStarted(workspace) {
   }
   return { service };
 }
-async function privateLink(workspace, stateHome) {
+async function privateLink(workspace, stateHome, config) {
   try {
-    const value = closed(await nativeCall(new ServiceCoordination(workspace, stateHome), "token-link", true), ["link"]);
+    const value = closed(await nativeCall(workspace === null ? new GatewayStore(config ?? serverConfigPath(homedir6()), stateHome) : new ServiceCoordination(workspace, stateHome), "token-link", true), ["link"]);
     return text(value.link, 4096, true);
   } catch {
     return;
   }
 }
 var ownerControl = {
-  async ownerStatus(workspace) {
+  async ownerStatus(workspace, config) {
     try {
-      const observed2 = await serviceStatus(new ServiceCoordination(workspace));
+      const observed2 = await serviceStatus(workspace === null ? new GatewayStore(config ?? serverConfigPath(homedir6())) : new ServiceCoordination(workspace));
       return observed2 && typeof observed2 === "object" && "status" in observed2 ? String(observed2.status) : "unavailable";
     } catch {
       return "unavailable";
     }
   },
-  async stopOwner(workspace) {
+  async stopOwner(workspace, config) {
     try {
-      const c = new ServiceCoordination(workspace);
+      const c = workspace === null ? new GatewayStore(config ?? serverConfigPath(homedir6())) : new ServiceCoordination(workspace);
       const observed2 = await serviceStatus(c);
       const status = observed2 && typeof observed2 === "object" && "status" in observed2 ? String(observed2.status) : "unavailable";
       if (status === "absent" || status === "stopped")
@@ -6978,7 +7626,7 @@ async function serverAction(s, action, requested, linger) {
   }
 }
 function serverGuidance(s, action, result, link) {
-  const cli = piUserInstall(s) ? `node ${JSON.stringify(join12(s.root, "src", "service-cli.mjs"))}` : "cadence";
+  const cli = piUserInstall(s) ? `node ${JSON.stringify(join15(s.root, "src", "service-cli.mjs"))}` : "cadence";
   const note = result.redirectedFrom ? `Cadence workspace: ${result.workspace} (${result.redirectedFrom} contains Cadence's private state)
 ` : "";
   return note + serverStatusGuidance(s, action, result, cli, link);
@@ -7010,6 +7658,11 @@ function managerDetail(s) {
 }
 function serverStatusGuidance(s, action, result, cli, link) {
   const workspace = JSON.stringify(result.workspace ?? "");
+  if (result.workspace === null && result.status === "started")
+    return `Cadence unified workbench: ${link ?? result.endpoint ?? result.service ?? "unconfirmed"}
+No default workspace was created. Projects are opened explicitly.
+Manage: ${cli} server status|restart|stop|uninstall
+`;
   const flags = `${s.scope === "system" ? " --system" : s.platform === "linux" ? " --user" : ""}${serviceName(s) ? ` --name ${serviceName(s)}` : ""}`;
   const manage = `Manage: ${cli} server status|restart|stop|uninstall${flags}`;
   const when = s.scope === "system" ? "at boot, as root (no linger)" : s.platform === "linux" ? "at boot or login" : "at login";
@@ -7035,7 +7688,7 @@ ${manage}
 ${linger}`;
     }
     case "waiting-for-pi-login":
-      return `Cadence is registered for ${result.workspace}; it starts once Pi has ${join12(agentDirectory(s), "auth.json")}.
+      return `Cadence is registered for ${result.workspace}; it starts once Pi has ${join15(agentDirectory(s), "auth.json")}.
 Log in to Pi, then: ${cli} server restart${flags}
 ${config}
 ${lingerGuidance(result.linger)}`;
@@ -7131,7 +7784,7 @@ async function serverMain(argv, hostUrl) {
     else if (flag === "--name" && argv[0])
       name = argv.shift();
     else if (flag === "--workspace" && action === "install" && argv[0])
-      requested = resolve5(argv.shift());
+      requested = resolve7(argv.shift());
     else if (flag === "--port" && action === "install" && argv[0]) {
       port = portValue(argv.shift());
       if (!port)
@@ -7139,7 +7792,7 @@ async function serverMain(argv, hostUrl) {
     } else
       throw new ContractError("invalid");
   }
-  const s = hostSystem(dirname9(dirname9(fileURLToPath(hostUrl))), ownerControl, {
+  const s = hostSystem(dirname13(dirname13(fileURLToPath2(hostUrl))), ownerControl, {
     scope,
     name
   });
@@ -7184,10 +7837,10 @@ async function serverMain(argv, hostUrl) {
     throw error;
   }
   let link;
-  if (result.status === "started" && result.workspace) {
-    Object.assign(result, await observeStarted(result.workspace));
+  if (result.status === "started" && result.workspace !== undefined) {
+    Object.assign(result, await observeStarted(result.workspace, serviceConfigPath(s)));
     if (result.service === "alive")
-      link = await privateLink(result.workspace);
+      link = await privateLink(result.workspace, undefined, serviceConfigPath(s));
   }
   process.stderr.write(serverGuidance(s, action, result, link));
   process.stdout.write(`${JSON.stringify(result)}
@@ -7217,14 +7870,14 @@ async function projectMain(argv, hostUrl) {
   while (argv.length) {
     const flag = argv.shift();
     if (!flag.startsWith("--") && !selected2) {
-      options.workspace = resolve5(flag);
+      options.workspace = resolve7(flag);
       selected2 = true;
     } else if (!seen.has(flag) && flag === "--create") {
       seen.add(flag);
       create = true;
     } else if (!seen.has(flag) && (flag === "--state-home" || flag === "--agent-dir") && argv[0]) {
       seen.add(flag);
-      const value = resolve5(argv.shift());
+      const value = resolve7(argv.shift());
       if (flag === "--state-home")
         options.stateHome = value;
       else
@@ -7235,14 +7888,8 @@ async function projectMain(argv, hostUrl) {
   if (privateWorkspace(options.workspace, options.stateHome))
     throw new ContractError("forbidden");
   if (create)
-    mkdirSync7(options.workspace, { recursive: true });
-  const landing = effectiveWorkspace(options.workspace, options.stateHome);
-  if (landing.redirected) {
-    process.stderr.write(`Cadence workspace: ${landing.workspace} (${options.workspace} contains Cadence's private state)
-`);
-    mkdirSync7(landing.workspace, { recursive: true });
-  }
-  options.workspace = landing.workspace;
+    mkdirSync6(options.workspace, { recursive: true });
+  effectiveWorkspace(options.workspace, options.stateHome);
   const c = new ServiceCoordination(options.workspace, options.stateHome);
   const kept = readHostConfig(c);
   if (!kept)
@@ -7270,8 +7917,25 @@ async function managementMain(argv, hostUrl) {
     if (!process.versions.node || process.versions.bun)
       throw new ContractError("unsupported-context");
     const command = argv.shift();
+    if (command === "workbench") {
+      await gatewayMain(argv, hostUrl);
+      return;
+    }
+    if ([
+      "start",
+      "status",
+      "diagnose",
+      "stop",
+      "token-link",
+      "token-rotate"
+    ].includes(command ?? "") && !argv.includes("--workspace")) {
+      await gatewayMain([command, ...argv], hostUrl);
+      return;
+    }
     if (command === "--help" && !argv.length) {
       process.stdout.write(`cadence start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--workspace PATH] [--state-home PATH]
+Without --workspace these commands address the unified workbench (except project recovery); no default project directory is created.
+cadence workbench start|status|diagnose|stop|token-link --reveal|token-rotate [--server-config PATH] [--state-home PATH]
 cadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall
 Linux server options: --system (root, no linger) or --user; --name NAME selects an independent service; install also accepts --port PORT (required for a new named service). Root defaults to --system. No automatic sudo or profile migration.
 cadence project open [PATH] [--create] [--agent-dir PATH] [--state-home PATH]
@@ -7349,23 +8013,11 @@ Recovery resolve requires this local native terminal, exact unchanged dead-owner
       else
         throw new ContractError("invalid");
     }
-    const landing = effectiveWorkspace(options.workspace, options.stateHome);
-    if (landing.redirected) {
-      if (seen.has("--workspace"))
-        process.stderr.write(`Cadence workspace: ${landing.workspace} (${options.workspace} contains Cadence's private state)
-`);
-      options.workspace = landing.workspace;
-      if (command === "start")
-        mkdirSync7(landing.workspace, { recursive: true });
-    }
+    effectiveWorkspace(options.workspace, options.stateHome);
     let result;
     if (command === "start")
       result = await startService(options, foreground, hostUrl);
-    else if (landing.redirected && !existsSync3(landing.workspace)) {
-      if (command !== "status" && command !== "diagnose")
-        throw new ContractError("unavailable");
-      result = { status: "absent" };
-    } else {
+    else {
       const c = new ServiceCoordination(options.workspace, options.stateHome);
       if (command === "recover" && recovery)
         result = await localRecovery(c, recovery);
@@ -7383,8 +8035,6 @@ Recovery resolve requires this local native terminal, exact unchanged dead-owner
       else
         throw new ContractError("invalid");
     }
-    if (landing.redirected && result && typeof result === "object")
-      result = { ...result, workspace: landing.workspace };
     if (result !== null)
       process.stdout.write(`${JSON.stringify(result)}
 `);

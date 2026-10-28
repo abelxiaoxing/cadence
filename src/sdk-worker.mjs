@@ -1,4 +1,6 @@
-// Ordinary SDK child, not Pi CLI startup. No discovery, credential files or fallback executor.
+// Isolated SDK child, not Pi CLI startup. Task discovery stays disabled;
+// ordinary conversations explicitly load only context/skills, never extensions.
+import { writeFileSync } from "node:fs";
 import {
   createProvider,
   InMemoryCredentialStore,
@@ -12,6 +14,11 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import {
+  encodeConversationContext,
+  readConversationContext,
+} from "./conversation-context.mjs";
+import { conversationResources } from "./conversation-resources.mjs";
 import { CaptureEmitter, SdkCapture } from "./worker-capture.mjs";
 import {
   closed,
@@ -185,13 +192,27 @@ try {
     if (inputBytes > 128 * 1024) refuse("parse", "input-bound");
     chunks.push(chunk);
   }
-  const envelope = closed(
-    parseWireJson(
-      new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)),
-      LIMITS.workerRequestBytes,
-    ),
-    ["request", "cwd", "model", "auth"],
+  const parsed = parseWireJson(
+    new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)),
+    LIMITS.workerRequestBytes,
   );
+  const envelope = closed(
+    parsed,
+    Object.hasOwn(parsed ?? {}, "conversation")
+      ? ["request", "cwd", "model", "auth", "conversation"]
+      : ["request", "cwd", "model", "auth"],
+  );
+  const conversation =
+    envelope.conversation === undefined
+      ? null
+      : closed(envelope.conversation, ["previous", "agentDir"]);
+  if (
+    conversation &&
+    ((conversation.previous !== null &&
+      typeof conversation.previous !== "string") ||
+      typeof conversation.agentDir !== "string")
+  )
+    refuse("parse", "invalid-conversation");
   const publicRequest = decodeWorkerPublicRequest(envelope.request);
   const request = {
     ...envelope,
@@ -329,6 +350,10 @@ try {
   process.stdout.on("error", stdoutFailureListener);
   stage = "session";
   const requestedThinkingLevel = thinkingLevel ?? "off";
+  const manager = SessionManager.inMemory(cwd);
+  if (conversation)
+    for (const message of readConversationContext(conversation.previous))
+      manager.appendMessage(message);
   const created = await createAgentSession({
     cwd,
     agentDir: cwd,
@@ -351,8 +376,10 @@ try {
             ),
           ]
         : [],
-    resourceLoader,
-    sessionManager: SessionManager.inMemory(cwd),
+    resourceLoader: conversation
+      ? conversationResources(resourceLoader, cwd, conversation.agentDir)
+      : resourceLoader,
+    sessionManager: manager,
     settingsManager: SettingsManager.inMemory({
       compaction: { enabled: false },
       retry: { enabled: false },
@@ -483,6 +510,12 @@ try {
   stage = "assistant-final";
   if (failure || terminalStopReason !== "stop" || ingress.frames !== 0)
     refuse("assistant-final", "terminal-incomplete");
+  // Anonymous pipe only. The owner applies its access-secret sanitizer before
+  // any checkpoint reaches disk; worker output cannot contain owner credentials.
+  if (conversation) {
+    stage = "conversation-context";
+    writeFileSync(3, encodeConversationContext(session.messages, secrets));
+  }
   await capture.final();
   await emitter.drain();
 } catch {

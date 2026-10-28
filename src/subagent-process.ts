@@ -5,6 +5,10 @@ import type { Readable, Writable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import {
+  CONTEXT_BYTES,
+  conversationMessages,
+} from "./conversation-context.mjs";
+import {
   networkSnapshot,
   safeChildEnv,
   sameNetwork,
@@ -22,11 +26,14 @@ import type { CheckDefinition, RunResult, TaskKind } from "./task-types.ts";
 import { diagnosticText } from "./verification-diagnostics.ts";
 import { CaptureState, parseCaptureLine } from "./worker-capture.mjs";
 import {
+  type CaptureFrame,
+  closed,
   decodeCaptureFrame,
   decodeRecordingLink,
   decodeWorkerPublicRequest,
   LIMITS,
   type NativeSettlement,
+  parseWireJson,
   type RecordingLink,
   type WorkerCompletion,
   type WorkerPublicRequest,
@@ -73,6 +80,10 @@ export interface ProcessSpec {
   ) => void;
   secrets?: string[];
   onProgress?: (text: string) => void;
+  /** Ordinary-chat capture, separately persisted; never a task recording receipt. */
+  onFrame?: (frame: CaptureFrame) => void;
+  /** Bounded anonymous checkpoint pipe, never a raw spill file. */
+  onContext?: (source: string) => void;
 }
 /** One bounded process owner for SDK workers and user-confirmed parent checks. */
 /** Windows has no process groups, and terminating CMD/a worker alone leaves
@@ -133,8 +144,19 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       windowsVerbatimArguments: spec.windowsVerbatimArguments,
       // No payload means EOF, not an empty write to an unused transport.
       // Explicit empty input still requests strict pipe delivery.
-      stdio: [spec.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+      stdio: [
+        spec.input === undefined ? "ignore" : "pipe",
+        "pipe",
+        "pipe",
+        ...(spec.onContext ? ["pipe" as const] : []),
+      ],
     }) as ChildProcessByStdio<Writable | null, Readable, Readable>;
+    const contextStream = spec.onContext
+      ? (child.stdio[3] as Readable | null)
+      : null;
+    let contextEnded = false,
+      contextBytes = 0;
+    const contextChunks: Buffer[] = [];
     let settled = false;
     let nativeClosed = false;
     let launched = false;
@@ -236,6 +258,7 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         child.stdout.destroy();
         child.stderr.destroy();
         child.stdin?.destroy();
+        contextStream?.destroy();
       }
     };
     const signalChild = (signal: NodeJS.Signals) => {
@@ -278,6 +301,7 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
             spec.expectedRequest,
           );
         const decoded = capture.accept(value, Buffer.byteLength(line) + 1);
+        spec.onFrame?.(decoded);
         if (decoded.event.kind === "ready") {
           ready = true;
           spec.onProgress?.("Agent ready");
@@ -348,6 +372,19 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         }
       }
     };
+    contextStream?.on("data", (chunk: Buffer) => {
+      if (settled || stopping) return;
+      contextBytes += chunk.length;
+      if (contextBytes > CONTEXT_BYTES) {
+        stop("failed");
+        return;
+      }
+      contextChunks.push(chunk);
+    });
+    contextStream?.once("end", () => {
+      contextEnded = true;
+    });
+    contextStream?.on("error", () => stop("failed"));
     let stdoutWork = Promise.resolve();
     let stderrWork = Promise.resolve();
     let stdoutEnded = false,
@@ -401,6 +438,18 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       // Native close can race the final paused read's continuation. Never use
       // exit/EOF or a still-pending decoder as a substitute for either fact.
       const close = () => {
+        if (spec.onContext && !stopping && code === 0) {
+          try {
+            if (!contextEnded) throw new Error("Context EOF missing");
+            spec.onContext(
+              new TextDecoder("utf-8", { fatal: true }).decode(
+                Buffer.concat(contextChunks),
+              ),
+            );
+          } catch {
+            stopping = "failed";
+          }
+        }
         if (!spec.protocol) output += stdoutDecoder.end();
         else {
           try {
@@ -529,7 +578,12 @@ function launchEncoded(
   timeoutMs: number,
   extra: Pick<
     ProcessSpec,
-    "onProgress" | "recording" | "onNative" | "maySignal"
+    | "onProgress"
+    | "recording"
+    | "onNative"
+    | "maySignal"
+    | "onFrame"
+    | "onContext"
   > = {},
 ): Promise<RunResult> {
   if (
@@ -701,6 +755,58 @@ export function preparedWorker(
     },
   };
 }
+/** Same isolated native launcher, auth projection and closure rules as tasks.
+ * The caller durably accepts a chat turn before this one-use launch. */
+export function launchConversation(
+  prepared: PreparedModelContext,
+  conversation: {
+    previous: string | null;
+    agentDir: string;
+  },
+  signal: AbortSignal,
+  options: {
+    timeoutMs: number;
+    maySignal(): boolean;
+    onNative(native: NativeSettlement): void;
+    onFrame(frame: CaptureFrame, secrets: readonly string[]): void;
+    ownerSecrets(): readonly string[];
+    onContext(messages: unknown[]): void;
+  },
+): Promise<RunResult> {
+  let encoded: ReturnType<typeof encodeEnvelope> | undefined;
+  return prepared.consume(
+    (material) => {
+      encoded = encodeEnvelope({ ...material, model: { ...material.model } });
+      encoded.input = JSON.stringify({ ...encoded.material, conversation });
+      return encoded.input;
+    },
+    (input) => {
+      if (!encoded || encoded.input !== input)
+        throw new Error("Invalid chat launch");
+      const secrets = encoded.secrets;
+      return launchEncoded(encoded, signal, options.timeoutMs, {
+        maySignal: options.maySignal,
+        onNative: options.onNative,
+        onFrame: (frame) => options.onFrame(frame, secrets),
+        onContext: (source) => {
+          const value = closed(parseWireJson(source, CONTEXT_BYTES), [
+            "schema",
+            "messages",
+          ]);
+          if (value.schema !== "cadence-conversation-context/1")
+            throw new Error("Invalid checkpoint");
+          options.onContext(
+            conversationMessages(value.messages, [
+              ...options.ownerSecrets(),
+              ...secrets,
+            ]),
+          );
+        },
+      });
+    },
+  );
+}
+
 export interface ServiceCheckContext {
   environment: Readonly<NodeJS.ProcessEnv>;
   recording: CheckRecording;

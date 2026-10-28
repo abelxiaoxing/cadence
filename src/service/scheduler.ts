@@ -149,6 +149,7 @@ export class TaskScheduler {
   private readonly barriers: {
     id: string;
     order: number;
+    conversation: boolean;
     resolve: (barrier: ReviewBarrier) => void;
     reject: (error: unknown) => void;
   }[] = [];
@@ -204,7 +205,25 @@ export class TaskScheduler {
       throw new ContractError("capacity");
   }
   /** Metadata shares the actual checkout gate, but is not a child/check slot. */
-  reviewBarrier(operationId: string): Promise<ReviewBarrier> {
+  reviewBarrier(
+    operationId: string,
+    signal?: AbortSignal,
+  ): Promise<ReviewBarrier> {
+    return this.acquireBarrier(operationId, false, signal);
+  }
+  /** Chat writes its own synchronous private journal, not a W3 metadata job. */
+  conversationBarrier(
+    operationId: string,
+    signal: AbortSignal,
+  ): Promise<ReviewBarrier> {
+    return this.acquireBarrier(operationId, true, signal);
+  }
+  private acquireBarrier(
+    operationId: string,
+    conversation: boolean,
+    signal?: AbortSignal,
+  ): Promise<ReviewBarrier> {
+    if (signal?.aborted) throw new ContractError("stale");
     if (this.closed || this.options.owner.state !== "idle")
       throw new ContractError("quarantine");
     if (
@@ -214,12 +233,25 @@ export class TaskScheduler {
     )
       throw new ContractError("capacity");
     const promise = new Promise<ReviewBarrier>((resolve, reject) => {
+      const abort = () => {
+        const index = this.barriers.findIndex((row) => row.id === operationId);
+        if (index >= 0)
+          this.barriers.splice(index, 1)[0].reject(new ContractError("stale"));
+      };
       this.barriers.push({
         id: operationId,
         order: ++this.sequence,
-        resolve,
-        reject,
+        conversation,
+        resolve: (value) => {
+          signal?.removeEventListener("abort", abort);
+          resolve(value);
+        },
+        reject: (error) => {
+          signal?.removeEventListener("abort", abort);
+          reject(error);
+        },
       });
+      signal?.addEventListener("abort", abort, { once: true });
     });
     this.pump();
     return promise;
@@ -596,7 +628,7 @@ export class TaskScheduler {
             if (
               this.barrier !== b.id ||
               this.options.writer.quarantined ||
-              this.options.writer.pendingWrites
+              (!b.conversation && this.options.writer.pendingWrites)
             )
               throw new ContractError("quarantine");
             this.barrier = null;

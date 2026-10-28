@@ -28,12 +28,14 @@ export async function acceptingFixture(
     mkdirSync(join(dir, name), { mode: 0o700 });
   const root = join(dir, "project"),
     agentDir = join(dir, "agent");
-  let providerMode: "single" | "parallel" | "pending" | "failure" = "single";
+  let providerMode: "single" | "parallel" | "pending" | "failure" | "write" =
+    "single";
   let contacts = 0,
     active = 0,
     maxActive = 0;
   const held: ServerResponse[] = [];
-  const observations: { tools: string[]; mode: string }[] = [];
+  const observations: { tools: string[]; mode: string; messages: unknown[] }[] =
+    [];
   const longText = `Actual retained SDK result. ${"retained-detail-αβγ ".repeat(900)} END-RETAINED`;
   function finish(res: ServerResponse, text = longText) {
     res.writeHead(200, {
@@ -61,10 +63,49 @@ export async function acceptingFixture(
         (t: { function: { name: string } }) => t.function.name,
       ),
       mode: providerMode,
+      messages: input.messages ?? [],
     });
     res.once("close", () => {
       active--;
     });
+    if (providerMode === "write") {
+      if (input.messages.at(-1)?.role === "tool") {
+        finish(res, "File written by an ordinary tool.");
+        return;
+      }
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        connection: "close",
+      });
+      for (const [delta, finish_reason] of [
+        [
+          {
+            role: "assistant",
+            tool_calls: [
+              {
+                index: 0,
+                id: "ordinary-write",
+                type: "function",
+                function: {
+                  name: "write",
+                  arguments: JSON.stringify({
+                    path: "ordinary-created.txt",
+                    content: "ordinary tool output\n",
+                  }),
+                },
+              },
+            ],
+          },
+          null,
+        ],
+        [{}, "tool_calls"],
+      ])
+        res.write(
+          `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 1, model: "fixed", choices: [{ index: 0, delta, finish_reason }] })}\n\n`,
+        );
+      res.end("data: [DONE]\n\n");
+      return;
+    }
     if (providerMode === "pending") {
       held.push(res);
       return;

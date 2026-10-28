@@ -9,7 +9,19 @@ import { join } from "node:path";
 import type { Duplex } from "node:stream";
 import { acceptingFixture } from "./accepting-fixture.ts";
 
-export async function secureAcceptingFixture() {
+export function secureAcceptingFixture() {
+  return secureFixture((proxy) =>
+    acceptingFixture("generated", undefined, proxy),
+  );
+}
+export async function secureFixture<
+  T extends { endpoint: string; close(): Promise<unknown> },
+>(
+  factory: (proxy: {
+    origin: string;
+    trustedAddresses: string[];
+  }) => Promise<T>,
+) {
   const root = mkdtempSync(join(tmpdir(), "accepting-tls-"));
   const key = join(root, "key.pem"),
     cert = join(root, "cert.pem");
@@ -124,7 +136,7 @@ export async function secureAcceptingFixture() {
   if (!address || typeof address === "string")
     throw Error("TLS bind unavailable");
   origin = `https://127.0.0.1:${address.port}`;
-  const fixture = await acceptingFixture("generated", undefined, {
+  const fixture = await factory({
     origin,
     trustedAddresses: ["127.0.0.1"],
   });

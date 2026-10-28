@@ -322,17 +322,21 @@ it("built browser safety: old task active Cancel, bad/missing builds, manual ref
       await new Promise((r) => setTimeout(r, 50));
     }
     assert(lostReceipt);
-    const exactReceipt = p.waitForResponse(
-      (r) =>
-        r.url() ===
-        `${f.endpoint}${wireRequest("receipt", lostCommand.commandId).path}`,
-    );
+    // Capture this exact response body immediately, before the click's UI
+    // reconciliation can retire its fetch handle. No request replay or wider wait.
+    const exactReceipt = p
+      .waitForResponse(
+        (r) =>
+          r.url() ===
+          `${f.endpoint}${wireRequest("receipt", lostCommand.commandId).path}`,
+      )
+      .then((response) => response.json());
     await p
       .getByRole("region", { name: "Command receipt" })
       .filter({ hasText: lostCommand.commandId })
       .getByRole("button", { name: "Observe exact receipt" })
       .click();
-    assert.equal((await (await exactReceipt).json()).status, "found");
+    assert.equal((await exactReceipt).status, "found");
     const failed = await settled(lostReceipt);
     assert.equal(failed.execution, "failed");
     await p

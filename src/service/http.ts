@@ -61,7 +61,12 @@ import {
 import type { ActionAdmission } from "./admission.ts";
 import { type HttpAuthentication, requestBoundary } from "./auth.ts";
 import { decodeHttpPolicy, type HttpPolicy, localOrigin } from "./config.ts";
-import { closed } from "./contracts/core.ts";
+import { closed, list } from "./contracts/core.ts";
+import type { WorkbenchPort } from "./contracts/workbench.ts";
+import {
+  decodeWorkbenchCommand,
+  decodeWorkbenchRead,
+} from "./contracts/workbench.ts";
 import type {
   Caller,
   CurrentMetadataPort,
@@ -77,6 +82,7 @@ export interface LiveProjectionPort {
   watermark(scope: Scope): LiveEvent;
 }
 export interface HttpAdapters {
+  workbench?: WorkbenchPort;
   admission: ActionAdmission | null;
   models?: Pick<ModelChoicePort, "catalog">;
   modelChoice?: Pick<ModelChoicePort, "choose">;
@@ -138,7 +144,7 @@ function refusal(
     error: publicError(code, uncertain ? "uncertain" : "none"),
   };
 }
-function fixedHeaders(response: ServerResponse): void {
+export function fixedHeaders(response: ServerResponse): void {
   response.setHeader("Cache-Control", "no-store");
   response.setHeader("Referrer-Policy", "no-referrer");
   response.setHeader("X-Content-Type-Options", "nosniff");
@@ -613,20 +619,27 @@ export class ServiceHttpServer {
       if (caller.authority === "browser" && clientBuild?.kind === "native")
         throw new ContractError("forbidden");
       if (
-        ["preflight", "command", "chooseModel", "cancel"].includes(
-          route.operation,
-        ) &&
+        [
+          "preflight",
+          "command",
+          "chooseModel",
+          "cancel",
+          "workbenchCommand",
+        ].includes(route.operation) &&
         !compatibleBuild(
           this.options.build,
           clientBuild,
-          route.operation === "cancel",
+          route.operation === "cancel" ||
+            (route.operation === "workbenchCommand" &&
+              decodeWorkbenchCommand(input).kind === "interrupt"),
         )
       )
         throw new ContractError("unsupported-context");
       dispatched =
         route.operation === "command" ||
         route.operation === "cancel" ||
-        route.operation === "chooseModel";
+        route.operation === "chooseModel" ||
+        route.operation === "workbenchCommand";
       const value = await this.dispatch(
         route.operation,
         input,
@@ -674,9 +687,14 @@ export class ServiceHttpServer {
   ): Promise<void> {
     const operation = req.url?.slice("/local/v1/admin/".length);
     if (
-      !["status", "diagnose", "stop", "token-link", "token-rotate"].includes(
-        operation ?? "",
-      )
+      ![
+        "status",
+        "diagnose",
+        "stop",
+        "token-link",
+        "token-rotate",
+        "detach-viewers",
+      ].includes(operation ?? "")
     )
       throw new ContractError("invalid");
     const write = operation !== "status" && operation !== "diagnose";
@@ -691,8 +709,27 @@ export class ServiceHttpServer {
     if (write) {
       const body = closed(
         await this.body(req, signal),
-        operation === "token-link" ? ["reveal"] : [],
+        operation === "token-link"
+          ? ["reveal"]
+          : operation === "detach-viewers"
+            ? ["attachments"]
+            : [],
       );
+      if (operation === "detach-viewers") {
+        const ids = list(body.attachments, LIMITS.viewers, decodeId);
+        this.options.auth.current(caller);
+        if (signal.aborted) unavailable();
+        for (const id of ids) {
+          const attachment = this.attachments.get(id);
+          if (attachment?.caller.authority === "browser")
+            this.detach(attachment);
+        }
+        send(res, 200, {
+          kind: "ok",
+          value: { status: "detached", epoch: this.options.auth.epoch },
+        });
+        return;
+      }
       if (operation === "token-link" && body.reveal !== true)
         throw new ContractError("forbidden");
     } else if (
@@ -720,6 +757,18 @@ export class ServiceHttpServer {
     const a = this.options.adapters,
       p = a.projection;
     switch (operation) {
+      case "workbenchRead":
+        if (!a.workbench) unavailable();
+        return {
+          kind: "ok",
+          value: a.workbench.read(decodeWorkbenchRead(input)),
+        };
+      case "workbenchCommand":
+        if (!a.workbench) unavailable();
+        return {
+          kind: "ok",
+          value: await a.workbench.command(decodeWorkbenchCommand(input)),
+        };
       case "current":
         if (!a.current) unavailable();
         return {

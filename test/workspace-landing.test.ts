@@ -1,19 +1,20 @@
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import {
   chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
 import { NativeConnection } from "../src/native-client.ts";
-import { ServiceCoordination } from "../src/service/coordination.ts";
+import { GatewayStore } from "../src/service/gateway-store.ts";
 import { effectiveWorkspace, stateHomeInside } from "../src/task-store.ts";
 import { windowsSystemEnvironment } from "./helpers/windows-environment.ts";
 
@@ -90,107 +91,78 @@ async function ownerExit(pid: number): Promise<void> {
   }
 }
 
-it("keeps project directories and redirects only the home directory and its ancestors", () => {
+it("keeps explicit projects but refuses private-state ancestors without redirecting or creating a default directory", () => {
   const f = fakeHome();
   const state = join(f.home, ".local", "state");
   const project = join(f.home, "projects", "app");
   mkdirSync(project, { recursive: true });
   expect(stateHomeInside(f.home, state)).toBe(true);
-  expect(effectiveWorkspace(f.home, state, f.home)).toEqual({
-    workspace: f.landing,
-    redirected: true,
-  });
-  expect(effectiveWorkspace(f.dir, state, f.home).redirected).toBe(true);
-  expect(effectiveWorkspace(project, state, f.home)).toEqual({
+  expect(() => effectiveWorkspace(f.home, state)).toThrow();
+  expect(() => effectiveWorkspace(f.dir, state)).toThrow();
+  expect(effectiveWorkspace(project, state)).toEqual({
     workspace: project,
     redirected: false,
   });
-  // A state home moved outside the home directory leaves home usable as given.
-  const outside = join(f.dir, "state");
-  expect(effectiveWorkspace(f.home, outside, f.home)).toEqual({
+  expect(effectiveWorkspace(f.home, join(f.dir, "state"))).toEqual({
     workspace: f.home,
     redirected: false,
   });
-  // Observation never creates the landing.
   expect(existsSync(f.landing)).toBe(false);
 });
 
-it("start from the home directory lands on ~/cadence; status, explicit --workspace, native attach and stop reach the same owner", async () => {
+it("start without a project opens only the workbench; readonly/native/home requests never create ~/cadence", async () => {
   const f = fakeHome();
-  const before = await run(f, ["status"]);
-  expect(before.code).toBe(0);
-  expect(JSON.parse(before.stdout)).toEqual({
+  expect(JSON.parse((await run(f, ["status"])).stdout)).toEqual({
     status: "absent",
-    workspace: f.landing,
   });
   expect(existsSync(f.landing)).toBe(false);
+  const server = createServer();
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") throw Error();
+  const port = address.port;
+  await new Promise<void>((r) => server.close(() => r()));
+  const config = join(f.home, ".pi/agent/cadence/.env");
+  mkdirSync(join(config, ".."), { recursive: true, mode: 0o700 });
+  writeFileSync(
+    config,
+    `CADENCE_PORT=${port}\nCADENCE_TOKEN=${"isolated-workbench-".repeat(3)}\n`,
+    { mode: 0o600 },
+  );
+  const state = join(
+    f.home,
+    process.platform === "win32" ? "AppData/Local" : ".local/state",
+  );
   let started = false,
     pid = 0;
   try {
-    const start = await run(f, ["start", "--port", "0"]);
-    expect(start.stderr).toBe("");
-    expect(start.code, start.stdout).toBe(0);
-    const alive = JSON.parse(start.stdout);
+    const start = await run(f, ["start"]);
+    expect(start.code, start.stdout + start.stderr).toBe(0);
+    expect(JSON.parse(start.stdout).status).toBe("alive");
     started = true;
-    expect(alive).toMatchObject({ status: "alive", workspace: f.landing });
-    expect(existsSync(f.landing)).toBe(true);
-    // The children's default state home inside this home (no XDG/LOCALAPPDATA).
-    const stateHome = join(
-      f.home,
-      process.platform === "win32" ? "AppData/Local" : ".local/state",
+    const store = new GatewayStore(config, state);
+    pid = store.read()?.pid ?? 0;
+    expect(store.projects()).toEqual([]);
+    expect(existsSync(f.landing)).toBe(false);
+    expect(start.stderr).toContain(
+      "No project or default workspace was created",
     );
-    const registration = JSON.parse(
-      readFileSync(
-        new ServiceCoordination(f.landing, stateHome).path("registration.json"),
-        "utf8",
-      ),
-    );
-    expect(registration.epoch).toBe(alive.epoch);
-    pid = registration.pid;
-    process.kill(pid, 0);
-
-    // An explicit home directory is redirected too, with one informational line.
-    const explicit = await run(f, ["status", "--workspace", f.home]);
-    expect(explicit.code).toBe(0);
-    expect(explicit.stderr).toBe(
-      `Cadence workspace: ${f.landing} (${f.home} contains Cadence's private state)\n`,
-    );
-    expect(JSON.parse(explicit.stdout)).toMatchObject({
-      status: "alive",
-      epoch: alive.epoch,
-      workspace: f.landing,
-    });
-
-    // Pi started in the home directory attaches to the same landing owner.
-    // os.homedir() reads HOME on POSIX and USERPROFILE on Windows; the default
-    // state home is XDG_STATE_HOME or LOCALAPPDATA, both inside this home.
+    expect((await run(f, ["status", "--workspace", f.home])).code).toBe(1);
+    expect((await run(f, ["project", "open", f.home])).code).toBe(1);
     vi.stubEnv("HOME", f.home);
     vi.stubEnv("USERPROFILE", f.home);
     vi.stubEnv("XDG_STATE_HOME", undefined);
     vi.stubEnv("LOCALAPPDATA", undefined);
     const connection = new NativeConnection();
-    try {
-      await connection.attach(f.home);
-      expect(connection.session?.authority).toBe("local");
-      expect(connection.session?.epoch).toBe(alive.epoch);
-    } finally {
-      await connection.detach();
-    }
-
-    // A real project keeps its own identity: nothing there is redirected.
-    const project = join(f.home, "projects", "app");
-    mkdirSync(project, { recursive: true });
-    const projectStatus = await run(f, ["status", "--workspace", project]);
-    expect(JSON.parse(projectStatus.stdout)).toEqual({ status: "absent" });
+    await expect(connection.attach(f.home)).rejects.toThrow();
+    await connection.detach();
+    expect(existsSync(f.landing)).toBe(false);
   } finally {
     if (started) {
-      const stop = await run(f, ["stop"]);
-      expect(JSON.parse(stop.stdout)).toMatchObject({
-        status: "stopped",
-        workspace: f.landing,
-      });
-      // POSIX removes a live process's directory; an orphan never reaped (an
-      // init-less container) would also never report ESRCH there.
+      expect(JSON.parse((await run(f, ["stop"])).stdout).status).toBe(
+        "stopped",
+      );
       if (pid && process.platform === "win32") await ownerExit(pid);
     }
   }

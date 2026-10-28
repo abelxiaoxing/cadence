@@ -1,6 +1,6 @@
 /** Explicit Linux system-manager registration. Runs as root without logind or
  * a user bus. No sudo, credential copying, process killing or fence recovery. */
-import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, realpathSync, rmSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import {
   type AutostartResult,
@@ -33,7 +33,8 @@ function observed(s: AutostartSystem) {
   let previous = readGenerated(path, MARKER);
   if (
     typeof previous === "string" &&
-    (!isAbsolute(unitWorkspace(previous) ?? "") ||
+    ((unitWorkspace(previous) !== null &&
+      !isAbsolute(unitWorkspace(previous) ?? "")) ||
       !previous.includes("\nUser=root\n"))
   )
     previous = null;
@@ -74,10 +75,10 @@ function sameStateEnvironment(s: AutostartSystem, previous: string): boolean {
  * directory owner. Refuse detached/uncertain owners without sending them Stop. */
 async function ownerBoundary(
   s: AutostartSystem,
-  workspace: string,
+  workspace: string | null,
   managed: boolean,
 ): Promise<AutostartResult | undefined> {
-  const status = await s.ownerStatus(workspace);
+  const status = await s.ownerStatus(workspace, serviceConfigPath(s));
   if (managed) {
     if (status === "absent") return { status: "unavailable", workspace };
   } else if (status !== "absent" && status !== "stopped") {
@@ -106,21 +107,29 @@ export async function configureSystemService(
   if (mode === "restart" && previous === undefined)
     return { status: "absent", scope: "system" };
   const sdk = sdkPackages(s.root);
-  if (!sdk) return { status: "missing-pi-sdk", scope: "system" };
   // A missing kept project is not permission to silently replace it with a
   // different landing directory on restart.
-  if (previous && !existsSync(unitWorkspace(previous) as string))
+  if (
+    previous &&
+    unitWorkspace(previous) &&
+    !existsSync(unitWorkspace(previous) as string)
+  )
     return { status: "workspace-changed", ...result };
   // Validate the target without creating it or disturbing the previous owner.
   const selected = selectWorkspace(
     s,
     requested,
-    unitWorkspace(previous),
+    mode === "install" && requested === undefined
+      ? null
+      : unitWorkspace(previous),
     false,
   );
-  const selectedReal = existsSync(selected.workspace)
-    ? realpathSync(selected.workspace)
-    : undefined;
+  if (selected.workspace !== null && !sdk)
+    return { status: "missing-pi-sdk", scope: "system" };
+  const selectedReal =
+    selected.workspace && existsSync(selected.workspace)
+      ? realpathSync(selected.workspace)
+      : undefined;
   const agentDir = agentDirectory(s);
   const content = buildUnit({
     system: true,
@@ -129,7 +138,7 @@ export async function configureSystemService(
     workspace: selected.workspace,
     serverConfig: serviceConfigPath(s),
     agentDir,
-    sdk,
+    sdk: sdk ?? [],
     environment: serviceEnvironment(s),
   });
   if (previous && !sameStateEnvironment(s, previous))
@@ -144,14 +153,14 @@ export async function configureSystemService(
   if (active.status === 0 && previous === undefined)
     return { status: "foreign", ...result };
   if (
-    selectedReal &&
+    (selected.workspace === null || selectedReal) &&
     (previous === undefined || selected.workspace !== unitWorkspace(previous))
   ) {
     const target = await ownerBoundary(s, selected.workspace, false);
     if (target) return { ...selected, ...target, ...result };
   }
   const workspace = unitWorkspace(previous);
-  if (workspace) {
+  if (workspace !== undefined) {
     const refused = await ownerBoundary(s, workspace, active.status === 0);
     if (refused) return { ...refused, ...result };
   }
@@ -163,7 +172,7 @@ export async function configureSystemService(
   if (unsettled) return { ...unsettled, ...result };
   if (readGenerated(path, MARKER) !== previous)
     return { status: "foreign", ...result };
-  if (selectedReal) {
+  if (selectedReal && selected.workspace) {
     try {
       if (realpathSync(selected.workspace) !== selectedReal)
         return { status: "workspace-changed", ...result };
@@ -179,7 +188,6 @@ export async function configureSystemService(
       workspace: unitWorkspace(previous),
       ...result,
     };
-  mkdirSync(selected.workspace, { recursive: true });
   write(path, content);
   if (s.systemctl(["daemon-reload"]).status !== 0)
     return { status: "failed", ...result, ...selected };
@@ -187,7 +195,7 @@ export async function configureSystemService(
     return { status: "failed", ...result, ...selected };
   // A restart does not change enablement or masking; a disabled unit can be
   // started explicitly now but stays disabled at boot, like the user route.
-  if (!regularFile(join(agentDir, "auth.json")))
+  if (selected.workspace !== null && !regularFile(join(agentDir, "auth.json")))
     return { status: "waiting-for-pi-login", ...result, ...selected };
   s.systemctl(["reset-failed", s.unit]);
   return {
@@ -218,7 +226,7 @@ export async function stopSystemService(
     return { status: "unavailable", workspace, ...result };
   const owner = await ownerBoundary(
     s,
-    workspace as string,
+    workspace as string | null,
     active.status === 0,
   );
   if (owner) return { ...owner, ...result };

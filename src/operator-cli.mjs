@@ -288,13 +288,10 @@ function stateHomeInside(root, stateHome = defaultStateHome()) {
 function privateWorkspace(requested, stateHome = defaultStateHome()) {
   return contains(join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1"), canonicalAmbientRoot(requested));
 }
-var LANDING_WORKSPACE = "cadence";
-function effectiveWorkspace(requested, stateHome, home = homedir()) {
-  if (privateWorkspace(requested, stateHome))
-    throw new Error("Private state cannot be a workspace");
-  if (!stateHomeInside(resolveWorkspace(requested).root, stateHome))
-    return { workspace: requested, redirected: false };
-  return { workspace: join(home, LANDING_WORKSPACE), redirected: true };
+function effectiveWorkspace(requested, stateHome, _home) {
+  if (privateWorkspace(requested, stateHome) || stateHomeInside(resolveWorkspace(requested).root, stateHome))
+    throw new Error("Choose a project outside Cadence private state; no default workspace was created");
+  return { workspace: requested, redirected: false };
 }
 
 class TaskStore {

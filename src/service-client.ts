@@ -1,4 +1,12 @@
 import {
+  decodeWorkbenchCommand,
+  decodeWorkbenchRead,
+  decodeWorkbenchResult,
+  type WorkbenchCommand,
+  type WorkbenchRead,
+  type WorkbenchResult,
+} from "./service/contracts/workbench.ts";
+import {
   type Action,
   type ActiveRuns,
   type CancelCommand,
@@ -82,6 +90,11 @@ import {
  * Text transports use parseWireJson BEFORE handing unknown values to this client.
  */
 export interface ServiceTransport {
+  workbenchRead?(
+    request: WorkbenchRead,
+    signal?: AbortSignal,
+  ): Promise<unknown>;
+  workbenchCommand?(request: WorkbenchCommand): Promise<unknown>;
   current?(request: CurrentRequest, signal?: AbortSignal): Promise<unknown>;
   currentChanges?(
     request: CurrentRequest,
@@ -123,6 +136,42 @@ const unavailable = <T>(mutation: boolean): Reply<T> => ({
 
 export class ServiceClient {
   constructor(private readonly transport: ServiceTransport) {}
+  async workbenchRead(
+    input: WorkbenchRead,
+    signal?: AbortSignal,
+  ): Promise<Reply<WorkbenchResult>> {
+    const request = decodeWorkbenchRead(input);
+    try {
+      if (!this.transport.workbenchRead) return unavailable(false);
+      return decodeReply(
+        await this.transport.workbenchRead(request, signal),
+        decodeWorkbenchResult,
+      );
+    } catch {
+      return unavailable(false);
+    }
+  }
+  async workbenchCommand(
+    input: WorkbenchCommand,
+  ): Promise<Reply<WorkbenchResult>> {
+    const request = decodeWorkbenchCommand(input);
+    try {
+      if (!this.transport.workbenchCommand) return unavailable(true);
+      const reply = decodeReply(
+        await this.transport.workbenchCommand(request),
+        decodeWorkbenchResult,
+      );
+      if (
+        reply.kind === "ok" &&
+        (!("commandId" in reply.value) ||
+          reply.value.commandId !== request.commandId)
+      )
+        return unavailable(true);
+      return reply;
+    } catch {
+      return unavailable(true);
+    }
+  }
   async current(
     input: CurrentRequest,
     signal?: AbortSignal,

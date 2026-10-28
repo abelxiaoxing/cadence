@@ -7,6 +7,7 @@ import {
   decodeSequence,
   parseWireJson,
 } from "../../../src/service-contract.ts";
+import { currentProject } from "../client/project-route";
 import type { ReadCursor, Scope } from "../types";
 export function historyUrl(
   taskId: string,
@@ -14,6 +15,8 @@ export function historyUrl(
   conversation?: { scope: Scope; snapshotSeq?: string },
 ): string {
   const url = new URL(window.location.origin + window.location.pathname);
+  const project = currentProject();
+  if (project) url.searchParams.set("project", project);
   const params = new URLSearchParams({ task: decodeId(taskId) });
   if (conversation) {
     params.set("scope", JSON.stringify(decodeScope(conversation.scope)));

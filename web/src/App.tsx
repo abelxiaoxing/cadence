@@ -43,6 +43,7 @@ import {
   planMetadataClient,
 } from "./client/plan-metadata";
 import { mergeObservation } from "./client/receipts";
+import { useWorkbench } from "./client/use-workbench";
 import { useWorkspace } from "./client/use-workspace";
 import { ViewLifetime } from "./client/view-lifetime";
 import { ActionDialog } from "./components/actions/ActionDialog";
@@ -59,10 +60,14 @@ import { RunBrowser } from "./components/history/RunBrowser";
 import { SearchBar } from "./components/history/SearchBar";
 import { MessageList } from "./components/transcript/MessageList";
 import { ToolCallBlock } from "./components/transcript/ToolCallBlock";
+import { AgentDock } from "./components/workspace/AgentDock";
+import { ChatWorkspace } from "./components/workspace/ChatWorkspace";
+import { FilesPanel } from "./components/workspace/FilesPanel";
 import {
   InspectorPanel,
   InspectorPlaceholder,
 } from "./components/workspace/InspectorPanel";
+import { ProjectPicker } from "./components/workspace/ProjectPicker";
 import { RunSummary } from "./components/workspace/RunSummary";
 import { TaskSidebar } from "./components/workspace/TaskSidebar";
 import { historyUrl, readHistoryUrl } from "./history/history-url";
@@ -83,6 +88,14 @@ import type {
   SearchHit,
   TaskKind,
 } from "./types";
+
+function chatFromLocation(): string | null {
+  const value = new URLSearchParams(window.location.hash?.slice(1)).get("chat");
+  return value &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)
+    ? value
+    : null;
+}
 
 const VIEWS: readonly (readonly [string, IconType])[] = [
   ["tools", FiTool],
@@ -132,9 +145,15 @@ export function WorkspaceNotice({
 export function App({
   api: provided,
   planMetadata,
+  onOpenProject,
+  onWorkbenchHome,
+  projectEntries,
 }: {
   api?: BrowserClient;
   planMetadata?: PlanMetadataPort;
+  onOpenProject?(path: string): Promise<void>;
+  onWorkbenchHome?(): void;
+  projectEntries?: { path: string; current: boolean }[];
 }) {
   const { t, tx, locale, setLocale } = useT();
   const [api] = useState(() => provided ?? browserClient());
@@ -142,6 +161,16 @@ export function App({
   const [detached, setDetached] = useState(false);
   const [initial] = useState(readHistoryUrl),
     [taskId, setTaskId] = useState<string | null>(initial?.taskId ?? null);
+  const [chatId, setChatId] = useState<string | null>(() =>
+    initial ? null : (chatFromLocation() ?? crypto.randomUUID()),
+  );
+  const [sourceChat, setSourceChat] = useState<string | null>(null);
+  const [projectOpen, setProjectOpen] = useState<string | null>(null);
+  const [rightTab, setRightTab] = useState<"files" | "task">(
+    initial ? "task" : "files",
+  );
+  const [reference, setReference] = useState<string>();
+  const clearReference = useCallback(() => setReference(undefined), []);
   const [scope, setScope] = useState<Scope | null>(
     initial ? (initial.scope ?? { kind: "task", id: initial.taskId }) : null,
   );
@@ -150,6 +179,32 @@ export function App({
     taskId ? { kind: "task", id: taskId } : null,
     !detached,
   );
+  const chatWorkspace = useRef<string | null>(null);
+  if (workspace.workspace)
+    chatWorkspace.current = workspace.workspace.workspaceId;
+  const chats = useWorkbench(
+    api.client,
+    workspace.workspace && !detached ? { kind: "conversations" } : null,
+    2000,
+  );
+  const projects = useWorkbench(
+    api.client,
+    workspace.workspace && !detached ? { kind: "projects" } : null,
+  );
+  const workingFolder =
+    (projects.value?.kind === "projects"
+      ? projects.value.entries.find((entry) => entry.current)?.path
+      : undefined) ?? workspace.workspace?.rootLabel;
+  const taskOrigin = useWorkbench(
+    api.client,
+    taskId && workspace.workspace && !detached
+      ? { kind: "task-origin", taskId }
+      : null,
+  );
+  const linkedChat =
+    taskOrigin.value?.kind === "task-origin"
+      ? taskOrigin.value.conversationId
+      : null;
   const observation = {
     state: workspace.observation,
     transportStatus: workspace.transportStatus,
@@ -219,6 +274,7 @@ export function App({
   const [receipts, setReceipts] = useState<CommandObservation[]>([]),
     [canceling, setCanceling] = useState(new Set<string>());
   const mounted = useRef(true);
+  const creationRead = useRef<AbortController | null>(null);
   const setReceipt = (value: CommandObservation) => {
     if (!mounted.current) return;
     setReceipts((previous) => {
@@ -253,6 +309,7 @@ export function App({
     mounted.current = true;
     return () => {
       mounted.current = false;
+      creationRead.current?.abort();
       lifetime.current.depart();
     };
   }, []);
@@ -290,7 +347,41 @@ export function App({
       if (lifetime.current.current(ticket)) setPreparing(false);
     }
   };
+  const selectChat = (id: string = crypto.randomUUID()) => {
+    creationRead.current?.abort();
+    lifetime.current.depart();
+    setPrepared(undefined);
+    setPreparing(false);
+    setChatId(id);
+    setTaskId(null);
+    setScope(null);
+    setTaskTitle("");
+    setScopeTitle("");
+    setHit(undefined);
+    setDetail(undefined);
+    setSelectedSnapshot(undefined);
+    setTab("messages");
+    setRightTab("files");
+    closeDrawer();
+    history.replaceState(
+      null,
+      "",
+      `${location.pathname}${location.search}#chat=${id}`,
+    );
+  };
+  useEffect(() => {
+    if (chatId && !window.location.hash)
+      history.replaceState(
+        null,
+        "",
+        `${location.pathname}${location.search}#chat=${chatId}`,
+      );
+  }, [chatId]);
   const selectTask = (id: string, title?: string) => {
+    creationRead.current?.abort();
+    setSourceChat(null);
+    setChatId(null);
+    setRightTab("task");
     setTaskTitle(title ?? "");
     setScopeTitle("");
     setSelectedSnapshot(undefined);
@@ -307,8 +398,23 @@ export function App({
   };
   useEffect(() => {
     const navigate = () => {
+      creationRead.current?.abort();
       const target = readHistoryUrl();
-      if (!target) return;
+      if (!target) {
+        const chat = chatFromLocation();
+        if (chat) {
+          setChatId(chat);
+          setTaskId(null);
+          setScope(null);
+          setRightTab("files");
+          setPrepared(undefined);
+          lifetime.current.depart();
+          closeDrawer();
+        }
+        return;
+      }
+      setChatId(null);
+      setRightTab("task");
       // Same-document links/back navigation observe the exact new task too.
       // Changing a hash never refreshes a grant or replays an action.
       lifetime.current.depart();
@@ -381,8 +487,59 @@ export function App({
     if (value.receipt && lifetime.current.current(resultTicket)) {
       workspace.refresh();
 
-      if (value.receipt.created?.state === "published")
-        selectTask(value.receipt.created.taskId);
+      if (value.receipt.created) {
+        creationRead.current?.abort();
+        const read = new AbortController();
+        creationRead.current = read;
+        const origin =
+          sourceChat &&
+          chats.value?.kind === "conversations" &&
+          chats.value.entries.some((chat) => chat.id === sourceChat)
+            ? sourceChat
+            : null;
+        const epoch = workspace.workspace?.epoch;
+        // Observe the exact accepted Create; never retry it or auto-Start.
+        void (async () => {
+          while (mounted.current && !read.signal.aborted) {
+            const lookup = await api.client.receipt(
+              value.commandId,
+              read.signal,
+            );
+            if (!mounted.current || read.signal.aborted) return;
+            setReceipt({ commandId: value.commandId, lookup });
+            if (
+              lookup.status === "found" &&
+              lookup.receipt.created?.state === "published"
+            ) {
+              const createdTaskId = lookup.receipt.created.taskId;
+              if (origin && epoch) {
+                const linked = await api.client.workbenchCommand({
+                  kind: "link-task",
+                  commandId: value.commandId,
+                  epoch,
+                  taskId: createdTaskId,
+                  conversationId: origin,
+                });
+                if (!mounted.current || read.signal.aborted) return;
+                if (linked.kind !== "ok")
+                  setError(
+                    t(
+                      "Task created, but its conversation link was not confirmed.",
+                    ),
+                  );
+              }
+              selectTask(createdTaskId);
+              return;
+            }
+            if (
+              lookup.status !== "found" ||
+              lookup.receipt.publication !== "pending"
+            )
+              return;
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+        })();
+      }
     }
   };
   const cancel = (runId: string) => {
@@ -463,7 +620,7 @@ export function App({
       ? "Service unavailable"
       : taskId
         ? "Task snapshot not observed yet"
-        : "No task selected");
+        : "Chat ready");
   return (
     <div className={`app${inspectorOpen ? "" : " inspector-hidden"}`}>
       <header className="topbar">
@@ -477,6 +634,17 @@ export function App({
         </button>
         {/* Phone drawers open below the topbar, so its controls stay live. */}
         <div className="topbar-flow">
+          {onWorkbenchHome && (
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label={t("Workbench projects")}
+              title={t("Workbench projects")}
+              onClick={onWorkbenchHome}
+            >
+              <FiFolder />
+            </button>
+          )}
           <span className="brand">
             <span className="brand-logo" aria-hidden="true">
               C
@@ -627,6 +795,7 @@ export function App({
                 setExportOpen(false);
                 lifetime.current.depart();
                 setPreparing(false);
+                creationRead.current?.abort();
                 setDetached(true);
               }}
             >
@@ -659,7 +828,7 @@ export function App({
           }
         >
           <FiSidebar aria-hidden="true" />
-          <span>{t("Plan")}</span>
+          <span>{chatId ? t("Files") : t("Plan")}</span>
         </button>
       </header>
       {!workspace.workspace && activeRuns.length > 0 && (
@@ -725,30 +894,82 @@ export function App({
               cancelCompatible={!!workspace.cancelCompatible}
               canceling={canceling}
               onCancel={cancel}
-              onProject={() => {
-                lifetime.current.depart();
-                setPrepared(undefined);
-                setPreparing(false);
-                setTaskId(null);
-                setScope(null);
-                setTaskTitle("");
-                setDetail(undefined);
-                setHit(undefined);
-                setSelectedSnapshot(undefined);
-                closeDrawer();
-                history.replaceState(null, "", location.pathname);
-              }}
+              onProject={() => selectChat()}
+              chats={
+                chats.value?.kind === "conversations" ? chats.value.entries : []
+              }
+              conversationId={chatId}
+              projects={
+                projectEntries ??
+                (projects.value?.kind === "projects"
+                  ? projects.value.entries
+                  : [{ path: workspace.workspace.rootLabel, current: true }])
+              }
+              onConversation={selectChat}
+              onNewConversation={() => selectChat()}
+              onOpenProject={(path) => setProjectOpen(path ?? "")}
               onTask={selectTask}
               onScope={selectScope}
               onNew={() => {
                 closeDrawer();
+                setSourceChat(null);
                 setNewOpen(true);
+              }}
+            />
+          )}
+          {workspace.workspace && (
+            <AgentDock
+              client={api.client}
+              active={workspace.activeRuns}
+              taskId={taskId}
+              runs={runs}
+              snapshot={snapshotSeq}
+              onOpen={(parent, child, snapshot, label) => {
+                selectTask(parent);
+                setScope({ kind: "child", id: child });
+                setScopeTitle(label);
+                setSelectedSnapshot(snapshot);
+                history.replaceState(
+                  null,
+                  "",
+                  historyUrl(parent, undefined, {
+                    scope: { kind: "child", id: child },
+                    snapshotSeq: snapshot,
+                  }),
+                );
               }}
             />
           )}
         </section>
         <ResizeHandle side="left" width={leftWidth} onResize={setLeftWidth} />
         <main className="main" inert={mobile && drawer !== null}>
+          {chatId && (
+            <ChatWorkspace
+              key={`${chatWorkspace.current ?? "connecting"}:${chatId}`}
+              client={api.client}
+              id={chatId}
+              workspaceId={chatWorkspace.current ?? "connecting"}
+              available={!!workspace.workspace}
+              canInterrupt={!!workspace.cancelCompatible}
+              enabled={
+                !!workspace.workspace &&
+                !!workspace.compatible &&
+                !workspace.error
+              }
+              onModel={() => setModelOpen(true)}
+              onChanged={() => {
+                chats.refresh();
+                workspace.refresh();
+              }}
+              reference={reference}
+              onReferenceUsed={clearReference}
+              onCadence={(value) => {
+                setGoal(value);
+                setSourceChat(chatId);
+                setNewOpen(true);
+              }}
+            />
+          )}
           {scope && (
             <header className="conversation-header">
               <div className="conversation-heading">
@@ -759,6 +980,15 @@ export function App({
                     onClick={() => selectTask(taskId, taskTitle)}
                   >
                     {t("Back to task")}
+                  </button>
+                )}
+                {linkedChat && (
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => selectChat(linkedChat)}
+                  >
+                    {t("Back to ordinary conversation")}
                   </button>
                 )}
                 <h2 title={taskTitle || scope.id}>
@@ -788,7 +1018,7 @@ export function App({
               </details>
             </header>
           )}
-          <div className="workspace-content">
+          <div className="workspace-content" hidden={!!chatId}>
             {!seed && (
               <section className="empty-state">
                 <span className="empty-logo" aria-hidden="true">
@@ -914,23 +1144,56 @@ export function App({
           tabIndex={-1}
           inert={mobile && drawer !== "right"}
         >
-          {seed ? (
-            <InspectorPanel
-              key={taskId}
-              client={api.client}
-              context={context}
-              seed={{
-                ...seed,
-                scope: { kind: "task", id: taskId ?? seed.scope.id },
-              }}
-              runs={runs}
-              canAct={canAct && !preparing}
-              onAction={(a) => void action(a)}
-              planMetadata={metadata}
-            />
-          ) : (
-            <InspectorPlaceholder />
-          )}
+          <div className="workbench-right">
+            <nav className="rp-tabs" aria-label={t("Workspace panels")}>
+              <button
+                type="button"
+                className="rp-tab"
+                aria-pressed={rightTab === "files"}
+                onClick={() => setRightTab("files")}
+              >
+                <FiFolder />
+                {t("Files")}
+              </button>
+              <button
+                type="button"
+                className="rp-tab"
+                aria-pressed={rightTab === "task"}
+                disabled={!seed}
+                onClick={() => setRightTab("task")}
+              >
+                <FiLayers />
+                {t("Task details")}
+              </button>
+            </nav>
+            {rightTab === "files" ? (
+              <FilesPanel
+                client={api.client}
+                enabled={!!workspace.workspace}
+                onReference={(path) => {
+                  if (!chatId) selectChat(linkedChat ?? undefined);
+                  setReference(path);
+                  closeDrawer();
+                }}
+              />
+            ) : seed ? (
+              <InspectorPanel
+                key={taskId}
+                client={api.client}
+                context={context}
+                seed={{
+                  ...seed,
+                  scope: { kind: "task", id: taskId ?? seed.scope.id },
+                }}
+                runs={runs}
+                canAct={canAct && !preparing}
+                onAction={(a) => void action(a)}
+                planMetadata={metadata}
+              />
+            ) : (
+              <InspectorPlaceholder />
+            )}
+          </div>
         </section>
       </div>
       <footer className="statusbar">
@@ -984,6 +1247,19 @@ export function App({
           </span>
         </div>
         <div className="statusbar-right">
+          {workspace.workspace && (
+            <button
+              type="button"
+              className="status-cwd"
+              title={workingFolder}
+              aria-label={t("Switch working folder")}
+              onClick={() => setProjectOpen("")}
+            >
+              <FiFolder />
+              <span>{workingFolder}</span>
+              <FiChevronDown />
+            </button>
+          )}
           <div
             className={`status-item${workspace.compatible ? " faint" : " warn"}`}
             title={localBuild?.buildId ?? t("unbuilt source")}
@@ -1011,6 +1287,16 @@ export function App({
           </div>
         </div>
       </footer>
+      {projectOpen !== null && workspace.workspace && (
+        <ProjectPicker
+          onOpen={onOpenProject}
+          client={api.client}
+          current={workingFolder ?? workspace.workspace.rootLabel}
+          initial={projectOpen || undefined}
+          epoch={workspace.workspace.epoch}
+          onClose={() => setProjectOpen(null)}
+        />
+      )}
       {modelOpen && (
         <ModelChooser
           client={api.client}
