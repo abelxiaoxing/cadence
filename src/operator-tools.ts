@@ -5,8 +5,8 @@ import {
 } from "./task-store.ts";
 import { diagnosticText } from "./verification-diagnostics.ts";
 
-/** The home directory and its ancestors observe the ~/cadence landing, like
- * the management client; a missing landing is refused, never created. */
+/** Observe only the explicit project; private-state ancestors are refused,
+ * never redirected to or reconstructed as a default workspace. */
 const observed = (cwd: string) =>
   resolveWorkspace(effectiveWorkspace(cwd).workspace);
 

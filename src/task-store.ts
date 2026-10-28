@@ -251,7 +251,7 @@ export function savedRecordIdentity(record: TaskRecord): string {
   return contentIdentity(recordText(record));
 }
 /** Resolve ambient aliases, including a missing tail, without creating anything. */
-function canonicalAmbientRoot(path: string): string {
+export function canonicalAmbientRoot(path: string): string {
   const full = resolve(path);
   try {
     return realpathSync(full);
@@ -304,20 +304,21 @@ export function privateWorkspace(
     canonicalAmbientRoot(requested),
   );
 }
-export const LANDING_WORKSPACE = "cadence";
-/** A directory that contains the private state home (the home directory and
- * its ancestors) can never be a workspace; use ~/cadence instead of refusing.
- * Observation only: the caller decides whether the landing may be created. */
+/** A project must be explicit and outside private state. Never choose, create or
+ * reconstruct a default workspace. The workbench itself has no project cwd. */
 export function effectiveWorkspace(
   requested: string,
   stateHome?: string,
-  home = homedir(),
+  _home?: string,
 ): { workspace: string; redirected: boolean } {
-  if (privateWorkspace(requested, stateHome))
-    throw new Error("Private state cannot be a workspace");
-  if (!stateHomeInside(resolveWorkspace(requested).root, stateHome))
-    return { workspace: requested, redirected: false };
-  return { workspace: join(home, LANDING_WORKSPACE), redirected: true };
+  if (
+    privateWorkspace(requested, stateHome) ||
+    stateHomeInside(resolveWorkspace(requested).root, stateHome)
+  )
+    throw new Error(
+      "Choose a project outside Cadence private state; no default workspace was created",
+    );
+  return { workspace: requested, redirected: false };
 }
 export interface CheckoutLock {
   schema: "cadence-assistant-lock/1";

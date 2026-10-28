@@ -1,5 +1,6 @@
 // Internal ordinary-Node host. Startup secrets arrive only on anonymous stdin.
 
+import { createGateway } from "./service/gateway.ts";
 import { createServiceHost } from "./service/host.ts";
 import {
   hostEnvironment,
@@ -23,9 +24,15 @@ try {
     new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)),
     STARTUP_INPUT_BYTES,
   );
-  const host = await createServiceHost(input);
+  const host =
+    input.kind === "workbench"
+      ? await createGateway(
+          input,
+          new URL("./service-host.mjs", import.meta.url),
+        )
+      : await createServiceHost(input);
   process.stdout.write(
-    `${JSON.stringify({ status: "ready", epoch: host.owner.lease.registration.epoch })}\n`,
+    `${JSON.stringify({ status: "ready", epoch: "epoch" in host ? host.epoch : host.owner.lease.registration.epoch })}\n`,
   );
 } catch (error) {
   // The readiness channel carries the fixed code and stage, never error text.

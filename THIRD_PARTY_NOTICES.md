@@ -17,6 +17,7 @@ Cadence directly adapts token digest comparison, cookie encoding/decoding, boots
 The source/destination inventory and deliberate security changes are recorded in `provenance/auth-reuse.json`.
 The complete upstream notice is preserved at `licenses/pi-web-ui-MIT.txt`.
 The substantial workspace/navigation/transcript/tool/Markdown/review/search/timeline/responsive/reconciliation adaptations are inventoried in `provenance/webui-reuse.json` and summarized in shipped `docs/reuse-and-distribution.md`.
+The ordinary-chat composer, directory picker, readonly file browser and agent-dock presentation additionally reference pi-web-ui revision `944f556463d6693a3f0cfe375c22680090e85bbe`, under the same retained MIT notice; its subagent/goal/delegate engines and prompt composer are not included.
 
 ## Bundled browser dependencies, icons and fonts
 

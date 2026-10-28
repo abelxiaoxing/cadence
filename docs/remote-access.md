@@ -59,3 +59,16 @@ Environment-backed tokens require explicit Stop/restart with changed environment
 Links may already exist in clipboard/history or external logs; redirecting cannot retract disclosure.
 Use [management and recovery](service-management.md) for Stop, uncertainty and exact local resolution.
 Loopback HTTPS/viewport tests are not physical-device or second-machine deployment qualification.
+
+## Unified workbench entry
+
+The default workbench can route associated projects on the same HTTPS origin; it does not redirect remote browsers to a project owner's loopback port.
+Its explicit `cadence workbench start --config /absolute/private-http-policy.json` accepts the HTTP policy object (schema `cadence-service-http/1`, `host`, `port`, `proxy`), not a project HostConfig or an execution cwd.
+Use the same `proxy.origin` and trusted immediate proxy addresses as above; the `.env` remains authoritative for the port and token.
+The selected policy is retained in private workbench state, so after orderly `cadence workbench stop` a default `cadence server install` can register that entry without a project or a default workspace.
+Do not install over an independently running detached entry; stop it explicitly first.
+The gateway authenticates and validates Host/Origin before routing, rejects browser local-capability headers and management paths, and forwards project requests with browser cookies, not native authority.
+Project attachment IDs, owner CSRF/build compatibility, consent, retained read proofs and exports remain owner-validated.
+A workbench token rotation revokes its routes and retires its exact browser viewers without cancelling admitted project work.
+Project ports, backend cookies and local capabilities remain server-side.
+This is one entry for a trusted service account, not multi-tenant filesystem isolation or an OS sandbox.

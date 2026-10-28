@@ -3,13 +3,14 @@
 
 import { decodeExportRequest } from "../../../src/service-contract.ts";
 import { wireRequest } from "../../../src/service-wire.ts";
+import { projectPrefix } from "../client/project-route";
 import type { ExportRequest } from "../types";
 export function requestDownload(input: ExportRequest): void {
   const wire = wireRequest("download", decodeExportRequest(input));
   if (wire.method !== "GET")
     throw new Error("Native download needs the named GET attachment route.");
   const link = document.createElement("a");
-  link.href = wire.path;
+  link.href = projectPrefix() + wire.path;
   link.download = `cadence-${input.scope.kind}-${input.scope.id}.${input.format === "markdown" ? "md" : "ndjson"}`;
   link.referrerPolicy = "no-referrer";
   document.body.appendChild(link);

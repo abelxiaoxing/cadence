@@ -261,6 +261,16 @@ export class TaskActions implements AdmissionOwner {
     h.owner.trackAccepted(original); // BEFORE the first commit/activation microtask
     return result;
   }
+  /** A normal-chat turn uses the same exclusive checkout gate. Invalidate old
+   * plans/check observations without pretending that chat is a Cadence task. */
+  conversationBoundary(barrier: ReviewBarrier): void {
+    barrier.assertHeld();
+    this.options.host.owner.lease.assert();
+    if (!Number.isSafeInteger(this.generation + 1))
+      throw new ContractError("capacity");
+    ++this.generation;
+    this.admission.revokeGrants();
+  }
   async settledAll(): Promise<void> {
     await Promise.all([...this.accepted.values()].map((a) => a.original));
   }

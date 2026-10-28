@@ -2586,7 +2586,7 @@ for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
         .update(readFileSync(new URL("../src/sdk-worker.mjs", import.meta.url)))
         .digest("hex");
       expect(workerSha256).toBe(
-        "237ace53e54a54f39b21558052d426162632478d156c1da253bbce36e1986345",
+        "99020ac30f00102313290300c3851f5a30ddc0bd184cdd24095b3d18c4538a90",
       );
       let productionObserved = false;
       let pid: number | undefined;

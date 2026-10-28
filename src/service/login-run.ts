@@ -5,7 +5,7 @@
  * killed. Registry values are only tested for presence, because reg.exe
  * prints them in the console code page. */
 import { rmSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { ContractError } from "../service-contract.ts";
 import {
   type AutostartResult,
@@ -49,12 +49,12 @@ function argument(value: string): string {
 export interface LauncherInput {
   node: string;
   cli: string;
-  workspace: string;
+  workspace: string | null;
   serverConfig: string;
   environment: [string, string][];
 }
 export function buildLauncher(u: LauncherInput): string {
-  const command = `${argument(u.node)} ${argument(u.cli)} start --workspace ${argument(u.workspace)} --server-config ${argument(u.serverConfig)}`;
+  const command = `${argument(u.node)} ${argument(u.cli)} ${u.workspace === null ? "workbench start" : `start --workspace ${argument(u.workspace)}`} --server-config ${argument(u.serverConfig)}`;
   return [
     `${MARKER}; \`cadence server install\` and \`restart\` rewrite this file.`,
     `' Started at login by ${RUN_KEY}\\${RUN_VALUE}; window style 0 hides the console.`,
@@ -62,7 +62,10 @@ export function buildLauncher(u: LauncherInput): string {
     // The launched command inherits this process environment.
     ...(u.environment.length ? ['Set env = shell.Environment("Process")'] : []),
     ...u.environment.map(([k, v]) => `env(${literal(k)}) = ${literal(v)}`),
-    `shell.CurrentDirectory = ${literal(u.workspace)}`,
+    ...(u.workspace === null
+      ? ["' Cadence workbench gateway; no project workspace"]
+      : []),
+    `shell.CurrentDirectory = ${literal(u.workspace ?? dirname(dirname(u.cli)))}`,
     `shell.Run ${literal(command)}, 0, False`,
     "",
   ].join("\r\n");
@@ -70,7 +73,11 @@ export function buildLauncher(u: LauncherInput): string {
 /** Windows Script Host reads non-ANSI paths only from a UTF-16LE script with BOM. */
 const utf16 = (text: string) =>
   Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")]);
-function launcherWorkspace(text: string | undefined): string | undefined {
+function launcherWorkspace(
+  text: string | undefined,
+): string | null | undefined {
+  if (text?.includes("' Cadence workbench gateway; no project workspace"))
+    return null;
   return text
     ?.match(/^shell\.CurrentDirectory = "((?:[^"]|"")*)"\r?$/m)?.[1]
     .replaceAll('""', '"');
@@ -101,9 +108,13 @@ export async function configureLoginRun(
     return { status: "foreign", unit: `${RUN_KEY}\\${RUN_VALUE}` };
   if (mode === "restart" && previous === undefined) return { status: "absent" };
   const sdk = sdkPackages(s.root);
-  if (!sdk) return { status: "missing-pi-sdk" };
   const kept = launcherWorkspace(previous);
-  const { workspace, redirectedFrom } = selectWorkspace(s, requested, kept);
+  const { workspace, redirectedFrom } = selectWorkspace(
+    s,
+    requested,
+    mode === "install" && requested === undefined ? null : kept,
+  );
+  if (workspace !== null && !sdk) return { status: "missing-pi-sdk" };
   const refused = await settle(s, kept);
   if (refused) return { ...refused, unit: path };
   // The login environment already carries the user's PATH and %LOCALAPPDATA%.
@@ -134,7 +145,7 @@ export async function configureLoginRun(
     s.reg(["delete", APPROVED_KEY, "/v", RUN_VALUE, "/f"]);
   }
   // A new owner without Pi's auth source would refuse; the next login retries.
-  if (!regularFile(join(agentDirectory(s), "auth.json")))
+  if (workspace !== null && !regularFile(join(agentDirectory(s), "auth.json")))
     return { status: "waiting-for-pi-login", ...result };
   return { status: s.launch(path) ? "started" : "failed", ...result };
 }
@@ -172,7 +183,10 @@ export async function loginRunStatus(
   if (previous === null) return { status: "foreign", unit: path };
   if (previous === undefined) return { status: "absent" };
   const workspace = launcherWorkspace(previous);
-  const owner = workspace ? await s.ownerStatus(workspace) : "unavailable";
+  const owner =
+    workspace !== undefined
+      ? await s.ownerStatus(workspace, serverConfigPath(s.home))
+      : "unavailable";
   return {
     status: owner === "alive" ? "active" : "inactive",
     enabled: present(s, RUN_KEY) && !approvedOff(s) ? "enabled" : "disabled",

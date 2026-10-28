@@ -24,7 +24,7 @@ export function ActionDialog({
     return () => {
       dialog?.close();
       if (previous instanceof HTMLElement && previous.isConnected)
-        previous.focus();
+        previous.focus({ preventScroll: true });
     };
   }, []);
   return (

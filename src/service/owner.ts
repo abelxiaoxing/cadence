@@ -3,8 +3,10 @@ import {
   ContractError,
   decodeCheckNativeSettlement,
   decodeCommittedBatch,
+  decodeNativeSettlement,
   decodeWorkerCompletion,
   LIMITS,
+  type NativeSettlement,
   type WorkerCompletion,
 } from "../service-contract.ts";
 import type { OwnerLease, OwnerPhase } from "./coordination.ts";
@@ -105,6 +107,18 @@ export class ServiceOwner {
   trackAccepted(original: Promise<AcceptedWorkResult>): void {
     this.track("work", original, (value) => value.status === "settled");
   }
+  /** Ordinary conversations share Stop/lifetime ownership without task admission. */
+  trackConversation(
+    original: Promise<AcceptedWorkResult>,
+    requestStop: () => void,
+  ): void {
+    this.track(
+      "work",
+      original,
+      (value) => value.status === "settled",
+      requestStop,
+    );
+  }
   get acceptedPending(): number {
     return [...this.activities].filter((a) => a.kind === "work").length;
   }
@@ -182,6 +196,17 @@ export class ServiceOwner {
           )
         );
       },
+      requestStop,
+    );
+  }
+  trackConversationProcess(
+    original: Promise<NativeSettlement>,
+    requestStop: () => void,
+  ): void {
+    this.track(
+      "process",
+      original,
+      (value) => decodeNativeSettlement(value).closure !== "unconfirmed",
       requestStop,
     );
   }

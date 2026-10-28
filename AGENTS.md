@@ -3,14 +3,15 @@
 `@abelxiaoxing/cadence` is a dual-surface task workspace: native `/cadence` and built WebUI share one persistent service.
 Ordinary engineering and resource discovery never activate execution or start a service.
 Only explicit `cadence server install` registers and starts the generated service (Linux system/root unit without linger or explicit legacy user unit, LaunchAgent on macOS, Run entry on Windows); no package install hook does, `server restart|stop|uninstall` go through orderly Stop, and disable/mask/disable-linger are respected.
-Code tasks require a readable plan and fresh context-bound Start consent, then direct host-tool edits, real parent checks and human review.
+Cadence code tasks require a readable plan and fresh context-bound Start consent, then direct host-tool edits, real parent checks and human review.
 Native entry retains raw-terminal guards; browser access authentication is not action consent.
 Client departure detaches, never cancels admitted work; explicit Cancel/Stop preserve actual closure and unknown fences.
 No terminal embedded executor, automatic replay, profile copying or recovery by deleting uncertain locks is allowed.
 This is not a sandbox, certified executor or transactional application system.
-Research/diagnosis are readonly; ordinary conversations remain independent.
+Research/diagnosis are readonly; ordinary conversations remain independent and use direct host tools only on explicit Send, under the shared checkout gate.
 Human-readable task summaries live under `.cadence/assistant/tasks`; private history and coordination use `cadence-assistant-v1` outside the working copy.
-A directory containing that state home (home and its ancestors) lands on `~/cadence` instead of refusing; only `start` creates it.
+The unified workbench has no project cwd and never creates a default workspace; private-state ancestors are refused as project roots, never redirected.
+Explicit Open associates independent project owners behind one authenticated origin; navigation detaches, while whole-workbench Stop joins its associated exact-epoch owners.
 Consumer data and uncertain resources must never be imported, reset or cleaned incidentally.
 `cadence project open` explicitly starts or reuses a directory owner on its own selected port, never a task; named Linux services keep projects independent, and root operation never copies another account's credentials or adopts its state.
 

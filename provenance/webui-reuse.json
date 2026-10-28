@@ -43,7 +43,11 @@
     "web/src/use-chat.ts": "46477a178120807c097dc42cafd3fb4cf81ebb71bfcd6cd99d049f2196941e3c",
     "web/src/use-copy-feedback.ts": "b6f8ca9a67ba61bc66d822c42e06baffbb97461663952b8240d664751984d8a5",
     "web/src/use-swipe-drawer.ts": "6b6136c92ae2247a54e1069965e9b510add4684a74d10cdc06a7eebd1980b8de",
-    "web/vite.config.ts": "1be75f22af7f3d5bbbf6eb10fba64fb444b473e8abb2b6b7348010678b8f82b8"
+    "web/vite.config.ts": "1be75f22af7f3d5bbbf6eb10fba64fb444b473e8abb2b6b7348010678b8f82b8",
+    "web/src/components/ChatInput.tsx": "8619b09e0b0369220a0f8a9569efe613067fb7775458088ff370df4cf4461d84",
+    "web/src/components/FooterBar.tsx": "c3fba545739a98e822c9343b3332cd22bf6ceca77fcfc25b608ce867ab8438d2",
+    "web/src/components/ProjectPicker.tsx": "0199089763769260fc253d55ae3bb987bab4b9c6b7dcc288957e075f9c37b167",
+    "web/src/components/DirectoryBrowser.tsx": "8ea533734a2e7d71f9de3831fa3186868e7df6017b8618344de5faa8e2f01f0d"
   },
   "groups": [
     {
@@ -198,6 +202,23 @@
         "web/src/main.tsx"
       ],
       "modifications": "Real installed Vite production build with fixed flat names, all 60 fonts, separate vis CSS, no dotenv/public/CDN/source maps. Two new private outputs must match before publication; --check is nonmutating. Source/contract/build identities are local, not server-echo compatibility. W7 final package/member/license and shared build handshake remain pending."
+    },
+    {
+      "id": "ordinary-workbench",
+      "sourceRevision": "944f556463d6693a3f0cfe375c22680090e85bbe",
+      "sources": [
+        "web/src/components/ChatInput.tsx",
+        "web/src/components/FooterBar.tsx",
+        "web/src/components/ProjectPicker.tsx",
+        "web/src/components/DirectoryBrowser.tsx"
+      ],
+      "destinations": [
+        "web/src/components/workspace/ChatWorkspace.tsx",
+        "web/src/components/workspace/AgentDock.tsx",
+        "web/src/components/workspace/FilesPanel.tsx",
+        "web/src/components/workspace/ProjectPicker.tsx"
+      ],
+      "modifications": "Adapt bottom composer, message/tool presentation, local directory browsing and cwd-picker layout to finite Cadence APIs. Remove upstream subagent/goal/delegate/plan engines, prompt composer/personas, PTY, plugin slots, SSH and file mutations. Ordinary turns use the existing Cadence native launcher and checkout gate, not task records. Explicit project opening navigates to a distinct owner; ordinary drafts and Cadence task mode are kept per conversation. Drawer focus cannot horizontally scroll the translating layout."
     }
   ],
   "newIntegrationFiles": [
@@ -239,18 +260,40 @@
     "web/vitest.config.ts",
     "web/src/components/actions/ModelChooser.tsx",
     "web/src/components/review/CurrentChangesPanel.tsx",
-    "test/web/conversations.test.tsx"
+    "test/web/conversations.test.tsx",
+    "src/conversation-context.mjs",
+    "src/conversation-context.d.mts",
+    "src/conversation-resources.mjs",
+    "src/service/contracts/workbench.ts",
+    "src/service/conversations.ts",
+    "src/service/workbench-files.ts",
+    "src/service/workbench.ts",
+    "web/src/client/use-workbench.ts",
+    "test/service-conversations.test.ts",
+    "test/workbench-boundaries.test.ts",
+    "test/web/workbench.test.tsx",
+    "test/web/workbench-browser.e2e.mjs",
+    "src/service/gateway.ts",
+    "src/service/gateway-cli.ts",
+    "src/service/gateway-store.ts",
+    "src/service/contracts/gateway.ts",
+    "web/src/Workbench.tsx",
+    "web/src/client/project-route.ts",
+    "test/service-gateway.test.ts",
+    "test/gateway-state.test.ts",
+    "test/helpers/gateway-fixture.ts",
+    "test/web/gateway-browser.e2e.mjs"
   ],
   "destinations": {
-    "licenses/pi-web-ui-reuse.md": "11d04d9b727fbe47b6492d598615c23cb94a1df4280e1f1b1afaa9e8850d7902",
+    "licenses/pi-web-ui-reuse.md": "e4e5994056f9abe4fb10c1ae823aa1f717a3a91ceb90666de0eb85c16f56ad0e",
     "web/index.html": "d4f99afb551ce57f3c0c361b176c37540520cd1658ef568c86ef01e0cce9e5b1",
-    "web/src/App.tsx": "957b7730da9586b7b0e0f358cd7354048571a223b2f80eb533cbdb86d3893ab5",
+    "web/src/App.tsx": "12270fb8e1a10e4b90aad695599e85021d82ce0388ea5abc0b9864da21fc472f",
     "web/src/client/actions.ts": "192587fe7eee7b7d669a0e93641d0880a4ca33a56a6ca25d0fe4265a8519db88",
-    "web/src/client/browser.ts": "3e0645d7603b5c13d68e9ed9785eb519ee44c8b7ec13672950ad2a8b58cd7c14",
+    "web/src/client/browser.ts": "3074fea935763155554a0131d42bbcb470972c61abdf319cfcc2f35db65c4055",
     "web/src/client/message-delta.ts": "9133b161d07c0f5ca6a85562d396c36f724982d51f35ea0abae03035d79e4e8b",
     "web/src/client/plan-metadata.ts": "e6eae96d36319aac9430fe6a4ab0edd1a7b01cfe2fe9d7748b8fbbd59d957a45",
     "web/src/client/use-workspace.ts": "7554f4c97d7a9a899630cbbd0f675360549a1c708e2987b30668cd26d96f235e",
-    "web/src/components/actions/ActionDialog.tsx": "47341df982c27bfaa7488a158b5af317ab87a6ac199cf1a574306189c12cdc00",
+    "web/src/components/actions/ActionDialog.tsx": "bda42b4eb56ffa8f9df299e64f7686151dee87f2f515f7774564a83f5ebac92a",
     "web/src/components/actions/ConfirmAction.tsx": "14a7b10ed73d3930476bdaef810e45de20e744666183986b2ba1d42461de6898",
     "web/src/components/actions/ReceiptPanel.tsx": "205795ee6b5b23e58e16b8516fa163a62bc40970a3fa0b8abb114713074d668c",
     "web/src/components/history/ContentExplorer.tsx": "362fb87f04bea106dafbae313e4946486678e8a79685b47ac0626e6680e312d3",
@@ -279,18 +322,18 @@
     "web/src/components/transcript/ToolCallBlock.tsx": "d81762bdd1a318de7014e97e0685162016dfa92dba58794c3c23e2f7dab5ec58",
     "web/src/components/workspace/InspectorPanel.tsx": "5c4b050d94d862adad1e06795d6902bfa729cd33db025f9a7f6aa6b9fc5765b7",
     "web/src/components/workspace/RunSummary.tsx": "d6a08bb9994aa585a56afe217fe438984894d357365bf7aaed57d1713d0ff7ec",
-    "web/src/components/workspace/TaskSidebar.tsx": "76ef4f9dfefe3894676a667bdb3c17916afe46feceadc38236b1df8c30e4b4fd",
-    "web/src/history/download-export.ts": "8444b3f0face7c4e82f24601bc80eddc1e49d5236f352ec9d40d5739f6e9c76e",
-    "web/src/history/history-url.ts": "77a2146c7336c311d22313a32b84d1e3a4ce7ae1d4e196874f2112c31534bcb6",
+    "web/src/components/workspace/TaskSidebar.tsx": "d5f2b908a44905a28be5f5ad9b58110e9b75ad30320b92d399c5d52739ebb62a",
+    "web/src/history/download-export.ts": "ab531872d83acf06733e3ede1b374730e83bafc21c41d48dcffc3e2f30d31528",
+    "web/src/history/history-url.ts": "0d2a586ff60d4a4c10473485e210e0b788c4411988fd45bafdebdc07f80cf6af",
     "web/src/history/readers.ts": "48bed1b8d4d89bc5719b729fcc3b938f9a88a447583b32dd4a71364b2e88c1e0",
     "web/src/history/search-page.ts": "69656774cfd6d11379a74348d15b0249e4b609d066f121ca9d82231cc454302c",
     "web/src/history/use-page.ts": "26244cc7f1da133ac820ebaab3804aecf943608e2ac65ebeb5b32e84aa2a6d5a",
     "web/src/layout/ResizeHandle.tsx": "d9d5cfece8d3d6e419fb68cd70ce71120fcd82daed64c928c91cc0beb774190f",
     "web/src/layout/panel-sash.ts": "0ce5758e99a8ff77fc1993cff787daa464af3accc5d0cefb5b69a044414da562",
     "web/src/layout/swipe-drawer.ts": "1404d6dacc4e8af0d358e9b9e60b00af81b4a8507eb3adc27e31b27deee6950a",
-    "web/src/layout/use-drawer-focus.ts": "4ca03c1b6db5838e3a57d7218a333fe8a10b0fc37a26430304e7ac9d9b741c94",
+    "web/src/layout/use-drawer-focus.ts": "399ab20232c16085fae3fc07c200c7fe766c1bd5ac43754718ab4ad432430446",
     "web/src/layout/use-swipe-drawer.ts": "3eb0b5ad000dfb36e4fc78b7d8690c714c7ad8bc16b8dd55262667e0035d740a",
-    "web/src/main.tsx": "8debdb8fd9f751a50e2a770bf4b67cbb07921bbecd90430146d2addc12d54133",
+    "web/src/main.tsx": "613d7e6ba8e82aa351bbd86343467d2555f1a77dea6b17f7f6efc1be59bcfd97",
     "web/src/navigation/assignment-rows.ts": "366ee712340945865fdb4745f378a33750b5ca1a92d1875728e81f8ced63f439",
     "web/src/reference.css": "250b68c4d588c188db96135a35de64d1a3b2cfd1c9068bf4872e8a847deedb34",
     "web/src/review/preview-toc.ts": "3b8687648c5a69356dd41e50dac7b4787215f859718f06b5e70560d616ceb324",
@@ -298,7 +341,7 @@
     "web/src/rich/remark-backslash-math.ts": "273205bd4694172f14fab2adad28acf9993e35c476c00756cbafb73135516c2e",
     "web/src/rich/stream-markdown.ts": "ce80d88c65bd49b3fdb4586201090c46b5fdbb81850ef321a782929f3a40e41e",
     "web/src/rich/use-copy-feedback.ts": "6df2a9e9e085b516c98816220420e307a24c5b8826049d0d276e08b59e19a321",
-    "web/src/styles.css": "1dc500edebd8f0a89a2544362877baec394df40bf08b8808d0d9d897818b1c2f",
+    "web/src/styles.css": "50dabcc08afec04db401fbe9556c5adc0404b8083c2a31409f85e7fe49405d48",
     "web/src/timeline/TimelineView.tsx": "25ade49214cfd160c049a56163bfdf40433d3a7e3b3447a46a1e277423b77d6f",
     "web/src/timeline/timeline-adapter.ts": "4bd061c89c0dc78edea5d9f1b7ce6b6be24f82b6949f84d0d7120d3cafe95dbb",
     "web/src/timeline/timeline-client.d.mts": "c216e4da9c9220ee2e0ce78fa9d40e3daf59d690140331184573e724f900525b",
@@ -333,7 +376,33 @@
     "web/src/components/actions/ModelChooser.tsx": "1e415361e51c478139578790ce41fdd053ef8ebec5a8fb0899178135f492efc7",
     "web/src/components/review/CurrentChangesPanel.tsx": "7feada844a4485d1e63fe1d4a10c73b38757cd07525f636d0c16eb8b1845d2c4",
     "test/web/conversations.test.tsx": "dcfb3f50612f2cc7f0c52d3db88c05287a3964c525e0fbf7668a9b6101f4b84f",
-    "test/web/accepting-browser-negative.e2e.mjs": "372ffe92a80fa0b95c58eb181839ef432dbc0d644dde4b605e130f0a85067b93"
+    "test/web/accepting-browser-negative.e2e.mjs": "9f67a8ef0bc28de7c01cd9bde4674794ebc004a6f8b8918a88ddc7c52834cc5c",
+    "src/conversation-context.mjs": "204f47807244c5cdd55e744b3a3a4c532cd6d52d3ad190184d8684f43cb292ef",
+    "src/conversation-context.d.mts": "2d33f1b812d9a982bb2cefa5397e0c8230c7525a3c82c6659637a9f289cfdb9c",
+    "src/conversation-resources.mjs": "a7ed3e4813e3e240f0a8eb4867ee497e352d62a06cb85980d0ac292d12dc001a",
+    "src/service/contracts/workbench.ts": "07bb1edc5f665d89fafbc984f2df49a08427ac7aa43bcd17d783920f0ef59277",
+    "src/service/conversations.ts": "447207010e85d5ed547d4bfd5a91685bbb2a152a8390b2967488e694f85029df",
+    "src/service/workbench-files.ts": "265e45e8d686a90d642ddba0ead8c4fb2a767241cbc1b104856a9ee5669ce630",
+    "src/service/workbench.ts": "d5eacc634588f36aa778a2a2bf15cac842ec7075add811453cfddb26cab034aa",
+    "web/src/client/use-workbench.ts": "bb873931423f46b000da51d9c827b8e0af7efe814a19b86d74bd028bfc4f741c",
+    "test/service-conversations.test.ts": "c0202ca44e873f1b32970c14f194dd38221882348af8302395408c8398830297",
+    "test/workbench-boundaries.test.ts": "94ceeb379c0337f6f452c7de149e4f9cd5ce7327c6f5ddba5b843725502ed4c4",
+    "test/web/workbench.test.tsx": "38e86359fb3fce305e2ab9155c1209a1292ee064e530d9838ae24748d75aa8fb",
+    "test/web/workbench-browser.e2e.mjs": "d1452f419be9737285877ccf158eb9008c2b9025c364d2aff2fc148e01c8f686",
+    "web/src/components/workspace/ChatWorkspace.tsx": "a828d421bd0974e11241584e8826afb543654e0283adfa5c01cdbe6b913198b4",
+    "web/src/components/workspace/AgentDock.tsx": "01c2ce75ec8451d4a88abff8020bc9f9fe510e2c0958b9b770f50b67ea186a37",
+    "web/src/components/workspace/FilesPanel.tsx": "eca52560cdbc2d58c7b8a05919e4b0c8b63c487b00823747e20797fd6c1ce6fe",
+    "web/src/components/workspace/ProjectPicker.tsx": "2e451a524e6bbaebf96127c3a005226a430b76aa2be325281c8902adffa5dbcf",
+    "src/service/gateway.ts": "f53533181182d321b41a04e6ff49672a3a830330ec1390178c77ee8aedbef132",
+    "src/service/gateway-cli.ts": "6f59772752deeeb683aeb871566827233b53475b3154e09f72fa1fb0a46511b7",
+    "src/service/gateway-store.ts": "50f1fa02de55646c21c526ffa8aba34efe56638eb895aba5a5ab4a6f5c9ff98a",
+    "src/service/contracts/gateway.ts": "5853740ebaa77e4b0b8a33d4f9d8dcec478340b6383f75bd7059efd951e7d49a",
+    "web/src/Workbench.tsx": "57a5d9814023b5ed696224932c4cb38d575ce415ff3474111f5e6c3803575b26",
+    "web/src/client/project-route.ts": "9c14aa3108771c77cb698b46da085d711acf27eb4ba5bf5c23cce40ab5f76029",
+    "test/service-gateway.test.ts": "9b04144629d5dd2827f09cf7315ee0d747a431582e0b060edbcd20d2ef3a5105",
+    "test/gateway-state.test.ts": "88d93773e0ba3c36291848c0c9cb334b5a1814c98b7c7dc7dadd8c7091e51673",
+    "test/helpers/gateway-fixture.ts": "5391550a3f4eefd947efe63fa0202c44d01658189e0c8ed7b8f4909ce0d09007",
+    "test/web/gateway-browser.e2e.mjs": "7067b8d66dc59862d689df14e0ed66d1c35542d29d485c86e96ccb98db071f7f"
   },
   "existingLicense": {
     "path": "licenses/pi-web-ui-MIT.txt",
@@ -596,6 +665,16 @@
       "id": "stale-banner-retained-only",
       "originalSourcePinPreserved": true,
       "note": "Retained-only task (history without live task.json) now answers an unavailable current context instead of stale; the generic stale banner no longer claims a service source mismatch or suggests a restart, it asks for a fresh observation/confirmation. Build compatibility remains a separate compatibleBuild status; stale alone cannot diagnose whether sources changed. Local operation errors are shown independently, never masking a stale observation or recommending service startup for a clipboard/preflight failure. Current destination hashes are refreshed; prior source/evidence records remain historical."
+    },
+    {
+      "id": "ordinary-chat-and-explicit-cadence-workbench",
+      "originalSourcePinPreserved": true,
+      "note": "Ordinary multi-turn conversations and explicit cadence-prefix task creation coexist with a lower-left Cadence agent observer, readonly files and independent project navigation. No upstream executor, prompt composer or subagent system. Full verify passed before this evidence-only update: 1994 root tests (27 Linux skips), 130 web tests, 7 browser scenarios and the 135-member real pack audit. Prior evidence remains historical; no paid-provider or new native-platform qualification is implied."
+    },
+    {
+      "id": "unified-workbench-without-default-workspace",
+      "originalSourcePinPreserved": true,
+      "note": "Cadence-owned directory-less workbench with same-origin project routing; no implicit ~/cadence creation, hidden substitute workspace or upstream executor/prompt layer. Browser requests retain browser authority; independent owners keep execution cwd and actual Stop closure. Full verify passed before this evidence-only update: 1997 root tests (27 Linux skips), 130 web tests, 9 real-browser cases including CA-validated HTTPS, and the 135-member real-pack audit. Prior failed attempts and historical evidence are not reclassified as successful. No paid provider or new native-platform qualification."
     }
   ],
   "testAdaptations": [
@@ -624,5 +703,19 @@
       "destination": "test/web/presentation.test.tsx",
       "scope": "Adapt tree/immutability/copy/search intent to immutable retained pages and exact UTF-8 anchors; no hidden thinking, client-only archive search or provider delta schema."
     }
-  ]
+  ],
+  "workbenchReference": {
+    "repository": "https://github.com/xing-shuyin/pi-web-ui",
+    "commit": "944f556463d6693a3f0cfe375c22680090e85bbe",
+    "sources": {
+      "web/src/components/ChatInput.tsx": "8619b09e0b0369220a0f8a9569efe613067fb7775458088ff370df4cf4461d84",
+      "web/src/components/FooterBar.tsx": "c3fba545739a98e822c9343b3332cd22bf6ceca77fcfc25b608ce867ab8438d2",
+      "web/src/components/ProjectPicker.tsx": "0199089763769260fc253d55ae3bb987bab4b9c6b7dcc288957e075f9c37b167",
+      "web/src/components/DirectoryBrowser.tsx": "8ea533734a2e7d71f9de3831fa3186868e7df6017b8618344de5faa8e2f01f0d",
+      "web/src/components/LeftPanel.tsx": "40ba0d3bf7298ca4f7ff4d58e450145dc24a3152954eb670143a4f66b2d2acd9",
+      "web/src/components/RightPanel.tsx": "d01ada7be98f46ab0567194c15d75248e0feb1811481cf09048046ce8d31e025",
+      "web/src/styles.css": "db03521c220016e7b3da010dac43bfeaa72ed0326035efebd30497c145724b40"
+    },
+    "note": "Additional ordinary-chat, file/project-picker and compact dock presentation reference. Existing source pins and historic evidence remain unchanged; no upstream runtime or prompt composer is imported."
+  }
 }

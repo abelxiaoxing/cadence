@@ -11,6 +11,7 @@ import {
   FiPlus,
   FiSquare,
 } from "react-icons/fi";
+import type { ChatSummary } from "../../../../src/service/contracts/workbench.ts";
 import { usePage } from "../../history/use-page";
 import { useT } from "../../i18n/locale";
 import { buildNavigationRows } from "../../navigation/assignment-rows";
@@ -220,6 +221,12 @@ export function TaskSidebar({
   onScope,
   onNew,
   onProject,
+  chats = [],
+  conversationId,
+  projects,
+  onConversation,
+  onNewConversation,
+  onOpenProject,
 }: {
   client: ServiceClient;
   workspace: WorkspaceBootstrap;
@@ -235,6 +242,12 @@ export function TaskSidebar({
   onScope: OpenScope;
   onNew: () => void;
   onProject: () => void;
+  chats?: ChatSummary[];
+  conversationId?: string | null;
+  projects?: { path: string; current: boolean }[];
+  onConversation?: (id: string) => void;
+  onNewConversation?: () => void;
+  onOpenProject?: (path?: string) => void;
 }) {
   const { t, tx } = useT();
   const request: ListRequest = {
@@ -285,36 +298,119 @@ export function TaskSidebar({
   const project =
     workspace.rootLabel.split(/[\\/]/).filter(Boolean).at(-1) ??
     workspace.rootLabel;
+  const liveChats = chats.filter(
+    (chat) =>
+      chat.status === "running" ||
+      chat.status === "queued" ||
+      chat.id === conversationId,
+  );
+  const chatRow = (chat: ChatSummary) => (
+    <button
+      type="button"
+      key={chat.id}
+      className={`session-item${chat.id === conversationId ? " active" : ""}`}
+      onClick={() => onConversation?.(chat.id)}
+      title={chat.title}
+    >
+      <span className="session-icon">
+        <FiMessageSquare />
+      </span>
+      <span className="session-info">
+        <span className="session-title">{chat.title}</span>
+        <span className="session-sub">
+          {t("Ordinary")} · {tx(chat.status)}
+        </span>
+      </span>
+    </button>
+  );
   return (
     <aside className="panel panel-left lp-panel">
       <div className="lp-new">
-        <button type="button" className="new-conversation" onClick={onNew}>
-          <FiPlus aria-hidden="true" />
-          {t("New task")}
-        </button>
-      </div>
-      <SidebarSection title={t("Recent projects")} className="projects">
         <button
           type="button"
-          className="session-item project-item active"
-          title={workspace.rootLabel}
-          onClick={onProject}
+          className="new-conversation"
+          onClick={onNewConversation ?? onNew}
         >
-          <span className="session-icon">
-            <FiFolder aria-hidden="true" />
-          </span>
-          <span className="session-info">
-            <span className="session-title">{project}</span>
-            <span className="session-sub">{workspace.rootLabel}</span>
-          </span>
+          <FiPlus aria-hidden="true" />
+          {onNewConversation ? t("New conversation") : t("New task")}
         </button>
-        <p className="panel-hint">
-          {t("This service exposes one project. Opening it never starts work.")}
-        </p>
+        {onNewConversation && (
+          <button
+            type="button"
+            className="new-task-shortcut"
+            aria-label={t("New task")}
+            title={t("New task")}
+            onClick={onNew}
+          >
+            <FiCpu />
+          </button>
+        )}
+      </div>
+      <SidebarSection title={t("Recent projects")} className="projects">
+        {projects ? (
+          <>
+            {projects.map((entry) => (
+              <button
+                type="button"
+                className={`session-item project-item${entry.current ? " active" : ""}`}
+                key={entry.path}
+                title={entry.path}
+                onClick={() =>
+                  entry.current ? onProject() : onOpenProject?.(entry.path)
+                }
+              >
+                <span className="session-icon">
+                  <FiFolder />
+                </span>
+                <span className="session-info">
+                  <span className="session-title">
+                    {entry.path.split(/[\\/]/).filter(Boolean).at(-1) ??
+                      entry.path}
+                  </span>
+                  <span className="session-sub">{entry.path}</span>
+                </span>
+              </button>
+            ))}
+            <button
+              type="button"
+              className="project-open"
+              onClick={() => onOpenProject?.()}
+            >
+              <FiPlus />
+              {t("Open working folder")}
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="session-item project-item active"
+              title={workspace.rootLabel}
+              onClick={onProject}
+            >
+              <span className="session-icon">
+                <FiFolder aria-hidden="true" />
+              </span>
+              <span className="session-info">
+                <span className="session-title">{project}</span>
+                <span className="session-sub">{workspace.rootLabel}</span>
+              </span>
+            </button>
+            <p className="panel-hint">
+              {t(
+                "This service exposes one project. Opening it never starts work.",
+              )}
+            </p>
+          </>
+        )}
       </SidebarSection>
       <SidebarSection
         title={t("Running conversations")}
-        count={activeRuns?.status === "complete" ? String(active.length) : "?"}
+        count={
+          activeRuns?.status === "complete"
+            ? String(active.length + liveChats.length)
+            : "?"
+        }
         className="running-conversations"
       >
         {activeRuns?.status !== "complete" && (
@@ -324,9 +420,12 @@ export function TaskSidebar({
             )}
           </p>
         )}
-        {activeRuns?.status === "complete" && active.length === 0 && (
-          <p className="panel-hint">{t("No active runs")}</p>
-        )}
+        {liveChats.map(chatRow)}
+        {activeRuns?.status === "complete" &&
+          active.length === 0 &&
+          liveChats.length === 0 && (
+            <p className="panel-hint">{t("No active runs")}</p>
+          )}
         {active.map((run) => {
           const title = records.find(
             (r) => r.owner.taskId === run.taskId,
@@ -379,6 +478,7 @@ export function TaskSidebar({
         className="grow"
       >
         <nav aria-label={t("Tasks")} className="task-list">
+          {chats.filter((chat) => !liveChats.includes(chat)).map(chatRow)}
           {history.map((r) => (
             <div key={r.owner.taskId}>
               <button

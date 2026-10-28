@@ -20,9 +20,12 @@ cadence stop --workspace /absolute/project
 Defaults are loopback `127.0.0.1:17423`, normal Pi agent configuration, and detached service lifetime.
 An explicit port0 selects and persists a positive port once; restart uses the selected configuration, not a fallback endpoint.
 Missing/corrupt existing setup is preserved, not filled in or reset.
-A workspace that contains the private state home (the home directory and its ancestors, such as `C:\Users\<you>` with `%LOCALAPPDATA%` or `~` with `~/.local/state`) would expose private history and locks to change observation, so every command there uses `~/cadence` (`%USERPROFILE%\cadence`) instead of refusing.
-Only `start` creates it; `status` reports `absent` without creating it, an explicit `--workspace` adds one informational line, and JSON output names the effective `workspace` only when it differs.
-`/cadence` started in such a directory attaches to the same owner, and real project directories are never redirected.
+Commands without `--workspace` address the unified workbench, which has no execution cwd and never creates `~/cadence`.
+Use `cadence workbench start|status|diagnose|stop|token-link|token-rotate` to name that target explicitly.
+Its start accepts `--foreground`, `--state-home`, `--agent-dir`, `--server-config` and a private `--config` containing an `HttpPolicy` object (the schema used below for project HTTP policy).
+The configuration's port/token come from the `.env`; a selected HTTP policy is retained across orderly restarts.
+A project root containing the private state home is refused, with no alternate directory creation; native `/cadence` also requires a real project selection.
+Existing `~/cadence` content is never removed, relocated or automatically adopted.
 A directory inside `cadence-assistant-v1` is never an engineering workspace, even for root or `project open --create`.
 Apart from the background service below, there is no supervisor installation, provider login or credential migration.
 
@@ -43,7 +46,16 @@ The JSON result reports the canonical workspace, actual task cwd and endpoint; t
 Keep that link private.
 Open Pi in the same project and use `/cadence` for the native client; explicit `cadence stop --workspace <path>` stops only that project.
 Opening another project never changes the cwd or cancels work in the former one.
-Each project has its own browser entry and owner; this is not a same-page cross-project browser router.
+The default workbench routes all associated projects through one origin, including a configured HTTPS proxy.
+Its project picker browses directory names readonly; only **Open this project** starts or reuses an owner, without admitting a task or model call.
+Project navigation remounts only the browser client; the original owner's work continues.
+Browser proxy traffic keeps browser authority and the owner's own attachments, CSRF/build checks, grants and history proofs; native management routes and local-capability headers are not forwarded.
+The gateway also refuses the legacy project-level Open command, so every opening is associated through the workbench instead of returning an independent backend token link.
+The gateway's token, backend cookies and native capabilities are never returned in project DTOs or stored in browser localStorage.
+Token rotation retires and detaches its exact browser attachments without cancelling admitted work.
+The private account state stores bounded project references and opening receipts, not copied worktrees, Pi profiles or imported transcripts.
+Private coordination/Pi credential directories and foreign-owned project selections are refused.
+Direct project entry links remain available as a compatibility route; that route alone still uses separate loopback project entries.
 Git subdirectories and aliases resolve to the same checkout, while overlapping parent/child owners still refuse.
 An unknown, quarantined or inaccessible selection is never treated as a new project or recovered by choosing another state home.
 
@@ -72,12 +84,18 @@ Linux also accepts `--name <name>` on every server command to select `cadence-<n
 Names must start with a letter or digit and contain only letters, digits, `_` and `-` (at most48characters).
 
 `install` also creates the research template `~/.pi/agent/cadence/.env` when it is missing, never overwriting it, whatever the service result, and adds its [port and token](#port-and-token) lines when they are missing.
-`install` works from any package location and runs `start --foreground --workspace <workspace> --server-config <file>` (Linux, macOS) or the same without `--foreground` (Windows) from that copy with the installing Node, without `--port`.
-The workspace is `~/cadence` (created if missing), an existing absolute `--workspace`, or on later installs the one the definition already runs; a workspace containing the service's state home lands on `~/cadence` with a note.
+`install` without `--workspace` runs `workbench start --foreground --server-config <file>` (Linux, macOS), or without `--foreground` on Windows.
+The service process may use its package directory as a technical launch cwd; it is never an agent workspace and no project scan or model runtime is initialized there.
+An explicit `--workspace` retains single-project service compatibility and must name an existing suitable directory.
+A reinstall without `--workspace` explicitly selects the unified entry after orderly Stop of the old generated definition; it neither deletes the former workspace nor imports its data.
+A plain `restart` retains the definition's existing target, including an older explicit project service, rather than silently migrating it.
 The `.env` [port and token](#port-and-token) select the endpoint (17423 by default) and the token; an occupied endpoint fails instead of falling back.
 Install and restart print the private entry link once the owner answers; the JSON result on stdout never carries the token.
 `restart` rewrites an existing definition with the current Node and package paths, keeping its workspace and the user's disable choices, and starts it; run it after an npm upgrade, a Node change or a `models.json` edit.
-`stop` stops the owner orderly and keeps the registration for the next boot or login.
+`stop` joins the workbench's accepted openings and associated exact-epoch project owners, then closes the entry; unrelated project owners stay independent.
+If one associated owner refuses or has a changed epoch, Stop still reaches the other known owners serially, while the workbench remains fenced rather than reporting a successful Stop.
+Project-specific `stop --workspace <path>` remains scoped to that owner.
+The generated registration stays for the next boot or login.
 `uninstall` stops it orderly and deletes only what Cadence generated; workspace, state home, history, linger and Pi sources stay.
 Because npm runs no uninstall script, uninstall the service before `npm uninstall -g`; a left-behind definition fails to start once its CLI path disappears.
 A definition Cadence did not generate is left unchanged (`foreign`), and `status` reports `absent` when none is registered.
@@ -85,7 +103,8 @@ A definition Cadence did not generate is left unchanged (`foreign`), and `status
 Pi's installer omits peers, so the standalone owner and workers load the Pi SDK (`pi-coding-agent`, `pi-ai`) from exact 0.84.3 optional dependencies.
 Package files may be hard links into the package manager's store (Bun's default install); Cadence binds their exact content, not their link count.
 Missing or unusable Pi sources refuse before an owner registers; a new owner without the SDK quarantines.
-`install` therefore writes no service definition while the SDK is unresolvable (for example, optional dependencies omitted), and registers without starting while Pi's `auth.json` is missing (`waiting-for-pi-login`); log in to Pi, then run `cadence server restart`.
+The no-project workbench starts without either an SDK runtime or Pi authentication; missing sources are reported only when a project is explicitly opened.
+For an explicit single-project definition, the older guards remain: no SDK means no definition, and missing `auth.json` means registered but waiting for Pi login.
 
 While no service is registered, Pi's session-start card shows a separate warning naming `cadence server install` for an installed package copy (`node <copy>/src/service-cli.mjs server install` for Pi's managed copy, which puts no bin on `PATH`); a checkout loaded with `pi -e` stays quiet.
 It is a warning rather than part of the info card because Pi's TUI replaces one info status with the next.
@@ -175,7 +194,7 @@ Only where polkit requires authorization for `set-self-linger` (older systemd de
 `--no-linger` or `CADENCE_LINGER=0` skips linger; `restart` never changes it, so `loginctl disable-linger` is kept.
 The unit bakes the installer's PATH (minus npm lifecycle entries), LANG/LC_ALL, an absolute XDG_STATE_HOME and a custom PI_CODING_AGENT_DIR, so shell management sees the same state home and Pi sources.
 Proxy variables are not baked; add a validated pair with `systemctl --user edit cadence`.
-It carries `ConditionPathExists=` for the CLI, `auth.json` and both SDK packages.
+It carries `ConditionPathExists=` for the CLI; explicit single-project definitions also require `auth.json` and both SDK packages, while the project-less workbench does not.
 
 `restart` stops an active unit with its loaded definition, rewrites the file and starts it, without enabling a disabled unit; a masked unit is never enabled or started.
 `ExecStop` is the authenticated orderly Stop, so admitted work is stopped, not detached; `stop` and `uninstall` (`disable --now`) use it too.
@@ -191,7 +210,7 @@ To keep the service off while Cadence stays installed, use `systemctl --user dis
 
 `install` writes `~/Library/LaunchAgents/com.abelxiaoxing.cadence.plist` with `RunAtLoad`, runs `launchctl enable` (undoing a `launchctl disable`) and loads it into `gui/<uid>` with `launchctl bootstrap`, which starts it; launchd loads it again at every login.
 It bakes the same PATH, LANG/LC_ALL, XDG_STATE_HOME and PI_CODING_AGENT_DIR as the Linux unit and logs to `~/Library/Logs/cadence.log`.
-Without `auth.json` the agent is written but not loaded.
+For an explicit single-project service, missing `auth.json` leaves the agent written but not loaded; the project-less workbench can start without Pi login.
 Because launchd stops a job only by signaling it, `restart`, `stop`, `uninstall` and a reinstall first stop the owner through the authenticated orderly Stop, and change nothing when that Stop is `unconfirmed`, `quarantined` or `unavailable`.
 Only then does Cadence unload (`bootout`) or replace the agent; `stop` leaves it loaded, and the finished job starts again at the next login.
 There is no `KeepAlive`: launchd has no start limit, and a restart never clears fences, so a failed owner stays down until `cadence server restart`.
@@ -201,10 +220,10 @@ At logout or shutdown launchd signals the job, which is not orderly Stop and can
 ### Windows login Run entry
 
 `install` writes `%LOCALAPPDATA%\cadence-server\cadence.vbs`, beside rather than inside the private state home, and the per-user value `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Cadence`, which runs it with `wscript.exe` at login; no administrator rights are needed.
-The launcher is UTF-16 with a byte-order mark, so non-ASCII paths work, and runs `start --workspace` with window style 0, so no console window appears; the detached owner keeps running after the launcher exits.
+The launcher is UTF-16 with a byte-order mark, so non-ASCII paths work, and runs `workbench start` (or `start --workspace` for an explicit project) with window style 0, so no console window appears; the detached owner keeps running after the launcher exits.
 It bakes only a custom PI_CODING_AGENT_DIR, because the login environment already carries PATH and `%LOCALAPPDATA%`.
 `install` also removes Task Manager's `StartupApproved` switch for the entry (undoing a disable there); `restart` keeps both the entry and that switch, and `status` reports a disabled entry.
-Without `auth.json` the entry is registered but nothing starts.
+For an explicit single-project service, missing `auth.json` leaves the entry registered but starts nothing; the project-less workbench can start without Pi login.
 Nothing supervises the detached owner, so a failed owner is not restarted, and every `restart`, `stop`, `uninstall` and reinstall first runs the authenticated orderly Stop and changes nothing unless it is confirmed; Cadence never kills a process.
 A `Cadence` Run value without Cadence's launcher is `foreign` and left unchanged; registry values are only tested for presence, because `reg.exe` prints them in the console code page.
 At sign-out or shutdown Windows ends the owner without orderly Stop, which can leave recovery fences; run `cadence server stop` first while work is running.

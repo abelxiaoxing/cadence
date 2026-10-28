@@ -1,7 +1,9 @@
 /** SDK-free native management client. No task-action or provider API imports. */
+
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { request } from "node:http";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureUserConfig } from "../install-config.mjs";
@@ -30,6 +32,8 @@ import {
 } from "./autostart.ts";
 import { closed, text } from "./contracts/core.ts";
 import { ServiceCoordination } from "./coordination.ts";
+import { gatewayMain } from "./gateway-cli.ts";
+import { GatewayStore } from "./gateway-store.ts";
 import {
   configureLaunchAgent,
   LABEL,
@@ -64,6 +68,7 @@ import {
   PORT_KEY,
   ServerConfigRefusal,
   TOKEN_KEY,
+  serverConfigPath as workbenchConfigPath,
 } from "./server-config.ts";
 
 import {
@@ -87,16 +92,21 @@ export interface ManagementReply {
   actions?: boolean;
   generation?: number;
 }
+export interface ControlTarget {
+  localAccess(): { endpoint: string; epoch: string; capability: string };
+  inspect(): { status: string; epoch?: string | null };
+}
 export function nativeCall(
-  c: ServiceCoordination,
+  c: ControlTarget,
   operation: string,
   reveal = false,
+  controlBody?: { attachments: string[] },
 ): Promise<unknown> {
   const access = c.localAccess();
   const url = new URL(`${access.endpoint}/local/v1/admin/${operation}`);
   const write = !["status", "diagnose"].includes(operation);
   const body = write
-    ? JSON.stringify(reveal ? { reveal: true } : {})
+    ? JSON.stringify(controlBody ?? (reveal ? { reveal: true } : {}))
     : undefined;
   return new Promise((resolve, reject) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -178,7 +188,7 @@ export function nativeCall(
 const pause = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 export async function serviceStatus(
-  c: ServiceCoordination,
+  c: ControlTarget,
   diagnose = false,
 ): Promise<unknown> {
   const observed = c.inspect();
@@ -192,9 +202,7 @@ export async function serviceStatus(
     };
   }
 }
-export async function stopService(
-  c: ServiceCoordination,
-): Promise<ManagementReply> {
+export async function stopService(c: ControlTarget): Promise<ManagementReply> {
   // A disconnected/missing ack is never a successful stop, even if a later file
   // looks stopped. Only this authenticated exact-epoch accepted request is joined.
   let epoch: string;
@@ -302,6 +310,28 @@ export async function startService(
       throw new ContractError("conflict");
     return existing;
   }
+  return launchHost(
+    input,
+    c,
+    foreground,
+    hostUrl,
+    input.config.cwd,
+    env,
+    network,
+  );
+}
+export async function launchHost(
+  input: HostInput | import("./gateway-store.ts").GatewayInput,
+  c: ControlTarget,
+  foreground: boolean,
+  hostUrl: URL,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  network: ReturnType<typeof networkSnapshot>,
+): Promise<unknown> {
+  const serialized = `${JSON.stringify(input)}\n`;
+  if (Buffer.byteLength(serialized) > STARTUP_INPUT_BYTES)
+    throw new ContractError("oversize");
   // No global Node search, inherited preloads, credentials on argv, or TS fallback.
   if (!sameNetwork(network, networkSnapshot(process.env)))
     throw new ContractError("stale");
@@ -312,7 +342,7 @@ export async function startService(
       fileURLToPath(hostUrl),
     ],
     {
-      cwd: input.config.cwd,
+      cwd,
       env,
       detached: !foreground,
       windowsHide: true,
@@ -394,7 +424,7 @@ export async function startService(
     }),
   ]);
   clearTimeout(timer);
-  const guidance = startupGuidance(result, input);
+  const guidance = "kind" in input ? "" : startupGuidance(result, input);
   if (guidance) process.stderr.write(guidance);
   // A reporting bound/client departure never sends a signal or restarts a child.
   child.stdout.destroy();
@@ -411,13 +441,17 @@ export async function startService(
 /** Observe the unit's owner through the same authenticated status route; a
  * reporting bound is not a stop or restart reason. */
 async function observeStarted(
-  workspace: string,
+  workspace: string | null,
+  config?: string,
 ): Promise<{ service: string; endpoint?: string }> {
   const deadline = performance.now() + LIMITS.startWaitMs + 2000;
   let service = "unconfirmed";
   while (performance.now() < deadline) {
     try {
-      const c = new ServiceCoordination(workspace);
+      const c =
+        workspace === null
+          ? new GatewayStore(config ?? workbenchConfigPath(homedir()))
+          : new ServiceCoordination(workspace);
       const observed = await serviceStatus(c);
       if (observed && typeof observed === "object" && "status" in observed)
         service = String(observed.status);
@@ -434,13 +468,19 @@ async function observeStarted(
 /** The running owner's private entry link, for the guidance only: never part
  * of the JSON result. */
 async function privateLink(
-  workspace: string,
+  workspace: string | null,
   stateHome?: string,
+  config?: string,
 ): Promise<string | undefined> {
   try {
     const value = closed(
       await nativeCall(
-        new ServiceCoordination(workspace, stateHome),
+        workspace === null
+          ? new GatewayStore(
+              config ?? workbenchConfigPath(homedir()),
+              stateHome,
+            )
+          : new ServiceCoordination(workspace, stateHome),
         "token-link",
         true,
       ),
@@ -453,9 +493,13 @@ async function privateLink(
 }
 /** Orderly owner control for service managers that only signal (macOS, Windows). */
 const ownerControl: OwnerControl = {
-  async ownerStatus(workspace) {
+  async ownerStatus(workspace, config) {
     try {
-      const observed = await serviceStatus(new ServiceCoordination(workspace));
+      const observed = await serviceStatus(
+        workspace === null
+          ? new GatewayStore(config ?? workbenchConfigPath(homedir()))
+          : new ServiceCoordination(workspace),
+      );
       return observed && typeof observed === "object" && "status" in observed
         ? String(observed.status)
         : "unavailable";
@@ -463,9 +507,12 @@ const ownerControl: OwnerControl = {
       return "unavailable";
     }
   },
-  async stopOwner(workspace) {
+  async stopOwner(workspace, config) {
     try {
-      const c = new ServiceCoordination(workspace);
+      const c =
+        workspace === null
+          ? new GatewayStore(config ?? workbenchConfigPath(homedir()))
+          : new ServiceCoordination(workspace);
       const observed = await serviceStatus(c);
       const status =
         observed && typeof observed === "object" && "status" in observed
@@ -559,6 +606,8 @@ function serverStatusGuidance(
   link: string | undefined,
 ): string {
   const workspace = JSON.stringify(result.workspace ?? "");
+  if (result.workspace === null && result.status === "started")
+    return `Cadence unified workbench: ${link ?? result.endpoint ?? result.service ?? "unconfirmed"}\nNo default workspace was created. Projects are opened explicitly.\nManage: ${cli} server status|restart|stop|uninstall\n`;
   const flags = `${s.scope === "system" ? " --system" : s.platform === "linux" ? " --user" : ""}${serviceName(s) ? ` --name ${serviceName(s)}` : ""}`;
   const manage = `Manage: ${cli} server status|restart|stop|uninstall${flags}`;
   const when =
@@ -712,9 +761,17 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
     throw error;
   }
   let link: string | undefined;
-  if (result.status === "started" && result.workspace) {
-    Object.assign(result, await observeStarted(result.workspace));
-    if (result.service === "alive") link = await privateLink(result.workspace);
+  if (result.status === "started" && result.workspace !== undefined) {
+    Object.assign(
+      result,
+      await observeStarted(result.workspace, serviceConfigPath(s)),
+    );
+    if (result.service === "alive")
+      link = await privateLink(
+        result.workspace,
+        undefined,
+        serviceConfigPath(s),
+      );
   }
   process.stderr.write(serverGuidance(s, action, result, link));
   process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -740,6 +797,49 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
 /** Explicit local project launch, not browser discovery or task admission.
  * Separate checkouts keep separate owner locks/history/ports; the current
  * project's accepted work is never stopped or moved to the new cwd. */
+/** Explicit browser/native project opening shares the same launch policy. No
+ * task, global cwd mutation, credential copying or service-manager registration. */
+/** A genuine pre-admission refusal, distinct from an uncertain launch. */
+export class ProjectOpenRefusal extends ContractError {
+  constructor(readonly noOwner: boolean) {
+    super("unavailable");
+  }
+}
+export async function openProjectDirectory(
+  workspace: string,
+  stateHome: string,
+  agentDir: string,
+  hostUrl: URL,
+): Promise<{ path: string; link: string }> {
+  if (privateWorkspace(workspace, stateHome))
+    throw new ContractError("forbidden");
+  effectiveWorkspace(workspace, stateHome);
+  const c = new ServiceCoordination(workspace, stateHome);
+  const kept = readHostConfig(c);
+  const options: StartOptions = {
+    workspace,
+    stateHome,
+    ...(!kept ? { port: 0, agentDir } : {}),
+  };
+  const result = await startService(options, false, hostUrl);
+  if (
+    !result ||
+    typeof result !== "object" ||
+    !("status" in result) ||
+    result.status !== "alive"
+  )
+    throw new ProjectOpenRefusal(
+      !!result &&
+        typeof result === "object" &&
+        "status" in result &&
+        result.status === "refused" &&
+        c.inspect().status === "absent",
+    );
+  const link = await privateLink(c.store.root, stateHome);
+  if (!link) throw new ContractError("unavailable");
+  return { path: c.store.root, link };
+}
+
 async function projectMain(argv: string[], hostUrl: URL): Promise<void> {
   if (argv.shift() !== "open") throw new ContractError("invalid");
   const options: StartOptions = { workspace: process.cwd() };
@@ -768,14 +868,7 @@ async function projectMain(argv: string[], hostUrl: URL): Promise<void> {
   if (privateWorkspace(options.workspace, options.stateHome))
     throw new ContractError("forbidden");
   if (create) mkdirSync(options.workspace, { recursive: true });
-  const landing = effectiveWorkspace(options.workspace, options.stateHome);
-  if (landing.redirected) {
-    process.stderr.write(
-      `Cadence workspace: ${landing.workspace} (${options.workspace} contains Cadence's private state)\n`,
-    );
-    mkdirSync(landing.workspace, { recursive: true });
-  }
-  options.workspace = landing.workspace;
+  effectiveWorkspace(options.workspace, options.stateHome);
   const c = new ServiceCoordination(options.workspace, options.stateHome);
   const kept = readHostConfig(c);
   // Port 0 is requested only for a genuinely new selection. An existing owner
@@ -812,9 +905,27 @@ export async function managementMain(
     if (!process.versions.node || process.versions.bun)
       throw new ContractError("unsupported-context");
     const command = argv.shift();
+    if (command === "workbench") {
+      await gatewayMain(argv, hostUrl);
+      return;
+    }
+    if (
+      [
+        "start",
+        "status",
+        "diagnose",
+        "stop",
+        "token-link",
+        "token-rotate",
+      ].includes(command ?? "") &&
+      !argv.includes("--workspace")
+    ) {
+      await gatewayMain([command as string, ...argv], hostUrl);
+      return;
+    }
     if (command === "--help" && !argv.length) {
       process.stdout.write(
-        "cadence start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--workspace PATH] [--state-home PATH]\ncadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall\nLinux server options: --system (root, no linger) or --user; --name NAME selects an independent service; install also accepts --port PORT (required for a new named service). Root defaults to --system. No automatic sudo or profile migration.\ncadence project open [PATH] [--create] [--agent-dir PATH] [--state-home PATH]\nProject open explicitly starts/reuses that checkout owner, selecting a private free port for a new project. It never creates or starts a task.\nStart is explicit, or the background service that server install registers: a system/root unit on Linux without linger, or --user with optional linger (--no-linger or CADENCE_LINGER=0 keeps user scope to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file, --server-config (the .env whose CADENCE_PORT and CADENCE_TOKEN the background service uses).\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop. Unconfirmed/quarantined is not stopped.\nRecovery resolve requires this local native terminal, exact unchanged dead-owner resources and separate process/credential/storage acknowledgments. No --yes, network recovery, killing, repair or cleanup.\n",
+        "cadence start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--workspace PATH] [--state-home PATH]\nWithout --workspace these commands address the unified workbench (except project recovery); no default project directory is created.\ncadence workbench start|status|diagnose|stop|token-link --reveal|token-rotate [--server-config PATH] [--state-home PATH]\ncadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall\nLinux server options: --system (root, no linger) or --user; --name NAME selects an independent service; install also accepts --port PORT (required for a new named service). Root defaults to --system. No automatic sudo or profile migration.\ncadence project open [PATH] [--create] [--agent-dir PATH] [--state-home PATH]\nProject open explicitly starts/reuses that checkout owner, selecting a private free port for a new project. It never creates or starts a task.\nStart is explicit, or the background service that server install registers: a system/root unit on Linux without linger, or --user with optional linger (--no-linger or CADENCE_LINGER=0 keeps user scope to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file, --server-config (the .env whose CADENCE_PORT and CADENCE_TOKEN the background service uses).\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop. Unconfirmed/quarantined is not stopped.\nRecovery resolve requires this local native terminal, exact unchanged dead-owner resources and separate process/credential/storage acknowledgments. No --yes, network recovery, killing, repair or cleanup.\n",
       );
       return;
     }
@@ -876,27 +987,11 @@ export async function managementMain(
         options.host = value;
       else throw new ContractError("invalid");
     }
-    // A directory containing the private state home (the home directory and
-    // its ancestors) can never be a workspace; land on ~/cadence instead of
-    // refusing. Only start creates it; observation creates nothing.
-    const landing = effectiveWorkspace(options.workspace, options.stateHome);
-    if (landing.redirected) {
-      if (seen.has("--workspace"))
-        process.stderr.write(
-          `Cadence workspace: ${landing.workspace} (${options.workspace} contains Cadence's private state)\n`,
-        );
-      options.workspace = landing.workspace;
-      if (command === "start")
-        mkdirSync(landing.workspace, { recursive: true });
-    }
+    effectiveWorkspace(options.workspace, options.stateHome);
     let result: unknown;
     if (command === "start")
       result = await startService(options, foreground, hostUrl);
-    else if (landing.redirected && !existsSync(landing.workspace)) {
-      if (command !== "status" && command !== "diagnose")
-        throw new ContractError("unavailable");
-      result = { status: "absent" };
-    } else {
+    else {
       const c = new ServiceCoordination(options.workspace, options.stateHome);
       if (command === "recover" && recovery)
         result = await localRecovery(c, recovery);
@@ -911,10 +1006,6 @@ export async function managementMain(
         result = await nativeCall(c, command);
       else throw new ContractError("invalid");
     }
-    // Name the effective workspace only when it differs from the request, so
-    // every existing output stays byte-identical.
-    if (landing.redirected && result && typeof result === "object")
-      result = { ...result, workspace: landing.workspace };
     if (result !== null) process.stdout.write(`${JSON.stringify(result)}\n`);
     if (failedStatus(result)) process.exitCode = 1;
   } catch {

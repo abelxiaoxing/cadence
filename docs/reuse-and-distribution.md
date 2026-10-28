@@ -3,6 +3,7 @@
 ## Source families
 
 Cadence adapts `xing-shuyin/pi-web-ui@e8bab487af208bc9a1ab60a821652323f598127f`, MIT copyright 2026 xing-shuyin.
+The ordinary-chat composer, folder picker and file/dock presentation additionally reference sibling revision `944f556463d6693a3f0cfe375c22680090e85bbe`; the separate reference hashes are retained alongside the original pins.
 The full original license is `licenses/pi-web-ui-MIT.txt`.
 Repository `provenance/webui-reuse.json` records source/destination hashes and explicit incompatible branches removed; `provenance/auth-reuse.json` records token/cookie adaptation.
 
@@ -18,8 +19,9 @@ Repository `provenance/webui-reuse.json` records source/destination hashes and e
 | use-chat, message-delta              | Shared typed reconciliation, gaps/resync and no mutation replay          |
 | Token/cookie and upgrade guards      | Cookie-first authenticated HTTP/WS, explicit Host/Origin/CSRF boundaries |
 
-No upstream runtime, general chat server, PTY, plugin loader, browser shell, credentials editor, reconnect continuation or task repair ships.
-Cadence's finite owner/admission/history contracts replace those incompatible seams.
+No upstream chat/subagent runtime, goal/delegate loop, PTY, plugin loader, browser shell, credentials editor, prompt composer, reconnect replay or task repair ships.
+Cadence owns ordinary conversations separately, using its existing native launcher, exact model/auth resolution and checkout gate; its finite task admission/history contracts remain unchanged.
+Readonly file browsing and explicit independent project opening are new Cadence service operations, not upstream filesystem mutation or global `set_cwd` routes.
 
 ## Emitted licenses
 
@@ -43,3 +45,12 @@ The retired shell-local controller is not a shipped competing executor.
 The real pack audit rejects missing/extra/duplicate/linked/special/unsafe members, altered bodies, pin/notice/font drift and linked extraction roots/ancestors.
 Extracted tests use tar-only package bodies and explicitly linked existing fixture peers; they never fill missing package files from source.
 No version bump, dependency install or publication is implied by this redesign.
+
+## Unified entry without a default workspace
+
+`web/src/Workbench.tsx` composes the project selector and existing project UI without importing pi-web-ui's session/execution service.
+The Cadence-owned gateway uses the existing authentication, public codecs, private-files discipline and independently coordinated project owners.
+The no-project entry never initializes an SDK session, manufactures a checkout, creates `~/cadence`, or repairs a missing project directory.
+A technical service-process cwd is not a model/tool workspace.
+The built same-origin routing covers both HTTP requests and WebSockets, while browser authority and project consent remain distinct from native management capability.
+New Linux manager tests exercise the no-workspace default; macOS/Windows generated-definition tests are not native-platform execution qualification.

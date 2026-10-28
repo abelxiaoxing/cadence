@@ -1,4 +1,9 @@
 import { closed, oneOf } from "./service/contracts/core.ts";
+import {
+  decodeWorkbenchCommand,
+  decodeWorkbenchRead,
+  decodeWorkbenchResult,
+} from "./service/contracts/workbench.ts";
 /** Portable finite HTTP/WS route owner. Common DTO semantics stay in service-contract. */
 import {
   ContractError,
@@ -44,6 +49,8 @@ import {
 
 export const HTTP_ROUTES = {
   session: "/api/v1/session",
+  workbenchRead: "/api/v1/workbench/read",
+  workbenchCommand: "/api/v1/workbench/command",
   current: "/api/v1/current",
   currentChanges: "/api/v1/current-changes",
   activeRuns: "/api/v1/active-runs",
@@ -102,7 +109,9 @@ export function httpOutputLimit(
     operation === "activeRuns" ||
     operation === "workspace" ||
     operation === "models" ||
-    operation === "chooseModel"
+    operation === "chooseModel" ||
+    operation === "workbenchRead" ||
+    operation === "workbenchCommand"
   )
     return LIMITS.pageBytes;
   if (operation === "graph") {
@@ -117,12 +126,21 @@ export function httpOutputLimit(
   return LIMITS.controlBytes;
 }
 export function mutation(operation: HttpOperation): boolean {
-  return ["preflight", "command", "cancel", "detach", "chooseModel"].includes(
-    operation,
-  );
+  return [
+    "preflight",
+    "command",
+    "cancel",
+    "detach",
+    "chooseModel",
+    "workbenchCommand",
+  ].includes(operation);
 }
 export function decodeHttpInput(operation: HttpOperation, value: unknown) {
   switch (operation) {
+    case "workbenchRead":
+      return decodeWorkbenchRead(value);
+    case "workbenchCommand":
+      return decodeWorkbenchCommand(value);
     case "session":
     case "models":
     case "activeRuns":
@@ -179,6 +197,9 @@ export function decodeHttpOutput(
   if ((pageReaders as readonly string[]).includes(operation))
     return decodeReply(value, decodeHistoryReadResult);
   switch (operation) {
+    case "workbenchRead":
+    case "workbenchCommand":
+      return decodeReply(value, decodeWorkbenchResult);
     case "current":
       return decodeReply(value, decodeCurrentView);
     case "currentChanges":
@@ -225,6 +246,7 @@ export function decodeHttpOutput(
 export function readonlyBody(operation: HttpOperation): boolean {
   const operations: readonly HttpOperation[] = [
     ...pageReaders,
+    "workbenchRead",
     "current",
     "currentChanges",
     "checkObligations",

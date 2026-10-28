@@ -1,6 +1,6 @@
 {
   "name": "@abelxiaoxing/cadence",
-  "version": "2.0.12",
+  "version": "2.0.14",
   "description": "Shared Pi task workspace: native terminal and WebUI, persistent service, checks and human review.",
   "license": "MIT",
   "type": "module",
@@ -60,7 +60,10 @@
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
-    "licenses"
+    "licenses",
+    "src/conversation-context.mjs",
+    "src/conversation-resources.mjs",
+    "src/service/contracts/workbench.ts"
   ],
   "pi": {
     "extensions": [

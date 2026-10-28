@@ -192,8 +192,8 @@ export class NativeConnection {
     // Failed detach keeps its exact transport/slot. Explicit re-entry may retry
     // detach, but never forget it and allocate a replacement on uncertainty.
     await this.detach();
-    // Pi started in the home directory attaches to the ~/cadence landing owner,
-    // the same one the management client starts there. Observation only.
+    // Native clients require an explicit project; never create or redirect to
+    // a default workspace. Observation only.
     const access = new ServiceCoordination(
       effectiveWorkspace(cwd).workspace,
     ).localAccess();

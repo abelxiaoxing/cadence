@@ -49,6 +49,7 @@ import {
 } from "./runtime.ts";
 import { readServerConfig } from "./server-config.ts";
 import { TaskActions } from "./task-actions.ts";
+import { Workbench } from "./workbench.ts";
 
 function legacy(
   store: TaskStore,
@@ -103,6 +104,7 @@ declare const __CADENCE_SERVICE_CONTRACT__: string;
 export interface ServiceHost {
   /** Null only in explicitly deferred source-boundary fixtures, never compiled production. */
   actions: TaskActions | null;
+  workbench: Workbench | null;
   coordination: ServiceCoordination;
   owner: ServiceOwner;
   writer: HistoryWriter;
@@ -313,6 +315,29 @@ export async function createServiceHost(
           ],
           workerTimeoutMs: sourceBuild?.workerTimeoutMs,
         });
+    const workbench = actions
+      ? new Workbench({
+          coordination: c,
+          owner,
+          models,
+          choice,
+          actions,
+          cwd: input.config.cwd,
+          agentDir: input.config.agentDir,
+          projectsEnabled: !input.config.http.proxy,
+          hostUrl: new URL(
+            sourceBuild ? "../service-host.mjs" : "./service-host.mjs",
+            import.meta.url,
+          ),
+          secrets: () => [
+            ...access.redactionLiterals(),
+            native.capability,
+            ...network.literals,
+            ...models.viewRedactionLiterals(),
+          ],
+          timeoutMs: sourceBuild?.workerTimeoutMs,
+        })
+      : null;
     const unavailable = (taskId: string | null): ControlContext => ({
       status: "unavailable",
       workspaceId: reader.files.format.workspaceId,
@@ -377,6 +402,7 @@ export async function createServiceHost(
       auth,
       build,
       adapters: {
+        workbench: workbench ?? undefined,
         admission: actions?.admission ?? null,
         models: choice,
         modelChoice: actions ? choice : undefined,
@@ -460,6 +486,7 @@ export async function createServiceHost(
     http.admit();
     return {
       actions,
+      workbench,
       coordination: c,
       owner,
       writer,

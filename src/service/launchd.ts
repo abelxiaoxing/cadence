@@ -3,7 +3,7 @@
  * authenticated orderly Stop and refuses unless it is confirmed. There is no
  * KeepAlive: launchd has no start limit, and a restart never clears fences. */
 import { rmSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   type AutostartResult,
   type AutostartSystem,
@@ -35,7 +35,7 @@ const xml = (value: string) =>
 export interface PlistInput {
   node: string;
   cli: string;
-  workspace: string;
+  workspace: string | null;
   serverConfig: string;
   environment: [string, string][];
   log: string;
@@ -55,16 +55,18 @@ export function buildPlist(u: PlistInput): string {
     ...[
       u.node,
       u.cli,
-      "start",
-      "--foreground",
-      "--workspace",
-      u.workspace,
+      ...(u.workspace === null
+        ? ["workbench", "start", "--foreground"]
+        : ["start", "--foreground", "--workspace", u.workspace]),
       "--server-config",
       u.serverConfig,
     ].map(string),
     "\t</array>",
+    ...(u.workspace === null
+      ? ["<!-- Cadence workbench gateway; no project workspace -->"]
+      : []),
     "\t<key>WorkingDirectory</key>",
-    `\t<string>${xml(u.workspace)}</string>`,
+    `\t<string>${xml(u.workspace ?? dirname(dirname(u.cli)))}</string>`,
     "\t<key>EnvironmentVariables</key>",
     "\t<dict>",
     ...u.environment.flatMap(([k, v]) => [
@@ -85,7 +87,11 @@ export function buildPlist(u: PlistInput): string {
     "",
   ].join("\n");
 }
-function plistWorkspace(text: string | undefined): string | undefined {
+function plistWorkspace(text: string | undefined): string | null | undefined {
+  if (
+    text?.includes("<!-- Cadence workbench gateway; no project workspace -->")
+  )
+    return null;
   const m = text?.match(
     /^\t<key>WorkingDirectory<\/key>\n\t<string>([^<]*)<\/string>$/m,
   );
@@ -118,9 +124,13 @@ export async function configureLaunchAgent(
   if (previous === null) return { status: "foreign", unit: path };
   if (mode === "restart" && previous === undefined) return { status: "absent" };
   const sdk = sdkPackages(s.root);
-  if (!sdk) return { status: "missing-pi-sdk" };
   const kept = plistWorkspace(previous);
-  const { workspace, redirectedFrom } = selectWorkspace(s, requested, kept);
+  const { workspace, redirectedFrom } = selectWorkspace(
+    s,
+    requested,
+    mode === "install" && requested === undefined ? null : kept,
+  );
+  if (workspace !== null && !sdk) return { status: "missing-pi-sdk" };
   const refused = await settle(s, kept);
   if (refused) return { ...refused, unit: path };
   // Nothing runs now, so unloading signals no owner.
@@ -144,7 +154,7 @@ export async function configureLaunchAgent(
   if (mode === "install") s.launchctl(["enable", target(s)]);
   else if (disabled(s)) return { status: "disabled", ...result };
   // A new owner without Pi's auth source would refuse; the next login loads it.
-  if (!regularFile(join(agentDirectory(s), "auth.json")))
+  if (workspace !== null && !regularFile(join(agentDirectory(s), "auth.json")))
     return { status: "waiting-for-pi-login", ...result };
   const started = s.launchctl(["bootstrap", domain(s), path]).status === 0;
   return { status: started ? "started" : "failed", ...result };

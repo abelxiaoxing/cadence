@@ -41,7 +41,12 @@ import {
   templateNames,
 } from "./model-config.ts";
 import type { ServiceOwner } from "./owner.ts";
-import type { AuthAccountingPort, PersistenceResult } from "./ports.ts";
+import type {
+  AuthAccountingPort,
+  AuthPreparationIntent,
+  AuthPreparationSettlement,
+  PersistenceResult,
+} from "./ports.ts";
 
 export interface ModelContextOptions {
   /** Explicit service-launch inputs, never browser or per-request overrides. */
@@ -92,6 +97,13 @@ export interface ModelPreparationInput {
   timeoutMs: number;
   signal: AbortSignal;
   current: () => boolean;
+  /** Ordinary chat has its own durable turn, not a fabricated task admission.
+   * These synchronous private writes must flush before returning, and fence on
+   * uncertainty. They never receive resolved credentials. */
+  journal?: {
+    preparation(intent: AuthPreparationIntent): void;
+    settlement(result: AuthPreparationSettlement): void;
+  };
 }
 export interface TrackedModelPreparation {
   result: Promise<ModelPreparation>;
@@ -751,6 +763,34 @@ export class OwnerModelContext {
       writes.push(original);
       return report;
     };
+    const recordPreparation = async (
+      intent: AuthPreparationIntent,
+    ): Promise<void> => {
+      if (input.journal) input.journal.preparation(intent);
+      else
+        committed(
+          await this.trackedWrite(
+            retainWrite(this.#options.accounting.preparation(intent)),
+          ),
+        );
+    };
+    const recordSettlement = async (
+      result: AuthPreparationSettlement,
+    ): Promise<PersistenceResult | null> => {
+      if (input.journal) {
+        input.journal.settlement(result);
+        return null;
+      }
+      // Register the ORIGINAL combined settlement below, before getAuth can
+      // settle or Stop can close admission. Never late-track a continuation.
+      return retainWrite(this.#options.accounting.settlement(result));
+    };
+    const taskResult = (
+      result: PersistenceResult | null,
+    ): PersistenceResult => {
+      if (result === null) throw new ContractError("recording-exhausted");
+      return result;
+    };
     let closed = input.signal.aborted;
     let effectStarted = false;
     const current = () => {
@@ -818,7 +858,7 @@ export class OwnerModelContext {
         await previous;
         check();
         effectStarted = true;
-        const intent = this.#options.accounting.preparation({
+        await recordPreparation({
           operationId,
           epoch,
           runId: request.runId,
@@ -826,17 +866,22 @@ export class OwnerModelContext {
           sourceSelectionId: request.model.sourceSelectionId,
           validityMs,
         });
-        committed(await this.trackedWrite(retainWrite(intent)));
         let initial: PiSnapshot;
         try {
           initial = check();
         } catch (error) {
-          const write = this.#options.accounting.settlement({
+          const result: AuthPreparationSettlement = {
             operationId,
             outcome: "refused",
             admissionClosed: true,
-          });
-          committed(await this.trackedWrite(retainWrite(write)));
+          };
+          if (input.journal) input.journal.settlement(result);
+          else
+            committed(
+              await this.trackedWrite(
+                retainWrite(this.#options.accounting.settlement(result)),
+              ),
+            );
           throw error;
         }
         const runtime = this.#runtime;
@@ -906,31 +951,27 @@ export class OwnerModelContext {
               failure = error;
               outcome = "refused";
             }
-            return retainWrite(
-              this.#options.accounting.settlement({
-                operationId,
-                outcome,
-                admissionClosed:
-                  closed ||
-                  input.signal.aborted ||
-                  !current() ||
-                  this.#options.owner.state !== "idle",
-              }),
-            );
+            return recordSettlement({
+              operationId,
+              outcome,
+              admissionClosed:
+                closed ||
+                input.signal.aborted ||
+                !current() ||
+                this.#options.owner.state !== "idle",
+            });
           },
           () => {
             failure = new ContractError("auth-unavailable");
-            return retainWrite(
-              this.#options.accounting.settlement({
-                operationId,
-                outcome: "failed",
-                admissionClosed:
-                  closed ||
-                  input.signal.aborted ||
-                  !current() ||
-                  this.#options.owner.state !== "idle",
-              }),
-            );
+            return recordSettlement({
+              operationId,
+              outcome: "failed",
+              admissionClosed:
+                closed ||
+                input.signal.aborted ||
+                !current() ||
+                this.#options.owner.state !== "idle",
+            });
           },
         );
         // Both originals are immediately handled/tracked, including refused late
@@ -940,12 +981,15 @@ export class OwnerModelContext {
         try {
           this.#options.owner.trackAuth(
             original,
-            this.#options.accounting.lifetimeTracked ? undefined : recorded,
+            input.journal || this.#options.accounting.lifetimeTracked
+              ? undefined
+              : recorded.then(taskResult),
           );
         } catch {
           trackingFailed = true;
         }
-        committed(await recorded);
+        const record = await recorded;
+        if (!input.journal) committed(taskResult(record));
         if (trackingFailed) throw new ContractError("quarantine");
         check();
         if (failure || !material)
