@@ -60,8 +60,10 @@ async function published(entry: Entry, initial: Receipt): Promise<Receipt> {
     const lookup = await entry.client.receipt(receipt.commandId, entry.signal);
     active(entry.signal);
     entry.observe({ commandId: receipt.commandId, lookup });
-    if (lookup.status !== "found") throw new Error("receipt-inconclusive");
-    receipt = lookup.receipt;
+    if (lookup.status === "absent") throw new Error("receipt-inconclusive");
+    // Passive reads stay inconclusive while publication is fenced; observing
+    // again is readonly and never repeats the accepted action.
+    if (lookup.status === "found") receipt = lookup.receipt;
   }
   if (receipt.admission !== "accepted" || receipt.publication !== "published")
     throw new Error(

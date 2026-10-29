@@ -49,6 +49,9 @@ export class WorkspaceObserver {
     let reading = false;
     let attached = false;
     let lastPoll = 0;
+    // A failed read (e.g. a passive read fenced by publication) is observed
+    // again soon rather than after the full reconcile period. Readonly only.
+    let failed = false;
     let blocked = false;
     let actionCapability = false;
     let state: ViewerState = {
@@ -170,6 +173,7 @@ export class WorkspaceObserver {
         }
       } finally {
         reading = false;
+        failed = !succeeded;
         state.actions = succeeded && actionCapability;
         emit();
       }
@@ -277,7 +281,7 @@ export class WorkspaceObserver {
       tracker.tick(Date.now());
       emit();
       if (
-        Date.now() - lastPoll >= 30000 ||
+        Date.now() - lastPoll >= (failed ? 2000 : 30000) ||
         (scope && tracker.needsPoll(Date.now()))
       )
         void poll();

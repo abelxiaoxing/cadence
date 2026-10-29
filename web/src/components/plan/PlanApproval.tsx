@@ -23,10 +23,12 @@ export function PlanApproval({
   onResult,
 }: {
   client: ServiceClient;
-  storeId: string;
-  context: ContextVersion;
+  /** Absent while the selected task is re-observed. The component stays
+   * mounted, so a transient gap never aborts an in-flight approval. */
+  storeId: string | undefined;
+  context: ContextVersion | null;
   runs: RunProjection[];
-  snapshotSeq: string;
+  snapshotSeq: string | undefined;
   canAct: boolean;
   onResult(value: CommandObservation): void;
 }) {
@@ -58,7 +60,9 @@ export function PlanApproval({
     parent.publication === "published";
   if (
     prepared &&
-    canonicalJson(prepared.preflight.preview.version) !== canonicalJson(context)
+    (!context ||
+      canonicalJson(prepared.preflight.preview.version) !==
+        canonicalJson(context))
   )
     invalidated.current = true;
   const stale = !!prepared && invalidated.current;
@@ -69,7 +73,9 @@ export function PlanApproval({
       !planner?.result ||
       !planner.childRunId ||
       operation.current ||
-      !context.task
+      !storeId ||
+      !snapshotSeq ||
+      !context?.task
     )
       return;
     const abort = new AbortController();
@@ -150,6 +156,7 @@ export function PlanApproval({
       !prepared ||
       stale ||
       !canAct ||
+      !storeId ||
       operation.current ||
       prepared.submitted
     )
@@ -189,7 +196,7 @@ export function PlanApproval({
     }
   };
   if (
-    context.task?.kind !== "code" ||
+    context?.task?.kind !== "code" ||
     (!prepared && !error && runs.some((run) => run.admission.kind === "start"))
   )
     return null;
@@ -235,7 +242,7 @@ export function PlanApproval({
               })}
             </p>
           )}
-          {stale && (
+          {stale && !busy && (
             <p role="alert">
               {t("Context changed. Close and review the plan again.")}
             </p>
