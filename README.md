@@ -332,6 +332,11 @@ Use their current declarations rather than copying DTO parsing, reducers, a seco
   Ordinary-user Git trust behavior remains unchanged.
   System services require uid0, bypass user managers/logind entirely and require confirmed native Stop before manager stop or definition replacement; changed state-home inputs, old user units and detached running owners refuse implicit adoption.
   Registry reservation atomically rejects canonical ancestor/descendant overlaps, including nested Git roots and aliases; a different state-home does not coordinate arbitrary other owners.
+- The short global registry lock never expires or auto-reclaims from PID absence.
+  `recover inspect|resolve` handles a valid dead same-host lock explicitly before project recovery, with fresh local-terminal acknowledgments, exact registry/unreserved-project checks and a flushed exclusive evidence receipt.
+  Concurrent or interrupted resolvers cannot remove a successor lock; all project reservations, locks and history remain intact.
+  Unreserved partial release, unsafe/corrupt registry or receipt bytes, live/remote/ambiguous holders and changed resources stay fenced.
+  Readonly diagnosis and project Open name `registry-locked`; see [global registry recovery](docs/service-management.md#residual-global-registry-lock).
 - Native entry requires fresh raw Enter within1500ms, trusted/idle TUI, no pending modal/messages and no child guard.
   Browser authentication grants access, not task consent; normal mutation ingress also requires independently built compatible client/service/assets identities.
 - Boot model choice is absent until explicitly selected.
@@ -450,6 +455,7 @@ Byte values are UTF-8/encoded bounds where specified; they are not targets to si
 | Navigation            | 8192 encoded ASCII bytes; encrypted plaintext6000 bytes; no execution authority                                      |
 | Live/export           | 16 viewers,256 messages/1MiB each; two search/two export readers;120s download idle, not total archive timeout       |
 | Storage               | 10GiB checkout quota;512MiB reserved per episode;256MiB free-space floor; no TTL cleanup                             |
+| Registry recovery     | 1024 namespace entries; 128 immutable attempts per lock incarnation; no evidence eviction                            |
 | Unified workbench     | 128 associated projects; 1024 durable opening receipts; 64 connections; bounded proxy frames and bodies; no eviction |
 | Assets                | 16MiB per member/64MiB closure; fixed complete manifest and all font bodies                                          |
 
@@ -505,7 +511,7 @@ Preserve failed attempts; correct a demonstrated cause before rerunning, and nev
 Regression owners:
 
 - `service-contract`, `service-current`, `service-model-choice`, `service-auth`: closed DTOs, exact source/choice/current authority, security and compatibility.
-- `service-owner`, `service-accepted-work`, `service-stop-continuation`, `service-recovery`: original operations, overlap, Stop, unknown fences and informed recovery.
+- `service-owner`, `service-accepted-work`, `service-stop-continuation`, `service-recovery`, `service-registry-recovery`: original operations, overlap, Stop, unknown fences and informed recovery.
 - `service-scheduler`, `service-checks`, `service-human-review`, `service-accepting-host`: real SDK overlap/exclusion, native checks, review and publication.
 - `worker-*`, `lightweight-sdk`, `lightweight-process-diff`: genuine SDK/tool capture, split redaction, no-spill bounds and original native facts.
 - `service-history-*`: durable ordering, cold/no-index/restarted proof/search/export, corruption/torn/quota and expected-byte publication.
@@ -535,6 +541,21 @@ Publish `web/dist` from Node: Vite run under Bun lays out its preload helper dif
 Review the independently enumerated package member list and every emitted body, not a count or an expected list generated from the tar under test.
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
+
+### Release 2.0.15 acceptance snapshot
+
+The release candidate passed the complete root suite: 2034 tests in 85 files, with 27 platform skips on Linux.
+The final browser-only frame-readiness adjustment then passed all 9 real-browser scenarios; 130 web tests and the 135-member real-pack audit also passed.
+This is separate-lane evidence, not a claim that one final `verify` invocation was entirely green.
+Observed environment: Linux x86_64, Node26.7.0, Bun1.3.14, Pi SDK0.84.3 and existing Chrome for Testing151.0.7922.34; root runs used `VITEST_MAX_WORKERS=1` without changing test deadlines.
+New coverage includes actual registry-writer and resolver exits, concurrent resolvers, unchanged project fences/history, changed/linked/remote/live resources, a removed stopped workspace, piped/pasted/canceled refusal, genuine native-TTY confirmation and browser Open after explicit recovery without replay.
+
+The first integration command was cut off by its 25-minute outer command budget while tests were still running.
+The next completed root run failed one omitted browser-test provenance pin (updated) and three owner/proxy settlement or timeout cases, which passed separately; their timing cause was not established.
+A later complete root/web pass encountered Chromium's first screenshot-capture failure; the browser fixture now waits for painted frames before that capture, without retrying operations or swallowing capture errors, and all browser scenarios passed afterward.
+The last full attempt hit six history-test deadlines in two files; those unchanged files passed all 45 tests in a subsequent diagnostic run, and the earlier complete root pass remains distinct from that later failure.
+Failed logs and isolated fixture evidence were preserved; no test budget was increased, dependency/browser downloaded, consumer lock deleted or service installed/restarted.
+No paid-provider use or new native Windows/macOS qualification is claimed.
 
 ### Release 2.0.14 acceptance snapshot
 

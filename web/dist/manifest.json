@@ -1,8 +1,8 @@
 {
   "schema": "cadence-web-assets/1",
-  "sourceHash": "9b1cc986f4dbc46b65d273591022a28d9ad30462ec728844bdacfe3bdd40eb64",
-  "contractHash": "9c917c085d034e08764de359cee49aea748c395a63ed629fe67d149b97850fa1",
-  "buildId": "72e54db75d264cd4992dcb7ae0fea5a0a482c1e8bb6faa2a6b63522a618f7176",
+  "sourceHash": "acdad68d925f48b8cf86ff4d45bce689828e9e8a664c8ad70f37ac9ddf1bb79d",
+  "contractHash": "944f3b53bd5b7f1d3f30868e0947d900e356ae9a2bcfb9f591edd988b3d5eb3a",
+  "buildId": "a129f17b1d81a381e7103e908846cb3a1ccfc25c90c9e91808838f77bf2bd72c",
   "assets": [
     {
       "name": "assets/cadence.css",
@@ -73,8 +73,8 @@
     },
     {
       "name": "assets/cadence.js",
-      "bytes": 267092,
-      "sha256": "36995e2601cf20d9c694e3d4550078079150064157c1fb854f5d294437d658d4",
+      "bytes": 267923,
+      "sha256": "9bf8d7763bdb1731c28fa3ca6f27c405435b25a0ca2ea761c966cc25857259ba",
       "references": [
         "assets/markdown.js",
         "assets/react.js",

@@ -392,7 +392,7 @@
     "web/src/components/workspace/ChatWorkspace.tsx": "a828d421bd0974e11241584e8826afb543654e0283adfa5c01cdbe6b913198b4",
     "web/src/components/workspace/AgentDock.tsx": "01c2ce75ec8451d4a88abff8020bc9f9fe510e2c0958b9b770f50b67ea186a37",
     "web/src/components/workspace/FilesPanel.tsx": "eca52560cdbc2d58c7b8a05919e4b0c8b63c487b00823747e20797fd6c1ce6fe",
-    "web/src/components/workspace/ProjectPicker.tsx": "2e451a524e6bbaebf96127c3a005226a430b76aa2be325281c8902adffa5dbcf",
+    "web/src/components/workspace/ProjectPicker.tsx": "4da19d2e5289893b087d36448518e88c003a8333c6ce331c717a7fabaeea7ec7",
     "src/service/gateway.ts": "f53533181182d321b41a04e6ff49672a3a830330ec1390178c77ee8aedbef132",
     "src/service/gateway-cli.ts": "6f59772752deeeb683aeb871566827233b53475b3154e09f72fa1fb0a46511b7",
     "src/service/gateway-store.ts": "50f1fa02de55646c21c526ffa8aba34efe56638eb895aba5a5ab4a6f5c9ff98a",
@@ -402,7 +402,7 @@
     "test/service-gateway.test.ts": "9b04144629d5dd2827f09cf7315ee0d747a431582e0b060edbcd20d2ef3a5105",
     "test/gateway-state.test.ts": "88d93773e0ba3c36291848c0c9cb334b5a1814c98b7c7dc7dadd8c7091e51673",
     "test/helpers/gateway-fixture.ts": "5391550a3f4eefd947efe63fa0202c44d01658189e0c8ed7b8f4909ce0d09007",
-    "test/web/gateway-browser.e2e.mjs": "7067b8d66dc59862d689df14e0ed66d1c35542d29d485c86e96ccb98db071f7f"
+    "test/web/gateway-browser.e2e.mjs": "f65e931bcec15fee7733a11828d5b7b69b3d8acc26a72cbfbe335a14326c8f27"
   },
   "existingLicense": {
     "path": "licenses/pi-web-ui-MIT.txt",

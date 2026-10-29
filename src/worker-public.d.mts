@@ -92,6 +92,7 @@ export declare const ERROR_CODES: readonly [
   "quarantine",
   "capacity",
   "unavailable",
+  "registry-locked",
   "auth-unavailable",
   "recording-exhausted",
   "receipt-inconclusive",

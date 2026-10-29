@@ -424,3 +424,32 @@ it("nonTTY and synthetic flags cannot authorize; inspect remains readonly", () =
   }
   expect(storedTree(f.dir)).toEqual(before);
 });
+
+it("registry recovery unblocks existing project recovery without releasing its owner or history", async () => {
+  const f = crash("auth");
+  const original = storedTree(f.c.store.privateRoot);
+  const path = join(f.c.registryDirectory, "registry.lock");
+  const writer = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    import { writeFileSync } from "node:fs";
+    import { hostname } from "node:os";
+    import { randomUUID } from "node:crypto";
+    writeFileSync(process.argv[1], JSON.stringify({schema: "cadence-service-registry-lock/1", token: randomUUID(), pid: process.pid, host: hostname()}), {flag: "wx", mode: 0o600});
+  `,
+      path,
+    ],
+    { encoding: "utf8", timeout: 15000 },
+  );
+  expect(writer.status, writer.stderr).toBe(0);
+  f.c.resolveRegistryRecovery(f.c.inspectRegistryRecovery(), () => {});
+  expect(storedTree(f.c.store.privateRoot)).toEqual(original);
+  const choice = await confirmation(f);
+  expect((await resolveRecovery(f.c, choice, f.history)).status).toBe(
+    "resolved",
+  );
+  expect(f.c.inspect().status).toBe("stopped");
+});

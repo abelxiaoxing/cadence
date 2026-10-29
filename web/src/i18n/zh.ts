@@ -2,6 +2,8 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
+  "The shared registry lock is blocking projects. On the service host, run cadence recover inspect --workspace <project> with the same --state-home, then use recover resolve in a local terminal if eligible. Do not delete lock files manually.":
+    "共享注册表锁正在阻止项目打开。请在服务所在主机运行 cadence recover inspect --workspace <project>，使用相同的 --state-home；符合恢复条件时，在本机终端运行 recover resolve。请勿手动删除锁文件。",
   // Dual conversation workbench
   "Task created, but its conversation link was not confirmed.":
     "任务已创建，但与普通对话的关联尚未确认。",

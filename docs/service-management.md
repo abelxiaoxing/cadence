@@ -258,7 +258,7 @@ At sign-out or shutdown Windows ends the owner without orderly Stop, which can l
   Ctrl-C, SIGTERM, machine crash or terminal destruction is **not** the authenticated orderly Stop route and can leave recovery fences.
   A recovered `stopped` registration means acknowledged fence release, not retroactive native closure certification.
 
-`diagnose` reports fixed pending/recording facts and `proxyAuth: direct|validated-proxy`.
+`diagnose` reports fixed pending/recording facts and `proxyAuth: direct|validated-proxy` when the owner is reachable; a blocked global registry instead reports its fixed lock reason and local recovery hint.
 No normal status/diagnosis prints access secrets, provider credentials or outbound proxy URLs.
 Keep the explicitly revealed token link private.
 Browser entry redirects to a token-free URL and uses an HttpOnly cookie; that does not retract a link already copied into history, a clipboard or external logs.
@@ -300,8 +300,46 @@ cadence recover inspect --workspace /absolute/project
 cadence recover resolve --workspace /absolute/project
 ```
 
-Inspection is readonly.
-It displays the epoch, exact coordination/history digests, owner PID/host observation and independent process/credential/storage uncertainty.
+Inspection is readonly and handles the global registry lock before project-owner recovery.
+
+### Residual global registry lock
+
+`status` and `diagnose` report `reason: "registry-locked"` and the lock holder observation (`live`, `absent`, `ambiguous` or `unreadable`).
+Project Open reports `registry-locked` instead of an opaque `unavailable`; the folder picker explains the local recovery command.
+This lock is shared by every project in the selected state home, so trying a different project does not bypass it.
+Use the same account and `--state-home` as the owner; omit that flag only when it uses the default state home:
+
+```sh
+cadence recover inspect --workspace /absolute/project --state-home /absolute/state-home
+cadence recover resolve --workspace /absolute/project --state-home /absolute/state-home
+```
+
+With a registry lock present, inspection reports `scope: "global-registry"`, the exact lock-incarnation digest, holder PID/host, reservation count and any previous resolver's liveness.
+A project with no selected owner can be used to address this global operation; it still must be an existing suitable directory.
+Resolve requires the same four fresh local-terminal acknowledgments described below, with the displayed lock-incarnation digest instead of a service epoch.
+The holder must be on this host and its PID probe must specifically report absence; age, a remote host, permission denial or a reused live PID never authorizes release.
+
+Recovery validates the registry and checks that unreserved project selections have no remaining owner/checkout fences.
+A normally stopped project whose working directory was later removed is checked through its retained private metadata; recovery neither requires nor reconstructs that directory.
+An interrupted reservation remains reserved even when its project initialization is incomplete: unrelated projects can reopen, but that project's uncertain resources are not repaired.
+An older release interrupted after removing a reservation but before releasing its project locks is unsafe and remains blocked, as do corrupt/partial registry bytes, linked files and changed resources.
+Inspection reports `blocked-preserve-state` when it cannot establish those conditions; preserve that state for manual diagnosis rather than deleting locks.
+
+Before releasing only `registry.lock`, the resolver exclusively creates, flushes and closes a private receipt under `service-registry-v1/recovery-v1/<lock-incarnation>/<attempt>.json`, retaining the original lock bytes and acknowledged digest.
+It then rechecks the lock incarnation, registry, unreserved project selections, receipt and terminal authority.
+Concurrent resolvers cannot release a successor lock.
+If a resolver dies after the receipt but before release, a new inspection and fresh terminal confirmation may append the next attempt after that resolver's same-host PID is absent; neither receipt nor lock is silently reclaimed.
+Torn or unsafe receipts remain preserved and refused.
+Inspection is bounded to 1024 namespace entries and 128 attempts for one lock incarnation; it never evicts evidence to make space.
+
+All project reservations, owner locks, checkout locks, capabilities, history and unknown outcomes remain unchanged.
+No Open/Start is replayed, no process is signaled, and no service is installed or started by recovery.
+After success, explicitly open the desired project again.
+If its own owner is still fenced, run `recover inspect` again and follow project-owner recovery separately; restoring global registry access does not certify or release that owner's work.
+
+### Project-owner recovery
+
+With no registry lock present, inspection displays the epoch, exact coordination/history digests, owner PID/host observation and independent process/credential/storage uncertainty.
 Those digests identify preserved resources, not successful work or credential validity.
 A journal with no unmatched intent does not prove every escaped descendant or external credential writer stopped.
 
