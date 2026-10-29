@@ -571,6 +571,17 @@ Review the independently enumerated package member list and every emitted body, 
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
 
+### Release 2.0.17 acceptance snapshot
+
+Full `verify` passed on the release candidate in about four minutes: 1908 root tests in 71 files (27 platform skips on Linux), 16 task-entry node tests, 136 web tests, 5 real-browser scenarios in 4 files and the 135-member real-pack audit.
+Observed environment: Linux x86_64, official Node 22.22.1, Bun 1.3.14, Pi SDK 0.84.3 and Chrome for Testing 153.0.8010.12, with four root workers and unchanged test deadlines.
+`verify` no longer runs the slow real-process, PTY, HTTPS-proxy browser and multi-MiB cold-scan suites; those behaviors are not regression-gated in this release.
+Task Send creates a task and starts readonly analysis, and one Confirm plan and execute saves and starts the reviewed plan.
+Fixes in that flow: a fenced receipt read is observed again instead of ending the sequence, a transient context gap no longer aborts an in-flight approval, and a failed observation is re-read after 2s rather than leaving actions disabled until the 30s reconcile.
+Ordinary conversations show no recorded-view switch, and Runs includes the current snapshot's owner projection.
+The first merged attempts failed a time-budgeted search page and the new plan-approval browser step, which also failed on its original commit; both causes were fixed, not retried around.
+No consumer service was installed or restarted, no paid provider was used and no native Windows/macOS qualification is claimed; the `ci/windows` matrix still names the removed vitest projects and was not run.
+
 ### Release 2.0.16 acceptance snapshot
 
 The final code candidate passed all 2070 root tests in 86 files (27 platform skips on Linux), 133 web tests, all 9 real-browser scenarios and the 135-member exact real-pack audit.
