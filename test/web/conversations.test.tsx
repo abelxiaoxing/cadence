@@ -199,6 +199,7 @@ it("the initial conversation shell renders without a selected snapshot or task",
   vi.stubGlobal("window", { location: new URL("http://127.0.0.1:43210/app") });
   const html = renderToStaticMarkup(<App />);
   expect(html).toContain("Cadence");
-  expect(html).toContain("Conversation");
-  expect(html).toContain("Details");
+  // Recorded views read a task/child scope; an ordinary conversation offers none.
+  expect(html).not.toContain("Recorded views");
+  expect(html).not.toContain("view-menu");
 });

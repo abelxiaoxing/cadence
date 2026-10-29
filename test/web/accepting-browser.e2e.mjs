@@ -197,8 +197,11 @@ it("built loopback browser-only accepting workflow, two contexts, original servi
       .getByRole("button", { name: "Observe current state", exact: true })
       .click();
     await other.locator(".view-menu > summary").click();
-    await other.getByRole("button", { name: "outcomes", exact: true }).click();
-    await other.getByText(started.runId, { exact: true }).waitFor();
+    await other.getByRole("button", { name: "runs", exact: true }).click();
+    await other
+      .locator(".run-current")
+      .getByText(started.runId, { exact: true })
+      .waitFor();
     receipt.secondContextRunId = started.runId;
     await p.getByRole("button", { name: "Reconnect as a viewer" }).click();
     await p

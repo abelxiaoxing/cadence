@@ -319,6 +319,8 @@ it("built readonly history, exact Unicode/full copy, timeline and drawers across
       await page
         .getByRole("heading", { name: "Cadence", exact: true })
         .waitFor();
+      // An ordinary conversation has no recorded scope, so no view switch.
+      assert.equal(await page.locator(".tb-tabs").count(), 0);
       for (const viewport of viewports) {
         await page.setViewportSize(viewport);
         if (viewport.width <= 900)

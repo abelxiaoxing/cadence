@@ -554,7 +554,8 @@ Folder browsing (not Open) accepts `~` for the service account's home and report
 One service still owns one checkout.
 The recent-project directory records only explicit project openings in the same private namespace; navigation opens that project's independent authenticated entry rather than changing global cwd, importing Pi sessions or adopting another account's state.
 The center shows ordinary streamed messages or retained task text as Markdown.
-Task tools/context/timeline/run facts and export/link actions live under Details.
+Task tools/context/timeline/runs and export/link actions live under Details, shown only for a task or child scope; an ordinary conversation has no view switch and folds its tool calls into the transcript.
+Runs puts the current snapshot's owner projection above the retained run pages.
 The right panel defaults to files; its Task details inspector remains bound to the task's current plan/check/change/review context even when viewing a child.
 Historical child links bind exact scope and watermark.
 Bounded history and Back never silently rebase; running conversations offer an explicit new-activity update, and source limitations/progress stay visible even when complete-record metadata is folded.
