@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -102,13 +103,15 @@ it("built browser safety: old task active Cancel, bad/missing builds, manual ref
       throw Error("original work did not settle");
     }
     async function create(goal, kind) {
-      await p.getByRole("button", { name: "New task", exact: true }).click();
-      await p.getByRole("dialog").getByLabel("Kind").selectOption(kind);
-      await p.getByLabel("Goal", { exact: true }).fill(goal);
-      await p
-        .getByRole("button", { name: "Preview Create (does not Start)" })
-        .click();
-      const r = await settled(await command("create"));
+      // Legacy task kinds remain service fixtures, not browser creation choices.
+      const workspace = await f.client.workspace();
+      assert.equal(workspace.kind, "ok");
+      assert.equal(workspace.value.context.status, "available");
+      const preview = await f.client.preflight(workspace.value.context.version, { kind: "create", taskKind: kind, goal });
+      assert.equal(preview.kind, "ok");
+      const created = await f.client.create({ commandId: randomUUID(), expected: preview.value.preview.version, grant: preview.value.grant, action: preview.value.preview.action });
+      assert.equal(created.kind, "ok");
+      const r = await settled(created.value);
       await p
         .locator(".task-list > .page-controls")
         .getByRole("button", { name: "Observe a new snapshot" })

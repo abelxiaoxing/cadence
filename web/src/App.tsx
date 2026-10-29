@@ -43,10 +43,10 @@ import {
   planMetadataClient,
 } from "./client/plan-metadata";
 import { mergeObservation } from "./client/receipts";
+import { beginTask } from "./client/task-entry";
 import { useWorkbench } from "./client/use-workbench";
 import { useWorkspace } from "./client/use-workspace";
 import { ViewLifetime } from "./client/view-lifetime";
-import { ActionDialog } from "./components/actions/ActionDialog";
 import { ConfirmAction } from "./components/actions/ConfirmAction";
 import { ModelChooser } from "./components/actions/ModelChooser";
 import { ReceiptPanel } from "./components/actions/ReceiptPanel";
@@ -56,6 +56,7 @@ import { EntityPane } from "./components/history/EntityPane";
 import { ExportDialog } from "./components/history/ExportDialog";
 import { GlobalSearchModal } from "./components/history/GlobalSearchModal";
 import { PageControls } from "./components/history/PageControls";
+import { PlanApproval } from "./components/plan/PlanApproval";
 import { RunBrowser } from "./components/history/RunBrowser";
 import { SearchBar } from "./components/history/SearchBar";
 import { MessageList } from "./components/transcript/MessageList";
@@ -87,7 +88,6 @@ import type {
   ReadCursor,
   Scope,
   SearchHit,
-  TaskKind,
 } from "./types";
 
 function chatFromLocation(): string | null {
@@ -165,7 +165,7 @@ export function App({
   const [chatId, setChatId] = useState<string | null>(() =>
     initial ? null : (chatFromLocation() ?? crypto.randomUUID()),
   );
-  const [sourceChat, setSourceChat] = useState<string | null>(null);
+  const [taskComposer, setTaskComposer] = useState(false);
   const [projectOpen, setProjectOpen] = useState<string | null>(null);
   const [rightTab, setRightTab] = useState<"files" | "task">(
     initial ? "task" : "files",
@@ -266,9 +266,7 @@ export function App({
     [exportOpen, setExportOpen] = useState(false);
   const [hit, setHit] = useState<SearchHit>(),
     [detail, setDetail] = useState<ReadCursor | undefined>(initial?.cursor);
-  const [newOpen, setNewOpen] = useState(false),
-    [goal, setGoal] = useState(""),
-    [kind, setKind] = useState<TaskKind>("code");
+  const [enteringTask, setEnteringTask] = useState(false);
   const [prepared, setPrepared] = useState<PreparedAction>(),
     [preparing, setPreparing] = useState(false),
     [error, setError] = useState("");
@@ -276,6 +274,7 @@ export function App({
     [canceling, setCanceling] = useState(new Set<string>());
   const mounted = useRef(true);
   const creationRead = useRef<AbortController | null>(null);
+  const entryBusy = useRef(false);
   const setReceipt = (value: CommandObservation) => {
     if (!mounted.current) return;
     setReceipts((previous) => {
@@ -348,7 +347,8 @@ export function App({
       if (lifetime.current.current(ticket)) setPreparing(false);
     }
   };
-  const selectChat = (id: string = crypto.randomUUID()) => {
+  const selectChat = (id: string = crypto.randomUUID(), cadence = false) => {
+    setTaskComposer(cadence);
     creationRead.current?.abort();
     lifetime.current.depart();
     setPrepared(undefined);
@@ -380,7 +380,6 @@ export function App({
   }, [chatId]);
   const selectTask = (id: string, title?: string) => {
     creationRead.current?.abort();
-    setSourceChat(null);
     setChatId(null);
     setRightTab("task");
     setTaskTitle(title ?? "");
@@ -485,62 +484,82 @@ export function App({
   const resultTicket = lifetime.current.ticket();
   const result = (value: CommandObservation) => {
     setReceipt(value);
-    if (value.receipt && lifetime.current.current(resultTicket)) {
+    if (value.receipt && lifetime.current.current(resultTicket))
       workspace.refresh();
-
-      if (value.receipt.created) {
-        creationRead.current?.abort();
-        const read = new AbortController();
-        creationRead.current = read;
-        const origin =
-          sourceChat &&
-          chats.value?.kind === "conversations" &&
-          chats.value.entries.some((chat) => chat.id === sourceChat)
-            ? sourceChat
-            : null;
-        const epoch = workspace.workspace?.epoch;
-        // Observe the exact accepted Create; never retry it or auto-Start.
-        void (async () => {
-          while (mounted.current && !read.signal.aborted) {
-            const lookup = await api.client.receipt(
-              value.commandId,
-              read.signal,
-            );
-            if (!mounted.current || read.signal.aborted) return;
-            setReceipt({ commandId: value.commandId, lookup });
-            if (
-              lookup.status === "found" &&
-              lookup.receipt.created?.state === "published"
-            ) {
-              const createdTaskId = lookup.receipt.created.taskId;
-              if (origin && epoch) {
-                const linked = await api.client.workbenchCommand({
-                  kind: "link-task",
-                  commandId: value.commandId,
-                  epoch,
-                  taskId: createdTaskId,
-                  conversationId: origin,
-                });
-                if (!mounted.current || read.signal.aborted) return;
-                if (linked.kind !== "ok")
-                  setError(
-                    t(
-                      "Task created, but its conversation link was not confirmed.",
-                    ),
-                  );
-              }
-              selectTask(createdTaskId);
-              return;
-            }
-            if (
-              lookup.status !== "found" ||
-              lookup.receipt.publication !== "pending"
-            )
-              return;
-            await new Promise((resolve) => setTimeout(resolve, 500));
-          }
-        })();
+  };
+  const sendTask = async (goal: string): Promise<boolean> => {
+    const base = workspace.workspace;
+    if (
+      entryBusy.current ||
+      !workspace.actions ||
+      !base ||
+      base.context.status !== "available" ||
+      detached
+    )
+      return false;
+    const abort = new AbortController();
+    creationRead.current?.abort();
+    creationRead.current = abort;
+    entryBusy.current = true;
+    setEnteringTask(true);
+    setError("");
+    const creation: {
+      value?: { taskId: string; commandId: string };
+    } = {};
+    const origin =
+      chats.value?.kind === "conversations" &&
+      chats.value.entries.some((chat) => chat.id === chatId)
+        ? chatId
+        : null;
+    try {
+      const id = await beginTask({
+        client: api.client,
+        storeId: base.storeId,
+        context: base.context.version,
+        goal,
+        signal: abort.signal,
+        observe: (value) => {
+          setReceipt(value);
+          const receipt =
+            value.receipt ??
+            (value.lookup?.status === "found" ? value.lookup.receipt : undefined);
+          if (receipt?.created?.state === "published")
+            creation.value = {
+              taskId: receipt.created.taskId,
+              commandId: value.commandId,
+            };
+        },
+      });
+      if (abort.signal.aborted) return false;
+      if (origin && creation.value) {
+        const linked = await api.client.workbenchCommand({
+          kind: "link-task",
+          commandId: creation.value.commandId,
+          epoch: base.epoch,
+          taskId: id,
+          conversationId: origin,
+        });
+        if (abort.signal.aborted) return false;
+        if (linked.kind !== "ok")
+          setError(t("Task created, but its conversation link was not confirmed."));
       }
+      selectTask(id);
+      workspace.refresh();
+      return true;
+    } catch (error) {
+      if (!abort.signal.aborted && mounted.current) {
+        if (creation.value) selectTask(creation.value.taskId);
+        setError(
+          t("Task preparation stopped: {reason}. Observe the original receipt; no automatic retry.", {
+            reason: error instanceof Error ? error.message : "unavailable",
+          }),
+        );
+        workspace.refresh();
+      }
+      return false;
+    } finally {
+      entryBusy.current = false;
+      if (mounted.current) setEnteringTask(false);
     }
   };
   const cancel = (runId: string) => {
@@ -903,11 +922,7 @@ export function App({
               onNewConversation={() => selectChat()}
               onTask={selectTask}
               onScope={selectScope}
-              onNew={() => {
-                closeDrawer();
-                setSourceChat(null);
-                setNewOpen(true);
-              }}
+              onNew={() => selectChat(undefined, true)}
             />
           )}
           {workspace.workspace && (
@@ -956,11 +971,9 @@ export function App({
               }}
               reference={reference}
               onReferenceUsed={clearReference}
-              onCadence={(value) => {
-                setGoal(value);
-                setSourceChat(chatId);
-                setNewOpen(true);
-              }}
+              initialMode={taskComposer ? "cadence" : "chat"}
+              taskPending={enteringTask}
+              onCadence={sendTask}
             />
           )}
           {scope && (
@@ -1011,6 +1024,18 @@ export function App({
               </details>
             </header>
           )}
+          {taskId && context && storeId && snapshotSeq && (
+            <PlanApproval
+              key={taskId}
+              client={api.client}
+              storeId={storeId}
+              context={context}
+              runs={runs}
+              snapshotSeq={snapshotSeq}
+              canAct={canAct && !preparing}
+              onResult={result}
+            />
+          )}
           <div className="workspace-content" hidden={!!chatId}>
             {!seed && (
               <section className="empty-state">
@@ -1027,10 +1052,10 @@ export function App({
                   type="button"
                   className="primary"
                   disabled={!workspace.workspace}
-                  onClick={() => setNewOpen(true)}
+                  onClick={() => selectChat(undefined, true)}
                 >
                   <FiPlus aria-hidden="true" />
-                  {t("Create task")}
+                  {t("New task")}
                 </button>
               </section>
             )}
@@ -1302,60 +1327,6 @@ export function App({
             workspace.refresh(true);
           }}
         />
-      )}
-      {newOpen && (
-        <ActionDialog
-          title={t("Create task")}
-          onClose={() => setNewOpen(false)}
-        >
-          <label>
-            {t("Kind")}
-            <select
-              aria-label={t("Kind")}
-              value={kind}
-              onChange={(e) =>
-                setKind(
-                  e.target.value === "research"
-                    ? "research"
-                    : e.target.value === "diagnosis"
-                      ? "diagnosis"
-                      : "code",
-                )
-              }
-            >
-              <option value="code">{t("Code")}</option>
-              <option value="research">{t("Readonly research")}</option>
-              <option value="diagnosis">{t("Readonly diagnosis")}</option>
-            </select>
-          </label>
-          <label>
-            {t("Goal")}
-            <textarea
-              aria-label={t("Goal")}
-              value={goal}
-              onChange={(e) => setGoal(e.target.value)}
-              rows={6}
-            />
-          </label>
-          <footer>
-            <button
-              type="button"
-              className="primary"
-              disabled={
-                !workspace.actions ||
-                workspace.workspace?.context.status !== "available" ||
-                preparing ||
-                !goal.trim()
-              }
-              onClick={() => {
-                setNewOpen(false);
-                void action({ kind: "create", taskKind: kind, goal });
-              }}
-            >
-              {t("Preview Create (does not Start)")}
-            </button>
-          </footer>
-        </ActionDialog>
       )}
       {prepared && (
         <ConfirmAction

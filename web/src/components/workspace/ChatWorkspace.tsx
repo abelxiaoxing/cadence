@@ -41,6 +41,8 @@ export function ChatWorkspace({
   onChanged,
   reference,
   onReferenceUsed,
+  initialMode = "chat",
+  taskPending = false,
 }: {
   client: ServiceClient;
   id: string;
@@ -48,7 +50,9 @@ export function ChatWorkspace({
   enabled: boolean;
   available?: boolean;
   canInterrupt?: boolean;
-  onCadence(goal: string): void;
+  onCadence(goal: string): Promise<boolean>;
+  initialMode?: "chat" | "cadence";
+  taskPending?: boolean;
   onModel(): void;
   onChanged(): void;
   reference?: string;
@@ -58,7 +62,7 @@ export function ChatWorkspace({
   const draftKey = `cadence:draft:${workspaceId}:${id}`;
   const [draft, setDraft] = useState(() => stored(draftKey));
   const [mode, setMode] = useState<"chat" | "cadence">(() =>
-    stored(`${draftKey}:mode`) === "cadence" ? "cadence" : "chat",
+    stored(`${draftKey}:mode`) === "cadence" ? "cadence" : initialMode,
   );
   const [before, setBefore] = useState<string | null>(null);
   const [busy, setBusy] = useState(false),
@@ -80,6 +84,7 @@ export function ChatWorkspace({
   const stick = useRef(true),
     [away, setAway] = useState(false);
   const alive = useRef(true);
+  const taskSending = useRef(false);
   const observedHead = useRef("");
   const sentDraft = useRef(draft);
   useEffect(() => {
@@ -136,6 +141,8 @@ export function ChatWorkspace({
   const send = async () => {
     if (
       busy ||
+      taskPending ||
+      taskSending.current ||
       running ||
       pending ||
       !enabled ||
@@ -145,7 +152,23 @@ export function ChatWorkspace({
     )
       return;
     if (input.mode === "cadence") {
-      onCadence(input.text.trim());
+      taskSending.current = true;
+      setBusy(true);
+      try {
+        if (await onCadence(input.text.trim())) {
+          try {
+            sessionStorage.removeItem(draftKey);
+          } catch {
+            // Storage availability cannot change an accepted task's outcome.
+          }
+          if (alive.current) setDraft("");
+        }
+      } catch {
+        if (alive.current) setError(t("Task preparation unavailable. Observe the original receipt before sending again."));
+      } finally {
+        taskSending.current = false;
+        if (alive.current) setBusy(false);
+      }
       return;
     }
     if (blocked || before !== null) return;
@@ -307,7 +330,7 @@ export function ChatWorkspace({
       >
         <textarea
           ref={textarea}
-          disabled={!enabled || busy || !!pending}
+          disabled={!enabled || busy || taskPending || !!pending}
           aria-label={t("Message")}
           value={draft}
           placeholder={t("Message, or /cadence followed by a task…")}
@@ -348,7 +371,7 @@ export function ChatWorkspace({
           </button>
           <span className="composer-hint">
             {input.mode === "cadence"
-              ? t("Prepare a plan first; Start requires confirmation.")
+              ? t("Send to begin analysis. You will confirm the plan before any edits.")
               : t("Direct host tools · no Cadence task")}
           </span>
           {running ? (
@@ -370,13 +393,18 @@ export function ChatWorkspace({
                 !view ||
                 !!page.error ||
                 busy ||
+                taskPending ||
                 !!pending ||
                 !input.text.trim() ||
                 (input.mode === "chat" && (blocked || before !== null))
               }
             >
               <FiArrowUp />
-              {input.mode === "cadence" ? t("Prepare task") : t("Send")}
+              {taskPending
+                ? t("Analyzing task…")
+                : input.mode === "cadence"
+                  ? t("Prepare task")
+                  : t("Send")}
             </button>
           )}
         </div>
