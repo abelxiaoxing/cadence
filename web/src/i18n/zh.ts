@@ -150,7 +150,6 @@ export const zh = {
   context: "上下文",
   timeline: "时间线",
   runs: "运行",
-  outcomes: "结果",
   "Export selected scope": "导出所选范围",
   "Copy token-free link": "复制不含令牌的链接",
   "Link copy unavailable.": "无法复制链接。",
@@ -181,6 +180,8 @@ export const zh = {
   "Plans, children, checks and human review share one service owner. No chat or discovery activates execution.":
     "计划、子运行、检查和人工审阅共用一个服务所有者。聊天或浏览不会触发执行。",
   "Create task": "创建任务",
+  "Runs in the current snapshot": "当前快照中的运行",
+  "Retained runs": "已保留的运行记录",
   "No owner run projection in this snapshot.": "此快照中没有所有者运行视图。",
   "No snapshot observed yet; absence is not proof of settlement.":
     "尚未观察到快照；没有记录不代表已结束。",

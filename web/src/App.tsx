@@ -11,7 +11,6 @@ import {
 } from "react";
 import type { IconType } from "react-icons";
 import {
-  FiCheckCircle,
   FiChevronDown,
   FiClock,
   FiCpu,
@@ -103,7 +102,6 @@ const VIEWS: readonly (readonly [string, IconType])[] = [
   ["context", FiLayers],
   ["timeline", FiClock],
   ["runs", FiGitBranch],
-  ["outcomes", FiCheckCircle],
 ];
 /** Local operation failures cannot diagnose the service or hide its observation. */
 export function WorkspaceNotice({
@@ -664,100 +662,104 @@ export function App({
             </span>
           )}
           <span className="tb-spacer" aria-hidden="true" />
-          <nav className="tb-tabs" aria-label={t("Recorded views")}>
-            <button
-              type="button"
-              className="tb-tab"
-              aria-pressed={tab === "messages" && !detail}
-              onClick={() => {
-                setDetail(undefined);
-                setHit(undefined);
-                setTab("messages");
-              }}
-            >
-              <FiMessageSquare aria-hidden="true" />
-              {t("Conversation")}
-            </button>
-            <details
-              className="view-menu"
-              ref={viewMenu}
-              onKeyDown={(event) => {
-                if (event.key === "Escape" && viewMenu.current) {
-                  viewMenu.current.open = false;
-                  viewMenu.current.querySelector("summary")?.focus();
-                }
-              }}
-              onBlur={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget))
-                  event.currentTarget.open = false;
-              }}
-            >
-              <summary className="chip">
-                {tab === "messages" ? t("Details") : tx(tab)}
-                <FiChevronDown aria-hidden="true" />
-              </summary>
-              <div className="view-menu-items">
-                {VIEWS.map(([view, Icon]) => (
-                  <button
-                    type="button"
-                    key={view}
-                    aria-pressed={tab === view}
-                    onClick={() => {
-                      setDetail(undefined);
-                      setHit(undefined);
-                      setTab(view);
-                      if (viewMenu.current) {
-                        viewMenu.current.open = false;
-                        viewMenu.current.querySelector("summary")?.focus();
-                      }
-                    }}
-                  >
-                    <Icon aria-hidden="true" />
-                    {tx(view)}
-                  </button>
-                ))}
-                <div className="view-menu-actions">
-                  <button
-                    type="button"
-                    aria-label={t("Export selected scope")}
-                    disabled={!seed}
-                    onClick={() => {
-                      if (viewMenu.current) {
-                        viewMenu.current.open = false;
-                        viewMenu.current.querySelector("summary")?.focus();
-                      }
-                      setExportOpen(true);
-                    }}
-                  >
-                    <FiDownload aria-hidden="true" />
-                    {t("Export selected scope")}
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={t("Copy token-free link")}
-                    disabled={!taskId}
-                    onClick={() => {
-                      if (taskId)
-                        void copyTextToClipboard(
-                          historyUrl(
-                            taskId,
-                            detail,
-                            scope
-                              ? { scope, snapshotSeq: selectedSnapshot }
-                              : undefined,
-                          ),
-                        ).then((ok) =>
-                          setError(ok ? "" : t("Link copy unavailable.")),
-                        );
-                    }}
-                  >
-                    <FiLink aria-hidden="true" />
-                    {t("Copy token-free link")}
-                  </button>
+          {/* Recorded views read a task/child scope; an ordinary conversation
+              has none and folds its tools into the transcript. */}
+          {scope && (
+            <nav className="tb-tabs" aria-label={t("Recorded views")}>
+              <button
+                type="button"
+                className="tb-tab"
+                aria-pressed={tab === "messages" && !detail}
+                onClick={() => {
+                  setDetail(undefined);
+                  setHit(undefined);
+                  setTab("messages");
+                }}
+              >
+                <FiMessageSquare aria-hidden="true" />
+                {t("Conversation")}
+              </button>
+              <details
+                className="view-menu"
+                ref={viewMenu}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape" && viewMenu.current) {
+                    viewMenu.current.open = false;
+                    viewMenu.current.querySelector("summary")?.focus();
+                  }
+                }}
+                onBlur={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget))
+                    event.currentTarget.open = false;
+                }}
+              >
+                <summary className="chip">
+                  {tab === "messages" ? t("Details") : tx(tab)}
+                  <FiChevronDown aria-hidden="true" />
+                </summary>
+                <div className="view-menu-items">
+                  {VIEWS.map(([view, Icon]) => (
+                    <button
+                      type="button"
+                      key={view}
+                      aria-pressed={tab === view}
+                      onClick={() => {
+                        setDetail(undefined);
+                        setHit(undefined);
+                        setTab(view);
+                        if (viewMenu.current) {
+                          viewMenu.current.open = false;
+                          viewMenu.current.querySelector("summary")?.focus();
+                        }
+                      }}
+                    >
+                      <Icon aria-hidden="true" />
+                      {tx(view)}
+                    </button>
+                  ))}
+                  <div className="view-menu-actions">
+                    <button
+                      type="button"
+                      aria-label={t("Export selected scope")}
+                      disabled={!seed}
+                      onClick={() => {
+                        if (viewMenu.current) {
+                          viewMenu.current.open = false;
+                          viewMenu.current.querySelector("summary")?.focus();
+                        }
+                        setExportOpen(true);
+                      }}
+                    >
+                      <FiDownload aria-hidden="true" />
+                      {t("Export selected scope")}
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={t("Copy token-free link")}
+                      disabled={!taskId}
+                      onClick={() => {
+                        if (taskId)
+                          void copyTextToClipboard(
+                            historyUrl(
+                              taskId,
+                              detail,
+                              scope
+                                ? { scope, snapshotSeq: selectedSnapshot }
+                                : undefined,
+                            ),
+                          ).then((ok) =>
+                            setError(ok ? "" : t("Link copy unavailable.")),
+                          );
+                      }}
+                    >
+                      <FiLink aria-hidden="true" />
+                      {t("Copy token-free link")}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </details>
-          </nav>
+              </details>
+            </nav>
+          )}
           <span className="tb-spacer" aria-hidden="true" />
           <div className="tb-actions">
             <SearchBar
@@ -1087,30 +1089,35 @@ export function App({
                     />
                   )}
                   {tab === "runs" && (
-                    <RunBrowser
-                      key={taskId}
-                      client={api.client}
-                      seed={{
-                        ...seed,
-                        scope: { kind: "task", id: taskId ?? seed.scope.id },
-                      }}
-                      onScope={selectScope}
-                    />
+                    <>
+                      <section className="run-current">
+                        <h3>{t("Runs in the current snapshot")}</h3>
+                        {runs.length > 0 ? (
+                          runs.map((r) => (
+                            <RunSummary key={r.childRunId ?? r.runId} run={r} />
+                          ))
+                        ) : (
+                          <p className="panel-empty">
+                            {current && observation.state
+                              ? t("No owner run projection in this snapshot.")
+                              : t(
+                                  "No snapshot observed yet; absence is not proof of settlement.",
+                                )}
+                          </p>
+                        )}
+                      </section>
+                      <h3>{t("Retained runs")}</h3>
+                      <RunBrowser
+                        key={taskId}
+                        client={api.client}
+                        seed={{
+                          ...seed,
+                          scope: { kind: "task", id: taskId ?? seed.scope.id },
+                        }}
+                        onScope={selectScope}
+                      />
+                    </>
                   )}
-                  {tab === "outcomes" &&
-                    (runs.length > 0 ? (
-                      runs.map((r) => (
-                        <RunSummary key={r.childRunId ?? r.runId} run={r} />
-                      ))
-                    ) : (
-                      <p className="panel-empty">
-                        {current && observation.state
-                          ? t("No owner run projection in this snapshot.")
-                          : t(
-                              "No snapshot observed yet; absence is not proof of settlement.",
-                            )}
-                      </p>
-                    ))}
                 </div>
               )
             )}

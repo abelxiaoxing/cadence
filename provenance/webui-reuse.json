@@ -74,7 +74,7 @@
         "web/src/layout/ResizeHandle.tsx",
         "web/src/layout/use-drawer-focus.ts"
       ],
-      "modifications": "Three-pane composition and selected coherent CSS rule families; direct sash/swipe algorithms; props narrowed to task/run data. Add keyboard focus and inert drawers. Delete composer, PTY, plugin slots, filesystem tree and model/provider administration. Correct open-drawer drag offset. Chrome restyle: TopBar brand/chip/tb-tab/panel-toggle and data-tip families, lp-section/session-item sidebar rows, pill inspector tabs, msg-meta/body transcript cards, statusbar, empty-state and scrollbar rules; generic controls use zero-specificity :where() so family classes win; phones wrap the topbar into an action row and an icon tab row. Fine-pointer controls follow pi's 24–28px density and coarse pointers keep 32–36px minimum targets; the earlier universal 44px controls were replaced. Accessible names are unchanged and every safety statement stays fully visible, wrapping in the scope bar, statusbar and collapsed episode rows instead of being clipped or hidden; small statements, selected tabs and the primary button use AA-contrast tokens. Interface text, including accessible names, is keyed by its English source and shown in English or Simplified Chinese; a topbar chip switches the language. Alert lines inside action dialogs keep the error colour rather than the dimmed dialog paragraph colour. Conversation-first refinement: one-service project section, independent active roster, paged task/run/subagent history, secondary Details menu and optional task-bound inspector; no cross-project/session import. Default Markdown text with folded complete metadata preserves visible limitations and exact child snapshot links. Conversation-first empty entry shares the existing layout, sidebar entry points and welcome presentation; folder selection stays in the bottom-right picker, and the entry history section explains per-project history and lists recent projects that only preselect it. Returning to the last project is readonly navigation to a running owner. No unbound chat or automatic project activation."
+      "modifications": "Three-pane composition and selected coherent CSS rule families; direct sash/swipe algorithms; props narrowed to task/run data. Add keyboard focus and inert drawers. Delete composer, PTY, plugin slots, filesystem tree and model/provider administration. Correct open-drawer drag offset. Chrome restyle: TopBar brand/chip/tb-tab/panel-toggle and data-tip families, lp-section/session-item sidebar rows, pill inspector tabs, msg-meta/body transcript cards, statusbar, empty-state and scrollbar rules; generic controls use zero-specificity :where() so family classes win; phones wrap the topbar into an action row and an icon tab row. Fine-pointer controls follow pi's 24–28px density and coarse pointers keep 32–36px minimum targets; the earlier universal 44px controls were replaced. Accessible names are unchanged and every safety statement stays fully visible, wrapping in the scope bar, statusbar and collapsed episode rows instead of being clipped or hidden; small statements, selected tabs and the primary button use AA-contrast tokens. Interface text, including accessible names, is keyed by its English source and shown in English or Simplified Chinese; a topbar chip switches the language. Alert lines inside action dialogs keep the error colour rather than the dimmed dialog paragraph colour. Conversation-first refinement: one-service project section, independent active roster, paged task/run/subagent history, secondary Details menu and optional task-bound inspector; no cross-project/session import. Default Markdown text with folded complete metadata preserves visible limitations and exact child snapshot links. Conversation-first empty entry shares the existing layout, sidebar entry points and welcome presentation; folder selection stays in the bottom-right picker, and the entry history section explains per-project history and lists recent projects that only preselect it. Returning to the last project is readonly navigation to a running owner. No unbound chat or automatic project activation. Recorded views appear only for a task/child scope (an ordinary conversation folds its tools into the transcript), and the current snapshot's owner run projection heads the retained run pages in one Runs view."
     },
     {
       "id": "plan-navigation",
@@ -293,7 +293,7 @@
   "destinations": {
     "licenses/pi-web-ui-reuse.md": "e4e5994056f9abe4fb10c1ae823aa1f717a3a91ceb90666de0eb85c16f56ad0e",
     "web/index.html": "d4f99afb551ce57f3c0c361b176c37540520cd1658ef568c86ef01e0cce9e5b1",
-    "web/src/App.tsx": "5e49d3d71a2789eb6b5379b67c948dde377ea5f7f1566e4bf30866b55db0dac8",
+    "web/src/App.tsx": "c514cfca2a66397bff08194ced27ad1320f810ac7bc819ec34b839b6b227a3be",
     "web/src/client/actions.ts": "192587fe7eee7b7d669a0e93641d0880a4ca33a56a6ca25d0fe4265a8519db88",
     "web/src/client/browser.ts": "3074fea935763155554a0131d42bbcb470972c61abdf319cfcc2f35db65c4055",
     "web/src/client/message-delta.ts": "9133b161d07c0f5ca6a85562d396c36f724982d51f35ea0abae03035d79e4e8b",
@@ -358,7 +358,7 @@
     "web/vite.config.ts": "4f372e948d2261f408232612c451a37b3393d3b0d2a14b53984cb04efcd1e5d5",
     "scripts/build-web.mjs": "0334c888aa4c915df9e18cf6e9d62ac939412091d6751754d623201c2f2b9e85",
     "src/service-assets.ts": "ebf42142a64d7c4f00147c19a6e3e05bf4b7a287c68c081695ff0fbb7356ecd5",
-    "test/web/assets-browser.e2e.mjs": "2113ff8005c63a40f88c5393c1df2b52ca89506c2c77992f72814700d2421dc9",
+    "test/web/assets-browser.e2e.mjs": "bcc4c75d4f558bb0cd20deb0bfbbd74a2801fbf766aac556253853b03a88be09",
     "test/web/assets.test.tsx": "0a817c01d89e12e778dbcf6452727c951d81f44ac2dbc87488f384dbafabfdd4",
     "test/web/fixtures.tsx": "2224fa5c37c5ba352476e96a35170f4d7c5d8c62399418a1a192c6c30f1b3f20",
     "test/web/history-timeline.test.tsx": "dcc99efe7f6f7d9ed72f167c89fc1177f0b4506218fe147c5cd1f2e0d2914851",
@@ -381,7 +381,7 @@
     "web/vitest.config.ts": "e439a39d4a59c7e279e5eb4b869405699f38ff617f413cb6fe1a70e2b15f4ab5",
     "web/src/components/actions/ModelChooser.tsx": "1e415361e51c478139578790ce41fdd053ef8ebec5a8fb0899178135f492efc7",
     "web/src/components/review/CurrentChangesPanel.tsx": "7feada844a4485d1e63fe1d4a10c73b38757cd07525f636d0c16eb8b1845d2c4",
-    "test/web/conversations.test.tsx": "6684fb6dc5d4e66c9a6c3205fcad37ed3b60cd6983dbd143089592fc33e0d158",
+    "test/web/conversations.test.tsx": "9fcfd864710b4a0c2706d158729729d26bfaaf2e46a6f57ece7a52ddbe05f05d",
     "src/conversation-context.mjs": "204f47807244c5cdd55e744b3a3a4c532cd6d52d3ad190184d8684f43cb292ef",
     "src/conversation-context.d.mts": "2d33f1b812d9a982bb2cefa5397e0c8230c7525a3c82c6659637a9f289cfdb9c",
     "src/conversation-resources.mjs": "a7ed3e4813e3e240f0a8eb4867ee497e352d62a06cb85980d0ac292d12dc001a",
