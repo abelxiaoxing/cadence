@@ -59,6 +59,32 @@ export const zh = {
   Send: "发送",
   "Stop response": "停止回复",
   "Prepare task": "准备任务",
+  "Analyzing task…": "正在分析任务…",
+  "Send to begin analysis. You will confirm the plan before any edits.":
+    "发送后开始分析，修改代码前会请你确认计划。",
+  "Task preparation unavailable. Observe the original receipt before sending again.":
+    "任务准备不可用，请先查看原始请求结果，不要重复发送。",
+  "Task preparation stopped: {reason}. Observe the original receipt; no automatic retry.":
+    "任务准备已停止：{reason}。请查看原始请求结果，不会自动重试。",
+  "Plan approval": "计划确认",
+  "Plan metadata read in progress. Try again after observation completes.":
+    "计划信息仍在读取，请等状态更新后再试。",
+  "This task already has a plan. Review it in Task details instead.":
+    "此任务已有计划，请在任务详情中查看，避免覆盖现有计划。",
+  "Analysis complete. Review the plan before making changes.":
+    "分析完成，请在修改代码前确认计划。",
+  "Analysis and progress appear below. No edits start before plan approval.":
+    "分析过程与进度显示在下方，确认计划前不会修改代码。",
+  "Review implementation plan": "查看实施计划",
+  "Confirm plan and execute": "确认计划并执行",
+  "Approving saves this exact plan and starts it. No separate Start confirmation is needed.":
+    "确认后将保存并执行当前计划，无需再次点击启动。",
+  "Context changed. Close and review the plan again.":
+    "任务上下文已变化，请关闭后重新查看计划。",
+  "Plan confirmation expired. Review the plan again.":
+    "计划确认已过期，请重新查看计划。",
+  "Plan execution stopped: {reason}. Observe the original receipt; no automatic retry.":
+    "计划执行流程已停止：{reason}。请查看原始请求结果，不会自动重试。",
   "Prepare a plan first; Start requires confirmation.":
     "先准备计划，执行需另行确认 Start。",
   "Direct host tools · no Cadence task":

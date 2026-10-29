@@ -390,18 +390,12 @@ for (const route of ["loopback", "https"])
       await page
         .getByRole("button", { name: "Prepare task", exact: true })
         .click();
-      await page
-        .getByRole("button", {
-          name: "Preview Create (does not Start)",
-          exact: true,
-        })
-        .click();
-      await page
-        .getByRole("button", { name: "Confirm create", exact: true })
-        .click();
+      await page.getByRole("button", { name: "Review implementation plan", exact: true }).waitFor();
+      await page.waitForFunction(() => [...document.querySelectorAll("button")].some((button) => button.textContent === "Review implementation plan" && !button.disabled));
+      assert.equal(await page.getByRole("dialog").count(), 0);
       await page.getByLabel("Readable plan", { exact: true }).waitFor();
       assert.equal(new URL(page.url()).searchParams.get("project"), projectB);
-      assert.equal(g.f.contacts(), 1, "Create is not Start");
+      assert.equal(g.f.contacts(), 2, "Send starts readonly analysis, not editing");
       await page.reload();
       await page
         .getByRole("button", {
