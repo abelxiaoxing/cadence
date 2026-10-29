@@ -327,6 +327,7 @@ var ERROR_CODES = [
   "quarantine",
   "capacity",
   "unavailable",
+  "registry-locked",
   "auth-unavailable",
   "recording-exhausted",
   "receipt-inconclusive"
@@ -3517,6 +3518,21 @@ function names(path2, allowed) {
     dir.closeSync();
   }
 }
+function decodeRegistryLock(snapshot) {
+  const o = closed(json(snapshot), ["schema", "token", "pid", "host"]);
+  return {
+    schema: literal(o.schema, "cadence-service-registry-lock/1"),
+    token: decodeId(o.token),
+    pid: integer(o.pid, 1, 2147483647),
+    host: text(o.host, 255, true)
+  };
+}
+var registryNames = [
+  "format.json",
+  "roots.json",
+  "registry.lock",
+  "recovery-v1"
+];
 function recoveryOwnerStatus(pid, host) {
   if (host !== hostname2())
     return "ambiguous";
@@ -3568,11 +3584,7 @@ class ServiceCoordination {
   registry() {
     if (!this.files.directory(this.registryDirectory))
       return;
-    names(this.registryDirectory, [
-      "format.json",
-      "roots.json",
-      "registry.lock"
-    ]);
+    names(this.registryDirectory, registryNames);
     const format = this.files.read(this.registryPath("format.json"));
     const snapshot = this.files.read(this.registryPath("roots.json"), REGISTRY_BYTES);
     if (!format || !snapshot)
@@ -3597,10 +3609,10 @@ class ServiceCoordination {
       }
     };
   }
-  assertNamespace(walks) {
-    if (!this.files.directory(this.directory, false, walks))
+  assertNamespace(walks, directory2 = this.directory) {
+    if (!this.files.directory(directory2, false, walks))
       refused();
-    names(this.directory, [
+    names(directory2, [
       "format.json",
       "config.json",
       "registration.json",
@@ -3612,15 +3624,16 @@ class ServiceCoordination {
       "history-v2",
       "conversations-v1"
     ]);
-    this.files.directory(join5(this.directory, "history-v2"), false, walks);
+    this.files.directory(join5(directory2, "history-v2"), false, walks);
   }
-  selected() {
+  selected(directory2 = this.directory, root = this.store.root, stoppedOnly = false) {
     const walks = new DirectoryWalks;
-    if (!this.files.directory(this.directory, false, walks))
+    if (!this.files.directory(directory2, false, walks))
       return;
-    this.assertNamespace(walks);
-    const manifest = this.files.read(this.path("format.json"), undefined, walks);
-    const config = this.files.read(this.path("config.json"), undefined, walks);
+    this.assertNamespace(walks, directory2);
+    const path2 = (name) => join5(directory2, name);
+    const manifest = this.files.read(path2("format.json"), undefined, walks);
+    const config = this.files.read(path2("config.json"), undefined, walks);
     if (!manifest || !config)
       refused();
     const f = closed(json(manifest), [
@@ -3630,20 +3643,22 @@ class ServiceCoordination {
       "configIdentity"
     ]);
     literal(f.schema, "cadence-service-format/1");
-    literal(f.root, this.store.root);
+    literal(f.root, root);
     literal(f.stateHome, this.stateHome);
     literal(f.configIdentity, config.identity);
     const c = decodeOwnerConfig(json(config));
-    const hostConfig = this.files.read(this.path("host-config.json"), undefined, walks);
+    const hostConfig = this.files.read(path2("host-config.json"), undefined, walks);
     if (hostConfig && hostConfig.identity !== c.policyIdentity)
       refused();
-    const registration = this.files.read(this.path("registration.json"), undefined, walks);
-    const owner = this.files.read(this.path("owner.lock"), undefined, walks);
-    const capability = this.files.read(this.path("local-capability.json"), undefined, walks);
-    const checkout = this.files.read(this.store.lockPath, 8192, walks);
+    const registration = this.files.read(path2("registration.json"), undefined, walks);
+    const owner = this.files.read(path2("owner.lock"), undefined, walks);
+    const capability = this.files.read(path2("local-capability.json"), undefined, walks);
+    const checkout = this.files.read(join5(dirname5(directory2), "checkout.lock"), 8192, walks);
     const value = registration ? decodeRegistration(json(registration)) : undefined;
-    if (value && (value.root !== this.store.root || value.stateHome !== this.stateHome || value.configIdentity !== config.identity || !endpointMatches(c.endpoint, value.endpoint)))
+    if (value && (value.root !== root || value.stateHome !== this.stateHome || value.configIdentity !== config.identity || !endpointMatches(c.endpoint, value.endpoint)))
       refused();
+    if (stoppedOnly && (checkout || value && value.phase !== "stopped"))
+      throw new ContractError("quarantine");
     if (value && value.phase !== "stopped") {
       if (!owner || !checkout || !capability)
         refused();
@@ -3723,18 +3738,21 @@ class ServiceCoordination {
   }
   withRegistry(operation) {
     this.files.directory(this.registryDirectory, true);
-    names(this.registryDirectory, [
-      "format.json",
-      "roots.json",
-      "registry.lock"
-    ]);
+    names(this.registryDirectory, registryNames);
     const lockPath = this.registryPath("registry.lock");
-    const lock = this.files.create(lockPath, encoded({
-      schema: "cadence-service-registry-lock/1",
-      token: randomUUID3(),
-      pid: process.pid,
-      host: hostname2()
-    }));
+    let lock;
+    try {
+      lock = this.files.create(lockPath, encoded({
+        schema: "cadence-service-registry-lock/1",
+        token: randomUUID3(),
+        pid: process.pid,
+        host: hostname2()
+      }));
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "EEXIST")
+        throw new ContractError("registry-locked");
+      throw error;
+    }
     let dirty = false;
     try {
       let format = this.files.read(this.registryPath("format.json"));
@@ -3758,11 +3776,7 @@ class ServiceCoordination {
       }, () => {
         this.files.assert(lockPath, lock);
         this.files.assert(this.registryPath("format.json"), format);
-        names(this.registryDirectory, [
-          "format.json",
-          "roots.json",
-          "registry.lock"
-        ]);
+        names(this.registryDirectory, registryNames);
       });
       this.files.remove(lockPath, lock);
       return result;
@@ -3893,6 +3907,154 @@ class ServiceCoordination {
         this.files.assert(this.registryPath("roots.json"), releasedRegistry, REGISTRY_BYTES);
       });
     });
+  }
+  registryLockDiagnostic() {
+    try {
+      const lock = this.files.read(this.registryPath("registry.lock"));
+      if (!lock)
+        return;
+      const value = decodeRegistryLock(lock);
+      return {
+        reason: "registry-locked",
+        owner: recoveryOwnerStatus(value.pid, value.host)
+      };
+    } catch {
+      return { reason: "registry-locked", owner: "unreadable" };
+    }
+  }
+  registryRecoveryState() {
+    const lock = this.files.read(this.registryPath("registry.lock"));
+    if (!lock)
+      throw new ContractError("conflict");
+    const value = decodeRegistryLock(lock);
+    names(this.registryDirectory, registryNames);
+    const format = this.files.read(this.registryPath("format.json"));
+    const roots = this.files.read(this.registryPath("roots.json"), REGISTRY_BYTES);
+    const registry = !format && !roots ? undefined : this.registry();
+    const entries = registry?.value.entries ?? [];
+    const protectedRoots = new Set(entries.map((row) => hash(row.root)));
+    const proofs = [];
+    const directory2 = opendirSync(this.files.namespace);
+    try {
+      let count = 0;
+      for (let entry = directory2.readSync();entry; entry = directory2.readSync()) {
+        if (++count > 1024)
+          throw new ContractError("capacity");
+        if (!/^[a-f0-9]{64}$/.test(entry.name) || protectedRoots.has(entry.name))
+          continue;
+        const service = join5(this.files.namespace, entry.name, "service-v1");
+        if (!this.files.directory(service))
+          continue;
+        const manifest = this.files.read(join5(service, "format.json"));
+        if (!manifest)
+          refused();
+        const f = closed(json(manifest), [
+          "schema",
+          "root",
+          "stateHome",
+          "configIdentity"
+        ]);
+        const root = pathValue(f.root);
+        if (hash(root) !== entry.name)
+          refused();
+        const selected = this.selected(service, root, true);
+        if (!selected)
+          throw new ContractError("quarantine");
+        proofs.push([
+          entry.name,
+          ...[
+            selected.manifest,
+            selected.config,
+            selected.hostConfig,
+            selected.registration
+          ].map((file) => file ? [file.identity, file.stamp] : null)
+        ]);
+      }
+    } finally {
+      directory2.closeSync();
+    }
+    proofs.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b), "en"));
+    const stateDigest = hash(encoded([
+      lock.identity,
+      lock.stamp,
+      format ? [format.identity, format.stamp] : null,
+      roots ? [roots.identity, roots.stamp] : null,
+      proofs
+    ]));
+    const epoch = hash(encoded([lock.identity, lock.stamp]));
+    const archive = this.registryPath(join5("recovery-v1", epoch));
+    const attempts = [];
+    let previousResolver = null;
+    if (this.files.directory(archive)) {
+      names(archive, Array.from({ length: 128 }, (_, n) => `${n}.json`));
+      for (let n = 0;n < 128; n++) {
+        const attempt = this.files.read(join5(archive, `${n}.json`), 32768);
+        if (!attempt) {
+          names(archive, attempts.map((_, i) => `${i}.json`));
+          break;
+        }
+        const o = closed(json(attempt, 32768), [
+          "schema",
+          "lock",
+          "pid",
+          "host",
+          "digest"
+        ]);
+        literal(o.schema, "cadence-registry-recovery/1");
+        literal(o.lock, lock.bytes.toString("utf8"));
+        decodeHash(o.digest);
+        previousResolver = recoveryOwnerStatus(integer(o.pid, 1, 2147483647), text(o.host, 255, true));
+        attempts.push(attempt);
+      }
+    }
+    const inspection = {
+      scope: "global-registry",
+      epoch,
+      coordinationDigest: hash(encoded([stateDigest, attempts.map((a) => [a.identity, a.stamp])])),
+      owner: recoveryOwnerStatus(value.pid, value.host),
+      process: { pid: value.pid, host: value.host },
+      reservations: entries.length,
+      previousResolver,
+      resolution: "local-interactive-only"
+    };
+    return { lock, archive, attempts, stateDigest, inspection };
+  }
+  inspectRegistryRecovery() {
+    return this.registryRecoveryState().inspection;
+  }
+  resolveRegistryRecovery(expected, assertAuthority) {
+    assertAuthority();
+    const state = this.registryRecoveryState();
+    if (encoded(state.inspection) !== encoded(expected))
+      throw new ContractError("conflict");
+    if (expected.owner !== "absent" || expected.previousResolver !== null && expected.previousResolver !== "absent")
+      throw new ContractError("quarantine");
+    if (state.attempts.length >= 128)
+      throw new ContractError("capacity");
+    assertAuthority();
+    const receiptPath = join5(state.archive, `${state.attempts.length}.json`);
+    const receipt = this.files.create(receiptPath, encoded({
+      schema: "cadence-registry-recovery/1",
+      lock: state.lock.bytes.toString("utf8"),
+      pid: process.pid,
+      host: hostname2(),
+      digest: expected.coordinationDigest
+    }), 32768);
+    assertAuthority();
+    const current = this.registryRecoveryState();
+    if (current.stateDigest !== state.stateDigest || current.inspection.owner !== "absent" || current.attempts.length !== state.attempts.length + 1)
+      throw new ContractError("conflict");
+    for (const [n, attempt] of state.attempts.entries())
+      this.files.assert(join5(state.archive, `${n}.json`), attempt, 32768);
+    this.files.assert(receiptPath, receipt, 32768);
+    assertAuthority();
+    this.files.remove(this.registryPath("registry.lock"), state.lock);
+    return {
+      status: "resolved",
+      scope: "global-registry",
+      recoveryId: expected.epoch,
+      notice: "registry-only-project-fences-preserved"
+    };
   }
   prepareRecoveryRelease(expected, assertAuthority) {
     assertAuthority();
@@ -6991,7 +7153,7 @@ async function confirm(expected) {
       "storage"
     ],
     [
-      `Release ONLY the displayed unchanged service-owned fences. Type resolve ${expected.epoch}`,
+      `${expected.scope === "global-registry" ? "Release ONLY the global registry lock; all project fences remain." : "Release ONLY the displayed unchanged service-owned fences."} Type resolve ${expected.epoch}`,
       `resolve ${expected.epoch}`
     ]
   ];
@@ -7054,6 +7216,42 @@ async function confirm(expected) {
 async function localRecovery(c, operation) {
   if (operation === "resolve")
     native();
+  const registryLock = c.registryLockDiagnostic();
+  if (registryLock) {
+    let expected2;
+    try {
+      expected2 = c.inspectRegistryRecovery();
+    } catch {
+      const blocked = {
+        scope: "global-registry",
+        ...registryLock,
+        coordination: "unavailable",
+        resolution: "blocked-preserve-state",
+        notice: "Registry state is incomplete, changed or unsafe. Preserve it; no lock or project resource was released."
+      };
+      if (operation === "inspect")
+        return blocked;
+      process.stdout.write(`${JSON.stringify(blocked)}
+`);
+      throw new ContractError("quarantine");
+    }
+    const view2 = {
+      ...expected2,
+      process: {
+        ...expected2.process,
+        host: diagnosticText(expected2.process.host, 255)
+      },
+      notice: `Global registry lock blocks every project in this state home. Recovery preserves its original bytes and all project reservations, owner/checkout locks and history. Inspect project fences separately afterward. ${warning}`
+    };
+    if (operation === "inspect")
+      return view2;
+    process.stdout.write(`${JSON.stringify(view2)}
+`);
+    if (expected2.owner !== "absent" || expected2.previousResolver !== null && expected2.previousResolver !== "absent")
+      throw new ContractError("quarantine");
+    const assertFresh2 = await confirm(expected2);
+    return c.resolveRegistryRecovery(expected2, assertFresh2);
+  }
   const history = new HistoryRecovery(c);
   const expected = await inspectRecovery(c, history);
   const registration2 = c.recoverySnapshot().registration;
@@ -7355,6 +7553,13 @@ function nativeCall(c, operation, reveal = false, controlBody) {
 }
 var pause = (ms) => new Promise((resolve8) => setTimeout(resolve8, ms));
 async function serviceStatus(c, diagnose = false) {
+  const registryLock = c.registryLockDiagnostic?.();
+  if (registryLock)
+    return {
+      status: "unavailable",
+      ...registryLock,
+      recovery: "cadence recover inspect --workspace <project> [--state-home <state-home>]"
+    };
   const observed2 = c.inspect();
   if (observed2.status === "absent" || observed2.status === "stopped")
     return observed2;
@@ -7397,6 +7602,10 @@ function serverConfigHint(error) {
 Fix it and run the command again; the file holds the WebUI port and token as ${PORT_KEY}=<1-65535> and ${TOKEN_KEY}=<at least 32 characters>, one line each.
 `;
 }
+function registryGuidance(workspace, stateHome) {
+  return `The shared registry lock blocks project access in this state home. No automatic lock deletion. Inspect locally: cadence recover inspect --workspace ${JSON.stringify(workspace)} --state-home ${JSON.stringify(stateHome)}; eligible dead locks require cadence recover resolve in a local terminal.
+`;
+}
 function startupGuidance(result, input) {
   let report;
   try {
@@ -7404,6 +7613,8 @@ function startupGuidance(result, input) {
   } catch {
     return "";
   }
+  if (report.error === "registry-locked")
+    return registryGuidance(input.workspace, input.stateHome);
   const agent = input.config.agentDir;
   const inspect = `Inspect: cadence-service diagnose|recover inspect --workspace ${JSON.stringify(input.workspace)}
 `;
@@ -7431,6 +7642,15 @@ ${inspect}` : "";
 async function startService(options, foreground, hostUrl) {
   const network = networkSnapshot(process.env);
   const env = hostEnvironment(process.env);
+  const c = new ServiceCoordination(options.workspace, options.stateHome);
+  if (c.registryLockDiagnostic()) {
+    process.stderr.write(registryGuidance(c.store.root, c.stateHome));
+    return {
+      status: "refused",
+      error: "registry-locked",
+      stage: "service"
+    };
+  }
   let input;
   try {
     input = decodeHostInput(selectStart(options, process.env));
@@ -7443,7 +7663,6 @@ async function startService(options, foreground, hostUrl) {
 `;
   if (Buffer.byteLength(serialized) > STARTUP_INPUT_BYTES)
     throw new ContractError("oversize");
-  const c = new ServiceCoordination(input.workspace, input.stateHome);
   const existing = await serviceStatus(c);
   if (existing && typeof existing === "object" && "status" in existing && existing.status === "alive") {
     const running = readHostConfig(c);
@@ -7891,7 +8110,7 @@ async function projectMain(argv, hostUrl) {
     mkdirSync6(options.workspace, { recursive: true });
   effectiveWorkspace(options.workspace, options.stateHome);
   const c = new ServiceCoordination(options.workspace, options.stateHome);
-  const kept = readHostConfig(c);
+  const kept = c.registryLockDiagnostic() ? undefined : readHostConfig(c);
   if (!kept)
     options.port = 0;
   const result = await startService(options, false, hostUrl);

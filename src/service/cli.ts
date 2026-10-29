@@ -11,6 +11,7 @@ import { networkSnapshot, sameNetwork } from "../sdk-network.ts";
 import {
   ContractError,
   decodeId,
+  type ErrorCode,
   LIMITS,
   parseWireJson,
 } from "../service-contract.ts";
@@ -31,7 +32,10 @@ import {
   stopAutostart,
 } from "./autostart.ts";
 import { closed, text } from "./contracts/core.ts";
-import { ServiceCoordination } from "./coordination.ts";
+import {
+  type RegistryLockDiagnostic,
+  ServiceCoordination,
+} from "./coordination.ts";
 import { gatewayMain } from "./gateway-cli.ts";
 import { GatewayStore } from "./gateway-store.ts";
 import {
@@ -95,6 +99,7 @@ export interface ManagementReply {
 export interface ControlTarget {
   localAccess(): { endpoint: string; epoch: string; capability: string };
   inspect(): { status: string; epoch?: string | null };
+  registryLockDiagnostic?(): RegistryLockDiagnostic | undefined;
 }
 export function nativeCall(
   c: ControlTarget,
@@ -191,6 +196,14 @@ export async function serviceStatus(
   c: ControlTarget,
   diagnose = false,
 ): Promise<unknown> {
+  const registryLock = c.registryLockDiagnostic?.();
+  if (registryLock)
+    return {
+      status: "unavailable",
+      ...registryLock,
+      recovery:
+        "cadence recover inspect --workspace <project> [--state-home <state-home>]",
+    };
   const observed = c.inspect();
   if (observed.status === "absent" || observed.status === "stopped")
     return observed;
@@ -250,6 +263,9 @@ function failedStatus(result: unknown): boolean {
 function serverConfigHint(error: ServerConfigRefusal): string {
   return `Cadence changed nothing: ${error.path} ${error.reason}.\nFix it and run the command again; the file holds the WebUI port and token as ${PORT_KEY}=<1-65535> and ${TOKEN_KEY}=<at least 32 characters>, one line each.\n`;
 }
+function registryGuidance(workspace: string, stateHome: string): string {
+  return `The shared registry lock blocks project access in this state home. No automatic lock deletion. Inspect locally: cadence recover inspect --workspace ${JSON.stringify(workspace)} --state-home ${JSON.stringify(stateHome)}; eligible dead locks require cadence recover resolve in a local terminal.\n`;
+}
 /** One fixed hint per refused startup stage, naming only the selected sources. */
 function startupGuidance(result: unknown, input: HostInput): string {
   let report: StartupReport;
@@ -258,6 +274,8 @@ function startupGuidance(result: unknown, input: HostInput): string {
   } catch {
     return "";
   }
+  if (report.error === "registry-locked")
+    return registryGuidance(input.workspace, input.stateHome);
   const agent = input.config.agentDir;
   const inspect = `Inspect: cadence-service diagnose|recover inspect --workspace ${JSON.stringify(input.workspace)}\n`;
   switch (report.stage) {
@@ -284,6 +302,15 @@ export async function startService(
 ): Promise<unknown> {
   const network = networkSnapshot(process.env);
   const env = hostEnvironment(process.env); // validate route before any child/SDK import
+  const c = new ServiceCoordination(options.workspace, options.stateHome);
+  if (c.registryLockDiagnostic()) {
+    process.stderr.write(registryGuidance(c.store.root, c.stateHome));
+    return {
+      status: "refused",
+      error: "registry-locked",
+      stage: "service",
+    } satisfies StartupReport;
+  }
   let input: HostInput;
   try {
     input = decodeHostInput(selectStart(options, process.env));
@@ -295,7 +322,6 @@ export async function startService(
   const serialized = `${JSON.stringify(input)}\n`;
   if (Buffer.byteLength(serialized) > STARTUP_INPUT_BYTES)
     throw new ContractError("oversize");
-  const c = new ServiceCoordination(input.workspace, input.stateHome);
   const existing = await serviceStatus(c);
   if (
     existing &&
@@ -801,8 +827,11 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
  * task, global cwd mutation, credential copying or service-manager registration. */
 /** A genuine pre-admission refusal, distinct from an uncertain launch. */
 export class ProjectOpenRefusal extends ContractError {
-  constructor(readonly noOwner: boolean) {
-    super("unavailable");
+  constructor(
+    readonly noOwner: boolean,
+    code: ErrorCode = "unavailable",
+  ) {
+    super(code);
   }
 }
 export async function openProjectDirectory(
@@ -815,6 +844,8 @@ export async function openProjectDirectory(
     throw new ContractError("forbidden");
   effectiveWorkspace(workspace, stateHome);
   const c = new ServiceCoordination(workspace, stateHome);
+  if (c.registryLockDiagnostic())
+    throw new ProjectOpenRefusal(true, "registry-locked");
   const kept = readHostConfig(c);
   const options: StartOptions = {
     workspace,
@@ -833,7 +864,14 @@ export async function openProjectDirectory(
         typeof result === "object" &&
         "status" in result &&
         result.status === "refused" &&
-        c.inspect().status === "absent",
+        (("error" in result && result.error === "registry-locked") ||
+          c.inspect().status === "absent"),
+      result &&
+        typeof result === "object" &&
+        "error" in result &&
+        result.error === "registry-locked"
+        ? "registry-locked"
+        : "unavailable",
     );
   const link = await privateLink(c.store.root, stateHome);
   if (!link) throw new ContractError("unavailable");
@@ -870,7 +908,7 @@ async function projectMain(argv: string[], hostUrl: URL): Promise<void> {
   if (create) mkdirSync(options.workspace, { recursive: true });
   effectiveWorkspace(options.workspace, options.stateHome);
   const c = new ServiceCoordination(options.workspace, options.stateHome);
-  const kept = readHostConfig(c);
+  const kept = c.registryLockDiagnostic() ? undefined : readHostConfig(c);
   // Port 0 is requested only for a genuinely new selection. An existing owner
   // keeps its exact persisted port/cwd/config; an inconclusive read is not new.
   if (!kept) options.port = 0;

@@ -3,12 +3,11 @@ import { isatty } from "node:tty";
 import { HistoryRecovery } from "../history/recovery.ts";
 import { ContractError, LIMITS } from "../service-contract.ts";
 import { diagnosticText } from "../verification-diagnostics.ts";
-import type { ServiceCoordination } from "./coordination.ts";
-import {
-  inspectRecovery,
-  type RecoveryInspection,
-  resolveRecovery,
-} from "./recovery.ts";
+import type {
+  RegistryRecoveryInspection,
+  ServiceCoordination,
+} from "./coordination.ts";
+import { inspectRecovery, resolveRecovery } from "./recovery.ts";
 
 const warning =
   "PID absence is not proof that descendants stopped or credential writes settled. Inspect/stop old processes externally, independently inspect the selected Pi credential store and SDK locks, and inspect retained history/storage. Cadence does not kill, repair, reset, migrate or certify those resources. Unknown historical outcomes remain unknown. A new Start is required.";
@@ -16,7 +15,10 @@ function native(): void {
   if (!isatty(0) || !isatty(1) || !process.stdin.isTTY || !process.stdout.isTTY)
     throw new ContractError("forbidden");
 }
-async function confirm(expected: RecoveryInspection): Promise<() => void> {
+async function confirm(expected: {
+  epoch: string;
+  scope?: "global-registry";
+}): Promise<() => void> {
   native();
   if (process.stdin.readableLength) throw new ContractError("forbidden");
   const identity = JSON.stringify(expected);
@@ -35,7 +37,7 @@ async function confirm(expected: RecoveryInspection): Promise<() => void> {
       "storage",
     ],
     [
-      `Release ONLY the displayed unchanged service-owned fences. Type resolve ${expected.epoch}`,
+      `${expected.scope === "global-registry" ? "Release ONLY the global registry lock; all project fences remain." : "Release ONLY the displayed unchanged service-owned fences."} Type resolve ${expected.epoch}`,
       `resolve ${expected.epoch}`,
     ],
   ];
@@ -104,6 +106,43 @@ export async function localRecovery(
   operation: "inspect" | "resolve",
 ): Promise<unknown> {
   if (operation === "resolve") native(); // no filesystem writes on nonterminal invocation
+  const registryLock = c.registryLockDiagnostic();
+  if (registryLock) {
+    let expected: RegistryRecoveryInspection;
+    try {
+      expected = c.inspectRegistryRecovery();
+    } catch {
+      const blocked = {
+        scope: "global-registry",
+        ...registryLock,
+        coordination: "unavailable",
+        resolution: "blocked-preserve-state",
+        notice:
+          "Registry state is incomplete, changed or unsafe. Preserve it; no lock or project resource was released.",
+      };
+      if (operation === "inspect") return blocked;
+      process.stdout.write(`${JSON.stringify(blocked)}\n`);
+      throw new ContractError("quarantine");
+    }
+    const view = {
+      ...expected,
+      process: {
+        ...expected.process,
+        host: diagnosticText(expected.process.host, 255),
+      },
+      notice: `Global registry lock blocks every project in this state home. Recovery preserves its original bytes and all project reservations, owner/checkout locks and history. Inspect project fences separately afterward. ${warning}`,
+    };
+    if (operation === "inspect") return view;
+    process.stdout.write(`${JSON.stringify(view)}\n`);
+    if (
+      expected.owner !== "absent" ||
+      (expected.previousResolver !== null &&
+        expected.previousResolver !== "absent")
+    )
+      throw new ContractError("quarantine");
+    const assertFresh = await confirm(expected);
+    return c.resolveRegistryRecovery(expected, assertFresh);
+  }
   const history = new HistoryRecovery(c);
   const expected = await inspectRecovery(c, history);
   const registration = c.recoverySnapshot().registration;

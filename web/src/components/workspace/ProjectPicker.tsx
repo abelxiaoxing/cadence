@@ -137,7 +137,20 @@ export function ProjectPicker({
           {t("Bounded listing; narrow the directory to see more.")}
         </p>
       )}
-      {(error || page.error) && <p role="alert">{error || page.error}</p>}
+      {(error || page.error) && (
+        <p role="alert">
+          {error || page.error}
+          {error === "registry-locked" && (
+            <>
+              {" "}
+              —{" "}
+              {t(
+                "The shared registry lock is blocking projects. On the service host, run cadence recover inspect --workspace <project> with the same --state-home, then use recover resolve in a local terminal if eligible. Do not delete lock files manually.",
+              )}
+            </>
+          )}
+        </p>
+      )}
       <footer>
         <button
           type="button"
