@@ -148,12 +148,14 @@ export function App({
   planMetadata,
   onOpenProject,
   onWorkbenchHome,
+  workbenchHome,
   projectEntries,
 }: {
   api?: BrowserClient;
   planMetadata?: PlanMetadataPort;
   onOpenProject?(path: string): Promise<void>;
   onWorkbenchHome?(): void;
+  workbenchHome?: string;
   projectEntries?: { path: string; current: boolean }[];
 }) {
   const { t, tx, locale, setLocale } = useT();
@@ -1283,6 +1285,7 @@ export function App({
           client={api.client}
           current={workingFolder ?? workspace.workspace.rootLabel}
           initial={projectOpen || undefined}
+          home={workbenchHome}
           epoch={workspace.workspace.epoch}
           onClose={() => setProjectOpen(null)}
         />

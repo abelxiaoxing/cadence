@@ -155,9 +155,27 @@ it("folder navigation keeps the full current path and recent choices in the pick
   expect(picker).toContain('aria-label="Recent projects"');
   expect(picker).toContain('aria-current="true"');
   expect(picker).toContain("/projects/b");
-  expect(picker).toContain("Open this project");
+  expect(picker).toContain('title="Open /projects/b"');
+  // Before the first observation settles nothing is named or openable, and
+  // there is no separate Browse step.
+  expect(picker).toContain("Reading folder…");
+  expect(picker).toMatch(/<button[^>]*class="primary"[^>]*disabled=""/);
+  expect(picker).toContain("Open this folder");
+  expect(picker).not.toContain(">Browse<");
   expect(open).not.toHaveBeenCalled();
   expect(read).not.toHaveBeenCalled();
+  const chinese = renderToStaticMarkup(
+    <LocaleProvider initial="zh">
+      <ProjectPicker
+        client={{ workbenchRead: read }}
+        current="/projects/a"
+        epoch="epoch"
+        onClose={() => {}}
+      />
+    </LocaleProvider>,
+  );
+  expect(chinese).toContain("打开此文件夹");
+  expect(chinese).not.toContain("浏览");
 });
 
 it("the entry sidebar explains per-project history and lists recent projects without opening one", () => {

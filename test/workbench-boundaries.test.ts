@@ -3,13 +3,15 @@ import {
   linkSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { conversationMessages } from "../src/conversation-context.mjs";
+import { ContractError } from "../src/service/contracts/core.ts";
 import {
   type ChatTurn,
   decodeChatTurn,
@@ -207,6 +209,41 @@ it("file previews refuse hard-linked private files and hide credential paths", (
   expect(listing.kind).toBe("files");
   if (listing.kind !== "files") throw new Error("Missing files");
   expect(listing.entries).toEqual([]);
+});
+
+it("folder browsing names the home with ~ and refuses files and links instead of calling them unreadable", () => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "wb-browse-home-")));
+  mkdirSync(join(home, "work", "project"), { recursive: true, mode: 0o700 });
+  writeFileSync(join(home, "notes.txt"), "plain");
+  vi.stubEnv("HOME", home);
+  vi.stubEnv("USERPROFILE", home);
+  try {
+    const files = new WorkbenchFiles(home, [], () => []);
+    const code = (path: string) => {
+      try {
+        files.list(path, true);
+        return "listed";
+      } catch (error) {
+        return error instanceof ContractError ? error.code : "other";
+      }
+    };
+    expect(files.list("~", true)).toMatchObject({ path: home });
+    expect(files.list("~/work", true)).toMatchObject({
+      path: join(home, "work"),
+      entries: [{ name: "project", directory: true }],
+    });
+    expect(code(join(home, "missing"))).toBe("invalid");
+    expect(code("work")).toBe("invalid");
+    expect(code(join(home, "notes.txt"))).toBe("forbidden");
+    if (process.platform !== "win32") {
+      symlinkSync(join(home, "work"), join(home, "linked"), "dir");
+      expect(code(join(home, "linked", "project"))).toBe("forbidden");
+    }
+    // Open's own resolution is unchanged: it still requires a full path.
+    expect(() => files.directory("~")).toThrow(ContractError);
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });
 
 it.skipIf(process.platform === "win32")(

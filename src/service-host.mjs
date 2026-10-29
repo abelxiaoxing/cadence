@@ -9,7 +9,7 @@ import {
   createServer as createServer2,
   request as request2
 } from "node:http";
-import { homedir as homedir4 } from "node:os";
+import { homedir as homedir5 } from "node:os";
 import { WebSocket, WebSocketServer as WebSocketServer2 } from "ws";
 
 // src/service-assets.ts
@@ -9772,6 +9772,7 @@ import {
   readSync as readSync4,
   realpathSync as realpathSync3
 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
 import { dirname as dirname10, isAbsolute as isAbsolute6, join as join12, relative as relative5, resolve as resolve6, sep as sep4 } from "node:path";
 
 // src/worker-redaction.mjs
@@ -10176,8 +10177,18 @@ class WorkbenchFiles {
       throw new ContractError("forbidden");
     return target;
   }
+  browsed(path) {
+    const full = /^~(?:[\\/]|$)/.test(path) ? join12(homedir4(), path.slice(1)) : path || this.root;
+    try {
+      return this.directory(full);
+    } catch (error) {
+      if (error instanceof Error && error.message === "Unsafe directory")
+        throw new ContractError("forbidden");
+      throw error;
+    }
+  }
   list(path, directories = false) {
-    const selected2 = directories ? this.directory(path || this.root) : this.selected(path);
+    const selected2 = directories ? this.browsed(path) : this.selected(path);
     if (!safeDirectory(selected2) || sanitizeText(selected2, this.secrets()) !== selected2)
       throw new ContractError("forbidden");
     const entries = [], dir = opendirSync5(selected2);
@@ -10370,7 +10381,7 @@ Content-Length: 0\r
     server.close();
     throw error;
   }
-  const files = new WorkbenchFiles(homedir4(), [store.files.namespace, input.agentDir], () => acquired.access.redactionLiterals());
+  const files = new WorkbenchFiles(homedir5(), [store.files.namespace, input.agentDir], () => acquired.access.redactionLiterals());
   const assert = () => {
     store.assert();
     if (!accepting)
@@ -10730,7 +10741,7 @@ Content-Length: 0\r
           kind: "workbench",
           epoch: auth.epoch,
           csrf: auth.csrf,
-          home: homedir4(),
+          home: homedir5(),
           projects: store.projects(),
           build: build2
         });

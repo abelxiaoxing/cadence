@@ -9,6 +9,7 @@ import { decodeWorkbenchResult } from "../../src/service/contracts/workbench.ts"
 import type { ServiceClient } from "../../src/service-client.ts";
 import {
   ContractError,
+  ERROR_CODES,
   parseWireJson,
   publicError,
 } from "../../src/service-contract.ts";
@@ -193,7 +194,17 @@ export function Workbench() {
             { credentials: "same-origin", redirect: "error", signal },
           );
           const value = await read(response);
-          if (!response.ok) throw new ContractError("unavailable");
+          // Keep a refusal's public code so the picker can say why (missing,
+          // refused, unreadable); anything unrecognised stays unavailable.
+          if (!response.ok) {
+            const code = errorCode(value);
+            return {
+              kind: "error",
+              error: publicError(
+                ERROR_CODES.find((known) => known === code) ?? "unavailable",
+              ),
+            };
+          }
           return { kind: "ok", value: decodeWorkbenchResult(value) };
         } catch {
           return { kind: "error", error: publicError("unavailable") };
@@ -218,6 +229,7 @@ export function Workbench() {
         api={api}
         onOpenProject={open}
         onWorkbenchHome={() => navigate(null)}
+        workbenchHome={entry.home}
         projectEntries={entry.projects.map((p) => ({
           path: p.cwd,
           current: p.id === selected,
@@ -260,6 +272,7 @@ export function Workbench() {
             current: false,
           }))}
           initial={picker}
+          home={entry.home}
           epoch={entry.epoch}
           onClose={() => setPicker(null)}
           onOpen={open}
