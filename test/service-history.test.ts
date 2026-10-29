@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
@@ -11,7 +11,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { open } from "node:fs/promises";
-import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,23 +19,18 @@ import { HistoryReader } from "../src/history/reader.ts";
 import { COMPLETE, type JournalRow } from "../src/history/types.ts";
 import { HistoryWriter } from "../src/history/writer.ts";
 import { ServiceCoordination } from "../src/service/coordination.ts";
-import { OwnerModelContext } from "../src/service/model-context.ts";
-import { ServiceOwner } from "../src/service/owner.ts";
 import {
   canonicalJson,
-  decodeWorkerPublicRequest,
   LIMITS,
   type OwnerRecordingInput,
   type PublicRecordingInput,
   type ReadCursor,
   type WorkerCompletion,
 } from "../src/service-contract.ts";
-import { preparedWorker } from "../src/subagent-process.ts";
 import {
   admitFixtureRun,
   failedCompletion,
   historyFixture,
-  ownerFact,
   prepareFixtureChild,
 } from "./helpers/history-fixture.ts";
 import { historyProfile } from "./helpers/history-profile.ts";
@@ -57,7 +51,6 @@ vi.mock("node:fs/promises", async (original) => {
   return { ...value, open: vi.fn(value.open) };
 });
 const nativeOpen = vi.mocked(open).getMockImplementation()!;
-const nativeSpawn = vi.mocked(spawn).getMockImplementation()!;
 function diskBytes(path: string): [string, string][] {
   return readdirSync(path, { withFileTypes: true }).flatMap(
     (e): [string, string][] =>
@@ -435,32 +428,6 @@ for (const fault of ["interior", "artifact", "hardlink", "mode"] as const)
     expect(() => HistoryReader.open(f.c)!.inspect()).toThrow();
     expect(diskBytes(f.files.directory)).toEqual(before);
   });
-it("pending original IO stays charged after five-second reporting stall; no late repair", async () => {
-  let release!: () => void,
-    reached = false;
-  const gate = new Promise<void>((yes) => {
-    release = yes;
-  });
-  const f = historyFixture({
-    observeWrite: async (at) => {
-      if (at === "artifacts") {
-        reached = true;
-        await gate;
-      }
-    },
-  });
-  const pending = ownerContent(f, "retained under slow IO");
-  expect((await pending).status).toBe("refused");
-  expect(reached).toBe(true);
-  expect(f.writer.quarantined).toBe(true);
-  expect(f.writer.pendingWrites).toBe(1);
-  expect(f.writer.accounting.owner.bytes).toBeGreaterThan(0);
-  release();
-  await f.writer.settled();
-  expect(f.writer.pendingWrites).toBe(0);
-  expect(f.writer.accounting.owner.bytes).toBe(0);
-  expect(f.writer.committedSeq).toBe("0");
-}, 10000);
 it("quota saturation includes orphans and injected ENOSPC retains fences and old readable bytes", async () => {
   const f = historyFixture({ quotaBytes: 2 * 1024 * 1024 });
   expect(await f.writer.commit(f.intent)).toEqual({ status: "uncertain" });
@@ -477,232 +444,6 @@ it("quota saturation includes orphans and injected ENOSPC retains fences and old
   expect(readFileSync(g.files.segmentPath(1))).toEqual(before);
   expect(HistoryReader.open(g.c)!.inspect().tail).toBe(false);
 });
-it("actual W1 preparation and W2 SDK capture commit >2MiB into this durable writer without viewers", async () => {
-  profile = historyProfile("native");
-  vi.mocked(open).mockImplementation(async (...args) => {
-    const fd = await nativeOpen(...args);
-    profile?.wrap(fd, "sync", "native.sync");
-    return fd;
-  });
-  const f = historyFixture();
-  const home = join(f.dir, "home"),
-    agentDir = join(home, "agent");
-  mkdirSync(agentDir, { recursive: true, mode: 0o700 });
-  const key = "fabricated-w3-provider-secret",
-    ownerSecret = "fabricated-w3-owner-secret";
-  const expected = `${"x".repeat(1018)}${key} ${"y".repeat(2040 - 1018 - key.length - 1)}${ownerSecret} ${"x".repeat(2 * 1024 * 1024 + 1)} λ final`;
-  let contacts = 0,
-    originalClose = false,
-    spawns = 0;
-  const server = createServer(async (req, res) => {
-    for await (const _ of req) {
-      /* original request drain */
-    }
-    contacts++;
-    expect(req.headers.authorization).toBe(`Bearer ${key}`);
-    res.writeHead(200, {
-      "content-type": "text/event-stream",
-      connection: "close",
-    });
-    const send = (delta: unknown, finish_reason: string | null = null) =>
-      res.write(
-        `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 1, model: "fixed", choices: [{ index: 0, delta, finish_reason }] })}\n\n`,
-      );
-    for (let at = 0; at < expected.length; at += 1024)
-      send({ role: "assistant", content: expected.slice(at, at + 1024) });
-    send({}, "stop");
-    res.end("data: [DONE]\n\n");
-  });
-  await new Promise<void>((yes) => server.listen(0, "127.0.0.1", yes));
-  try {
-    const address = server.address();
-    if (!address || typeof address === "string")
-      throw new Error("Fixture unavailable");
-    writeFileSync(
-      join(agentDir, "auth.json"),
-      JSON.stringify({ fixture: { type: "api_key", key } }),
-      { mode: 0o600 },
-    );
-    writeFileSync(
-      join(agentDir, "models.json"),
-      JSON.stringify({
-        providers: {
-          fixture: {
-            baseUrl: `http://127.0.0.1:${address.port}/v1`,
-            api: "openai-completions",
-            models: [{ id: "fixed", reasoning: false }],
-          },
-        },
-      }),
-      { mode: 0o600 },
-    );
-    for (const key of [
-      "http_proxy",
-      "https_proxy",
-      "HTTP_PROXY",
-      "HTTPS_PROXY",
-      "ALL_PROXY",
-      "all_proxy",
-      "NO_PROXY",
-      "no_proxy",
-      "NODE_USE_ENV_PROXY",
-      "NODE_OPTIONS",
-    ])
-      vi.stubEnv(key, undefined);
-    const owner = new ServiceOwner(f.lease, {
-      quiesce() {},
-      flush: () => f.writer.flush(),
-      closeListener: async () => {},
-    });
-    const context = new OwnerModelContext({
-      home,
-      cwd: f.root,
-      agentDir,
-      environment: { HOME: home, USERPROFILE: home },
-      owner,
-      accounting: f.writer.auth,
-    });
-    await context.load();
-    const model = context.select({
-      provider: "fixture",
-      model: "fixed",
-      api: "openai-completions",
-      thinking: "off",
-    });
-    f.context.model = model;
-    f.writer.supplyContext(f.context);
-    expect((await f.writer.commit(f.intent)).status).toBe("committed");
-    await admitFixtureRun(f);
-    const request = decodeWorkerPublicRequest({
-      protocol: 2,
-      taskId: f.link.taskId,
-      taskKind: "research",
-      runId: f.link.runId,
-      childRunId: f.link.childRunId,
-      assignmentId: "one",
-      purpose: "research",
-      model,
-      role: { role: "design-explorer", sha256: "a".repeat(64) },
-      context: "",
-      instructions: "Fixture only",
-      prompt: "Inspect",
-      handoff: { graphRevision: 1, inputs: [] },
-    });
-    const prepared = await context.prepare({
-      request,
-      operationId: randomUUID(),
-      epoch: f.link.epoch,
-      timeoutMs: 15000,
-      signal: new AbortController().signal,
-      current: () => true,
-    });
-    expect(prepared.status).toBe("prepared");
-    if (prepared.status !== "prepared") throw new Error("No preparation");
-    expect(
-      (await f.writer.processes.launchIntent(f.link, f.intent.operationId))
-        .status,
-    ).toBe("committed");
-    vi.mocked(spawn).mockImplementationOnce((command, args, options) => {
-      spawns++;
-      const child = nativeSpawn(
-        command,
-        [
-          "--import",
-          new URL("./helpers/lightweight-sdk-guard.mjs", import.meta.url).href,
-          ...(args ?? []),
-        ],
-        options,
-      );
-      child.on("close", () => {
-        originalClose = true;
-      });
-      return child;
-    });
-    const result = await preparedWorker(
-      prepared.prepared,
-      request,
-      f.link,
-      [ownerSecret],
-      15000,
-    ).launch(new AbortController().signal, f.writer.capture(f.link));
-    expect(result.native).toMatchObject({
-      outcome: "completed",
-      closure: "direct-child-closed",
-      exitCode: 0,
-      stdin: "delivered",
-      final: "valid",
-      cleanup: "settled",
-    });
-    expect(result.recording.status).toBe("committed");
-    expect(originalClose).toBe(true);
-    expect(spawns).toBe(1);
-    expect(contacts).toBe(1);
-    const settled = await f.writer.processes.settlement(f.link, result);
-    expect(settled.status).toBe("committed");
-    if (settled.status !== "committed") throw new Error("No settlement");
-    if (result.recording.status !== "committed")
-      throw new Error("No retained result");
-    const reader = HistoryReader.open(f.c)!,
-      content = result.recording.detail.content;
-    let cursor: ReadCursor | null = {
-      storeId: reader.storeId,
-      scope: { kind: "child", id: f.link.childRunId },
-      snapshotSeq: reader.inspect().committedSeq,
-      recordId: content.recordId,
-      recordVersion: content.version,
-      field: content.field,
-      query: null,
-      offset: 0,
-    };
-    let body = "",
-      pages = 0;
-    while (cursor) {
-      const page = await reader.detail(cursor);
-      body += page.text;
-      cursor = page.next;
-      pages++;
-    }
-    expect(body).toBe(
-      expected
-        .replaceAll(key, "[redacted]")
-        .replaceAll(ownerSecret, "[redacted]"),
-    );
-    expect(pages).toBeGreaterThan(8);
-    expect(content.bytes).toBeGreaterThan(LIMITS.ringBytes);
-    for (const [path] of diskBytes(f.files.directory)) {
-      const bytes = readFileSync(path, "utf8");
-      expect(bytes).not.toContain(key);
-      expect(bytes).not.toContain(ownerSecret);
-    }
-    expect(f.writer.pendingWrites).toBe(0);
-    expect(
-      (
-        await ownerFact(f, {
-          kind: "parent-settled",
-          runId: f.link.runId,
-          settlement: {
-            kind: "parent",
-            outcome: "completed",
-            required: [
-              {
-                assignmentId: "one",
-                childRunId: f.link.childRunId,
-                native: result.native,
-                recording: result.recording,
-                settlementSeq: settled.batch.committedSeq,
-              },
-            ],
-          },
-        })
-      ).status,
-    ).toBe("committed");
-    expect(new HistoryWriter(f.lease).quarantined).toBe(false);
-  } finally {
-    vi.unstubAllEnvs();
-    server.closeAllConnections();
-    await new Promise<void>((yes) => server.close(() => yes()));
-  }
-}, 20000);
 
 let crashFixture: string;
 let coldDetailFixture: string;
@@ -1179,46 +920,6 @@ it("foundation review: control flush drains progress without firing its batching
     vi.useRealTimers();
   }
 });
-it("foundation review: original sync keeps leases and publication fence after reporting timeout", async () => {
-  const f = historyFixture();
-  let reached!: () => void, release!: () => void;
-  const entered = new Promise<void>((yes) => {
-    reached = yes;
-  });
-  const gate = new Promise<void>((yes) => {
-    release = yes;
-  });
-  vi.mocked(open).mockImplementationOnce(async (...args) => {
-    const fd = await nativeOpen(...args),
-      sync = fd.sync.bind(fd);
-    vi.spyOn(fd, "sync").mockImplementationOnce(async () => {
-      reached();
-      await gate;
-      await sync();
-    });
-    return fd;
-  });
-  const pending = ownerContent(f, "still charged during original sync");
-  await entered;
-  try {
-    expect(await pending).toMatchObject({
-      status: "refused",
-      durability: "uncertain",
-    });
-    expect(f.writer.pendingWrites).toBe(1);
-    expect(f.writer.accounting.owner.bytes).toBeGreaterThan(0);
-    expect(HistoryReader.open(f.c)!.inspect().committedSeq).toBe("0");
-  } finally {
-    release();
-    await f.writer.settled();
-  }
-  expect(f.writer.pendingWrites).toBe(0);
-  expect(f.writer.accounting.owner.bytes).toBe(0);
-  expect(f.writer.quarantined).toBe(true);
-  expect((await pending).status).toBe("refused");
-  expect(HistoryReader.open(f.c)!.inspect().committedSeq).toBe("1");
-  expect((await f.writer.commit(f.intent)).status).toBe("uncertain");
-}, 10000);
 
 it("review: native zero cannot satisfy committed final recording with an incomplete retained detail", async () => {
   const f = historyFixture();

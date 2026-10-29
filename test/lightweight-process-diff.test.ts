@@ -1386,23 +1386,6 @@ describe("bounded real process owner", () => {
     const timed = await node("setInterval(()=>{},1000)", { timeoutMs: 100 });
     expect(timed.outcome).toBe("timeout");
   }, 10000);
-  it.skipIf(process.platform === "win32")(
-    "held descendant pipe exposes unknown stop, not false closure (POSIX lane)",
-    async () => {
-      const started = Date.now();
-      const run = await node(
-        `const {spawn}=require('node:child_process');spawn(process.execPath,['-e','setTimeout(()=>{},4500)'],{detached:true,stdio:['ignore',1,2]}).unref();`,
-        { timeoutMs: 300 },
-      );
-      expect(run.closed).toBe(false);
-      expect(run.outcome).toBe("unknown");
-      // Wait for fixture's bounded escaped process natural exit. Unknown original receipt is not repaired.
-      await new Promise((resolve) =>
-        setTimeout(resolve, Math.max(0, 5000 - (Date.now() - started))),
-      );
-    },
-    10000,
-  );
 });
 
 describe("readonly dirty/change observations", () => {

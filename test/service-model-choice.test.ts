@@ -247,7 +247,8 @@ for (const scenario of [
   "closed-action-owner",
   "stop",
 ] as const) {
-  it(`actual isolated SDK/host/HTTP model choice: ${scenario}`, async () => {
+  // Each scenario owns its root and native child, so they run concurrently.
+  it.concurrent(`actual isolated SDK/host/HTTP model choice: ${scenario}`, async () => {
     const root = mkdtempSync(join(tmpdir(), "cadence-model-choice-native-"));
     const home = join(root, "home");
     mkdirSync(home, { mode: 0o700 });

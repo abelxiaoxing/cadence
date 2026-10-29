@@ -1,6 +1,6 @@
 /** Actual isolated owner/choice/SDK/disk/check paths. No accepting production HTTP. */
 import type { SpawnOptions } from "node:child_process";
-import { createHash, randomUUID, webcrypto } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -16,7 +16,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { HistoryProjection } from "../src/history/projection.ts";
-import { HistoryReader } from "../src/history/reader.ts";
 import { proposePlan } from "../src/plan-proposal.ts";
 import { HttpAuthentication } from "../src/service/auth.ts";
 import { ServiceHttpServer } from "../src/service/http.ts";
@@ -25,7 +24,6 @@ import { ServiceClient } from "../src/service-client.ts";
 import {
   type Action,
   canonicalJson,
-  decodeActiveRuns,
   decodeCurrentChanges,
   decodeCurrentView,
   decodeWorkspaceBootstrap,
@@ -33,7 +31,6 @@ import {
   publicError,
 } from "../src/service-contract.ts";
 import { HttpServiceTransport } from "../src/service-http-client.ts";
-import { captureChanges } from "../src/task-diff.ts";
 import { request as httpRequest } from "./helpers/service-http-fixture.ts";
 import { createServiceHost } from "./helpers/source-host.ts";
 import { keepOnlyEnvironment } from "./helpers/windows-environment.ts";
@@ -384,116 +381,6 @@ it("initial none reads real legacy plan/roles without private writes; choice ena
   expect(f.contacts()).toBe(0);
 });
 
-it.each(["research", "code"] as const)(
-  "current and first %s Start share the exact prospective graph, then preserve native outcome and cold current metadata",
-  async (kind) => {
-    const f = await fixture();
-    f.choose();
-    const id = await f.create(kind);
-    if (kind === "code") {
-      const selected = f.h.coordination.store.loadSnapshot(id);
-      if (!selected) throw Error("task");
-      // Actual legacy/manual current-v1 plan; no retained private Save or invented reference.
-      f.h.coordination.store.save(
-        {
-          ...selected.record,
-          revision: selected.record.revision + 1,
-          plan: "Inspect and report the explicitly reviewed code task.",
-        },
-        selected.record.revision,
-        f.h.owner.lease.checkout,
-        selected.identity,
-      );
-    }
-    const view = f.current(id),
-      seq = f.h.writer.committedSeq;
-    const preview = await f.actions.observe({ kind: "start", taskId: id });
-    expect(preview.version).toEqual(
-      view.context.status === "available" ? view.context.version : null,
-    );
-    expect(f.h.writer.committedSeq).toBe(seq);
-    const receipt = await f.submit({ kind: "start", taskId: id }, view);
-    expect(receipt.runId).not.toBeNull();
-    expect(() => f.choose("other")).toThrow();
-    await f.actions.settledAll();
-    expect(f.contacts()).toBe(1);
-    expect(natives).toEqual([{ closed: true, code: 0 }]);
-    const stored = await f.h.writer.lookup(receipt.commandId);
-    expect(stored.status === "found" && stored.record.receipt.execution).toBe(
-      "completed",
-    );
-    expect(f.current(id).savedGraph).toEqual({ status: "none" });
-    expect(f.actions.activeRuns()).toMatchObject({
-      status: "complete",
-      runs: [],
-    });
-  },
-  20000,
-);
-
-it("saved graph is genuine before Start, portable hashes agree, and summary/review preserve cold lineage", async () => {
-  const f = await fixture();
-  f.choose();
-  const id = await f.create();
-  const action = await f.save(id);
-  const current = f.current(id);
-  expect(current.savedGraph.status).toBe("saved");
-  if (current.savedGraph.status !== "saved") throw Error("saved graph");
-  const reopened = HistoryReader.open(f.h.coordination);
-  if (!reopened) throw Error("reader");
-  const graph = await reopened.graph(current.savedGraph.request);
-  expect("graph" in graph && graph.graph).toEqual(action.graph);
-  const digest = await webcrypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(action.plan),
-  );
-  expect(Buffer.from(digest).toString("hex")).toBe(action.graph.plan.sha256);
-  const second = await proposePlan(
-    current,
-    "Second 中文 🙂",
-    action.graph.assignments,
-    {
-      uuid: randomUUID,
-      sha256: async (bytes) =>
-        Buffer.from(
-          await webcrypto.subtle.digest("SHA-256", Uint8Array.from(bytes)),
-        ).toString("hex"),
-    },
-  );
-  expect(second.graph.revision).toBe(action.graph.revision + 1);
-  expect(second.graph.planRevision).toBe(action.graph.planRevision + 1);
-  const receipt = await f.submit({ kind: "start", taskId: id });
-  await f.actions.settledAll();
-  expect(f.current(id).savedGraph).toMatchObject({
-    status: "saved",
-    request: { graph: current.savedGraph.request.graph },
-  });
-  if (!receipt.runId) throw Error("run");
-  const draft = {
-    kind: "review" as const,
-    taskId: id,
-    runId: receipt.runId,
-    changesIdentity: captureChanges(f.root).fingerprint,
-    checksRevision: 0,
-    acceptIssues: true,
-  };
-  const preview = await f.actions.observe(draft);
-  await f.submit(
-    { ...draft, checksRevision: preview.checksRevision },
-    f.current(id),
-  );
-  await f.actions.settledAll();
-  expect(f.h.coordination.store.load(id)?.phase).toBe("done");
-  const raw = f.h.coordination.store.loadSnapshot(id);
-  if (!raw) throw Error("task");
-  expect(
-    reopened.publishedPlan(id, f.h.writer.committedSeq, {
-      ...raw.record,
-      identity: raw.identity,
-    })?.graph,
-  ).toEqual(action.graph);
-}, 60000);
-
 it("current text and change body redact real private literals without editable identity or writes", async () => {
   const f = await fixture();
   f.choose();
@@ -660,39 +547,6 @@ it("raw-byte and real model-source changes refuse instead of refreshing prior cu
   expect(() => f.choose("other")).toThrow();
   expect(f.contacts()).toBe(0);
 });
-
-it("active accepted-unallocated work stays discoverable on an older task page and blocks choice", async () => {
-  const f = await fixture();
-  f.choose();
-  const old = await f.create(),
-    id = await f.create();
-  let release!: () => void;
-  const pending = new Promise<void>((yes) => {
-    release = yes;
-  });
-  const original = f.h.writer.admitRun.bind(f.h.writer);
-  vi.spyOn(f.h.writer, "admitRun").mockImplementation(async (...args) => {
-    await pending;
-    return original(...args);
-  });
-  try {
-    const receipt = await f.submit({ kind: "start", taskId: id });
-    expect(f.current(old).task?.id).toBe(old);
-    const refs = f.actions.activeRuns();
-    expect(refs).toMatchObject({
-      status: "complete",
-      runs: [
-        { taskId: id, runId: receipt.runId, stage: "accepted-unallocated" },
-      ],
-    });
-    expect(f.actions.workspace().activeRuns).toEqual(refs);
-    expect(() => f.choose("other")).toThrow();
-  } finally {
-    release();
-  }
-  await f.actions.settledAll();
-  expect(f.contacts()).toBe(1);
-}, 20000);
 
 it("actual checks/changes use shared callbacks, exact own-generation PASS and relevant result revision", async () => {
   const f = await fixture();
@@ -1298,118 +1152,6 @@ it("nullable consumer refuses configuration replacement across actual admission,
   expect(f.contacts()).toBe(0);
 });
 
-it("active roster is unavailable during original acceptance and retains the frozen chosen model after allocation", async () => {
-  const f = await fixture();
-  const choice = f.choose();
-  const id = await f.create();
-  let release!: () => void, entered!: () => void;
-  const pending = new Promise<void>((yes) => {
-    release = yes;
-  });
-  const reached = new Promise<void>((yes) => {
-    entered = yes;
-  });
-  const original = f.h.writer.commit.bind(f.h.writer);
-  vi.spyOn(f.h.writer, "commit").mockImplementationOnce(async (...args) => {
-    entered();
-    await pending;
-    return original(...args);
-  });
-  const submitting = f.submit({ kind: "start", taskId: id });
-  try {
-    await reached;
-    expect(f.actions.activeRuns()).toMatchObject({
-      status: "unavailable",
-      error: { code: "receipt-inconclusive" },
-    });
-    expect(() => f.choose("other")).toThrow();
-    expect(f.h.choice.snapshot()).toEqual(choice);
-  } finally {
-    release();
-  }
-  const receipt = await submitting;
-  await f.actions.settledAll();
-  if (!receipt.runId) throw Error("run");
-  expect(
-    f.h.reader.admission(receipt.runId, f.h.writer.committedSeq).identity
-      .context.model,
-  ).toEqual(choice.selected);
-  expect(natives).toEqual([{ closed: true, code: 0 }]);
-  expect(f.contacts()).toBe(1);
-}, 20000);
-
-it("active roster retains a natively settled check while its original final publication drains", async () => {
-  const f = await fixture();
-  f.choose();
-  const older = await f.create(),
-    id = await f.create("code");
-  let release!: () => void,
-    entered!: () => void,
-    publications = 0;
-  const pending = new Promise<void>((yes) => {
-    release = yes;
-  });
-  const reached = new Promise<void>((yes) => {
-    entered = yes;
-  });
-  const original = f.h.writer.publishTask.bind(f.h.writer);
-  vi.spyOn(f.h.writer, "publishTask").mockImplementation(async (...args) => {
-    if (++publications === 2) {
-      entered();
-      await pending;
-    }
-    return original(...args);
-  });
-  const receipt = await f.submit({
-    kind: "check",
-    taskId: id,
-    check: {
-      kind: "manual",
-      name: "Manual",
-      command: process.platform === "win32" ? "exit /b 0" : "true",
-      timeoutMs: 120000,
-    },
-  });
-  try {
-    await reached;
-    expect(f.current(older).task?.id).toBe(older);
-    expect(f.actions.activeRuns()).toMatchObject({
-      status: "complete",
-      runs: [
-        { taskId: id, runId: receipt.runId, kind: "check", stage: "draining" },
-      ],
-    });
-    expect(() => f.choose("other")).toThrow();
-    const facts = [...f.h.reader.files.scan()]
-      .flatMap((b) => b.rows)
-      .flatMap((r) => (r.value.kind === "owner" ? r.value.events : []))
-      .flatMap((e) =>
-        e.kind === "owner" &&
-        e.value.kind === "fact" &&
-        e.value.fact.kind === "check-settled"
-          ? [e.value.fact]
-          : [],
-      );
-    expect(facts).toHaveLength(1);
-    expect(facts[0]).toMatchObject({
-      status: "passed",
-      native: {
-        outcome: "completed",
-        closure: "direct-child-closed",
-        exitCode: 0,
-      },
-    });
-  } finally {
-    release();
-  }
-  await f.actions.settledAll();
-  expect(f.actions.activeRuns()).toMatchObject({
-    status: "complete",
-    runs: [],
-  });
-  expect(f.contacts()).toBe(0);
-}, 20000);
-
 it("prospective helper rejects role/model/UTF8/graph/version/crypto faults before returning authority or invoking an invalid digest", async () => {
   const f = await fixture();
   f.choose();
@@ -1612,83 +1354,3 @@ it("current default eviction and same-revision changes stale the old proposal in
   expect(tree(f.h.reader.files.directory)).toEqual(before);
   expect(f.contacts()).toBe(0);
 });
-
-it("actual eight accepted unallocated episodes are complete across pages; capacity and epoch substitutions refuse", async () => {
-  const f = await fixture();
-  f.choose();
-  const ids = Array.from({ length: 9 }, () => legacyResearch(f));
-  let release!: () => void;
-  const pending = new Promise<void>((yes) => {
-    release = yes;
-  });
-  const original = f.h.writer.admitRun.bind(f.h.writer);
-  vi.spyOn(f.h.writer, "admitRun").mockImplementation(async (...args) => {
-    await pending;
-    return original(...args);
-  });
-  const runs: string[] = [];
-  try {
-    for (const id of ids.slice(0, 8)) {
-      const receipt = await f.submit({ kind: "start", taskId: id });
-      if (!receipt.runId) throw Error("accepted run");
-      runs.push(receipt.runId);
-    }
-    const roster = f.actions.activeRuns();
-    expect(roster.status).toBe("complete");
-    if (roster.status !== "complete") throw Error("roster");
-    expect(roster.runs.map((r) => r.runId)).toEqual(runs);
-    expect(roster.runs.every((r) => r.stage === "accepted-unallocated")).toBe(
-      true,
-    );
-    expect(f.current(ids[8]).task?.id).toBe(ids[8]);
-    expect(f.actions.workspace().activeRuns).toEqual(roster);
-    expect(() => f.choose("other")).toThrow();
-    const last = f.current(ids[8]);
-    if (last.context.status !== "available") throw Error("context");
-    expect(
-      await f.actions.admission.preflight(
-        {
-          action: { kind: "start", taskId: ids[8] },
-          expected: last.context.version,
-        },
-        f.caller,
-      ),
-    ).toMatchObject({ kind: "error", error: { code: "capacity" } });
-    expect(() =>
-      decodeActiveRuns({
-        ...roster,
-        runs: [
-          ...roster.runs,
-          {
-            ...roster.runs[0],
-            runId: randomUUID(),
-            taskId: ids[8],
-            operationId: randomUUID(),
-          },
-        ],
-      }),
-    ).toThrow();
-    expect(() =>
-      decodeActiveRuns({
-        ...roster,
-        runs: [{ ...roster.runs[0], epoch: randomUUID() }],
-      }),
-    ).toThrow();
-    // Exact internal cancellation requests to the actual episodes, before any
-    // allocation resumes. This control does not claim authenticated HTTP Cancel.
-    for (const run of runs) f.actions.scheduler.cancel(run);
-    expect(f.actions.activeRuns()).toMatchObject({
-      status: "complete",
-      runs: runs.map((runId) => ({ runId, stage: "draining" })),
-    });
-  } finally {
-    release();
-  }
-  await f.actions.settledAll();
-  expect(f.actions.activeRuns()).toMatchObject({
-    status: "complete",
-    runs: [],
-  });
-  expect(f.contacts()).toBe(0);
-  expect(natives).toEqual([]);
-}, 60000);

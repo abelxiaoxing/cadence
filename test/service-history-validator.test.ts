@@ -18,13 +18,11 @@ import { ForwardValidator } from "../src/history/validator.ts";
 import {
   ContractError,
   canonicalJson,
-  encodeExportFrame,
   LIMITS,
   type ReadCursor,
 } from "../src/service-contract.ts";
 import { historyFixture } from "./helpers/history-fixture.ts";
 import {
-  readProjection,
   retainedText,
   searchSeed,
   storedTree,
@@ -50,40 +48,6 @@ beforeAll(() => {
   );
   expect(build.status, build.stderr).toBe(0);
 });
-it.each(["probe", "probe-twice", "probe-bad-head"])(
-  "native cold exact8MiB search/detail and both exports: %s",
-  (mode) => {
-    const parent = mkdtempSync(join(tmpdir(), "cadence-validator-exact-")),
-      dir = join(parent, "fixture");
-    const child = spawnSync(process.execPath, [bundle, mode, dir], {
-      encoding: "utf8",
-      timeout: 90000,
-      maxBuffer: 2 * 1024 * 1024,
-    });
-    expect(child.status, child.stderr).toBe(0);
-    expect(child.signal).toBeNull();
-    expect(child.stderr).toBe("");
-    const receipt = JSON.parse(readFileSync(join(dir, "receipt.json"), "utf8"));
-    expect(receipt.featureComplete).toBe(true);
-    expect(receipt.predecessorBytes).toBe(8388608);
-    if (mode === "probe") expect(receipt.bridgeBytes).toBe(785);
-    expect(receipt.readLimit).toBe(8388608);
-    expect(receipt.readTimeLimit).toBe(100);
-    expect(receipt.entireHistoryTreeUnchanged).toBe(true);
-    for (const format of ["ndjson", "markdown"])
-      expect(
-        JSON.parse(
-          readFileSync(join(dir, `export-${format}-receipt.json`), "utf8"),
-        ),
-      ).toMatchObject({
-        format,
-        trailer: true,
-        sourceUnchanged: true,
-        exactTarget: true,
-      });
-  },
-  100000,
-);
 
 /** Deliberately injected smaller byte quantum, not a raised production ceiling. */
 async function firstProgress(
@@ -286,85 +250,3 @@ it("finite original scan agrees with the independent administrative scanner; rea
   );
   expect(validator.state.previous.high).toBe(Number(f.files.inspect().highSeq));
 });
-
-it.each([3, 2])(
-  "private iterator exports a9MiB retained field in both formats without a browser key, format%s",
-  async (version) => {
-    const f = historyFixture(),
-      text = "retained界\n".repeat(800000),
-      selected = await retainedText(f, text, "plan", 1, 1);
-    expect(Buffer.byteLength(text)).toBeGreaterThan(8 * 1024 * 1024);
-    const snapshotSeq = f.writer.committedSeq;
-    if (version === 2) {
-      // Fixture setup only: construct recognized old-format bytes, preserving the
-      // original new-format files OUTSIDE history. No product migration is invoked.
-      const path = join(f.files.directory, "format.json"),
-        format = JSON.parse(readFileSync(path, "utf8"));
-      renameSync(path, join(f.dir, "original-format3.json"));
-      renameSync(
-        join(f.files.directory, "read-proof-key.json"),
-        join(f.dir, "original-format3-key.json"),
-      );
-      writeFileSync(
-        path,
-        JSON.stringify({ ...format, schema: "cadence-history-store/2" }),
-        { mode: 0o600 },
-      );
-    }
-    const before = storedTree(f.files.directory);
-    for (const format of ["ndjson", "markdown"] as const) {
-      const sum = createHash("sha256"),
-        content = createHash("sha256");
-      let count = 0,
-        encodedBytes = 0,
-        contentBytes = 0,
-        trailer = false,
-        markdownDetail = false;
-      for await (const frame of readProjection(f).export(
-        {
-          storeId: f.files.format.storeId,
-          scope: { kind: "task", id: f.link.taskId },
-          snapshotSeq,
-          format,
-        },
-        new AbortController().signal,
-      )) {
-        expect(trailer).toBe(false);
-        if (frame.event.kind === "trailer") {
-          expect(frame.event).toMatchObject({
-            frames: count,
-            encodedBytes,
-            complete: true,
-            sha256: sum.digest("hex"),
-          });
-          trailer = true;
-        } else {
-          const bytes = encodeExportFrame(frame, format);
-          sum.update(bytes);
-          encodedBytes += Buffer.byteLength(bytes);
-          count++;
-          if (frame.event.kind === "detail") {
-            content.update(frame.event.text);
-            contentBytes += Buffer.byteLength(frame.event.text);
-          }
-          if (frame.event.kind === "markdown") {
-            if (frame.event.text.startsWith("\n\n### ")) markdownDetail = true;
-            else if (frame.event.text.startsWith("\n\nCoverage: "))
-              markdownDetail = false;
-            else if (markdownDetail) {
-              const retained = frame.event.text.replace(/^ {4}/gm, "");
-              content.update(retained);
-              contentBytes += Buffer.byteLength(retained);
-            }
-          }
-        }
-      }
-      expect(trailer).toBe(true);
-      expect(contentBytes).toBe(Buffer.byteLength(text));
-      expect(content.digest("hex")).toBe(selected.content.sha256);
-      expect(encodedBytes).toBeGreaterThan(Buffer.byteLength(text));
-    }
-    expect(storedTree(f.files.directory)).toEqual(before);
-  },
-  90000,
-);

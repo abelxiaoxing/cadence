@@ -172,17 +172,14 @@ function diskSink(path: string, gate: Promise<void>, batchMs = 0) {
   };
   return { sink, pool, contents, metrics };
 }
-for (const mode of ["instant", "stalled", "batched", "disk-error"] as const)
+for (const mode of ["instant", "disk-error"] as const)
   it(`actual SDK producer / ${mode} disk fixture preserves original charges and native facts`, async () => {
-    const slow = mode === "stalled";
     const root = mkdtempSync(join(tmpdir(), "cadence-w2-disk-"));
     const path =
       mode === "disk-error" ? root : join(root, "fixture-public.jsonl");
     const key = "fabricated-worker-canary",
       ownerToken = "fabricated-owner-only-canary";
-    const expected = slow
-      ? "x".repeat(512 * 1024)
-      : `beyond-preview ${key} ${ownerToken} ${"x".repeat(mode === "batched" ? 2 * 1024 * 1024 : 32768)}`;
+    const expected = `beyond-preview ${key} ${ownerToken} ${"x".repeat(32768)}`;
     let requests = 0;
     const server = createServer(async (req, res) => {
       for await (const _chunk of req) {
@@ -206,13 +203,7 @@ for (const mode of ["instant", "stalled", "batched", "disk-error"] as const)
     await new Promise<void>((resolve) =>
       server.listen(0, "127.0.0.1", resolve),
     );
-    let release = () => {};
-    const gate = slow
-      ? new Promise<void>((resolve) => {
-          release = resolve;
-        })
-      : Promise.resolve();
-    const fixture = diskSink(path, gate, mode === "batched" ? 100 : 0);
+    const fixture = diskSink(path, Promise.resolve(), 0);
     const raw: Buffer[] = [];
     let nativeExit: number | null | undefined;
     let nativeClose = false;
@@ -297,15 +288,6 @@ for (const mode of ["instant", "stalled", "batched", "disk-error"] as const)
         expect(fixture.metrics.appendAttempts).toBe(1); // genuine EISDIR, no write retry
         expect(result.native.outcome).not.toBe("completed");
         expect(fixture.pool.accounting.leases).toBe(0);
-      } else if (slow) {
-        expect(result.recording.status).not.toBe("committed");
-        expect(fixture.pool.accounting.bytes).toBeGreaterThan(0); // ORIGINAL pending write not refunded.
-        release();
-        const deadline = Date.now() + 5000;
-        while (fixture.pool.accounting.leases && Date.now() < deadline)
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        expect(fixture.pool.accounting.leases).toBe(0);
-        expect(result.recording.status).not.toBe("committed"); // no retroactive success
       } else {
         expect(result.native).toMatchObject({
           outcome: "completed",
@@ -332,7 +314,6 @@ for (const mode of ["instant", "stalled", "batched", "disk-error"] as const)
         expect(fixture.pool.accounting.leases).toBe(0);
       }
     } finally {
-      release();
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

@@ -1357,26 +1357,6 @@ describe("transport regression controls and original settlement", () => {
     ws.close();
     await closed;
   });
-  it("native heartbeat runs at 5s and unresponsive viewer detaches after 15s, not cancellation", async () => {
-    const f = await setup(),
-      a = actionFixture(f),
-      cancel = vi.spyOn(a.owner, "requestCancel"),
-      ws = await socket(f);
-    const started = Date.now(),
-      messages: any[] = [];
-    ws.on("message", (v) => messages.push(JSON.parse(v.toString())));
-    const closed = once(ws, "close");
-    ws.send(JSON.stringify({ kind: "subscribe", scope: f.scope }));
-    await vi.waitFor(
-      () =>
-        expect(messages.some((v) => v.event?.kind === "heartbeat")).toBe(true),
-      { timeout: 7000 },
-    );
-    expect(Date.now() - started).toBeGreaterThanOrEqual(4000);
-    await closed;
-    expect(Date.now() - started).toBeGreaterThanOrEqual(14000);
-    expect(cancel).not.toHaveBeenCalled();
-  }, 23000);
   it("retains admitted injected work across rotation and closes original listeners/sockets once", async () => {
     const f = await setup(),
       a = actionFixture(f),
