@@ -15,9 +15,10 @@ export function useWorkbench(
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<{
     key: string;
+    revision: number;
     value?: WorkbenchResult;
     error?: string;
-  }>({ key });
+  }>({ key, revision: -1 });
   useEffect(() => {
     if (key === "null") return;
     void revision; // Explicit readonly refresh, never a command replay.
@@ -31,9 +32,10 @@ export function useWorkbench(
       if (abort.signal.aborted) return;
       setState((previous) =>
         reply.kind === "ok"
-          ? { key, value: reply.value }
+          ? { key, revision, value: reply.value }
           : {
               key,
+              revision,
               value: previous.key === key ? previous.value : undefined,
               error: reply.error.code,
             },
@@ -47,7 +49,13 @@ export function useWorkbench(
     };
   }, [client, key, revision, interval]);
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
-  return { ...(state.key === key ? state : {}), refresh };
+  return {
+    ...(state.key === key ? state : {}),
+    // Retained display data is not a settled initial/explicit observation.
+    loading:
+      key !== "null" && (state.key !== key || state.revision !== revision),
+    refresh,
+  };
 }
 export function cadenceInput(
   value: string,

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FiFolder, FiGlobe, FiPlus } from "react-icons/fi";
 import {
   decodeProjectEntry,
   decodeWorkbenchEntry,
@@ -19,6 +18,7 @@ import { browserClient } from "./client/browser";
 import { localBuild } from "./client/build-identity";
 import { currentProject } from "./client/project-route";
 import { ProjectPicker } from "./components/workspace/ProjectPicker";
+import { WorkbenchHome } from "./components/workspace/WorkbenchHome";
 import { useT } from "./i18n/locale";
 
 async function read(response: Response): Promise<unknown> {
@@ -39,7 +39,7 @@ function errorCode(value: unknown): string {
 /** Entry discovery is readonly. Only an explicit Open starts/reuses a project.
  * Scope changes remount the thin project client, detaching rather than stopping. */
 export function Workbench() {
-  const { t, locale, setLocale } = useT();
+  const { t } = useT();
   const [entry, setEntry] = useState<WorkbenchEntry | null>();
   const [selected, setSelected] = useState(currentProject);
   const [picker, setPicker] = useState<string | null>(null);
@@ -176,88 +176,41 @@ export function Workbench() {
       />
     );
   return (
-    <div className="app workbench-entry">
-      <header className="topbar">
-        <span className="brand">
-          <span className="brand-logo">C</span>
-          <h1 className="brand-name">Cadence</h1>
-        </span>
-        <span className="tb-spacer" />
-        <button
-          type="button"
-          className="icon-btn"
-          onClick={() => setLocale(locale === "zh" ? "en" : "zh")}
-          aria-label={locale === "zh" ? "Switch to English" : "切换到中文"}
-        >
-          <FiGlobe />
-          {locale === "zh" ? "EN" : "中文"}
-        </button>
-      </header>
-      <main className="workbench-landing">
-        <section>
-          <h2>{t("Your workbench, your projects")}</h2>
-          <p>
-            {t(
-              "No default workspace is created. Open an existing folder to use ordinary conversations and Cadence tasks.",
-            )}
-          </p>
-          <p className="inspector-note">
-            {t(
-              "Opening a project never starts a task. Switching projects keeps admitted work running in its original directory.",
-            )}
-          </p>
-          <button
-            type="button"
-            className="primary"
-            disabled={!entry}
-            onClick={() => setPicker(entry?.home ?? "")}
-          >
-            <FiPlus />
-            {t("Open working folder")}
-          </button>
-          {error && (
-            <p role="alert">
-              {error}{" "}
-              <button type="button" onClick={() => refresh((n) => n + 1)}>
-                {t("Reload observation")}
-              </button>
-            </p>
-          )}
-          {selected && !project && entry && (
-            <p role="alert">
-              {t(
-                "Selected project is unavailable. Choose a project explicitly; no directory was reconstructed.",
-              )}
-            </p>
-          )}
-        </section>
-        <section className="workbench-projects">
-          <h3>{t("Recent projects")}</h3>
-          {entry?.projects.map((project) => (
-            <button
-              type="button"
-              key={project.id}
-              onClick={() => setPicker(project.cwd)}
-            >
-              <FiFolder />
-              <span>{project.cwd}</span>
+    <>
+      <WorkbenchHome
+        ready={!!entry}
+        onOpenFolder={() => setPicker(entry?.home ?? "")}
+      >
+        {error && (
+          <p role="alert" className="banner-notice">
+            {error}{" "}
+            <button type="button" onClick={() => refresh((n) => n + 1)}>
+              {t("Reload observation")}
             </button>
-          ))}
-          {entry?.projects.length === 0 && (
-            <p className="inspector-note">{t("No projects associated yet.")}</p>
-          )}
-        </section>
-      </main>
+          </p>
+        )}
+        {selected && !project && entry && (
+          <p role="alert" className="banner-notice">
+            {t(
+              "Selected project is unavailable. Choose a project explicitly; no directory was reconstructed.",
+            )}
+          </p>
+        )}
+      </WorkbenchHome>
       {entry && picker !== null && (
         <ProjectPicker
           client={directories}
           current=""
+          projects={entry.projects.map((p) => ({
+            path: p.cwd,
+            current: false,
+          }))}
           initial={picker}
           epoch={entry.epoch}
           onClose={() => setPicker(null)}
           onOpen={open}
         />
       )}
-    </div>
+    </>
   );
 }

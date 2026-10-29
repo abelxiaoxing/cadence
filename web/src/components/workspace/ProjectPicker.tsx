@@ -14,9 +14,11 @@ export function ProjectPicker({
   epoch,
   onClose,
   onOpen,
+  projects = [],
 }: {
   client: Pick<ServiceClient, "workbenchRead"> &
     Partial<Pick<ServiceClient, "workbenchCommand">>;
+  projects?: { path: string; current: boolean }[];
   current: string;
   initial?: string;
   epoch: string;
@@ -38,11 +40,16 @@ export function ProjectPicker({
   const page = useWorkbench(client, { kind: "directories", path });
   const listing = page.value?.kind === "directories" ? page.value : undefined;
   const browse = (value: string) => {
+    if (busy) return;
     setPath(value);
     setDraft(value);
+    setError("");
+    page.refresh();
   };
+  const canOpen =
+    !busy && !!listing && !page.error && !page.loading && draft === path;
   const open = async () => {
-    if (busy || !listing || page.error) return;
+    if (!canOpen || !listing) return;
     if (!onOpen && listing.path === current) {
       onClose();
       return;
@@ -97,6 +104,26 @@ export function ProjectPicker({
           "Choose a folder on the service host. Opening reuses or starts that project's independent service; current work keeps running.",
         )}
       </p>
+      {projects.length > 0 && (
+        <section className="cwd-recent" aria-label={t("Recent projects")}>
+          <h3>{t("Recent projects")}</h3>
+          <div className="cwd-recent-list">
+            {projects.map((project) => (
+              <button
+                type="button"
+                key={project.path}
+                title={project.path}
+                aria-current={project.current ? "true" : undefined}
+                disabled={busy}
+                onClick={() => browse(project.path)}
+              >
+                <FiFolder aria-hidden="true" />
+                <span>{project.path}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
       <form
         className="cwd-input"
         onSubmit={(event) => {
@@ -107,14 +134,18 @@ export function ProjectPicker({
         <input
           aria-label={t("Folder path")}
           value={draft}
+          disabled={busy}
           onChange={(event) => setDraft(event.target.value)}
         />
-        <button type="submit">{t("Browse")}</button>
+        <button type="submit" disabled={busy}>
+          {t("Browse")}
+        </button>
       </form>
       <div className="cwd-picker-list">
         {listing?.parent && (
           <button
             type="button"
+            disabled={busy}
             onClick={() => browse(listing.parent as string)}
           >
             <FiArrowUp />
@@ -125,6 +156,7 @@ export function ProjectPicker({
           <button
             type="button"
             key={entry.path}
+            disabled={busy}
             onClick={() => browse(entry.path)}
           >
             <FiFolder />
@@ -155,7 +187,7 @@ export function ProjectPicker({
         <button
           type="button"
           className="primary"
-          disabled={busy || !listing || !!page.error}
+          disabled={!canOpen}
           onClick={() => void open()}
         >
           {busy ? t("Opening project…") : t("Open this project")}

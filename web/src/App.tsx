@@ -70,6 +70,7 @@ import {
 import { ProjectPicker } from "./components/workspace/ProjectPicker";
 import { RunSummary } from "./components/workspace/RunSummary";
 import { TaskSidebar } from "./components/workspace/TaskSidebar";
+import { WorkingFolderButton } from "./components/workspace/WorkingFolderButton";
 import { historyUrl, readHistoryUrl } from "./history/history-url";
 import { usePage } from "./history/use-page";
 import { Template, useT } from "./i18n/locale";
@@ -894,20 +895,12 @@ export function App({
               cancelCompatible={!!workspace.cancelCompatible}
               canceling={canceling}
               onCancel={cancel}
-              onProject={() => selectChat()}
               chats={
                 chats.value?.kind === "conversations" ? chats.value.entries : []
               }
               conversationId={chatId}
-              projects={
-                projectEntries ??
-                (projects.value?.kind === "projects"
-                  ? projects.value.entries
-                  : [{ path: workspace.workspace.rootLabel, current: true }])
-              }
               onConversation={selectChat}
               onNewConversation={() => selectChat()}
-              onOpenProject={(path) => setProjectOpen(path ?? "")}
               onTask={selectTask}
               onScope={selectScope}
               onNew={() => {
@@ -1248,17 +1241,10 @@ export function App({
         </div>
         <div className="statusbar-right">
           {workspace.workspace && (
-            <button
-              type="button"
-              className="status-cwd"
-              title={workingFolder}
-              aria-label={t("Switch working folder")}
+            <WorkingFolderButton
+              path={workingFolder}
               onClick={() => setProjectOpen("")}
-            >
-              <FiFolder />
-              <span>{workingFolder}</span>
-              <FiChevronDown />
-            </button>
+            />
           )}
           <div
             className={`status-item${workspace.compatible ? " faint" : " warn"}`}
@@ -1290,6 +1276,10 @@ export function App({
       {projectOpen !== null && workspace.workspace && (
         <ProjectPicker
           onOpen={onOpenProject}
+          projects={
+            projectEntries ??
+            (projects.value?.kind === "projects" ? projects.value.entries : [])
+          }
           client={api.client}
           current={workingFolder ?? workspace.workspace.rootLabel}
           initial={projectOpen || undefined}

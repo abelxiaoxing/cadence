@@ -50,10 +50,154 @@ for (const route of ["loopback", "https"])
       page.setDefaultTimeout(15000);
       page.on("pageerror", (error) => errors.push(error.message));
       await page.goto(g.link);
-      await page.getByText("Your workbench, your projects").waitFor();
+      await page.getByText("What would you like to work on?").waitFor();
       assert(!existsSync(join(g.home, "cadence")));
       assert.equal(g.f.contacts(), 0);
       assert.equal(g.store.projects().length, 0);
+      assert(
+        await page
+          .getByRole("textbox", { name: "Message", exact: true })
+          .isDisabled(),
+      );
+      assert.equal(
+        await page
+          .getByRole("button", { name: "Create task", exact: true })
+          .count(),
+        0,
+      );
+      assert.equal(
+        await page.getByText("Recent projects", { exact: true }).count(),
+        0,
+      );
+      await page
+        .getByRole("button", { name: "New conversation", exact: true })
+        .click();
+      await page
+        .getByRole("dialog", { name: "Open working folder", exact: true })
+        .waitFor();
+      assert.equal(
+        g.store.projects().length,
+        0,
+        "New conversation only offers folder selection",
+      );
+      const openProject = page.getByRole("button", {
+        name: "Open this project",
+        exact: true,
+      });
+      const waitForObservedFolder = () =>
+        page.waitForFunction(() =>
+          [...document.querySelectorAll("dialog button")].some(
+            (button) =>
+              button.textContent === "Open this project" && !button.disabled,
+          ),
+        );
+      await waitForObservedFolder();
+      await page.getByRole("textbox", { name: "Folder path" }).fill(paths[0]);
+      assert(
+        await openProject.isDisabled(),
+        "editing the path must not authorize opening the previously listed folder",
+      );
+      let directoryReads = 0;
+      let releaseRead;
+      const heldRead = new Promise((resolve) => {
+        releaseRead = resolve;
+      });
+      const directoriesRoute = "**/workbench/v1/directories?*";
+      await page.route(directoriesRoute, async (request) => {
+        if (
+          new URL(request.request().url()).searchParams.get("path") !== paths[0]
+        )
+          return request.continue();
+        directoryReads++;
+        if (directoryReads === 1)
+          return request.fulfill({
+            status: 503,
+            contentType: "application/json",
+            body: JSON.stringify({
+              kind: "error",
+              error: { code: "unavailable" },
+            }),
+          });
+        if (directoryReads === 3) await heldRead;
+        return request.continue();
+      });
+      await page.getByRole("button", { name: "Browse", exact: true }).click();
+      await page
+        .getByRole("alert")
+        .filter({ hasText: "unavailable" })
+        .waitFor();
+      assert(await openProject.isDisabled());
+      // Repeating the same readonly Browse must retry observation, never Open.
+      await page.getByRole("button", { name: "Browse", exact: true }).click();
+      await waitForObservedFolder();
+      assert.equal(directoryReads, 2);
+      try {
+        await Promise.all([
+          page.waitForRequest(
+            (request) =>
+              request.url().includes("directories") &&
+              new URL(request.url()).searchParams.get("path") === paths[0],
+          ),
+          page.getByRole("button", { name: "Browse", exact: true }).click(),
+        ]);
+        assert(
+          await openProject.isDisabled(),
+          "refreshing a previously successful listing must fence Open until it settles",
+        );
+      } finally {
+        releaseRead();
+      }
+      await waitForObservedFolder();
+      assert.equal(directoryReads, 3);
+      await page.unroute(directoriesRoute);
+      assert.equal(g.store.projects().length, 0);
+      assert.equal(g.f.contacts(), 0);
+      await page.keyboard.press("Escape");
+      await page.locator("dialog[open]").waitFor({ state: "hidden" });
+      for (const width of [390, 320]) {
+        await page.setViewportSize({ width, height: 844 });
+        await page.getByRole("button", { name: "Tasks", exact: true }).click();
+        await page.waitForFunction(() => {
+          const panel = document.querySelector(".drawer-left");
+          return (
+            panel?.classList.contains("open") &&
+            panel.contains(document.activeElement)
+          );
+        });
+        await page.keyboard.press("Escape");
+        await page.waitForFunction(
+          () =>
+            !document.querySelector(".drawer-left")?.classList.contains("open"),
+        );
+        await page.getByRole("button", { name: "Files", exact: true }).click();
+        await page.waitForFunction(() =>
+          document
+            .querySelector(".drawer-right")
+            ?.contains(document.activeElement),
+        );
+        await page.keyboard.press("Escape");
+        await page
+          .getByRole("button", { name: "Switch working folder", exact: true })
+          .click();
+        await page
+          .getByRole("dialog", { name: "Open working folder", exact: true })
+          .waitFor();
+        await page.keyboard.press("Escape");
+        await page.locator("dialog[open]").waitFor({ state: "hidden" });
+        assert(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth,
+          ),
+        );
+        const folder = await page.locator(".status-cwd").boundingBox();
+        assert(
+          folder && folder.x + folder.width > width - 20 && folder.y > 780,
+        );
+        await page.screenshot({ path: join(root, `no-project-${width}.png`) });
+      }
+      await page.setViewportSize({ width: 1440, height: 900 });
+      assert.equal(g.store.projects().length, 0);
+      assert.equal(g.f.contacts(), 0);
       // Visibility/font readiness can precede Chromium's first composited
       // surface. Observe painted frames before capture, without retrying Open
       // or swallowing a failed screenshot (same frame barrier as assets-browser).
@@ -66,7 +210,7 @@ for (const route of ["loopback", "https"])
       await page.screenshot({ path: join(root, "no-project.png") });
       async function open(path) {
         await page
-          .getByRole("button", { name: "Open working folder", exact: true })
+          .getByRole("button", { name: "Switch working folder", exact: true })
           .first()
           .click();
         await page.getByRole("textbox", { name: "Folder path" }).fill(path);
@@ -108,7 +252,7 @@ for (const route of ["loopback", "https"])
         );
         assert.equal(writer.status, 0, writer.stderr);
         await page
-          .getByRole("button", { name: "Open working folder", exact: true })
+          .getByRole("button", { name: "Switch working folder", exact: true })
           .first()
           .click();
         await page.getByRole("textbox", { name: "Folder path" }).fill(paths[0]);
@@ -209,20 +353,25 @@ for (const route of ["loopback", "https"])
       );
       assert.equal(g.f.contacts(), 1);
       await page.screenshot({ path: join(root, "project-b.png") });
-      await page
-        .getByRole("button", { name: "Workbench projects", exact: true })
-        .click();
-      await page.getByText("Your workbench, your projects").waitFor();
       await open(paths[1]);
       assert.notEqual(
         new URL(page.url()).searchParams.get("project"),
         projectB,
       );
       assert.equal(g.f.contacts(), 1);
+      // Recent projects live in the lower-right picker. Browsing a recent entry
+      // is readonly; only explicit Open navigates and the original chat returns.
       await page
-        .getByRole("button", { name: "Workbench projects", exact: true })
+        .getByRole("button", { name: "Switch working folder", exact: true })
         .click();
-      await open(paths[0]);
+      await page
+        .getByRole("region", { name: "Recent projects", exact: true })
+        .getByRole("button", { name: paths[0], exact: true })
+        .click();
+      await page
+        .getByRole("button", { name: "Open this project", exact: true })
+        .click();
+      await page.locator("dialog[open]").waitFor({ state: "hidden" });
       await page
         .locator(".chat-message.assistant")
         .getByText(/Advisory:/)

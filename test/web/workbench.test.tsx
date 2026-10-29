@@ -1,7 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { cadenceInput } from "../../web/src/client/use-workbench";
+import { ChatWelcome } from "../../web/src/components/workspace/ChatWelcome";
 import { ChatTurnView } from "../../web/src/components/workspace/ChatWorkspace";
+import { ProjectPicker } from "../../web/src/components/workspace/ProjectPicker";
+import { WorkbenchHome } from "../../web/src/components/workspace/WorkbenchHome";
+import { WorkingFolderButton } from "../../web/src/components/workspace/WorkingFolderButton";
+import { LocaleProvider } from "../../web/src/i18n/locale";
 
 it("only an explicit leading command selects Cadence; mentions, quoted commands and code remain ordinary", () => {
   expect(cadenceInput("/cadence fix auth", "chat")).toEqual({
@@ -72,4 +77,71 @@ it("ordinary messages use rich text and folded real tool results, not task succe
   expect(html).toContain("worker-failure: prompt");
   expect(html).toContain("ep-state failed");
   expect(html).not.toContain("PASS");
+});
+
+it("the project-less entry is a conversation shell with navigation at bottom right, not a project landing page", () => {
+  const open = vi.fn();
+  const html = renderToStaticMarkup(
+    <WorkbenchHome ready onOpenFolder={open} />,
+  );
+  expect(html).toContain('class="panel panel-left lp-panel"');
+  expect(html).toContain("New conversation");
+  expect(html).toContain("Conversation history");
+  expect(html).toContain("What would you like to work on?");
+  expect(html).toContain('class="panel files-panel"');
+  expect(html).toMatch(/<textarea disabled="" aria-label="Message"/);
+  expect(html).toMatch(
+    /class="statusbar-right".*aria-label="Switch working folder"/,
+  );
+  for (const label of [
+    "Your workbench, your projects",
+    "Recent projects",
+    "Create task",
+    "No active runs",
+  ])
+    expect(html).not.toContain(label);
+  expect(open).not.toHaveBeenCalled();
+  const chinese = renderToStaticMarkup(
+    <LocaleProvider initial="zh">
+      <WorkbenchHome ready onOpenFolder={open} />
+    </LocaleProvider>,
+  );
+  expect(chinese).toContain("新对话");
+  expect(chinese).toContain("在右下角选择工作文件夹");
+  expect(chinese).not.toContain("你的工作台，你的项目");
+});
+
+it("the shared empty conversation has no central task creation shortcut", () => {
+  const html = renderToStaticMarkup(<ChatWelcome />);
+  expect(html).toContain("What would you like to work on?");
+  expect(html).not.toContain("<button");
+});
+
+it("folder navigation keeps the full current path and recent choices in the picker without opening on render", () => {
+  const read = vi.fn(),
+    open = vi.fn();
+  const button = renderToStaticMarkup(
+    <WorkingFolderButton path="/projects/a & b" onClick={open} />,
+  );
+  expect(button).toContain('title="/projects/a &amp; b"');
+  expect(button).toContain("Switch working folder");
+  const picker = renderToStaticMarkup(
+    <ProjectPicker
+      client={{ workbenchRead: read }}
+      current="/projects/a"
+      epoch="epoch"
+      projects={[
+        { path: "/projects/a", current: true },
+        { path: "/projects/b", current: false },
+      ]}
+      onClose={() => {}}
+      onOpen={open}
+    />,
+  );
+  expect(picker).toContain('aria-label="Recent projects"');
+  expect(picker).toContain('aria-current="true"');
+  expect(picker).toContain("/projects/b");
+  expect(picker).toContain("Open this project");
+  expect(open).not.toHaveBeenCalled();
+  expect(read).not.toHaveBeenCalled();
 });
