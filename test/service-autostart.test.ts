@@ -304,6 +304,7 @@ describe.skipIf(process.platform !== "linux")("systemd user service", () => {
     expect(text).toContain('Environment="LANG=C.UTF-8"');
     expect(text).not.toContain("PI_CODING_AGENT_DIR");
     expect(text).toContain("KillMode=mixed\n");
+    expect(text).toContain("RestartPreventExitStatus=78\n");
     expect(text).toContain("WantedBy=default.target\n");
     // No --port: CADENCE_PORT and CADENCE_TOKEN in the .env select them.
     expect(text).not.toContain("--port");

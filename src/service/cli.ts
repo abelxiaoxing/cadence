@@ -228,7 +228,15 @@ export async function stopService(c: ControlTarget): Promise<ManagementReply> {
   }
   const deadline = performance.now() + LIMITS.stopWaitMs;
   while (performance.now() < deadline) {
-    const observed = c.inspect();
+    let observed: ReturnType<ControlTarget["inspect"]>;
+    try {
+      observed = c.inspect();
+    } catch {
+      // Registration replacement can race this passive sample. Keep joining
+      // the already accepted exact-epoch Stop within its original deadline;
+      // an unreadable sample is never closure and never resends the request.
+      observed = { status: "unavailable" };
+    }
     if (
       "epoch" in observed &&
       observed.epoch === epoch &&
@@ -258,6 +266,37 @@ function failedStatus(result: unknown): boolean {
       String(result.status),
     )
   );
+}
+/** EX_CONFIG: deterministic foreground refusal is not a supervisor retry loop. */
+export function managementExitCode(
+  result: unknown,
+  foreground = false,
+): number {
+  if (foreground) {
+    try {
+      decodeStartupReport(result);
+      return 78;
+    } catch {
+      /* not a startup refusal */
+    }
+  }
+  return 1;
+}
+/** Manager acceptance is not authenticated owner readiness. */
+export function observedServerResult<T extends AutostartResult>(
+  result: T,
+  service: string,
+) {
+  return {
+    ...result,
+    service,
+    ...(result.status === "started" && service !== "alive"
+      ? {
+          managerStatus: result.status,
+          status: service === "quarantined" ? "quarantined" : "unconfirmed",
+        }
+      : {}),
+  };
 }
 /** The specific reason, naming only the path, keys and line numbers. */
 function serverConfigHint(error: ServerConfigRefusal): string {
@@ -460,6 +499,8 @@ export async function launchHost(
     if (failedStatus(result)) process.exitCode = 1;
     process.stdout.write(`${JSON.stringify(result)}\n`);
     await closure;
+    if (failedStatus(result))
+      process.exitCode = managementExitCode(result, true);
     return null;
   }
   return result;
@@ -632,6 +673,11 @@ function serverStatusGuidance(
   link: string | undefined,
 ): string {
   const workspace = JSON.stringify(result.workspace ?? "");
+  if (
+    result.workspace === null &&
+    ["quarantined", "unconfirmed", "unavailable"].includes(result.status)
+  )
+    return `Cadence workbench is not ready (${result.status}); no successful startup or Stop is inferred.\nInspect locally: ${cli} workbench recover inspect --server-config ${JSON.stringify(serviceConfigPath(s))}\nUse the definition's same account and state home; eligible recovery requires recover resolve in a local terminal. Preserve locks and history.\n`;
   if (result.workspace === null && result.status === "started")
     return `Cadence unified workbench: ${link ?? result.endpoint ?? result.service ?? "unconfirmed"}\nNo default workspace was created. Projects are opened explicitly.\nManage: ${cli} server status|restart|stop|uninstall\n`;
   const flags = `${s.scope === "system" ? " --system" : s.platform === "linux" ? " --user" : ""}${serviceName(s) ? ` --name ${serviceName(s)}` : ""}`;
@@ -688,7 +734,7 @@ function serverStatusGuidance(
       return `Cadence has no background service for ${s.platform}; start it explicitly: ${cli} start --workspace /absolute/project\n`;
     case "unconfirmed":
     case "quarantined":
-      return `Cadence changed nothing: its owner's orderly Stop was not confirmed (${result.status}). Inspect: ${cli} diagnose --workspace ${workspace}\n`;
+      return `Cadence owner reports ${result.status}; successful startup or orderly Stop is not confirmed.\nInspect: ${cli} diagnose --workspace ${workspace}\nLocal recovery: ${cli} recover inspect --workspace ${workspace}\nPreserve uncertain state; recovery requires separate fresh terminal confirmation.\n`;
     case "failed":
       return `Could not register or start Cadence's service; ${managerDetail(s)}.\n${lingerGuidance(result.linger)}`;
     default:
@@ -788,16 +834,35 @@ async function serverMain(argv: string[], hostUrl: URL): Promise<void> {
   }
   let link: string | undefined;
   if (result.status === "started" && result.workspace !== undefined) {
-    Object.assign(
-      result,
-      await observeStarted(result.workspace, serviceConfigPath(s)),
-    );
+    const workspace = result.workspace;
+    const observation = await observeStarted(workspace, serviceConfigPath(s));
+    result = {
+      ...observedServerResult(result, observation.service),
+      ...observation,
+    };
     if (result.service === "alive")
-      link = await privateLink(
-        result.workspace,
-        undefined,
-        serviceConfigPath(s),
-      );
+      link = await privateLink(workspace, undefined, serviceConfigPath(s));
+  }
+  if (
+    action === "status" &&
+    result.workspace !== undefined &&
+    ["active", "activating", "failed"].includes(result.status)
+  ) {
+    const target =
+      result.workspace === null
+        ? new GatewayStore(serviceConfigPath(s))
+        : new ServiceCoordination(result.workspace);
+    const observed = await serviceStatus(target);
+    if (observed && typeof observed === "object" && "status" in observed) {
+      const service = String(observed.status);
+      result = {
+        ...result,
+        service,
+        ...(service === "quarantined"
+          ? { managerStatus: result.status, status: service }
+          : {}),
+      };
+    }
   }
   process.stderr.write(serverGuidance(s, action, result, link));
   process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -939,6 +1004,11 @@ export async function managementMain(
   argv: string[],
   hostUrl: URL,
 ): Promise<void> {
+  const foregroundStart =
+    argv.includes("--foreground") &&
+    (argv[0] === "start" || (argv[0] === "workbench" && argv[1] === "start"));
+  const recoveryCommand =
+    argv[0] === "recover" || (argv[0] === "workbench" && argv[1] === "recover");
   try {
     if (!process.versions.node || process.versions.bun)
       throw new ContractError("unsupported-context");
@@ -955,6 +1025,7 @@ export async function managementMain(
         "stop",
         "token-link",
         "token-rotate",
+        "recover",
       ].includes(command ?? "") &&
       !argv.includes("--workspace")
     ) {
@@ -963,7 +1034,7 @@ export async function managementMain(
     }
     if (command === "--help" && !argv.length) {
       process.stdout.write(
-        "cadence start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--workspace PATH] [--state-home PATH]\nWithout --workspace these commands address the unified workbench (except project recovery); no default project directory is created.\ncadence workbench start|status|diagnose|stop|token-link --reveal|token-rotate [--server-config PATH] [--state-home PATH]\ncadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall\nLinux server options: --system (root, no linger) or --user; --name NAME selects an independent service; install also accepts --port PORT (required for a new named service). Root defaults to --system. No automatic sudo or profile migration.\ncadence project open [PATH] [--create] [--agent-dir PATH] [--state-home PATH]\nProject open explicitly starts/reuses that checkout owner, selecting a private free port for a new project. It never creates or starts a task.\nStart is explicit, or the background service that server install registers: a system/root unit on Linux without linger, or --user with optional linger (--no-linger or CADENCE_LINGER=0 keeps user scope to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file, --server-config (the .env whose CADENCE_PORT and CADENCE_TOKEN the background service uses).\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop. Unconfirmed/quarantined is not stopped.\nRecovery resolve requires this local native terminal, exact unchanged dead-owner resources and separate process/credential/storage acknowledgments. No --yes, network recovery, killing, repair or cleanup.\n",
+        "cadence start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--workspace PATH] [--state-home PATH]\nWithout --workspace these commands (including recover) address the unified workbench, never cwd; no default project directory is created. Project recovery requires explicit --workspace PATH. Recovery checks the account-wide registry lock first.\ncadence workbench start|status|diagnose|stop|token-link --reveal|token-rotate|recover inspect|recover resolve [--server-config PATH] [--state-home PATH]\ncadence server install [--workspace PATH] [--no-linger]|status|restart|stop|uninstall\nLinux server options: --system (root, no linger) or --user; --name NAME selects an independent service; install also accepts --port PORT (required for a new named service). Root defaults to --system. No automatic sudo or profile migration.\ncadence project open [PATH] [--create] [--agent-dir PATH] [--state-home PATH]\nProject open explicitly starts/reuses that checkout owner, selecting a private free port for a new project. It never creates or starts a task.\nStart is explicit, or the background service that server install registers: a system/root unit on Linux without linger, or --user with optional linger (--no-linger or CADENCE_LINGER=0 keeps user scope to login), a LaunchAgent on macOS and a Run entry on Windows, both started at login. Server restart, stop and uninstall use the orderly Stop. cadence-service is the same command. Default detached or --foreground. Start accepts --config, --agent-dir, --host, --port, --token-file, --server-config (the .env whose CADENCE_PORT and CADENCE_TOKEN the background service uses).\nReturn/quit detaches clients; only explicit Cancel/Stop requests stop. Unconfirmed/quarantined is not stopped.\nRecovery resolve requires this local native terminal, exact unchanged dead-owner resources and separate process/credential/storage acknowledgments. No --yes, network recovery, killing, repair or cleanup.\n",
       );
       return;
     }
@@ -1045,9 +1116,26 @@ export async function managementMain(
       else throw new ContractError("invalid");
     }
     if (result !== null) process.stdout.write(`${JSON.stringify(result)}\n`);
-    if (failedStatus(result)) process.exitCode = 1;
-  } catch {
-    process.stderr.write('{"error":"service-refused"}\n');
-    process.exitCode = 1;
+    if (failedStatus(result))
+      process.exitCode = managementExitCode(result, foreground);
+  } catch (error) {
+    process.stderr.write(
+      `${JSON.stringify({
+        error: "service-refused",
+        ...(recoveryCommand
+          ? {
+              code: error instanceof ContractError ? error.code : "unavailable",
+              stage: "recovery",
+              notice:
+                "Use workbench recover for account/workbench state or explicit --workspace for an existing project; preserve state on refusal.",
+            }
+          : {}),
+      })}\n`,
+    );
+    process.exitCode =
+      foregroundStart &&
+      (error instanceof ContractError || error instanceof ServerConfigRefusal)
+        ? 78
+        : 1;
   }
 }

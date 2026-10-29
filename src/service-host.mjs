@@ -5353,7 +5353,7 @@ function sdkNetworkEnvironment(ambient, scoped) {
 
 // src/service/coordination.ts
 import { randomBytes as randomBytes2, randomUUID as randomUUID4 } from "node:crypto";
-import { opendirSync, realpathSync as realpathSync3 } from "node:fs";
+import { opendirSync } from "node:fs";
 import { hostname as hostname2 } from "node:os";
 import { dirname as dirname5, isAbsolute as isAbsolute4, join as join6, relative as relative3, sep as sep3 } from "node:path";
 var registrationKeys = [
@@ -5489,18 +5489,24 @@ function recoveryDigest(registry, selected) {
 }
 
 class ServiceCoordination {
-  store;
+  project;
   files;
-  directory;
   registryDirectory;
   stateHome;
   constructor(workspace, stateHome) {
-    this.store = new TaskStore(resolveWorkspace(workspace).root, stateHome);
-    const namespace = dirname5(this.store.privateRoot);
+    this.project = workspace === null ? undefined : new TaskStore(resolveWorkspace(workspace).root, stateHome);
+    this.stateHome = this.project ? dirname5(dirname5(this.project.privateRoot)) : canonicalAmbientRoot(stateHome ?? defaultStateHome());
+    const namespace = join6(this.stateHome, "cadence-assistant-v1");
     this.files = new PrivateFiles(namespace);
-    this.stateHome = dirname5(namespace);
-    this.directory = join6(this.store.privateRoot, "service-v1");
     this.registryDirectory = join6(namespace, "service-registry-v1");
+  }
+  get store() {
+    if (!this.project)
+      throw new ContractError("forbidden");
+    return this.project;
+  }
+  get directory() {
+    return join6(this.store.privateRoot, "service-v1");
   }
   path(name) {
     return join6(this.directory, name);
@@ -5522,7 +5528,7 @@ class ServiceCoordination {
     const o = closed(json(snapshot, REGISTRY_BYTES), ["schema", "entries"]);
     const entries = list(o.entries, REGISTRY_ENTRIES, decodeReservation);
     for (const [i, row] of entries.entries()) {
-      if (row.stateHome !== this.stateHome || realpathSync3(row.root) !== row.root)
+      if (row.stateHome !== this.stateHome || canonicalAmbientRoot(row.root) !== row.root)
         refused();
       if (entries.slice(0, i).some((other) => rootsOverlap(row.root, other.root) || row.endpoint === other.endpoint))
         refused();
@@ -5714,6 +5720,7 @@ class ServiceCoordination {
     }
   }
   acquire(input, resolvedEndpoint = input.endpoint, initializeNew, reselectExisting) {
+    this.store;
     const config = decodeOwnerConfig(input);
     const bound = endpoint(resolvedEndpoint);
     if (!endpointMatches(config.endpoint, bound))
@@ -6135,6 +6142,7 @@ class OwnerLease {
 // src/service/gateway-store.ts
 import { randomBytes as randomBytes3, randomUUID as randomUUID5 } from "node:crypto";
 import { opendirSync as opendirSync2 } from "node:fs";
+import { hostname as hostname3 } from "node:os";
 import { join as join7, resolve as resolve3 } from "node:path";
 
 // src/service/contracts/gateway.ts
@@ -6178,6 +6186,8 @@ function decodeGatewayProject(value) {
   return project;
 }
 function registration(value) {
+  const hasHost = !!value && typeof value === "object" && Object.hasOwn(value, "host");
+  const hasRecovery = !!value && typeof value === "object" && Object.hasOwn(value, "recovery");
   const o = closed(value, [
     "schema",
     "epoch",
@@ -6186,8 +6196,22 @@ function registration(value) {
     "capability",
     "selection",
     "pid",
-    "phase"
+    "phase",
+    ...hasHost ? ["host"] : [],
+    ...hasRecovery ? ["recovery"] : []
   ]);
+  let recovery;
+  if (hasRecovery) {
+    const r = closed(o.recovery, ["receipt", "sha256", "stamp"]);
+    const receipt = text(r.receipt, 128, true);
+    if (!/^recovery-v1\/[a-f0-9]{64}\/(?:0|[1-9][0-9]{0,2})\.json$/.test(receipt))
+      throw new ContractError("corrupt-selected");
+    recovery = {
+      receipt,
+      sha256: decodeHash(r.sha256),
+      stamp: text(r.stamp, 512, true)
+    };
+  }
   const endpoint2 = text(o.endpoint, 128, true), capability = text(o.capability, 43, true);
   if (!/^http:\/\/(?:127\.0\.0\.1|\[::1\]):[1-9][0-9]{0,4}$/.test(endpoint2) || !/^[A-Za-z0-9_-]{43}$/.test(capability))
     throw new ContractError("corrupt-selected");
@@ -6198,7 +6222,9 @@ function registration(value) {
     endpoint: endpoint2,
     capability,
     selection: decodeHash(o.selection),
-    pid: integer(o.pid, 1),
+    pid: integer(o.pid, 1, 2147483647),
+    ...hasHost ? { host: text(o.host, 255, true) } : {},
+    ...recovery ? { recovery } : {},
     phase: oneOf(o.phase, ["alive", "stopping", "stopped", "quarantined"])
   };
 }
@@ -6258,6 +6284,8 @@ class GatewayStore {
     const previous = this.read();
     if (previous && previous.phase !== "stopped")
       throw new ContractError("quarantine");
+    if (previous?.recovery)
+      this.associatedProjects();
     this.lock = this.files.create(this.path("gateway.lock"), encoded({ epoch: randomUUID5() }));
     const source = { serverConfig: this.serverConfig, token };
     if (!previous)
@@ -6277,6 +6305,8 @@ class GatewayStore {
       capability: randomBytes3(32).toString("base64url"),
       selection: hash2(inputBytes),
       pid: process.pid,
+      host: hostname3(),
+      ...previous?.recovery ? { recovery: previous.recovery } : {},
       phase: "alive"
     };
     this.selected = this.selected ? this.files.replace(this.path("gateway.json"), this.selected, encoded(this.value)) : this.files.create(this.path("gateway.json"), encoded(this.value));
@@ -6320,6 +6350,21 @@ class GatewayStore {
     }
     return out;
   }
+  associatedProjects() {
+    const projects = this.projects(), recovery = this.read()?.recovery;
+    if (!recovery)
+      return projects;
+    const receipt = this.files.read(this.path(recovery.receipt), 65536);
+    if (!receipt || receipt.identity !== recovery.sha256 || receipt.stamp !== recovery.stamp)
+      throw new ContractError("corrupt-selected");
+    const value = json(receipt, 65536);
+    literal(value.schema, "cadence-workbench-recovery/1");
+    const retired = list(value.retiredProjects, 128, (entry) => {
+      const row = closed(entry, ["id", "stamp"]);
+      return { id: decodeHash(row.id), stamp: text(row.stamp, 512, true) };
+    });
+    return projects.filter((project) => !retired.some((row) => row.id === project.id && row.stamp === this.files.read(this.path(`projects/${project.id}.json`))?.stamp));
+  }
   saveProject(project) {
     this.assert();
     const p = decodeGatewayProject(project), path = this.path(`projects/${p.id}.json`), before = this.files.read(path);
@@ -6335,205 +6380,10 @@ class GatewayStore {
   }
 }
 
-// src/service/runtime.ts
-import { homedir as homedir2 } from "node:os";
-import { dirname as dirname6, isAbsolute as isAbsolute5, join as join8, resolve as resolve4 } from "node:path";
-var STARTUP_INPUT_BYTES = 16 * 1024;
-function absolute(value) {
-  const result = text(value, 4096, true);
-  if (!isAbsolute5(result))
-    throw new ContractError("invalid");
-  return result;
-}
-function decodeHostConfig(value) {
-  const o = closed(value, [
-    "schema",
-    "http",
-    "cwd",
-    "agentDir",
-    "tokenSource",
-    "tokenFile"
-  ]);
-  const tokenSource = oneOf(o.tokenSource, [
-    "generated",
-    "environment",
-    "file",
-    "config"
-  ]);
-  const tokenFile = o.tokenFile === null ? null : absolute(o.tokenFile);
-  if ((tokenSource === "file" || tokenSource === "config") !== !!tokenFile)
-    throw new ContractError("invalid");
-  return {
-    schema: literal(o.schema, "cadence-service-host/1"),
-    http: decodeHttpPolicy(o.http),
-    cwd: absolute(o.cwd),
-    agentDir: absolute(o.agentDir),
-    tokenSource,
-    tokenFile
-  };
-}
-function reselectable(old, next) {
-  const kept = (c) => encoded({
-    ...c,
-    http: { ...c.http, port: 0 },
-    tokenSource: null,
-    tokenFile: null
-  });
-  return next.tokenSource === "config" && kept(old) === kept(next);
-}
-function readHostConfig(c) {
-  const owner = c.configuration();
-  if (!owner)
-    return;
-  const snapshot = c.files.read(c.path("host-config.json"));
-  if (!snapshot)
-    throw new ContractError("corrupt-selected");
-  const config = decodeHostConfig(json(snapshot));
-  if (!config.http.port || owner.endpoint !== localOrigin(config.http, config.http.port) || owner.policyIdentity !== hash2(encoded(config)))
-    throw new ContractError("conflict");
-  return config;
-}
-function hostEnvironment(ambient) {
-  let route;
-  const facts = networkSnapshot(ambient);
-  try {
-    if (facts.NODE_OPTIONS.present)
-      throw new Error;
-    route = sdkNetworkEnvironment(facts, networkSnapshot(undefined));
-  } catch {
-    throw new ContractError("unsupported-context");
-  }
-  const result = Object.create(null);
-  for (const key of Object.keys(ambient)) {
-    const d = Object.getOwnPropertyDescriptor(ambient, key);
-    if (!d || !("value" in d) || typeof d.value !== "string")
-      throw new ContractError("invalid");
-    if (/^(?:CADENCE_|PI_|ABEL_|TRELLIS_|GIT_)/i.test(key) || networkKeys.some((name) => name === key))
-      continue;
-    result[key] = d.value;
-  }
-  if (route.redactionLiterals.length) {
-    result.HTTP_PROXY = route.env.HTTP_PROXY;
-    result.HTTPS_PROXY = route.env.HTTPS_PROXY;
-    result.NODE_USE_ENV_PROXY = "1";
-  }
-  result.PI_OFFLINE = "1";
-  result.NO_COLOR = "1";
-  if (!sameNetwork(facts, networkSnapshot(ambient)))
-    throw new ContractError("stale");
-  return result;
-}
-function selectStart(options, ambient) {
-  const workspace = resolveWorkspace(options.workspace), c = new ServiceCoordination(workspace.root, options.stateHome);
-  const old = readHostConfig(c);
-  const env = Object.getOwnPropertyDescriptor(ambient, "CADENCE_WEB_TOKEN");
-  if (env && (!("value" in env) || typeof env.value !== "string"))
-    throw new ContractError("invalid");
-  let fromFile;
-  if (options.config) {
-    const path = resolve4(options.config), f = new PrivateFiles(dirname6(path));
-    const bytes = f.read(path);
-    if (!bytes)
-      throw new ContractError("corrupt-selected");
-    fromFile = decodeHostConfig(json(bytes));
-  }
-  const base = old ?? fromFile ?? decodeHostConfig({
-    schema: "cadence-service-host/1",
-    cwd: workspace.cwd,
-    http: {
-      schema: "cadence-service-http/1",
-      host: options.host ?? "127.0.0.1",
-      port: options.port ?? 17423,
-      proxy: null
-    },
-    agentDir: resolve4(options.agentDir ?? ambient.PI_CODING_AGENT_DIR ?? join8(ambient.HOME ?? ambient.USERPROFILE ?? homedir2(), ".pi", "agent")),
-    tokenSource: options.tokenFile ? "file" : env ? "environment" : "generated",
-    tokenFile: options.tokenFile ? resolve4(options.tokenFile) : null
-  });
-  const server = options.serverConfig !== undefined ? resolve4(options.serverConfig) : old?.tokenSource === "config" ? old.tokenFile : null;
-  let selected = base;
-  if (server) {
-    if (options.tokenFile !== undefined)
-      throw new ContractError("conflict");
-    const { port } = readServerConfig(server).config;
-    selected = decodeHostConfig({
-      ...base,
-      http: { ...base.http, port },
-      tokenSource: "config",
-      tokenFile: server
-    });
-  }
-  if (fromFile && encoded(fromFile) !== encoded(selected) || options.port !== undefined && options.port !== selected.http.port || options.host !== undefined && options.host !== selected.http.host || options.agentDir !== undefined && resolve4(options.agentDir) !== selected.agentDir || options.tokenFile !== undefined && resolve4(options.tokenFile) !== selected.tokenFile || env && selected.tokenSource !== "environment" || selected.tokenSource === "environment" && !env || resolveWorkspace(selected.cwd).root !== workspace.root)
-    throw new ContractError("conflict");
-  return {
-    workspace: workspace.root,
-    stateHome: c.stateHome,
-    config: selected,
-    environmentToken: env?.value ?? null
-  };
-}
-function decodeHostInput(value) {
-  const o = closed(value, [
-    "workspace",
-    "stateHome",
-    "config",
-    "environmentToken"
-  ]);
-  const config = decodeHostConfig(o.config);
-  const environmentToken = o.environmentToken === null ? null : text(o.environmentToken, 1024, true);
-  if (config.tokenSource === "environment" !== (environmentToken !== null))
-    throw new ContractError("invalid");
-  return {
-    workspace: absolute(o.workspace),
-    stateHome: absolute(o.stateHome),
-    config,
-    environmentToken
-  };
-}
-var STARTUP_STAGES = [
-  "package",
-  "pi-agent-directory",
-  "pi-auth",
-  "pi-models",
-  "pi-runtime",
-  "service"
-];
-
-class StartupRefusal extends ContractError {
-  stage;
-  quarantined;
-  constructor(code2, stage, quarantined = false) {
-    super(code2);
-    this.stage = stage;
-    this.quarantined = quarantined;
-  }
-}
-function startupReport(error) {
-  if (error instanceof StartupRefusal)
-    return {
-      status: error.quarantined ? "quarantined" : "refused",
-      error: error.code,
-      stage: error.stage
-    };
-  return {
-    status: "refused",
-    error: error instanceof ContractError ? error.code : "unavailable",
-    stage: "service"
-  };
-}
-function decodeStartupReport(value) {
-  const o = closed(value, ["status", "error", "stage"]);
-  return {
-    status: oneOf(o.status, ["refused", "quarantined"]),
-    error: oneOf(o.error, ERROR_CODES),
-    stage: oneOf(o.stage, STARTUP_STAGES)
-  };
-}
-
 // src/history/recovery.ts
 import { createHash as createHash8, randomUUID as randomUUID7 } from "node:crypto";
 import { lstatSync as lstatSync7, opendirSync as opendirSync4 } from "node:fs";
-import { join as join10, relative as relative4 } from "node:path";
+import { join as join9, relative as relative4 } from "node:path";
 
 // src/service/recovery.ts
 async function inspectRecovery(coordination, history) {
@@ -6565,7 +6415,7 @@ import {
   statfsSync
 } from "node:fs";
 import { open } from "node:fs/promises";
-import { dirname as dirname8, join as join9 } from "node:path";
+import { dirname as dirname7, join as join8 } from "node:path";
 
 // src/history/admission.ts
 function decodeRunAdmission(value) {
@@ -6594,13 +6444,13 @@ import {
   openSync as openSync3,
   readSync as readSync3
 } from "node:fs";
-import { dirname as dirname7 } from "node:path";
+import { dirname as dirname6 } from "node:path";
 function bad() {
   throw new ContractError("corrupt-selected");
 }
 var stamp2 = (s) => [s.dev, s.ino, s.size, s.mode, s.uid, s.nlink, s.ctimeMs, s.mtimeMs].join(":");
 function selected(files, path, read, walks) {
-  if (!files.files.directory(dirname7(path), false, walks))
+  if (!files.files.directory(dirname6(path), false, walks))
     bad();
   const before = lstatSync5(path);
   if (!before.isFile() || before.nlink !== 1 || process.platform !== "win32" && (before.mode & 63 || process.getuid && before.uid !== process.getuid()))
@@ -7134,7 +6984,7 @@ async function retryStalled(read) {
     } catch (error) {
       if (!(error instanceof StalledQuantum) || retry >= STALL_RETRIES)
         throw error;
-      await new Promise((resolve5) => setImmediate(resolve5));
+      await new Promise((resolve4) => setImmediate(resolve4));
     }
   }
 }
@@ -7155,14 +7005,14 @@ class HistoryFiles {
     this.coordination = coordination;
     this.format = format;
     this.formatSnapshot = formatSnapshot;
-    this.directory = join9(coordination.directory, "history-v2");
+    this.directory = join8(coordination.directory, "history-v2");
     this.files = coordination.files;
   }
   static open(coordination) {
-    const dir = join9(coordination.directory, "history-v2");
+    const dir = join8(coordination.directory, "history-v2");
     if (!coordination.files.directory(dir))
       return;
-    const file = coordination.files.read(join9(dir, "format.json"));
+    const file = coordination.files.read(join8(dir, "format.json"));
     if (!file)
       corrupt();
     const format = decodeFormat(json(file));
@@ -7178,7 +7028,7 @@ class HistoryFiles {
       existing.assertWritable();
       return existing;
     }
-    const dir = join9(c.directory, "history-v2");
+    const dir = join8(c.directory, "history-v2");
     const format = {
       schema: FORMAT,
       storeId: randomUUID6(),
@@ -7188,19 +7038,19 @@ class HistoryFiles {
     c.files.directory(dir, true);
     for (const name of ["commands", "ledger", "runs", "indexes"]) {
       lease.assert();
-      c.files.directory(join9(dir, name), true);
+      c.files.directory(join8(dir, name), true);
     }
     lease.assert();
-    const keyPath = join9(dir, "read-proof-key.json");
+    const keyPath = join8(dir, "read-proof-key.json");
     c.files.create(keyPath, encoded({
       schema: "cadence-history-read-key/1",
       storeId: format.storeId,
       key: randomBytes4(32).toString("base64url")
     }));
     lease.assert();
-    const snapshot = c.files.create(join9(dir, "format.json"), encoded(format));
+    const snapshot = c.files.create(join8(dir, "format.json"), encoded(format));
     const result = new HistoryFiles(c, format, snapshot);
-    result.syncParents(join9(dir, "format.json"));
+    result.syncParents(join8(dir, "format.json"));
     result.assertWritable();
     return result;
   }
@@ -7235,7 +7085,7 @@ class HistoryFiles {
       throw new ContractError("quarantine");
   }
   assertFormat() {
-    this.files.assert(join9(this.directory, "format.json"), this.formatSnapshot);
+    this.files.assert(join8(this.directory, "format.json"), this.formatSnapshot);
   }
   readProofMaterial(budget) {
     if (this.format.schema !== FORMAT)
@@ -7244,7 +7094,7 @@ class HistoryFiles {
       this.assertReadFormat(budget);
     else
       this.assertFormat();
-    const selected2 = this.readBudgeted(join9(this.directory, "read-proof-key.json"), 512, budget);
+    const selected2 = this.readBudgeted(join8(this.directory, "read-proof-key.json"), 512, budget);
     if (!selected2 || this.proofSnapshot && (selected2.identity !== this.proofSnapshot.identity || selected2.stamp !== this.proofSnapshot.stamp))
       corrupt();
     try {
@@ -7272,17 +7122,17 @@ class HistoryFiles {
       return;
     }
     this.assertFormat();
-    assertIncarnation(this, join9(this.directory, "read-proof-key.json"), this.proofSnapshot.stamp);
+    assertIncarnation(this, join8(this.directory, "read-proof-key.json"), this.proofSnapshot.stamp);
   }
   segmentPath(segment) {
-    return join9(this.directory, "ledger", `${String(segment).padStart(12, "0")}.jsonl`);
+    return join8(this.directory, "ledger", `${String(segment).padStart(12, "0")}.jsonl`);
   }
   artifactPath(ref) {
-    return join9(this.directory, "runs", ref.runId, "artifacts", ref.artifactId, `${ref.part}.part`);
+    return join8(this.directory, "runs", ref.runId, "artifacts", ref.artifactId, `${ref.part}.part`);
   }
   admissionPath(runId) {
     decodeId(runId);
-    return join9(this.directory, "runs", runId, "admission.json");
+    return join8(this.directory, "runs", runId, "admission.json");
   }
   writeAdmission(lease, input) {
     lease.assert();
@@ -7308,7 +7158,7 @@ class HistoryFiles {
   readCommand(commandId, budget) {
     decodeId(commandId);
     this.assertReadFormat(budget);
-    return this.readBudgeted(join9(this.directory, "commands", commandId, "intent.json"), RECORD_BYTES, budget);
+    return this.readBudgeted(join8(this.directory, "commands", commandId, "intent.json"), RECORD_BYTES, budget);
   }
   readAdmission(runId, identity, budget) {
     return this.readAdmissionIdentity(runId, hash2(canonicalJson(identity)), budget);
@@ -7329,7 +7179,7 @@ class HistoryFiles {
   syncParents(file) {
     if (process.platform === "win32")
       return;
-    for (let path = dirname8(file);; path = dirname8(path)) {
+    for (let path = dirname7(file);; path = dirname7(path)) {
       if (!this.files.directory(path))
         corrupt();
       const fd = openSync4(path, constants4.O_RDONLY | constants4.O_DIRECTORY);
@@ -7340,13 +7190,13 @@ class HistoryFiles {
       }
       if (path === this.coordination.directory)
         break;
-      if (path === dirname8(path))
+      if (path === dirname7(path))
         corrupt();
     }
   }
   assertReadFormat(budget) {
     budget.reserve(this.formatSnapshot.bytes.length);
-    this.files.assert(join9(this.directory, "format.json"), this.formatSnapshot, this.formatSnapshot.bytes.length);
+    this.files.assert(join8(this.directory, "format.json"), this.formatSnapshot, this.formatSnapshot.bytes.length);
   }
   assertPublished(segment, end, seq) {
     const fence = publicationFences.get(this.directory);
@@ -7384,7 +7234,7 @@ class HistoryFiles {
       const dir = opendirSync3(path);
       try {
         for (let e = dir.readSync();e; e = dir.readSync()) {
-          const p = join9(path, e.name), st = lstatSync6(p);
+          const p = join8(path, e.name), st = lstatSync6(p);
           if (st.isDirectory())
             bytes += walk(p, depth + 1);
           else {
@@ -7419,7 +7269,7 @@ class HistoryFiles {
     state.bytes = 0;
     state.identity = null;
     let count = 0;
-    const ledger = join9(this.directory, "ledger");
+    const ledger = join8(this.directory, "ledger");
     if (!this.files.directory(ledger))
       corrupt();
     const dir = opendirSync3(ledger);
@@ -7736,7 +7586,7 @@ class HistoryFiles {
   checkpoint(lease, state) {
     lease.assert();
     this.assertWritable();
-    const path = join9(this.directory, "checkpoint.json"), old = this.files.read(path);
+    const path = join8(this.directory, "checkpoint.json"), old = this.files.read(path);
     const body = encoded({
       schema: "cadence-history-checkpoint/2",
       storeId: this.format.storeId,
@@ -8343,7 +8193,7 @@ function digestHistory(files, exclude) {
       dir.closeSync();
     }
     for (const name of names2.sort()) {
-      const selected2 = join10(path, name);
+      const selected2 = join9(path, name);
       if (selected2 === exclude)
         continue;
       const rel = relative4(files.directory, selected2);
@@ -8531,6 +8381,201 @@ class HistoryRecovery {
   }
 }
 
+// src/service/runtime.ts
+import { homedir as homedir2 } from "node:os";
+import { dirname as dirname8, isAbsolute as isAbsolute5, join as join10, resolve as resolve4 } from "node:path";
+var STARTUP_INPUT_BYTES = 16 * 1024;
+function absolute(value) {
+  const result = text(value, 4096, true);
+  if (!isAbsolute5(result))
+    throw new ContractError("invalid");
+  return result;
+}
+function decodeHostConfig(value) {
+  const o = closed(value, [
+    "schema",
+    "http",
+    "cwd",
+    "agentDir",
+    "tokenSource",
+    "tokenFile"
+  ]);
+  const tokenSource = oneOf(o.tokenSource, [
+    "generated",
+    "environment",
+    "file",
+    "config"
+  ]);
+  const tokenFile = o.tokenFile === null ? null : absolute(o.tokenFile);
+  if ((tokenSource === "file" || tokenSource === "config") !== !!tokenFile)
+    throw new ContractError("invalid");
+  return {
+    schema: literal(o.schema, "cadence-service-host/1"),
+    http: decodeHttpPolicy(o.http),
+    cwd: absolute(o.cwd),
+    agentDir: absolute(o.agentDir),
+    tokenSource,
+    tokenFile
+  };
+}
+function reselectable(old, next) {
+  const kept = (c) => encoded({
+    ...c,
+    http: { ...c.http, port: 0 },
+    tokenSource: null,
+    tokenFile: null
+  });
+  return next.tokenSource === "config" && kept(old) === kept(next);
+}
+function readHostConfig(c) {
+  const owner = c.configuration();
+  if (!owner)
+    return;
+  const snapshot = c.files.read(c.path("host-config.json"));
+  if (!snapshot)
+    throw new ContractError("corrupt-selected");
+  const config = decodeHostConfig(json(snapshot));
+  if (!config.http.port || owner.endpoint !== localOrigin(config.http, config.http.port) || owner.policyIdentity !== hash2(encoded(config)))
+    throw new ContractError("conflict");
+  return config;
+}
+function hostEnvironment(ambient) {
+  let route;
+  const facts = networkSnapshot(ambient);
+  try {
+    if (facts.NODE_OPTIONS.present)
+      throw new Error;
+    route = sdkNetworkEnvironment(facts, networkSnapshot(undefined));
+  } catch {
+    throw new ContractError("unsupported-context");
+  }
+  const result = Object.create(null);
+  for (const key of Object.keys(ambient)) {
+    const d = Object.getOwnPropertyDescriptor(ambient, key);
+    if (!d || !("value" in d) || typeof d.value !== "string")
+      throw new ContractError("invalid");
+    if (/^(?:CADENCE_|PI_|ABEL_|TRELLIS_|GIT_)/i.test(key) || networkKeys.some((name) => name === key))
+      continue;
+    result[key] = d.value;
+  }
+  if (route.redactionLiterals.length) {
+    result.HTTP_PROXY = route.env.HTTP_PROXY;
+    result.HTTPS_PROXY = route.env.HTTPS_PROXY;
+    result.NODE_USE_ENV_PROXY = "1";
+  }
+  result.PI_OFFLINE = "1";
+  result.NO_COLOR = "1";
+  if (!sameNetwork(facts, networkSnapshot(ambient)))
+    throw new ContractError("stale");
+  return result;
+}
+function selectStart(options, ambient) {
+  const workspace = resolveWorkspace(options.workspace), c = new ServiceCoordination(workspace.root, options.stateHome);
+  const old = readHostConfig(c);
+  const env = Object.getOwnPropertyDescriptor(ambient, "CADENCE_WEB_TOKEN");
+  if (env && (!("value" in env) || typeof env.value !== "string"))
+    throw new ContractError("invalid");
+  let fromFile;
+  if (options.config) {
+    const path = resolve4(options.config), f = new PrivateFiles(dirname8(path));
+    const bytes = f.read(path);
+    if (!bytes)
+      throw new ContractError("corrupt-selected");
+    fromFile = decodeHostConfig(json(bytes));
+  }
+  const base = old ?? fromFile ?? decodeHostConfig({
+    schema: "cadence-service-host/1",
+    cwd: workspace.cwd,
+    http: {
+      schema: "cadence-service-http/1",
+      host: options.host ?? "127.0.0.1",
+      port: options.port ?? 17423,
+      proxy: null
+    },
+    agentDir: resolve4(options.agentDir ?? ambient.PI_CODING_AGENT_DIR ?? join10(ambient.HOME ?? ambient.USERPROFILE ?? homedir2(), ".pi", "agent")),
+    tokenSource: options.tokenFile ? "file" : env ? "environment" : "generated",
+    tokenFile: options.tokenFile ? resolve4(options.tokenFile) : null
+  });
+  const server = options.serverConfig !== undefined ? resolve4(options.serverConfig) : old?.tokenSource === "config" ? old.tokenFile : null;
+  let selected2 = base;
+  if (server) {
+    if (options.tokenFile !== undefined)
+      throw new ContractError("conflict");
+    const { port } = readServerConfig(server).config;
+    selected2 = decodeHostConfig({
+      ...base,
+      http: { ...base.http, port },
+      tokenSource: "config",
+      tokenFile: server
+    });
+  }
+  if (fromFile && encoded(fromFile) !== encoded(selected2) || options.port !== undefined && options.port !== selected2.http.port || options.host !== undefined && options.host !== selected2.http.host || options.agentDir !== undefined && resolve4(options.agentDir) !== selected2.agentDir || options.tokenFile !== undefined && resolve4(options.tokenFile) !== selected2.tokenFile || env && selected2.tokenSource !== "environment" || selected2.tokenSource === "environment" && !env || resolveWorkspace(selected2.cwd).root !== workspace.root)
+    throw new ContractError("conflict");
+  return {
+    workspace: workspace.root,
+    stateHome: c.stateHome,
+    config: selected2,
+    environmentToken: env?.value ?? null
+  };
+}
+function decodeHostInput(value) {
+  const o = closed(value, [
+    "workspace",
+    "stateHome",
+    "config",
+    "environmentToken"
+  ]);
+  const config = decodeHostConfig(o.config);
+  const environmentToken = o.environmentToken === null ? null : text(o.environmentToken, 1024, true);
+  if (config.tokenSource === "environment" !== (environmentToken !== null))
+    throw new ContractError("invalid");
+  return {
+    workspace: absolute(o.workspace),
+    stateHome: absolute(o.stateHome),
+    config,
+    environmentToken
+  };
+}
+var STARTUP_STAGES = [
+  "package",
+  "pi-agent-directory",
+  "pi-auth",
+  "pi-models",
+  "pi-runtime",
+  "service"
+];
+
+class StartupRefusal extends ContractError {
+  stage;
+  quarantined;
+  constructor(code2, stage, quarantined = false) {
+    super(code2);
+    this.stage = stage;
+    this.quarantined = quarantined;
+  }
+}
+function startupReport(error) {
+  if (error instanceof StartupRefusal)
+    return {
+      status: error.quarantined ? "quarantined" : "refused",
+      error: error.code,
+      stage: error.stage
+    };
+  return {
+    status: "refused",
+    error: error instanceof ContractError ? error.code : "unavailable",
+    stage: "service"
+  };
+}
+function decodeStartupReport(value) {
+  const o = closed(value, ["status", "error", "stage"]);
+  return {
+    status: oneOf(o.status, ["refused", "quarantined"]),
+    error: oneOf(o.error, ERROR_CODES),
+    stage: oneOf(o.stage, STARTUP_STAGES)
+  };
+}
+
 // src/service/cli.ts
 function nativeCall(c, operation, reveal = false, controlBody) {
   const access = c.localAccess();
@@ -8625,7 +8670,12 @@ async function stopService(c) {
   }
   const deadline = performance.now() + LIMITS.stopWaitMs;
   while (performance.now() < deadline) {
-    const observed = c.inspect();
+    let observed;
+    try {
+      observed = c.inspect();
+    } catch {
+      observed = { status: "unavailable" };
+    }
     if ("epoch" in observed && observed.epoch === epoch && observed.status === "stopped")
       return { status: "stopped", epoch };
     if (observed.status === "quarantined")
@@ -8638,6 +8688,15 @@ async function stopService(c) {
 }
 function failedStatus(result) {
   return !!(result && typeof result === "object" && ("status" in result) && ["unconfirmed", "unavailable", "quarantined", "refused"].includes(String(result.status)));
+}
+function managementExitCode(result, foreground = false) {
+  if (foreground) {
+    try {
+      decodeStartupReport(result);
+      return 78;
+    } catch {}
+  }
+  return 1;
 }
 function serverConfigHint(error) {
   return `Cadence changed nothing: ${error.path} ${error.reason}.
@@ -8801,6 +8860,8 @@ async function launchHost(input, c, foreground, hostUrl, cwd, env, network) {
     process.stdout.write(`${JSON.stringify(result)}
 `);
     await closure;
+    if (failedStatus(result))
+      process.exitCode = managementExitCode(result, true);
     return null;
   }
   return result;
@@ -9709,7 +9770,7 @@ import {
   opendirSync as opendirSync5,
   openSync as openSync5,
   readSync as readSync4,
-  realpathSync as realpathSync4
+  realpathSync as realpathSync3
 } from "node:fs";
 import { dirname as dirname10, isAbsolute as isAbsolute6, join as join12, relative as relative5, resolve as resolve6, sep as sep4 } from "node:path";
 
@@ -10084,7 +10145,7 @@ class WorkbenchFiles {
   excluded;
   constructor(root, excluded, secrets) {
     this.secrets = secrets;
-    this.root = realpathSync4(root);
+    this.root = realpathSync3(root);
     this.excluded = excluded.flatMap((path) => [
       resolve6(path),
       canonicalAmbientRoot(path)
@@ -10100,7 +10161,7 @@ class WorkbenchFiles {
   directory(path) {
     if (!isAbsolute6(path) || !safeDirectory(path))
       throw new ContractError("invalid");
-    const canonical = realpathSync4(path);
+    const canonical = realpathSync3(path);
     this.allowed(canonical);
     return canonical;
   }
@@ -10378,7 +10439,7 @@ Content-Length: 0\r
     return result;
   }
   function binding(id) {
-    const project = store.projects().find((p) => p.id === id);
+    const project = store.associatedProjects().find((p) => p.id === id);
     if (!project)
       throw new ContractError("unavailable");
     const c = new ServiceCoordination(project.path, input.stateHome), local = c.localAccess();
@@ -10421,7 +10482,7 @@ Content-Length: 0\r
       const originals = await Promise.allSettled([...opens.values()].map((o) => o.result));
       const uncertainOpening = originals.some((r) => r.status === "rejected" && !(r.reason instanceof ProjectOpenRefusal && r.reason.noOwner));
       const retired = await Promise.allSettled([...retirements]);
-      const targets = store.projects();
+      const targets = store.associatedProjects();
       await joinProjectStops(targets, async (p) => {
         const c = new ServiceCoordination(p.path, input.stateHome), observed = await serviceStatus(c);
         const status = observed && typeof observed === "object" && "status" in observed ? observed.status : "unavailable";
@@ -17317,7 +17378,7 @@ import {
   constants as constants6,
   fsyncSync as fsyncSync4,
   openSync as openSync6,
-  realpathSync as realpathSync5
+  realpathSync as realpathSync4
 } from "node:fs";
 import { dirname as dirname12, isAbsolute as isAbsolute7, join as join16, relative as relative6, sep as sep5 } from "node:path";
 function summary(text2, maximum, runId) {
@@ -17368,7 +17429,7 @@ function publicationRecord(store, reader, intent, link, run, request3, expected,
   else {
     if (action.kind !== "create" || !request3.cwd || store.list().length >= 1000)
       bad11();
-    const cwd = realpathSync5(request3.cwd), within = relative6(store.root, cwd);
+    const cwd = realpathSync4(request3.cwd), within = relative6(store.root, cwd);
     if (isAbsolute7(within) || within === ".." || within.startsWith(`..${sep5}`))
       bad11();
     record2 = {
@@ -19446,7 +19507,7 @@ class OwnerModelChoice {
 }
 
 // src/service/model-config.ts
-import { lstatSync as lstatSync11, realpathSync as realpathSync6 } from "node:fs";
+import { lstatSync as lstatSync11, realpathSync as realpathSync5 } from "node:fs";
 import { dirname as dirname13, isAbsolute as isAbsolute8, join as join18, resolve as resolve7 } from "node:path";
 var CONFIG_BYTES2 = 1024 * 1024;
 var ENTRY_LIMIT = 256;
@@ -19520,7 +19581,7 @@ function piSource(agentDir, home, cwd, env) {
   if (selected2 === "~" || selected2.startsWith("~/"))
     selected2 = home + selected2.slice(1);
   selected2 = resolve7(cwd, selected2);
-  const directory = join18(realpathSync6(dirname13(selected2)), selected2.slice(dirname13(selected2).length + 1));
+  const directory = join18(realpathSync5(dirname13(selected2)), selected2.slice(dirname13(selected2).length + 1));
   if (!lstatSync11(directory).isDirectory() || lstatSync11(directory).isSymbolicLink())
     refuse2();
   const files = new PrivateFiles(directory, false);
@@ -20958,7 +21019,7 @@ class ServiceOwner {
 
 // src/service/task-actions.ts
 import { randomUUID as randomUUID18 } from "node:crypto";
-import { realpathSync as realpathSync7 } from "node:fs";
+import { realpathSync as realpathSync6 } from "node:fs";
 
 // src/task-diff.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
@@ -24132,9 +24193,9 @@ class TaskActions {
       selection: structuredClone(options.selection),
       ownerSecrets: [...options.ownerSecrets]
     };
-    this.cwd = realpathSync7(options.cwd);
+    this.cwd = realpathSync6(options.cwd);
     const config = readHostConfig(options.host.coordination);
-    if (!config || realpathSync7(config.cwd) !== this.cwd)
+    if (!config || realpathSync6(config.cwd) !== this.cwd)
       throw new ContractError("unsupported-context");
     this.launchCwd = config.cwd;
     this.checkEnvironment = options.host.checkEnvironment;
@@ -24258,7 +24319,7 @@ class TaskActions {
     if (this.closed || this.options.host.owner.state !== "idle" || this.options.host.writer.quarantined)
       throw new ContractError("quarantine");
     this.options.host.owner.lease.assert();
-    if (!this.sources.current() || realpathSync7(this.cwd) !== this.cwd || realpathSync7(this.launchCwd) !== this.cwd || this.options.host.checkEnvironment !== this.checkEnvironment)
+    if (!this.sources.current() || realpathSync6(this.cwd) !== this.cwd || realpathSync6(this.launchCwd) !== this.cwd || this.options.host.checkEnvironment !== this.checkEnvironment)
       throw new ContractError("stale");
   }
   choiceSnapshot() {
@@ -24374,7 +24435,7 @@ class TaskActions {
     const access = this.currentAccess();
     const committedSeq = snapshot ?? h.writer.committedSeq;
     const selected2 = taskId ? h.coordination.store.loadSnapshot(taskId) : null;
-    if (selected2 && realpathSync7(selected2.record.cwd) !== this.cwd)
+    if (selected2 && realpathSync6(selected2.record.cwd) !== this.cwd)
       throw new ContractError("unsupported-context");
     const secrets = this.viewSecrets();
     const roles = this.sources.roles.map(({ role: role2, sha256 }) => ({
@@ -24880,7 +24941,7 @@ class TaskActions {
         this.assertChoice(expected);
         held.assertHeld();
         const actual = h.coordination.store.loadSnapshot(task.id), want = published ?? task;
-        if (!actual || actual.identity !== want.identity || actual.record.revision !== want.revision || realpathSync7(actual.record.cwd) !== this.cwd || this.generation !== expected.checkoutGeneration || h.writer.controlRevision(task.id) !== expected.controlRev + 1 || this.scheduler.activeTask(task.id))
+        if (!actual || actual.identity !== want.identity || actual.record.revision !== want.revision || realpathSync6(actual.record.cwd) !== this.cwd || this.generation !== expected.checkoutGeneration || h.writer.controlRevision(task.id) !== expected.controlRev + 1 || this.scheduler.activeTask(task.id))
           throw new ContractError("stale");
         const changes2 = captureChanges(h.coordination.store.root);
         if (changes2.fingerprint !== expected.observation.identity || changes2.complete !== expected.observation.complete)
@@ -25065,7 +25126,7 @@ import { join as join23 } from "node:path";
 
 // src/service/conversations.ts
 import { randomUUID as randomUUID19 } from "node:crypto";
-import { lstatSync as lstatSync13, opendirSync as opendirSync7, realpathSync as realpathSync8, statfsSync as statfsSync2 } from "node:fs";
+import { lstatSync as lstatSync13, opendirSync as opendirSync7, realpathSync as realpathSync7, statfsSync as statfsSync2 } from "node:fs";
 import { dirname as dirname14, join as join22 } from "node:path";
 var TURN_BYTES = 384 * 1024;
 var META_BYTES = 64 * 1024;
@@ -25186,7 +25247,7 @@ class Conversations {
   constructor(o) {
     this.o = o;
     this.root = join22(o.coordination.directory, "conversations-v1");
-    this.cwd = realpathSync8(o.cwd);
+    this.cwd = realpathSync7(o.cwd);
   }
   currentDirectory() {
     const current2 = resolveWorkspace(this.o.cwd);

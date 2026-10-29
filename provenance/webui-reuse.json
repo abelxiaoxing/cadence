@@ -286,7 +286,10 @@
     "web/src/components/workspace/ChatWelcome.tsx",
     "web/src/components/workspace/ConversationActions.tsx",
     "web/src/components/workspace/WorkbenchHome.tsx",
-    "web/src/components/workspace/WorkingFolderButton.tsx"
+    "web/src/components/workspace/WorkingFolderButton.tsx",
+    "src/service/gateway-recovery.ts",
+    "test/gateway-recovery.test.ts",
+    "test/helpers/gateway-recovery-child.ts"
   ],
   "destinations": {
     "licenses/pi-web-ui-reuse.md": "e4e5994056f9abe4fb10c1ae823aa1f717a3a91ceb90666de0eb85c16f56ad0e",
@@ -397,9 +400,9 @@
     "web/src/components/workspace/AgentDock.tsx": "01c2ce75ec8451d4a88abff8020bc9f9fe510e2c0958b9b770f50b67ea186a37",
     "web/src/components/workspace/FilesPanel.tsx": "eca52560cdbc2d58c7b8a05919e4b0c8b63c487b00823747e20797fd6c1ce6fe",
     "web/src/components/workspace/ProjectPicker.tsx": "ca9f7102b1f6db7cbfae0d1fbf51db40afa5e0656fcb18ddb21937d9ac56d275",
-    "src/service/gateway.ts": "f53533181182d321b41a04e6ff49672a3a830330ec1390178c77ee8aedbef132",
-    "src/service/gateway-cli.ts": "6f59772752deeeb683aeb871566827233b53475b3154e09f72fa1fb0a46511b7",
-    "src/service/gateway-store.ts": "50f1fa02de55646c21c526ffa8aba34efe56638eb895aba5a5ab4a6f5c9ff98a",
+    "src/service/gateway.ts": "962d31c5c9d335f2d1db36454e504fa3e57af6a0523f57dbb9a62e4e9a027ce1",
+    "src/service/gateway-cli.ts": "befce0e996d9518ecbf715bd4e7f64fe5148d6a399ce1c66fa88fbe3aafac395",
+    "src/service/gateway-store.ts": "a7a2f13ddf43c92ec38ed2a1476a0a60720b2ffe4d43cd379b997f3c11c9a83e",
     "src/service/contracts/gateway.ts": "5853740ebaa77e4b0b8a33d4f9d8dcec478340b6383f75bd7059efd951e7d49a",
     "web/src/Workbench.tsx": "6c7245f2bb309aa4ae481b9cf18a6f4c234c332841e2ee2cbf624d15b3b182b3",
     "web/src/client/project-route.ts": "9c14aa3108771c77cb698b46da085d711acf27eb4ba5bf5c23cce40ab5f76029",
@@ -410,7 +413,10 @@
     "web/src/components/workspace/ChatWelcome.tsx": "011efc1a31b5eda7bcb7856ffe33af4359be8eb7b54b37d75b8d432e0a3c79a6",
     "web/src/components/workspace/ConversationActions.tsx": "6591dac0b8f69428db1feec32a1232de686b018da8da1f55412de3ce9787e9a7",
     "web/src/components/workspace/WorkbenchHome.tsx": "065a74debfdf89c8aaebe692009d1a1ade432274698e9fe3a5bcfe7b1ce1cb9c",
-    "web/src/components/workspace/WorkingFolderButton.tsx": "79e27127b059801af3965e87d1623e80ac701fce91338f8e121eabb95e1f94ee"
+    "web/src/components/workspace/WorkingFolderButton.tsx": "79e27127b059801af3965e87d1623e80ac701fce91338f8e121eabb95e1f94ee",
+    "src/service/gateway-recovery.ts": "c870bea2b8da75c07c762255a9a3be415966b02cc3bcd6f7e0b4c5fe26f76589",
+    "test/gateway-recovery.test.ts": "e6fb1f46b58e2f2699be77c080bd4c1a676c4c1851cc07575a1d7516698bbb12",
+    "test/helpers/gateway-recovery-child.ts": "6d25ebe009588275b55a5f852883184e96076030cb3bc74c945cb08a1d2f489d"
   },
   "existingLicense": {
     "path": "licenses/pi-web-ui-MIT.txt",

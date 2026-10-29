@@ -111,6 +111,46 @@ it.each(["lock", "empty", "partial"])(
     sibling.release();
   },
 );
+it("a deleted reserved project does not block global recovery or lose its private fences", () => {
+  const { c, other, lock } = fixture("reserved");
+  const before = storedTree(c.files.namespace);
+  rmdirSync(c.store.root);
+  const account = new ServiceCoordination(null, c.stateHome);
+  const expected = account.inspectRegistryRecovery();
+  expect(expected).toMatchObject({ owner: "absent", reservations: 1 });
+  const inspected = spawnSync(
+    process.execPath,
+    [
+      join(process.cwd(), "src/service-cli.mjs"),
+      "recover",
+      "inspect",
+      "--state-home",
+      c.stateHome,
+    ],
+    { cwd: c.stateHome, encoding: "utf8", timeout: 15000 },
+  );
+  expect(inspected.status, inspected.stderr).toBe(0);
+  expect(JSON.parse(inspected.stdout)).toMatchObject({
+    scope: "global-registry",
+    reservations: 1,
+    owner: "absent",
+  });
+  expect(storedTree(c.files.namespace)).toEqual(before);
+  expect(account.resolveRegistryRecovery(expected, () => {}).status).toBe(
+    "resolved",
+  );
+  expect(existsSync(c.store.root)).toBe(false);
+  const after = new Map(storedTree(c.files.namespace));
+  for (const [path, value] of before)
+    if (path !== lock) expect(after.get(path)).toEqual(value);
+  const sibling = new ServiceCoordination(other, c.stateHome).acquire({
+    ...config,
+    endpoint: "http://127.0.0.1:17424",
+  });
+  sibling.release();
+  expect(existsSync(c.store.lockPath)).toBe(true);
+});
+
 it("dead registry writer recovery preserves a different live owner and checkout fence", () => {
   const { c, other } = fixture();
   c.resolveRegistryRecovery(c.inspectRegistryRecovery(), () => {});
