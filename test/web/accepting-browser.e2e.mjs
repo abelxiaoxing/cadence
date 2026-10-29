@@ -74,23 +74,26 @@ it("built loopback browser-only accepting workflow, two contexts, original servi
       .click();
     await other.getByRole("button", { name: "Tasks", exact: true }).click();
     await other.getByRole("button", { name: "New task", exact: true }).click();
-    await other.getByLabel("Goal", { exact: true }).fill("Local unsent draft");
-    await other.waitForFunction(() =>
-      [...document.querySelectorAll("button")].some(
-        (button) =>
-          button.textContent === "Preview Create (does not Start)" &&
-          !button.disabled,
-      ),
-    );
-    await other.keyboard.press("Escape");
+    await other
+      .getByLabel("Message", { exact: true })
+      .fill("Local unsent draft");
+    await other
+      .getByRole("button", { name: "Prepare task", exact: true })
+      .waitFor();
+    assert.equal(await other.getByRole("dialog").count(), 0);
     assert.equal(f.contacts(), 0);
     await p.getByRole("button", { name: "New task", exact: true }).click();
     await p
-      .getByLabel("Goal", { exact: true })
+      .getByLabel("Message", { exact: true })
       .fill("Browser independent readonly collaboration");
-    await p
-      .getByRole("button", { name: "Preview Create (does not Start)" })
-      .click();
+    const creation = p.waitForResponse(
+      (r) =>
+        r.url().endsWith("/api/v1/commands") &&
+        r.request().method() === "POST" &&
+        r.request().postDataJSON()?.action?.kind === "create",
+    );
+    void creation.catch(() => {});
+    await p.getByRole("button", { name: "Prepare task", exact: true }).click();
     async function confirm(kind) {
       const response = p.waitForResponse(
         (r) =>
@@ -131,7 +134,18 @@ it("built loopback browser-only accepting workflow, two contexts, original servi
       }
       throw Error("publication unavailable");
     }
-    const created = await published(await confirm("create"));
+    const creationReply = await (await creation).json();
+    assert.equal(creationReply.kind, "ok");
+    const created = await published(creationReply.value);
+    await p.waitForFunction(() =>
+      [...document.querySelectorAll("button")].some(
+        (button) =>
+          button.textContent === "Review implementation plan" &&
+          !button.disabled,
+      ),
+    );
+    assert.equal(await p.getByRole("dialog").count(), 0);
+    assert.equal(f.contacts(), 1, "Send starts readonly analysis");
     const taskId = created.created.taskId;
     await p
       .locator(".task-list > .page-controls")
@@ -178,8 +192,8 @@ it("built loopback browser-only accepting workflow, two contexts, original servi
     await published(generated);
     assert.equal(
       f.contacts(),
-      1,
-      "Generate is exactly one readonly advisory child",
+      2,
+      "Each Generate is exactly one readonly advisory child",
     );
     await p
       .getByRole("button", { name: "Observe current state", exact: true })
@@ -192,7 +206,7 @@ it("built loopback browser-only accepting workflow, two contexts, original servi
     await other.goto(`${f.endpoint}/app#task=${taskId}`);
     await published(started);
     assert(f.maxActive() >= 2, "genuine overlapping SDK HTTP requests");
-    assert.equal(f.contacts(), 3);
+    assert.equal(f.contacts(), 4);
     await other
       .getByRole("button", { name: "Observe current state", exact: true })
       .click();
@@ -405,7 +419,7 @@ it("built loopback browser-only accepting workflow, two contexts, original servi
       .waitFor();
     assert.equal(
       f.contacts(),
-      3,
+      4,
       "reconnect and rotation never replay mutations",
     );
     receipt.passed = true;

@@ -141,13 +141,18 @@ The unified browser entry opens on the conversation shell, without an execution 
 Choose a working folder from the lower-right button; before a folder is selected, New conversation offers the same picker and Send stays disabled.
 Only explicit Open starts or reuses a project owner.
 Within that project, the browser opens on an ordinary conversation with a real message composer, retained multi-turn context and standard read/write/edit/bash tools; no Cadence task is created by Send.
-Use `cadence <goal>` or `/cadence <goal>` at the beginning of the input, or select Cadence task, to prepare a separate task.
+Use `cadence <goal>` or `/cadence <goal>` at the beginning of the input, or select Cadence task, then Send to create a task in the background and begin readonly analysis.
+New task opens the same composer in task mode; there is no task-kind picker or creation dialog.
 Mentions, quotations and fenced code do not select task mode.
-Create is not Start: the readable plan, explicit Start, exact configured checks and human review remain separate.
+Analysis appears in the task transcript.
+Review implementation plan opens the retained proposal for one explicit Confirm plan and execute approval: save those exact bytes, then start only the matching graph under a fresh grant.
+Changed context, failed publication or an uncertain reply stops the sequence without automatic retry.
+Configured checks and human review remain separate.
 A task created from an existing ordinary conversation retains a navigation link back; the old conversation is not converted and its history is not silently injected into the task.
 All of this works without a live Pi terminal.
 A token grants workspace access, not action consent.
-Cadence task mutations need their own context-bound preview/confirmation.
+Task Send authorizes only creation and readonly analysis.
+Editing requires context-bound plan confirmation; the advanced inspector retains independent Save/Start controls.
 Ordinary Send binds its exact text, conversation head, epoch, access and selected model; stale/duplicate/lost replies do not silently replay work.
 The WebUI provides task/run/assignment navigation, long retained messages and tool detail, exact literal search, timeline and complete scoped NDJSON/Markdown downloads.
 Desktop panes and phone drawers retain cancellation and keyboard controls.
