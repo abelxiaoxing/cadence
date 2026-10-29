@@ -236,7 +236,9 @@ Storage exhaustion refuses new work rather than silently evicting history.
 Workbench state lives separately under `<state-home>/cadence-assistant-v1/workbenches-v1/<configuration-hash>/`, not in a hidden substitute workspace.
 Whole-workbench Stop joins its accepted openings and associated exact-epoch project owners, serializing their final registry releases; unrelated, unassociated owners are not stopped.
 A changed epoch, uncertain launch or unconfirmed Stop keeps the workbench fenced, but does not prevent Stop from reaching its other known associated owners.
-Workbenches never repair missing private state or erase uncertain locks.
+Workbenches never repair missing private state or automatically erase uncertain locks.
+`cadence workbench recover inspect|resolve` offers explicit local recovery after a dead gateway, with exact resources, durable evidence and fresh terminal acknowledgments; it preserves project fences/history and retires only the old workbench associations until another explicit Open.
+Registrations from older versions without a hostname additionally require independent same-host attestation; unknown provenance is not recoverable by guessing a PID.
 Service restart never resumes the old queue.
 Uncertain process/auth/storage settlement keeps fences; use documented local informed recovery, not PID-only deletion or automatic cleanup.
 
@@ -338,6 +340,14 @@ Use their current declarations rather than copying DTO parsing, reducers, a seco
   Concurrent or interrupted resolvers cannot remove a successor lock; all project reservations, locks and history remain intact.
   Unreserved partial release, unsafe/corrupt registry or receipt bytes, live/remote/ambiguous holders and changed resources stay fenced.
   Readonly diagnosis and project Open name `registry-locked`; see [global registry recovery](docs/service-management.md#residual-global-registry-lock).
+  Missing retained project directories do not invalidate the global registry: their exact reservations and private fences remain, while canonical existing ancestors, aliases and overlaps are still checked.
+  Unbound `recover` addresses account/workbench state, not cwd; project recovery requires explicit `--workspace`.
+- Workbench recovery is local and interactive, never acquire-on-dead-PID.
+  A bounded flushed receipt precedes exact gateway fence release; project registrations, locks, incomplete opening receipts and history are untouched.
+  The receipt retires the exact old project-reference incarnations from proxy/Stop association until explicit Open republishes them, preventing a deleted old directory from re-quarantining the next orderly Stop.
+  New workbench registrations record their host; legacy hostless registrations require an extra fresh same-host attestation, never automatic host inference.
+  Live/foreign/ambiguous owners and changed or unsafe resources refuse.
+  Generated Linux units exclude deterministic foreground refusal exit78 from restart; manager acceptance without authenticated readiness is not reported as successful startup.
 - Native entry requires fresh raw Enter within1500ms, trusted/idle TUI, no pending modal/messages and no child guard.
   Browser authentication grants access, not task consent; normal mutation ingress also requires independently built compatible client/service/assets identities.
 - Boot model choice is absent until explicitly selected.
@@ -504,6 +514,7 @@ Do not run the entire suite after every local edit, but do not replace final int
 `vitest run --config test/fast.config.ts` selects only its reviewed short-test allowlist, without inheriting root projects; `test/integration.config.ts` selects the exact complement and retains the serial projects.
 `test/test-selection.test.ts` compares the runner's actual file discovery across all three configurations, rejecting duplicates, overlap, omissions and moved serial files; new tests belong to integration until explicitly promoted.
 Create a fresh 0700 root on the checkout's disk filesystem and explicitly set TMPDIR/TEMP/TMP to it; a nearly full tmpfs `/tmp` makes owners refuse at their free-space floor (`receipt-inconclusive`) and `web/dist` publication fail with EXDEV.
+Keep that root's absolute path short: Chromium appends fixture and singleton-socket components, and an overly long path makes it abort before browser scenarios begin.
 A test waits for the event it needs (both providers contacted, a row settled), not a wall-clock guess at how long process starts take; fixed waits stay only where time is the contract.
 Use fabricated credentials, isolated browser/profile/state roots and local fixtures; never personal credentials, automatic downloads or unknown process cleanup.
 Outer command budgets must cover whole suites and preserve original runner waits; existing SDK20s/child15s, PTY90s/interaction15s and browser120s/action15s fixture budgets are not increased to obtain green.
@@ -524,6 +535,7 @@ Regression owners:
 - `service-cli`: real owners started from the `.env` port and token, reselection of a stopped workspace, edits while running and rotation of the token line.
 - `workspace-landing`: no-default-workspace startup, explicit root refusal and noncreating native/readonly entry.
 - `service-gateway` and `gateway-browser`: real same-origin project routing, browser-only authority, retirement on token rotation, continuing ordinary work and genuine multi-owner Stop; loopback and isolated HTTPS browser lanes.
+- `gateway-recovery`: real crashed owners/resolvers, exact gateway-only release, preserved project fences and unfinished openings, retired/reopened associations, live/remote/changed/linked refusals, generated CLI diagnostics and native-TTY host/process/credential/storage acknowledgments.
 
 Regenerate operator/service/native/browser outputs only through their canonical builders; `--check` variants compare new private output without overwriting canonical bytes.
 WebUI text is keyed by its English source: fixed text goes through `useT().t`, whose type requires a `web/src/i18n/zh.ts` entry with the same `{name}` marks, and run-time status words or kept notices through `tx`, which passes unknown text and codes through.
@@ -547,6 +559,28 @@ Publish `web/dist` from Node: Vite run under Bun lays out its preload helper dif
 Review the independently enumerated package member list and every emitted body, not a count or an expected list generated from the tar under test.
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
+
+### Release 2.0.16 acceptance snapshot
+
+The final code candidate passed all 2070 root tests in 86 files (27 platform skips on Linux), 133 web tests, all 9 real-browser scenarios and the 135-member exact real-pack audit.
+Source/type/build/lint/Agent checks and a separate Bun pack/body audit also passed; this is separate-lane evidence, not a claim that one `verify` invocation was entirely green.
+Observed environment: Linux x86_64, Node26.7.0, Bun1.3.14, Pi SDK0.84.3 and existing Chrome for Testing151.0.7922.34, with `VITEST_MAX_WORKERS=1` and unchanged test deadlines.
+Review added failing-then-passing regressions for a successor lock borrowing a stopped predecessor's PID, unexpected foreground management exceptions being misclassified as exit78, and an accepted Stop abandoning its exact-epoch wait after an inconclusive registration read.
+The stopped-row recovery bridge must belong to the exact current lock; Stop never resends its request or infers closure from a read failure or successor epoch.
+The first full attempt had three pre-existing test deadlines and a workbench Stop with empty CLI output; isolated diagnostics passed the timeout files, and the original timing and empty-output causes remain unconfirmed.
+After the independently reproduced Stop race was fixed, the second full attempt passed root/web checks but every browser launch hit Chromium's explicit singleton-socket path-length refusal because the private temporary root was too long.
+Using a fresh short private root on the same disk, all browser scenarios and the pack audit passed without code changes, larger budgets, skipped tests or downloads.
+Failure logs and isolated receipts remain outside the checkout; no consumer service was installed/restarted, uncertain state cleaned, paid provider used or new native Windows/macOS qualification claimed.
+
+### Workbench recovery review snapshot
+
+The recovery review reproduces the still-reserved deleted-project failure, adds gateway-only native recovery (including legacy host attestation), and exercises restart/Stop after retiring old project associations without deleting references or project fences.
+The new gateway recovery file passes 30 tests, including actual owner/resolver exits, concurrent resolvers, interrupted release, unsafe/changed resources, real generated startup refusal/restart/Stop and genuine POSIX TTY confirmation; global registry recovery passes 34 tests.
+Full `verify` passed static/build/lint/Agent checks and reached 2064 passing root tests with 27 platform skips, but one unchanged `service-history-projection` dense-message test exceeded its 15s deadline.
+Its complete 24-test file passed in a subsequent isolated diagnostic run (the affected case took 1.83s); the original timing cause is unconfirmed, not retrospectively successful.
+After the final startup/Stop diagnostic wording correction, 121 targeted CLI/recovery tests, source/generated checks, 133 web tests, all 9 browser scenarios and the 135-member real-pack audit passed.
+A separate Bun pack/body audit also passed; failures and isolated fixture receipts remain outside the checkout, with no increased test budgets, downloaded dependencies, consumer lock cleanup or service installation/restart.
+Actual WSL shutdown, real service-manager installation and new native Windows/macOS recovery qualification were not executed; this is not a full green `verify` claim.
 
 ### Conversation-first entry review snapshot
 

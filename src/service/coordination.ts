@@ -1,9 +1,11 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { opendirSync, realpathSync } from "node:fs";
+import { opendirSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import {
   type CheckoutLock,
+  canonicalAmbientRoot,
+  defaultStateHome,
   resolveWorkspace,
   TaskStore,
 } from "../task-store.ts";
@@ -245,18 +247,29 @@ export type CoordinationStatus =
  * task creation, stale reclaim or accepting execution route lives here.
  */
 export class ServiceCoordination {
-  readonly store: TaskStore;
+  private readonly project?: TaskStore;
   readonly files: PrivateFiles;
-  readonly directory: string;
   readonly registryDirectory: string;
   readonly stateHome: string;
-  constructor(workspace: string, stateHome?: string) {
-    this.store = new TaskStore(resolveWorkspace(workspace).root, stateHome);
-    const namespace = dirname(this.store.privateRoot);
+  /** null addresses only account-wide registry recovery, never an implicit cwd. */
+  constructor(workspace: string | null, stateHome?: string) {
+    this.project =
+      workspace === null
+        ? undefined
+        : new TaskStore(resolveWorkspace(workspace).root, stateHome);
+    this.stateHome = this.project
+      ? dirname(dirname(this.project.privateRoot))
+      : canonicalAmbientRoot(stateHome ?? defaultStateHome());
+    const namespace = join(this.stateHome, "cadence-assistant-v1");
     this.files = new PrivateFiles(namespace);
-    this.stateHome = dirname(namespace);
-    this.directory = join(this.store.privateRoot, "service-v1");
     this.registryDirectory = join(namespace, "service-registry-v1");
+  }
+  get store(): TaskStore {
+    if (!this.project) throw new ContractError("forbidden");
+    return this.project;
+  }
+  get directory(): string {
+    return join(this.store.privateRoot, "service-v1");
   }
   path(
     name:
@@ -289,9 +302,12 @@ export class ServiceCoordination {
     const o = closed(json(snapshot, REGISTRY_BYTES), ["schema", "entries"]);
     const entries = list(o.entries, REGISTRY_ENTRIES, decodeReservation);
     for (const [i, row] of entries.entries()) {
+      // A missing consumer directory does not erase its reservation. Validate
+      // its canonical existing ancestors without recreating the missing tail;
+      // aliases (including dangling ones), permissions and overlaps still refuse.
       if (
         row.stateHome !== this.stateHome ||
-        realpathSync(row.root) !== row.root
+        canonicalAmbientRoot(row.root) !== row.root
       )
         refused();
       // An endpoint cannot be shared by two supported owners, even for disjoint roots.
@@ -561,6 +577,7 @@ export class ServiceCoordination {
      * selected host-config snapshot); only then may the identity change. */
     reselectExisting?: (hostConfig: FileSnapshot) => void,
   ): OwnerLease {
+    void this.store; // An account-only recovery target cannot acquire an owner.
     const config = decodeOwnerConfig(input);
     const bound = endpoint(resolvedEndpoint);
     if (!endpointMatches(config.endpoint, bound))

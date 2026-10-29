@@ -23,6 +23,12 @@ if (mode === "partial") {
   // Fixture-only authority; product CLI requires genuine native confirmations.
   console.log(JSON.stringify(c.resolveRegistryRecovery(expected, () => {})));
 } else {
+  if (mode === "reserved")
+    c.acquire({
+      schema: "cadence-service-owner-config/1",
+      endpoint: "http://127.0.0.1:17423",
+      policyIdentity: "a".repeat(64),
+    });
   c.files.create(
     join(c.registryDirectory, "registry.lock"),
     encoded({

@@ -340,6 +340,7 @@ export function buildUnit(u: UnitInput): string {
     "KillMode=mixed",
     "TimeoutStopSec=90",
     "Restart=on-failure",
+    "RestartPreventExitStatus=78",
     "RestartSec=10",
     "",
     "[Install]",

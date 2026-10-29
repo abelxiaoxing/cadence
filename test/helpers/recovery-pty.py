@@ -30,6 +30,9 @@ def send(text):
         time.sleep(0.04)
 
 try:
+    if config.get("legacyHost"):
+        read_until("Type local-host: ")
+        send("local-host\r")
     read_until("Type processes: ")
     if config["mode"] == "paste":
         os.write(fd, b"\x1b[200~processes\rcredentials\rstorage\r\x1b[201~")

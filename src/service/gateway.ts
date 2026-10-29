@@ -289,7 +289,7 @@ export async function createGateway(
     return result;
   }
   function binding(id: string): Promise<Binding> {
-    const project = store.projects().find((p) => p.id === id);
+    const project = store.associatedProjects().find((p) => p.id === id);
     if (!project) throw new ContractError("unavailable");
     const c = new ServiceCoordination(project.path, input.stateHome),
       local = c.localAccess();
@@ -343,7 +343,7 @@ export async function createGateway(
           !(r.reason instanceof ProjectOpenRefusal && r.reason.noOwner),
       );
       const retired = await Promise.allSettled([...retirements]);
-      const targets = store.projects();
+      const targets = store.associatedProjects();
       // Owners share the short registry writer. Do not race their final release
       // by issuing simultaneous Stop requests from this workbench.
       await joinProjectStops(targets, async (p) => {

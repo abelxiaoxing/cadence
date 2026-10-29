@@ -1,6 +1,7 @@
 /** Account-scoped workbench coordination, not a TaskStore or an execution cwd. */
 import { randomBytes, randomUUID } from "node:crypto";
 import { opendirSync } from "node:fs";
+import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 import { canonicalAmbientRoot, defaultStateHome } from "../task-store.ts";
 import { AccessMaterial } from "./auth.ts";
@@ -11,6 +12,7 @@ import {
   decodeHash,
   decodeId,
   integer,
+  list,
   literal,
   oneOf,
   text,
@@ -61,6 +63,10 @@ export interface GatewayRegistration {
   capability: string;
   selection: string;
   pid: number;
+  /** Older registrations omitted this; recovery requires explicit host attestation. */
+  host?: string;
+  /** Explicit recovery acknowledges old associations without deleting their references. */
+  recovery?: { receipt: string; sha256: string; stamp: string };
   phase: "alive" | "stopping" | "stopped" | "quarantined";
 }
 export type { ProjectEntry as GatewayProject } from "./contracts/gateway.ts";
@@ -75,6 +81,10 @@ function decodeGatewayProject(value: unknown): ProjectEntry {
   return project;
 }
 function registration(value: unknown): GatewayRegistration {
+  const hasHost =
+    !!value && typeof value === "object" && Object.hasOwn(value, "host");
+  const hasRecovery =
+    !!value && typeof value === "object" && Object.hasOwn(value, "recovery");
   const o = closed(value, [
     "schema",
     "epoch",
@@ -84,7 +94,23 @@ function registration(value: unknown): GatewayRegistration {
     "selection",
     "pid",
     "phase",
+    ...(hasHost ? ["host"] : []),
+    ...(hasRecovery ? ["recovery"] : []),
   ]);
+  let recovery: GatewayRegistration["recovery"];
+  if (hasRecovery) {
+    const r = closed(o.recovery, ["receipt", "sha256", "stamp"]);
+    const receipt = text(r.receipt, 128, true);
+    if (
+      !/^recovery-v1\/[a-f0-9]{64}\/(?:0|[1-9][0-9]{0,2})\.json$/.test(receipt)
+    )
+      throw new ContractError("corrupt-selected");
+    recovery = {
+      receipt,
+      sha256: decodeHash(r.sha256),
+      stamp: text(r.stamp, 512, true),
+    };
+  }
   const endpoint = text(o.endpoint, 128, true),
     capability = text(o.capability, 43, true);
   if (
@@ -99,7 +125,9 @@ function registration(value: unknown): GatewayRegistration {
     endpoint,
     capability,
     selection: decodeHash(o.selection),
-    pid: integer(o.pid, 1),
+    pid: integer(o.pid, 1, 2147483647),
+    ...(hasHost ? { host: text(o.host, 255, true) } : {}),
+    ...(recovery ? { recovery } : {}),
     phase: oneOf(o.phase, ["alive", "stopping", "stopped", "quarantined"]),
   };
 }
@@ -169,6 +197,7 @@ export class GatewayStore {
     const previous = this.read();
     if (previous && previous.phase !== "stopped")
       throw new ContractError("quarantine");
+    if (previous?.recovery) this.associatedProjects();
     this.lock = this.files.create(
       this.path("gateway.lock"),
       encoded({ epoch: randomUUID() }),
@@ -200,6 +229,8 @@ export class GatewayStore {
       capability: randomBytes(32).toString("base64url"),
       selection: hash(inputBytes),
       pid: process.pid,
+      host: hostname(),
+      ...(previous?.recovery ? { recovery: previous.recovery } : {}),
       phase: "alive",
     };
     this.selected = this.selected
@@ -257,6 +288,35 @@ export class GatewayStore {
       stream.closeSync();
     }
     return out;
+  }
+  /** Recovery retires exact old associations, not projects or outcomes. An
+   * explicit Open/save replaces the reference incarnation and associates it again. */
+  associatedProjects(): GatewayProject[] {
+    const projects = this.projects(),
+      recovery = this.read()?.recovery;
+    if (!recovery) return projects;
+    const receipt = this.files.read(this.path(recovery.receipt), 65536);
+    if (
+      !receipt ||
+      receipt.identity !== recovery.sha256 ||
+      receipt.stamp !== recovery.stamp
+    )
+      throw new ContractError("corrupt-selected");
+    const value = json(receipt, 65536) as Record<string, unknown>;
+    literal(value.schema, "cadence-workbench-recovery/1");
+    const retired = list(value.retiredProjects, 128, (entry) => {
+      const row = closed(entry, ["id", "stamp"]);
+      return { id: decodeHash(row.id), stamp: text(row.stamp, 512, true) };
+    });
+    return projects.filter(
+      (project) =>
+        !retired.some(
+          (row) =>
+            row.id === project.id &&
+            row.stamp ===
+              this.files.read(this.path(`projects/${project.id}.json`))?.stamp,
+        ),
+    );
   }
   saveProject(project: GatewayProject): void {
     this.assert();

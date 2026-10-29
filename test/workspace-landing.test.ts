@@ -160,9 +160,9 @@ it("start without a project opens only the workbench; readonly/native/home reque
     expect(existsSync(f.landing)).toBe(false);
   } finally {
     if (started) {
-      expect(JSON.parse((await run(f, ["stop"])).stdout).status).toBe(
-        "stopped",
-      );
+      const stopped = await run(f, ["stop"]);
+      expect(stopped.code, JSON.stringify(stopped)).toBe(0);
+      expect(JSON.parse(stopped.stdout).status).toBe("stopped");
       if (pid && process.platform === "win32") await ownerExit(pid);
     }
   }

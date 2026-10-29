@@ -3,10 +3,15 @@ import { isatty } from "node:tty";
 import { HistoryRecovery } from "../history/recovery.ts";
 import { ContractError, LIMITS } from "../service-contract.ts";
 import { diagnosticText } from "../verification-diagnostics.ts";
-import type {
-  RegistryRecoveryInspection,
+import {
+  type RegistryRecoveryInspection,
   ServiceCoordination,
 } from "./coordination.ts";
+import {
+  inspectGatewayRecovery,
+  resolveGatewayRecovery,
+} from "./gateway-recovery.ts";
+import type { GatewayStore } from "./gateway-store.ts";
 import { inspectRecovery, resolveRecovery } from "./recovery.ts";
 
 const warning =
@@ -17,13 +22,22 @@ function native(): void {
 }
 async function confirm(expected: {
   epoch: string;
-  scope?: "global-registry";
+  scope?: "global-registry" | "workbench";
+  legacyHost?: boolean;
 }): Promise<() => void> {
   native();
   if (process.stdin.readableLength) throw new ContractError("forbidden");
   const identity = JSON.stringify(expected);
   const deadline = performance.now() + LIMITS.grantMs;
   const prompts = [
+    ...(expected.legacyHost
+      ? [
+          [
+            "Legacy registration has no host identity. Independently verify this state originated on THIS host and is not shared/copied from another host. Type local-host",
+            "local-host",
+          ],
+        ]
+      : []),
     [
       "Confirm old processes stopped externally; acknowledge escaped-descendant uncertainty. Type processes",
       "processes",
@@ -37,7 +51,7 @@ async function confirm(expected: {
       "storage",
     ],
     [
-      `${expected.scope === "global-registry" ? "Release ONLY the global registry lock; all project fences remain." : "Release ONLY the displayed unchanged service-owned fences."} Type resolve ${expected.epoch}`,
+      `${expected.scope === "global-registry" ? "Release ONLY the global registry lock; all project fences remain." : expected.scope === "workbench" ? "Release ONLY the workbench fence and retire its old project associations; all project fences remain." : "Release ONLY the displayed unchanged service-owned fences."} Type resolve ${expected.epoch}`,
       `resolve ${expected.epoch}`,
     ],
   ];
@@ -101,7 +115,7 @@ async function confirm(expected: {
       throw new ContractError("stale");
   };
 }
-export async function localRecovery(
+async function localRegistryRecovery(
   c: ServiceCoordination,
   operation: "inspect" | "resolve",
 ): Promise<unknown> {
@@ -143,6 +157,14 @@ export async function localRecovery(
     const assertFresh = await confirm(expected);
     return c.resolveRegistryRecovery(expected, assertFresh);
   }
+  return undefined;
+}
+export async function localRecovery(
+  c: ServiceCoordination,
+  operation: "inspect" | "resolve",
+): Promise<unknown> {
+  const registry = await localRegistryRecovery(c, operation);
+  if (registry !== undefined) return registry;
   const history = new HistoryRecovery(c);
   const expected = await inspectRecovery(c, history);
   const registration = c.recoverySnapshot().registration;
@@ -173,5 +195,63 @@ export async function localRecovery(
       },
     },
     history,
+  );
+}
+
+/** Unbound account/workbench management; cwd is never a selected project. */
+export async function localGatewayRecovery(
+  store: GatewayStore,
+  operation: "inspect" | "resolve",
+): Promise<unknown> {
+  const registry = await localRegistryRecovery(
+    new ServiceCoordination(null, store.stateHome),
+    operation,
+  );
+  if (registry !== undefined) return registry;
+  let expected: ReturnType<typeof inspectGatewayRecovery>;
+  try {
+    const observed = store.inspect();
+    if (observed.status === "absent" || observed.status === "stopped") {
+      if (operation === "resolve") throw new ContractError("unavailable");
+      return { ...observed, scope: "workbench" };
+    }
+    expected = inspectGatewayRecovery(store);
+  } catch (error) {
+    if (operation === "resolve") throw error;
+    return {
+      status: "unavailable",
+      scope: "workbench",
+      resolution: "blocked-preserve-state",
+      error: error instanceof ContractError ? error.code : "unavailable",
+      notice:
+        "Workbench state is incomplete, changed or unsafe. Preserve it; no resource was released.",
+    };
+  }
+  const view = {
+    ...expected,
+    process: {
+      ...expected.process,
+      host:
+        expected.process.host === null
+          ? null
+          : diagnosticText(expected.process.host, 255),
+    },
+    notice: `Recovery releases ONLY the workbench fence and retires its exact old project associations. Project references, reservations, owner/checkout locks, opening receipts and history remain unchanged. Explicit Open must associate a project again; recover affected project owners separately. ${warning}`,
+  };
+  if (operation === "inspect") return view;
+  process.stdout.write(`${JSON.stringify(view)}\n`);
+  if (
+    (!expected.legacyHost && expected.owner !== "absent") ||
+    expected.owner === "live" ||
+    (expected.previousResolver !== null &&
+      expected.previousResolver !== "absent")
+  )
+    throw new ContractError("quarantine");
+  const authority = await confirm(expected);
+  return resolveGatewayRecovery(
+    store,
+    expected,
+    authority,
+    expected.legacyHost,
   );
 }
