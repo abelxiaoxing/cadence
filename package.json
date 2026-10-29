@@ -1,6 +1,6 @@
 {
   "name": "@abelxiaoxing/cadence",
-  "version": "2.0.16",
+  "version": "2.0.17",
   "description": "Shared Pi task workspace: native terminal and WebUI, persistent service, checks and human review.",
   "license": "MIT",
   "type": "module",
