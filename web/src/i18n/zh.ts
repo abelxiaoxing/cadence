@@ -5,7 +5,13 @@ export const zh = {
   "The shared registry lock is blocking projects. On the service host, run cadence recover inspect --workspace <project> with the same --state-home, then use recover resolve in a local terminal if eligible. Do not delete lock files manually.":
     "共享注册表锁正在阻止项目打开。请在服务所在主机运行 cadence recover inspect --workspace <project>，使用相同的 --state-home；符合恢复条件时，在本机终端运行 recover resolve。请勿手动删除锁文件。",
   "Start a conversation from the sidebar.": "从左侧开启一段新对话。",
-  "No conversations yet.": "还没有对话。",
+  "Conversations are kept with each project. Open a working folder to see its history.":
+    "历史对话按项目保存。打开工作文件夹后，即可查看它的历史对话。",
+  "Conversations are kept with each project. Choose a project below and open it to see its history.":
+    "历史对话按项目保存。在下方选择项目并打开，即可查看它的历史对话。",
+  "Returning to your last project {name}…": "正在回到上次的项目 {name}…",
+  "Your last project {name} is not running. Choose it below and open it again to see its conversations.":
+    "上次的项目 {name} 当前未运行。在下方选择它并重新打开，即可查看它的对话。",
   "Choose a working folder at the bottom right to start chatting.":
     "在右下角选择工作文件夹，即可开始对话。",
   "Files appear here after you open a working folder.":

@@ -1,5 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
+import type { WorkbenchEntry } from "../../src/service/contracts/gateway.ts";
+import {
+  LAST_PROJECT_STORAGE_KEY,
+  projectRunning,
+  rememberedProject,
+  rememberProject,
+  restorableProject,
+} from "../../web/src/client/last-project";
 import { cadenceInput } from "../../web/src/client/use-workbench";
 import { ChatWelcome } from "../../web/src/components/workspace/ChatWelcome";
 import { ChatTurnView } from "../../web/src/components/workspace/ChatWorkspace";
@@ -7,6 +15,8 @@ import { ProjectPicker } from "../../web/src/components/workspace/ProjectPicker"
 import { WorkbenchHome } from "../../web/src/components/workspace/WorkbenchHome";
 import { WorkingFolderButton } from "../../web/src/components/workspace/WorkingFolderButton";
 import { LocaleProvider } from "../../web/src/i18n/locale";
+
+afterEach(() => vi.unstubAllGlobals());
 
 it("only an explicit leading command selects Cadence; mentions, quoted commands and code remain ordinary", () => {
   expect(cadenceInput("/cadence fix auth", "chat")).toEqual({
@@ -87,6 +97,10 @@ it("the project-less entry is a conversation shell with navigation at bottom rig
   expect(html).toContain('class="panel panel-left lp-panel"');
   expect(html).toContain("New conversation");
   expect(html).toContain("Conversation history");
+  expect(html).toContain(
+    "Conversations are kept with each project. Open a working folder to see its history.",
+  );
+  expect(html).not.toContain("No conversations yet.");
   expect(html).toContain("What would you like to work on?");
   expect(html).toContain('class="panel files-panel"');
   expect(html).toMatch(/<textarea disabled="" aria-label="Message"/);
@@ -144,4 +158,140 @@ it("folder navigation keeps the full current path and recent choices in the pick
   expect(picker).toContain("Open this project");
   expect(open).not.toHaveBeenCalled();
   expect(read).not.toHaveBeenCalled();
+});
+
+it("the entry sidebar explains per-project history and lists recent projects without opening one", () => {
+  const open = vi.fn();
+  const projects = ["/work/alpha", "/work/beta & co"];
+  const html = renderToStaticMarkup(
+    <WorkbenchHome ready projects={projects} onOpenFolder={open} />,
+  );
+  expect(html).toContain(
+    "Conversations are kept with each project. Choose a project below and open it to see its history.",
+  );
+  expect(html).toMatch(
+    /class="session-item project-item" title="\/work\/alpha".*>alpha<.*\/work\/alpha</,
+  );
+  expect(html).toContain("beta &amp; co");
+  expect(html).not.toContain("Recent projects");
+  expect(open).not.toHaveBeenCalled();
+  const checking = renderToStaticMarkup(
+    <WorkbenchHome
+      ready
+      projects={projects}
+      restore={{ status: "checking", path: "/work/alpha" }}
+      onOpenFolder={open}
+    />,
+  );
+  expect(checking).toContain("Returning to your last project alpha…");
+  const stopped = renderToStaticMarkup(
+    <LocaleProvider initial="zh">
+      <WorkbenchHome
+        ready
+        projects={projects}
+        restore={{ status: "stopped", path: "/work/alpha" }}
+        onOpenFolder={open}
+      />
+    </LocaleProvider>,
+  );
+  expect(stopped).toContain("上次的项目 alpha 当前未运行");
+  expect(stopped).toContain("历史对话");
+  const loading = renderToStaticMarkup(
+    <WorkbenchHome ready={false} projects={projects} onOpenFolder={open} />,
+  );
+  expect(loading).toMatch(
+    /<button type="button" class="session-item project-item"[^>]*disabled=""/,
+  );
+  expect(open).not.toHaveBeenCalled();
+});
+
+const key = (c: string) => c.repeat(64);
+function entry(...ids: string[]): WorkbenchEntry {
+  return {
+    projects: ids.map((id) => ({
+      id,
+      path: `/state/${id}`,
+      cwd: `/work/${id.slice(0, 1)}`,
+      epoch: "epoch",
+    })),
+  } as unknown as WorkbenchEntry;
+}
+function storage(initial: Record<string, string> = {}) {
+  const values = new Map(Object.entries(initial));
+  const setItem = vi.fn((name: string, value: string) => {
+    values.set(name, value);
+  });
+  vi.stubGlobal("localStorage", {
+    getItem: (name: string) => values.get(name) ?? null,
+    setItem,
+  });
+  return { values, setItem };
+}
+
+it("the remembered project is an opaque associated key; unavailable storage never fails", () => {
+  expect(rememberedProject()).toBeNull();
+  expect(() => rememberProject(key("a"))).not.toThrow();
+  const { values, setItem } = storage();
+  rememberProject(key("a"));
+  rememberProject(key("a"));
+  expect(setItem).toHaveBeenCalledTimes(1);
+  expect(values.get(LAST_PROJECT_STORAGE_KEY)).toBe(key("a"));
+  expect(restorableProject(entry(key("b"), key("a")))?.cwd).toBe("/work/a");
+  expect(restorableProject(entry(key("b")))).toBeUndefined();
+  for (const saved of ["/work/a", key("A"), `${key("a")}0`, ""]) {
+    storage({ [LAST_PROJECT_STORAGE_KEY]: saved });
+    expect(rememberedProject()).toBeNull();
+    expect(restorableProject(entry(key("a")))).toBeUndefined();
+  }
+  vi.stubGlobal("localStorage", {
+    getItem: () => {
+      throw new Error("blocked");
+    },
+    setItem: () => {
+      throw new Error("blocked");
+    },
+  });
+  expect(rememberedProject()).toBeNull();
+  expect(() => rememberProject(key("a"))).not.toThrow();
+});
+
+it("restoring checks a running owner with one readonly project listing, never Open", async () => {
+  vi.stubGlobal("window", {
+    location: new URL("http://127.0.0.1:17423/app"),
+  });
+  const requests: { url: string; method?: string }[] = [];
+  let reply: unknown = {
+    kind: "ok",
+    value: { kind: "conversations", entries: [] },
+  };
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    requests.push({ url, method: init?.method });
+    if (reply instanceof Error) throw reply;
+    return new Response(JSON.stringify(reply));
+  });
+  expect(await projectRunning(key("a"), new AbortController().signal)).toBe(
+    true,
+  );
+  expect(requests).toHaveLength(1);
+  expect(requests[0].method).toBe("GET");
+  expect(requests[0].url).toMatch(
+    new RegExp(`^http://127\\.0\\.0\\.1:17423/projects/${key("a")}/`),
+  );
+  expect(requests[0].url).not.toContain("open");
+  reply = {
+    kind: "error",
+    error: { code: "unavailable", effect: "none", recovery: "operator" },
+  };
+  expect(await projectRunning(key("a"), new AbortController().signal)).toBe(
+    false,
+  );
+  reply = new Error("network");
+  expect(await projectRunning(key("a"), new AbortController().signal)).toBe(
+    false,
+  );
+  const aborted = new AbortController();
+  aborted.abort();
+  reply = { kind: "ok", value: { kind: "conversations", entries: [] } };
+  expect(await projectRunning(key("a"), aborted.signal)).toBe(false);
+  expect(requests.every((request) => request.method === "GET")).toBe(true);
 });

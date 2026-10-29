@@ -16,6 +16,11 @@ import { boundedText } from "../../src/service-http-client.ts";
 import { App } from "./App";
 import { browserClient } from "./client/browser";
 import { localBuild } from "./client/build-identity";
+import {
+  projectRunning,
+  rememberProject,
+  restorableProject,
+} from "./client/last-project";
 import { currentProject } from "./client/project-route";
 import { ProjectPicker } from "./components/workspace/ProjectPicker";
 import { WorkbenchHome } from "./components/workspace/WorkbenchHome";
@@ -37,7 +42,8 @@ function errorCode(value: unknown): string {
     : "unavailable";
 }
 /** Entry discovery is readonly. Only an explicit Open starts/reuses a project.
- * Scope changes remount the thin project client, detaching rather than stopping. */
+ * Scope changes remount the thin project client, detaching rather than stopping.
+ * An unselected first entry returns to the last project only while it runs. */
 export function Workbench() {
   const { t } = useT();
   const [entry, setEntry] = useState<WorkbenchEntry | null>();
@@ -45,7 +51,20 @@ export function Workbench() {
   const [picker, setPicker] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [revision, refresh] = useState(0);
+  const [restore, setRestore] = useState<{
+    status: "checking" | "stopped";
+    path: string;
+  } | null>(null);
   const hashes = useRef(new Map<string, string>());
+  const firstEntry = useRef(!selected);
+  const restoring = useRef<AbortController | null>(null);
+  // Clears a pending check; a "stopped" notice stays until navigation.
+  const cancelRestore = useCallback(() => {
+    if (!restoring.current) return;
+    restoring.current.abort();
+    restoring.current = null;
+    setRestore(null);
+  }, []);
   useEffect(() => {
     void revision;
     const abort = new AbortController();
@@ -74,12 +93,39 @@ export function Workbench() {
     return () => abort.abort();
   }, [revision]);
   useEffect(() => {
-    const changed = () => setSelected(currentProject());
+    const changed = () => {
+      cancelRestore();
+      setRestore(null);
+      setSelected(currentProject());
+    };
     window.addEventListener("popstate", changed);
     return () => window.removeEventListener("popstate", changed);
-  }, []);
+  }, [cancelRestore]);
+  useEffect(() => {
+    if (!entry || !firstEntry.current) return;
+    firstEntry.current = false;
+    const project = restorableProject(entry);
+    if (!project) return;
+    const abort = new AbortController();
+    restoring.current = abort;
+    setRestore({ status: "checking", path: project.cwd });
+    void projectRunning(project.id, abort.signal).then((running) => {
+      // Any explicit navigation, Open or folder choice meanwhile wins.
+      if (abort.signal.aborted) return;
+      restoring.current = null;
+      if (!running) {
+        setRestore({ status: "stopped", path: project.cwd });
+        return;
+      }
+      history.replaceState(null, "", `/app?project=${project.id}`);
+      setRestore(null);
+      setSelected(project.id);
+    });
+  }, [entry]);
   const navigate = useCallback(
     (project: ProjectEntry | null) => {
+      cancelRestore();
+      setRestore(null);
       if (selected) hashes.current.set(selected, window.location.hash);
       history.pushState(
         null,
@@ -91,7 +137,7 @@ export function Workbench() {
       setSelected(project?.id ?? null);
       setPicker(null);
     },
-    [selected],
+    [selected, cancelRestore],
   );
   const open = useCallback(
     async (path: string) => {
@@ -160,8 +206,11 @@ export function Workbench() {
     () => (selected ? browserClient(selected) : undefined),
     [selected],
   );
-  if (entry === null) return <App />;
   const project = entry?.projects.find((p) => p.id === selected);
+  useEffect(() => {
+    if (project) rememberProject(project.id);
+  }, [project]);
+  if (entry === null) return <App />;
   if (entry && project && api)
     return (
       <App
@@ -179,7 +228,12 @@ export function Workbench() {
     <>
       <WorkbenchHome
         ready={!!entry}
-        onOpenFolder={() => setPicker(entry?.home ?? "")}
+        projects={entry?.projects.map((p) => p.cwd) ?? []}
+        restore={restore}
+        onOpenFolder={(path) => {
+          cancelRestore();
+          setPicker(path ?? entry?.home ?? "");
+        }}
       >
         {error && (
           <p role="alert" className="banner-notice">

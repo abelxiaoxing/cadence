@@ -74,7 +74,7 @@
         "web/src/layout/ResizeHandle.tsx",
         "web/src/layout/use-drawer-focus.ts"
       ],
-      "modifications": "Three-pane composition and selected coherent CSS rule families; direct sash/swipe algorithms; props narrowed to task/run data. Add keyboard focus and inert drawers. Delete composer, PTY, plugin slots, filesystem tree and model/provider administration. Correct open-drawer drag offset. Chrome restyle: TopBar brand/chip/tb-tab/panel-toggle and data-tip families, lp-section/session-item sidebar rows, pill inspector tabs, msg-meta/body transcript cards, statusbar, empty-state and scrollbar rules; generic controls use zero-specificity :where() so family classes win; phones wrap the topbar into an action row and an icon tab row. Fine-pointer controls follow pi's 24–28px density and coarse pointers keep 32–36px minimum targets; the earlier universal 44px controls were replaced. Accessible names are unchanged and every safety statement stays fully visible, wrapping in the scope bar, statusbar and collapsed episode rows instead of being clipped or hidden; small statements, selected tabs and the primary button use AA-contrast tokens. Interface text, including accessible names, is keyed by its English source and shown in English or Simplified Chinese; a topbar chip switches the language. Alert lines inside action dialogs keep the error colour rather than the dimmed dialog paragraph colour. Conversation-first refinement: one-service project section, independent active roster, paged task/run/subagent history, secondary Details menu and optional task-bound inspector; no cross-project/session import. Default Markdown text with folded complete metadata preserves visible limitations and exact child snapshot links. Conversation-first empty entry shares the existing layout, sidebar entry points and welcome presentation; folder selection and recent projects are confined to the bottom-right picker. No unbound chat or automatic project activation."
+      "modifications": "Three-pane composition and selected coherent CSS rule families; direct sash/swipe algorithms; props narrowed to task/run data. Add keyboard focus and inert drawers. Delete composer, PTY, plugin slots, filesystem tree and model/provider administration. Correct open-drawer drag offset. Chrome restyle: TopBar brand/chip/tb-tab/panel-toggle and data-tip families, lp-section/session-item sidebar rows, pill inspector tabs, msg-meta/body transcript cards, statusbar, empty-state and scrollbar rules; generic controls use zero-specificity :where() so family classes win; phones wrap the topbar into an action row and an icon tab row. Fine-pointer controls follow pi's 24–28px density and coarse pointers keep 32–36px minimum targets; the earlier universal 44px controls were replaced. Accessible names are unchanged and every safety statement stays fully visible, wrapping in the scope bar, statusbar and collapsed episode rows instead of being clipped or hidden; small statements, selected tabs and the primary button use AA-contrast tokens. Interface text, including accessible names, is keyed by its English source and shown in English or Simplified Chinese; a topbar chip switches the language. Alert lines inside action dialogs keep the error colour rather than the dimmed dialog paragraph colour. Conversation-first refinement: one-service project section, independent active roster, paged task/run/subagent history, secondary Details menu and optional task-bound inspector; no cross-project/session import. Default Markdown text with folded complete metadata preserves visible limitations and exact child snapshot links. Conversation-first empty entry shares the existing layout, sidebar entry points and welcome presentation; folder selection stays in the bottom-right picker, and the entry history section explains per-project history and lists recent projects that only preselect it. Returning to the last project is readonly navigation to a running owner. No unbound chat or automatic project activation."
     },
     {
       "id": "plan-navigation",
@@ -287,6 +287,7 @@
     "web/src/components/workspace/ConversationActions.tsx",
     "web/src/components/workspace/WorkbenchHome.tsx",
     "web/src/components/workspace/WorkingFolderButton.tsx",
+    "web/src/client/last-project.ts",
     "src/service/gateway-recovery.ts",
     "test/gateway-recovery.test.ts",
     "test/helpers/gateway-recovery-child.ts"
@@ -394,7 +395,7 @@
     "web/src/client/use-workbench.ts": "5e2eedc805fa7da883b5cdd95537d299e9444b5dec47911afbb9d724951b23e1",
     "test/service-conversations.test.ts": "c0202ca44e873f1b32970c14f194dd38221882348af8302395408c8398830297",
     "test/workbench-boundaries.test.ts": "94ceeb379c0337f6f452c7de149e4f9cd5ce7327c6f5ddba5b843725502ed4c4",
-    "test/web/workbench.test.tsx": "c3670d8239490dc535c14c4a19c00b4e5b68aa59c9a872f863942d7f9bfef355",
+    "test/web/workbench.test.tsx": "f3a8edf27031f6b3756cf16cf790e26f5a3d4671d3ca839044a6043333abb592",
     "test/web/workbench-browser.e2e.mjs": "d1452f419be9737285877ccf158eb9008c2b9025c364d2aff2fc148e01c8f686",
     "web/src/components/workspace/ChatWorkspace.tsx": "9fa93c2f5c32c3c4229f9bf19356e072dc0570964b3dea69b3c62eefd2a4af53",
     "web/src/components/workspace/AgentDock.tsx": "01c2ce75ec8451d4a88abff8020bc9f9fe510e2c0958b9b770f50b67ea186a37",
@@ -404,16 +405,17 @@
     "src/service/gateway-cli.ts": "befce0e996d9518ecbf715bd4e7f64fe5148d6a399ce1c66fa88fbe3aafac395",
     "src/service/gateway-store.ts": "a7a2f13ddf43c92ec38ed2a1476a0a60720b2ffe4d43cd379b997f3c11c9a83e",
     "src/service/contracts/gateway.ts": "5853740ebaa77e4b0b8a33d4f9d8dcec478340b6383f75bd7059efd951e7d49a",
-    "web/src/Workbench.tsx": "6c7245f2bb309aa4ae481b9cf18a6f4c234c332841e2ee2cbf624d15b3b182b3",
+    "web/src/Workbench.tsx": "2bcee12900ddfdd5a5b5771c3fba96fee58fad67f160d989cef40394ca99452f",
     "web/src/client/project-route.ts": "9c14aa3108771c77cb698b46da085d711acf27eb4ba5bf5c23cce40ab5f76029",
     "test/service-gateway.test.ts": "9b04144629d5dd2827f09cf7315ee0d747a431582e0b060edbcd20d2ef3a5105",
     "test/gateway-state.test.ts": "88d93773e0ba3c36291848c0c9cb334b5a1814c98b7c7dc7dadd8c7091e51673",
     "test/helpers/gateway-fixture.ts": "5391550a3f4eefd947efe63fa0202c44d01658189e0c8ed7b8f4909ce0d09007",
-    "test/web/gateway-browser.e2e.mjs": "740fbf1e4b88984ff39da30eb5fde97b5f4bcf209ff755668bdb7b17f66d3c23",
+    "test/web/gateway-browser.e2e.mjs": "9299c6364019a2d32dff73826e9edb46a99f7e248c4cf0ad206753b3416ff5f7",
     "web/src/components/workspace/ChatWelcome.tsx": "011efc1a31b5eda7bcb7856ffe33af4359be8eb7b54b37d75b8d432e0a3c79a6",
     "web/src/components/workspace/ConversationActions.tsx": "6591dac0b8f69428db1feec32a1232de686b018da8da1f55412de3ce9787e9a7",
-    "web/src/components/workspace/WorkbenchHome.tsx": "065a74debfdf89c8aaebe692009d1a1ade432274698e9fe3a5bcfe7b1ce1cb9c",
+    "web/src/components/workspace/WorkbenchHome.tsx": "dab9d00e9d1cc8d3ec2ee1f72fafc5a1df2d4654f12558f47d30b94c6d046afe",
     "web/src/components/workspace/WorkingFolderButton.tsx": "79e27127b059801af3965e87d1623e80ac701fce91338f8e121eabb95e1f94ee",
+    "web/src/client/last-project.ts": "45ceb96bf9d9e3d28e8f43220206a0b2979cda3757f149d125687e7aff95dbff",
     "src/service/gateway-recovery.ts": "c870bea2b8da75c07c762255a9a3be415966b02cc3bcd6f7e0b4c5fe26f76589",
     "test/gateway-recovery.test.ts": "e6fb1f46b58e2f2699be77c080bd4c1a676c4c1851cc07575a1d7516698bbb12",
     "test/helpers/gateway-recovery-child.ts": "6d25ebe009588275b55a5f852883184e96076030cb3bc74c945cb08a1d2f489d"
