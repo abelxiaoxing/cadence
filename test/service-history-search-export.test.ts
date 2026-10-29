@@ -442,10 +442,19 @@ it("an ordinary fresh Node process resumes a no-index mid-chunk cursor at its or
     join(f.files.directory, "indexes-preserved"),
   );
   const before = storedTree(f.files.directory),
-    page = nativeRead(f, first.next!, "search");
-  expect(page.cursor.snapshotSeq).toBe(first.cursor.snapshotSeq);
-  expect(
-    page.hits.map((h: { range: { start: number } }) => h.range.start),
-  ).toEqual(Array.from({ length: 50 }, (_, i) => i + 50));
+    starts: number[] = [];
+  // A loaded host may end a page at the search time budget; follow its cursor.
+  for (let next = first.next; starts.length < 50; ) {
+    const page = nativeRead(f, next!, "search");
+    expect(page.cursor.snapshotSeq).toBe(first.cursor.snapshotSeq);
+    starts.push(
+      ...page.hits.map((h: { range: { start: number } }) => h.range.start),
+    );
+    expect(page.next ?? starts.length >= 50).toBeTruthy();
+    next = page.next;
+  }
+  expect(starts.slice(0, 50)).toEqual(
+    Array.from({ length: 50 }, (_, i) => i + 50),
+  );
   expect(storedTree(f.files.directory)).toEqual(before);
 }, 20000);
