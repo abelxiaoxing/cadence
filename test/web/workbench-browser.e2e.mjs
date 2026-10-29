@@ -89,20 +89,18 @@ it("built workbench: ordinary chat, file reference, explicit Cadence transition,
     await p.screenshot({ path: join(root, "desktop.png"), fullPage: true });
     await input.fill("/cadence Prepare a safe task from this chat");
     await p.getByRole("button", { name: "Prepare task", exact: true }).click();
-    assert.equal(
-      await p.getByLabel("Goal", { exact: true }).inputValue(),
-      "Prepare a safe task from this chat",
+    await p
+      .getByRole("button", { name: "Review implementation plan", exact: true })
+      .waitFor();
+    await p.waitForFunction(() =>
+      [...document.querySelectorAll("button")].some(
+        (button) =>
+          button.textContent === "Review implementation plan" &&
+          !button.disabled,
+      ),
     );
-    assert.equal(f.contacts(), 1);
-    await p
-      .getByRole("button", {
-        name: "Preview Create (does not Start)",
-        exact: true,
-      })
-      .click();
-    await p
-      .getByRole("button", { name: "Confirm create", exact: true })
-      .click();
+    assert.equal(await p.getByRole("dialog").count(), 0);
+    assert.equal(await p.getByLabel("Kind", { exact: true }).count(), 0);
     await p.getByLabel("Readable plan", { exact: true }).waitFor();
     await p
       .getByRole("button", {
@@ -110,7 +108,11 @@ it("built workbench: ordinary chat, file reference, explicit Cadence transition,
         exact: true,
       })
       .waitFor();
-    assert.equal(f.contacts(), 1, "Create must not Start");
+    assert.equal(
+      f.contacts(),
+      2,
+      "Send starts one readonly analysis without editing",
+    );
     await p.reload();
     await p
       .getByRole("button", {
@@ -178,8 +180,31 @@ it("built workbench: ordinary chat, file reference, explicit Cadence transition,
     await p
       .getByRole("dialog", { name: "Open working folder", exact: true })
       .waitFor();
-    assert.equal(f.contacts(), 1);
+    assert.equal(f.contacts(), 2);
     await p.keyboard.press("Escape");
+    await p.setViewportSize({ width: 1440, height: 900 });
+    await p
+      .getByRole("button", { name: /Prepare a safe task from this chat/ })
+      .click();
+    await p
+      .getByRole("button", { name: "Review implementation plan", exact: true })
+      .click();
+    await p
+      .getByRole("dialog", { name: "Confirm plan and execute", exact: true })
+      .waitFor();
+    assert.equal(f.contacts(), 2, "Opening a plan confirmation does not edit");
+    await p
+      .getByRole("button", { name: "Confirm plan and execute", exact: true })
+      .click();
+    await p.waitForFunction(() => !document.querySelector('[role="dialog"]'));
+    const deadline = Date.now() + 15000;
+    while (f.contacts() < 3 && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(
+      f.contacts(),
+      3,
+      "One plan confirmation starts exactly one implementation worker",
+    );
     assert.deepEqual(errors, []);
     writeFileSync(
       join(root, "receipt.json"),

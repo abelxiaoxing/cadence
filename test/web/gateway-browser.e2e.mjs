@@ -432,17 +432,23 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
       .getByRole("button", { name: "Prepare task", exact: true })
       .click();
     await page
-      .getByRole("button", {
-        name: "Preview Create (does not Start)",
-        exact: true,
-      })
-      .click();
-    await page
-      .getByRole("button", { name: "Confirm create", exact: true })
-      .click();
+      .getByRole("button", { name: "Review implementation plan", exact: true })
+      .waitFor();
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll("button")].some(
+        (button) =>
+          button.textContent === "Review implementation plan" &&
+          !button.disabled,
+      ),
+    );
+    assert.equal(await page.getByRole("dialog").count(), 0);
     await page.getByLabel("Readable plan", { exact: true }).waitFor();
     assert.equal(new URL(page.url()).searchParams.get("project"), projectB);
-    assert.equal(g.f.contacts(), 1, "Create is not Start");
+    assert.equal(
+      g.f.contacts(),
+      2,
+      "Send starts readonly analysis, not editing",
+    );
     await page.reload();
     await page
       .getByRole("button", {
@@ -457,7 +463,8 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
     assert.equal(page.url(), chatUrl);
     // An unselected entry returns to the last project while its owner runs.
     // That is navigation, not Open: no association, contact or Send is added.
-    const associated = g.store.projects().length;
+    const associated = g.store.projects().length,
+      contacts = g.f.contacts();
     await page.goto(`${g.endpoint}/app`);
     await page
       .locator(".panel-left .session-item")
@@ -465,7 +472,7 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
       .waitFor();
     assert.equal(new URL(page.url()).searchParams.get("project"), projectB);
     assert.equal(g.store.projects().length, associated);
-    assert.equal(g.f.contacts(), 1);
+    assert.equal(g.f.contacts(), contacts);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: join(root, "project-390.png") });
     assert(

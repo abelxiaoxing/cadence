@@ -87,7 +87,7 @@
     "build:operator": "bun scripts/build-operator.mjs",
     "build:service": "bun scripts/build-service.mjs",
     "check:web": "tsc -p web/tsconfig.json && tsc -p web/tsconfig.config.json",
-    "test:web": "vitest run --config web/vitest.config.ts",
+    "test:web": "node --test test/web/task-entry.node.mjs && vitest run --config web/vitest.config.ts",
     "build:web": "node scripts/build-web.mjs",
     "build:web:check": "node scripts/build-web.mjs --check",
     "test:web:assets-browser": "bun run test:browser",
