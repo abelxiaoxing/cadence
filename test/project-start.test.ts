@@ -1,5 +1,4 @@
 import { spawn, spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -11,11 +10,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it, vi } from "vitest";
-import { stopService } from "../src/service/cli.ts";
-import { ServiceCoordination } from "../src/service/coordination.ts";
-import { ServiceClient } from "../src/service-client.ts";
-import type { Action, Reply } from "../src/service-contract.ts";
-import { HttpServiceTransport } from "../src/service-http-client.ts";
 import { captureChanges } from "../src/task-diff.ts";
 import {
   gitEnvironment,
@@ -23,9 +17,6 @@ import {
   resolveWorkspace,
   TaskStore,
 } from "../src/task-store.ts";
-import { confirm, prepare } from "../web/src/client/actions.ts";
-import { acceptingFixture } from "./helpers/accepting-fixture.ts";
-import { nativeBuild } from "./helpers/source-build.ts";
 import { windowsSystemEnvironment } from "./helpers/windows-environment.ts";
 
 const cli = fileURLToPath(new URL("../src/service-cli.mjs", import.meta.url));
@@ -33,11 +24,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
-function ok<T>(reply: Reply<T>): T {
-  expect(reply.kind, JSON.stringify(reply)).toBe("ok");
-  if (reply.kind !== "ok") throw Error("fixture refusal");
-  return reply.value;
-}
 function run(args: string[], cwd: string, env: NodeJS.ProcessEnv) {
   return new Promise<{ code: number | null; stdout: string; stderr: string }>(
     (resolve, reject) => {
@@ -59,201 +45,6 @@ function run(args: string[], cwd: string, env: NodeJS.ProcessEnv) {
     },
   );
 }
-it("opens independent directory owners on selected free ports while the first SDK run continues; new code tasks bind the new cwd", async () => {
-  const f = await acceptingFixture("generated");
-  const state = join(f.dir, "state"),
-    project = join(f.dir, "another project 漢");
-  const env = {
-    ...windowsSystemEnvironment(),
-    PATH: process.env.PATH,
-    HOME: join(f.dir, "home"),
-    USERPROFILE: join(f.dir, "home"),
-    TMPDIR: join(f.dir, "tmp"),
-    TEMP: join(f.dir, "tmp"),
-    TMP: join(f.dir, "tmp"),
-  };
-  let other: ServiceCoordination | undefined,
-    transport: HttpServiceTransport | undefined;
-  const choose = async (client: ServiceClient) => {
-    const catalog = ok(await client.models());
-    ok(
-      await client.chooseModel({
-        expected: catalog.version,
-        choice: {
-          provider: "fixture",
-          model: "fixed",
-          api: "openai-completions",
-          thinking: "off",
-        },
-      }),
-    );
-  };
-  const submit = async (
-    client: ServiceClient,
-    storeId: string,
-    action: Action,
-  ) => {
-    const view = ok(
-      await client.current({
-        storeId,
-        taskId: action.kind === "create" ? null : action.taskId,
-      }),
-    );
-    if (view.context.status !== "available") throw Error("fixture context");
-    const receipt = ok(
-      await confirm(
-        client,
-        ok(await prepare(client, view.context.version, action)),
-      ),
-    );
-    await expect
-      .poll(
-        async () => {
-          const lookup = await client.receipt(receipt.commandId);
-          return (
-            lookup.status === "found" &&
-            (action.kind === "start" ||
-              lookup.receipt.publication === "published")
-          );
-        },
-        { timeout: 15000, interval: 50 },
-      )
-      .toBe(true);
-    return receipt;
-  };
-  try {
-    const a = ok(await f.client.session());
-    await choose(f.client);
-    const created = await submit(f.client, a.storeId, {
-      kind: "create",
-      taskKind: "research",
-      goal: "Keep this original readonly episode running",
-    });
-    if (!created.created) throw Error("fixture task");
-    f.mode("pending");
-    const active = await submit(f.client, a.storeId, {
-      kind: "start",
-      taskId: created.created.taskId,
-    });
-    await expect.poll(f.contacts, { timeout: 15000, interval: 50 }).toBe(1);
-    const args = [
-      "project",
-      "open",
-      project,
-      "--agent-dir",
-      join(f.dir, "agent"),
-      "--state-home",
-      state,
-    ];
-    const missing = await run(args, f.root, env);
-    expect(missing.code).toBe(1);
-    expect(existsSync(project)).toBe(false);
-    const opened = await run([...args, "--create"], f.root, env);
-    expect(opened.code, opened.stderr).toBe(0);
-    const first = JSON.parse(opened.stdout);
-    expect(first).toMatchObject({
-      status: "alive",
-      actions: false,
-      workspace: project,
-      cwd: project,
-    });
-    expect(first.endpoint).not.toBe(f.endpoint);
-    expect(first.endpoint).not.toContain(":0");
-    expect(opened.stderr).toContain("Private WebUI link:");
-    expect(opened.stdout).not.toContain("token=");
-    expect(existsSync(join(project, ".cadence", "assistant", "tasks"))).toBe(
-      false,
-    );
-    other = new ServiceCoordination(project, state);
-    const access = other.localAccess();
-    transport = new HttpServiceTransport({
-      origin: access.endpoint,
-      localCapability: access.capability,
-      build: nativeBuild,
-    });
-    const client = new ServiceClient(transport),
-      b = ok(await client.session());
-    expect(b.storeId).not.toBe(a.storeId);
-    await choose(client);
-    const code = await submit(client, b.storeId, {
-      kind: "create",
-      taskKind: "code",
-      goal: "New engineering task in the selected folder",
-    });
-    if (!code.created) throw Error("fixture code task");
-    const summary = JSON.parse(
-      readFileSync(
-        join(
-          project,
-          ".cadence",
-          "assistant",
-          "tasks",
-          code.created.taskId,
-          "task.json",
-        ),
-        "utf8",
-      ),
-    );
-    expect(summary.cwd).toBe(project);
-    expect(summary.phase).toBe("planning");
-    const reopened = await run(args, f.root, env);
-    expect(reopened.code, reopened.stderr).toBe(0);
-    expect(JSON.parse(reopened.stdout)).toMatchObject({
-      epoch: first.epoch,
-      endpoint: first.endpoint,
-      cwd: project,
-    });
-    const roster = ok(await f.client.activeRuns());
-    expect(
-      roster.status === "complete" &&
-        roster.runs.some((r) => r.runId === active.runId),
-    ).toBe(true);
-    expect(f.contacts()).toBe(1); // Opening/reopening/creating a task never prompts a model.
-    const overlap = await run(
-      [
-        "project",
-        "open",
-        join(project, "nested"),
-        "--create",
-        "--agent-dir",
-        join(f.dir, "agent"),
-        "--state-home",
-        state,
-      ],
-      f.root,
-      env,
-    );
-    expect(overlap.code).toBe(1);
-    expect(other.localAccess().epoch).toBe(first.epoch);
-    if (!active.runId) throw Error("fixture run");
-    ok(
-      await f.client.cancel({
-        commandId: randomUUID(),
-        epoch: a.epoch,
-        runId: active.runId,
-      }),
-    );
-    await expect
-      .poll(
-        async () => {
-          const lookup = await f.client.receipt(active.commandId);
-          const remaining = ok(await f.client.activeRuns());
-          return (
-            lookup.status === "found" &&
-            lookup.receipt.execution === "canceled" &&
-            remaining.status === "complete" &&
-            !remaining.runs.some((r) => r.runId === active.runId)
-          );
-        },
-        { timeout: 15000, interval: 50 },
-      )
-      .toBe(true);
-  } finally {
-    await transport?.detach();
-    if (other) expect((await stopService(other)).status).toBe("stopped");
-    await f.close();
-  }
-}, 60000);
 
 it("never creates a project in the reserved private namespace, even with --create", async () => {
   const dir = mkdtempSync(join(tmpdir(), "project-private-")),

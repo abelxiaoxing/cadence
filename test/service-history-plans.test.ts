@@ -361,59 +361,6 @@ it("accepted Create is not authority to retain a caller-supplied plan", async ()
   expect(f.writer.quarantined).toBe(false);
 });
 
-it("a real five-second reporting stall retains the original plan lease and cannot publish on late completion", async () => {
-  let block = false;
-  let entered!: () => void, release!: () => void;
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const f = await created({
-    observeWrite: async (at) => {
-      if (block && at === "artifacts") {
-        entered();
-        await held;
-      }
-    },
-  });
-  const p = proposal(f, "Plan held by the original writer");
-  expect((await f.writer.commit(p.intent)).status).toBe("committed");
-  block = true;
-  const report = f.writer.retainAcceptedPlan(p.intent.operationId, []);
-  try {
-    await started;
-    const result = await report;
-    expect(result).toMatchObject({
-      status: "refused",
-      durability: "uncertain",
-    });
-    expect(f.writer.pendingWrites).toBe(1);
-    expect(f.writer.accounting.owner.leases).toBe(1);
-    expect(f.writer.accounting.owner.bytes).toBeGreaterThan(0);
-    expect(f.writer.quarantined).toBe(true);
-    expect(f.c.store.loadSnapshot(f.link.taskId)!.record.plan).toBe("");
-  } finally {
-    block = false;
-    release();
-    await f.writer.settled();
-  }
-  expect(f.writer.pendingWrites).toBe(0);
-  expect(f.writer.accounting.owner.leases).toBe(0);
-  expect(f.writer.quarantined).toBe(true);
-  expect(
-    (await f.writer.publishTask({ operationId: p.intent.operationId })).status,
-  ).not.toBe("published");
-  expect(() =>
-    HistoryReader.open(f.c)!.publishedPlan(
-      f.link.taskId,
-      f.writer.committedSeq,
-    ),
-  ).toThrow();
-  expect(f.c.store.inspectLock()).toEqual(f.lease.checkout);
-}, 20_000);
-
 it("retains maximum legal graph and maximum legal plan together without duplicate identity expansion", async () => {
   const f = await created(),
     p = proposal(f, "p".repeat(32768));

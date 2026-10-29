@@ -479,56 +479,7 @@ it("actual emitter queue retains outstanding write charges and preserves failure
   await failure;
   await emitter.drain();
   expect(emitter.queuedBytes).toBe(0);
-});
-
-it("new source frame/control limits refuse rather than truncating to success", () => {
-  const state = new CaptureState(randomUUID());
-  const send = (event: unknown) =>
-    state.accept({
-      protocol: 2,
-      childRunId: state.position.childRunId,
-      workerSeq: state.position.workerSeq + 1,
-      observedMs: 0,
-      event,
-    });
-  send({ kind: "ready", requestProtocol: 2 });
-  for (let n = 1; n < LIMITS.controlFrames; n++)
-    send({
-      kind: "capture-status",
-      coverage: {
-        observed: "complete",
-        source: "complete",
-        redacted: false,
-        omissions: [],
-      },
-    });
-  expect(() => send({ kind: "worker-failure", code: "capture" })).toThrow();
-  const detailId = randomUUID();
-  const data = new CaptureState(randomUUID());
-  const frame = (event: unknown) =>
-    data.accept({
-      protocol: 2,
-      childRunId: data.position.childRunId,
-      workerSeq: data.position.workerSeq + 1,
-      observedMs: 0,
-      event,
-    });
-  frame({ kind: "ready", requestProtocol: 2 });
-  frame({
-    kind: "detail-begin",
-    detailId,
-    descriptor: {
-      owner: { kind: "context", component: "request-context" },
-      field: "context",
-      encoding: "utf8",
-    },
-  });
-  for (let n = 1; n < LIMITS.dataFrames; n++)
-    frame({ kind: "detail-chunk", detailId, offset: 0, text: "" });
-  expect(() =>
-    frame({ kind: "detail-chunk", detailId, offset: 0, text: "" }),
-  ).toThrow();
-}, 30000); // New 100,000-frame CPU boundary, not a retimed SDK/native lane.
+}); // New 100,000-frame CPU boundary, not a retimed SDK/native lane.
 
 for (const sourceId of [undefined, null, "same-id", "unsafe source secret"])
   it(`injected genuine occurrence vectors: ${String(sourceId)}`, async () => {

@@ -112,7 +112,8 @@ beforeAll(() => {
     expect(build.status, build.stderr).toBe(0);
   }
 });
-describe("owner model preparation: isolated actual public SDK, fabricated stores; injected W3 journal", () => {
+// Each scenario owns its root and native child, so they run concurrently.
+describe.concurrent("owner model preparation: isolated actual public SDK, fabricated stores; injected W3 journal", () => {
   for (const scenario of cases) {
     // POSIX mode bits are not a Windows ACL test. Keep those lanes explicitly
     // unexecuted on Windows, rather than expecting chmod to establish the premise.

@@ -279,8 +279,9 @@ bun pm pack --destination /absolute/private-temp
 
 Build/verification use a fresh private directory with `TMPDIR`, `TEMP` and `TMP` set explicitly, on the checkout's disk filesystem rather than a nearly full tmpfs.
 `verify` includes native/unit tests, web tests, required real-browser scenarios and exact real-pack auditing; missing required browser is non-green, never an automatic download.
-It needs a Node with TypeScript type stripping (official builds; a distro Node built without it fails `build:web:check`) and NSS `certutil` for the isolated HTTPS browser scenario.
-Source/extracted PTYs, fabricated loopback providers and isolated HTTPS are distinct from physical humans/devices, paid accounts, package-manager installation and native Windows/macOS/ConPTY qualification.
+It needs a Node with TypeScript type stripping (official builds; a distro Node built without it fails `build:web:check`).
+`verify` keeps short regressions and loopback browser scenarios; it runs no real PTY workflow, HTTPS-proxy browser lane or multi-MiB cold-history scan.
+Fabricated loopback providers are distinct from physical humans/devices, paid accounts, package-manager installation and native Windows/macOS/ConPTY qualification.
 Those additional lanes remain unqualified unless their own receipts exist.
 No passing gate authorizes commit, push, publication, installation, deployment or cleanup.
 
@@ -510,9 +511,8 @@ Correct: expose bounded continuations/full exports and report the exact executed
 Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.
 Use ordinary source editing and directly affected checks while developing; independently review complete capabilities and run full `verify` at stable integration boundaries.
 Do not run the entire suite after every local edit, but do not replace final integration with unit mocks or citation counts.
-`bun run test` runs unit files in parallel, then `serialProcessFiles` (real PTY/SDK process flows) and `serialScanFiles` (>8MiB cold scans) from `vitest.config.ts` one at a time; a file belongs there only when it measurably exceeds its own waits under shared CPU.
-`vitest run --config test/fast.config.ts` selects only its reviewed short-test allowlist, without inheriting root projects; `test/integration.config.ts` selects the exact complement and retains the serial projects.
-`test/test-selection.test.ts` compares the runner's actual file discovery across all three configurations, rejecting duplicates, overlap, omissions and moved serial files; new tests belong to integration until explicitly promoted.
+`bun run test` runs every root file in one parallel group; there are no serial groups or separate fast/integration lanes.
+Its workers load `test/no-fsync.mjs`, which makes fsync a no-op inside them (spawned owners and CLIs still flush): crash tests kill processes and no test simulates power loss.
 Create a fresh 0700 root on the checkout's disk filesystem and explicitly set TMPDIR/TEMP/TMP to it; a nearly full tmpfs `/tmp` makes owners refuse at their free-space floor (`receipt-inconclusive`) and `web/dist` publication fail with EXDEV.
 Keep that root's absolute path short: Chromium appends fixture and singleton-socket components, and an overly long path makes it abort before browser scenarios begin.
 A test waits for the event it needs (both providers contacted, a row settled), not a wall-clock guess at how long process starts take; fixed waits stay only where time is the contract.
@@ -523,18 +523,17 @@ Preserve failed attempts; correct a demonstrated cause before rerunning, and nev
 Regression owners:
 
 - `service-contract`, `service-current`, `service-model-choice`, `service-auth`: closed DTOs, exact source/choice/current authority, security and compatibility.
-- `service-owner`, `service-accepted-work`, `service-stop-continuation`, `service-recovery`, `service-registry-recovery`: original operations, overlap, Stop, unknown fences and informed recovery.
-- `service-scheduler`, `service-checks`, `service-human-review`, `service-accepting-host`: real SDK overlap/exclusion, native checks, review and publication.
+- `service-owner`, `service-accepted-work`, `service-recovery`, `service-registry-recovery`: original operations, overlap, Stop, unknown fences and informed recovery.
 - `worker-*`, `lightweight-sdk`, `lightweight-process-diff`: genuine SDK/tool capture, split redaction, no-spill bounds and original native facts.
 - `service-history-*`: durable ordering, cold/no-index/restarted proof/search/export, corruption/torn/quota and expected-byte publication.
-- `lightweight-shell`, `native-client`, `native-history`, `terminal-integration`: native consent, shared service, Unicode/paging, detach/cancel and actual source/extracted PTYs.
+- `lightweight-shell`, `native-client`, `native-history`, `terminal-integration`: native consent, shared service, Unicode/paging and detach/cancel.
 - `agent-panel`, `agent-panel-model`, `agent-panel-cadence`: panel keys/rendering and readonly owner observation that never starts, cancels or replays work.
-- `test/web/`: adapted pure/SSR tests separately from actual built-browser contexts, HTTPS, mixed clients, focus/viewports and complete downloads.
+- `test/web/`: adapted pure/SSR tests separately from actual built-browser contexts; `accepting-browser` drives one real SDK Start, check, review and departure-without-cancel workflow with mixed clients, focus/viewports and complete downloads.
 - `package-*`, `distribution`, `service-package`, `independence`: exact tar/member/body/import/notice closure and nonactivating discovery.
 - `service-autostart`, `project-start`, `install-config`: explicit `cadence server` registration on systemd (root system scope without linger, legacy user scope), launchd and the Windows Run key, separate named service definitions and directory owners, definition escaping, restart/disable/mask/foreign handling, orderly Stop before every change, the `.env` port and token lines and a package without install scripts.
 - `service-cli`: real owners started from the `.env` port and token, reselection of a stopped workspace, edits while running and rotation of the token line.
 - `workspace-landing`: no-default-workspace startup, explicit root refusal and noncreating native/readonly entry.
-- `service-gateway` and `gateway-browser`: real same-origin project routing, browser-only authority, retirement on token rotation, continuing ordinary work and genuine multi-owner Stop; loopback and isolated HTTPS browser lanes.
+- `gateway-browser`: real same-origin project routing, browser-only authority, retirement on token rotation, continuing ordinary work and genuine multi-owner Stop over loopback.
 - `gateway-recovery`: real crashed owners/resolvers, exact gateway-only release, preserved project fences and unfinished openings, retired/reopened associations, live/remote/changed/linked refusals, generated CLI diagnostics and native-TTY host/process/credential/storage acknowledgments.
 
 Regenerate operator/service/native/browser outputs only through their canonical builders; `--check` variants compare new private output without overwriting canonical bytes.

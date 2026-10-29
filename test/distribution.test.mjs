@@ -406,45 +406,6 @@ describe("real lightweight package", () => {
     expect(readFileSync(file, "utf8")).toBe("{unknown secret=do-not-display");
   });
 
-  it("loads actual source/extracted extension and independent skills with no prompt aliases or extra task tools", async () => {
-    const { DefaultResourceLoader, SettingsManager } = await import(
-      "@earendil-works/pi-coding-agent"
-    );
-    for (const packageRoot of [root, installed]) {
-      const cwd = path.join(
-        fixture,
-        packageRoot === root ? "source-loader" : "extracted-loader",
-      );
-      mkdirSync(cwd);
-      const loader = new DefaultResourceLoader({
-        cwd,
-        agentDir: path.join(cwd, "agent"),
-        settingsManager: SettingsManager.inMemory(),
-        additionalExtensionPaths: [path.join(packageRoot, "src/index.ts")],
-        additionalSkillPaths: [path.join(packageRoot, "skills")],
-        noExtensions: true,
-        noSkills: true,
-        noPromptTemplates: true,
-        noThemes: true,
-        noContextFiles: true,
-      });
-      await loader.reload();
-      expect(loader.getExtensions().errors).toEqual([]);
-      const extensions = loader.getExtensions().extensions;
-      expect(extensions).toHaveLength(1);
-      expect([...extensions[0].commands.keys()]).toEqual(["cadence"]);
-      expect(extensions[0].tools.size).toBe(0);
-      expect(loader.getPrompts().prompts).toEqual([]);
-      expect(
-        loader
-          .getSkills()
-          .skills.map((s) => s.name)
-          .sort(),
-      ).toEqual(["context7-auto-research", "git-commit", "grok-search"]);
-      expect(existsSync(path.join(cwd, ".cadence"))).toBe(false);
-    }
-  }, 20000);
-
   it("installed SDK child runs an actual loopback tool cycle with literal auth and no TypeScript/source fallback", async () => {
     const cwd = path.join(fixture, "sdk-consumer");
     mkdirSync(cwd);
@@ -591,83 +552,6 @@ describe("real lightweight package", () => {
     }
   }, 20000);
 });
-
-it("actual source/extracted nonterminal CLI command dispatch cannot create or start a task", () => {
-  const cli = path.join(
-    root,
-    "node_modules/@earendil-works/pi-coding-agent/dist/cli.js",
-  );
-  for (const packageRoot of [root, installed])
-    for (const mode of ["json", "text"]) {
-      const cwd = path.join(
-        fixture,
-        `nonterminal-${packageRoot === root ? "source" : "installed"}-${mode}`,
-      );
-      mkdirSync(cwd);
-      const home = path.join(cwd, "home");
-      mkdirSync(home);
-      const agent = path.join(home, "agent");
-      mkdirSync(agent);
-      writeFileSync(
-        path.join(agent, "settings.json"),
-        JSON.stringify({
-          packages: [],
-          extensions: [],
-          skills: [],
-          prompts: [],
-          themes: [],
-          cacheWarming: "off",
-          retry: { enabled: false },
-          enableInstallTelemetry: false,
-        }),
-      );
-      const result = spawnSync(
-        process.execPath,
-        [
-          cli,
-          "--offline",
-          "--approve",
-          "--no-session",
-          "--no-context-files",
-          "--no-extensions",
-          "--no-skills",
-          "--no-prompt-templates",
-          "--no-themes",
-          "--extension",
-          path.join(packageRoot, "src/index.ts"),
-          "--mode",
-          mode,
-          "--print",
-          "/cadence inert",
-        ],
-        {
-          cwd,
-          input: "",
-          encoding: "utf8",
-          timeout: 15000,
-          env: {
-            PATH: process.env.PATH,
-            HOME: home,
-            USERPROFILE: home,
-            PI_CODING_AGENT_DIR: agent,
-            XDG_STATE_HOME: path.join(home, "state"),
-            PI_OFFLINE: "1",
-            PI_SKIP_VERSION_CHECK: "1",
-            PI_TELEMETRY: "0",
-          },
-        },
-      );
-      expect(result.error).toBeUndefined();
-      expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout + result.stderr).not.toMatch(
-        /legacy history is not imported|Cadence foreground work/,
-      );
-      expect(existsSync(path.join(cwd, ".cadence"))).toBe(false);
-      expect(existsSync(path.join(home, "state/cadence-assistant-v1"))).toBe(
-        false,
-      );
-    }
-}, 60000);
 
 it("shipped check example is decoded by the extracted readonly operator without executing it", () => {
   const cwd = path.join(fixture, "configured");

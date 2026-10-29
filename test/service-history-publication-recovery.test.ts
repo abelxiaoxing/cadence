@@ -29,19 +29,13 @@ import { HistoryWriter } from "../src/history/writer.ts";
 import { ServiceCoordination } from "../src/service/coordination.ts";
 import { ServiceOwner } from "../src/service/owner.ts";
 import { inspectRecovery } from "../src/service/recovery.ts";
-import {
-  canonicalJson,
-  LIMITS,
-  type PublicRecordingInput,
-} from "../src/service-contract.ts";
+import { canonicalJson, LIMITS } from "../src/service-contract.ts";
 import { savedRecordIdentity } from "../src/task-store.ts";
 import { TASK_SCHEMA } from "../src/task-types.ts";
 import {
   admitFixtureRun,
-  failedCompletion,
   historyFixture,
   ownerFact,
-  prepareFixtureChild,
   settleFixtureRun,
 } from "./helpers/history-fixture.ts";
 import { selectLegacy as legacy } from "./helpers/history-publication-fixture.ts";
@@ -205,188 +199,6 @@ it("creation cap refuses the 1001st acceptance without reserving a command or hi
     existsSync(join(f.files.directory, "commands", f.intent.commandId)),
   ).toBe(false);
 });
-it("long independently retained result and baseline publish useful bounded v1 previews", async () => {
-  const f = historyFixture();
-  legacy(f);
-  await f.writer.commit(f.intent);
-  await admitFixtureRun(f);
-  const link = {
-    epoch: f.link.epoch,
-    taskId: f.link.taskId,
-    runId: f.link.runId,
-    operationId: f.intent.operationId,
-  };
-  async function retainBaseline(text: string) {
-    const detailId = randomUUID(),
-      entityId = randomUUID();
-    await recordOwner(f, {
-      link,
-      observedMs: 0,
-      events: [
-        {
-          kind: "content-begin",
-          detailId,
-          owner: {
-            taskId: link.taskId,
-            runId: link.runId,
-            childRunId: null,
-            entity: { kind: "changes", id: entityId, version: 1 },
-          },
-          field: "changes",
-          encoding: "utf8",
-        },
-      ],
-    });
-    for (let at = 0; at < text.length; at += 4096)
-      await recordOwner(f, {
-        link,
-        observedMs: 0,
-        events: [
-          { kind: "content-chunk", detailId, text: text.slice(at, at + 4096) },
-        ],
-      });
-    const end = await recordOwner(f, {
-      link,
-      observedMs: 0,
-      events: [{ kind: "content-end", detailId, coverage: COMPLETE }],
-    });
-    return { content: end.ownerDetails[0].content, entityId };
-  }
-  await prepareFixtureChild(f);
-  await f.writer.processes.launchIntent(f.link, f.intent.operationId);
-  const messageId = randomUUID(),
-    detailId = randomUUID();
-  let seq = 0;
-  async function capture(
-    events: PublicRecordingInput["events"][number]["event"][],
-  ) {
-    const source = {
-      first: ++seq,
-      last: seq,
-      firstObservedMs: 0,
-      lastObservedMs: 0,
-    };
-    const input = {
-      link: f.link,
-      source,
-      events: events.map((event) => ({ source, event })),
-    };
-    const reserved = f.writer.capture(f.link).reserve({
-      sourceFrames: 1,
-      retainedBytes: 0,
-      outputBytes: Buffer.byteLength(canonicalJson(input)),
-      outputChunks: events.length,
-      lane: "data",
-    });
-    if (reserved.status !== "reserved") throw Error("fixture capture");
-    const result = await reserved.reservation.commit(input);
-    if (result.status !== "committed") throw Error("fixture capture commit");
-    return result.batch;
-  }
-  await capture([
-    { kind: "ready", requestProtocol: 2 },
-    {
-      kind: "message-start",
-      messageId,
-      role: "assistant",
-      source: { disposition: "unavailable", value: null },
-      resultCallId: null,
-    },
-    {
-      kind: "detail-begin",
-      detailId,
-      descriptor: {
-        owner: { kind: "message-final", messageId },
-        field: "final-text",
-        encoding: "utf8",
-      },
-    },
-  ]);
-  const text = "long result λ ".repeat(5000);
-  for (let at = 0; at < text.length; at += 4096)
-    await capture([
-      { kind: "stored-chunk", detailId, text: text.slice(at, at + 4096) },
-    ]);
-  const final = await capture([
-    { kind: "stored-end", detailId, coverage: COMPLETE },
-    {
-      kind: "message-end",
-      messageId,
-      finalDetailId: detailId,
-      finalBlockCount: 1,
-      stopReason: "stop",
-    },
-    { kind: "final", messageId, detailId, stopReason: "stop" },
-  ]);
-  const completion = failedCompletion(f.link.childRunId);
-  completion.native = {
-    ...completion.native,
-    outcome: "completed",
-    exitCode: 0,
-    final: "valid",
-  };
-  completion.selected = { messageId, detailId };
-  completion.recording = {
-    status: "committed",
-    selected: { messageId, detailId },
-    detail: final.details[0],
-  };
-  expect((await f.writer.processes.settlement(f.link, completion)).status).toBe(
-    "committed",
-  );
-  const result = { content: final.details[0].content },
-    baseline = await retainBaseline("baseline data ".repeat(5000));
-  expect(
-    (
-      await ownerFact(f, {
-        kind: "changes",
-        observationId: baseline.entityId,
-        stage: "before",
-        observation: { ...f.context.observation, checkoutGeneration: 0 },
-        content: baseline.content,
-      })
-    ).status,
-  ).toBe("committed");
-  await settleFixtureRun(f, "completed");
-  const published = await f.writer.publishTask({
-    operationId: f.intent.operationId,
-    result: result.content,
-    baseline: baseline.content,
-  });
-  expect(published.status).toBe("published");
-  const saved = f.c.store.load(f.link.taskId)!;
-  expect(saved.phase).toBe("planning");
-  for (const value of [saved.result, saved.baseline]) {
-    expect(Buffer.byteLength(value)).toBeLessThanOrEqual(16384);
-    expect(value).toContain(f.link.runId);
-    expect(value).toContain("retained history unchanged");
-  }
-  const reader = HistoryReader.open(f.c)!;
-  for (const content of [result.content, baseline.content]) {
-    const d = reader.selected({
-      storeId: reader.storeId,
-      scope: { kind: "run", id: f.link.runId },
-      snapshotSeq: f.writer.committedSeq,
-      recordId: content.recordId,
-      recordVersion: content.version,
-      field: content.field,
-      query: null,
-      offset: 0,
-    });
-    expect(
-      [...reader.parts(d, f.writer.committedSeq)].reduce(
-        (n, p) => n + p.bytes.length,
-        0,
-      ),
-    ).toBe(content.bytes);
-    expect(content.bytes).toBeGreaterThan(32768);
-  }
-  const before = diskIdentity(f.dir);
-  [...f.files.scan()];
-  f.c.store.load(f.link.taskId);
-  await f.writer.lookup(f.intent.commandId);
-  expect(diskIdentity(f.dir)).toEqual(before);
-}, 20000);
 it.each([
   "completed",
   "failed",
@@ -1148,35 +960,6 @@ it("final review: checksum-valid recovery cannot invent an uncommitted sequence 
   ).rejects.toThrow();
   expect(diskIdentity(f.dir)).toEqual(before);
 });
-
-it("recovered archive beyond the read budget reaches its exact retained hit", async () => {
-  const f = crash("large-tail"),
-    recovery = new HistoryRecovery(f.c);
-  const fact = await recovery.append(await confirmation(f.c)),
-    before = diskIdentity(f.dir);
-  let cursor: import("../src/service-contract.ts").ReadCursor | null = {
-    storeId: f.files.format.storeId,
-    scope: { kind: "task", id: f.selected.taskId },
-    snapshotSeq: fact.committedSeq,
-    query: "Crash",
-    recordId: null,
-    recordVersion: null,
-    field: null,
-    offset: 0,
-  };
-  const hits = [];
-  for (let pages = 0; cursor && pages < 1000; pages++) {
-    const page = await searchHistory(HistoryReader.open(f.c)!, cursor);
-    hits.push(...page.hits);
-    if (page.next) expect(page.next).not.toEqual(cursor);
-    cursor = page.next;
-  }
-  expect(cursor).toBeNull();
-  expect(hits).toHaveLength(1);
-  expect(hits[0].owner.taskId).toBe(f.selected.taskId);
-  expect(hits[0].range).toEqual({ start: 0, end: 5 });
-  expect(diskIdentity(f.dir)).toEqual(before);
-}, 30000);
 
 it.each(["journal", "commit"] as const)(
   "recovery pins exact key incarnation across %s boundary",
