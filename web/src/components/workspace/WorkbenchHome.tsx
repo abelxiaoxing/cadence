@@ -1,4 +1,5 @@
-/** Project-less conversation shell. No project client, task or Send is created. */
+/** Project-less conversation shell. No project client, task or Send is created.
+ * History belongs to each project; a recent project only preselects the picker. */
 import {
   type ReactNode,
   useCallback,
@@ -23,11 +24,15 @@ import { WorkingFolderButton } from "./WorkingFolderButton";
 
 export function WorkbenchHome({
   ready,
+  projects = [],
+  restore = null,
   onOpenFolder,
   children,
 }: {
   ready: boolean;
-  onOpenFolder(): void;
+  projects?: readonly string[];
+  restore?: { status: "checking" | "stopped"; path: string } | null;
+  onOpenFolder(path?: string): void;
   children?: ReactNode;
 }) {
   const { t, locale, setLocale } = useT();
@@ -50,10 +55,12 @@ export function WorkbenchHome({
     container: layout,
   });
   useDrawerFocus(layout, drawer, mobile, closeDrawer);
-  const openFolder = () => {
+  const openFolder = (path?: string) => {
     closeDrawer();
-    onOpenFolder();
+    onOpenFolder(path);
   };
+  const name = (path: string) =>
+    path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
   return (
     <div
       className={`app workbench-entry${filesOpen ? "" : " inspector-hidden"}`}
@@ -122,16 +129,53 @@ export function WorkbenchHome({
         >
           <aside className="panel panel-left lp-panel">
             <ConversationActions
-              onConversation={openFolder}
+              onConversation={() => openFolder()}
               disabled={!ready}
             />
-            <section className="lp-section">
+            <section className="lp-section grow">
               <header className="lp-section-header">
                 <span className="lp-section-title">
                   {t("Conversation history")}
                 </span>
               </header>
-              <p className="panel-hint">{t("No conversations yet.")}</p>
+              <div className="lp-section-body">
+                <p className="panel-hint" role="status">
+                  {restore?.status === "checking"
+                    ? t("Returning to your last project {name}…", {
+                        name: name(restore.path),
+                      })
+                    : restore?.status === "stopped"
+                      ? t(
+                          "Your last project {name} is not running. Choose it below and open it again to see its conversations.",
+                          { name: name(restore.path) },
+                        )
+                      : projects.length
+                        ? t(
+                            "Conversations are kept with each project. Choose a project below and open it to see its history.",
+                          )
+                        : t(
+                            "Conversations are kept with each project. Open a working folder to see its history.",
+                          )}
+                </p>
+                {projects.map((path) => (
+                  <button
+                    type="button"
+                    className="session-item project-item"
+                    key={path}
+                    title={path}
+                    disabled={!ready}
+                    onClick={() => openFolder(path)}
+                  >
+                    <span className="session-icon">
+                      <FiFolder aria-hidden="true" />
+                    </span>
+                    <span className="session-info">
+                      <span className="session-title">{name(path)}</span>
+                      <span className="session-sub">{path}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
             </section>
           </aside>
         </section>
@@ -188,7 +232,7 @@ export function WorkbenchHome({
           </span>
         </div>
         <div className="statusbar-right">
-          <WorkingFolderButton disabled={!ready} onClick={openFolder} />
+          <WorkingFolderButton disabled={!ready} onClick={() => openFolder()} />
         </div>
       </footer>
     </div>

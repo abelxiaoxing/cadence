@@ -542,7 +542,10 @@ WebUI text is keyed by its English source: fixed text goes through `useT().t`, w
 The timeline client takes the chosen language from its bridge and is remounted on a switch; browser scenarios pin `locale: "en-US"` so English assertions do not follow the host's `LANG`.
 The browser is conversation-first, including before any project is selected: ordinary chat and explicit Cadence task conversations share its sidebar, while a lower-left dock observes actual Cadence child identities.
 The empty entry has no project welcome screen or central Create shortcut; New conversation offers folder selection until a project is explicitly opened.
-The bottom-right folder control is always present, and recent projects live inside its picker rather than in the conversation sidebar.
+The bottom-right folder control is always present, and its picker lists recent projects.
+Conversation history belongs to each project owner, so the unselected entry's history section says so and lists the recent projects; choosing one only preselects its folder in the picker.
+An unselected first entry returns to the last selected project, remembered only in that browser as its opaque key, after one readonly conversation listing proves that owner still runs in its associated epoch; this is navigation, never Open.
+A stopped, changed or unknown owner stays stopped: the entry remains and names the last project as not running, and any navigation, Open or folder choice during the check wins.
 Browsing or dismissing the picker never opens a project or sends a message.
 Open is available only for the successfully observed folder while its path input is unchanged; editing the path or refreshing its listing disables Open until Browse settles.
 Browse always makes a fresh readonly observation, including retrying the same path after a read failure; it never replays Open.

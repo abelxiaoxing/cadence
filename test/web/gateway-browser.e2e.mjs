@@ -414,6 +414,17 @@ for (const route of ["loopback", "https"])
         .getByText(/Advisory:/)
         .waitFor();
       assert.equal(page.url(), chatUrl);
+      // An unselected entry returns to the last project while its owner runs.
+      // That is navigation, not Open: no association, contact or Send is added.
+      const associated = g.store.projects().length;
+      await page.goto(`${g.endpoint}/app`);
+      await page
+        .locator(".panel-left .session-item")
+        .filter({ hasText: "Ordinary conversation in project B" })
+        .waitFor();
+      assert.equal(new URL(page.url()).searchParams.get("project"), projectB);
+      assert.equal(g.store.projects().length, associated);
+      assert.equal(g.f.contacts(), 1);
       await page.setViewportSize({ width: 390, height: 844 });
       await page.screenshot({ path: join(root, "project-390.png") });
       assert(
