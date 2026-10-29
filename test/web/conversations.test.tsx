@@ -95,17 +95,16 @@ it("an unavailable roster is not empty or inferred from historical lifecycle", (
       onTask={() => {}}
       onScope={() => {}}
       onNew={() => {}}
-      onProject={() => {}}
     />,
   );
   for (const label of [
-    "Recent projects",
     "Running conversations",
     "Conversation history",
-    "This service exposes one project",
     "Active roster unavailable",
   ])
     expect(html).toContain(label);
+  expect(html).not.toContain("Recent projects");
+  expect(html).not.toContain("Open working folder");
   expect(html).not.toContain("No active runs");
   expect(html).not.toContain("Cancel run — request stop");
 });

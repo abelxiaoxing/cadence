@@ -79,8 +79,9 @@ for (const route of ["loopback", "https"])
       await other
         .getByRole("button", { name: "Observe current state", exact: true })
         .click();
+      await other.getByRole("button", { name: "Tasks", exact: true }).click();
       await other
-        .getByRole("button", { name: "Create task", exact: true })
+        .getByRole("button", { name: "New task", exact: true })
         .click();
       await other
         .getByLabel("Goal", { exact: true })
@@ -94,7 +95,7 @@ for (const route of ["loopback", "https"])
       );
       await other.keyboard.press("Escape");
       assert.equal(f.contacts(), 0);
-      await p.getByRole("button", { name: "Create task", exact: true }).click();
+      await p.getByRole("button", { name: "New task", exact: true }).click();
       await p
         .getByLabel("Goal", { exact: true })
         .fill("Browser independent readonly collaboration");

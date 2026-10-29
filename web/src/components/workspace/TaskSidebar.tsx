@@ -6,9 +6,7 @@ import {
   FiChevronDown,
   FiChevronRight,
   FiCpu,
-  FiFolder,
   FiMessageSquare,
-  FiPlus,
   FiSquare,
 } from "react-icons/fi";
 import type { ChatSummary } from "../../../../src/service/contracts/workbench.ts";
@@ -24,6 +22,7 @@ import type {
   WorkspaceBootstrap,
 } from "../../types";
 import { PageControls } from "../history/PageControls";
+import { ConversationActions } from "./ConversationActions";
 
 type OpenScope = (scope: Scope, snapshot?: string, label?: string) => void;
 
@@ -220,13 +219,10 @@ export function TaskSidebar({
   onTask,
   onScope,
   onNew,
-  onProject,
   chats = [],
   conversationId,
-  projects,
   onConversation,
   onNewConversation,
-  onOpenProject,
 }: {
   client: ServiceClient;
   workspace: WorkspaceBootstrap;
@@ -241,13 +237,10 @@ export function TaskSidebar({
   onTask: (id: string, title?: string) => void;
   onScope: OpenScope;
   onNew: () => void;
-  onProject: () => void;
   chats?: ChatSummary[];
   conversationId?: string | null;
-  projects?: { path: string; current: boolean }[];
   onConversation?: (id: string) => void;
   onNewConversation?: () => void;
-  onOpenProject?: (path?: string) => void;
 }) {
   const { t, tx } = useT();
   const request: ListRequest = {
@@ -295,9 +288,6 @@ export function TaskSidebar({
       />
     </section>
   );
-  const project =
-    workspace.rootLabel.split(/[\\/]/).filter(Boolean).at(-1) ??
-    workspace.rootLabel;
   const liveChats = chats.filter(
     (chat) =>
       chat.status === "running" ||
@@ -325,85 +315,7 @@ export function TaskSidebar({
   );
   return (
     <aside className="panel panel-left lp-panel">
-      <div className="lp-new">
-        <button
-          type="button"
-          className="new-conversation"
-          onClick={onNewConversation ?? onNew}
-        >
-          <FiPlus aria-hidden="true" />
-          {onNewConversation ? t("New conversation") : t("New task")}
-        </button>
-        {onNewConversation && (
-          <button
-            type="button"
-            className="new-task-shortcut"
-            aria-label={t("New task")}
-            title={t("New task")}
-            onClick={onNew}
-          >
-            <FiCpu />
-          </button>
-        )}
-      </div>
-      <SidebarSection title={t("Recent projects")} className="projects">
-        {projects ? (
-          <>
-            {projects.map((entry) => (
-              <button
-                type="button"
-                className={`session-item project-item${entry.current ? " active" : ""}`}
-                key={entry.path}
-                title={entry.path}
-                onClick={() =>
-                  entry.current ? onProject() : onOpenProject?.(entry.path)
-                }
-              >
-                <span className="session-icon">
-                  <FiFolder />
-                </span>
-                <span className="session-info">
-                  <span className="session-title">
-                    {entry.path.split(/[\\/]/).filter(Boolean).at(-1) ??
-                      entry.path}
-                  </span>
-                  <span className="session-sub">{entry.path}</span>
-                </span>
-              </button>
-            ))}
-            <button
-              type="button"
-              className="project-open"
-              onClick={() => onOpenProject?.()}
-            >
-              <FiPlus />
-              {t("Open working folder")}
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              type="button"
-              className="session-item project-item active"
-              title={workspace.rootLabel}
-              onClick={onProject}
-            >
-              <span className="session-icon">
-                <FiFolder aria-hidden="true" />
-              </span>
-              <span className="session-info">
-                <span className="session-title">{project}</span>
-                <span className="session-sub">{workspace.rootLabel}</span>
-              </span>
-            </button>
-            <p className="panel-hint">
-              {t(
-                "This service exposes one project. Opening it never starts work.",
-              )}
-            </p>
-          </>
-        )}
-      </SidebarSection>
+      <ConversationActions onConversation={onNewConversation} onTask={onNew} />
       <SidebarSection
         title={t("Running conversations")}
         count={

@@ -137,7 +137,8 @@ For manual checks, `pi -e ./src/index.ts -e ./scripts/agent-panel-demo.ts` adds 
 
 Open the private link that `cadence server install` printed, or that `cadence token-link --reveal` reveals.
 Valid bootstrap redirects to a token-free URL and uses an HttpOnly SameSite cookie for subsequent HTTP/WebSocket access; no localStorage token copy.
-The unified browser entry first shows projects, without an execution cwd, SDK session or default workspace.
+The unified browser entry opens on the conversation shell, without an execution cwd, SDK session or default workspace.
+Choose a working folder from the lower-right button; before a folder is selected, New conversation offers the same picker and Send stays disabled.
 Only explicit Open starts or reuses a project owner.
 Within that project, the browser opens on an ordinary conversation with a real message composer, retained multi-turn context and standard read/write/edit/bash tools; no Cadence task is created by Send.
 Use `cadence <goal>` or `/cadence <goal>` at the beginning of the input, or select Cadence task, to prepare a separate task.
@@ -151,10 +152,10 @@ Ordinary Send binds its exact text, conversation head, epoch, access and selecte
 The WebUI provides task/run/assignment navigation, long retained messages and tool detail, exact literal search, timeline and complete scoped NDJSON/Markdown downloads.
 Desktop panes and phone drawers retain cancellation and keyboard controls.
 Its chrome follows pi-web-ui: a compact topbar with view tabs and icon actions, a sectioned task sidebar, pill inspector tabs, transcript/tool cards and a bottom statusbar; phones wrap the topbar into an action row and an icon tab row.
-The left sidebar lists recent projects and running/retained conversations; a separate lower-left dock observes Cadence subagents and opens their retained transcripts.
+The left sidebar provides New conversation and New task alongside running/retained conversations; a separate lower-left dock observes Cadence subagents and opens their retained transcripts.
 It is not pi-web-ui's subagent engine.
 The right sidebar defaults to readonly files, bounded text previews and path-only references; task plan/check/change/review controls occupy its Task details tab.
-The lower-right folder button browses directories on the service host and explicitly opens another independent project owner.
+The lower-right folder button contains recent projects, browses directories on the service host and explicitly opens another independent project owner.
 The unified entry switches project clients on the same origin, including an explicitly configured HTTPS proxy; it never changes a running task's cwd, registers a boot service or cancels the project left behind.
 Backend cookies and native capabilities never reach the browser; proxied actions remain browser-authority actions, with owner-side consent/build/CSRF checks.
 The gateway refuses the legacy project-level Open command: all project openings use its own association route, without returning an independent backend token link.
@@ -310,7 +311,7 @@ Historical logs are not runtime dependencies, and removing development tooling m
 
 `src/service/{gateway,gateway-store,gateway-cli}.ts` owns the no-project entry, private workbench coordination and same-origin project routing, not task execution.
 A root access rotation retires its proxy attachment IDs and detaches those exact browser viewers at the owners, without cancelling admitted work.
-The first version requires a selected project for ordinary Send/tools; the empty workbench is a project selector, not an unbound chat executor.
+The first version requires a selected project for ordinary Send/tools; the empty workbench presents the conversation shell with Send disabled, not an unbound chat executor.
 `src/service/{workbench,conversations,workbench-files}.ts` owns ordinary conversations, their private retained turns, readonly files and explicit project navigation; `src/service/contracts/workbench.ts` is the portable closed DTO boundary.
 Conversation auth intents and original settlements use their own flushed private journal, never fabricated task/history receipts.
 Their original Stop lifetime and exclusive checkout barrier belong to the existing service owner and scheduler.
@@ -527,7 +528,12 @@ Regression owners:
 Regenerate operator/service/native/browser outputs only through their canonical builders; `--check` variants compare new private output without overwriting canonical bytes.
 WebUI text is keyed by its English source: fixed text goes through `useT().t`, whose type requires a `web/src/i18n/zh.ts` entry with the same `{name}` marks, and run-time status words or kept notices through `tx`, which passes unknown text and codes through.
 The timeline client takes the chosen language from its bridge and is remounted on a switch; browser scenarios pin `locale: "en-US"` so English assertions do not follow the host's `LANG`.
-The browser is conversation-first: ordinary chat and explicit Cadence task conversations share its sidebar, while a lower-left dock observes actual Cadence child identities.
+The browser is conversation-first, including before any project is selected: ordinary chat and explicit Cadence task conversations share its sidebar, while a lower-left dock observes actual Cadence child identities.
+The empty entry has no project welcome screen or central Create shortcut; New conversation offers folder selection until a project is explicitly opened.
+The bottom-right folder control is always present, and recent projects live inside its picker rather than in the conversation sidebar.
+Browsing or dismissing the picker never opens a project or sends a message.
+Open is available only for the successfully observed folder while its path input is unchanged; editing the path or refreshing its listing disables Open until Browse settles.
+Browse always makes a fresh readonly observation, including retrying the same path after a read failure; it never replays Open.
 One service still owns one checkout.
 The recent-project directory records only explicit project openings in the same private namespace; navigation opens that project's independent authenticated entry rather than changing global cwd, importing Pi sessions or adopting another account's state.
 The center shows ordinary streamed messages or retained task text as Markdown.
@@ -541,6 +547,14 @@ Publish `web/dist` from Node: Vite run under Bun lays out its preload helper dif
 Review the independently enumerated package member list and every emitted body, not a count or an expected list generated from the tar under test.
 Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
 Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
+
+### Conversation-first entry review snapshot
+
+The project-less conversation shell and folder-picker review passed 133 web tests, all 9 real-browser scenarios and the 135-member real-pack audit, plus a separate Bun pack/body audit.
+New loopback and HTTPS regressions refuse Open after an unbrowsed path edit, retry the same readonly directory observation after failure, and fence Open while a refresh is pending; the two original picker defects were observed failing before their fixes.
+Full `verify` passed its static/build/lint/Agent checks but stopped in the root suite: 2033 tests passed, 27 platform tests skipped, and the unchanged `service-history-search-export` field-kind/snapshot case exceeded its 5s deadline.
+That complete 16-test file passed in a subsequent isolated diagnostic run (the affected case took 1.16s); the original timing cause is unconfirmed, and this is not a full green `verify` claim.
+Failed logs were retained outside the checkout; no deadline was increased, test skipped to obtain green, dependency downloaded or consumer service installed/restarted.
 
 ### Release 2.0.15 acceptance snapshot
 

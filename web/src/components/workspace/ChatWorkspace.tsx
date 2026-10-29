@@ -20,6 +20,7 @@ import { cadenceInput, useWorkbench } from "../../client/use-workbench";
 import { useT } from "../../i18n/locale";
 import { Markdown } from "../rich/Markdown";
 import { StreamMarkdown } from "../rich/StreamMarkdown";
+import { ChatWelcome } from "./ChatWelcome";
 
 function stored(key: string) {
   try {
@@ -234,27 +235,7 @@ export function ChatWorkspace({
           }
         }}
       >
-        {!summary && (
-          <div className="empty-state">
-            <span className="empty-logo" aria-hidden="true">
-              C
-            </span>
-            <h2>{t("What would you like to work on?")}</h2>
-            <p>
-              {t(
-                "Chat normally, or start with /cadence to prepare a task. Nothing starts until you send.",
-              )}
-            </p>
-            <button
-              type="button"
-              className="ghost"
-              disabled={!enabled}
-              onClick={() => onCadence("")}
-            >
-              {t("Create task")}
-            </button>
-          </div>
-        )}
+        {!summary && <ChatWelcome />}
         {view?.before && (
           <button
             type="button"
