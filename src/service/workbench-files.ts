@@ -9,6 +9,7 @@ import {
   readSync,
   realpathSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { canonicalAmbientRoot, safeDirectory } from "../task-store.ts";
 import { sanitizeText, TextSanitizer } from "../worker-redaction.mjs";
@@ -80,10 +81,22 @@ export class WorkbenchFiles {
       throw new ContractError("forbidden");
     return target;
   }
+  /** Folder browsing only (Open still requires a full path): `~` names this
+   * account's home, and a file or linked component is a refusal, not unreadable. */
+  private browsed(path: string): string {
+    const full = /^~(?:[\\/]|$)/.test(path)
+      ? join(homedir(), path.slice(1))
+      : path || this.root;
+    try {
+      return this.directory(full);
+    } catch (error) {
+      if (error instanceof Error && error.message === "Unsafe directory")
+        throw new ContractError("forbidden");
+      throw error;
+    }
+  }
   list(path: string, directories = false): WorkbenchResult {
-    const selected = directories
-      ? this.directory(path || this.root)
-      : this.selected(path);
+    const selected = directories ? this.browsed(path) : this.selected(path);
     if (
       !safeDirectory(selected) ||
       sanitizeText(selected, this.secrets()) !== selected

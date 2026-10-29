@@ -48,7 +48,7 @@ Keep that link private.
 Open Pi in the same project and use `/cadence` for the native client; explicit `cadence stop --workspace <path>` stops only that project.
 Opening another project never changes the cwd or cancels work in the former one.
 The default workbench routes all associated projects through one origin, including a configured HTTPS proxy.
-Its project picker browses directory names readonly; only **Open this project** starts or reuses an owner, without admitting a task or model call.
+Its project picker browses directory names readonly (`~` names the service account's home); only **Open this folder**, or one click on a recent project, starts or reuses an owner, without admitting a task or model call.
 Project navigation remounts only the browser client; the original owner's work continues.
 Browser proxy traffic keeps browser authority and the owner's own attachments, CSRF/build checks, grants and history proofs; native management routes and local-capability headers are not forwarded.
 The gateway also refuses the legacy project-level Open command, so every opening is associated through the workbench instead of returning an independent backend token link.

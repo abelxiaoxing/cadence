@@ -43,10 +43,29 @@ export const zh = {
   "Task details": "任务详情",
   "Switch working folder": "切换工作文件夹",
   "Open working folder": "打开工作文件夹",
-  "Open this project": "打开此项目",
-  "Opening project…": "正在打开项目…",
+  "Open this folder": "打开此文件夹",
+  "Opening folder…": "正在打开文件夹…",
+  "Will open:": "将打开：",
+  "Open {path}": "打开 {path}",
   "Folder path": "文件夹路径",
-  Browse: "浏览",
+  "Type or paste a path, then press Enter": "输入或粘贴路径，按回车前往",
+  "Edit path": "输入路径",
+  "Current location": "当前位置",
+  "Home folder": "主目录",
+  "Home folder (~)": "主目录（~）",
+  "Filter folders": "筛选文件夹",
+  "Filter this folder…": "筛选当前文件夹…",
+  "Reading folder…": "正在读取文件夹…",
+  "No matching folders.": "没有匹配的文件夹。",
+  "No subfolders.": "没有子文件夹。",
+  "Enter a full path, for example ~/project.":
+    "请输入完整路径，例如 ~/project。",
+  "This folder does not exist. Check the path.":
+    "找不到这个文件夹，请检查路径。",
+  "This location cannot be browsed: it belongs to another account, is protected, or is not a plain folder (for example a link).":
+    "无法浏览这个位置：它属于其他账户、受保护，或不是普通文件夹（例如符号链接）。",
+  "This folder could not be read right now; it may lack read permission. Try again.":
+    "暂时无法读取这个文件夹，可能没有读取权限，请重试。",
   "Parent folder": "上级文件夹",
   "Choose a folder on the service host. Opening reuses or starts that project's independent service; current work keeps running.":
     "选择服务所在主机上的文件夹。打开时将复用或启动该项目的独立服务，当前工作会继续运行。",

@@ -547,8 +547,11 @@ Conversation history belongs to each project owner, so the unselected entry's hi
 An unselected first entry returns to the last selected project, remembered only in that browser as its opaque key, after one readonly conversation listing proves that owner still runs in its associated epoch; this is navigation, never Open.
 A stopped, changed or unknown owner stays stopped: the entry remains and names the last project as not running, and any navigation, Open or folder choice during the check wins.
 Browsing or dismissing the picker never opens a project or sends a message.
-Open is available only for the successfully observed folder while its path input is unchanged; editing the path or refreshing its listing disables Open until Browse settles.
-Browse always makes a fresh readonly observation, including retrying the same path after a read failure; it never replays Open.
+The picker has no separate Browse step: its location trail, folder list and Enter in the path entry navigate, and the footer names the exact Open target.
+Open of a typed or recent path first makes one fresh readonly observation and opens only that observation's canonical folder; a failed read opens nothing and keeps the typed path and previous listing in view.
+The footer Open is disabled while any observation is pending, including the first one; a recent entry still opens, because its own fresh observation supersedes the pending read.
+Every navigation makes a fresh readonly observation, including retrying the same path after a read failure; it never replays Open.
+Folder browsing (not Open) accepts `~` for the service account's home and reports a missing folder as `invalid`, a file or linked component as `forbidden` and a read failure as `unavailable`; the gateway passes these public codes on so the picker can explain them.
 One service still owns one checkout.
 The recent-project directory records only explicit project openings in the same private namespace; navigation opens that project's independent authenticated entry rather than changing global cwd, importing Pi sessions or adopting another account's state.
 The center shows ordinary streamed messages or retained task text as Markdown.

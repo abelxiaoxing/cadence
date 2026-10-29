@@ -2535,13 +2535,79 @@ summary:focus-visible,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.cwd-location {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  margin-top: 12px;
+}
+.cwd-crumbs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: 2px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+.cwd-crumbs > button {
+  flex: none;
+  min-height: 26px;
+  padding: 2px 8px;
+  border-color: transparent;
+  background: transparent;
+  font: 12px var(--mono);
+  white-space: nowrap;
+}
+.cwd-crumbs > button[aria-current] {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+.cwd-crumb-sep {
+  flex: none;
+  color: var(--text-faint);
+}
 .cwd-input {
+  flex: 1;
+  min-width: 0;
   display: flex;
   gap: 8px;
 }
 .cwd-input input {
   flex: 1;
   min-width: 0;
+  font-family: var(--mono);
+}
+.cwd-location > .ghost[aria-pressed="true"] {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+.action-dialog > .cwd-filter {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 0 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  color: var(--text-faint);
+}
+.action-dialog > .cwd-filter:focus-within {
+  border-color: var(--accent);
+}
+.action-dialog > .cwd-filter > input {
+  flex: 1;
+  width: auto;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding-left: 0;
+  padding-right: 0;
 }
 .cwd-picker-list {
   display: flex;
@@ -2550,9 +2616,32 @@ summary:focus-visible,
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  margin: 12px 0;
+  margin: 8px 0 12px;
   border: 1px solid var(--border-soft);
   border-radius: 8px;
+}
+.cwd-picker-list[aria-busy] > button {
+  opacity: 0.55;
+}
+.cwd-picker-note {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--text-faint);
+}
+.action-dialog > .cwd-footer {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.cwd-target {
+  flex: 1 1 240px;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.cwd-target code {
+  font: 12px var(--mono);
+  color: var(--text);
 }
 .cwd-picker-list > button {
   justify-content: flex-start;

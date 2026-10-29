@@ -81,21 +81,30 @@ for (const route of ["loopback", "https"])
         "New conversation only offers folder selection",
       );
       const openProject = page.getByRole("button", {
-        name: "Open this project",
+        name: "Open this folder",
         exact: true,
       });
       const waitForObservedFolder = () =>
         page.waitForFunction(() =>
           [...document.querySelectorAll("dialog button")].some(
             (button) =>
-              button.textContent === "Open this project" && !button.disabled,
+              button.textContent === "Open this folder" && !button.disabled,
           ),
         );
       await waitForObservedFolder();
-      await page.getByRole("textbox", { name: "Folder path" }).fill(paths[0]);
-      assert(
-        await openProject.isDisabled(),
-        "editing the path must not authorize opening the previously listed folder",
+      assert.equal(
+        await page.getByRole("button", { name: "Browse", exact: true }).count(),
+        0,
+      );
+      await page
+        .getByRole("button", { name: "Edit path", exact: true })
+        .click();
+      const folderPath = page.getByRole("textbox", { name: "Folder path" });
+      await folderPath.fill(paths[0]);
+      assert.equal(
+        await page.locator(".cwd-target code").textContent(),
+        paths[0],
+        "Open names the typed path, not the previously listed folder",
       );
       let directoryReads = 0;
       let releaseRead;
@@ -121,16 +130,36 @@ for (const route of ["loopback", "https"])
         if (directoryReads === 3) await heldRead;
         return request.continue();
       });
-      await page.getByRole("button", { name: "Browse", exact: true }).click();
+      // Open of a typed path observes it first; a failed read opens nothing
+      // and keeps both the typed path and the previous listing in view.
+      await openProject.click();
       await page
         .getByRole("alert")
-        .filter({ hasText: "unavailable" })
+        .filter({ hasText: "could not be read right now" })
         .waitFor();
-      assert(await openProject.isDisabled());
-      // Repeating the same readonly Browse must retry observation, never Open.
-      await page.getByRole("button", { name: "Browse", exact: true }).click();
+      assert.equal(directoryReads, 1);
+      assert.equal(g.store.projects().length, 0);
+      assert.equal(await folderPath.inputValue(), paths[0]);
+      assert(
+        await page
+          .getByRole("button", { name: "Parent folder", exact: true })
+          .isVisible(),
+      );
+      // Enter retries the same readonly observation, never Open.
+      await Promise.all([
+        page.waitForResponse(
+          (r) =>
+            r.url().includes("directories") &&
+            new URL(r.url()).searchParams.get("path") === paths[0] &&
+            r.status() === 200,
+        ),
+        folderPath.press("Enter"),
+      ]);
       await waitForObservedFolder();
       assert.equal(directoryReads, 2);
+      assert.equal(g.store.projects().length, 0);
+      const here = page.locator('.cwd-crumbs [aria-current="location"]');
+      assert.equal(await here.textContent(), "browser-b");
       try {
         await Promise.all([
           page.waitForRequest(
@@ -138,7 +167,7 @@ for (const route of ["loopback", "https"])
               request.url().includes("directories") &&
               new URL(request.url()).searchParams.get("path") === paths[0],
           ),
-          page.getByRole("button", { name: "Browse", exact: true }).click(),
+          here.click(),
         ]);
         assert(
           await openProject.isDisabled(),
@@ -213,7 +242,11 @@ for (const route of ["loopback", "https"])
           .getByRole("button", { name: "Switch working folder", exact: true })
           .first()
           .click();
+        await page
+          .getByRole("button", { name: "Edit path", exact: true })
+          .click();
         await page.getByRole("textbox", { name: "Folder path" }).fill(path);
+        // One explicit Open: a fresh readonly observation, then that folder.
         await Promise.all([
           page.waitForResponse(
             (r) =>
@@ -221,11 +254,10 @@ for (const route of ["loopback", "https"])
               r.url().includes(encodeURIComponent(path)) &&
               r.status() === 200,
           ),
-          page.getByRole("button", { name: "Browse", exact: true }).click(),
+          page
+            .getByRole("button", { name: "Open this folder", exact: true })
+            .click(),
         ]);
-        await page
-          .getByRole("button", { name: "Open this project", exact: true })
-          .click();
         await page
           .getByRole("textbox", { name: "Message", exact: true })
           .waitFor();
@@ -255,6 +287,9 @@ for (const route of ["loopback", "https"])
           .getByRole("button", { name: "Switch working folder", exact: true })
           .first()
           .click();
+        await page
+          .getByRole("button", { name: "Edit path", exact: true })
+          .click();
         await page.getByRole("textbox", { name: "Folder path" }).fill(paths[0]);
         await Promise.all([
           page.waitForResponse(
@@ -263,11 +298,10 @@ for (const route of ["loopback", "https"])
               r.url().includes(encodeURIComponent(paths[0])) &&
               r.status() === 200,
           ),
-          page.getByRole("button", { name: "Browse", exact: true }).click(),
+          page
+            .getByRole("button", { name: "Open this folder", exact: true })
+            .click(),
         ]);
-        await page
-          .getByRole("button", { name: "Open this project", exact: true })
-          .click();
         await page
           .getByRole("alert")
           .filter({ hasText: "The shared registry lock is blocking projects." })
@@ -359,19 +393,39 @@ for (const route of ["loopback", "https"])
         projectB,
       );
       assert.equal(g.f.contacts(), 1);
-      // Recent projects live in the lower-right picker. Browsing a recent entry
-      // is readonly; only explicit Open navigates and the original chat returns.
-      await page
-        .getByRole("button", { name: "Switch working folder", exact: true })
-        .click();
-      await page
-        .getByRole("region", { name: "Recent projects", exact: true })
-        .getByRole("button", { name: paths[0], exact: true })
-        .click();
-      await page
-        .getByRole("button", { name: "Open this project", exact: true })
-        .click();
-      await page.locator("dialog[open]").waitFor({ state: "hidden" });
+      // Recent projects live in the lower-right picker. One click on a recent
+      // entry is its explicit Open, even while the picker's first read is
+      // still pending, and the original chat returns.
+      let pendingReads = 0;
+      let releaseFirstRead;
+      const firstRead = new Promise((resolve) => {
+        releaseFirstRead = resolve;
+      });
+      const anyDirectories = (url) => url.href.includes("directories");
+      await page.route(anyDirectories, async (request) => {
+        if (pendingReads++ === 0) await firstRead;
+        // The superseded first read may already be aborted by the client.
+        await request.continue().catch(() => {});
+      });
+      try {
+        await Promise.all([
+          page.waitForRequest((request) =>
+            anyDirectories(new URL(request.url())),
+          ),
+          page
+            .getByRole("button", { name: "Switch working folder", exact: true })
+            .click(),
+        ]);
+        await page
+          .getByRole("region", { name: "Recent projects", exact: true })
+          .getByRole("button", { name: paths[0], exact: true })
+          .click();
+        await page.locator("dialog[open]").waitFor({ state: "hidden" });
+      } finally {
+        releaseFirstRead();
+        await page.unroute(anyDirectories);
+      }
+      assert.equal(pendingReads, 2);
       await page
         .locator(".chat-message.assistant")
         .getByText(/Advisory:/)
