@@ -205,6 +205,19 @@ it("built workbench: ordinary chat, file reference, explicit Cadence transition,
       3,
       "One plan confirmation starts exactly one implementation worker",
     );
+    // The started worker settles before the fixture's orderly close.
+    const drainBy = Date.now() + 15000;
+    for (;;) {
+      const active = await f.client.activeRuns();
+      if (
+        active.kind === "ok" &&
+        active.value.status === "complete" &&
+        active.value.runs.length === 0
+      )
+        break;
+      assert(Date.now() < drainBy, "implementation run did not drain");
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
     assert.deepEqual(errors, []);
     writeFileSync(
       join(root, "receipt.json"),

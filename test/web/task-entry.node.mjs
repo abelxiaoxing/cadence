@@ -158,6 +158,60 @@ test("pending creation is observed by its original ID before analysis", async ()
   ]);
 });
 
+test("fenced inconclusive receipt reads are observed again, never resubmitted", async () => {
+  const f = fixture(),
+    create = f.client.create;
+  let accepted;
+  f.client.create = async (command) => {
+    const reply = await create(command);
+    accepted = reply.value;
+    return {
+      kind: "ok",
+      value: {
+        ...accepted,
+        publication: "pending",
+        created: { ...accepted.created, state: "reserved" },
+      },
+    };
+  };
+  let reads = 0;
+  f.client.receipt = async () => {
+    f.calls.push("receipt");
+    return ++reads < 3
+      ? {
+          status: "inconclusive",
+          error: { code: "receipt-inconclusive", effect: "uncertain" },
+        }
+      : { status: "found", receipt: accepted };
+  };
+  await beginTask(f.input);
+  assert.deepEqual(f.calls, [
+    "preflight:create",
+    "create",
+    "receipt",
+    "receipt",
+    "receipt",
+    "current",
+    "preflight:generate-plan",
+    "generate-plan",
+  ]);
+});
+
+test("an absent receipt stops the sequence without another command", async () => {
+  const f = fixture(),
+    create = f.client.create;
+  f.client.create = async (command) => {
+    const reply = await create(command);
+    return { kind: "ok", value: { ...reply.value, publication: "pending" } };
+  };
+  f.client.receipt = async () => {
+    f.calls.push("receipt");
+    return { status: "absent", committedSeq: "1" };
+  };
+  await assert.rejects(beginTask(f.input), /receipt-inconclusive/);
+  assert.deepEqual(f.calls, ["preflight:create", "create", "receipt"]);
+});
+
 test("lost create response retains the command identity and never retries or starts", async () => {
   const f = fixture();
   f.client.create = async () => {

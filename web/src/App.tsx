@@ -1035,7 +1035,7 @@ export function App({
               </details>
             </header>
           )}
-          {taskId && context && storeId && snapshotSeq && (
+          {taskId && (
             <PlanApproval
               key={taskId}
               client={api.client}
