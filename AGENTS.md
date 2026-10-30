@@ -17,8 +17,9 @@ Consumer data and uncertain resources must never be imported, reset or cleaned i
 
 ## Development
 
-`README.md` is the temporary home for project architecture, executable contracts, limits, regression lessons and verification guidance.
-Read its Engineering knowledge section and the affected source/tests before changing a boundary.
+`engineering/` holds project architecture, executable contracts, limits, regression lessons and verification guidance, one file per area; `README.md` stays a short user guide.
+Before changing a boundary, read the area file the project index names and the affected source/tests; read `engineering/verification.md` before integrating.
+Keep each fact in one place: limits beside their constants, operations in `docs/`, and new release evidence appended to `engineering/releases.md`, which is not required reading.
 Handle ordinary engineering directly; no task-management framework, task creation, archive ceremony or workflow-specific agent is required.
 Keep research and commit skills independent; Git commits, pushes, installation, publication and deployment require their applicable explicit authorization.
 Preserve unrelated working-tree changes and actual native/auth/storage outcomes.
@@ -37,8 +38,16 @@ Use the installed public Pi declarations rather than assuming global documentati
 <!-- ABEL:AGENTS-INDEX:START -->
 ## Project index
 
-- `package.json` defines the standalone package; `README.md` owns project engineering guidance.
+- `package.json` defines the standalone package; `README.md` is the user guide.
 - `src/index.ts` is the sole Pi extension entrypoint; `src/service/` owns the shared execution service.
 - `src/history/` owns durable recording and retained readers; `web/src/` owns the browser client.
 - `agents/`, `skills/` and `config/` contain the shipped independent profiles, skills and examples.
+- `engineering/architecture.md`: module ownership, maintained seams, packaging and shipped content.
+- `engineering/lifetimes.md`: admission, scheduling, Stop, registry and recovery.
+- `engineering/checks-review.md`: checks, change observation, task publication and Review.
+- `engineering/history.md`: capture, redaction and retained history readers.
+- `engineering/clients.md`: the native client, the agent panel, the WebUI and ordinary conversations.
+- `engineering/limits.md`: resource ceilings and their owning constants.
+- `engineering/verification.md`: commands, development practice, regression owners and lessons.
+- `engineering/releases.md`: append-only release evidence, not required reading.
 <!-- ABEL:AGENTS-INDEX:END -->

@@ -222,7 +222,6 @@
     }
   ],
   "newIntegrationFiles": [
-    "licenses/pi-web-ui-reuse.md",
     "scripts/build-web.mjs",
     "src/service-assets.ts",
     "test/web/assets-browser.e2e.mjs",
@@ -291,7 +290,6 @@
     "test/helpers/gateway-recovery-child.ts"
   ],
   "destinations": {
-    "licenses/pi-web-ui-reuse.md": "e4e5994056f9abe4fb10c1ae823aa1f717a3a91ceb90666de0eb85c16f56ad0e",
     "web/index.html": "d4f99afb551ce57f3c0c361b176c37540520cd1658ef568c86ef01e0cce9e5b1",
     "web/src/App.tsx": "c9c3e3eb6dc1461feada213c7d9878cb009803216c9d11057a184be9f23a6d56",
     "web/src/client/actions.ts": "192587fe7eee7b7d669a0e93641d0880a4ca33a56a6ca25d0fe4265a8519db88",

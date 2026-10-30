@@ -114,6 +114,14 @@ It is a warning rather than part of the info card because Pi's TUI replaces one 
 `/cadence` names the same command when it finds no owner.
 A machine without a supported user service manager and `CADENCE_AUTOSTART=0` keep both quiet; with `CADENCE_LINGER=0` they suggest `--no-linger`.
 
+### One copy for Pi and the service
+
+After `npm install -g`, `pi install "$(npm root -g)/@abelxiaoxing/cadence"` records that path and loads it in place, so an npm upgrade updates the service and native `/cadence` together.
+Pi's own package install (`pi install npm:@abelxiaoxing/cadence`) also loads the native client, but its copy puts no `cadence` on `PATH`; register its service with `node ~/.pi/agent/npm/node_modules/@abelxiaoxing/cadence/src/service-cli.mjs server install`.
+Keep one copy: two copies drift apart on upgrade, and a native client refuses an owner whose service contract differs from its own.
+A unit registered by an earlier version's Pi install hook keeps running; `cadence server restart` from the copy you keep rewrites it, and `pi update` no longer restarts it.
+Opening the private link once leaves an HttpOnly cookie in that browser; the address without the token only explains how to get the link.
+
 ### Port and token
 
 The background service reads two lines of the research configuration `~/.pi/agent/cadence/.env`:
