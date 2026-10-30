@@ -20,6 +20,7 @@ import { cadenceInput, useWorkbench } from "../../client/use-workbench";
 import { useT } from "../../i18n/locale";
 import { Markdown } from "../rich/Markdown";
 import { StreamMarkdown } from "../rich/StreamMarkdown";
+import { ChatSteps, LEGACY_OMITTED_NOTICE, turnParts } from "./ChatSteps";
 import { ChatWelcome } from "./ChatWelcome";
 
 function stored(key: string) {
@@ -421,39 +422,46 @@ export function ChatWorkspace({
 }
 export function ChatTurnView({ turn }: { turn: ChatTurn }) {
   const { t, tx } = useT();
+  const { steps, answer } = turnParts(turn.items);
+  const live = turn.status === "running" && answer.length === 0;
+  const grouped =
+    steps.length > 0 || live || Object.values(turn.omitted).some(Boolean);
+  const notice = turn.notice
+    .split("\n")
+    .filter((line) => line && line !== LEGACY_OMITTED_NOTICE);
   return (
     <section className="chat-turn" aria-label={t("Conversation turn")}>
-      {turn.items.map((item) =>
-        item.role === "tool" ? (
-          <details className="chat-tool" key={item.id}>
-            <summary>
-              <span>{item.name || t("Tool")}</span>
-              {item.error && (
-                <span className="ep-state failed">{t("failed")}</span>
-              )}
-            </summary>
-            {item.args && <pre>{item.args}</pre>}
-            {item.text && <pre>{item.text}</pre>}
-          </details>
-        ) : (
-          <article className={`chat-message ${item.role}`} key={item.id}>
-            <div className="chat-message-role">
-              {item.role === "user" ? t("You") : "Cadence"}
-            </div>
-            {item.role === "assistant" && turn.status === "running" ? (
-              <StreamMarkdown text={item.text} />
-            ) : (
-              <Markdown text={item.text} />
-            )}
+      {turn.items
+        .filter((item) => item.role === "user")
+        .map((item) => (
+          <article className="chat-message user" key={item.id}>
+            <div className="chat-message-role">{t("You")}</div>
+            <Markdown text={item.text} />
           </article>
-        ),
+        ))}
+      {(grouped || answer.length > 0) && (
+        <article className="chat-message assistant">
+          <div className="chat-message-role">Cadence</div>
+          {grouped && (
+            <ChatSteps
+              turn={turn}
+              steps={steps}
+              live={live}
+              answered={answer.length > 0}
+            />
+          )}
+          {answer.map((item) =>
+            turn.status === "running" ? (
+              <StreamMarkdown key={item.id} text={item.text} />
+            ) : (
+              <Markdown key={item.id} text={item.text} />
+            ),
+          )}
+        </article>
       )}
-      {turn.notice && (
-        <p className="inspector-note">
-          {turn.notice
-            .split("\n")
-            .map((line) => tx(line))
-            .join("\n")}
+      {notice.length > 0 && (
+        <p className="inspector-note chat-turn-notice">
+          {notice.map((line) => tx(line)).join("\n")}
         </p>
       )}
       {!["completed", "running", "queued"].includes(turn.status) && (

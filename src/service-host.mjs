@@ -4006,12 +4006,20 @@ function decodeWorkbenchCommand(v) {
   };
 }
 function decodeChatTurn(v) {
-  const o = closed(v, ["id", "epoch", "status", "items", "notice"]);
+  const keys2 = ["id", "epoch", "status", "items", "notice"];
+  const current = v !== null && typeof v === "object" && Object.hasOwn(v, "omitted");
+  const o = closed(v, current ? [...keys2, "omitted"] : keys2);
+  const omitted = current ? closed(o.omitted, ["thinking", "media", "other"]) : null;
   return {
     id: decodeId(o.id),
     epoch: decodeId(o.epoch),
     status: oneOf(o.status, statuses),
     notice: text(o.notice, 1024),
+    omitted: {
+      thinking: omitted ? bool(omitted.thinking) : false,
+      media: omitted ? bool(omitted.media) : false,
+      other: omitted ? bool(omitted.other) : false
+    },
     items: list(o.items, 256, (v2) => {
       const i = closed(v2, ["id", "role", "text", "name", "args", "error"]);
       return {
@@ -10285,7 +10293,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "944f3b53bd5b7f1d3f30868e0947d900e356ae9a2bcfb9f591edd988b3d5eb3a",
+    contractHash: "83a2720c0a5a61f9e18e4f67e9738f184dee61cf07e75d9b98b5728577daaa6d",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -25158,6 +25166,11 @@ import { dirname as dirname14, join as join22 } from "node:path";
 var TURN_BYTES = 384 * 1024;
 var META_BYTES = 64 * 1024;
 var SESSION_LIMIT = 200;
+var OMITTED_FLAG = {
+  "hidden-thinking": "thinking",
+  binary: "media",
+  unsupported: "other"
+};
 
 class ConversationCapture {
   turn;
@@ -25251,8 +25264,8 @@ class ConversationCapture {
         item.error = e.isError;
     } else if (e.kind === "worker-failure")
       this.turn.notice = `worker-failure: ${e.code}`;
-    else if (e.kind === "omitted-block")
-      this.turn.notice = "Hidden thinking, signatures and media are not retained.";
+    else if (e.kind === "omitted-block" && e.block.owner.kind !== "context" && e.block.owner.kind !== "handoff")
+      this.turn.omitted[OMITTED_FLAG[e.block.reason]] = true;
     if ([...this.details.values()].reduce((size, detail) => size + Buffer.byteLength(detail.text) + detail.sanitizer.retainedBytes, 0) > TURN_BYTES)
       throw new ContractError("capacity");
     canonicalJson(this.turn, TURN_BYTES);
@@ -25509,6 +25522,7 @@ class Conversations {
       epoch: input.model.epoch,
       status: "queued",
       notice: "",
+      omitted: { thinking: false, media: false, other: false },
       items: [
         {
           id: "user",
@@ -25934,7 +25948,7 @@ function refuseAt(stage, step) {
   }
 }
 async function createServiceHost(value, sourceBuild) {
-  const embedded = "944f3b53bd5b7f1d3f30868e0947d900e356ae9a2bcfb9f591edd988b3d5eb3a";
+  const embedded = "83a2720c0a5a61f9e18e4f67e9738f184dee61cf07e75d9b98b5728577daaa6d";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

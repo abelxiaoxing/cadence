@@ -43,6 +43,11 @@ import type { TaskActions } from "./task-actions.ts";
 const TURN_BYTES = 384 * 1024;
 const META_BYTES = 64 * 1024;
 const SESSION_LIMIT = 200;
+const OMITTED_FLAG = {
+  "hidden-thinking": "thinking",
+  binary: "media",
+  unsupported: "other",
+} as const satisfies Record<string, keyof ChatTurn["omitted"]>;
 interface SavedConversation {
   id: string;
   title: string;
@@ -182,9 +187,13 @@ export class ConversationCapture {
       if (e.kind === "tool-end") item.error = e.isError;
     } else if (e.kind === "worker-failure")
       this.turn.notice = `worker-failure: ${e.code}`;
-    else if (e.kind === "omitted-block")
-      this.turn.notice =
-        "Hidden thinking, signatures and media are not retained.";
+    else if (
+      e.kind === "omitted-block" &&
+      e.block.owner.kind !== "context" &&
+      e.block.owner.kind !== "handoff"
+    )
+      // A flag, not a notice line: it must never displace a failure reason.
+      this.turn.omitted[OMITTED_FLAG[e.block.reason]] = true;
     if (
       [...this.details.values()].reduce(
         (size, detail) =>
@@ -504,6 +513,7 @@ export class Conversations {
       epoch: input.model.epoch,
       status: "queued",
       notice: "",
+      omitted: { thinking: false, media: false, other: false },
       items: [
         {
           id: "user",

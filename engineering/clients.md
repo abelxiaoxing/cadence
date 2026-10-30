@@ -85,6 +85,8 @@ An active turn retains independent interruption authority even when its metadata
 Access-token rotation revokes viewers, not admitted queued turns.
 A completed turn retains sanitized text and tool exchanges for its next explicit Send.
 The bounded checkpoint passes through an anonymous pipe and owner-side credential redaction before persistence; hidden thinking, signatures and media are not retained.
+A turn records omitted thinking, media and unrecognized (`other`) blocks as `omitted` flags, never as a `notice` line, so a later failure reason is not displaced; turns saved before the flags decode with all three unset.
+Releases through 2.0.19 refuse a turn that carries the flags, so going back to one leaves conversations written since unreadable there.
 Assistant usage keeps only the counts every Pi message carries; optional provider breakdowns such as `reasoning` or `cacheWrite1h` are dropped, not refused.
 Failed, interrupted or over-budget turns remain visible but currently require a new conversation instead of replaying incomplete context.
 A restart never resumes pending turns; unknown work keeps fences.
@@ -116,6 +118,8 @@ One service still owns one checkout.
 The recent-project directory records only explicit project openings in the same private namespace; navigation opens that project's independent authenticated entry rather than changing global cwd, importing Pi sessions or adopting another account's state.
 The center shows ordinary streamed messages or retained task text as Markdown.
 Task tools/context/timeline/runs and export/link actions live under Details, shown only for a task or child scope; an ordinary conversation has no view switch and folds its tool calls into the transcript.
+An ordinary turn shows one speaker label: everything through its last tool call folds into a steps line that names what the tools touched (live while running; it opens by itself when the turn ends without an answer, until the user toggles it), and the assistant text after it is the answer.
+Tool names are model-chosen data: one matching no known kind, `constructor` included, counts as a plain tool.
 Runs puts the current snapshot's owner projection above the retained run pages.
 The right panel defaults to files; its Task details inspector remains bound to the task's current plan/check/change/review context even when viewing a child.
 Historical child links bind exact scope and watermark.

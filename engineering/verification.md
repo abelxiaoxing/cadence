@@ -93,6 +93,7 @@ Preserve original license bytes through their precise Git attributes; line-endin
 | Credential value inside a provider/model ID (Ollama `ollama`)  | Withhold and count only that catalog entry; choosing it refuses; others selectable                    |
 | Git output past its buffer/time bound (`node_modules` listing) | Hash a fixed outcome, never pipe-timed partial bytes: an unchanged tree keeps one identity            |
 | Optional Pi usage keys (`reasoning`, `cacheWrite1h`)           | Checkpoint only the counts every message carries; a provider breakdown never fails the turn           |
+| A turn's steps watched live, then failing without an answer    | Derive the fold from the settled turn on every render, not from mount-time state; user toggles win    |
 
 Good: current context → explicit grant → durable acceptance → genuine original native/storage settlement → exact retained dependency → real checks → human review.
 Base: a client leaves and another reattaches to the same accepted run without launching it again.
