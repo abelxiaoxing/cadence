@@ -57,6 +57,8 @@ A task created from an existing ordinary conversation retains a navigation link 
 All of this works without a live Pi terminal.
 A token grants workspace access, not action consent.
 Task Send authorizes only creation and readonly analysis.
+It reads the workspace again at Send and binds the project, access and selected model shown; the working-tree observation, checkout generation and control revision are those observed at Send, while plan approval still binds the exact observation.
+A `stale` refusal names the context fields that moved (for example `stale: observation`) from one more readonly read, without retrying.
 Editing requires context-bound plan confirmation; the advanced inspector retains independent Save/Start controls.
 Ordinary Send binds its exact text, conversation head, epoch, access and selected model; stale/duplicate/lost replies do not silently replay work.
 The WebUI provides task/run/assignment navigation, long retained messages and tool detail, exact literal search, timeline and complete scoped NDJSON/Markdown downloads.

@@ -13,17 +13,56 @@ interface Entry {
   signal: AbortSignal;
   observe(value: CommandObservation): void;
 }
+type Field = keyof ContextVersion;
 function active(signal: AbortSignal) {
   if (signal.aborted) throw new Error("canceled");
 }
-function sameEnvironment(a: ContextVersion, b: ContextVersion) {
-  const environment = ({
-    task: _task,
-    controlRev: _control,
-    ...rest
-  }: ContextVersion) => rest;
-  if (canonicalJson(environment(a)) !== canonicalJson(environment(b)))
-    throw new Error("stale");
+/** Names of the context fields that differ; a diagnosis, never a retry. */
+function drift(a: ContextVersion, b: ContextVersion): Field[] {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)] as Field[]);
+  return [...keys].filter(
+    (key) => canonicalJson(a[key] ?? null) !== canonicalJson(b[key] ?? null),
+  );
+}
+function stale(fields: Field[]) {
+  return new Error(fields.length ? `stale: ${fields.join(", ")}` : "stale");
+}
+function bind(a: ContextVersion, b: ContextVersion, free: readonly Field[]) {
+  const fields = drift(a, b).filter((key) => !free.includes(key));
+  if (fields.length) throw stale(fields);
+}
+const sameEnvironment = (a: ContextVersion, b: ContextVersion) =>
+  bind(a, b, ["task", "controlRev"]);
+/** Task Send binds the project, access and model the user saw. The working
+ * tree is observed again at Send: ordinary editing moves it, and only plan
+ * approval (not readonly creation and analysis) binds it. */
+const sameSend = (a: ContextVersion, b: ContextVersion) =>
+  bind(a, b, ["task", "controlRev", "observation", "checkoutGeneration"]);
+async function workspace(entry: Entry) {
+  active(entry.signal);
+  const reply = await entry.client.workspace(entry.signal);
+  active(entry.signal);
+  if (reply.kind === "error") throw new Error(reply.error.code);
+  if (reply.value.context.status !== "available")
+    throw new Error("unavailable");
+  return reply.value.context.version;
+}
+/** A stale refusal names what moved since `expected`, from one more readonly
+ * observation; nothing is retried. */
+async function refusal(entry: Entry, expected: ContextVersion, code: string) {
+  if (code !== "stale") return new Error(code);
+  try {
+    return stale(
+      drift(
+        expected,
+        expected.task
+          ? await current(entry, expected.task.id)
+          : await workspace(entry),
+      ),
+    );
+  } catch {
+    return new Error("stale");
+  }
 }
 async function submit(
   entry: Entry,
@@ -42,7 +81,11 @@ async function submit(
       commandId: prepared.commandId,
       error: `${reply.error.code}; effect ${reply.error.effect}`,
     });
-    throw new Error(reply.error.code);
+    throw await refusal(
+      entry,
+      prepared.preflight.preview.version,
+      reply.error.code,
+    );
   }
   entry.observe({ commandId: prepared.commandId, receipt: reply.value });
   active(entry.signal);
@@ -90,24 +133,27 @@ async function current(entry: Entry, taskId: string) {
 export async function beginTask(
   entry: Entry & { context: ContextVersion; goal: string },
 ): Promise<string> {
-  active(entry.signal);
-  const proposal = await prepare(entry.client, entry.context, {
+  const sent = await workspace(entry);
+  sameSend(entry.context, sent);
+  const proposal = await prepare(entry.client, sent, {
     kind: "create",
     taskKind: "code",
     goal: entry.goal,
   });
-  if (proposal.kind === "error") throw new Error(proposal.error.code);
+  if (proposal.kind === "error")
+    throw await refusal(entry, sent, proposal.error.code);
   const receipt = await published(entry, await submit(entry, proposal.value));
   if (receipt.created?.state !== "published")
     throw new Error("receipt-inconclusive");
   const taskId = receipt.created.taskId;
   const context = await current(entry, taskId);
-  sameEnvironment(entry.context, context);
+  sameSend(sent, context);
   const analysis = await prepare(entry.client, context, {
     kind: "generate-plan",
     taskId,
   });
-  if (analysis.kind === "error") throw new Error(analysis.error.code);
+  if (analysis.kind === "error")
+    throw await refusal(entry, context, analysis.error.code);
   await submit(entry, analysis.value);
   return taskId;
 }
@@ -131,7 +177,8 @@ export async function approvePlan(
     kind: "start",
     taskId: preview.action.taskId,
   });
-  if (start.kind === "error") throw new Error(start.error.code);
+  if (start.kind === "error")
+    throw await refusal(entry, context, start.error.code);
   if (
     start.value.preflight.preview.readablePlan !== preview.action.plan ||
     canonicalJson(start.value.preflight.preview.graph) !==

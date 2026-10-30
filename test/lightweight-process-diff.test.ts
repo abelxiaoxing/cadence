@@ -1489,6 +1489,46 @@ describe("readonly dirty/change observations", () => {
     writeFileSync(join(root, "ignored"), "private");
     expect(captureChanges(root).complete).toBe(false);
   });
+  it("an output-limited Git observation keeps one identity for an unchanged tree", () => {
+    const { root } = repository();
+    // The killed diff's partial stdout varies with pipe timing; hashing it made
+    // every preflight of an unchanged tree stale.
+    writeFileSync(join(root, "tracked.txt"), "changed line\n".repeat(100_000));
+    const views = Array.from({ length: 4 }, () =>
+      captureChanges(root, 64 * 1024),
+    );
+    expect(new Set(views.map((view) => view.fingerprint)).size).toBe(1);
+    // Only the fixed outcome is hashed: bytes inside limited output are
+    // unobserved (labeled incomplete), while other observations still count.
+    writeFileSync(
+      join(root, "tracked.txt"),
+      `other start\n${"changed line\n".repeat(100_000)}`,
+    );
+    expect(captureChanges(root, 64 * 1024).fingerprint).toBe(
+      views[0].fingerprint,
+    );
+    expect(views[0].complete).toBe(false);
+    expect(views[0].text).toContain(
+      "Unavailable/limited Git observation: diff (ENOBUFS)",
+    );
+    writeFileSync(join(root, "untracked.txt"), "new");
+    expect(captureChanges(root, 64 * 1024).fingerprint).not.toBe(
+      views[0].fingerprint,
+    );
+  });
+  it("a wholly ignored directory is one uninspected entry", () => {
+    const { root } = repository();
+    writeFileSync(join(root, ".gitignore"), "build/\n*.env\n");
+    mkdirSync(join(root, "build"));
+    writeFileSync(join(root, "build", "a.o"), "a");
+    const before = captureChanges(root);
+    expect(before.complete).toBe(false);
+    expect(before.text).toContain("Ignored files exist");
+    writeFileSync(join(root, "build", "b.o"), "b");
+    expect(captureChanges(root).fingerprint).toBe(before.fingerprint);
+    writeFileSync(join(root, "local.env"), "x");
+    expect(captureChanges(root).fingerprint).not.toBe(before.fingerprint);
+  });
   it("real check edits invalidate check freshness while exit remains factual", async () => {
     const { root } = repository();
     const store = new TaskStore(root, join(temporary(), "state"));

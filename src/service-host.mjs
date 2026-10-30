@@ -21038,7 +21038,8 @@ import { createHash as createHash21 } from "node:crypto";
 import { lstatSync as lstatSync12, readdirSync as readdirSync3, readlinkSync } from "node:fs";
 import { join as join19, relative as relative7 } from "node:path";
 var admin = (path) => path === ".cadence/assistant/tasks" || path.startsWith(".cadence/assistant/tasks/");
-function captureChanges(root) {
+var GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
+function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
   const deadline = Date.now() + 3000;
   const hash3 = createHash21("sha256");
   const parts = [];
@@ -21050,24 +21051,25 @@ function captureChanges(root) {
     hash3.update(label).update("\x00").update(data2).update("\x00");
   };
   const git = (args) => {
-    if (Date.now() >= deadline) {
-      complete = false;
-      limits.push("Git observation time budget exhausted");
-      return { stdout: Buffer.alloc(0) };
+    let outcome;
+    if (Date.now() >= deadline)
+      outcome = "time budget exhausted";
+    else {
+      const result = spawnSync2("git", gitArguments(["-c", "core.quotepath=true", ...args]), {
+        cwd: root,
+        encoding: "buffer",
+        timeout: Math.max(1, deadline - Date.now()),
+        maxBuffer: outputBytes,
+        windowsHide: true,
+        env: gitEnvironment()
+      });
+      if (!result.error && result.status === 0)
+        return { stdout: result.stdout, limited: false };
+      outcome = result.error ? result.error.code ?? "error" : result.signal ? `signal ${result.signal}` : `exit ${result.status}`;
     }
-    const result = spawnSync2("git", gitArguments(["-c", "core.quotepath=true", ...args]), {
-      cwd: root,
-      encoding: "buffer",
-      timeout: Math.max(1, deadline - Date.now()),
-      maxBuffer: 512 * 1024,
-      windowsHide: true,
-      env: gitEnvironment()
-    });
-    if (result.error || result.status !== 0) {
-      complete = false;
-      limits.push(`Unavailable/limited Git observation: ${args[0]}`);
-    }
-    return result;
+    complete = false;
+    limits.push(`Unavailable/limited Git observation: ${args[0]} (${outcome})`);
+    return { stdout: Buffer.from(`[limited: ${outcome}]`), limited: true };
   };
   const inventory = (name) => {
     if (admin(name))
@@ -21120,7 +21122,7 @@ function captureChanges(root) {
       ":(exclude).cadence/assistant/tasks/**"
     ];
     const head = git(["rev-parse", "--verify", "HEAD"]);
-    add("HEAD", head.stdout ?? "");
+    add("HEAD", head.stdout);
     for (const [label, args] of [
       [
         "Status (includes pre-existing dirt)",
@@ -21156,15 +21158,14 @@ function captureChanges(root) {
         ]
       ]
     ]) {
-      const result = git([...args]);
-      const data2 = result.stdout ?? Buffer.alloc(0);
+      const data2 = git([...args]).stdout;
       add(label, data2);
       parts.push(`## ${label}
 ${data2.toString("utf8")}`);
     }
     const index = git(["ls-files", "--stage", "-z", ...pathspec]);
-    add("Index entries", index.stdout ?? "");
-    for (const entry of (index.stdout ?? Buffer.alloc(0)).toString("utf8").split("\x00")) {
+    add("Index entries", index.stdout);
+    for (const entry of index.stdout.toString("utf8").split("\x00")) {
       if (!entry.startsWith("160000 "))
         continue;
       complete = false;
@@ -21178,19 +21179,25 @@ ${data2.toString("utf8")}`);
       ...pathspec
     ]);
     parts.push("## Untracked identities (content not automatically sent to model)");
-    for (const name of (untracked.stdout ?? Buffer.alloc(0)).toString("utf8").split("\x00").filter(Boolean))
-      inventory(name);
+    if (untracked.limited)
+      add("Untracked", untracked.stdout);
+    else
+      for (const name of untracked.stdout.toString("utf8").split("\x00").filter(Boolean))
+        inventory(name);
     const ignored = git([
       "ls-files",
       "--others",
       "--ignored",
       "--exclude-standard",
+      "--directory",
+      "--no-empty-directory",
       "-z",
       ...pathspec
     ]);
-    if (ignored.stdout?.length) {
+    if (ignored.stdout.length) {
       complete = false;
-      limits.push("Ignored files exist and are not inspected; review coverage is incomplete.");
+      if (!ignored.limited)
+        limits.push("Ignored files exist and are not inspected; review coverage is incomplete.");
       add("ignored paths", ignored.stdout);
     }
     parts.push("Administrative .cadence/assistant/tasks records are excluded from business freshness; configuration is not excluded.");
