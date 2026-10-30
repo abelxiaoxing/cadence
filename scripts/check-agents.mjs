@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // AGENTS index validation: every indexed path and command must exist and the
 // managed block must not index runtime IDs, timestamps, approval state,
-// version policy, or a reference-repository product dependency.
+// version policy, or a reference-repository product dependency. Every
+// engineering/ area file must be indexed, and the repository paths, relative
+// links and regression owners it names must still exist.
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -97,6 +99,61 @@ for (const route of [
 }
 if (/openspec|prompts\//iu.test(block))
   throw new Error("AGENTS index retains retired ownership");
+
+const ENGINEERING = join(ROOT, "engineering");
+const REPO_PATH =
+  /^(?:agents|config|docs|engineering|licenses|provenance|scripts|skills|src|test|web)\//u;
+const expandBraces = (route) => {
+  const group = /\{([^{}]+)\}/u.exec(route);
+  if (!group) return [route];
+  const [before, after] = [
+    route.slice(0, group.index),
+    route.slice(group.index + group[0].length),
+  ];
+  return group[1]
+    .split(",")
+    .flatMap((part) => expandBraces(before + part + after));
+};
+const testNames = [];
+const walkTests = (dir) => {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) walkTests(join(dir, entry.name));
+    else testNames.push(entry.name);
+  }
+};
+walkTests(join(ROOT, "test"));
+for (const name of readdirSync(ENGINEERING).filter((n) => n.endsWith(".md"))) {
+  if (!block.includes(`\`engineering/${name}\``))
+    throw new Error(`AGENTS index missing engineering/${name}`);
+  // Release evidence is an append-only log: it may name paths that later go away.
+  if (name === "releases.md") continue;
+  const doc = readFileSync(join(ENGINEERING, name), "utf8");
+  for (const [, route] of doc.matchAll(/`([^`\s]+)`/gu)) {
+    if (!REPO_PATH.test(route) || /[<*]/u.test(route)) continue;
+    for (const path of expandBraces(route))
+      if (!existsSync(join(ROOT, path)))
+        throw new Error(`engineering/${name} names a missing path: ${path}`);
+  }
+  for (const [, target] of doc.matchAll(/\]\(([^)#\s]+)[^)]*\)/gu)) {
+    if (/^[a-z]+:/u.test(target)) continue;
+    if (!existsSync(resolve(ENGINEERING, target)))
+      throw new Error(`engineering/${name} links to a missing file: ${target}`);
+  }
+}
+const owners = readFileSync(join(ENGINEERING, "verification.md"), "utf8")
+  .split("\n## Regression owners\n")[1]
+  ?.split("\n## ")[0];
+if (!owners)
+  throw new Error("engineering/verification.md lacks Regression owners");
+for (const line of owners.split("\n").filter((l) => l.startsWith("- "))) {
+  for (const [, stem] of line.split(": ")[0].matchAll(/`([^`]+)`/gu)) {
+    if (stem.includes("/")) continue; // a directory, checked as a path above
+    const found = stem.endsWith("*")
+      ? testNames.some((n) => n.startsWith(stem.slice(0, -1)))
+      : testNames.some((n) => n.startsWith(`${stem}.`));
+    if (!found) throw new Error(`regression owner has no test file: ${stem}`);
+  }
+}
 const provenance = readFileSync(
   join(ROOT, "provenance/adapted-modules.yaml"),
   "utf8",
@@ -117,4 +174,4 @@ for (const role of [
   );
   if (binding?.[1] !== hash) throw new Error("Agent provenance drift");
 }
-console.log("check:agents: AGENTS index valid");
+console.log("check:agents: AGENTS index and engineering routes valid");

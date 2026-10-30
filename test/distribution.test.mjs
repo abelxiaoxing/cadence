@@ -294,11 +294,11 @@ afterAll(() => {
 });
 
 describe("real lightweight package", () => {
-  it("audits exactly 135 unique regular members, every source body and all Agent pins", () => {
-    expect(expected).toHaveLength(135);
+  it("audits exactly 142 unique regular members, every source body and all Agent pins", () => {
+    expect(expected).toHaveLength(142);
     const audit = auditPackage(archive, root, expected);
     expect(audit.members).toEqual(expected);
-    expect(Object.keys(audit.bodyHashes)).toHaveLength(135);
+    expect(Object.keys(audit.bodyHashes)).toHaveLength(142);
     const receipt = JSON.parse(
       readFileSync(path.join(fixture, "distribution-diagnostics.json"), "utf8"),
     );
@@ -307,7 +307,7 @@ describe("real lightweight package", () => {
     for (const stage of ["after-extract", "after-copy", "after-peer-links"]) {
       const entry = receipt.stages.find((entry) => entry.stage === stage);
       expect(entry.status).toBe("passed");
-      expect(entry.bodyChecks).toHaveLength(135);
+      expect(entry.bodyChecks).toHaveLength(142);
       expect(
         entry.bodyChecks.every((check) => check.status === "matched"),
       ).toBe(true);

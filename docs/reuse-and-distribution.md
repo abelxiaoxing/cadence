@@ -1,28 +1,5 @@
 # Reuse and Distribution
 
-## Source families
-
-Cadence adapts `xing-shuyin/pi-web-ui@e8bab487af208bc9a1ab60a821652323f598127f`, MIT copyright 2026 xing-shuyin.
-The ordinary-chat composer, folder picker and file/dock presentation additionally reference sibling revision `944f556463d6693a3f0cfe375c22680090e85bbe`; the separate reference hashes are retained alongside the original pins.
-The full original license is `licenses/pi-web-ui-MIT.txt`.
-Repository `provenance/webui-reuse.json` records source/destination hashes and explicit incompatible branches removed; `provenance/auth-reuse.json` records token/cookie adaptation.
-
-| Source family                        | Package adaptation                                                       |
-| ------------------------------------ | ------------------------------------------------------------------------ |
-| App, TopBar, panels, layout, drawers | Conversation-first workspace, project/session sidebar and phone drawers  |
-| conv-groups, PlanBoard               | Active/history task and subagent tree, finite graph and explicit consent |
-| MessageList, Message, ToolCallBlock  | Default Markdown transcript, folded metadata and bounded retained detail |
-| Markdown, StreamMarkdown, copy       | Sanitized Markdown/math/code, no script/external-image execution         |
-| FilePreview, SCM presentation        | Readonly observed changes, no Git/file mutation API                      |
-| GlobalSearchModal, search, deep link | Literal durable search, exact versioned hits and scoped export           |
-| Standalone run-trace client          | Local vis timeline/filter/replay of observations, never execution        |
-| use-chat, message-delta              | Shared typed reconciliation, gaps/resync and no mutation replay          |
-| Token/cookie and upgrade guards      | Cookie-first authenticated HTTP/WS, explicit Host/Origin/CSRF boundaries |
-
-No upstream chat/subagent runtime, goal/delegate loop, PTY, plugin loader, browser shell, credentials editor, prompt composer, reconnect replay or task repair ships.
-Cadence owns ordinary conversations separately, using its existing native launcher, exact model/auth resolution and checkout gate; its finite task admission/history contracts remain unchanged.
-Readonly file browsing and explicit independent project opening are new Cadence service operations, not upstream filesystem mutation or global `set_cwd` routes.
-
 ## Emitted licenses
 
 `licenses/bundled-web.txt` contains full original notices with stable labeled boundaries: React/DOM/scheduler; react-icons and the selected Feather family; unified/Markdown/HTML utilities; highlight.js; KaTeX code; vis-timeline and the versions actually embedded by its standalone build.
@@ -48,7 +25,7 @@ No version bump, dependency install or publication is implied by this redesign.
 
 ## Unified entry without a default workspace
 
-`web/src/Workbench.tsx` composes the project selector and existing project UI without importing pi-web-ui's session/execution service.
+`web/src/Workbench.tsx` composes the project selector and existing project UI without importing the upstream session/execution service.
 The Cadence-owned gateway uses the existing authentication, public codecs, private-files discipline and independently coordinated project owners.
 The no-project entry never initializes an SDK session, manufactures a checkout, creates `~/cadence`, or repairs a missing project directory.
 A technical service-process cwd is not a model/tool workspace.

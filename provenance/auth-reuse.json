@@ -34,7 +34,7 @@
     "src/service/config.ts": "d1c9598ab4c026d419ff621ae894f618961e2b5acdf2c16b45ff84b8d50830f8",
     "src/service/http.ts": "bb40b0aac4f020ac3de853e126351f64a82415d3aa83150194d2b6fdb25e0f3b",
     "licenses/pi-web-ui-MIT.txt": "a8068b68c721f3c80c9e17ecf31b325e12e85cb4da9be5b48bd60f36b1ff039c",
-    "THIRD_PARTY_NOTICES.md": "713bb642a94b26144f124f82e76e0e014adc657c01b519f54607d2eff82e457a"
+    "THIRD_PARTY_NOTICES.md": "ee5c7c70badc8936b8867393eeb23d6958030367b578faf60f2368400bf5b985"
   },
   "licenseBodyPreserved": true,
   "limitations": [

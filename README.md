@@ -1,751 +1,106 @@
 # Cadence
 
-`@abelxiaoxing/cadence` is a shared Pi task workspace with two independently usable clients: native `/cadence` and a browser WebUI.
-One authenticated workbench entry routes to independent project owners, which own tasks, bounded subagent collaboration, real parent checks and retained history.
-Resource discovery and opening history never start work or a service.
-The WebUI also supports ordinary Pi conversations: only an explicit Send starts their direct host-tool work, independently of Cadence task admission.
-`cadence server install` registers that service with the user's service manager and starts its WebUI on the default address.
+[English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Русский](README.ru.md)
 
-This is a trusted workflow assistant, **not a sandbox, certified executor or transactional application system**.
-Code workers edit the chosen working copy directly; recovery can require human work.
-Model prose, tool results and human Done do not certify checks or code.
+Cadence turns [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) into a persistent task workspace.
+Plan a code task, let subagents work on it, run your checks and review the result from the Pi terminal (`/cadence`) or a browser WebUI; both attach to the same background service.
+
+## Why Cadence
+
+- **Work outlives the window.**
+  Tasks run in a background service: closing the terminal, quitting Pi or leaving the browser tab only detaches, and either client can reattach to the same run.
+- **Nothing is edited before you approve.**
+  A task first analyzes readonly and proposes a readable plan; files change only after you confirm that exact plan.
+- **Results you can trust.**
+  Subagent output, real check runs and your own review stay separate: model prose or a "Done" never counts as a passed check, and failed, canceled and unknown outcomes stay distinct.
+- **Complete history.**
+  Every run keeps its messages, tool calls and outputs, with exact search and complete Markdown/NDJSON export; known secrets are redacted.
+- **One link for everything.**
+  The WebUI (desktop and phone, English and 简体中文) also hosts ordinary Pi conversations and switches between projects, each with its own owner and history.
+
+Cadence is a trusted assistant, **not a sandbox**: its agents edit your working copy directly with host tools, so use it on code you can review and recover.
 
 ## Install
 
-Cadence needs Node `>=22.19.0` with npm and [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent), installed and logged in to a model provider: the service reads Pi's `auth.json` and `models.json` and never creates its own login.
+You need Node `>=22.19.0` with npm, and Pi installed and logged in to a model provider; Cadence reuses Pi's login and model settings.
 
 ```sh
 npm install -g @abelxiaoxing/cadence
 cadence server install
+pi install "$(npm root -g)/@abelxiaoxing/cadence"
 ```
 
-The global install puts `cadence` (and its alias `cadence-service`) on `PATH`.
-Cadence ships no install script, so npm 12 and Bun, which skip untrusted install scripts by default, change nothing.
-They may still report blocked scripts from the pinned Pi SDK's dependencies: `@google/genai`'s preinstall only echoes `no-op`, and `protobufjs`'s postinstall only warns about a dependent's version scheme, so neither needs approval.
-`cadence server install` registers and starts the project-less workbench on `http://127.0.0.1:17423`; it does not create `~/cadence` or select a working directory.
-Open an existing folder explicitly in the workbench to associate its project owner.
-The explicit `--workspace /absolute/project` option retains the older single-project service route for compatibility; it never creates a missing project.
-It prints the private link to open, `http://127.0.0.1:17423/?token=…`.
-The port and that token live with the research settings in `~/.pi/agent/cadence/.env`.
-Install creates that file from the research template when missing (Pi's startup card names the path until it exists), and adds either line when it is missing, never changing an existing one:
+`cadence server install` registers and starts a background service (systemd on Linux, a LaunchAgent on macOS, a login entry on Windows) and prints a private link, `http://127.0.0.1:17423/?token=…`.
+The last command lets Pi load the same copy for `/cadence`, so one npm upgrade updates both.
+The port and token live in `~/.pi/agent/cadence/.env`; anyone with the token can use your workspace, so keep the link private.
 
-```sh
-CADENCE_PORT=17423
-CADENCE_TOKEN=<random 43 characters>
-```
+## Use
 
-A file you made yourself works as it is, like Pi's own sources: any permissions (a note suggests `chmod 600` when other users can read it) and dotfiles links; a refusal names the line and reason.
-The token admits anyone who has it to the workspace, so keep the file and the link private; a token you choose needs at least 32 characters.
-To change either, edit the line and run `cadence server restart`, which prints the new link; old links and browser cookies stop working.
-A workspace that an earlier version started with a generated token switches to the file at that restart and keeps its history.
+### In the browser
 
-| Platform     | Service                                                                                   | Starts                                |
-| ------------ | ----------------------------------------------------------------------------------------- | ------------------------------------- |
-| Linux (root) | System unit `/etc/systemd/system/cadence.service`                                         | At boot, no linger                    |
-| Linux (user) | User unit `~/.local/share/systemd/user/cadence.service`                                   | At boot through linger, else at login |
-| macOS        | LaunchAgent `~/Library/LaunchAgents/com.abelxiaoxing.cadence.plist`                       | At login                              |
-| Windows      | `HKCU\…\CurrentVersion\Run\Cadence`, starting `%LOCALAPPDATA%\cadence-server\cadence.vbs` | At login, without a console window    |
+1. Open the printed link once; the browser then remembers you.
+   If you lose it, `cadence token-link --reveal` prints it again.
+2. Choose a project folder with the folder button in the lower right, and choose a model.
+3. Send a message for an ordinary conversation, or begin it with `cadence <goal>` (or select Cadence task) to create a task.
+4. When the analysis proposes a plan, open **Review implementation plan** and choose **Confirm plan and execute**.
+5. Follow subagents in the lower-left dock; checks, changes and review are under **Task details** on the right.
 
-On Linux, root defaults to `--system` and never uses linger; ordinary accounts default to `--user`.
-In user scope, install enables linger without a prompt when logind allows it, and otherwise asks `loginctl enable-linger`, which may want your password; `--no-linger` (or `CADENCE_LINGER=0`) keeps the service to login.
-Open the printed private link once; the browser then keeps an HttpOnly cookie, and `http://127.0.0.1:17423/` alone only says how to get the link.
-For native `/cadence`, let Pi load the same copy: `pi install "$(npm root -g)/@abelxiaoxing/cadence"` records that path and loads it in place, so an npm upgrade updates both.
+### In the terminal
 
-```sh
-cadence server status
-cadence server restart     # after an upgrade or a models.json change
-cadence server stop
-cadence server uninstall   # before npm uninstall -g, which runs no Cadence script
-```
+In Pi's TUI, type `/cadence [goal]` and press Enter yourself; pasted or scripted input does not open it.
+Choose a model, create or open a task, edit its plan and confirm Start; the menus also show subagents, checks, changes, review and history.
 
-Upgrade with `npm install -g @abelxiaoxing/cadence@latest`, then `cadence server restart`, which rewrites the service definition with the current Node and package paths.
-Restart, stop and uninstall go through the authenticated orderly Stop, so running work is stopped, not detached; system/root, macOS and Windows management refuse to signal or replace a service when its Stop is not confirmed.
-`stop` keeps the registration, so the service starts again at the next boot or login.
-Uninstall removes only the generated definition; workspace, history, linger and Pi sources stay.
+Every Pi session also shows running background agents above the input: press ↓ on an empty input to select one and Enter to read its transcript (`CADENCE_AGENT_PANEL=off` hides the panel).
 
-Pi's own package install (`pi install npm:@abelxiaoxing/cadence`) still loads the native client, but its copy has no `cadence` on `PATH`; register the service with `node ~/.pi/agent/npm/node_modules/@abelxiaoxing/cadence/src/service-cli.mjs server install`, the command Pi's startup warning names while no service is registered.
-Keep one copy: two copies drift apart on upgrade, and a native client refuses an owner whose service contract differs from its own.
-A unit registered by an earlier version's Pi install hook keeps running; `cadence server restart` from the copy you keep rewrites it, and `pi update` no longer restarts it.
-See [the background service](docs/service-management.md#background-service) for exact behavior and limits.
-
-## Load and start explicitly
-
-The package can be loaded as a reviewed local package, extracted tarball or installed npm package through Pi's package mechanism.
-For a local checkout, add its absolute or relative path to Pi's `packages` setting, or try `pi -e ./cadence`.
-Pi loads `src/index.ts`; the service, worker and readonly operator are ordinary JavaScript with no TypeScript/source-tree fallback.
-The manifest does not impose a Pi version range; inside Pi the extension uses Pi's own public packages.
-Development pins, declared Node baseline (`>=22.19.0`) and actual tested runtime identities are separate facts, not universal compatibility promises.
-Required installed peers are public Pi packages and Typebox; `undici` and `ws` are exact production dependencies.
-Pi's package installer omits peers and supplies only its own packages and Typebox to the extension, so any other extension import must be a production dependency.
-The standalone owner and workers run outside Pi and import `pi-coding-agent`/`pi-ai` by bare name, so they load the exact tested copy (0.84.3) from optional dependencies; an install that omits optional dependencies cannot start an owner.
-Browser assets are prebuilt, not compiled by consumer postinstall.
-
-Before using the shared owner, stop older Cadence sessions and choose one coordination state-home for the checkout.
-No old records, databases, credentials or uncertain locks are imported, reset or cleaned.
-
-```sh
-cadence start --workspace /absolute/project
-cadence status --workspace /absolute/project
-cadence token-link --workspace /absolute/project --reveal
-```
-
-Use the installed `cadence` bin (or `cadence-service`), or `node /absolute/cadence/src/service-cli.mjs` followed by those arguments.
-Default binding is numeric loopback `127.0.0.1:17423`; `--foreground` is available for an explicitly configured supervisor.
-Start reads the existing Pi agent directory (or an explicit private configuration), never creates another login/profile.
-Without `--workspace`, `cadence start|status|diagnose|stop|token-link|token-rotate` address the workbench; `cadence workbench <operation>` is the explicit equivalent.
-Project-scoped commands and native `/cadence` require an actual project directory.
-A directory containing private state, or inside the private namespace, is refused as a project root without redirection, mkdir or reconstruction.
-An existing `~/cadence` is consumer data: it is neither deleted nor automatically associated.
-See [service management](docs/service-management.md) for configuration, model/auth policy, Stop, diagnosis and informed recovery.
-
-### Native terminal
-
-In a trusted, idle Pi TUI, type `/cadence [goal]` using fresh native Enter.
-The optional goal does not Start; pasted/replayed/nonterminal command dispatch cannot grant native entry.
-The client attaches to the existing owner and never falls back to a local executor or starts one implicitly.
-Choose the exact owner model/API/thinking level explicitly: initial selection is absent.
-Create or open a task, edit a readable plan and finite assignments/dependencies, preview and confirm Start.
-Readonly Generate is advisory and requires a separate Save/Start.
-Native menus expose child messages/tools/timeline, checks, current changes, review, retained history/search/export and independent active-run Cancel.
-
-Return, session departure and Pi quit **detach; admitted work continues** while the service is alive.
-Reattach to observe the same IDs without replay.
-Explicit Cancel requests bounded stop; it is not proof that every escaped descendant stopped.
-
-### Background agent panel
-
-A readonly panel in the Pi TUI follows background agents: the child runs of Cadence's running owner and any agents another extension announces on Pi's shared event bus.
-Every TUI session, not only `/cadence`, looks for the owner already running for its workspace half a second after start and every 15s while none answers; it never starts, recovers or selects one, skips an incompatible owner and only detaches on departure.
-That observation holds one of the owner's viewer attachments, so departure (including Pi quit) waits up to 1.5s for the detach to reach the owner rather than leaving the slot to its idle expiry; `/cadence` departs the same way.
-`CADENCE_AGENT_PANEL=off` turns that observation off.
-It reads the active roster every 5s, and every 2s together with the task's snapshot while it follows an episode, announcing each child of the active episodes: its assignment ID as label, purpose as kind, lifecycle or latest tool as activity, and completed, canceled or any other outcome (with its reason) as done, cancelled or error.
-A child whose outcome the session can no longer observe (no compatible owner a whole retry after losing it, or no settled row five looks after its run left the roster) ends as an error that says so; `/cadence` History keeps the actual outcome.
-Elapsed time counts from when the session first observed a child (`—` for one first seen settled); no tokens are shown because the owner records no usage.
-Opening a child reads its retained messages, tool calls and results through the history readers, up to 64KiB per field; complete fields, search and export stay in `/cadence` History.
-A retained `edit` call shows its call and result without Pi's diff preview, which would compare against the file as it is now.
-Producers emit `subagent:start {id,label,kind,startedAt}`, `subagent:message {id,message,streaming?}`, `subagent:activity {id,activity,tokensIn?,tokensOut?}`, `subagent:stats {id,tokensIn,tokensOut?}` and `subagent:end {id,status,endedAt,error?}` with status `done`, `error` or `cancelled`; `startedAt: null` marks an unobserved start.
-A message has the main session's message shape; `streaming: true` marks a snapshot that the next message replaces.
-The panel emits `subagent:view {id}` (`id: null` when none) so a producer loads only the shown agent's messages.
-Nothing is mounted until the first agent arrives (`CADENCE_AGENT_PANEL=always` keeps `● main` visible).
-Then a launched/finished block sits above the input and one row per agent below it: at most six recently active rows plus `+K more`.
-With an empty input, ↓ moves focus to the rows; ↑/↓ or Ctrl+P/N select, Enter shows that agent's transcript in place of the main view, PgUp/PgDn, Ctrl+U/D and Home/End scroll it, and Esc returns to the main view and then to the input.
-Every other input key, including Enter, Shift+Tab and Ctrl+J, stays Pi's; each agent view remembers its scroll position.
-The panel never starts, cancels or keeps an agent or Pi alive, and keeps nothing across restarts.
-For manual checks, `pi -e ./src/index.ts -e ./scripts/agent-panel-demo.ts` adds `/agents-demo [count]`, which plays fake agents (the second fails) and runs nothing.
-
-### Browser
-
-Open the private link that `cadence server install` printed, or that `cadence token-link --reveal` reveals.
-Valid bootstrap redirects to a token-free URL and uses an HttpOnly SameSite cookie for subsequent HTTP/WebSocket access; no localStorage token copy.
-The unified browser entry opens on the conversation shell, without an execution cwd, SDK session or default workspace.
-Choose a working folder from the lower-right button; before a folder is selected, New conversation offers the same picker and Send stays disabled.
-Only explicit Open starts or reuses a project owner.
-Within that project, the browser opens on an ordinary conversation with a real message composer, retained multi-turn context and standard read/write/edit/bash tools; no Cadence task is created by Send.
-Use `cadence <goal>` or `/cadence <goal>` at the beginning of the input, or select Cadence task, then Send to create a task in the background and begin readonly analysis.
-New task opens the same composer in task mode; there is no task-kind picker or creation dialog.
-Mentions, quotations and fenced code do not select task mode.
-Analysis appears in the task transcript.
-Review implementation plan opens the retained proposal for one explicit Confirm plan and execute approval: save those exact bytes, then start only the matching graph under a fresh grant.
-Changed context, failed publication or an uncertain reply stops the sequence without automatic retry.
-Configured checks and human review remain separate.
-A task created from an existing ordinary conversation retains a navigation link back; the old conversation is not converted and its history is not silently injected into the task.
-All of this works without a live Pi terminal.
-A token grants workspace access, not action consent.
-Task Send authorizes only creation and readonly analysis.
-Editing requires context-bound plan confirmation; the advanced inspector retains independent Save/Start controls.
-Ordinary Send binds its exact text, conversation head, epoch, access and selected model; stale/duplicate/lost replies do not silently replay work.
-The WebUI provides task/run/assignment navigation, long retained messages and tool detail, exact literal search, timeline and complete scoped NDJSON/Markdown downloads.
-Desktop panes and phone drawers retain cancellation and keyboard controls.
-Its chrome follows pi-web-ui: a compact topbar with view tabs and icon actions, a sectioned task sidebar, pill inspector tabs, transcript/tool cards and a bottom statusbar; phones wrap the topbar into an action row and an icon tab row.
-The left sidebar provides New conversation and New task alongside running/retained conversations; a separate lower-left dock observes Cadence subagents and opens their retained transcripts.
-It is not pi-web-ui's subagent engine.
-The right sidebar defaults to readonly files, bounded text previews and path-only references; task plan/check/change/review controls occupy its Task details tab.
-The lower-right folder button contains recent projects, browses directories on the service host and explicitly opens another independent project owner.
-The unified entry switches project clients on the same origin, including an explicitly configured HTTPS proxy; it never changes a running task's cwd, registers a boot service or cancels the project left behind.
-Backend cookies and native capabilities never reach the browser; proxied actions remain browser-authority actions, with owner-side consent/build/CSRF checks.
-The gateway refuses the legacy project-level Open command: all project openings use its own association route, without returning an independent backend token link.
-Direct legacy project entries remain available; only that compatibility route retains its older loopback-only cross-project navigation.
-The interface is in English or Simplified Chinese: it follows the browser's first preferred language, and the topbar's globe chip (`中文` / `EN`) switches it, remembered only in that browser.
-Error codes, identifiers, commands and recorded content stay untranslated.
-
-#### Ordinary conversation boundaries
-
-Ordinary conversations run through the same isolated SDK process launcher, exact model/auth sources and orderly Stop as tasks, with a separate private `service-v1/conversations-v1` store rather than fabricated task records or imported Pi sessions.
-Their tools operate on the host, not in a sandbox.
-Each turn holds the checkout's exclusive gate, so ordinary turns, Cadence children and parent checks cannot edit/read across one another's active write window; leaving a tab only detaches.
-Conversation identities are not recreated when their metadata disappears, unaccepted turn directories are never adopted, and rolling private writes compare their exact expected bytes.
-An active turn retains independent interruption authority even when its metadata is unavailable; readonly views do not reconstruct that metadata.
-Access-token rotation revokes viewers, not admitted queued turns.
-A completed turn retains sanitized text and tool exchanges for its next explicit Send.
-The bounded checkpoint passes through an anonymous pipe and owner-side credential redaction before persistence; hidden thinking, signatures and media are not retained.
-Failed, interrupted or over-budget turns remain visible but currently require a new conversation instead of replaying incomplete context.
-A restart never resumes pending turns; unknown work keeps fences.
-There is no upstream goal/delegate loop, subagent tool/template pack, PTY, plugin loader, prompt composer or automatic retry/compaction.
-Ordinary resources are Pi's base prompt, applicable `SYSTEM.md`/`APPEND_SYSTEM.md`/project instructions and the default skill directories, loaded on demand at Send; package extensions and package-discovered resources are not loaded into these workers.
-Limits are explicit: 200 conversations, 1000 turns per conversation, eight admitted turns (serialized within one checkout), 384KiB per retained visible turn, 2MiB continuation context, and 512MiB/10,000 entries for the separate conversation store, without eviction.
-Task history retains its existing independent bounds.
-File browsing lists at most 200 entries from 2000 directory entries and previews at most 128KiB of UTF-8 text.
-It refuses symlinks, hard-linked files, private state, Pi's agent directory (including its configured alias target), `.git`, `.env` variants, common credential directories such as `.ssh`/`.aws`, and credential/config filenames; limitations remain visible.
-This is not a filesystem sandbox for model tools.
-
-### Root services and independent projects
-
-Linux can run Cadence as a system-level root service, without a user bus or linger:
-
-```sh
-sudo -H cadence server install --system --workspace /srv/project
-sudo -H cadence server status --system
-```
-
-Root defaults to `--system`; an ordinary account still defaults to `--user`, which retains the existing linger behavior.
-There is no automatic sudo or credential/profile copying: the root owner uses root's own Pi sources and private state, and has full host permissions, not a sandbox.
-Stop old owners before changing accounts or state homes; a different account's private namespace cannot coordinate the former owner's work.
-
-Open another existing folder explicitly, or create a new project directory:
+### More projects
 
 ```sh
 cadence project open /absolute/project
 cadence project open /absolute/new-project --create
 ```
 
-A new project selects an available loopback port once; reopening keeps its exact owner, port, cwd and history.
-The command prints its private WebUI entry link; it does not create a task, choose a model or Start execution, and existing projects' admitted work continues.
-Each project retains its native `/cadence` attachment and independent owner; the unified browser routes to it without a global mutable execution cwd.
-For independent boot services, use `cadence server install --system --name api --workspace /srv/api --port 17424` as root, and manage it with the same `--system --name api` flags.
-See [service management](docs/service-management.md) for migration, named port/token files and limits.
+Each project gets its own owner, port and history, and the command prints its private link; the WebUI folder picker opens projects the same way.
+Opening another project never stops work in the previous one.
 
-## Execution, checks and review
+### Checks
 
-- Graphs contain 1–16 required assignments with explicit purposes/dependencies and exact model choice; no recursive spawning or autonomous retry.
-- Two readonly children may overlap; checkout editing and parent checks serialize across tasks and aliases against readers/writers.
-- Research/diagnosis never gain editing or parent-shell authority through a plan or child prompt.
-- Configured checks are available on both clients.
-  Manual shell checks require the native local capability and fresh command/cwd/timeout confirmation.
-- Checks use the service launch's ordinary project environment, never resolved model auth or a browser environment overlay.
-- Changes are bounded observations including pre-existing dirt, not proof of causation or a complete filesystem snapshot.
-- Failed, canceled, timeout, unknown, blocked, stale and not-run remain distinct.
-  Done-with-issues preserves all execution/check facts.
+List the commands that verify your project in `.cadence/assistant/config.json`, and tasks can run them as real checks before review:
 
-## History and preservation
-
-Human-readable summaries remain `.cadence/assistant/tasks/<id>/task.json`; optional checks remain `.cadence/assistant/config.json`.
-Private coordination/history use `<state-home>/cadence-assistant-v1/<checkout-hash>/service-v1/`.
-Rich `history-v2` is independent of the recent live buffer; new stores use private format3 and authenticated bounded navigation.
-Legacy/unknown formats remain preserved, never auto-migrated.
-View/search/export are readonly and cannot resume work or repair history.
-Exact task/run/child exports require the completion trailer, counts, digest and original EOF; a short preview or revoked download is not a complete archive.
-Capture reports redaction, omitted binary/hidden data, source truncation and incomplete recording explicitly.
-Known-secret redaction is not universal detection of business secrets.
-Storage exhaustion refuses new work rather than silently evicting history.
-
-Workbench state lives separately under `<state-home>/cadence-assistant-v1/workbenches-v1/<configuration-hash>/`, not in a hidden substitute workspace.
-Whole-workbench Stop joins its accepted openings and associated exact-epoch project owners, serializing their final registry releases; unrelated, unassociated owners are not stopped.
-A changed epoch, uncertain launch or unconfirmed Stop keeps the workbench fenced, but does not prevent Stop from reaching its other known associated owners.
-Workbenches never repair missing private state or automatically erase uncertain locks.
-`cadence workbench recover inspect|resolve` offers explicit local recovery after a dead gateway, with exact resources, durable evidence and fresh terminal acknowledgments; it preserves project fences/history and retires only the old workbench associations until another explicit Open.
-Registrations from older versions without a hostname additionally require independent same-host attestation; unknown provenance is not recoverable by guessing a PID.
-Service restart never resumes the old queue.
-Uncertain process/auth/storage settlement keeps fences; use documented local informed recovery, not PID-only deletion or automatic cleanup.
-
-## Personal remote access
-
-Keep the backend on loopback and configure one explicit HTTPS origin and trusted immediate reverse proxy.
-See [the Caddy example](docs/remote-access.md); it installs or deploys nothing.
-Host/Origin/CSRF and pre-upgrade WebSocket checks apply in addition to authentication.
-Do not expose credential-bearing plain public HTTP.
-Token links may remain in clipboard/history or external logs; redirection cannot retract disclosure.
-Local token rotation invalidates old cookies/grants/sockets/downloads, not admitted tasks.
-Provider credentials remain server-side; browser tokens and model credentials are separate.
-Outbound provider proxy policy is independent of inbound HTTPS and refuses unsupported routes instead of falling back direct.
-
-## Independent shipped content
-
-- `skills/context7-auto-research` and `skills/grok-search` remain independent research tools.
-- `skills/git-commit` requires an explicit commit request and deterministic audit; task review never commits.
-- Three pinned professional profiles in `agents/` provide readonly design/diagnosis and direct-edit implementation instructions, not execution authority.
-- `config/` contains optional research/check examples.
-  The package has no install script; `cadence server install` creates a missing user `.env` template, and no build/Git/provider operation runs at install.
-- `node /absolute/cadence/src/operator-cli.mjs doctor|runs [workspace]` remains readonly and independent of service startup.
-
-## Development and evidence
-
-```sh
-bun run check
-bun run check:web
-bun run build:check
-bun run lint
-bun run check:agents
-bun run test:service
-bun run test:web
-CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run test:browser
-CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify
-bun pm pack --destination /absolute/private-temp
+```json
+{
+  "schema": "cadence-assistant-checks/1",
+  "checks": [{ "name": "Tests", "command": "bun run test", "timeoutMs": 120000 }]
+}
 ```
 
-Build/verification use a fresh private directory with `TMPDIR`, `TEMP` and `TMP` set explicitly, on the checkout's disk filesystem rather than a nearly full tmpfs.
-`verify` includes native/unit tests, web tests, required real-browser scenarios and exact real-pack auditing; missing required browser is non-green, never an automatic download.
-It needs a Node with TypeScript type stripping (official builds; a distro Node built without it fails `build:web:check`).
-`verify` keeps short regressions and loopback browser scenarios; it runs no real PTY workflow, HTTPS-proxy browser lane or multi-MiB cold-history scan.
-Fabricated loopback providers are distinct from physical humans/devices, paid accounts, package-manager installation and native Windows/macOS/ConPTY qualification.
-Those additional lanes remain unqualified unless their own receipts exist.
-No passing gate authorizes commit, push, publication, installation, deployment or cleanup.
+## Manage the service
 
-## Engineering knowledge
+```sh
+cadence server status
+cadence server restart     # after an upgrade or a .env / models.json change
+cadence server stop        # stays registered and starts again at the next boot or login
+cadence server uninstall   # run before npm uninstall -g
+```
 
-This section is the temporary, tool-independent home for project knowledge formerly spread across development-task records.
-Ordinary engineering uses source edits, focused tests and code review directly; no task-management extension, task creation, archive step or workflow-specific agent is required.
-Do not recreate the removed project workflow integration unless explicitly requested.
-`AGENTS.md` is a short entry guide; this section owns the maintained engineering contracts.
-Historical logs are not runtime dependencies, and removing development tooling must never delete consumer `.cadence` data or private service state.
+Upgrade with `npm install -g @abelxiaoxing/cadence@latest`, then `cadence server restart`.
+Restart, stop and uninstall stop running work in order rather than leaving it detached.
+Uninstall removes only the service definition; projects, history and Pi settings stay.
+Linux root and named services, remote HTTPS access and recovery are covered in [service management](docs/service-management.md) and [remote access](docs/remote-access.md).
 
-### Source ownership and API boundaries
+## Development
 
-| Owner                                                                                                      | Responsibility                                                                                                             |
-| ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `src/index.ts`, `src/task-shell.ts`, `src/native-*.ts`                                                     | Nonactivating Pi entry, raw native consent, typed service attachment, paging and verified export; no embedded executor     |
-| `src/agent-panel.ts`, `src/agent-panel-model.ts`, `src/agent-panel-cadence.ts`                             | Readonly agent panel over Pi's `subagent:*` bus, fed with a running owner's children; never starts or cancels work         |
-| `src/service/host.ts`, `src/service/cli.ts`, `src/service/{autostart,system-service,launchd,login-run}.ts` | Single-owner composition, explicit project launch and generated system/user service definitions; management stays SDK-free |
-| `src/service/{coordination,private-files,owner,recovery}.ts`                                               | Canonical overlap exclusion, exact locks, original-operation lifetime and informed local recovery                          |
-| `src/service/{admission,task-actions,graph,scheduler}.ts`                                                  | Context-bound actions, actual current views, finite graph scheduling, check/review barriers                                |
-| `src/service/{model-config,model-context,model-choice,auth-network}.ts`, `src/sdk-network.ts`              | Existing Pi sources, explicit exact model/thinking, original OAuth writeback and strict shared network policy              |
-| `src/worker-public.mjs` and `.d.mts`, `src/service-contract.ts`                                            | One portable core/domain/capture codec with matching declarations and facade; TS core/domain/capture modules re-export it  |
-| `src/service/contracts/`, `src/service-client.ts`, `src/service-wire.ts`, `src/service-http-client.ts`     | Closed DTOs, typed named operations, reply correlation, transport bounds and one projection tracker                        |
-| `src/subagent-process.ts`, `src/sdk-worker.mjs`, `src/worker-{capture,redaction,tools}.mjs`                | Same native worker/check launcher, genuine SDK capture, incremental sanitizer and bounded no-raw-spill bash adapter        |
-| `src/history/{writer,run-state,publication}.ts`                                                            | One committed sequence authority, shared semantic reducers and expected-byte strict-v1 summaries                           |
-| `src/history/` readers/proof/search/export/live modules                                                    | Original-source integrity, bounded retained navigation, exact search and complete nonblocking exports                      |
-| `src/task-store.ts`, `src/task-types.ts`, `src/task-diff.ts`                                               | Literal workspace identity, bounded plain summaries/configuration and honest change observation                            |
-| `web/src/`                                                                                                 | Reused presentation and thin shared-client adapters, not SDK/session/execution ownership                                   |
-| `scripts/`, `provenance/`, `licenses/`                                                                     | Reproducible builds, exact package/body/reference/notice audits and pinned reuse                                           |
+Pi can also load a local checkout or packed tarball: add its absolute or relative path to Pi's `packages`, or try `pi -e ./cadence`.
+Cadence does not impose a Pi version range; development pins and tested runtimes are not universal compatibility promises.
 
-`src/service/{gateway,gateway-store,gateway-cli}.ts` owns the no-project entry, private workbench coordination and same-origin project routing, not task execution.
-A root access rotation retires its proxy attachment IDs and detaches those exact browser viewers at the owners, without cancelling admitted work.
-The first version requires a selected project for ordinary Send/tools; the empty workbench presents the conversation shell with Send disabled, not an unbound chat executor.
-`src/service/{workbench,conversations,workbench-files}.ts` owns ordinary conversations, their private retained turns, readonly files and explicit project navigation; `src/service/contracts/workbench.ts` is the portable closed DTO boundary.
-Conversation auth intents and original settlements use their own flushed private journal, never fabricated task/history receipts.
-Their original Stop lifetime and exclusive checkout barrier belong to the existing service owner and scheduler.
+```sh
+bun install
+CADENCE_BROWSER_PATH=/absolute/existing/chromium bun run verify
+```
 
-The native path is `index → shell → native client → service → scheduler/process/history`.
-`src/task-controller.ts` remains a legacy regression subject, not a reachable or shipped production executor.
-The readonly operator and independent research/startup modules must not gain service startup or execution side effects.
-Inspect actual installed public Pi declarations before changing host/SDK bindings; never import private SDK implementation paths or select a global substitute.
+Engineering guidance is split by area under [engineering/](engineering/); the project index in [AGENTS.md](AGENTS.md) says which file covers which code.
+`verify` also needs an official Node build, a private temporary directory and an existing Chromium; see [verification](engineering/verification.md).
 
-Key maintained seams include `TaskActions.current/currentChanges/activeRuns/checkObligations`, `ServiceClient.preflight` and named action methods, `HistoryWriter.commit/capture/publishTask`, and `NativeConnection.attach/refresh/detach`.
-Use their current declarations rather than copying DTO parsing, reducers, a second controller, or process ownership into a client.
-
-### Admission, execution and original lifetimes
-
-- One canonical checkout/state-home domain has one persistent owner, including while idle.
-  Explicit project launch uses a new port only for a new checkout selection; reopened projects retain exact cwd/port/history, and no project navigation changes another owner's execution.
-  Root Git observations require Git's own ownership check: reset `safe.directory` exceptions per command, drop inherited `SUDO_UID` and disable fsmonitor, without configuration writes or ownership changes.
-  Merely selecting a foreign-owned repository cannot grant permission to run its clean/process filters; use its owning account instead.
-  Ordinary-user Git trust behavior remains unchanged.
-  System services require uid0, bypass user managers/logind entirely and require confirmed native Stop before manager stop or definition replacement; changed state-home inputs, old user units and detached running owners refuse implicit adoption.
-  Registry reservation atomically rejects canonical ancestor/descendant overlaps, including nested Git roots and aliases; a different state-home does not coordinate arbitrary other owners.
-- The short global registry lock never expires or auto-reclaims from PID absence.
-  `recover inspect|resolve` handles a valid dead same-host lock explicitly before project recovery, with fresh local-terminal acknowledgments, exact registry/unreserved-project checks and a flushed exclusive evidence receipt.
-  Concurrent or interrupted resolvers cannot remove a successor lock; all project reservations, locks and history remain intact.
-  Unreserved partial release, unsafe/corrupt registry or receipt bytes, live/remote/ambiguous holders and changed resources stay fenced.
-  Readonly diagnosis and project Open name `registry-locked`; see [global registry recovery](docs/service-management.md#residual-global-registry-lock).
-  Missing retained project directories do not invalidate the global registry: their exact reservations and private fences remain, while canonical existing ancestors, aliases and overlaps are still checked.
-  Unbound `recover` addresses account/workbench state, not cwd; project recovery requires explicit `--workspace`.
-- Workbench recovery is local and interactive, never acquire-on-dead-PID.
-  A bounded flushed receipt precedes exact gateway fence release; project registrations, locks, incomplete opening receipts and history are untouched.
-  The receipt retires the exact old project-reference incarnations from proxy/Stop association until explicit Open republishes them, preventing a deleted old directory from re-quarantining the next orderly Stop.
-  New workbench registrations record their host; legacy hostless registrations require an extra fresh same-host attestation, never automatic host inference.
-  Live/foreign/ambiguous owners and changed or unsafe resources refuse.
-  Generated Linux units exclude deterministic foreground refusal exit78 from restart; manager acceptance without authenticated readiness is not reported as successful startup.
-- Native entry requires fresh raw Enter within1500ms, trusted/idle TUI, no pending modal/messages and no child guard.
-  Browser authentication grants access, not task consent; normal mutation ingress also requires independently built compatible client/service/assets identities.
-- Boot model choice is absent until explicitly selected.
-  Preserve exact provider/model/API/thinking/source identities; unsupported transport or thinking refuses without fallback or clamping.
-  Choice changes refuse while accepted work, admissions, barriers or original operations are busy.
-- A120s one-use grant binds exact action, epoch/access/config/control/task raw bytes/graph/cwd/model/check-environment and relevant observations.
-  Durable acceptance precedes effects; identical command IDs observe the same receipt, conflicting identities refuse, and inconclusive lookup never means absent.
-- Generate is a separate readonly advisory episode, with no saved graph execution or automatic plan replacement, Save or Start.
-  A prospective plan UUID/hash is not a committed reference; accepted retention and successful expected-byte publication establish saved membership.
-- Independent readonly assignments may overlap; writers and native parent checks exclude readers and other writers across tasks.
-  Reserve bounded slots/bytes before copying/auth/effects; dependencies use exact committed predecessor content only after actual native and recording settlement.
-  Overflow, stale dependencies, first failure or wait expiry closes admission without retry; independent already-running siblings retain their own outcomes.
-  Each assignment or check observes the working copy at its baseline, immediately before its native launch and after exit; the steps between recheck ownership, sources and definitions without another Git/file capture.
-- Register the original accepted control flow before its first effect, in addition to separate native/auth/storage originals.
-  Reporting timeout, a caught promise, PID absence or an empty roster cannot release resources.
-  Stop publishes one shared attempt, quiesces all admissions, requests stops before awaiting children and joins permitted original continuation/safety writes.
-  Already-started publication can finish; new post-Stop ordinary publication cannot start.
-- TERM/KILL recheck lease ownership at each signal boundary.
-  Native close is authoritative for the direct child, not `exit`, EOF or escaped-descendant closure.
-  Unknown process/auth/storage settlement preserves fences; late completion never retroactively repairs an unknown result.
-- Return, navigation, browser disconnect and Pi quit detach accepted work.
-  Reconnect does not resend mutations; a refused Cancel permits only another explicit click, not automatic retry.
-
-### Checks, publication and review truth
-
-Configured checks match exact name, command and timeout; missing obligations project not-run rather than fabricated execution records.
-Manual checks require native local capability and fresh confirmation; browsers have no arbitrary-shell/PTY endpoint.
-Use the frozen service-launch ordinary environment, stripped of access/control material; never merge resolved model auth or a browser environment overlay.
-Service check output retains bounded complete stdout/stderr with independent UTF-8/sanitizer state and explicit observation labels, not the legacy64KiB preview.
-Join both original stream tails, actual EOF/close and storage completion; Node may resume paused stdio while draining exit.
-Known access-token rotation must update private redaction without sending access secrets into child environment.
-
-A fresh check may account for exactly one owned generation advance bound to its check/operation/held gate.
-Do not replace this proof with a general before≤after comparison.
-Changes to files, definitions, epoch/cwd/environment or a foreign generation stale the current obligation without rewriting historical native exit or PASS.
-Human Review binds exact selected run/graph/check/change identities and recaptures under a short exclusive barrier only after confirmation, not throughout the human modal.
-One accepted Review folds its fixed committed snapshot (plan proof, selected run, check results) once; every barrier validation still rechecks raw task bytes, changes, configuration, choice and active work.
-Acknowledgment permits reviewed-with-issues, never changes failed/partial/canceled/native/recording/check facts or revives blocked execution.
-Unavailable concurrent views may display conservative stale status but cannot advance authoritative review revisions and invalidate an otherwise unchanged accepted Review.
-
-Task v1 remains a strict human-readable summary; rich graph/transcript data never become unknown siblings beside `task.json`.
-`TaskStore.loadSnapshot` includes raw-byte identity; save/publication requires exact expected bytes and revision.
-A same-revision external edit conflicts and remains preserved.
-Summary clipping is labeled and never clips retained detail; a subsequent publication failure remains separate from previously completed execution.
-A retained task may have no live `task.json` (for example after a workspace rebuild).
-Current reads then retain the requested task ID in an unavailable context, with no live task/plan or action authority; history snapshots and retained content remain readable without reconstructing the summary.
-Stable absence is not `stale`; appearance/disappearance or changed identities during an observation still are.
-Generic `stale` requests fresh observation/confirmation, not a diagnosis that `models.json` changed or an instruction to restart; build compatibility is evaluated separately from the session and independently built client identities.
-Local operation errors neither hide an independent observation error nor imply that the service needs to be started.
-
-### Capture, retained history and privacy
-
-Task workers use public SDK APIs, explicit empty resources, in-memory session/settings and disabled retries/compaction/cache warming.
-Ordinary-conversation workers share that launcher/auth/capture boundary but load only the explicit ordinary resource policy above and restore their own bounded sanitized checkpoint into an in-memory SessionManager.
-Verify exact model and effective thinking before READY/prompt; no provider discovery, credential argv/file envelope or implicit network fallback.
-Use the awaited public core-agent subscription for backpressure, reserving synchronous tool/update ingress before any copy or await.
-Custom bash uses public local operations plus the bounded redacted accumulator, not the stock raw-spill accumulator.
-Never await a run's own settlement from inside its awaited subscriber.
-
-Sanitize known literals, structured sensitive values and terminal controls before stdout and again before owner persistence.
-Preserve split UTF-8, escaped literals, surrogate pairs and possible secret prefixes across chunks; independent per-chunk string replacement is insufficient.
-Tool-start is an SDK observation, not proof of native execution; tool error is not a parent check result.
-A prompt/preflight/non-success terminal response is labeled `worker-failure: prompt`, not `capture`; the recorded message stop reason, actual exit and cleanup facts stay independent.
-A browser settlement timeout must retain its last receipt/active-roster facts before fixture teardown: a later Stop and its uncertain publication are not evidence that capture caused the original wait failure.
-Hidden thinking, signatures, provider envelopes and binary/media bodies remain explicitly omitted.
-Known-secret sanitation is not universal business-secret detection or an OS privacy sandbox.
-
-Only the serialized history writer assigns committed sequence and persisted content references.
-Commit actual admission/auth/launch/result facts in order; an index, observer callback or candidate reducer cannot authorize effects.
-Quota/exhaustion/refusal stops unsafe work without eviction; torn tails retain a verified prefix and visible gaps, while interior corruption refuses affected ranges.
-Derived indexes are optional accelerators: readers validate original batches/artifacts, use bounded fallback and never repair on view.
-Live task/run/child views share an already observed containing snapshot only within one notification drain, retaining its exact context and committed watermark.
-Narrowing requires the requested parent/child to be present; a historical run outside the task horizon still takes its independent reader, and no observation is cached into the next drain or used as renewed action consent.
-Transient reuse keeps at most one page-sized source per viewer, rather than retaining every unobserved run ring.
-Current/plan/review reads replay a task's batches, so per-file cost bounds them: on a slow host (Windows Node 22) that replay once exceeded the 100ms read quantum after review, leaving the task `unavailable`.
-`PrivateFiles` reuses a directory walk only within one synchronous `DirectoryWalks` scope (a read budget or lease check), after re-observing that directory's identity; an await or later call walks again, and the quantum is never raised instead.
-When a batch settles a task's publication, the owner writer remembers in process memory that task's fold state (check facts, latest run, plan/lineage progress with original admission locators) under its chain head's sequence and hash, a bounded number of tasks and states.
-Readers in that process resume from the newest remembered state at or before the snapshot whose chain link still matches and fold only newer original batches; an evicted, restarted, foreign-process or diverged miss folds the original chain, and nothing is persisted, authenticated or repaired.
-A quantum that makes no semantic progress because its wall-clock time ran out (a host stall: GC, scheduling, scanning) is repeated with a fresh quantum at most twice before its refusal stands; byte exhaustion and every other refusal stay final, and no progress is ever faked.
-The wall-clock quantum belongs only to client-facing cooperative reads: owner-internal authority reads (current views, admission, publication, Review and receipt facts) are bounded by the same bytes but never by time, so host speed cannot turn an owner's own decision into a refusal.
-Plan proofs and Review selections read their small plan text through its content/part indexes under the validated snapshot, verifying the original chunk batches, artifacts and aggregate hash; absent or faulty indexes fall back to the complete validated-prefix scan, which no longer runs per current view.
-Prepared journal heads avoid redundant mutable legacy hints; no-root compatibility and its original integrity checks remain.
-
-New history uses private format3 at `service-v1/history-v2/`, with exclusive private read-proof key creation before the final format marker.
-Format2 remains readonly, without silent migration or key regeneration.
-AES-256-GCM navigation authenticates bounded suspended source validation; cursors never grant authentication, admission, recovery or lock-release authority.
-Resume must advance actual semantic work and revalidate selected source/key/format incarnations, not merely produce a new nonce or reset proof budgets.
-These are supported-writer observations, not atomic snapshots of every archived file or change-and-revert detection.
-
-History data pages are untagged; list readers also return explicit `progress` or initial `snapshot`, while detail/entity/graph return data or progress.
-`SearchPage` has hits/next/coverage: zero hits with next is not completion.
-Keep exact snapshot/entity/version/UTF-8 ranges and source coverage; do not map progress to an empty successful page or rebase Back navigation.
-Readonly POST uses the same finite security/decoder boundary when inputs cannot fit GET; it is not execution consent.
-Exports stream task/run/child scope with actual counts/digest/watermark/trailer and original EOF; revoked or interrupted output has no successful completion.
-Browser download requested is not UI-verified completion; native export verifies the complete stream and creates destinations exclusively.
-
-### Current resource ceilings
-
-Byte values are UTF-8/encoded bounds where specified; they are not targets to silently increase when a fixture fails.
-
-| Boundary              | Default / ceiling                                                                                                    |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Graph / assignments   | 512KiB body;1–16 required assignments                                                                                |
-| Scheduling            | 8 episodes;128 queued assignments;2 preparing/running/closing child-or-check reservations                            |
-| Policy deadlines      | 6h episode;10min ready wait;20min default worker                                                                     |
-| Dependency input      | 16KiB per predecessor;32KiB aggregate; oversized required input blocks, not clips                                    |
-| Worker request        | 96KiB public pre-auth plus32KiB reserve; actual complete envelope128KiB                                              |
-| Process stop          | TERM then KILL after1000ms; unknown after3000ms without confirmed close                                              |
-| Native service checks | 16MiB aggregate raw output;64KiB raw chunk;32MiB retained detail; legacy256KiB/64KiB behavior unchanged              |
-| Capture               | 64KiB encoded frame;8KiB decoded chunk;32MiB detail;128MiB child protocol                                            |
-| Capture queues        | Worker4MiB/1024 frames; owner8MiB/2048;5s reporting stall retains original charges                                   |
-| Task v1               | 128KiB record; goal8KiB/plan32KiB/result and baseline16KiB;32 checks/64 activity;1000-task compatibility ceiling     |
-| Read quantum          | 8MiB or100ms cooperative work, including resumed proof/accounting                                                    |
-| Read replies          | 512KiB full paged/progress Reply;256KiB detail text; graph data/export-frame1MiB with graph body512KiB               |
-| Paging/search         | 50 default/200 maximum entries; literal case-sensitive query1–1024 bytes                                             |
-| Navigation            | 8192 encoded ASCII bytes; encrypted plaintext6000 bytes; no execution authority                                      |
-| Live/export           | 16 viewers,256 messages/1MiB each; two search/two export readers;120s download idle, not total archive timeout       |
-| Storage               | 10GiB checkout quota;512MiB reserved per episode;256MiB free-space floor; no TTL cleanup                             |
-| Registry recovery     | 1024 namespace entries; 128 immutable attempts per lock incarnation; no evidence eviction                            |
-| Unified workbench     | 128 associated projects; 1024 durable opening receipts; 64 connections; bounded proxy frames and bodies; no eviction |
-| Assets                | 16MiB per member/64MiB closure; fixed complete manifest and all font bodies                                          |
-
-### Validation and regression lessons
-
-| Condition                                                      | Required behavior                                                                                     |
-| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Missing/unsafe/corrupt/partial selected state                  | Absent or fixed refusal; no bootstrap, adoption, repair or cleanup on observation                     |
-| Native exit0 with recording/stdin/final/cleanup failure        | Preserve native zero independently; no workflow success                                               |
-| Stale grant, selected task bytes or model/source identity      | Refuse and require fresh observation/confirmation                                                     |
-| Unknown original stop/auth/storage or changed lease            | Retain fences/charges; no guessed process signaling or automatic release                              |
-| Failed/unrun/stale check, partial child or incomplete coverage | Explicit issues review; preserve independent recorded outcomes                                        |
-| Lost reply or detached view                                    | Observe original receipt/run; no mutation replay or implicit Cancel                                   |
-| Invalid read proof or changed source/key                       | Refuse; never rebase or interpret budget exhaustion as absence                                        |
-| Dirty/partial/extra compiled assets or unsafe archive          | Refuse in place; no source refill, wildcard serving or fallback build                                 |
-| Extension import outside Pi aliases declared only as a peer    | Exact production dependency; Pi's install omits peers and Pi fails to start                           |
-| Missing optional SDK or Pi `auth.json`                         | Project-less workbench may start without loading either; explicit project startup retains its refusal |
-| Package files hard-linked into a package manager's store (Bun) | Packaged reads ignore link count, bind exact bodies; other files stay single-link                     |
-| Host refuses during startup                                    | Fixed code/stage only; unregistered exits `refused`, registered stays `quarantined`                   |
-| Workspace containing the private state home                    | Refuse the project selection; no redirection, default directory or state relocation                   |
-| Restart changes the definition's workspace or Node path        | Stop with the loaded definition before rewriting, not only a signal                                   |
-| npm 12 or Bun skips untrusted install scripts by default       | Ship none; `cadence server install` registers the service and creates the template                    |
-| Service manager that only signals (launchd, Windows login)     | Orderly Stop first; an unconfirmed Stop changes nothing; no SIGTERM or `taskkill`                     |
-| Pi's TUI replaces an info status with the next one             | The missing-service hint is its own warning notification                                              |
-| Token source the user edits (`CADENCE_TOKEN` in `.env`)        | Read once before binding, never bound for the run: an edit cannot fence Stop                          |
-| Saved port/token source differs from `.env`                    | Only when stopped, reselect just those under the reservation; running ones refuse                     |
-| User-made `.env` (0755/0644, umask 002, dotfiles links)        | Like Pi's sources: ownership only, links followed; each refusal names its reason                      |
-| Credential value inside a provider/model ID (Ollama `ollama`)  | Withhold and count only that catalog entry; choosing it refuses; others selectable                    |
-
-Good: current context → explicit grant → durable acceptance → genuine original native/storage settlement → exact retained dependency → real checks → human review.
-Base: a client leaves and another reattaches to the same accepted run without launching it again.
-Bad: model prose, a valid cursor, a prepared graph, one native exit or a human Done checkbox becomes fabricated execution/check success.
-
-Wrong: release a reservation when `Promise.race` reports a timeout, or retry a mutation when its reply is missing.
-Correct: retain the original operation/fences and observe the exact receipt; a separately explicit safety request does not renew task consent.
-Wrong: show only preview/ring text as full history, or sum overlapping test runs into a larger suite total.
-Correct: expose bounded continuations/full exports and report the exact executed domain and final original exit.
-
-### Development and verification practice
-
-Read affected source and adjacent tests, identify the actual owner of a contract, then make the smallest coherent change.
-Use ordinary source editing and directly affected checks while developing; independently review complete capabilities and run full `verify` at stable integration boundaries.
-Do not run the entire suite after every local edit, but do not replace final integration with unit mocks or citation counts.
-`bun run test` runs every root file in one parallel group; there are no serial groups or separate fast/integration lanes.
-Its workers load `test/no-fsync.mjs`, which makes fsync a no-op inside them (spawned owners and CLIs still flush): crash tests kill processes and no test simulates power loss.
-Create a fresh 0700 root on the checkout's disk filesystem and explicitly set TMPDIR/TEMP/TMP to it; a nearly full tmpfs `/tmp` makes owners refuse at their free-space floor (`receipt-inconclusive`) and `web/dist` publication fail with EXDEV.
-Keep that root's absolute path short: Chromium appends fixture and singleton-socket components, and an overly long path makes it abort before browser scenarios begin.
-A test waits for the event it needs (both providers contacted, a row settled), not a wall-clock guess at how long process starts take; fixed waits stay only where time is the contract.
-Use fabricated credentials, isolated browser/profile/state roots and local fixtures; never personal credentials, automatic downloads or unknown process cleanup.
-Outer command budgets must cover whole suites and preserve original runner waits; existing SDK20s/child15s, PTY90s/interaction15s and browser120s/action15s fixture budgets are not increased to obtain green.
-Preserve failed attempts; correct a demonstrated cause before rerunning, and never assign old failures a retrospective cause without evidence.
-
-Regression owners:
-
-- `service-contract`, `service-current`, `service-model-choice`, `service-auth`: closed DTOs, exact source/choice/current authority, security and compatibility.
-- `service-owner`, `service-accepted-work`, `service-recovery`, `service-registry-recovery`: original operations, overlap, Stop, unknown fences and informed recovery.
-- `worker-*`, `lightweight-sdk`, `lightweight-process-diff`: genuine SDK/tool capture, split redaction, no-spill bounds and original native facts.
-- `service-history-*`: durable ordering, cold/no-index/restarted proof/search/export, corruption/torn/quota and expected-byte publication.
-- `lightweight-shell`, `native-client`, `native-history`, `terminal-integration`: native consent, shared service, Unicode/paging and detach/cancel.
-- `agent-panel`, `agent-panel-model`, `agent-panel-cadence`: panel keys/rendering and readonly owner observation that never starts, cancels or replays work.
-- `test/web/`: adapted pure/SSR tests separately from actual built-browser contexts; `accepting-browser` drives one real SDK Start, check, review and departure-without-cancel workflow with mixed clients, focus/viewports and complete downloads.
-- `package-*`, `distribution`, `service-package`, `independence`: exact tar/member/body/import/notice closure and nonactivating discovery.
-- `service-autostart`, `project-start`, `install-config`: explicit `cadence server` registration on systemd (root system scope without linger, legacy user scope), launchd and the Windows Run key, separate named service definitions and directory owners, definition escaping, restart/disable/mask/foreign handling, orderly Stop before every change, the `.env` port and token lines and a package without install scripts.
-- `service-cli`: real owners started from the `.env` port and token, reselection of a stopped workspace, edits while running and rotation of the token line.
-- `workspace-landing`: no-default-workspace startup, explicit root refusal and noncreating native/readonly entry.
-- `gateway-browser`: real same-origin project routing, browser-only authority, retirement on token rotation, continuing ordinary work and genuine multi-owner Stop over loopback.
-- `gateway-recovery`: real crashed owners/resolvers, exact gateway-only release, preserved project fences and unfinished openings, retired/reopened associations, live/remote/changed/linked refusals, generated CLI diagnostics and native-TTY host/process/credential/storage acknowledgments.
-
-Regenerate operator/service/native/browser outputs only through their canonical builders; `--check` variants compare new private output without overwriting canonical bytes.
-WebUI text is keyed by its English source: fixed text goes through `useT().t`, whose type requires a `web/src/i18n/zh.ts` entry with the same `{name}` marks, and run-time status words or kept notices through `tx`, which passes unknown text and codes through.
-The timeline client takes the chosen language from its bridge and is remounted on a switch; browser scenarios pin `locale: "en-US"` so English assertions do not follow the host's `LANG`.
-The browser is conversation-first, including before any project is selected: ordinary chat and explicit Cadence task conversations share its sidebar, while a lower-left dock observes actual Cadence child identities.
-The empty entry has no project welcome screen or central Create shortcut; New conversation offers folder selection until a project is explicitly opened.
-The bottom-right folder control is always present, and its picker lists recent projects.
-Conversation history belongs to each project owner, so the unselected entry's history section says so and lists the recent projects; choosing one only preselects its folder in the picker.
-An unselected first entry returns to the last selected project, remembered only in that browser as its opaque key, after one readonly conversation listing proves that owner still runs in its associated epoch; this is navigation, never Open.
-A stopped, changed or unknown owner stays stopped: the entry remains and names the last project as not running, and any navigation, Open or folder choice during the check wins.
-Browsing or dismissing the picker never opens a project or sends a message.
-The picker has no separate Browse step: its location trail, folder list and Enter in the path entry navigate, and the footer names the exact Open target.
-Open of a typed or recent path first makes one fresh readonly observation and opens only that observation's canonical folder; a failed read opens nothing and keeps the typed path and previous listing in view.
-The footer Open is disabled while any observation is pending, including the first one; a recent entry still opens, because its own fresh observation supersedes the pending read.
-Every navigation makes a fresh readonly observation, including retrying the same path after a read failure; it never replays Open.
-Folder browsing (not Open) accepts `~` for the service account's home and reports a missing folder as `invalid`, a file or linked component as `forbidden` and a read failure as `unavailable`; the gateway passes these public codes on so the picker can explain them.
-One service still owns one checkout.
-The recent-project directory records only explicit project openings in the same private namespace; navigation opens that project's independent authenticated entry rather than changing global cwd, importing Pi sessions or adopting another account's state.
-The center shows ordinary streamed messages or retained task text as Markdown.
-Task tools/context/timeline/runs and export/link actions live under Details, shown only for a task or child scope; an ordinary conversation has no view switch and folds its tool calls into the transcript.
-Runs puts the current snapshot's owner projection above the retained run pages.
-The right panel defaults to files; its Task details inspector remains bound to the task's current plan/check/change/review context even when viewing a child.
-Historical child links bind exact scope and watermark.
-Bounded history and Back never silently rebase; running conversations offer an explicit new-activity update, and source limitations/progress stay visible even when complete-record metadata is folded.
-Cancel uses the independent active roster (including the fallback strip when workspace discovery fails); navigation, project selection and hiding panels never cancel or authorize execution.
-
-Publish `web/dist` from Node: Vite run under Bun lays out its preload helper differently, so a Bun build fails a Node `build:web:check`.
-Review the independently enumerated package member list and every emitted body, not a count or an expected list generated from the tar under test.
-Keep public Pi peers external for the extension, the exact Undici/ws runtime edges, the exact optional SDK pins for the standalone owner and all upstream/font/vendor notices.
-Preserve original license bytes through their precise Git attributes; line-ending normalization must not invalidate audited source/notice hashes.
-
-### Release 2.0.17 acceptance snapshot
-
-Full `verify` passed on the release candidate in about four minutes: 1908 root tests in 71 files (27 platform skips on Linux), 16 task-entry node tests, 136 web tests, 5 real-browser scenarios in 4 files and the 135-member real-pack audit.
-Observed environment: Linux x86_64, official Node 22.22.1, Bun 1.3.14, Pi SDK 0.84.3 and Chrome for Testing 153.0.8010.12, with four root workers and unchanged test deadlines.
-`verify` no longer runs the slow real-process, PTY, HTTPS-proxy browser and multi-MiB cold-scan suites; those behaviors are not regression-gated in this release.
-Task Send creates a task and starts readonly analysis, and one Confirm plan and execute saves and starts the reviewed plan.
-Fixes in that flow: a fenced receipt read is observed again instead of ending the sequence, a transient context gap no longer aborts an in-flight approval, and a failed observation is re-read after 2s rather than leaving actions disabled until the 30s reconcile.
-Ordinary conversations show no recorded-view switch, and Runs includes the current snapshot's owner projection.
-The first merged attempts failed a time-budgeted search page and the new plan-approval browser step, which also failed on its original commit; both causes were fixed, not retried around.
-No consumer service was installed or restarted, no paid provider was used and no native Windows/macOS qualification is claimed; the `ci/windows` matrix still names the removed vitest projects and was not run.
-
-### Release 2.0.16 acceptance snapshot
-
-The final code candidate passed all 2070 root tests in 86 files (27 platform skips on Linux), 133 web tests, all 9 real-browser scenarios and the 135-member exact real-pack audit.
-Source/type/build/lint/Agent checks and a separate Bun pack/body audit also passed; this is separate-lane evidence, not a claim that one `verify` invocation was entirely green.
-Observed environment: Linux x86_64, Node26.7.0, Bun1.3.14, Pi SDK0.84.3 and existing Chrome for Testing151.0.7922.34, with `VITEST_MAX_WORKERS=1` and unchanged test deadlines.
-Review added failing-then-passing regressions for a successor lock borrowing a stopped predecessor's PID, unexpected foreground management exceptions being misclassified as exit78, and an accepted Stop abandoning its exact-epoch wait after an inconclusive registration read.
-The stopped-row recovery bridge must belong to the exact current lock; Stop never resends its request or infers closure from a read failure or successor epoch.
-The first full attempt had three pre-existing test deadlines and a workbench Stop with empty CLI output; isolated diagnostics passed the timeout files, and the original timing and empty-output causes remain unconfirmed.
-After the independently reproduced Stop race was fixed, the second full attempt passed root/web checks but every browser launch hit Chromium's explicit singleton-socket path-length refusal because the private temporary root was too long.
-Using a fresh short private root on the same disk, all browser scenarios and the pack audit passed without code changes, larger budgets, skipped tests or downloads.
-Failure logs and isolated receipts remain outside the checkout; no consumer service was installed/restarted, uncertain state cleaned, paid provider used or new native Windows/macOS qualification claimed.
-
-### Workbench recovery review snapshot
-
-The recovery review reproduces the still-reserved deleted-project failure, adds gateway-only native recovery (including legacy host attestation), and exercises restart/Stop after retiring old project associations without deleting references or project fences.
-The new gateway recovery file passes 30 tests, including actual owner/resolver exits, concurrent resolvers, interrupted release, unsafe/changed resources, real generated startup refusal/restart/Stop and genuine POSIX TTY confirmation; global registry recovery passes 34 tests.
-Full `verify` passed static/build/lint/Agent checks and reached 2064 passing root tests with 27 platform skips, but one unchanged `service-history-projection` dense-message test exceeded its 15s deadline.
-Its complete 24-test file passed in a subsequent isolated diagnostic run (the affected case took 1.83s); the original timing cause is unconfirmed, not retrospectively successful.
-After the final startup/Stop diagnostic wording correction, 121 targeted CLI/recovery tests, source/generated checks, 133 web tests, all 9 browser scenarios and the 135-member real-pack audit passed.
-A separate Bun pack/body audit also passed; failures and isolated fixture receipts remain outside the checkout, with no increased test budgets, downloaded dependencies, consumer lock cleanup or service installation/restart.
-Actual WSL shutdown, real service-manager installation and new native Windows/macOS recovery qualification were not executed; this is not a full green `verify` claim.
-
-### Conversation-first entry review snapshot
-
-The project-less conversation shell and folder-picker review passed 133 web tests, all 9 real-browser scenarios and the 135-member real-pack audit, plus a separate Bun pack/body audit.
-New loopback and HTTPS regressions refuse Open after an unbrowsed path edit, retry the same readonly directory observation after failure, and fence Open while a refresh is pending; the two original picker defects were observed failing before their fixes.
-Full `verify` passed its static/build/lint/Agent checks but stopped in the root suite: 2033 tests passed, 27 platform tests skipped, and the unchanged `service-history-search-export` field-kind/snapshot case exceeded its 5s deadline.
-That complete 16-test file passed in a subsequent isolated diagnostic run (the affected case took 1.16s); the original timing cause is unconfirmed, and this is not a full green `verify` claim.
-Failed logs were retained outside the checkout; no deadline was increased, test skipped to obtain green, dependency downloaded or consumer service installed/restarted.
-
-### Release 2.0.15 acceptance snapshot
-
-The release candidate passed the complete root suite: 2034 tests in 85 files, with 27 platform skips on Linux.
-The final browser-only frame-readiness adjustment then passed all 9 real-browser scenarios; 130 web tests and the 135-member real-pack audit also passed.
-This is separate-lane evidence, not a claim that one final `verify` invocation was entirely green.
-Observed environment: Linux x86_64, Node26.7.0, Bun1.3.14, Pi SDK0.84.3 and existing Chrome for Testing151.0.7922.34; root runs used `VITEST_MAX_WORKERS=1` without changing test deadlines.
-New coverage includes actual registry-writer and resolver exits, concurrent resolvers, unchanged project fences/history, changed/linked/remote/live resources, a removed stopped workspace, piped/pasted/canceled refusal, genuine native-TTY confirmation and browser Open after explicit recovery without replay.
-
-The first integration command was cut off by its 25-minute outer command budget while tests were still running.
-The next completed root run failed one omitted browser-test provenance pin (updated) and three owner/proxy settlement or timeout cases, which passed separately; their timing cause was not established.
-A later complete root/web pass encountered Chromium's first screenshot-capture failure; the browser fixture now waits for painted frames before that capture, without retrying operations or swallowing capture errors, and all browser scenarios passed afterward.
-The last full attempt hit six history-test deadlines in two files; those unchanged files passed all 45 tests in a subsequent diagnostic run, and the earlier complete root pass remains distinct from that later failure.
-Failed logs and isolated fixture evidence were preserved; no test budget was increased, dependency/browser downloaded, consumer lock deleted or service installed/restarted.
-No paid-provider use or new native Windows/macOS qualification is claimed.
-
-### Release 2.0.14 acceptance snapshot
-
-Full `verify` passed on the release candidate before this evidence-only note, with `VITEST_MAX_WORKERS=1`: 2000 root tests in 84 files (27 skipped on Linux), 130 web tests, 9 real-browser scenarios and the 135-member real-pack audit.
-Observed environment: Linux x86_64, Node26.7.0, Bun1.3.14, Pi SDK0.84.3 and existing Chrome for Testing151.0.7922.34.
-Review fixes refuse hard-linked file previews, common credential paths and configured private-directory alias targets; block legacy project Open through the gateway so backend token links and unassociated owners cannot escape its route; and continue serial Stop attempts for other associated owners after an earlier refusal, without releasing uncertain fences.
-Each boundary regression was observed failing before its fix and passing afterward; the generated service and browser outputs were rebuilt through their canonical builders.
-The first default-concurrency integration run failed 25 tests: 21 timeouts, three state refusals and one stale provenance pin.
-The reviewed destination pins were refreshed, the three state-refusal cases passed independently, and the complete single-worker run passed without increasing any deadline or omitting tests; the earlier failures remain failure evidence, not retrospectively successful runs.
-No consumer service installation/restart, paid-provider use or new native Windows/macOS qualification is claimed.
-
-### Unified-entry verification snapshot
-
-The unified no-default-workspace change passed full `verify` before this evidence-only note: 1997 root tests in 84 files (27 skipped on Linux), 130 web tests, 9 real-browser scenarios and the 135-member real-pack audit.
-New browser cases exercise a real generated workbench and independently opened owners under both loopback and a CA-validated HTTPS proxy: no default directory, same-origin switching, ordinary Send, explicit Create without Start, and retained chat/task navigation after refresh.
-The genuine SDK uses an isolated fabricated provider; no paid account, physical device or new native Windows/macOS qualification is implied.
-An early browser attempt completed its UI assertions but left one concurrently stopped owner quarantined; its failed closure receipt remains failure evidence, and the gateway now serializes associated owner Stop through their shared registry.
-The first full integration attempt then passed root/web checks but hit an existing browser harness's late response-body read; the harness now reads that exact response immediately, without request replay or a larger wait, and the subsequent complete `verify` passed.
-No consumer service was installed or restarted, and no existing `~/cadence` or uncertain state was deleted.
-
-### Ordinary-chat workbench integration snapshot
-
-Full `verify` passed on the working tree before this evidence-only note: 1994 root tests in 82 files (27 skipped on Linux), 130 web tests, 7 real-browser scenarios and the 135-member real pack audit.
-Observed environment: Linux x86_64, Node26.7.0, Bun1.3.14, Pi SDK0.84.3 and existing Chrome for Testing151.0.7922.34.
-The new lane used the genuine SDK against a fabricated loopback provider: ordinary multi-turn restore, a real write tool, duplicate-send observation, directory/credential boundaries, queued cancellation, orderly Stop/restart, rotation while queued, independent project owners/ports, and preserved unaccepted or missing metadata.
-Browser coverage includes the ordinary composer, file preview/reference, explicit Cadence creation without Start, retained origin navigation, and settled desktop/390px/320px drawer layouts.
-Early attempts caught an optional-envelope decoder regression, late OAuth-settlement tracking during Stop, old package/body counts and worker source pins, plus browser interactions that needed to await modal closure and reference/drawer updates; those were corrected before the final full pass.
-No existing budgets were enlarged, no browser/dependency was downloaded, and no consumer service installation, paid-provider or new Windows/macOS qualification is claimed.
-
-### Release 2.0.12 acceptance snapshot
-
-Full `verify` passed on the 2.0.12 release candidate before this evidence-only paragraph: 1983 root tests in 80 files (27 skipped on Linux), 128 web tests, 6 real-browser scenarios and the 132-member pack audit.
-Observed environment: Linux x86_64, Node26.7.0, Bun1.3.14, Pi SDK0.84.3 and existing Chrome for Testing151.0.7922.34.
-Retained conversations remain readable after their live `task.json` disappears and the owner restarts without a selected model; reads neither reconstruct live state nor grant execution authority, and an unused Start grant from before removal is refused without admission.
-Generic stale guidance asks for fresh observation/confirmation without diagnosing a model-source change; local errors no longer hide that observation or suggest starting the service.
-The local-error banner regression failed against the prior built assets and passed against the rebuilt candidate; a new Chinese assertion was corrected to expect its translated status, and an initial integration attempt stopped at provenance JSON formatting before the final full pass.
-No new Windows/macOS, real service-manager installation or paid-provider qualification is claimed.
-
-### Release 2.0.11 acceptance snapshot
-
-Full `verify` passed on the 2.0.11 release candidate before this evidence-only paragraph: 1976 root tests in 80 files (27 skipped on Linux), 122 web tests, 5 real-browser scenarios and the 132-member pack audit.
-Observed environment: Linux x86_64, Node26.7.0, Bun1.3.14, Pi SDK0.84.3 and existing Chrome for Testing151.0.7922.34.
-The root Git regressions use real Git with simulated ownership mismatch, and system service management uses isolated filesystem/manager adapters; no real root/systemd installation, new CI matrix, macOS or Windows qualification is claimed.
-
-This release adds explicit directory project launch and independent named Linux system/root services, and a conversation-first WebUI with retained task/run/subagent navigation.
-Root observation no longer automatically trusts foreign Git repositories; inactive service definitions cannot stop or adopt detached owners, including through restart or uninstall.
-Fast/integration test selection is checked against actual Vitest discovery, and provider prompt failures remain separate from capture failures.
-Live task/run/child views reuse only an already observed containing snapshot within one notification drain, never a previous round's action context.
-
-### Release 2.0.10 acceptance snapshot
-
-Full `verify` passed on the 2.0.10 release tree (`4843334` plus the version bump), in the 2.0.3 environment below.
-It ran 1949 root tests in 78 files (27 Windows-only controls skipped on Linux), 116 web tests, 5 real-browser scenarios and the 132-member pack audit, and CI 40278386880 passed 12/12 on the candidate `3cd94f4` (this commit before its snapshot).
-That CI run's first Windows Node 22 `parallel` attempt failed only `workspace-landing`'s cleanup (EBUSY removing the just-stopped landing workspace), as in 2.0.6's first run; the job passed when rerun.
-The fix answers a 2.0.9 report: an Ollama `"apiKey": "ollama"` under a provider named `ollama` made the whole model catalog refuse `unsupported-context`.
-An isolated owner with that `models.json` beside a second provider reproduced the refusal on 2.0.9; on 2.0.10 Chromium listed the second provider's models and explained the one withheld entry in English and Chinese.
-
-### Release 2.0.9 acceptance snapshot
-
-Full `verify` passed on the 2.0.9 release tree (`0e720a1` plus the version bump), in the 2.0.3 environment below.
-It ran 1948 root tests in 78 files (27 Windows-only controls skipped on Linux), 116 web tests, 5 real-browser scenarios and the 132-member pack audit, and CI 40209338973 passed 12/12 on the candidate `8b53b64` (this commit before its snapshot).
-The release adds the Simplified Chinese WebUI; Chromium at 1440 and 390px rendered the shell, inspector, dialogs and timeline in Chinese from a `zh-CN` browser locale.
-On the feature tree, an earlier full run failed only the reuse provenance pin (refreshed), and one `accepting-browser` run failed after the second context's Start; that scenario passed in four later runs, and its cause was not identified.
-
-### Release 2.0.8 acceptance snapshot
-
-Full `verify` passed on the 2.0.8 release tree (`7a40be6` plus the version bump), in the 2.0.3 environment below.
-It ran 1948 root tests in 78 files (27 Windows-only controls skipped on Linux), 111 web tests, 5 real-browser scenarios and the 132-member pack audit, and CI 40201203720 passed 12/12 on the candidate `1c372b2` (this commit before its snapshot).
-The fix answers a 2.0.7 report: `cadence server install` refused existing `.env` files with one message.
-The 2.0.7 refusal was reproduced for a 0755 directory from the older `mkdir -p` docs, 0644 editor files, umask 002 and a symlinked `~/.pi`.
-Those layouts now install, a dotfiles link stays a link, and a remaining refusal (an `export` line) names its line.
-
-### Release 2.0.7 acceptance snapshot
-
-Full `verify` ran on the 2.0.7 release tree (`7973e23` plus the version bump), in the 2.0.3 environment below.
-It passed 1945 root tests in 78 files (27 Windows-only controls skipped on Linux); `service-history-projection`'s multisegment archive test hit its 45s budget under shared load and passed alone (24 tests, 27s).
-The 111 web tests, 5 real-browser scenarios and 132-member pack audit passed, and CI 40194654384 passed 12/12 on the candidate `7341cf6` (this commit before its snapshot).
-`cadence server install|restart|uninstall` ran end to end in an isolated home, with a fake `systemctl` that runs the unit's own ExecStart and ExecStop.
-The printed link entered the WebUI, and an earlier generated-token workspace was reselected to the `.env`.
-An edit while running applied only at restart, and rotation changed only the `CADENCE_TOKEN` line.
-Real systemd, launchd and Windows registration were not exercised for this release.
-
-### Release 2.0.6 acceptance snapshot
-
-Full `verify` passed on the 2.0.6 release tree (`8d31512` plus the version bump): 1940 root tests in 78 files (27 Windows-only controls skipped on Linux), 111 web tests, 5 real-browser scenarios and the 132-member pack audit, in the 2.0.3 environment below.
-The package ships no install script: in isolated global installs, Bun 1.3.14 blocked three scripts for 2.0.5 (Cadence's postinstall and the Pi SDK's `@google/genai` and `protobufjs` scripts) and only those two SDK scripts for 2.0.6, and npm 11 lists only them.
-
-### Release 2.0.5 acceptance snapshot
-
-Full `verify` passed on the 2.0.5 release tree (`dce261b` plus the version bump): 1940 root tests in 78 files (27 Windows-only controls skipped on Linux), 111 web tests, 5 real-browser scenarios and the 133-member pack audit, in the 2.0.3 environment below.
-On that host `cadence server status` read the live unit that 2.0.4's Pi install hook had registered as `active` and `enabled` with linger on, so earlier units stay manageable.
-The launchd and Windows Run backends ran only against injected launchctl, reg.exe and orderly-Stop fakes; real macOS and Windows registration remains unqualified.
-
-### Release 2.0.4 acceptance snapshot
-
-Full `verify` passed on `3987f65` (the `max` thinking change): 1925 root tests in 78 files, 111 web tests, 5 real-browser scenarios and the 132-member pack audit, in the 2.0.3 environment below.
-On the same host, against a real Pi 1.4.0 user-scope install and a user-configured OpenAI-compatible provider, an owner model chosen in the WebUI ran a readonly research Start end to end: the child used `ls`/`find`/`read`, settled `completed`, published its summary and recorded hidden thinking as omitted.
-A concurrent Pi TUI's agent panel followed that child from launch through its tool calls to `finished (ok=1)`.
-A DeepSeek model whose `thinkingLevelMap` maps only `max` became selectable at `max` and its child made tool calls at that level; editing `models.json` during that run turned the owner's views `stale` until restart, as now documented.
-
-### Release 2.0.3 acceptance snapshot
-
-Full `verify` passed on `c27b8ca`: 1924 root tests in 78 files (27 Windows-only controls skipped on Linux), 111 web tests in 8 files, 5 real-browser scenarios in 3 files and the 132-member real pack audit.
-Observed environment: Linux x86_64, official Node 22.22.1, Bun 1.3.14, the pinned Pi SDK 0.84.3 and Chrome for Testing 153.0.8010.12; later commits change only tests and this section.
-The GitHub matrix (Windows and Ubuntu × Node 22/24 × `parallel`, `serial-process`, `serial-scan`) runs on the separate CI branch.
-A real Pi 1.4.0 user-scope install of the packed candidate, installed into Pi's own npm layout, registered and enabled the unit, enabled linger without a prompt and, on upgrade, stopped the old owner in order before starting the new one.
-That owner started with the agent directory Pi had created at 0775 and served the built WebUI to Chromium at 1440, 390 and 320px widths.
-No model-backed task ran there (no Pi provider login); macOS, physical phones, paid accounts and every adapter, and a second machine remain unqualified.
-
-### Prior integrated acceptance snapshot
-
-Before removal of development-workflow tooling, the integrated redesign passed full `verify`:1839 root tests/69 files,110 web tests/8 files and5 real-browser scenarios/3 files, with27 existing Windows-only controls skipped on Linux.
-It also passed separate129-member/35-runtime-source real pack/extraction, all four source/extracted regular/fullscreen Pi PTYs, mixed clients, CA-validated HTTPS/WSS, plain/gzip OAuth proxy, informed recovery and complete retained-history exports.
-Observed environment: Linux x86_64, Node26.7.0, Bun1.3.14, Pi0.84.3 and Chromium151.0.7922.34.
-These are prior executed results, not a claim that every later edit or other environment has been tested.
-The implementation/docs/evidence checkpoints are Git commits `b0fde94`, `531b158` and `2fd28b0`; historical failed/unknown outcomes are not rewritten by this summary.
-Additional Windows/macOS/ConPTY, Node22/other peers, paid accounts/every adapter, physical phone/human/second-machine, package-manager installation and real deployment remain unqualified.
-
-## Licenses and reuse
+## License
 
 Cadence is MIT.
-The substantial pinned pi-web-ui adaptations, original notices, emitted dependencies, Feather icons, KaTeX OFL fonts and vis embedded vendors are documented in [reuse and distribution](docs/reuse-and-distribution.md) and [third-party notices](THIRD_PARTY_NOTICES.md).
-Not all bundled material is covered by Cadence's MIT license.
+Bundled adaptations, fonts and vendors keep their own licenses; see [reuse and distribution](docs/reuse-and-distribution.md) and [third-party notices](THIRD_PARTY_NOTICES.md).
