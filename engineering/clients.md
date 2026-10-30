@@ -85,6 +85,7 @@ An active turn retains independent interruption authority even when its metadata
 Access-token rotation revokes viewers, not admitted queued turns.
 A completed turn retains sanitized text and tool exchanges for its next explicit Send.
 The bounded checkpoint passes through an anonymous pipe and owner-side credential redaction before persistence; hidden thinking, signatures and media are not retained.
+Assistant usage keeps only the counts every Pi message carries; optional provider breakdowns such as `reasoning` or `cacheWrite1h` are dropped, not refused.
 Failed, interrupted or over-budget turns remain visible but currently require a new conversation instead of replaying incomplete context.
 A restart never resumes pending turns; unknown work keeps fences.
 There is no upstream goal/delegate loop, subagent tool/template pack, PTY, plugin loader, prompt composer or automatic retry/compaction.

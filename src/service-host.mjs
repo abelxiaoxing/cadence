@@ -21944,6 +21944,22 @@ function argumentsData(value, secrets) {
     throw new Error("Unsupported context arguments");
   return parseWireJson(source, 64 * 1024);
 }
+function own(value, key2) {
+  const d = value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, key2) : undefined;
+  if (!d || !("value" in d))
+    throw new Error("Invalid usage");
+  return d.value;
+}
+function counts(value, keys3) {
+  const out = Object.create(null);
+  for (const key2 of keys3) {
+    const n = own(value, key2);
+    if (typeof n !== "number" || !Number.isFinite(n) || n < 0)
+      throw new Error("Invalid usage");
+    out[key2] = n;
+  }
+  return out;
+}
 function conversationMessages(messages, secrets = []) {
   return list(messages, 4096, (message) => {
     if (!message || typeof message !== "object")
@@ -21973,27 +21989,20 @@ function conversationMessages(messages, secrets = []) {
         toolName: clean(message.toolName, secrets, 128),
         isError: message.isError === true
       };
-    const usage = closed(message.usage, [
+    const usage = counts(message.usage, [
       "input",
       "output",
       "cacheRead",
       "cacheWrite",
-      "totalTokens",
-      "cost"
+      "totalTokens"
     ]);
-    const cost = closed(usage.cost, [
+    usage.cost = counts(own(message.usage, "cost"), [
       "input",
       "output",
       "cacheRead",
       "cacheWrite",
       "total"
     ]);
-    for (const value of [
-      ...Object.values(usage).filter((v) => typeof v !== "object"),
-      ...Object.values(cost)
-    ])
-      if (typeof value !== "number" || !Number.isFinite(value) || value < 0)
-        throw new Error("Invalid usage");
     return {
       role: role2,
       timestamp,
@@ -24852,7 +24861,7 @@ class TaskActions {
     const graph = action.kind === "start" ? plan?.graph ?? this.defaultGraph(selected2.record, selected2.identity, expected.model) : null;
     if (graph && hash2(canonicalJson(graph)) !== expected.task.graphIdentity)
       throw new ContractError("stale");
-    let own2 = {
+    let own3 = {
       revision: selected2.record.revision,
       identity: selected2.identity
     };
@@ -24882,7 +24891,7 @@ class TaskActions {
         try {
           this.assertChoice(expected);
           const latest = h.coordination.store.loadSnapshot(action.taskId);
-          return latest?.identity === own2.identity && latest.record.revision === own2.revision && this.sources.current();
+          return latest?.identity === own3.identity && latest.record.revision === own3.revision && this.sources.current();
         } catch {
           return false;
         }
@@ -24910,7 +24919,7 @@ class TaskActions {
         });
         if (publication.status !== "published" || !publication.observed)
           throw new ContractError("conflict");
-        own2 = publication.observed;
+        own3 = publication.observed;
       }
     });
     accepted2.activate(work);

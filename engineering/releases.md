@@ -3,6 +3,15 @@
 An append-only record of what each release or integration review actually executed, newest first.
 It is not required reading for a change: add a section for each release and never rewrite an older one.
 
+## Release 2.0.19 acceptance snapshot
+
+Full `verify` passed on the release candidate: 1912 root tests in 71 files (27 platform skips on Linux), 19 task-entry node tests, 136 web tests, 5 real-browser scenarios in 4 files and the 142-member real-pack audit.
+Observed environment: Linux x86_64, official Node 22.22.1, Bun 1.3.14, Pi SDK 0.84.3 and Chrome for Testing 153.0.8010.12, with unchanged test deadlines.
+A reported ordinary-conversation failure (`worker-failure: capture` after every complete reply, with no continuation context) traced to the checkpoint's closed usage reader: Pi 0.84.3 adds `usage.reasoning` whenever an OpenAI-compatible, Responses or Google provider reports usage, and Anthropic adds `cacheWrite1h`, so the six-key check refused every such turn.
+The checkpoint now keeps only the counts every message carries and drops provider breakdowns; previously stored contexts read unchanged.
+The accepting fixture's provider now sends a usage chunk as real OpenAI-compatible servers do; with it the workbench browser scenario fails on 2.0.18 exactly as reported (the reply appears, the turn never completes) and passes with the fix, alongside a new unit regression that also fails on 2.0.18.
+The reporter's project and providers were not available here; no consumer service was installed or restarted, no paid provider was used and the `ci/windows` matrix was not run.
+
 ## Release 2.0.18 acceptance snapshot
 
 Full `verify` passed on the release candidate: 1911 root tests in 71 files (27 platform skips on Linux), 19 task-entry node tests, 136 web tests, 5 real-browser scenarios in 4 files and the 142-member real-pack audit.

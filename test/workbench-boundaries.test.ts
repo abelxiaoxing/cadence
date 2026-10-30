@@ -10,7 +10,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
-import { conversationMessages } from "../src/conversation-context.mjs";
+import {
+  conversationMessages,
+  encodeConversationContext,
+} from "../src/conversation-context.mjs";
 import { ContractError } from "../src/service/contracts/core.ts";
 import {
   type ChatTurn,
@@ -169,6 +172,53 @@ it("continuation keeps tool exchanges but strips hidden/media/signatures and own
     expect(source).not.toContain(secret);
   expect(source).toContain("toolCall");
   expect(source).toContain("toolResult");
+});
+it("continuation accepts Pi usage breakdowns and stores only the common counts", () => {
+  const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+  const assistant = (usage: object) => [
+    { role: "user", content: "hi", timestamp: 1 },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "hi" }],
+      timestamp: 2,
+      api: "openai-completions",
+      provider: "fixture",
+      model: "fixed",
+      stopReason: "stop",
+      usage,
+    },
+  ];
+  const counts = {
+    input: 1,
+    output: 2,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 3,
+  };
+  // openai-completions/responses and google report reasoning; anthropic reports cacheWrite1h.
+  const plain = encodeConversationContext(assistant({ ...counts, cost }), []);
+  for (const extra of [{ reasoning: 1 }, { cacheWrite1h: 0 }])
+    expect(
+      encodeConversationContext(assistant({ ...counts, ...extra, cost }), []),
+    ).toBe(plain);
+  expect(plain).not.toMatch(/reasoning|cacheWrite1h/);
+  let calls = 0;
+  const getter = {
+    ...counts,
+    cost,
+    get output() {
+      calls++;
+      return 2;
+    },
+  };
+  for (const usage of [
+    { ...counts, totalTokens: -1, cost },
+    { ...counts, cost: { ...cost, total: Number.NaN } },
+    { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, cost },
+    getter,
+  ])
+    expect(() => conversationMessages(assistant(usage))).toThrow();
+  expect(calls).toBe(0);
 });
 it("file previews do not flush a truncated credential prefix or browse private state", () => {
   const root = mkdtempSync(join(tmpdir(), "wb-files-")),
