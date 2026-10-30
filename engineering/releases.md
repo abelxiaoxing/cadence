@@ -3,6 +3,15 @@
 An append-only record of what each release or integration review actually executed, newest first.
 It is not required reading for a change: add a section for each release and never rewrite an older one.
 
+## Release 2.0.18 acceptance snapshot
+
+Full `verify` passed on the release candidate: 1911 root tests in 71 files (27 platform skips on Linux), 19 task-entry node tests, 136 web tests, 5 real-browser scenarios in 4 files and the 142-member real-pack audit.
+Observed environment: Linux x86_64, official Node 22.22.1, Bun 1.3.14, Pi SDK 0.84.3 and Chrome for Testing 153.0.8010.12, with unchanged test deadlines.
+A reported WebUI task Send that always stopped `stale` traced to the change identity, not the service epoch: a Git command cut off by its 512KiB output bound (a `node_modules` ignored listing is enough) hashed pipe-timed partial bytes, so one unchanged tree had a new identity on each observation; this checkout's own ignored listing (1.37MB) drifted in 1 of 5 consecutive observations.
+Limited commands now hash a fixed outcome, wholly ignored directories count once and the hashed output bound is 16MiB; the new regression fails on the previous implementation.
+Task Send reads the workspace again and binds the project, access and model shown, and a `stale` refusal names the moved fields.
+The reporter's project was not available here; no consumer service was installed or restarted, no paid provider was used and the `ci/windows` matrix was not run.
+
 ## Release 2.0.17 acceptance snapshot
 
 Full `verify` passed on the release candidate in about four minutes: 1908 root tests in 71 files (27 platform skips on Linux), 16 task-entry node tests, 136 web tests, 5 real-browser scenarios in 4 files and the 135-member real-pack audit.

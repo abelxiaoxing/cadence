@@ -9,6 +9,8 @@ Read this before changing checks, change observation, task publication or Review
   Manual shell checks require the native local capability and fresh command/cwd/timeout confirmation.
 - Checks use the service launch's ordinary project environment, never resolved model auth or a browser environment overlay.
 - Changes are bounded observations including pre-existing dirt, not proof of causation or a complete filesystem snapshot.
+  The change identity hashes each Git command's complete raw output; a command cut off by its output or time bound contributes only its fixed outcome (for example `ENOBUFS`), never the partial bytes, and marks coverage incomplete.
+  A wholly ignored directory is one uninspected entry, so files inside it do not move the identity.
 - Failed, canceled, timeout, unknown, blocked, stale and not-run remain distinct.
   Done-with-issues preserves all execution/check facts.
 

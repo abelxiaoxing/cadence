@@ -45,6 +45,13 @@ function fixture() {
     ...extra,
   });
   const client = {
+    workspace: async () => {
+      calls.push("workspace");
+      return {
+        kind: "ok",
+        value: { context: { status: "available", version: context } },
+      };
+    },
     preflight: async (version, action) => {
       calls.push(`preflight:${action.kind}`);
       return {
@@ -117,6 +124,7 @@ test("one explicit send creates a code task and starts readonly analysis, never 
   const f = fixture();
   assert.equal(await beginTask(f.input), f.taskId);
   assert.deepEqual(f.calls, [
+    "workspace",
     "preflight:create",
     "create",
     "current",
@@ -149,6 +157,7 @@ test("pending creation is observed by its original ID before analysis", async ()
   };
   await beginTask(f.input);
   assert.deepEqual(f.calls, [
+    "workspace",
     "preflight:create",
     "create",
     "receipt",
@@ -186,6 +195,7 @@ test("fenced inconclusive receipt reads are observed again, never resubmitted", 
   };
   await beginTask(f.input);
   assert.deepEqual(f.calls, [
+    "workspace",
     "preflight:create",
     "create",
     "receipt",
@@ -209,7 +219,12 @@ test("an absent receipt stops the sequence without another command", async () =>
     return { status: "absent", committedSeq: "1" };
   };
   await assert.rejects(beginTask(f.input), /receipt-inconclusive/);
-  assert.deepEqual(f.calls, ["preflight:create", "create", "receipt"]);
+  assert.deepEqual(f.calls, [
+    "workspace",
+    "preflight:create",
+    "create",
+    "receipt",
+  ]);
 });
 
 test("lost create response retains the command identity and never retries or starts", async () => {
@@ -219,7 +234,7 @@ test("lost create response retains the command identity and never retries or sta
     throw new Error("lost");
   };
   await assert.rejects(beginTask(f.input));
-  assert.deepEqual(f.calls, ["preflight:create", "create"]);
+  assert.deepEqual(f.calls, ["workspace", "preflight:create", "create"]);
   assert.ok(f.observations[0].commandId);
 });
 
@@ -232,7 +247,7 @@ test("departure after creation prevents follow-up analysis without canceling acc
     return reply;
   };
   await assert.rejects(beginTask(f.input));
-  assert.deepEqual(f.calls, ["preflight:create", "create"]);
+  assert.deepEqual(f.calls, ["workspace", "preflight:create", "create"]);
 });
 
 test("a changed model after create cannot inherit the original Send consent", async () => {
@@ -265,6 +280,67 @@ test("a refused readonly preflight leaves the created task observable and never 
   await assert.rejects(beginTask(f.input), /conflict/);
   assert.ok(f.observations.some((value) => value.receipt?.created));
   assert.ok(!f.calls.includes("start"));
+});
+
+const available = (version) => ({
+  kind: "ok",
+  value: { context: { status: "available", version } },
+});
+
+test("Send observes the working tree again and binds only the project, access and model shown", async () => {
+  const f = fixture(),
+    preflight = f.client.preflight,
+    versions = [];
+  const sent = {
+    ...f.input.context,
+    checkoutGeneration: 2,
+    observation: { identity: "c".repeat(64), complete: false },
+  };
+  f.client.workspace = async () => {
+    f.calls.push("workspace");
+    return available(sent);
+  };
+  f.client.preflight = async (version, action) => {
+    versions.push(version);
+    return preflight(version, action);
+  };
+  assert.equal(await beginTask(f.input), f.taskId);
+  assert.deepEqual(versions[0], sent);
+});
+
+test("a model changed since display refuses before any command and names the field", async () => {
+  const f = fixture();
+  f.client.workspace = async () => {
+    f.calls.push("workspace");
+    return available({
+      ...f.input.context,
+      model: { ...f.input.context.model, model: "other" },
+    });
+  };
+  await assert.rejects(beginTask(f.input), { message: "stale: model" });
+  assert.deepEqual(f.calls, ["workspace"]);
+});
+
+test("a stale create preflight names the drifted field and never retries", async () => {
+  const f = fixture();
+  let reads = 0;
+  f.client.workspace = async () => {
+    f.calls.push("workspace");
+    return available(
+      ++reads === 1
+        ? f.input.context
+        : {
+            ...f.input.context,
+            observation: { identity: "d".repeat(64), complete: true },
+          },
+    );
+  };
+  f.client.preflight = async (_version, action) => {
+    f.calls.push(`preflight:${action.kind}`);
+    return { kind: "error", error: { code: "stale", effect: "none" } };
+  };
+  await assert.rejects(beginTask(f.input), { message: "stale: observation" });
+  assert.deepEqual(f.calls, ["workspace", "preflight:create", "workspace"]);
 });
 
 function approvalFixture() {
