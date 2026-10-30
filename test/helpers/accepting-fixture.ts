@@ -49,6 +49,10 @@ export async function acceptingFixture(
       res.write(
         `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 1, model: "fixed", choices: [{ index: 0, delta, finish_reason }] })}\n\n`,
       );
+    // Like real OpenAI-compatible servers given include_usage; Pi then adds usage.reasoning.
+    res.write(
+      `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 1, model: "fixed", choices: [], usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5, completion_tokens_details: { reasoning_tokens: 1 } } })}\n\n`,
+    );
     res.end("data: [DONE]\n\n");
   }
   const provider = createServer(async (req, res) => {

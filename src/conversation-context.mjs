@@ -21,6 +21,26 @@ function argumentsData(value, secrets) {
   if (sanitizer.limited) throw new Error("Unsupported context arguments");
   return parseWireJson(source, 64 * 1024);
 }
+function own(value, key) {
+  const d =
+    value && typeof value === "object"
+      ? Object.getOwnPropertyDescriptor(value, key)
+      : undefined;
+  if (!d || !("value" in d)) throw new Error("Invalid usage");
+  return d.value;
+}
+// Pi adds optional usage breakdowns per provider and release (reasoning, cacheWrite1h);
+// retain only the counts every assistant message carries, read as own data properties.
+function counts(value, keys) {
+  const out = Object.create(null);
+  for (const key of keys) {
+    const n = own(value, key);
+    if (typeof n !== "number" || !Number.isFinite(n) || n < 0)
+      throw new Error("Invalid usage");
+    out[key] = n;
+  }
+  return out;
+}
 /** Deliberately retain text and tool exchanges, not just last assistant prose. */
 export function conversationMessages(messages, secrets = []) {
   return list(messages, 4096, (message) => {
@@ -54,27 +74,20 @@ export function conversationMessages(messages, secrets = []) {
         toolName: clean(message.toolName, secrets, 128),
         isError: message.isError === true,
       };
-    const usage = closed(message.usage, [
+    const usage = counts(message.usage, [
       "input",
       "output",
       "cacheRead",
       "cacheWrite",
       "totalTokens",
-      "cost",
     ]);
-    const cost = closed(usage.cost, [
+    usage.cost = counts(own(message.usage, "cost"), [
       "input",
       "output",
       "cacheRead",
       "cacheWrite",
       "total",
     ]);
-    for (const value of [
-      ...Object.values(usage).filter((v) => typeof v !== "object"),
-      ...Object.values(cost),
-    ])
-      if (typeof value !== "number" || !Number.isFinite(value) || value < 0)
-        throw new Error("Invalid usage");
     return {
       role,
       timestamp,
