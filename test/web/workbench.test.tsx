@@ -1,6 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 import type { WorkbenchEntry } from "../../src/service/contracts/gateway.ts";
+import type {
+  ChatItem,
+  ChatTurn,
+} from "../../src/service/contracts/workbench.ts";
 import {
   LAST_PROJECT_STORAGE_KEY,
   projectRunning,
@@ -9,6 +13,11 @@ import {
   restorableProject,
 } from "../../web/src/client/last-project";
 import { cadenceInput } from "../../web/src/client/use-workbench";
+import {
+  LEGACY_OMITTED_NOTICE,
+  toolTarget,
+  turnParts,
+} from "../../web/src/components/workspace/ChatSteps";
 import { ChatWelcome } from "../../web/src/components/workspace/ChatWelcome";
 import { ChatTurnView } from "../../web/src/components/workspace/ChatWorkspace";
 import { ProjectPicker } from "../../web/src/components/workspace/ProjectPicker";
@@ -52,6 +61,7 @@ it("ordinary messages use rich text and folded real tool results, not task succe
         epoch: "epoch",
         status: "failed",
         notice: "worker-failure: prompt",
+        omitted: { thinking: false, media: false, other: false },
         items: [
           {
             id: "u",
@@ -87,6 +97,140 @@ it("ordinary messages use rich text and folded real tool results, not task succe
   expect(html).toContain("worker-failure: prompt");
   expect(html).toContain("ep-state failed");
   expect(html).not.toContain("PASS");
+});
+const chatItem = (
+  id: string,
+  role: ChatItem["role"],
+  fields: Partial<ChatItem> = {},
+): ChatItem => ({
+  id,
+  role,
+  text: "",
+  name: "",
+  args: "",
+  error: false,
+  ...fields,
+});
+const renderTurn = (turn: Partial<ChatTurn> & Pick<ChatTurn, "items">) =>
+  renderToStaticMarkup(
+    <ChatTurnView
+      turn={{
+        id: "turn",
+        epoch: "epoch",
+        status: "completed",
+        notice: "",
+        omitted: { thinking: false, media: false, other: false },
+        ...turn,
+      }}
+    />,
+  );
+it("a turn's steps fold under one summary line and its answer keeps the only speaker label", () => {
+  const items = [
+    chatItem("user", "user", { text: "Analyze" }),
+    chatItem("m1", "assistant"),
+    chatItem("t1", "tool", { name: "ls", args: '{"path":"."}' }),
+    chatItem("m2", "assistant", { text: "Looking at the sources." }),
+    chatItem("t2", "tool", { name: "read", args: '{"path":"a.ts"}' }),
+    chatItem("t3", "tool", {
+      name: "read",
+      args: '{"offset":40,"path":"a.ts"}',
+    }),
+    chatItem("t4", "tool", {
+      name: "read",
+      args: '{"path":"b.ts"}',
+      error: true,
+    }),
+    chatItem("t5", "tool", {
+      name: "bash",
+      args: '{"command":"git log\\n--oneline"}',
+    }),
+    chatItem("m3", "assistant"),
+    chatItem("m4", "assistant", { text: "**Final** answer" }),
+  ];
+  const parts = turnParts(items);
+  expect(parts.steps.map((item) => item.id)).toEqual([
+    "t1",
+    "m2",
+    "t2",
+    "t3",
+    "t4",
+    "t5",
+  ]);
+  expect(parts.answer.map((item) => item.id)).toEqual(["m4"]);
+  const html = renderTurn({
+    notice: LEGACY_OMITTED_NOTICE,
+    omitted: { thinking: true, media: false, other: false },
+    items,
+  });
+  expect(html.match(/chat-message-role">Cadence</g)).toHaveLength(1);
+  expect(html).toContain("Listed 1 directory · Read 2 files · Ran 1 command");
+  expect(html).toContain("1 failed");
+  expect(html).not.toMatch(/<details class="chat-steps"[^>]*\sopen/);
+  expect(html).toContain(">git log</span>");
+  expect(html).toContain("Looking at the sources.");
+  expect(html).toContain("Thinking is not retained.");
+  expect(html).not.toContain("Hidden thinking");
+  expect(html).not.toContain("chat-turn-notice");
+  expect(html).toContain("<strong>Final</strong>");
+});
+it("a running turn shows its latest step live and a turn ending without an answer opens its steps", () => {
+  const user = chatItem("user", "user", { text: "Analyze" });
+  const read = chatItem("t", "tool", {
+    name: "read",
+    args: '{"path":"src/x.ts"}',
+  });
+  const running = renderTurn({ status: "running", items: [user, read] });
+  expect(running).toContain("chat-steps-live");
+  expect(running).toContain("Working… read src/x.ts");
+  expect(renderTurn({ status: "running", items: [user] })).toContain(
+    "Working…",
+  );
+  expect(renderTurn({ status: "failed", items: [user, read] })).toMatch(
+    /<details class="chat-steps"[^>]*\sopen=""/,
+  );
+  const plain = renderTurn({
+    items: [user, chatItem("a", "assistant", { text: "Hi" })],
+  });
+  expect(plain).not.toContain("chat-steps");
+  expect(plain.match(/chat-message-role">Cadence</g)).toHaveLength(1);
+  expect(toolTarget('{"path":')).toBe("");
+  expect(toolTarget('["path"]')).toBe("");
+  expect(toolTarget('{"pattern":"TODO","path":"src"}')).toBe("TODO  src");
+});
+it("step summaries count model-named tools without reaching the prototype", () => {
+  const user = chatItem("user", "user", { text: "Analyze" });
+  const tool = (id: string, name: string, args = "{}") =>
+    chatItem(id, "tool", { name, args });
+  const html = renderTurn({
+    items: [
+      user,
+      tool("a", "constructor"),
+      tool("b", "__proto__"),
+      tool("c", "toString"),
+      tool("d", "powershell", '{"command":"Get-ChildItem"}'),
+      tool("e", "ls"),
+      tool("f", "ls", '{"limit":5}'),
+      tool("g", "ls", '{"path":'),
+      chatItem("z", "assistant", { text: "Done" }),
+    ],
+  });
+  // The working directory counts once; partial arguments name nothing.
+  expect(html).toContain("Used 3 tools · Ran 1 command · Listed 2 directories");
+});
+it("each omitted content kind gets its own line and a title when no tool ran", () => {
+  const user = chatItem("user", "user", { text: "Analyze" });
+  const omitted = (thinking: boolean, media: boolean, other: boolean) =>
+    renderTurn({ omitted: { thinking, media, other }, items: [user] });
+  const all = omitted(true, true, true);
+  expect(all.match(/class="chat-steps-omitted"/g)).toHaveLength(3);
+  expect(all).toContain("Other content is not retained.");
+  expect(all).toContain('chat-steps-title">Thought<');
+  expect(omitted(false, true, false)).toContain(
+    'chat-steps-title">Media not retained<',
+  );
+  const other = omitted(false, false, true);
+  expect(other).toContain('chat-steps-title">Content not retained<');
+  expect(other).not.toContain("Media is not retained.");
 });
 
 it("the project-less entry is a conversation shell with navigation at bottom right, not a project landing page", () => {

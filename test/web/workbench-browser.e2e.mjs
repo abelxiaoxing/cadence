@@ -59,6 +59,32 @@ it("built workbench: ordinary chat, file reference, explicit Cadence transition,
     await p.getByRole("button", { name: "Send", exact: true }).click();
     await p.getByText(/Send unavailable.*16 KiB/).waitFor();
     assert.equal(f.contacts(), 0);
+    // Steps watched live open by themselves once the turn fails without an answer.
+    f.mode("read-then-fail");
+    await input.fill("Read existing.txt");
+    await p.getByRole("button", { name: "Send", exact: true }).click();
+    await p
+      .locator(".chat-steps-live + .chat-steps-title")
+      .getByText("Working… read existing.txt")
+      .waitFor();
+    assert.equal(f.held(), 1);
+    assert.equal(
+      await p.locator("details.chat-steps").evaluate((steps) => steps.open),
+      false,
+    );
+    f.fail();
+    await p.locator("details.chat-steps[open]").waitFor();
+    assert.equal(
+      await p.locator(".chat-steps-title").textContent(),
+      "Read 1 file",
+    );
+    assert.equal(f.contacts(), 2);
+    f.mode("single");
+    await p
+      .getByRole("button", { name: "New conversation", exact: true })
+      .click();
+    await p.locator(".chat-turn").waitFor({ state: "detached" });
+    const base = f.contacts();
     await input.fill("Browser ordinary conversation");
     await p.getByRole("button", { name: "Send", exact: true }).click();
     await p
@@ -70,7 +96,7 @@ it("built workbench: ordinary chat, file reference, explicit Cadence transition,
         document.querySelector(".chat-workspace .conversation-header .ep-state")
           ?.textContent === "completed",
     );
-    assert.equal(f.contacts(), 1);
+    assert.equal(f.contacts(), base + 1);
     const chatUrl = p.url();
     await p.getByRole("button", { name: "existing.txt", exact: true }).click();
     await p
@@ -110,7 +136,7 @@ it("built workbench: ordinary chat, file reference, explicit Cadence transition,
       .waitFor();
     assert.equal(
       f.contacts(),
-      2,
+      base + 2,
       "Send starts one readonly analysis without editing",
     );
     await p.reload();
@@ -180,7 +206,7 @@ it("built workbench: ordinary chat, file reference, explicit Cadence transition,
     await p
       .getByRole("dialog", { name: "Open working folder", exact: true })
       .waitFor();
-    assert.equal(f.contacts(), 2);
+    assert.equal(f.contacts(), base + 2);
     await p.keyboard.press("Escape");
     await p.setViewportSize({ width: 1440, height: 900 });
     await p
@@ -192,17 +218,21 @@ it("built workbench: ordinary chat, file reference, explicit Cadence transition,
     await p
       .getByRole("dialog", { name: "Confirm plan and execute", exact: true })
       .waitFor();
-    assert.equal(f.contacts(), 2, "Opening a plan confirmation does not edit");
+    assert.equal(
+      f.contacts(),
+      base + 2,
+      "Opening a plan confirmation does not edit",
+    );
     await p
       .getByRole("button", { name: "Confirm plan and execute", exact: true })
       .click();
     await p.waitForFunction(() => !document.querySelector('[role="dialog"]'));
     const deadline = Date.now() + 15000;
-    while (f.contacts() < 3 && Date.now() < deadline)
+    while (f.contacts() < base + 3 && Date.now() < deadline)
       await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal(
       f.contacts(),
-      3,
+      base + 3,
       "One plan confirmation starts exactly one implementation worker",
     );
     // The started worker settles before the fixture's orderly close.

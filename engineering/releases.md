@@ -3,6 +3,18 @@
 An append-only record of what each release or integration review actually executed, newest first.
 It is not required reading for a change: add a section for each release and never rewrite an older one.
 
+## Release 2.0.20 acceptance snapshot
+
+Full `verify` passed on the release candidate: 1914 root tests in 71 files (27 platform skips on Linux), 19 task-entry node tests, 140 web tests, 5 real-browser scenarios in 4 files and the 142-member real-pack audit.
+Observed environment: Linux x86_64, official Node 22.22.1, Bun 1.3.14, Pi SDK 0.84.3 and Chrome for Testing 153.0.8010.12, with unchanged test deadlines.
+An ordinary turn now keeps one speaker label and folds its steps through the last tool call into one summary line above the answer.
+Omitted thinking, media and unrecognized blocks are `omitted` flags instead of a notice line, which `notice ||=` had kept in place of the turn's failure reason.
+Review before release found two defects static rendering cannot show; both reproduced in Chromium with a temporary rerender harness against the pre-fix component and pass after the fix.
+Steps watched live stayed folded when the turn then failed without an answer; the workbench browser scenario now holds a real `read` turn's follow-up request, sees the live steps, fails it and requires them to open.
+A model-chosen tool name such as `constructor` or `__proto__` resolved through the prototype and took down the whole WebUI; it now counts as a plain tool, with unit coverage.
+Turns written by this release carry `omitted`, which releases through 2.0.19 refuse, so going back to one leaves those conversations unreadable there.
+No consumer service was installed or restarted, no paid provider was used and the `ci/windows` matrix was not run.
+
 ## Release 2.0.19 acceptance snapshot
 
 Full `verify` passed on the release candidate: 1912 root tests in 71 files (27 platform skips on Linux), 19 task-entry node tests, 136 web tests, 5 real-browser scenarios in 4 files and the 142-member real-pack audit.

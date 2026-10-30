@@ -28,8 +28,13 @@ export async function acceptingFixture(
     mkdirSync(join(dir, name), { mode: 0o700 });
   const root = join(dir, "project"),
     agentDir = join(dir, "agent");
-  let providerMode: "single" | "parallel" | "pending" | "failure" | "write" =
-    "single";
+  let providerMode:
+    | "single"
+    | "parallel"
+    | "pending"
+    | "failure"
+    | "write"
+    | "read-then-fail" = "single";
   let contacts = 0,
     active = 0,
     maxActive = 0;
@@ -55,6 +60,38 @@ export async function acceptingFixture(
     );
     res.end("data: [DONE]\n\n");
   }
+  function callTool(
+    res: ServerResponse,
+    id: string,
+    name: string,
+    args: object,
+  ) {
+    res.writeHead(200, {
+      "content-type": "text/event-stream",
+      connection: "close",
+    });
+    for (const [delta, finish_reason] of [
+      [
+        {
+          role: "assistant",
+          tool_calls: [
+            {
+              index: 0,
+              id,
+              type: "function",
+              function: { name, arguments: JSON.stringify(args) },
+            },
+          ],
+        },
+        null,
+      ],
+      [{}, "tool_calls"],
+    ])
+      res.write(
+        `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 1, model: "fixed", choices: [{ index: 0, delta, finish_reason }] })}\n\n`,
+      );
+    res.end("data: [DONE]\n\n");
+  }
   const provider = createServer(async (req, res) => {
     const chunks = [];
     for await (const c of req) chunks.push(c);
@@ -77,37 +114,16 @@ export async function acceptingFixture(
         finish(res, "File written by an ordinary tool.");
         return;
       }
-      res.writeHead(200, {
-        "content-type": "text/event-stream",
-        connection: "close",
+      callTool(res, "ordinary-write", "write", {
+        path: "ordinary-created.txt",
+        content: "ordinary tool output\n",
       });
-      for (const [delta, finish_reason] of [
-        [
-          {
-            role: "assistant",
-            tool_calls: [
-              {
-                index: 0,
-                id: "ordinary-write",
-                type: "function",
-                function: {
-                  name: "write",
-                  arguments: JSON.stringify({
-                    path: "ordinary-created.txt",
-                    content: "ordinary tool output\n",
-                  }),
-                },
-              },
-            ],
-          },
-          null,
-        ],
-        [{}, "tool_calls"],
-      ])
-        res.write(
-          `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 1, model: "fixed", choices: [{ index: 0, delta, finish_reason }] })}\n\n`,
-        );
-      res.end("data: [DONE]\n\n");
+      return;
+    }
+    // One real readonly tool call, then the follow-up request waits for fail().
+    if (providerMode === "read-then-fail") {
+      if (input.messages.at(-1)?.role === "tool") held.push(res);
+      else callTool(res, "ordinary-read", "read", { path: "existing.txt" });
       return;
     }
     if (providerMode === "pending") {
@@ -293,6 +309,13 @@ export async function acceptingFixture(
     mode: (value: typeof providerMode) => {
       providerMode = value;
     },
+    fail() {
+      for (const r of held.splice(0)) {
+        r.writeHead(400);
+        r.end('{"error":{"message":"fabricated failure"}}');
+      }
+    },
+    held: () => held.length,
     contacts: () => contacts,
     maxActive: () => maxActive,
     observations,

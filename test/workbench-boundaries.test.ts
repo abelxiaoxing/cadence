@@ -56,6 +56,7 @@ it("chat streams hold split secrets and keep finalized text separate from tool r
     epoch: randomUUID(),
     status: "running",
     notice: "",
+    omitted: { thinking: false, media: false, other: false },
     items: [],
   };
   let saves = 0;
@@ -367,6 +368,7 @@ it("oversize tool arguments stop capture without poisoning the last readable tur
     epoch: randomUUID(),
     status: "running",
     notice: "",
+    omitted: { thinking: false, media: false, other: false },
     items: [],
   };
   const capture = new ConversationCapture(
@@ -411,4 +413,90 @@ it("oversize tool arguments stop capture without poisoning the last readable tur
   expect(() => decodeChatTurn(turn)).not.toThrow();
   expect(Buffer.byteLength(turn.items[0].args)).toBeLessThanOrEqual(64 * 1024);
   expect(turn.notice).toContain("limit exceeded");
+});
+it("omitted thinking, media and unknown blocks are flags that never displace a turn's notice", () => {
+  const turn: ChatTurn = {
+    id: randomUUID(),
+    epoch: randomUUID(),
+    status: "running",
+    notice: "",
+    omitted: { thinking: false, media: false, other: false },
+    items: [],
+  };
+  const capture = new ConversationCapture(
+    turn,
+    () => {},
+    () => [],
+  );
+  let sequence = 0;
+  const emit = (event: CaptureFrame["event"]) =>
+    capture.accept({
+      protocol: 2,
+      childRunId: "child",
+      workerSeq: ++sequence,
+      observedMs: 0,
+      event,
+    });
+  const omitted = (
+    owner: Extract<
+      CaptureFrame["event"],
+      { kind: "omitted-block" }
+    >["block"]["owner"],
+    reason: "hidden-thinking" | "binary" | "unsupported",
+  ) =>
+    emit({
+      kind: "omitted-block",
+      block: {
+        owner,
+        sourceType: reason === "binary" ? "image" : reason,
+        mimeType: null,
+        reason,
+      },
+    });
+  // Continuation context belongs to earlier turns, not this one.
+  omitted({ kind: "context", component: "request-context" }, "binary");
+  expect(turn.omitted).toEqual({ thinking: false, media: false, other: false });
+  omitted(
+    { kind: "message", messageId: "m", blockId: "b", index: 0, stage: "final" },
+    "hidden-thinking",
+  );
+  // An empty notice leaves room for the failure reason recorded when the turn ends.
+  expect(turn.notice).toBe("");
+  emit({ kind: "worker-failure", code: "model" });
+  omitted(
+    { kind: "tool", callId: "c", blockId: "b", index: 1, stage: "result" },
+    "binary",
+  );
+  expect(turn.notice).toBe("worker-failure: model");
+  expect(turn.omitted).toEqual({ thinking: true, media: true, other: false });
+  // A block of a type Cadence does not recognize is neither thinking nor media.
+  omitted(
+    { kind: "message", messageId: "m", blockId: "c", index: 2, stage: "final" },
+    "unsupported",
+  );
+  expect(turn.omitted).toEqual({ thinking: true, media: true, other: true });
+  expect(decodeChatTurn(structuredClone(turn))).toEqual(turn);
+});
+it("turns saved before omissions were flagged still decode; other shapes stay closed", () => {
+  const saved = {
+    id: randomUUID(),
+    epoch: randomUUID(),
+    status: "completed",
+    notice: "Hidden thinking, signatures and media are not retained.",
+    items: [],
+  };
+  expect(decodeChatTurn(saved)).toEqual({
+    ...saved,
+    omitted: { thinking: false, media: false, other: false },
+  });
+  expect(() =>
+    decodeChatTurn({ ...saved, omitted: { thinking: true, media: false } }),
+  ).toThrow();
+  expect(() =>
+    decodeChatTurn({
+      ...saved,
+      omitted: { thinking: 1, media: false, other: false },
+    }),
+  ).toThrow();
+  expect(() => decodeChatTurn({ ...saved, extra: true })).toThrow();
 });

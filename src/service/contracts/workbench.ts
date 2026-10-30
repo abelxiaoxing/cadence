@@ -66,6 +66,9 @@ export interface ChatTurn {
   status: ChatStatus;
   items: ChatItem[];
   notice: string;
+  /** Content kinds observed and not retained; never written into `notice`.
+   * `other` is a block of a type Cadence does not recognize. */
+  omitted: { thinking: boolean; media: boolean; other: boolean };
 }
 export interface ChatSummary {
   id: string;
@@ -199,12 +202,24 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
   };
 }
 export function decodeChatTurn(v: unknown): ChatTurn {
-  const o = closed(v, ["id", "epoch", "status", "items", "notice"]);
+  // Turns saved before `omitted` existed lack it; their flags read as unobserved.
+  const keys = ["id", "epoch", "status", "items", "notice"];
+  const current =
+    v !== null && typeof v === "object" && Object.hasOwn(v, "omitted");
+  const o = closed(v, current ? [...keys, "omitted"] : keys);
+  const omitted = current
+    ? closed(o.omitted, ["thinking", "media", "other"])
+    : null;
   return {
     id: decodeId(o.id),
     epoch: decodeId(o.epoch),
     status: oneOf(o.status, statuses),
     notice: text(o.notice, 1024),
+    omitted: {
+      thinking: omitted ? bool(omitted.thinking) : false,
+      media: omitted ? bool(omitted.media) : false,
+      other: omitted ? bool(omitted.other) : false,
+    },
     items: list(o.items, 256, (v) => {
       const i = closed(v, ["id", "role", "text", "name", "args", "error"]);
       return {

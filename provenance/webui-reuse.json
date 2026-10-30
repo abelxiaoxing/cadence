@@ -214,11 +214,12 @@
       ],
       "destinations": [
         "web/src/components/workspace/ChatWorkspace.tsx",
+        "web/src/components/workspace/ChatSteps.tsx",
         "web/src/components/workspace/AgentDock.tsx",
         "web/src/components/workspace/FilesPanel.tsx",
         "web/src/components/workspace/ProjectPicker.tsx"
       ],
-      "modifications": "Adapt bottom composer, message/tool presentation, local directory browsing and cwd-picker layout to finite Cadence APIs. Remove upstream subagent/goal/delegate/plan engines, prompt composer/personas, PTY, plugin slots, SSH and file mutations. Ordinary turns use the existing Cadence native launcher and checkout gate, not task records. Explicit project opening navigates to a distinct owner; ordinary drafts and Cadence task mode are kept per conversation. Drawer focus cannot horizontally scroll the translating layout. The folder picker drops the separate Browse step for a location trail, Enter-to-go path entry, a folder filter and a named Open target; Open of a typed or recent path first observes it and opens only that canonical folder."
+      "modifications": "Adapt bottom composer, message/tool presentation, local directory browsing and cwd-picker layout to finite Cadence APIs. Remove upstream subagent/goal/delegate/plan engines, prompt composer/personas, PTY, plugin slots, SSH and file mutations. Ordinary turns use the existing Cadence native launcher and checkout gate, not task records. Explicit project opening navigates to a distinct owner; ordinary drafts and Cadence task mode are kept per conversation. Drawer focus cannot horizontally scroll the translating layout. The folder picker drops the separate Browse step for a location trail, Enter-to-go path entry, a folder filter and a named Open target; Open of a typed or recent path first observes it and opens only that canonical folder. A turn keeps one speaker label: its steps through the last tool call fold into one summary line, split into ChatSteps, and the text after them is the answer."
     }
   ],
   "newIntegrationFiles": [
@@ -345,7 +346,7 @@
     "web/src/rich/remark-backslash-math.ts": "273205bd4694172f14fab2adad28acf9993e35c476c00756cbafb73135516c2e",
     "web/src/rich/stream-markdown.ts": "ce80d88c65bd49b3fdb4586201090c46b5fdbb81850ef321a782929f3a40e41e",
     "web/src/rich/use-copy-feedback.ts": "6df2a9e9e085b516c98816220420e307a24c5b8826049d0d276e08b59e19a321",
-    "web/src/styles.css": "1c73128a47c3c82169d1e412d08a10a1d39a771951a70c48b080bb90c5a85c6b",
+    "web/src/styles.css": "cf5833de56938aedd19c1867db4ea3e6bcee58f9c70a066b49fe050eeef1b85c",
     "web/src/timeline/TimelineView.tsx": "25ade49214cfd160c049a56163bfdf40433d3a7e3b3447a46a1e277423b77d6f",
     "web/src/timeline/timeline-adapter.ts": "4bd061c89c0dc78edea5d9f1b7ce6b6be24f82b6949f84d0d7120d3cafe95dbb",
     "web/src/timeline/timeline-client.d.mts": "c216e4da9c9220ee2e0ce78fa9d40e3daf59d690140331184573e724f900525b",
@@ -383,15 +384,16 @@
     "src/conversation-context.mjs": "1f75a8d8bfdf00e41c1841cfd1a47ca525b876ddf66c73f81c80d37ee87c86af",
     "src/conversation-context.d.mts": "2d33f1b812d9a982bb2cefa5397e0c8230c7525a3c82c6659637a9f289cfdb9c",
     "src/conversation-resources.mjs": "a7ed3e4813e3e240f0a8eb4867ee497e352d62a06cb85980d0ac292d12dc001a",
-    "src/service/contracts/workbench.ts": "07bb1edc5f665d89fafbc984f2df49a08427ac7aa43bcd17d783920f0ef59277",
-    "src/service/conversations.ts": "447207010e85d5ed547d4bfd5a91685bbb2a152a8390b2967488e694f85029df",
+    "src/service/contracts/workbench.ts": "c05a43b6de1b8edf5edf1a531876dab70ce71b4c9cf37330005da1240f11f3d3",
+    "src/service/conversations.ts": "9f98250a07dd93ffe6fcee582a10f24cf5611791437a3f7ea41f51b7aa8583db",
     "src/service/workbench-files.ts": "4de759ba4b88ee564fab428a803295e8c3608e575fbe99e635d188c3621e84c1",
     "src/service/workbench.ts": "d5eacc634588f36aa778a2a2bf15cac842ec7075add811453cfddb26cab034aa",
     "web/src/client/use-workbench.ts": "5e2eedc805fa7da883b5cdd95537d299e9444b5dec47911afbb9d724951b23e1",
-    "test/workbench-boundaries.test.ts": "b959f4bc39ce5a83b9b5068e58e4afc2a5cb740722c3086513d3ab38cc0b2078",
-    "test/web/workbench.test.tsx": "7a6e23e560549e5bee2c4292c267845007e01a5a85a7aade2e604517fdf4252b",
-    "test/web/workbench-browser.e2e.mjs": "698ec034e2710a2903bd63564f353e265698a4db3129b45f75dd63a425bc3a90",
-    "web/src/components/workspace/ChatWorkspace.tsx": "4945b002fe9eddd28d2be1f8dc521ed275087f3311702aa5a9e60eaca7b88461",
+    "test/workbench-boundaries.test.ts": "9f6932bb6e34413b4bc53aec039fdd2187221af7c3e465602c32be8592af8dd6",
+    "test/web/workbench.test.tsx": "f27634504788ab93b0d32b059844378546b83aadbe0cea203c5064b7ac65ba23",
+    "test/web/workbench-browser.e2e.mjs": "955a853028ea2171903e59bef2e9b03147b7ce0204a3ca62bde17ae092472305",
+    "web/src/components/workspace/ChatWorkspace.tsx": "32d2a4231f9e58ceb8ffda49fb1452af278f58c0c0a9ebab52aa0f1c3a7bfdfe",
+    "web/src/components/workspace/ChatSteps.tsx": "c9bfb8549c78bd84257c314253b1faa7d49424ab0509a01342ad9f84757d955c",
     "web/src/components/workspace/AgentDock.tsx": "01c2ce75ec8451d4a88abff8020bc9f9fe510e2c0958b9b770f50b67ea186a37",
     "web/src/components/workspace/FilesPanel.tsx": "eca52560cdbc2d58c7b8a05919e4b0c8b63c487b00823747e20797fd6c1ce6fe",
     "web/src/components/workspace/ProjectPicker.tsx": "75b7ea9dbf56852c524b1535e5e50bf03ecec9aa1fa66e195a6f85298e806c7e",
