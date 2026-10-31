@@ -426,8 +426,51 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
     assert.equal(g.f.contacts(), 1);
     const chatUrl = page.url();
     await page
+      .getByRole("button", { name: "Legacy task", exact: true })
+      .click();
+    await page
       .getByRole("textbox", { name: "Message", exact: true })
-      .fill("/cadence A task in the unified workbench");
+      .fill("A task in the unified workbench");
+    // A readonly refresh temporarily closes action readiness. The composer must
+    // expose that state instead of accepting a click which sendTask silently drops.
+    const workspaceRoute = (url) => url.pathname.endsWith("/workspace");
+    let releaseWorkspace, observedWorkspace;
+    const heldWorkspace = new Promise((resolve) => {
+      releaseWorkspace = resolve;
+    });
+    const workspaceStarted = new Promise((resolve) => {
+      observedWorkspace = resolve;
+    });
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll("button")].some(
+        (b) => b.textContent === "Prepare task" && !b.disabled,
+      ),
+    );
+    await page.route(workspaceRoute, async (route) => {
+      observedWorkspace();
+      await heldWorkspace;
+      await route.continue().catch(() => {});
+    });
+    try {
+      await Promise.all([
+        workspaceStarted,
+        page
+          .getByRole("button", { name: "Observe current state", exact: true })
+          .click(),
+      ]);
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll("button")].some(
+          (b) => b.textContent === "Prepare task" && b.disabled,
+        ),
+      );
+      await page
+        .getByRole("textbox", { name: "Message", exact: true })
+        .press("Enter");
+      assert.equal(g.f.contacts(), 1);
+    } finally {
+      releaseWorkspace();
+      await page.unroute(workspaceRoute);
+    }
     await page
       .getByRole("button", { name: "Prepare task", exact: true })
       .click();
@@ -461,6 +504,43 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
       .getByText(/Advisory:/)
       .waitFor();
     assert.equal(page.url(), chatUrl);
+    // The new mode also traverses the authenticated gateway as browser authority,
+    // independently of the legacy task route above and without any Pi terminal.
+    g.f.mode("coordinator");
+    await page
+      .getByRole("textbox", { name: "Message", exact: true })
+      .fill("/cadence");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await page
+      .getByText("Cadence is on. What would you like to accomplish?", {
+        exact: true,
+      })
+      .waitFor();
+    await page
+      .getByRole("textbox", { name: "Message", exact: true })
+      .fill("Decisions aligned, plan now with working-copy delivery");
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Implement this plan", exact: true })
+      .click();
+    await page
+      .locator(".workflow-panel .workflow-card > header .ep-state.completed")
+      .waitFor();
+    assert(
+      readFileSync(join(paths[0], "a.txt"), "utf8").includes("implemented"),
+    );
+    assert(
+      !existsSync(join(paths[0], ".git")),
+      "non-Git delivery must not initialize a repository",
+    );
+    assert.equal(page.url(), chatUrl);
+    await page
+      .getByRole("button", { name: "Exit Cadence", exact: true })
+      .click();
+    await page
+      .locator(".conversation-badge")
+      .filter({ hasText: "Ordinary" })
+      .waitFor();
     // An unselected entry returns to the last project while its owner runs.
     // That is navigation, not Open: no association, contact or Send is added.
     const associated = g.store.projects().length,

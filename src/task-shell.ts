@@ -41,6 +41,7 @@ import { diagnosticText } from "./verification-diagnostics.ts";
 
 /** One transient raw Enter occurrence, not an approval or model-callable control. */
 export class TerminalEntryLatch {
+  constructor(private readonly command = "cadence") {}
   private entry: { text: string; at: number } | undefined;
   private pasting = false;
   clear(): void {
@@ -59,7 +60,7 @@ export class TerminalEntryLatch {
       return;
     }
     if (this.pasting || !eligible || !matchesKey(data, Key.enter)) return;
-    if (/^\/cadence(?:[ \t]+[^\r\n]*)?$/.test(editor))
+    if (new RegExp(`^/${this.command}(?:[ \\t]+[^\\r\\n]*)?$`).test(editor))
       this.entry = { text: editor, at: now };
   }
   consume(args: string, now = Date.now()): boolean {
@@ -69,7 +70,7 @@ export class TerminalEntryLatch {
       !!entry &&
       now - entry.at >= 0 &&
       now - entry.at < 1500 &&
-      entry.text.replace(/^\/cadence[ \t]*/, "") === args
+      entry.text.replace(new RegExp(`^/${this.command}[ \\t]*`), "") === args
     );
   }
 }
@@ -84,7 +85,7 @@ function eligible(ctx: ExtensionContext): boolean {
 }
 
 export function registerTaskShell(pi: ExtensionAPI): void {
-  const latch = new TerminalEntryLatch(),
+  const latch = new TerminalEntryLatch("cadence-inspect"),
     connection = new NativeConnection();
   let epoch = 0,
     modal = false;
@@ -149,7 +150,7 @@ export function registerTaskShell(pi: ExtensionAPI): void {
       : undefined,
   );
 
-  pi.registerCommand("cadence", {
+  pi.registerCommand("cadence-inspect", {
     description:
       "Native service client: plan, Start, checks, review and retained history; Return detaches",
     handler: async (args, ctx) => {

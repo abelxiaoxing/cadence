@@ -25,7 +25,7 @@ if observer_run is not None:
     if not re.fullmatch(r"[0-9a-f-]{36}", observer_run):
         raise RuntimeError("observer-run-invalid")
     expected_steps = [
-        {"expect": "Context7", "send": ["/cadence", "\r"]},
+        {"expect": "Context7", "send": ["/cadence-inspect", "\r"]},
         {"expect": "Cadence service", "send": ["\x1b[B", "\x1b[B", "\x1b[B", "\r"]},
         {"expect": observer_run, "send": ["\x1b"]},
         {"expect": "Cadence service", "send": ["\x1b"]},

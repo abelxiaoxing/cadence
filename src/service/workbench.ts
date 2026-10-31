@@ -1,6 +1,7 @@
 /** Composition of independent conversations, readonly files and explicit project opening. */
 import { opendirSync } from "node:fs";
 import { join } from "node:path";
+import { CadencePreferences } from "../cadence-preferences.ts";
 import { sanitizeText } from "../worker-redaction.mjs";
 import { openProjectDirectory } from "./cli.ts";
 import {
@@ -18,18 +19,24 @@ import {
   type WorkbenchRead,
   type WorkbenchResult,
 } from "./contracts/workbench.ts";
+import { ConversationWorkflow } from "./conversation-workflow.ts";
 import { Conversations } from "./conversations.ts";
 import type { ServiceCoordination } from "./coordination.ts";
 import type { OwnerModelChoice } from "./model-choice.ts";
 import type { OwnerModelContext } from "./model-context.ts";
 import type { ServiceOwner } from "./owner.ts";
+import type { Caller } from "./ports.ts";
 import { hash } from "./private-files.ts";
 import type { TaskActions } from "./task-actions.ts";
 import { WorkbenchFiles } from "./workbench-files.ts";
+import { UnacceptedConversationCommand } from "./workbench-send-refusal.ts";
+import { Workflows } from "./workflows.ts";
 
 export class Workbench implements WorkbenchPort {
   readonly conversations: Conversations;
   readonly files: WorkbenchFiles;
+  readonly workflows: Workflows;
+  readonly cadence: ConversationWorkflow;
   private readonly projectRoot: string;
   private readonly opening = new Map<
     string,
@@ -48,9 +55,19 @@ export class Workbench implements WorkbenchPort {
       hostUrl: URL;
       secrets(): readonly string[];
       timeoutMs?: number;
+      checkEnvironment?: Readonly<NodeJS.ProcessEnv>;
     },
   ) {
     this.conversations = new Conversations(o);
+    this.workflows = new Workflows(o);
+    this.cadence = new ConversationWorkflow({
+      ...o,
+      conversations: this.conversations,
+      workflows: this.workflows,
+    });
+    this.cadence.assertRecords();
+    for (const entry of this.conversations.list().entries)
+      this.cadence.state(entry.id);
     if (
       this.conversations
         .list()
@@ -71,10 +88,28 @@ export class Workbench implements WorkbenchPort {
     const request = decodeWorkbenchRead(value);
     this.o.owner.lease.assert();
     switch (request.kind) {
+      case "cadence-conversation":
+        return { kind: request.kind, state: this.cadence.state(request.id) };
+      case "workflow-active":
+        return this.workflows.activeRuns();
+      case "workflow-transcript":
+        return this.workflows.transcript(request.id, request.stepId);
+      case "workflow-detail":
+        return this.workflows.detail(request.id, request.stepId);
+      case "workflow":
+        return this.workflows.view(request.id);
       case "task-origin":
         return this.conversations.origin(request.taskId);
-      case "conversations":
-        return this.conversations.list();
+      case "conversations": {
+        const value = this.conversations.list();
+        return {
+          ...value,
+          entries: value.entries.map((entry) => ({
+            ...entry,
+            cadence: this.cadence.state(entry.id).enabled,
+          })),
+        };
+      }
       case "conversation":
         return this.conversations.view(request.id, request.before);
       case "files":
@@ -85,6 +120,44 @@ export class Workbench implements WorkbenchPort {
         return this.files.list(request.path, true);
       case "projects":
         return this.projects();
+    }
+  }
+  private send(
+    request: Extract<
+      WorkbenchCommand,
+      { kind: "send" | "cadence-send" | "cadence-exit" }
+    >,
+  ): WorkbenchResult {
+    let mayHaveEffects = true;
+    try {
+      const state = this.cadence.state(request.conversationId);
+      mayHaveEffects =
+        this.o.owner.state !== "idle" ||
+        state.head === request.commandId ||
+        this.conversations.attempted(request.conversationId, request.commandId);
+      const accepting = () => {
+        mayHaveEffects = true;
+      };
+      if (request.kind === "send") {
+        if (state.enabled) throw new ContractError("conflict");
+        return this.conversations.send(request, undefined, accepting);
+      }
+      if (request.kind === "cadence-exit")
+        return this.cadence.send(
+          {
+            ...request,
+            kind: "cadence-send",
+            text: "exit cadence",
+            model: this.o.choice.snapshot().version,
+            intent: "exit",
+          },
+          accepting,
+        );
+      return this.cadence.send(request, accepting);
+    } catch (error) {
+      if (!mayHaveEffects && error instanceof ContractError)
+        throw new UnacceptedConversationCommand(error.code);
+      throw error;
     }
   }
   private projects(): WorkbenchResult {
@@ -120,9 +193,46 @@ export class Workbench implements WorkbenchPort {
     }
     return { kind: "projects", entries };
   }
-  command(value: WorkbenchCommand): WorkbenchResult | Promise<WorkbenchResult> {
+  command(
+    value: WorkbenchCommand,
+    caller?: Caller,
+  ): WorkbenchResult | Promise<WorkbenchResult> {
     const request = decodeWorkbenchCommand(value);
-    if (request.kind === "send") return this.conversations.send(request);
+    if (request.kind === "restore-model") {
+      if (request.epoch !== this.o.owner.lease.registration.epoch)
+        throw new ContractError("stale");
+      const before = this.o.choice.snapshot();
+      if (!before.selected) {
+        const choice = new CadencePreferences(this.o.agentDir).read();
+        if (!choice) throw new ContractError("unavailable");
+        this.o.choice.choose({ expected: before.version, choice });
+      }
+      return { kind: "accepted", commandId: request.commandId };
+    }
+    if (
+      request.kind === "send" ||
+      request.kind === "cadence-send" ||
+      request.kind === "cadence-exit"
+    )
+      return this.send(request);
+    if (
+      request.kind === "cadence-prepare" ||
+      request.kind === "cadence-approve"
+    )
+      return this.cadence.approval(request, caller);
+    if (request.kind === "workflow-cancel") {
+      if (!caller) throw new ContractError("forbidden");
+      return this.workflows.command(request.commandId, request.epoch, {
+        action: "cancel",
+        runId: request.runId,
+      });
+    }
+    if (request.kind === "workflow")
+      return this.workflows.command(
+        request.commandId,
+        request.epoch,
+        request.request,
+      );
     if (request.kind === "link-task") {
       this.conversations.link(
         request.taskId,

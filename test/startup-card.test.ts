@@ -85,7 +85,14 @@ function harness(registrar = register) {
     active: () => active,
     async emit(name: string, ctx: unknown, reason = "startup") {
       for (const handler of handlers.get(name) ?? [])
-        await handler({ reason }, ctx);
+        await handler(
+          { reason },
+          {
+            sessionManager: { getBranch: () => [] },
+            ...(ctx as object),
+            ui: { setStatus() {}, ...(ctx as any).ui },
+          },
+        );
     },
   };
 }
@@ -103,7 +110,7 @@ describe("Cadence startup configuration card", () => {
     expect(text).toContain("匿名模式，无需密钥");
     expect(text).toContain("待配置 GROK_API_URL、GROK_API_KEY");
     expect(text).toContain(displayedPath(input.userFile));
-    expect(text).toContain("（未创建）");
+    expect(text).toContain("（未创建，可选）");
     expect(text).not.toContain("未联网验证");
     expect(() => readFileSync(input.userFile)).toThrow();
     expect(fetch).not.toHaveBeenCalled();
@@ -220,12 +227,12 @@ describe("Cadence startup configuration card", () => {
       expect(h.pi.sendMessage).not.toHaveBeenCalled();
       expect(h.pi.sendUserMessage).not.toHaveBeenCalled();
       expect(h.pi.appendEntry).not.toHaveBeenCalled();
-      expect(h.pi.registerCommand).toHaveBeenCalledTimes(1);
+      expect(h.pi.registerCommand).toHaveBeenCalledTimes(2);
       expect(h.pi.registerCommand).toHaveBeenCalledWith(
         "cadence",
         expect.objectContaining({
           description:
-            "Native service client: plan, Start, checks, review and retained history; Return detaches",
+            "Enable Cadence for this entire conversation: /cadence [goal]. Continue in normal conversation; explicit exit only.",
         }),
       );
       expect(h.active()).toEqual(["read", "bash"]);
@@ -253,7 +260,7 @@ describe("Cadence startup configuration card", () => {
     },
   );
 
-  it("the shipped entrypoint registers a notification and one inert task command without task activation", async () => {
+  it("the shipped entrypoint registers a notification and an inert conversation command and optional inspector without task activation", async () => {
     const input = fixture();
     isolateHome(input.home);
     const h = harness(register);
@@ -270,12 +277,12 @@ describe("Cadence startup configuration card", () => {
     expect(notify).toHaveBeenCalledWith(zeroConfigCard(input), "info");
     expect(setWidget).not.toHaveBeenCalled();
     expect(h.active()).toEqual(["read", "bash"]);
-    expect(h.pi.registerCommand).toHaveBeenCalledTimes(1);
+    expect(h.pi.registerCommand).toHaveBeenCalledTimes(2);
     expect(h.pi.registerCommand).toHaveBeenCalledWith(
       "cadence",
       expect.objectContaining({
         description:
-          "Native service client: plan, Start, checks, review and retained history; Return detaches",
+          "Enable Cadence for this entire conversation: /cadence [goal]. Continue in normal conversation; explicit exit only.",
       }),
     );
     expect(h.active()).toEqual(["read", "bash"]);

@@ -73,7 +73,9 @@ it("built loopback browser-only accepting workflow, two contexts, original servi
       .getByRole("button", { name: "Observe current state", exact: true })
       .click();
     await other.getByRole("button", { name: "Tasks", exact: true }).click();
-    await other.getByRole("button", { name: "New task", exact: true }).click();
+    await other
+      .getByRole("button", { name: "Legacy task", exact: true })
+      .click();
     await other
       .getByLabel("Message", { exact: true })
       .fill("Local unsent draft");
@@ -82,7 +84,7 @@ it("built loopback browser-only accepting workflow, two contexts, original servi
       .waitFor();
     assert.equal(await other.getByRole("dialog").count(), 0);
     assert.equal(f.contacts(), 0);
-    await p.getByRole("button", { name: "New task", exact: true }).click();
+    await p.getByRole("button", { name: "Legacy task", exact: true }).click();
     await p
       .getByLabel("Message", { exact: true })
       .fill("Browser independent readonly collaboration");
@@ -108,10 +110,12 @@ it("built loopback browser-only accepting workflow, two contexts, original servi
       assert.equal(body.kind, "ok", JSON.stringify(body));
       return body.value;
     }
-    async function drained(id) {
+    async function drained(id, publishedReceipt) {
+      let lastRoster;
       const deadline = Date.now() + 15000;
       while (Date.now() < deadline) {
         const reply = await f.client.activeRuns();
+        lastRoster = reply;
         if (
           reply.kind === "ok" &&
           reply.value.status === "complete" &&
@@ -120,6 +124,14 @@ it("built loopback browser-only accepting workflow, two contexts, original servi
           return;
         await new Promise((r) => setTimeout(r, 100));
       }
+      // Preserve observations BEFORE fixture Stop; teardown cannot diagnose
+      // whether the original native work, recording or publication failed.
+      const evidence = { runId: id, publishedReceipt, lastRoster };
+      receipt.drainFailure = evidence;
+      writeFileSync(
+        join(root, "drain-failure.json"),
+        JSON.stringify(evidence, null, 2),
+      );
       throw Error("original run did not drain within action allowance");
     }
     async function published(command) {
@@ -127,7 +139,7 @@ it("built loopback browser-only accepting workflow, two contexts, original servi
       while (Date.now() < deadline) {
         const r = await f.client.receipt(command.commandId);
         if (r.status === "found" && r.receipt.publication === "published") {
-          if (command.runId) await drained(command.runId);
+          if (command.runId) await drained(command.runId, r.receipt);
           return r.receipt;
         }
         await new Promise((r) => setTimeout(r, 100));

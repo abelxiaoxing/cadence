@@ -29,7 +29,12 @@ The first version requires a selected project for ordinary Send/tools; the empty
 Conversation auth intents and original settlements use their own flushed private journal, never fabricated task/history receipts.
 Their original Stop lifetime and exclusive checkout barrier belong to the existing service owner and scheduler.
 
-The native path is `index → shell → native client → service → scheduler/process/history`.
+The daily native path is `index → cadence-mode → native client → Workbench/Workflows → shared scheduler barrier/process owner`.
+`src/service/conversation-workflow.ts` owns browser conversation mode, proposal/run binding, finite delegation and attachment-bound approval; `src/cadence-instructions.ts` shares the dialogue policy with native Pi.
+`src/coordinator-tools.mjs` is a bounded private child/owner IPC bridge, never an HTTP or general-purpose execution interface.
+`src/service/workflows.ts` owns the private proposal/grant/run journal and automated workflow; `src/service/workflow-git.ts` owns bounded Git observations/scopes; `src/service/contracts/workflow.ts` owns closed portable workflow DTOs.
+`src/cadence-preferences.ts` stores credential-free global model preference.
+The legacy inspector path remains `index → shell → native client → service → scheduler/process/history`.
 `src/task-controller.ts` remains a legacy regression subject, not a reachable or shipped production executor.
 The readonly operator and independent research/startup modules must not gain service startup or execution side effects.
 Inspect actual installed public Pi declarations before changing host/SDK bindings; never import private SDK implementation paths or select a global substitute.
@@ -52,7 +57,8 @@ Browser assets are prebuilt, not compiled by consumer postinstall.
 ## Shipped content
 
 - `skills/context7-auto-research` and `skills/grok-search` remain independent research tools.
-- `skills/git-commit` requires an explicit commit request and deterministic audit; task review never commits.
+- `skills/git-commit` requires an explicit commit request and deterministic audit; legacy task review never commits.
+  Conversation workflows may perform only their explicitly plan-authorized local commits/merge.
 - Three pinned professional profiles in `agents/` provide readonly design/diagnosis and direct-edit implementation instructions, not execution authority.
 - `config/` contains optional research/check examples.
   The package has no install script; `cadence server install` creates a missing user `.env` template, and no build/Git/provider operation runs at install.

@@ -70,6 +70,7 @@ import {
 import { ProjectPicker } from "./components/workspace/ProjectPicker";
 import { RunSummary } from "./components/workspace/RunSummary";
 import { TaskSidebar } from "./components/workspace/TaskSidebar";
+import { WorkflowCard } from "./components/workspace/WorkflowPanel";
 import { WorkingFolderButton } from "./components/workspace/WorkingFolderButton";
 import { historyUrl, readHistoryUrl } from "./history/history-url";
 import { usePage } from "./history/use-page";
@@ -188,6 +189,15 @@ export function App({
     workspace.workspace && !detached ? { kind: "conversations" } : null,
     2000,
   );
+  const workflowActivity = useWorkbench(
+    api.client,
+    !detached ? { kind: "workflow-active" } : null,
+    1000,
+  );
+  const background =
+    workflowActivity.value?.kind === "workflow-active"
+      ? workflowActivity.value.runs
+      : undefined;
   const projects = useWorkbench(
     api.client,
     workspace.workspace && !detached ? { kind: "projects" } : null,
@@ -931,9 +941,13 @@ export function App({
               conversationId={chatId}
               onConversation={selectChat}
               onNewConversation={() => selectChat()}
+              workflowActiveCount={background?.length}
               onTask={selectTask}
               onScope={selectScope}
-              onNew={() => selectChat(undefined, true)}
+              onNew={() => {
+                if (chatId) setTaskComposer(true);
+                else selectChat(undefined, true);
+              }}
             />
           )}
           {workspace.workspace && (
@@ -962,6 +976,28 @@ export function App({
         </section>
         <ResizeHandle side="left" width={leftWidth} onResize={setLeftWidth} />
         <main className="main" inert={mobile && drawer !== null}>
+          {background?.length || workflowActivity.error ? (
+            <details className="background-workflows">
+              <summary>
+                {t("Background workflows")} · {background?.length ?? "?"}
+              </summary>
+              {workflowActivity.error && (
+                <p role="alert">
+                  {t(
+                    "Workflow activity unavailable; retained work may still be running.",
+                  )}
+                </p>
+              )}
+              {background?.map((run) => (
+                <WorkflowCard
+                  key={run.id}
+                  client={api.client}
+                  id={run.id}
+                  onChanged={workflowActivity.refresh}
+                />
+              ))}
+            </details>
+          ) : null}
           {chatId && (
             <ChatWorkspace
               key={`${chatWorkspace.current ?? "connecting"}:${chatId}`}
@@ -970,6 +1006,10 @@ export function App({
               workspaceId={chatWorkspace.current ?? "connecting"}
               available={!!workspace.workspace}
               canInterrupt={!!workspace.cancelCompatible}
+              cadenceEnabled={
+                workspace.actions &&
+                workspace.workspace?.context.status === "available"
+              }
               enabled={
                 !!workspace.workspace &&
                 !!workspace.compatible &&
@@ -983,6 +1023,8 @@ export function App({
               reference={reference}
               onReferenceUsed={clearReference}
               initialMode={taskComposer ? "cadence" : "chat"}
+              legacyTask={taskComposer}
+              onModeChanged={() => setTaskComposer(false)}
               taskPending={enteringTask}
               onCadence={sendTask}
             />

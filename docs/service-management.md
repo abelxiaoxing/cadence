@@ -1,7 +1,9 @@
 # Explicit service management
 
-The native `/cadence` view and browser are clients of the same owner, started explicitly or by the [background service](#background-service).
-Opening either view, extension discovery, login and package installation do not start it.
+Native conversation mode and the browser use the shared project-owner implementation.
+Extension discovery, login and package installation do not start an owner.
+Explicit `/cadence` mode/current user Send can start or reuse a local owner without installing a boot service; see [Conversation mode](conversation-mode.md).
+The optional [background service](#background-service) remains an explicit management operation.
 Use one coordination state-home for the checkout; a different state-home is not a recovery route.
 Stop older Cadence sessions before starting the shared service.
 
@@ -111,13 +113,13 @@ For an explicit single-project definition, the older guards remain: no SDK means
 
 While no service is registered, Pi's session-start card shows a separate warning naming `cadence server install` for an installed package copy (`node <copy>/src/service-cli.mjs server install` for Pi's managed copy, which puts no bin on `PATH`); a checkout loaded with `pi -e` stays quiet.
 It is a warning rather than part of the info card because Pi's TUI replaces one info status with the next.
-`/cadence` names the same command when it finds no owner.
+The legacy `/cadence-inspect` client names the same management command when no owner exists; daily `/cadence` instead uses explicit on-demand project startup, without requiring a boot service.
 A machine without a supported user service manager and `CADENCE_AUTOSTART=0` keep both quiet; with `CADENCE_LINGER=0` they suggest `--no-linger`.
 
 ### One copy for Pi and the service
 
 After `npm install -g`, `pi install "$(npm root -g)/@abelxiaoxing/cadence"` records that path and loads it in place, so an npm upgrade updates the service and native `/cadence` together.
-Pi's own package install (`pi install npm:@abelxiaoxing/cadence`) also loads the native client, but its copy puts no `cadence` on `PATH`; register its service with `node ~/.pi/agent/npm/node_modules/@abelxiaoxing/cadence/src/service-cli.mjs server install`.
+Pi's own package install (`pi install npm:@abelxiaoxing/cadence`) also loads the native client, but its copy puts no `cadence` on `PATH`; if you want the optional boot service, register it with `node ~/.pi/agent/npm/node_modules/@abelxiaoxing/cadence/src/service-cli.mjs server install`.
 Keep one copy: two copies drift apart on upgrade, and a native client refuses an owner whose service contract differs from its own.
 A unit registered by an earlier version's Pi install hook keeps running; `cadence server restart` from the copy you keep rewrites it, and `pi update` no longer restarts it.
 Opening the private link once leaves an HttpOnly cookie in that browser; the address without the token only explains how to get the link.

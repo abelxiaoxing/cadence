@@ -695,17 +695,22 @@ describe("shipped entrypoint", () => {
         handlers.set(name, [...(handlers.get(name) ?? []), fn]);
       },
       registerCommand: vi.fn(),
+      registerTool: vi.fn(),
+      getActiveTools: () => [],
+      setActiveTools() {},
     };
     register(pi as never);
     const widgets = new Map<string, any>();
     const ctx = {
       cwd: "/work/project",
+      sessionManager: { getBranch: () => [] },
       mode: "tui",
       hasUI: true,
       isProjectTrusted: () => false,
       ui: {
         onTerminalInput: () => () => {},
         getEditorText: () => "",
+        setStatus() {},
         notify: vi.fn(),
         setWidget: (key: string, factory: any) => widgets.set(key, factory),
       },

@@ -1467,8 +1467,13 @@ const mockedWorker = async (scenario: string) => {
     stderr += text;
     return true;
   }) as any);
+  const disconnect =
+    typeof process.disconnect === "function"
+      ? vi.spyOn(process, "disconnect").mockImplementation(() => {})
+      : undefined;
   try {
     await import("../src/sdk-worker.mjs" as string);
+    if (disconnect) expect(disconnect).not.toHaveBeenCalled();
     // Allow handled bound-abort promises to settle; raw rejection must not escape.
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(JSON.stringify(request)).toBe(originalWire);
@@ -2586,7 +2591,7 @@ for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
         .update(readFileSync(new URL("../src/sdk-worker.mjs", import.meta.url)))
         .digest("hex");
       expect(workerSha256).toBe(
-        "99020ac30f00102313290300c3851f5a30ddc0bd184cdd24095b3d18c4538a90",
+        "7ed5e6ece3ab382a47674ae641c85a278f477623fe3ca632a6dbe4e6a36846f0",
       );
       let productionObserved = false;
       let pid: number | undefined;

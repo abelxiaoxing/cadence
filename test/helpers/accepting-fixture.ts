@@ -16,6 +16,7 @@ import { ServiceClient } from "../../src/service-client.ts";
 import { HttpServiceTransport } from "../../src/service-http-client.ts";
 import { nativeBuild, sourceContract } from "./source-build.ts";
 import { windowsSystemEnvironment } from "./windows-environment.ts";
+import { plan as workflowPlan } from "./workflow-plan.ts";
 
 export async function acceptingFixture(
   mode: "source" | "generated",
@@ -29,20 +30,26 @@ export async function acceptingFixture(
   const root = join(dir, "project"),
     agentDir = join(dir, "agent");
   let providerMode:
+    | "coordinator"
+    | "workflow-parallel"
+    | "workflow"
     | "single"
     | "parallel"
     | "pending"
     | "failure"
     | "write"
     | "read-then-fail" = "single";
+  let finalReply: string | undefined;
   let contacts = 0,
     active = 0,
     maxActive = 0;
   const held: ServerResponse[] = [];
+  const workflowWrites: { res: ServerResponse; path: string }[] = [];
   const observations: { tools: string[]; mode: string; messages: unknown[] }[] =
     [];
   const longText = `Actual retained SDK result. ${"retained-detail-αβγ ".repeat(900)} END-RETAINED`;
   function finish(res: ServerResponse, text = longText) {
+    text = finalReply ?? text;
     res.writeHead(200, {
       "content-type": "text/event-stream",
       connection: "close",
@@ -109,6 +116,94 @@ export async function acceptingFixture(
     res.once("close", () => {
       active--;
     });
+    const toolNames = (input.tools ?? []).map(
+      (t: { function: { name: string } }) => t.function.name,
+    );
+    if (
+      providerMode === "coordinator" &&
+      toolNames.includes("cadence_research")
+    ) {
+      const last = input.messages.at(-1);
+      const user =
+        typeof last?.content === "string"
+          ? last.content
+          : (last?.content ?? [])
+              .map((c: { text?: string }) => c.text ?? "")
+              .join("");
+      if (last?.role === "tool") {
+        finish(
+          res,
+          String(last.content).includes("proposalId")
+            ? "The complete plan is ready for your approval."
+            : "Investigation complete. Should we write both files?",
+        );
+      } else if (JSON.stringify(last?.content).includes("plan now")) {
+        const proposal = workflowPlan();
+        if (user.includes("working-copy")) proposal.delivery = "working-copy";
+        callTool(res, "coordinator-plan", "cadence_plan", proposal);
+      } else if (JSON.stringify(last?.content).includes("status")) {
+        callTool(res, "coordinator-status", "cadence_status", {});
+      } else if (user.trim() === "/cadence")
+        finish(res, "Cadence is on. What would you like to accomplish?");
+      else
+        callTool(res, "coordinator-research", "cadence_research", {
+          goal: "Inspect fixture",
+          questions: ["Read existing.txt; preserve it."],
+        });
+      return;
+    }
+    if (
+      providerMode === "coordinator" &&
+      !toolNames.includes("write") &&
+      !JSON.stringify(input.messages).includes(
+        "Independently inspect the implemented files",
+      )
+    ) {
+      if (input.messages.at(-1)?.role === "tool")
+        finish(res, "Existing project evidence was read, not changed.");
+      else callTool(res, "coordinator-read", "read", { path: "existing.txt" });
+      return;
+    }
+    if (
+      providerMode === "coordinator" ||
+      providerMode === "workflow" ||
+      providerMode === "workflow-parallel"
+    ) {
+      const prompt = JSON.stringify(input.messages);
+      if (prompt.includes("Independently inspect the implemented files")) {
+        finish(
+          res,
+          JSON.stringify({
+            approved: true,
+            summary: "Fixture review, not human review",
+            blockingIssues: [],
+          }),
+        );
+      } else if (input.messages.at(-1)?.role === "tool")
+        finish(res, "Implemented the declared file.");
+      else {
+        const path = prompt.includes("Write only these exact files: a.txt")
+          ? "a.txt"
+          : "b.txt";
+        if (
+          providerMode === "workflow-parallel" &&
+          prompt.includes("Write only these exact files:")
+        ) {
+          workflowWrites.push({ res, path });
+          if (workflowWrites.length === 2)
+            for (const item of workflowWrites.splice(0))
+              callTool(item.res, `workflow-${item.path}`, "write", {
+                path: item.path,
+                content: `implemented ${item.path}\n`,
+              });
+        } else
+          callTool(res, `workflow-${path}`, "write", {
+            path,
+            content: `implemented ${path}\n`,
+          });
+      }
+      return;
+    }
     if (providerMode === "write") {
       if (input.messages.at(-1)?.role === "tool") {
         finish(res, "File written by an ordinary tool.");
@@ -308,6 +403,9 @@ export async function acceptingFixture(
     legacyId,
     mode: (value: typeof providerMode) => {
       providerMode = value;
+    },
+    reply(text: string) {
+      finalReply = text;
     },
     fail() {
       for (const r of held.splice(0)) {

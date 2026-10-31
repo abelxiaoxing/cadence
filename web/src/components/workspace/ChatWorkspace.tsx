@@ -11,17 +11,20 @@ import {
 } from "react-icons/fi";
 import {
   type ChatSummary,
-  type ChatTurn,
   decodeWorkbenchCommand,
   type WorkbenchCommand,
 } from "../../../../src/service/contracts/workbench.ts";
 import type { ServiceClient } from "../../../../src/service-client.ts";
 import { cadenceInput, useWorkbench } from "../../client/use-workbench";
+import {
+  approveWorkflow,
+  cadenceApproval,
+  cadenceExit,
+} from "../../client/workflow-entry";
 import { useT } from "../../i18n/locale";
-import { Markdown } from "../rich/Markdown";
-import { StreamMarkdown } from "../rich/StreamMarkdown";
-import { ChatSteps, LEGACY_OMITTED_NOTICE, turnParts } from "./ChatSteps";
+import { ChatTurnView } from "./ChatTurnView";
 import { ChatWelcome } from "./ChatWelcome";
+import { WorkflowPanel } from "./WorkflowPanel";
 
 function stored(key: string) {
   try {
@@ -37,6 +40,7 @@ export function ChatWorkspace({
   enabled,
   available = enabled,
   canInterrupt = enabled,
+  cadenceEnabled = enabled,
   onCadence,
   onModel,
   onChanged,
@@ -44,6 +48,8 @@ export function ChatWorkspace({
   onReferenceUsed,
   initialMode = "chat",
   taskPending = false,
+  legacyTask = false,
+  onModeChanged,
 }: {
   client: ServiceClient;
   id: string;
@@ -51,9 +57,12 @@ export function ChatWorkspace({
   enabled: boolean;
   available?: boolean;
   canInterrupt?: boolean;
+  cadenceEnabled?: boolean;
   onCadence(goal: string): Promise<boolean>;
   initialMode?: "chat" | "cadence";
   taskPending?: boolean;
+  legacyTask?: boolean;
+  onModeChanged?(): void;
   onModel(): void;
   onChanged(): void;
   reference?: string;
@@ -75,11 +84,48 @@ export function ChatWorkspace({
     1000,
   );
   const view = page.value?.kind === "conversation" ? page.value : undefined;
-  const input = cadenceInput(draft, mode);
+  const workflow = useWorkbench(
+    client,
+    available ? { kind: "cadence-conversation", id } : null,
+    1000,
+  );
+  const state =
+    workflow.value?.kind === "cadence-conversation"
+      ? workflow.value.state
+      : undefined;
+  const cadence = state?.enabled === true;
+  const latestState = useRef(state);
+  latestState.current = state;
+  const [approvalPending, setApprovalPending] = useState(() =>
+    stored(`${draftKey}:approval`),
+  );
+  const input = cadenceInput(draft, cadence || legacyTask ? "cadence" : mode);
+  const legacy =
+    legacyTask && !cadence && cadenceInput(draft, "chat").mode !== "cadence";
+  const canSend =
+    enabled &&
+    !!view &&
+    !page.error &&
+    !!state &&
+    !workflow.error &&
+    !busy &&
+    !taskPending &&
+    !pending &&
+    (legacy ? cadenceEnabled : true);
   const summary = view?.summary;
   const running =
     summary && (summary.status === "queued" || summary.status === "running");
   const blocked = !!summary && summary.status !== "completed" && !running;
+  const canExit =
+    canInterrupt &&
+    !!view &&
+    !!state &&
+    !page.error &&
+    !workflow.error &&
+    !busy &&
+    !taskPending &&
+    !pending &&
+    !running;
   const textarea = useRef<HTMLTextAreaElement>(null),
     scroll = useRef<HTMLDivElement>(null);
   const stick = useRef(true),
@@ -131,6 +177,8 @@ export function ChatWorkspace({
       observedHead.current = signature;
       onChanged();
     }
+    if (approvalPending && state?.runs.includes(approvalPending))
+      setApprovalPending("");
     if (pending && view?.turns.some((turn) => turn.id === pending)) {
       setPending("");
       setDraft((value) => (value === sentDraft.current ? "" : value));
@@ -138,21 +186,71 @@ export function ChatWorkspace({
     }
     if (stick.current && scroll.current)
       scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [view, pending, onChanged]);
-  const send = async () => {
+  }, [view, pending, onChanged, approvalPending, state]);
+  useEffect(() => {
+    try {
+      if (approvalPending)
+        sessionStorage.setItem(`${draftKey}:approval`, approvalPending);
+      else sessionStorage.removeItem(`${draftKey}:approval`);
+    } catch {
+      /* retained server identity is authoritative */
+    }
+  }, [approvalPending, draftKey]);
+  const approve = async () => {
+    if (!state?.proposal || !canSend || running || approvalPending) return;
+    const observed = state;
+    setBusy(true);
+    setError("");
+    try {
+      const reply = await approveWorkflow({
+        client,
+        state: observed,
+        current: () =>
+          alive.current &&
+          latestState.current?.revision === observed.revision &&
+          latestState.current?.enabled === true,
+        submitting: (commandId) => {
+          setApprovalPending(commandId);
+          try {
+            sessionStorage.setItem(`${draftKey}:approval`, commandId);
+          } catch {
+            /* never replay */
+          }
+        },
+      });
+      if (!alive.current) return;
+      if (reply.kind === "error") {
+        setError(reply.error.code);
+        if (reply.error.effect === "none") setApprovalPending("");
+      } else setDraft((value) => (cadenceApproval(value) ? "" : value));
+    } catch (e) {
+      if (alive.current)
+        setError(e instanceof Error ? e.message : "unavailable");
+    } finally {
+      if (alive.current) {
+        setBusy(false);
+        workflow.refresh();
+        page.refresh();
+        onChanged();
+      }
+    }
+  };
+  const send = async (override?: string) => {
+    const message = override ?? draft;
+    const exiting = cadence && cadenceExit(message);
     if (
-      busy ||
-      taskPending ||
-      taskSending.current ||
+      !(exiting ? canExit : canSend) ||
       running ||
-      pending ||
-      !enabled ||
-      !view ||
-      page.error ||
-      !input.text.trim()
+      taskSending.current ||
+      !message.trim() ||
+      before !== null
     )
       return;
-    if (input.mode === "cadence") {
+    if (!override && cadence && cadenceApproval(message)) {
+      await approve();
+      return;
+    }
+    if (legacy && !override) {
       taskSending.current = true;
       setBusy(true);
       try {
@@ -177,26 +275,79 @@ export function ChatWorkspace({
       }
       return;
     }
-    if (blocked || before !== null) return;
+    if (blocked && (!cadence || summary?.status === "unknown")) return;
     setBusy(true);
     setError("");
     try {
-      const catalog = await client.models();
+      if (cadence && cadenceExit(message) && state) {
+        const commandId = crypto.randomUUID();
+        sentDraft.current = message;
+        setPending(commandId);
+        const reply = await client.workbenchCommand({
+          kind: "cadence-exit",
+          commandId,
+          conversationId: id,
+          head: summary?.head ?? null,
+          revision: state.revision,
+        });
+        if (!alive.current) return;
+        if (reply.kind === "error") {
+          setError(reply.error.code);
+          if (reply.error.effect === "none") setPending("");
+        } else {
+          setPending("");
+          setMode("chat");
+          onModeChanged?.();
+          setDraft((value) => (value === message ? "" : value));
+        }
+        workflow.refresh();
+        page.refresh();
+        onChanged();
+        return;
+      }
+      let catalog = await client.models();
       if (!alive.current) return;
-      if (catalog.kind !== "ok" || !catalog.value.selected) {
+      if (catalog.kind === "ok" && !catalog.value.selected) {
+        const restored = await client.workbenchCommand({
+          kind: "restore-model",
+          commandId: crypto.randomUUID(),
+          epoch: catalog.value.version.epoch,
+        });
+        if (!alive.current) return;
+        if (restored.kind === "error") {
+          setError(restored.error.code);
+          onModel();
+          return;
+        }
+        catalog = await client.models();
+      }
+      if (catalog.kind !== "ok" || !catalog.value.selected || !state) {
         onModel();
         return;
       }
-      const command: WorkbenchCommand = {
-        kind: "send",
+      const selecting = cadenceInput(message, mode).mode === "cadence";
+      const common = {
         commandId: crypto.randomUUID(),
         conversationId: id,
         head: summary?.head ?? null,
-        text: input.text,
+        text: message,
         model: catalog.value.version,
       };
+      const command: WorkbenchCommand =
+        cadence || selecting
+          ? {
+              kind: "cadence-send",
+              ...common,
+              revision: state.revision,
+              intent: cadenceExit(message)
+                ? "exit"
+                : cadence
+                  ? "message"
+                  : "enter",
+            }
+          : { kind: "send", ...common };
       decodeWorkbenchCommand(command); // Refuse invalid/oversize text before any pending-send state.
-      sentDraft.current = draft;
+      sentDraft.current = message;
       setPending(command.commandId);
       const reply = await client.workbenchCommand(command);
       if (!alive.current) return;
@@ -204,11 +355,17 @@ export function ChatWorkspace({
         setError(
           `${reply.error.code}. ${t("Observe this send before sending again. No automatic retry.")}`,
         );
+        if (reply.error.effect === "none") setPending("");
         // Even a lost reply can have accepted work. Observe this exact turn ID.
       } else {
         setDraft((value) => (value === sentDraft.current ? "" : value));
         setPending("");
+        if (command.kind === "cadence-send") {
+          setMode("chat");
+          onModeChanged?.();
+        }
       }
+      workflow.refresh();
       page.refresh();
       onChanged();
     } catch {
@@ -239,16 +396,43 @@ export function ChatWorkspace({
     page.refresh();
   };
   return (
-    <section className="chat-workspace" aria-label={t("Ordinary conversation")}>
+    <section
+      className="chat-workspace"
+      aria-label={
+        cadence ? t("Cadence conversation") : t("Ordinary conversation")
+      }
+    >
       <header className="conversation-header">
         <div className="conversation-heading">
           <FiMessageSquare aria-hidden="true" />
           <h2>{summary?.title ?? t("New conversation")}</h2>
-          <span className="conversation-badge">{t("Ordinary")}</span>
+          <span className="conversation-badge">
+            {cadence
+              ? t("Cadence on")
+              : legacy
+                ? t("Legacy task")
+                : t("Ordinary")}
+          </span>
+          {cadence && (
+            <button
+              type="button"
+              className="ghost"
+              disabled={!canExit}
+              onClick={() => void send("exit cadence")}
+            >
+              {t("Exit Cadence")}
+            </button>
+          )}
         </div>
         {summary && (
           <span className={`ep-state ${summary.status}`}>
-            {tx(summary.status)}
+            {cadence
+              ? running
+                ? t("Discussing")
+                : state?.proposal
+                  ? t("Awaiting plan approval")
+                  : t("Ready for conversation")
+              : tx(summary.status)}
           </span>
         )}
       </header>
@@ -292,9 +476,24 @@ export function ChatWorkspace({
         {view?.turns.map((turn) => (
           <ChatTurnView key={turn.id} turn={turn} />
         ))}
-        {(error || page.error) && (
+        {state && (
+          <WorkflowPanel
+            client={client}
+            state={state}
+            pending={approvalPending}
+            canApprove={
+              canSend && !running && !approvalPending && before === null
+            }
+            onApprove={() => void approve()}
+            onChanged={() => {
+              workflow.refresh();
+              onChanged();
+            }}
+          />
+        )}
+        {(error || page.error || workflow.error) && (
           <p role="alert" className="banner-notice">
-            {error || page.error}
+            {error || page.error || workflow.error}
           </p>
         )}
         {pending && (
@@ -305,7 +504,7 @@ export function ChatWorkspace({
             </button>
           </p>
         )}
-        {blocked && (
+        {blocked && !cadence && (
           <p className="inspector-note">
             {t(
               "This turn has no complete continuation context. Start a new conversation; retained messages are preserved.",
@@ -336,10 +535,21 @@ export function ChatWorkspace({
       >
         <textarea
           ref={textarea}
-          disabled={!enabled || busy || taskPending || !!pending}
+          disabled={
+            (!enabled && !(cadence && canInterrupt)) ||
+            !view ||
+            !state ||
+            !!page.error ||
+            !!workflow.error ||
+            busy ||
+            taskPending ||
+            !!pending
+          }
           aria-label={t("Message")}
           value={draft}
-          placeholder={t("Message, or /cadence followed by a task…")}
+          placeholder={t(
+            "Message, or /cadence to enter continuous Cadence mode…",
+          )}
           rows={3}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -356,11 +566,13 @@ export function ChatWorkspace({
         <div className="composer-toolbar">
           <select
             aria-label={t("Conversation mode")}
-            value={input.mode}
+            value={cadence ? "cadence" : input.mode}
+            disabled={cadence || running || busy}
             onChange={(event) => {
               const selected =
                 event.target.value === "cadence" ? "cadence" : "chat";
               setMode(selected);
+              if (selected === "chat") onModeChanged?.();
               if (
                 selected === "chat" &&
                 cadenceInput(draft, "chat").mode === "cadence"
@@ -369,7 +581,9 @@ export function ChatWorkspace({
             }}
           >
             <option value="chat">{t("Ordinary conversation")}</option>
-            <option value="cadence">{t("Cadence task")}</option>
+            <option value="cadence">
+              {legacy ? t("Legacy task") : t("Cadence on Send")}
+            </option>
           </select>
           <button type="button" className="ghost" onClick={onModel}>
             <FiCpu />
@@ -377,9 +591,7 @@ export function ChatWorkspace({
           </button>
           <span className="composer-hint">
             {input.mode === "cadence"
-              ? t(
-                  "Send to begin analysis. You will confirm the plan before any edits.",
-                )
+              ? t("Cadence stays on. Confirm one plan before implementation.")
               : t("Direct host tools · no Cadence task")}
           </span>
           {running ? (
@@ -397,20 +609,16 @@ export function ChatWorkspace({
               type="submit"
               className="primary"
               disabled={
-                !enabled ||
-                !view ||
-                !!page.error ||
-                busy ||
-                taskPending ||
-                !!pending ||
-                !input.text.trim() ||
-                (input.mode === "chat" && (blocked || before !== null))
+                !(cadence && cadenceExit(draft) ? canExit : canSend) ||
+                !draft.trim() ||
+                (blocked && (!cadence || summary?.status === "unknown")) ||
+                before !== null
               }
             >
               <FiArrowUp />
               {taskPending
                 ? t("Analyzing task…")
-                : input.mode === "cadence"
+                : legacy
                   ? t("Prepare task")
                   : t("Send")}
             </button>
@@ -420,54 +628,5 @@ export function ChatWorkspace({
     </section>
   );
 }
-export function ChatTurnView({ turn }: { turn: ChatTurn }) {
-  const { t, tx } = useT();
-  const { steps, answer } = turnParts(turn.items);
-  const live = turn.status === "running" && answer.length === 0;
-  const grouped =
-    steps.length > 0 || live || Object.values(turn.omitted).some(Boolean);
-  const notice = turn.notice
-    .split("\n")
-    .filter((line) => line && line !== LEGACY_OMITTED_NOTICE);
-  return (
-    <section className="chat-turn" aria-label={t("Conversation turn")}>
-      {turn.items
-        .filter((item) => item.role === "user")
-        .map((item) => (
-          <article className="chat-message user" key={item.id}>
-            <div className="chat-message-role">{t("You")}</div>
-            <Markdown text={item.text} />
-          </article>
-        ))}
-      {(grouped || answer.length > 0) && (
-        <article className="chat-message assistant">
-          <div className="chat-message-role">Cadence</div>
-          {grouped && (
-            <ChatSteps
-              turn={turn}
-              steps={steps}
-              live={live}
-              answered={answer.length > 0}
-            />
-          )}
-          {answer.map((item) =>
-            turn.status === "running" ? (
-              <StreamMarkdown key={item.id} text={item.text} />
-            ) : (
-              <Markdown key={item.id} text={item.text} />
-            ),
-          )}
-        </article>
-      )}
-      {notice.length > 0 && (
-        <p className="inspector-note chat-turn-notice">
-          {notice.map((line) => tx(line)).join("\n")}
-        </p>
-      )}
-      {!["completed", "running", "queued"].includes(turn.status) && (
-        <p className={`ep-state ${turn.status}`}>{tx(turn.status)}</p>
-      )}
-    </section>
-  );
-}
+export { ChatTurnView } from "./ChatTurnView";
 export type { ChatSummary };

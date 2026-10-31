@@ -44,6 +44,9 @@ Removing development tooling must never delete consumer `.cadence` data or priva
 
 ## Regression owners
 
+- `cadence-mode`, `cadence-mode-pty`, `workflow-contract`, `service-workflow`: persistent conversation activation/exit/branch restoration, actual Pi POSIX TUI/on-demand-owner flow, global model preference, exact plan approval, DAG validation, real SDK worktrees/checks/local integration and cancellation.
+- `service-conversation-workflow`, `test/web/workflow.test.tsx`, `test/web/cadence-browser.e2e.mjs`: actual SDK dialogue tools, persistent mode/model restoration, caller-bound single admission, exit/cancel separation, browser-only approval/local merge and lost-reply observation.
+- `workflow-git`, `workbench-send-admission`: staged-versus-worktree scope, actual commit ancestry, and pre-/post-acceptance error classification without erasing uncertain attempts.
 - `service-contract`, `service-current`, `service-model-choice`, `service-auth`: closed DTOs, exact source/choice/current authority, security and compatibility.
 - `service-owner`, `service-accepted-work`, `service-recovery`, `service-registry-recovery`: original operations, overlap, Stop, unknown fences and informed recovery.
 - `worker-*`, `lightweight-sdk`, `lightweight-process-diff`: genuine SDK/tool capture, split redaction, no-spill bounds and original native facts.

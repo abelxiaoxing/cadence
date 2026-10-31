@@ -34,7 +34,6 @@ Cadence は Pi のログインとモデル設定を再利用します。
 
 ```sh
 npm install -g @abelxiaoxing/cadence
-cadence server install
 pi install "$(npm root -g)/@abelxiaoxing/cadence"
 ```
 
@@ -50,21 +49,37 @@ pi install "$(npm root -g)/@abelxiaoxing/cadence"
 1. 表示されたリンクを一度開く。
    その後ブラウザはあなたを覚えておく。
    リンクを紛失した場合は `cadence token-link --reveal` で再度表示できます。
-2. 右下のフォルダボタンでプロジェクトフォルダを選び、モデルを選ぶ。
-3. 通常の会話にはメッセージを送信するか、`cadence <goal>` で始める（または Cadence タスクを選ぶ）とタスクが作成される。
-4. 分析が計画を提案したら、**実装計画をレビュー**を開き、**計画を確認して実行**を選ぶ。
-5. サブエージェントは左下の dock で追える。
-   チェック、変更、レビューは右の**タスク詳細**の下にある。
+2. プロジェクトフォルダを選びます。
+   送信時に保存済みのモデル設定を再利用します。
+   設定がない場合だけモデルを選んでください。
+3. 一度だけ `/cadence [目標]` を送信します。
+   この会話は Cadence モードを維持し、その後は通常のメッセージで要件を明確にできます。
+4. 完全な計画を確認し、**Implement this plan** を押します。
+   実装、検証、回数制限付きの修正、合意したローカル納品が自動で進みます。
+5. 同じ会話で進捗とサブエージェントの記録を確認できます。
+   再読み込みや目標完了でもモードは維持されます。
+   **Exit Cadence** はモード終了のみ、**Cancel workflow — request stop** は作業のキャンセル要求です。
+
+**Legacy task**: previous task/history workflow.
+No live Pi terminal is required for the browser conversation workflow.
 
 ### ターミナルで
 
-Pi の TUI で、自分で `/cadence [goal]` と入力して Enter を押す。
-貼り付けやスクリプトの入力では開かない。
-モデルを選び、タスクを作成または開き、その計画を編集して Start を確認する。
-メニューにはサブエージェント、チェック、変更、レビュー、履歴も表示される。
+`/cadence <目標>` を一度入力した後は、通常の会話を続けます。
+Cadence がプロジェクトを調査し、必要な判断を確認して計画を作ります。
+計画への明示的な承認後は、実装・検証・回数制限付き修正・合意したローカル統合を自動で進めます。
 
-すべての Pi セッションは、入力の上部に実行中のバックグラウンドエージェントを表示する。
-空の入力状態で ↓ を押して選択し、Enter でその記録を読む（`CADENCE_AGENT_PANEL=off` でパネルを非表示にできる）。
+目標が完了しても、この会話では Cadence モードを維持します。
+終了するには `exit cadence` と入力します。
+終了は実行中の作業をキャンセルしません。
+モデル設定は `~/.pi/agent/cadence/settings.json` に保存され、プロジェクト間で再利用されます。
+
+ローカル owner は必要時に起動します。
+システムサービスのインストールは WebUI・自動起動を使う場合のみ必要です。
+
+`/cadence-inspect`: legacy task/history UI.
+[Conversation mode](docs/conversation-mode.md): native/browser approval, limits and worktree setup.
+Browser authentication is not execution consent.
 
 ### その他のプロジェクト
 

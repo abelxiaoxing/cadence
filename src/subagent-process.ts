@@ -39,6 +39,7 @@ import {
   type WorkerPublicRequest,
 } from "./worker-public.mjs";
 import { WorkerRecording } from "./worker-recording.ts";
+import { sanitizeText } from "./worker-redaction.mjs";
 
 export interface RequestAuth {
   ok: true;
@@ -84,6 +85,11 @@ export interface ProcessSpec {
   onFrame?: (frame: CaptureFrame) => void;
   /** Bounded anonymous checkpoint pipe, never a raw spill file. */
   onContext?: (source: string) => void;
+  onCoordinator?: (
+    name: string,
+    args: unknown,
+    signal: AbortSignal,
+  ) => Promise<unknown>;
 }
 /** One bounded process owner for SDK workers and user-confirmed parent checks. */
 /** Windows has no process groups, and terminating CMD/a worker alone leaves
@@ -148,7 +154,10 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         spec.input === undefined ? "ignore" : "pipe",
         "pipe",
         "pipe",
-        ...(spec.onContext ? ["pipe" as const] : []),
+        ...(spec.onContext || spec.onCoordinator
+          ? [spec.onContext ? ("pipe" as const) : ("ignore" as const)]
+          : []),
+        ...(spec.onCoordinator ? ["ipc" as const] : []),
       ],
     }) as ChildProcessByStdio<Writable | null, Readable, Readable>;
     const contextStream = spec.onContext
@@ -259,6 +268,7 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         child.stderr.destroy();
         child.stdin?.destroy();
         contextStream?.destroy();
+        if (child.connected) child.disconnect();
       }
     };
     const signalChild = (signal: NodeJS.Signals) => {
@@ -286,6 +296,54 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       killTimer = setTimeout(() => signalChild("SIGKILL"), 1000);
       unknownTimer = setTimeout(() => finish(false, null, null), 3000);
     };
+    let bridgeCalls = 0;
+    let bridgeBusy = false;
+    if (spec.onCoordinator)
+      child.on("message", (message) => {
+        if (settled || stopping) return;
+        void (async () => {
+          let id: number | undefined;
+          try {
+            const body = JSON.stringify(message);
+            if (
+              ++bridgeCalls > 16 ||
+              bridgeBusy ||
+              Buffer.byteLength(body) > 65536 ||
+              sanitizeText(body, spec.secrets ?? []) !== body
+            )
+              throw new Error("Invalid coordinator frame");
+            const row = closed(message, ["id", "name", "args"]);
+            if (
+              !Number.isSafeInteger(row.id) ||
+              (row.id as number) < 1 ||
+              typeof row.name !== "string"
+            )
+              throw new Error("Invalid coordinator frame");
+            id = row.id as number;
+            bridgeBusy = true;
+            const value = await spec.onCoordinator?.(
+              row.name,
+              row.args,
+              ingressStop.signal,
+            );
+            const text = sanitizeText(
+              JSON.stringify(value),
+              spec.secrets ?? [],
+            );
+            const reply = { id, ok: true, text };
+            if (Buffer.byteLength(JSON.stringify(reply)) > 65536)
+              throw new Error("Coordinator result exceeds bound");
+            if (!settled && !stopping && child.connected)
+              child.send(reply, () => {});
+          } catch {
+            if (id !== undefined && child.connected && !settled && !stopping)
+              child.send({ id, ok: false }, () => {});
+            else stop("failed");
+          } finally {
+            bridgeBusy = false;
+          }
+        })();
+      });
     const abort = () => stop("canceled");
     const timeout = setTimeout(() => stop("timeout"), spec.timeoutMs);
     spec.signal.addEventListener("abort", abort, { once: true });
@@ -584,6 +642,8 @@ function launchEncoded(
     | "maySignal"
     | "onFrame"
     | "onContext"
+    | "onCoordinator"
+    | "secrets"
   > = {},
 ): Promise<RunResult> {
   if (
@@ -762,6 +822,7 @@ export function launchConversation(
   conversation: {
     previous: string | null;
     agentDir: string;
+    coordinator?: true;
   },
   signal: AbortSignal,
   options: {
@@ -771,6 +832,7 @@ export function launchConversation(
     onFrame(frame: CaptureFrame, secrets: readonly string[]): void;
     ownerSecrets(): readonly string[];
     onContext(messages: unknown[]): void;
+    onCoordinator?: ProcessSpec["onCoordinator"];
   },
 ): Promise<RunResult> {
   let encoded: ReturnType<typeof encodeEnvelope> | undefined;
@@ -787,6 +849,7 @@ export function launchConversation(
       return launchEncoded(encoded, signal, options.timeoutMs, {
         maySignal: options.maySignal,
         onNative: options.onNative,
+        onCoordinator: options.onCoordinator,
         onFrame: (frame) => options.onFrame(frame, secrets),
         onContext: (source) => {
           const value = closed(parseWireJson(source, CONTEXT_BYTES), [
@@ -802,6 +865,45 @@ export function launchConversation(
             ]),
           );
         },
+      });
+    },
+  );
+}
+
+/** Owner-admitted workflow worker. The owner validates/retains the selected
+ * worktree and journals launch before calling; model/auth still come from W1. */
+export function launchWorkflowWorker(
+  prepared: PreparedModelContext,
+  cwd: string,
+  signal: AbortSignal,
+  options: {
+    timeoutMs: number;
+    ownerSecrets: readonly string[];
+    maySignal(): boolean;
+    onNative(native: NativeSettlement, selectedMessageId?: string): void;
+    onFrame(frame: CaptureFrame, secrets: readonly string[]): void;
+  },
+): Promise<RunResult> {
+  let encoded: ReturnType<typeof encodeEnvelope> | undefined;
+  return prepared.consume(
+    (material) => {
+      encoded = encodeEnvelope({
+        ...material,
+        cwd,
+        model: { ...material.model },
+      });
+      return encoded.input;
+    },
+    (input) => {
+      if (!encoded || encoded.input !== input)
+        throw new Error("Invalid workflow launch");
+      const secrets = [...encoded.secrets, ...options.ownerSecrets];
+      return launchEncoded(encoded, signal, options.timeoutMs, {
+        secrets,
+        maySignal: options.maySignal,
+        onNative: (native, capture) =>
+          options.onNative(native, capture?.selected?.messageId),
+        onFrame: (frame) => options.onFrame(frame, secrets),
       });
     },
   );

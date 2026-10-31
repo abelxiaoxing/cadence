@@ -7,7 +7,7 @@ import {
 export const STARTUP_CARD_KEY = "cadence-configuration";
 /** No install script creates the file, so a missing one names how it is made. */
 export const CONFIG_MISSING =
-  "（未创建）：`cadence server install` 会生成模板，也可以手动创建";
+  "（未创建，可选）：日常 `/cadence` 无需此文件；需要研究服务时可手动配置";
 
 // Only code-owned labels and paths enter the UI; never values, endpoints,
 // models, parser errors or credentials from the configuration file.

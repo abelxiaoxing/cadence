@@ -223,6 +223,7 @@ export function TaskSidebar({
   conversationId,
   onConversation,
   onNewConversation,
+  workflowActiveCount,
 }: {
   client: ServiceClient;
   workspace: WorkspaceBootstrap;
@@ -241,6 +242,7 @@ export function TaskSidebar({
   conversationId?: string | null;
   onConversation?: (id: string) => void;
   onNewConversation?: () => void;
+  workflowActiveCount?: number;
 }) {
   const { t, tx } = useT();
   const request: ListRequest = {
@@ -308,7 +310,12 @@ export function TaskSidebar({
       <span className="session-info">
         <span className="session-title">{chat.title}</span>
         <span className="session-sub">
-          {t("Ordinary")} · {tx(chat.status)}
+          {chat.cadence ? t("Cadence on") : t("Ordinary")} ·{" "}
+          {chat.cadence
+            ? ["running", "queued"].includes(chat.status)
+              ? t("Discussing")
+              : t("See workflow progress")
+            : tx(chat.status)}
         </span>
       </span>
     </button>
@@ -320,7 +327,9 @@ export function TaskSidebar({
         title={t("Running conversations")}
         count={
           activeRuns?.status === "complete"
-            ? String(active.length + liveChats.length)
+            ? workflowActiveCount === undefined
+              ? "?"
+              : String(active.length + liveChats.length + workflowActiveCount)
             : "?"
         }
         className="running-conversations"
@@ -335,7 +344,8 @@ export function TaskSidebar({
         {liveChats.map(chatRow)}
         {activeRuns?.status === "complete" &&
           active.length === 0 &&
-          liveChats.length === 0 && (
+          liveChats.length === 0 &&
+          workflowActiveCount === 0 && (
             <p className="panel-hint">{t("No active runs")}</p>
           )}
         {active.map((run) => {

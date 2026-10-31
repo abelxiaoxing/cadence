@@ -40,3 +40,20 @@ Current reads then retain the requested task ID in an unavailable context, with 
 Stable absence is not `stale`; appearance/disappearance or changed identities during an observation still are.
 Generic `stale` requests fresh observation/confirmation, not a diagnosis that `models.json` changed or an instruction to restart; build compatibility is evaluated separately from the session and independently built client identities.
 Local operation errors neither hide an independent observation error nor imply that the service needs to be started.
+
+## Automatic conversation workflow
+
+Native/browser workflow approval includes exact setup, separate baseline/acceptance checks, delivery policy and a finite repair budget.
+Setup never implicitly copies dependency trees, profiles or credentials.
+Baseline checks cannot require future outputs.
+Local-merge candidates receive readonly Agent review, whole-candidate checks and another check after generated documentation before fast-forward integration into the unchanged target.
+Local commit hooks/signing are disabled; verification is explicitly approved instead.
+Workflow scope checks independently include staged changes, even when the worktree was restored to HEAD or a staged new file was removed.
+Each generated commit must extend the observed baseline and change only its approved files; unexpected HEAD movement during setup/workers/checks refuses continuation.
+Rejection preserves the index and worktrees; it never clears or resets them to manufacture an in-scope result.
+No implicit remote operation occurs.
+Post-merge checks report the real resulting commit even on failure; no rollback is claimed.
+Automatic outcomes retain `humanReviewed: false` and cannot satisfy legacy human Review.
+Full sanitized process results are separate from labelled status previews; lookup verifies that the selected step belongs to the run.
+Project Markdown uses a managed region preserving outside human text; ignored generated documents remain ignored and are published with expected-byte checks.
+Workflow notes have a separate directory/version and never add unknown siblings to legacy task v1.

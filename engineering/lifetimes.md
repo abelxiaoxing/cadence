@@ -3,7 +3,29 @@
 How work is admitted, scheduled, stopped and recovered, and which original operations hold fences.
 Read this before changing admission, scheduling, Stop, registry or recovery behavior.
 
-## Execution graph
+## Conversation workflow lifetime
+
+Conversation workflows have their own versioned private journal under the existing exact project owner.
+They acquire the same checkout barrier as ordinary conversations and retain it until all original workers/checks/auth/storage settle.
+Within that barrier, independent implementation assignments use separate Git worktrees (two at once); dependent worktrees consume committed ancestor outputs in topological order.
+Task worktrees use a separate `tasks/<task-id>` directory below the run, disjoint from the integration candidate; valid task IDs cannot collide with internal names.
+Direct working-copy delivery serializes edits.
+The terminal is never an embedded executor.
+One fresh 120s grant binds the exact proposal/plan, model source, project observation and owner epoch; accepted durable work owns the declared finite steps, not fabricated user clicks.
+The general workflow command remains native-only.
+Browser confirmation uses a separate conversation-bound boundary; both reach the same execution owner.
+Browser grants additionally bind the authenticated attachment/access generation and exact conversation revision/head, and are consumed before dispatch; a parallel tab cannot accept the same proposal twice.
+Browser access authentication is not execution consent.
+A fresh conversation Send can report no effect only from a healthy owner, after excluding prior/partial attempts and before registering original work or writing control/acceptance state.
+A server-only refusal type carries this proof to HTTP; error names alone never establish it.
+Prior attempts, partial writes and lost replies remain uncertain and observe-only.
+Coordinator turns are owner-accounted originals but hold no checkout barrier; only their finite delegated investigations acquire that gate.
+Coordinator interruption joins its own investigations, not a previously approved implementation.
+No restart replays an unfinished workflow.
+Unknown/incomplete retained state fences startup; Stop joins the shared owner accounting.
+Access rotation does not revoke an accepted worker's pinned model choice; source/epoch changes still refuse.
+
+## Legacy execution graph
 
 - Graphs contain 1–16 required assignments with explicit purposes/dependencies and exact model choice; no recursive spawning or autonomous retry.
 - Two readonly children may overlap; checkout editing and parent checks serialize across tasks and aliases against readers/writers.
@@ -33,7 +55,7 @@ Read this before changing admission, scheduling, Stop, registry or recovery beha
   Generated Linux units exclude deterministic foreground refusal exit78 from restart; manager acceptance without authenticated readiness is not reported as successful startup.
 - Native entry requires fresh raw Enter within1500ms, trusted/idle TUI, no pending modal/messages and no child guard.
   Browser authentication grants access, not task consent; normal mutation ingress also requires independently built compatible client/service/assets identities.
-- Boot model choice is absent until explicitly selected.
+- Boot model choice is absent until selected; native mode resolves the remembered credential-free preference (or current Pi choice on first use) into a new exact owner selection.
   Preserve exact provider/model/API/thinking/source identities; unsupported transport or thinking refuses without fallback or clamping.
   Choice changes refuse while accepted work, admissions, barriers or original operations are busy.
 - A120s one-use grant binds exact action, epoch/access/config/control/task raw bytes/graph/cwd/model/check-environment and relevant observations.

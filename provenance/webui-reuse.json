@@ -217,7 +217,8 @@
         "web/src/components/workspace/ChatSteps.tsx",
         "web/src/components/workspace/AgentDock.tsx",
         "web/src/components/workspace/FilesPanel.tsx",
-        "web/src/components/workspace/ProjectPicker.tsx"
+        "web/src/components/workspace/ProjectPicker.tsx",
+        "web/src/components/workspace/ChatTurnView.tsx"
       ],
       "modifications": "Adapt bottom composer, message/tool presentation, local directory browsing and cwd-picker layout to finite Cadence APIs. Remove upstream subagent/goal/delegate/plan engines, prompt composer/personas, PTY, plugin slots, SSH and file mutations. Ordinary turns use the existing Cadence native launcher and checkout gate, not task records. Explicit project opening navigates to a distinct owner; ordinary drafts and Cadence task mode are kept per conversation. Drawer focus cannot horizontally scroll the translating layout. The folder picker drops the separate Browse step for a location trail, Enter-to-go path entry, a folder filter and a named Open target; Open of a typed or recent path first observes it and opens only that canonical folder. A turn keeps one speaker label: its steps through the last tool call fold into one summary line, split into ChatSteps, and the text after them is the answer."
     }
@@ -288,11 +289,21 @@
     "web/src/client/last-project.ts",
     "src/service/gateway-recovery.ts",
     "test/gateway-recovery.test.ts",
-    "test/helpers/gateway-recovery-child.ts"
+    "test/helpers/gateway-recovery-child.ts",
+    "src/cadence-instructions.ts",
+    "src/coordinator-tools.mjs",
+    "src/service/conversation-workflow.ts",
+    "web/src/client/workflow-entry.ts",
+    "web/src/components/workspace/WorkflowPanel.tsx",
+    "web/src/components/workspace/ChatTurnView.tsx",
+    "test/service-conversation-workflow.test.ts",
+    "test/web/workflow.test.tsx",
+    "test/web/cadence-browser.e2e.mjs",
+    "src/service/workbench-send-refusal.ts"
   ],
   "destinations": {
     "web/index.html": "d4f99afb551ce57f3c0c361b176c37540520cd1658ef568c86ef01e0cce9e5b1",
-    "web/src/App.tsx": "c9c3e3eb6dc1461feada213c7d9878cb009803216c9d11057a184be9f23a6d56",
+    "web/src/App.tsx": "21eff7f7da4a6e701452997124ee8a2d9c2cf1b01275f429b993da8f255f807a",
     "web/src/client/actions.ts": "192587fe7eee7b7d669a0e93641d0880a4ca33a56a6ca25d0fe4265a8519db88",
     "web/src/client/browser.ts": "3074fea935763155554a0131d42bbcb470972c61abdf319cfcc2f35db65c4055",
     "web/src/client/message-delta.ts": "9133b161d07c0f5ca6a85562d396c36f724982d51f35ea0abae03035d79e4e8b",
@@ -327,7 +338,7 @@
     "web/src/components/transcript/ToolCallBlock.tsx": "d81762bdd1a318de7014e97e0685162016dfa92dba58794c3c23e2f7dab5ec58",
     "web/src/components/workspace/InspectorPanel.tsx": "5c4b050d94d862adad1e06795d6902bfa729cd33db025f9a7f6aa6b9fc5765b7",
     "web/src/components/workspace/RunSummary.tsx": "d6a08bb9994aa585a56afe217fe438984894d357365bf7aaed57d1713d0ff7ec",
-    "web/src/components/workspace/TaskSidebar.tsx": "c1095db764ebeb2da8f848e16b88489f795d6aff864a67b34e9aa400736f6922",
+    "web/src/components/workspace/TaskSidebar.tsx": "861c78b06f9467f209a82e5958cc7ce8e5e7019074dd453c4b694ff299bc83de",
     "web/src/history/download-export.ts": "ab531872d83acf06733e3ede1b374730e83bafc21c41d48dcffc3e2f30d31528",
     "web/src/history/history-url.ts": "0d2a586ff60d4a4c10473485e210e0b788c4411988fd45bafdebdc07f80cf6af",
     "web/src/history/readers.ts": "48bed1b8d4d89bc5719b729fcc3b938f9a88a447583b32dd4a71364b2e88c1e0",
@@ -346,7 +357,7 @@
     "web/src/rich/remark-backslash-math.ts": "273205bd4694172f14fab2adad28acf9993e35c476c00756cbafb73135516c2e",
     "web/src/rich/stream-markdown.ts": "ce80d88c65bd49b3fdb4586201090c46b5fdbb81850ef321a782929f3a40e41e",
     "web/src/rich/use-copy-feedback.ts": "6df2a9e9e085b516c98816220420e307a24c5b8826049d0d276e08b59e19a321",
-    "web/src/styles.css": "cf5833de56938aedd19c1867db4ea3e6bcee58f9c70a066b49fe050eeef1b85c",
+    "web/src/styles.css": "dd3f4b5045b3dd19390fd5d8c58b55bb4a7ea59d5248e3eb8cb3b6fca5d5b8f5",
     "web/src/timeline/TimelineView.tsx": "25ade49214cfd160c049a56163bfdf40433d3a7e3b3447a46a1e277423b77d6f",
     "web/src/timeline/timeline-adapter.ts": "4bd061c89c0dc78edea5d9f1b7ce6b6be24f82b6949f84d0d7120d3cafe95dbb",
     "web/src/timeline/timeline-client.d.mts": "c216e4da9c9220ee2e0ce78fa9d40e3daf59d690140331184573e724f900525b",
@@ -384,17 +395,17 @@
     "src/conversation-context.mjs": "1f75a8d8bfdf00e41c1841cfd1a47ca525b876ddf66c73f81c80d37ee87c86af",
     "src/conversation-context.d.mts": "2d33f1b812d9a982bb2cefa5397e0c8230c7525a3c82c6659637a9f289cfdb9c",
     "src/conversation-resources.mjs": "a7ed3e4813e3e240f0a8eb4867ee497e352d62a06cb85980d0ac292d12dc001a",
-    "src/service/contracts/workbench.ts": "c05a43b6de1b8edf5edf1a531876dab70ce71b4c9cf37330005da1240f11f3d3",
-    "src/service/conversations.ts": "9f98250a07dd93ffe6fcee582a10f24cf5611791437a3f7ea41f51b7aa8583db",
+    "src/service/contracts/workbench.ts": "6de3f02097b39d438988b885401de6c31b87f59e0a73e6dcda9d8980e53cbc6e",
+    "src/service/conversations.ts": "182e5303df4e1cbfb489ec3a08639b8d2ffd623384b04f85979c78da19b03014",
     "src/service/workbench-files.ts": "4de759ba4b88ee564fab428a803295e8c3608e575fbe99e635d188c3621e84c1",
-    "src/service/workbench.ts": "d5eacc634588f36aa778a2a2bf15cac842ec7075add811453cfddb26cab034aa",
+    "src/service/workbench.ts": "63509c0673a6e9d7c83994b94a36abf13f5bd2237d7e6292026ab6d78cd7a5eb",
     "web/src/client/use-workbench.ts": "5e2eedc805fa7da883b5cdd95537d299e9444b5dec47911afbb9d724951b23e1",
     "test/workbench-boundaries.test.ts": "9f6932bb6e34413b4bc53aec039fdd2187221af7c3e465602c32be8592af8dd6",
     "test/web/workbench.test.tsx": "f27634504788ab93b0d32b059844378546b83aadbe0cea203c5064b7ac65ba23",
-    "test/web/workbench-browser.e2e.mjs": "955a853028ea2171903e59bef2e9b03147b7ce0204a3ca62bde17ae092472305",
-    "web/src/components/workspace/ChatWorkspace.tsx": "32d2a4231f9e58ceb8ffda49fb1452af278f58c0c0a9ebab52aa0f1c3a7bfdfe",
+    "test/web/workbench-browser.e2e.mjs": "70f6eeef2e8061dfb7f884a381a071f56a8c3462bc6108f897605d387ab78d0f",
+    "web/src/components/workspace/ChatWorkspace.tsx": "b2d3c46fd36ae5396b227e4615f784d96e639ecd5af5bc262ddbd4feb2b5c8d3",
     "web/src/components/workspace/ChatSteps.tsx": "c9bfb8549c78bd84257c314253b1faa7d49424ab0509a01342ad9f84757d955c",
-    "web/src/components/workspace/AgentDock.tsx": "01c2ce75ec8451d4a88abff8020bc9f9fe510e2c0958b9b770f50b67ea186a37",
+    "web/src/components/workspace/AgentDock.tsx": "8cb603af0a210bb334dba8ddd15efd145cd93e6c0105070bb05e7c934f7bca53",
     "web/src/components/workspace/FilesPanel.tsx": "eca52560cdbc2d58c7b8a05919e4b0c8b63c487b00823747e20797fd6c1ce6fe",
     "web/src/components/workspace/ProjectPicker.tsx": "75b7ea9dbf56852c524b1535e5e50bf03ecec9aa1fa66e195a6f85298e806c7e",
     "src/service/gateway.ts": "962d31c5c9d335f2d1db36454e504fa3e57af6a0523f57dbb9a62e4e9a027ce1",
@@ -405,15 +416,25 @@
     "web/src/client/project-route.ts": "9c14aa3108771c77cb698b46da085d711acf27eb4ba5bf5c23cce40ab5f76029",
     "test/gateway-state.test.ts": "88d93773e0ba3c36291848c0c9cb334b5a1814c98b7c7dc7dadd8c7091e51673",
     "test/helpers/gateway-fixture.ts": "5391550a3f4eefd947efe63fa0202c44d01658189e0c8ed7b8f4909ce0d09007",
-    "test/web/gateway-browser.e2e.mjs": "13fe16cc58c35788b975b140543e93768cbbf9abcd7a14aa2105baf0c4b25427",
+    "test/web/gateway-browser.e2e.mjs": "9cae4461fa592a67e5309f799c65ac963fe6388e7e25cf1a2433dba21a5a4544",
     "web/src/components/workspace/ChatWelcome.tsx": "011efc1a31b5eda7bcb7856ffe33af4359be8eb7b54b37d75b8d432e0a3c79a6",
-    "web/src/components/workspace/ConversationActions.tsx": "6591dac0b8f69428db1feec32a1232de686b018da8da1f55412de3ce9787e9a7",
+    "web/src/components/workspace/ConversationActions.tsx": "7729b13b928b93562ef320d5d5b8961388c5146380de593d39cf7a88b160ad05",
     "web/src/components/workspace/WorkbenchHome.tsx": "dab9d00e9d1cc8d3ec2ee1f72fafc5a1df2d4654f12558f47d30b94c6d046afe",
     "web/src/components/workspace/WorkingFolderButton.tsx": "79e27127b059801af3965e87d1623e80ac701fce91338f8e121eabb95e1f94ee",
     "web/src/client/last-project.ts": "45ceb96bf9d9e3d28e8f43220206a0b2979cda3757f149d125687e7aff95dbff",
     "src/service/gateway-recovery.ts": "c870bea2b8da75c07c762255a9a3be415966b02cc3bcd6f7e0b4c5fe26f76589",
     "test/gateway-recovery.test.ts": "e6fb1f46b58e2f2699be77c080bd4c1a676c4c1851cc07575a1d7516698bbb12",
-    "test/helpers/gateway-recovery-child.ts": "6d25ebe009588275b55a5f852883184e96076030cb3bc74c945cb08a1d2f489d"
+    "test/helpers/gateway-recovery-child.ts": "6d25ebe009588275b55a5f852883184e96076030cb3bc74c945cb08a1d2f489d",
+    "src/cadence-instructions.ts": "37e1671e755178fbb416deef3d6799fcd305e5084e8b512b151a83b038c456e3",
+    "src/coordinator-tools.mjs": "94a7d2c752a5270c1e1285c2a1aa84d25cf15e8f7e8f0b5dc62c72a91ea56a6b",
+    "src/service/conversation-workflow.ts": "bef59b33083f4af0cce03d65552dadaa86b5e2a8804d69841fd91d45dbaf5fc2",
+    "web/src/client/workflow-entry.ts": "6b02d43622cc78ceeab817a945380bde1805f3cce200eca6f38d1260a8616a63",
+    "web/src/components/workspace/WorkflowPanel.tsx": "c2ec6f691d9d300e1fca460aad4beed72640b0d7b05bcd005758b0ad04c49958",
+    "web/src/components/workspace/ChatTurnView.tsx": "059f060115ee911976d3c92bcf69ea75052980fbaa44683820eaecf92b628217",
+    "test/service-conversation-workflow.test.ts": "3f9e993d1bf1299e3b4d45f688f81be2722b323c5dae7df6ed6faad5cfb686da",
+    "test/web/workflow.test.tsx": "3f62a5820c5399f8dc4529059838f43e851f089f61ba0f05ff2ae036e0e47bae",
+    "test/web/cadence-browser.e2e.mjs": "0e6f462a2e3c14cb712c2265b5cee700f52603d86b8176f6c407721f3092b563",
+    "src/service/workbench-send-refusal.ts": "0db0902eca805e53d8eafa8954cebff58eaa83fa935660533c7d46412183fdd0"
   },
   "existingLicense": {
     "path": "licenses/pi-web-ui-MIT.txt",
@@ -686,6 +707,21 @@
       "id": "unified-workbench-without-default-workspace",
       "originalSourcePinPreserved": true,
       "note": "Cadence-owned directory-less workbench with same-origin project routing; no implicit ~/cadence creation, hidden substitute workspace or upstream executor/prompt layer. Browser requests retain browser authority; independent owners keep execution cwd and actual Stop closure. Full verify passed before this evidence-only update: 1997 root tests (27 Linux skips), 130 web tests, 9 real-browser cases including CA-validated HTTPS, and the 135-member real-pack audit. Prior failed attempts and historical evidence are not reclassified as successful. No paid provider or new native-platform qualification."
+    },
+    {
+      "id": "persistent-native-cadence-conversation-mode",
+      "originalSourcePinPreserved": true,
+      "note": "Cadence-owned conversation mode and workflow coordinator; current integration pins updated for the closed workbench workflow DTO, owner routing and test fixture changes. Upstream sources remain unchanged. Native-only plan confirmation does not grant browser shell/merge authority. Verification evidence is recorded separately in engineering/releases.md."
+    },
+    {
+      "id": "persistent-browser-cadence-workflow",
+      "originalSourcePinPreserved": true,
+      "note": "Cadence-owned persistent conversation control and bounded SDK coordinator, browser-specific exact-plan approval, shared automatic execution and retained child/run presentation. The browser keeps browser authority; native general workflow and management boundaries remain separate. Legacy UI is explicitly labelled. Upstream pins and historical evidence are unchanged; final verification is recorded separately in engineering/releases.md."
+    },
+    {
+      "id": "conversation-review-boundary-fixes",
+      "originalSourcePinPreserved": true,
+      "note": "Cadence-owned fixes: owner-aware retained-result sanitation, index/commit scope verification, server-proven no-effect conversation Send refusal, and disjoint task worktree names. Browser regression distinguishes definite rejection from lost accepted Send responses. No upstream pins or historical qualification were rewritten."
     }
   ],
   "testAdaptations": [

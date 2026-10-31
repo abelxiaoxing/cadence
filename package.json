@@ -1,7 +1,7 @@
 {
   "name": "@abelxiaoxing/cadence",
-  "version": "2.0.20",
-  "description": "Shared Pi task workspace: native terminal and WebUI, persistent service, checks and human review.",
+  "version": "2.0.21",
+  "description": "Conversation-driven Pi workspace: persistent native and WebUI workflows, explicit plan approval, checks and local delivery.",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -71,7 +71,12 @@
     "licenses",
     "src/conversation-context.mjs",
     "src/conversation-resources.mjs",
-    "src/service/contracts/workbench.ts"
+    "src/service/contracts/workbench.ts",
+    "src/cadence-mode.ts",
+    "src/cadence-preferences.ts",
+    "src/service/contracts/workflow.ts",
+    "src/cadence-instructions.ts",
+    "src/coordinator-tools.mjs"
   ],
   "pi": {
     "extensions": [
