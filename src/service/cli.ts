@@ -15,7 +15,8 @@ import {
   LIMITS,
   parseWireJson,
 } from "../service-contract.ts";
-import { effectiveWorkspace, privateWorkspace } from "../task-store.ts";
+import { effectiveWorkspace, privateWorkspace } from "../workspace.ts";
+
 import {
   type AutostartResult,
   type AutostartSystem,

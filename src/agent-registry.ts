@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { readBounded } from "./task-store.ts";
+import { readBounded } from "./workspace.ts";
 
 export const AGENT_FILES = [
   "design-explorer.md",

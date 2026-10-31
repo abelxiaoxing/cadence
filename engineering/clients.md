@@ -28,8 +28,9 @@ Departure only detaches; the owner holds accepted work through actual closure.
 Model preferences persist as exact selectors in the user's agent directory (Pi's `getAgentDir()`, symlinked directories followed), never credentials, grants or source selection IDs.
 An unreadable preference file falls back to the current Pi model with one warning; an explicit model choice atomically replaces it.
 
-The previous native task/history UI remains under `/cadence-inspect`, with its original raw guard, typed attachment, independent Save/Start/Checks and human Review.
-It is an optional diagnostic/legacy route, not the daily entrypoint.
+`/cadence-history [run-id]` is readonly diagnostics with the original raw-entry/session/departure guards and typed attachment; it never starts an owner, selects a model, calls a provider or submits work.
+It lists retained workflows and reads exact step results/transcripts without an LLM, plus old task history/search/verified export.
+The old `/cadence-inspect` execution interface is removed.
 
 ## Background agent panel
 
@@ -38,10 +39,10 @@ Every TUI session, not only `/cadence`, looks for the owner already running for 
 That observation holds one of the owner's viewer attachments, so departure (including Pi quit) waits up to 1.5s for the detach to reach the owner rather than leaving the slot to its idle expiry; `/cadence` departs the same way.
 `CADENCE_AGENT_PANEL=off` turns that observation off.
 It reads the active roster every 5s, and every 2s together with the task's snapshot while it follows an episode, announcing each child of the active episodes: its assignment ID as label, purpose as kind, lifecycle or latest tool as activity, and completed, canceled or any other outcome (with its reason) as done, cancelled or error.
-A child whose outcome the session can no longer observe (no compatible owner a whole retry after losing it, or no settled row five looks after its run left the roster) ends as an error that says so; `/cadence-inspect` History keeps the actual outcome.
+A child whose outcome the session can no longer observe (no compatible owner a whole retry after losing it, or no settled row five looks after its run left the roster) ends as an error that says so; `/cadence-history` keeps the actual outcome.
 Workflow research, implementation and review subagents are announced the same way from the workflow roster; the viewed one streams its retained transcript, others refresh their activity at most every 10s, and an unreadable run ends as not observed.
 Elapsed time counts from when the session first observed a child (`—` for one first seen settled); no tokens are shown because the owner records no usage.
-Opening a child reads its retained messages, tool calls and results through the history readers, up to 64KiB per field; complete fields, search and export stay in `/cadence-inspect` History.
+Opening a child reads its retained messages, tool calls and results through the history readers, up to 64KiB per field; complete fields, search and export stay in `/cadence-history`.
 A retained `edit` call shows its call and result without Pi's diff preview, which would compare against the file as it is now.
 Producers emit `subagent:start {id,label,kind,startedAt}`, `subagent:message {id,message,streaming?}`, `subagent:activity {id,activity,tokensIn?,tokensOut?}`, `subagent:stats {id,tokensIn,tokensOut?}` and `subagent:end {id,status,endedAt,error?}` with status `done`, `error` or `cancelled`; `startedAt: null` marks an unobserved start.
 A message has the main session's message shape; `streaming: true` marks a snapshot that the next message replaces.
@@ -84,9 +85,9 @@ Known closed failed coordinator turns may continue on a new explicit Send from t
 A saved model preference is restored only on explicit Send, never readonly browsing; no silent model substitution.
 Remembering the chosen model is best-effort: a broken preference file never fails or reverts an installed choice.
 Exit does not require a usable selected model.
-The explicitly labelled Legacy task entry retains the old task-origin link, creation/readonly analysis, plan Save/Start and separate checks/human Review.
-Its composer still shares the workspace action-readiness guard for click and Enter.
-`/cadence` no longer selects that legacy route, and no old task/history is rewritten into a new workflow.
+There is no Legacy task creation entry or task composer.
+Historical task-origin links still read, but cannot be created.
+The old task inspector is readonly content/check/change/review evidence, never an editor or execution control; no old task/history is rewritten into a new workflow.
 Native Pi session transcripts are not imported into browser conversations.
 All of this works without a live Pi terminal.
 A definite pre-acceptance Send refusal preserves the draft and permits another explicit Send or mode exit; it does not pin an impossible pending turn.
@@ -95,9 +96,9 @@ Ordinary Send binds its exact text, conversation head, epoch, access and selecte
 The WebUI provides task/run/assignment navigation, long retained messages and tool detail, exact literal search, timeline and complete scoped NDJSON/Markdown downloads.
 Desktop panes and phone drawers retain cancellation and keyboard controls.
 Its chrome: a compact topbar with view tabs and icon actions, a sectioned task sidebar, pill inspector tabs, transcript/tool cards and a bottom statusbar; phones wrap the topbar into an action row and an icon tab row.
-The left sidebar provides New conversation and an explicitly labelled Legacy task shortcut alongside running/retained conversations; a separate lower-left dock observes Cadence subagents — workflow research/implementation/review workers and legacy task children — and opens their retained transcripts in the main area.
+The left sidebar provides New conversation alongside running/retained conversations and an on-demand Workflow history listing; a separate lower-left dock observes Cadence subagents — workflow research/implementation/review workers and legacy task children — and opens their retained transcripts in the main area.
 It is not a subagent engine.
-The right sidebar defaults to readonly files, bounded text previews and path-only references; task plan/check/change/review controls occupy its Task details tab.
+The right sidebar defaults to readonly files, bounded text previews and path-only references; retained content/check/change/review evidence occupies its History details tab.
 The lower-right folder button contains recent projects, browses directories on the service host and explicitly opens another independent project owner.
 The unified entry switches project clients on the same origin, including an explicitly configured HTTPS proxy; it never changes a running task's cwd, registers a boot service or cancels the project left behind.
 Backend cookies and native capabilities never reach the browser; proxied actions remain browser-authority actions, with owner-side consent/build/CSRF checks.
@@ -158,7 +159,7 @@ Task tools/context/timeline/runs and export/link actions live under Details, sho
 An ordinary turn shows one speaker label: everything through its last tool call folds into a steps line that names what the tools touched (live while running; it opens by itself when the turn ends without an answer, until the user toggles it), and the assistant text after it is the answer.
 Tool names are model-chosen data: one matching no known kind, `constructor` included, counts as a plain tool.
 Runs puts the current snapshot's owner projection above the retained run pages.
-The right panel defaults to files; its Task details inspector remains bound to the task's current plan/check/change/review context even when viewing a child.
+The right panel defaults to files; its History details inspector remains bound to the containing task and selected watermark even when viewing a child.
 Historical child links bind exact scope and watermark.
 Bounded history and Back never silently rebase; running conversations offer an explicit new-activity update, and source limitations/progress stay visible even when complete-record metadata is folded.
 Cancel uses the independent active roster (including the fallback strip when workspace discovery fails); navigation, project selection and hiding panels never cancel or authorize execution.

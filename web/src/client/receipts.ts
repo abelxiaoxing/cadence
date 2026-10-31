@@ -2,8 +2,13 @@ import {
   canonicalJson,
   compareSequence,
 } from "../../../src/service-contract.ts";
-import type { Receipt } from "../types";
-import type { CommandObservation } from "./actions";
+import type { Receipt, ReceiptLookup } from "../types";
+export interface CommandObservation {
+  commandId: string;
+  receipt?: Receipt;
+  lookup?: ReceiptLookup;
+  error?: string;
+}
 /** Exact command/operation identity and committed sequence, not HTTP arrival order. */
 export function mergeObservation(
   previous: CommandObservation,

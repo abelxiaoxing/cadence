@@ -284,3 +284,66 @@ Observed environment: Linux x86_64, Node26.7.0, Bun1.3.14, Pi0.84.3 and Chromium
 These are prior executed results, not a claim that every later edit or other environment has been tested.
 The implementation/docs/evidence checkpoints are Git commits `b0fde94`, `531b158` and `2fd28b0`; historical failed/unknown outcomes are not rewritten by this summary.
 Additional Windows/macOS/ConPTY, Node22/other peers, paid accounts/every adapter, physical phone/human/second-machine, package-manager installation and real deployment remain unqualified.
+
+## Unreleased — legacy task retirement, local verification incomplete
+
+The native `/cadence-inspect` and browser Legacy task creation/execution controls are removed; HTTP refuses old task preflight/commands for both caller authorities, even with an internally prepared old grant.
+The replacement `/cadence-history` is readonly, with workflow/step/transcript lookup and preserved task search/export; the browser adds an on-demand workflow history listing and a readonly task evidence inspector.
+Old summaries, private records, cancellation/Stop accounting and uncertain fences are not migrated or deleted.
+The obsolete check example and plan/action UI are no longer shipped; the old prospective-plan builder remains only as a regression helper.
+
+On Linux x86_64 with Node 26.7.0 and Bun 1.3.14, the focused native/history/auth/workflow/workbench run passed 128 tests in six files, and the final separate WebUI run passed 140 tests in 13 files.
+All six real Chromium scenarios in five files passed, including current plan approval/delivery, model-independent cold retained history, exact search, verified task/run/child downloads and responsive views.
+The new history browser scenario seeds an isolated source owner through the internal legacy regression producer, then stops it and reads a generated owner; this is not a re-enabled public task execution route.
+`pack:check` passed the exact 148-member/body audit, and a separate `bun pm pack --destination` produced a real tarball.
+
+Full `verify` passed root/web checks, generated-byte comparisons, lint and Agent pins, then failed its root-test stage: 1963 passed, three failed and 27 Windows-only controls skipped across 83 files.
+The three failures were the unchanged `test/service-recovery.test.ts` cases for processes, credentials and storage acknowledgments, each exceeding the existing 5000ms test budget; their cause remains unestablished.
+No test budget was enlarged and no full-suite pass is claimed.
+The browser and pack results above were executed separately after that failure, not inferred from the interrupted verify pipeline.
+Local logs and isolated fixtures remain under `/home/mirako/cd.ibPmTZ`, including `verify-1.log`, `web-final.log`, `browser-final.log`, `pack-check.log` and `pack-separate.log`; earlier failed development attempts remain there too.
+No commit, installation, publication or deployment was performed, and other operating systems/runtimes remain unqualified for this change.
+
+## Unreleased — execution-kernel removal checkpoint (retirement not complete)
+
+The old `TaskActions`, `ActionAdmission`, `TaskScheduler`, graph executor and foreground `TaskController` source files are deleted, not moved into test helpers.
+Current workflows/conversations use `CheckoutGate`; service coordination uses the extracted checkout lock and workspace utilities rather than task CRUD.
+The owner model choice no longer imports `HistoryWriter` or derives its configuration revision from legacy records; its counter is scoped by the owner epoch, with active-original and gate guards retained.
+The old prospective-plan helper, scheduler-specific diagnostics and execution-only regression cases are removed; independent owner/process/auth/recovery controls remain, and dedicated gate tests cover FIFO, cancellation, capacity, stale handles, Stop and lease loss.
+The generated service is tested to exclude the four retired execution classes.
+`task-store.ts` and `task-types.ts` no longer ship as bare package sources; the reviewed package gains the workspace, data-shape and checkout-lock modules, for a net 149 members.
+
+This checkpoint does not finish the architecture plan.
+The remaining host bootstrap/auth fallback/Stop coupling to `HistoryWriter`, old worker/client task-shaped protocols, and separation of archival reading from legacy writing are listed in `architecture.md`.
+No existing consumer task/history/private state was migrated, deleted or repaired.
+
+Full `verify` passed on the final code/test tree: 1813 root tests in 81 files, 27 Windows-only controls skipped on Linux, 140 WebUI tests in 13 files, six real Chromium scenarios in five files, and the exact 149-member/body pack audit.
+A separate `bun pm pack --destination` also produced a real 149-member archive.
+Environment: Linux x86_64, Node 26.7.0, Bun 1.3.14, installed Pi SDK 0.84.3 and existing Chrome for Testing 151.0.7922.34.
+The retained-history browser scenario now constructs fabricated archive-format records without a legacy executor or model request; genuine current SDK workflow/conversation tests remain separate evidence.
+No PTY, other operating system, paid provider, human interaction, installation or deployment qualification is implied.
+
+Earlier attempts remain recorded: formatting, exact package counts and the moved filesystem-helper fault-injection import failed before correction.
+One later browser attempt failed the timeline focus assertion; the test now queries the current row and active element atomically instead of comparing a previously resolved element handle across string-render replacement.
+The final targeted timeline scenarios and full browser group passed; this change does not claim a newly fixed production focus bug or erase the failed receipt.
+The three previous recovery timeouts did not recur in the final root run; their previous cause is not retrospectively assigned.
+No budgets were enlarged.
+Logs, screenshots, isolated fixtures and the separate tarball are retained under `/home/mirako/cr.BczrhY`, including `verify-7.log`, `verify-6.log`, `assets-browser-2.log` and `pack-separate.log`.
+No repository commit, push, package installation, publication or actual service deployment was performed.
+
+## Release 2.0.23 acceptance snapshot
+
+Full `verify` passed on the 2.0.23 candidate: 1823 root tests in 82 files (27 Windows-only controls skipped on Linux), 140 WebUI tests in 13 files, seven real Chromium scenarios in six files, and the exact 149-member/body pack audit.
+Environment: Linux x86_64, Node 26.7.0, Bun 1.3.14 and existing Chrome for Testing 151.0.7922.34, using the pinned Pi SDK 0.84.3.
+The candidate removes the retired task execution core and exposes readonly native/browser history; the remaining historical writer and protocol retirement is explicitly incomplete, as described in `architecture.md`.
+
+The review's two blocking regressions are fixed.
+Workspace labels now use the same complete owner literal source as workbench and legacy projections, including access material; a generated-owner regression checks a project path containing a fabricated access token with no selected model or provider contact.
+Workflow history uses bounded directory-scan progress rather than a total-record cutoff: 200 entries per quantum, 20 summaries per page, one page plus lookahead retained, bounded expiring readonly handles, and explicit continuation on both clients.
+Tests traverse 200, 201 and 501 IDs, enforce per-read work and cursor binding/consumption, check expiry/owner-close and directory replacement, and preserve corrupt/unsafe records.
+A generated owner lists 221 retained runs and still accepts a new research run; the built browser separately walks all 221 records, navigates Back and refreshes without selecting or contacting a model.
+
+Verification logs and isolated artifacts are retained under `/home/mirako/rel.9dLURH`, including `verify-1.log`, `unit-1.log`, `integration-1.log` and `browser-1.log`.
+Budgets were not enlarged, and no consumer history, private state or uncertain lock was migrated or cleaned.
+Other operating systems/runtimes, paid providers and real native PTY interaction remain unqualified for this candidate.
+Commit, push and npm publication were explicitly requested; this acceptance snapshot records tests, not a claim that those subsequent operations already succeeded.

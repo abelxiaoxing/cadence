@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { expect, it } from "vitest";
 import type {
@@ -499,6 +499,110 @@ it("a baseline command cannot hide out-of-scope changes by committing them in th
     expect(readFileSync(join(candidate, "out-of-scope.txt"), "utf8")).toBe(
       "unapproved",
     );
+  } finally {
+    await f.close();
+  }
+}, 20000);
+
+it("readonly workflow history crosses 200 runs in bounded pages without stopping new work or repairing records", async () => {
+  const { f, command, wait, model } = await setup(false);
+  try {
+    const before = f.contacts();
+    const root = join(f.c.directory, "workflows-v1", "runs");
+    const ids = Array.from(
+      { length: 221 },
+      (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    );
+    const bodies = ids.map((id, i) => {
+      const dir = join(root, id);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const body =
+        i === 5
+          ? "{torn"
+          : JSON.stringify({
+              id,
+              epoch: randomUUID(),
+              goal: `Recorded ${i}`,
+              status: "failed",
+              phase: "finished",
+              steps: [],
+              notice: "Retained fixture",
+              mergedCommit: null,
+              humanReviewed: false,
+            });
+      writeFileSync(join(dir, "state.json"), body, { mode: 0o600 });
+      return body;
+    });
+    let progressReads = 0;
+    const read = async (after: string | null) => {
+      let scan: string | undefined;
+      for (let quantum = 0; quantum < 3; quantum++) {
+        const reply = await f.client.workbenchRead({
+          kind: "workflow-history",
+          after,
+          ...(scan ? { scan } : {}),
+        });
+        if (reply.kind !== "ok") throw Error(JSON.stringify(reply));
+        if (reply.value.kind === "workflow-history-progress") {
+          expect(reply.value.after).toBe(after);
+          scan = reply.value.scan;
+          progressReads++;
+        } else if (reply.value.kind === "workflow-history") return reply.value;
+        else throw Error(JSON.stringify(reply));
+      }
+      throw Error("Fixture scan made no bounded progress");
+    };
+    const first = await read(null);
+    expect(first.entries.map((e) => e.id)).toEqual(ids.slice(0, 20));
+    expect(first.entries[5]).toEqual({ id: ids[5], run: null });
+    expect(first.next).toBe(ids[19]);
+    const seen = [...first.entries.map((e) => e.id)];
+    let next = first.next;
+    while (next) {
+      const page = await read(next);
+      seen.push(...page.entries.map((e) => e.id));
+      next = page.next;
+    }
+    expect(seen).toEqual(ids);
+    expect(progressReads).toBeGreaterThan(0);
+    for (let i = 0; i < ids.length; i++)
+      expect(readFileSync(join(root, ids[i], "state.json"), "utf8")).toBe(
+        bodies[i],
+      );
+    expect(f.contacts()).toBe(before);
+    const started = await command({
+      action: "research",
+      model,
+      goal: "New work after 221 retained runs",
+      questions: ["Read only"],
+    });
+    if (started.type !== "run") throw Error("expected new run");
+    expect((await wait(started.run.id)).status).toBe("completed");
+    writeFileSync(join(root, "unexpected"), "preserve", { mode: 0o600 });
+    await expect(read(null)).rejects.toThrow("corrupt-selected");
+    expect(readFileSync(join(root, "unexpected"), "utf8")).toBe("preserve");
+  } finally {
+    await f.close();
+  }
+}, 20000);
+
+it("workspace labels redact owner access material without selecting a model or contacting a provider", async () => {
+  const accessToken = "fabricated-owner-token-in-project-path-0123456789";
+  const f = await acceptingFixture("generated", undefined, null, {
+    rootName: accessToken,
+    accessToken,
+  });
+  try {
+    expect(f.root).toContain(accessToken);
+    expect((await f.client.session()).kind).toBe("ok");
+    const workspace = await f.client.workspace();
+    expect(workspace.kind).toBe("ok");
+    if (workspace.kind !== "ok") throw Error(workspace.error.code);
+    expect(JSON.stringify(workspace)).not.toContain(accessToken);
+    expect(workspace.value.rootLabel).toContain("[redacted]");
+    const models = await f.client.models();
+    expect(models.kind === "ok" && models.value.selected).toBeNull();
+    expect(f.contacts()).toBe(0);
   } finally {
     await f.close();
   }

@@ -28,7 +28,7 @@ import {
   decodeAssetManifest,
   loadWebAssets,
 } from "../../src/service-assets.ts";
-import * as store from "../../src/task-store.ts";
+import * as store from "../../src/workspace.ts";
 import { extractVisStyles } from "../../web/build-vis-style";
 import {
   type Fixture,
@@ -53,7 +53,6 @@ it("shared plan proposal bytes participate in independently compiled compatibili
     "src/service-client.ts",
     "src/service-http-client.ts",
     "src/service-wire.ts",
-    "src/plan-proposal.ts",
     "src/service/contracts",
   ]) {
     mkdirSync(dirname(join(dir, name)), { recursive: true, mode: 0o700 });
@@ -61,7 +60,7 @@ it("shared plan proposal bytes participate in independently compiled compatibili
   }
   const before = contractIdentity(dir);
   expect(before).toBe(contractIdentity(resolve(".")));
-  const proposal = join(dir, "src/plan-proposal.ts");
+  const proposal = join(dir, "src/service/contracts/workflow.ts");
   writeFileSync(
     proposal,
     `${readFileSync(proposal, "utf8")}\n// changed input\n`,
@@ -300,13 +299,16 @@ it("detects ordinary read-time replacement, not just matching returned body hash
     target = join(dir, "dist");
   cpSync(source, target, { recursive: true });
   const original = store.readBounded;
-  vi.spyOn(store, "readBounded").mockImplementation((path, bound, packaged) => {
-    const bytes = original(path, bound, packaged);
-    if (path === join(target, "assets/cadence.js")) {
-      unlinkSync(path);
-      writeFileSync(path, bytes ?? ""); // identical returned bytes, different selected incarnation
-    }
-    return bytes;
-  });
+  const read = vi
+    .spyOn(store, "readBounded")
+    .mockImplementation((path, bound, packaged) => {
+      const bytes = original(path, bound, packaged);
+      if (path === join(target, "assets/cadence.js")) {
+        unlinkSync(path);
+        writeFileSync(path, bytes ?? ""); // identical returned bytes, different selected incarnation
+      }
+      return bytes;
+    });
   expect(() => loadWebAssets(target)).toThrow("asset-read-changed");
+  expect(read).toHaveBeenCalled();
 });

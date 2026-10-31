@@ -6,7 +6,7 @@ Read this before changing admission, scheduling, Stop, registry or recovery beha
 ## Conversation workflow lifetime
 
 Conversation workflows have their own versioned private journal under the existing exact project owner.
-They acquire the same checkout barrier as ordinary conversations and retain it until all original workers/checks/auth/storage settle.
+They acquire the same checkout gate as ordinary conversations and retain it until all original workers/checks/auth/storage settle.
 Within that barrier, independent implementation assignments use separate Git worktrees (two at once); dependent worktrees consume committed ancestor outputs in topological order.
 Worktrees live under `<stateHome>/cadence-worktrees-v1/<project-hash>/<run>/` (0700, outside the private service namespace, never nested with the checkout): `integration` plus a disjoint `tasks/<task-id>` per task; valid task IDs cannot collide with internal names.
 Worktrees created by 2.0.21 inside the service namespace are left where they are.
@@ -29,11 +29,14 @@ Workflow cancel needs only the lease and epoch, so it works while the owner is q
 A native workflow command refused before any write, grant or admission for a never-attempted ID, by a healthy owner, reports no effect; anything else stays uncertain.
 Access rotation does not revoke an accepted worker's pinned model choice; source/epoch changes still refuse.
 
-## Legacy execution graph
+## Retired task execution
 
-- Graphs contain 1–16 required assignments with explicit purposes/dependencies and exact model choice; no recursive spawning or autonomous retry.
-- Two readonly children may overlap; checkout editing and parent checks serialize across tasks and aliases against readers/writers.
-- Research/diagnosis never gain editing or parent-shell authority through a plan or child prompt.
+The old task action/admission/graph scheduler and foreground controller are deleted.
+Current workflows and ordinary turns use the independent `CheckoutGate`, not an old task object.
+Legacy HTTP task preflight/command/cancel operations refuse; an archived run ID is not a handle to a live process.
+Current workflow Cancel, conversation Interrupt and exact-owner Stop remain independent.
+Historical graph/check/publication facts retain their original meaning, but no task execution is reconstructed from them.
+The remaining historical writer and transport coupling is documented in [architecture](architecture.md).
 
 ## Admission, execution and original lifetimes
 

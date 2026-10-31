@@ -1331,11 +1331,11 @@ describe("accepted control-flow lifetime (injected dispositions, real lease)", (
       deferred<import("../src/service/owner.ts").AcceptedWorkResult>();
     const safety = deferred<PersistenceResult>();
     let nested: ReturnType<ServiceOwner["stop"]> | undefined;
-    owner.registerActions(() => {
+    owner.registerRuntime(() => {
       events.push("actions");
       nested = owner.stop(1000);
     });
-    expect(() => owner.registerActions(() => {})).toThrow("conflict");
+    expect(() => owner.registerRuntime(() => {})).toThrow("conflict");
     const original = work.promise.then((result) => {
       owner.trackHistory(safety.promise, true);
       return result;

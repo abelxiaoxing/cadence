@@ -47,6 +47,7 @@ import {
   type StoredCommand,
   type WorkerCompletion,
 } from "../service-contract.ts";
+import { legacyTaskStore } from "../task-store.ts";
 import { TextSanitizer } from "../worker-redaction.mjs";
 import { decodeRunAdmission } from "./admission.ts";
 import { checkFold } from "./checks.ts";
@@ -1337,7 +1338,7 @@ export class HistoryWriter implements AdmissionPersistence {
         if (
           intent.identity.kind === "action" &&
           intent.identity.action.kind === "create" &&
-          this.lease.coordination.store.list().length >= 1000
+          legacyTaskStore(this.lease.coordination).list().length >= 1000
         ) {
           refused = { status: "refused", error: publicError("capacity") };
           return;
@@ -1487,7 +1488,7 @@ export class HistoryWriter implements AdmissionPersistence {
         )
           return refuse("conflict");
         const current = this.contexts.get(action.taskId);
-        const selected = this.lease.coordination.store.loadSnapshot(
+        const selected = legacyTaskStore(this.lease.coordination).loadSnapshot(
           action.taskId,
         );
         if (
@@ -1602,7 +1603,7 @@ export class HistoryWriter implements AdmissionPersistence {
         const expected = intent.identity.expected,
           task = expected.task,
           snapshot = task
-            ? this.lease.coordination.store.loadSnapshot(task.id)
+            ? legacyTaskStore(this.lease.coordination).loadSnapshot(task.id)
             : undefined;
         const current = task ? this.contexts.get(task.id) : undefined;
         if (
@@ -1813,7 +1814,7 @@ export class HistoryWriter implements AdmissionPersistence {
           const reader = HistoryReader.open(this.lease.coordination);
           if (!reader) throw new ContractError("unavailable");
           record = publicationRecord(
-            this.lease.coordination.store,
+            legacyTaskStore(this.lease.coordination),
             reader,
             intent,
             link,
@@ -1899,7 +1900,7 @@ export class HistoryWriter implements AdmissionPersistence {
         async () => {
           await this.options.observeWrite?.("publication-before-save");
           this.assertWritable(false, true);
-          const store = this.lease.coordination.store;
+          const store = legacyTaskStore(this.lease.coordination);
           try {
             // Recheck cap at the actual side effect, not just admission or later list.
             if (before.revision === 0 && store.list().length >= 1000)
@@ -2785,7 +2786,7 @@ export class HistoryWriter implements AdmissionPersistence {
           fact.kind === "publication-settled" &&
           fact.status === "published"
         ) {
-          const actual = this.lease.coordination.store.loadSnapshot(
+          const actual = legacyTaskStore(this.lease.coordination).loadSnapshot(
             value.link.taskId,
           );
           if (

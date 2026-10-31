@@ -19,9 +19,8 @@ import {
   safeChildEnv,
   type WorkerRequest,
 } from "../src/subagent-process.ts";
-import { TaskController } from "../src/task-controller.ts";
 import { captureChanges } from "../src/task-diff.ts";
-import { resolveWorkspace, TaskStore } from "../src/task-store.ts";
+import { resolveWorkspace } from "../src/task-store.ts";
 import { diagnosticText } from "../src/verification-diagnostics.ts";
 import { v2Frames } from "./helpers/worker-v2.ts";
 
@@ -291,58 +290,6 @@ describe("demand-based stdin transport", () => {
       }
     },
   );
-
-  it("real controller stores passed/review and failed statuses with stable inputs", async () => {
-    const root = temporary();
-    writeFileSync(join(root, "existing.txt"), "stable user bytes");
-    const store = new TaskStore(root, join(temporary(), "state"));
-    const controller = new TaskController(store, root);
-    controller.create("code", "Native check status");
-    const before = controller.observe().fingerprint;
-    for (const [name, command, exitCode, status, phase] of [
-      [
-        "pass",
-        process.platform === "win32" ? "exit 0" : "true",
-        0,
-        "passed",
-        "review",
-      ],
-      [
-        "fail",
-        process.platform === "win32" ? "exit 1" : "false",
-        1,
-        "failed",
-        "failed",
-      ],
-    ] as const) {
-      const result = await controller.check(
-        controller.choice(),
-        { name, command, timeoutMs: 1000 },
-        () => true,
-      );
-      expect(result).toMatchObject({
-        outcome: exitCode === 0 ? "completed" : "failed",
-        closed: true,
-        exitCode,
-        signal: null,
-      });
-      expect(controller.observe().fingerprint).toBe(before);
-      const task = controller.current;
-      expect(task?.phase).toBe(phase);
-      expect(task?.checks.find((check) => check.name === name)).toMatchObject({
-        status,
-        exitCode,
-        fingerprint: before,
-      });
-      expect(store.loadSnapshot(controller.choice().id)?.record).toEqual(task);
-      expect(controller.busy).toBe(false);
-      expect(controller.blocked).toBe(false);
-    }
-    expect(controller.current?.checks.map((check) => check.status)).toEqual([
-      "passed",
-      "failed",
-    ]);
-  });
 
   it.each(["before-exit", "after-exit", "after-close", "none"] as const)(
     "SDK payload + already parsed valid final: stdin error %s",
@@ -1528,23 +1475,6 @@ describe("readonly dirty/change observations", () => {
     expect(captureChanges(root).fingerprint).toBe(before.fingerprint);
     writeFileSync(join(root, "local.env"), "x");
     expect(captureChanges(root).fingerprint).not.toBe(before.fingerprint);
-  });
-  it("real check edits invalidate check freshness while exit remains factual", async () => {
-    const { root } = repository();
-    const store = new TaskStore(root, join(temporary(), "state"));
-    const controller = new TaskController(store, root);
-    controller.create("code", "Test check freshness");
-    await controller.check(
-      controller.choice(),
-      {
-        name: "changes",
-        command: "echo changed > tracked.txt",
-        timeoutMs: 1000,
-      },
-      () => true,
-    );
-    expect(controller.current?.checks[0].exitCode).toBe(0);
-    expect(controller.current?.checks[0].status).toBe("stale");
   });
   it("non-Git inventories additions/deletions and labels bounded omissions", () => {
     const root = temporary();

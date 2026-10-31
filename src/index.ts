@@ -3,15 +3,15 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerAgentPanel } from "./agent-panel.ts";
 import { registerCadenceAgentFeed } from "./agent-panel-cadence.ts";
 import { registerCadenceMode } from "./cadence-mode.ts";
+import { registerHistoryShell } from "./history-shell.ts";
 import { autostartNotice } from "./native-client.ts";
 import { CONFIG_MISSING, startupCardLines } from "./startup-card.ts";
-import { registerTaskShell } from "./task-shell.ts";
 
 /** Sole production composition. Discovery registers inert capabilities only;
- * actual host binding belongs to the lightweight shell’s session_start. */
+ * actual host binding belongs to the readonly history shell’s session_start. */
 export default function register(pi: ExtensionAPI): void {
   if (process.env.CADENCE_SUBAGENT_CHILD === "1") return;
-  registerTaskShell(pi);
+  registerHistoryShell(pi);
   registerCadenceMode(pi);
   // Observes `subagent:*` bus events only; renders nothing until one arrives.
   registerAgentPanel(pi);

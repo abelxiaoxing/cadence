@@ -295,11 +295,11 @@ afterAll(() => {
 });
 
 describe("real lightweight package", () => {
-  it("audits exactly 148 unique regular members, every source body and all Agent pins", () => {
-    expect(expected).toHaveLength(148);
+  it("audits exactly 149 unique regular members, every source body and all Agent pins", () => {
+    expect(expected).toHaveLength(149);
     const audit = auditPackage(archive, root, expected);
     expect(audit.members).toEqual(expected);
-    expect(Object.keys(audit.bodyHashes)).toHaveLength(148);
+    expect(Object.keys(audit.bodyHashes)).toHaveLength(149);
     const receipt = JSON.parse(
       readFileSync(path.join(fixture, "distribution-diagnostics.json"), "utf8"),
     );
@@ -308,13 +308,13 @@ describe("real lightweight package", () => {
     for (const stage of ["after-extract", "after-copy", "after-peer-links"]) {
       const entry = receipt.stages.find((entry) => entry.stage === stage);
       expect(entry.status).toBe("passed");
-      expect(entry.bodyChecks).toHaveLength(148);
+      expect(entry.bodyChecks).toHaveLength(149);
       expect(
         entry.bodyChecks.every((check) => check.status === "matched"),
       ).toBe(true);
     }
     expect(expected.filter((p) => p.startsWith("package/src/"))).toHaveLength(
-      46,
+      47,
     );
     expect(expected.join("\n")).not.toMatch(
       /sqlite|workspace-io|windows-job|apply-transaction|compiler|scheduler/,
@@ -554,11 +554,11 @@ describe("real lightweight package", () => {
   }, 20000);
 });
 
-it("shipped check example is decoded by the extracted readonly operator without executing it", () => {
+it("existing check configuration is decoded by the extracted readonly operator without executing or changing it", () => {
   const cwd = path.join(fixture, "configured");
   mkdirSync(path.join(cwd, ".cadence/assistant"), { recursive: true });
-  const example = readFileSync(
-    path.join(installed, "config/workflow-task.example.json"),
+  const example = Buffer.from(
+    `{\n  "schema": "cadence-assistant-checks/1",\n  "checks": [\n    { "name": "Type check", "command": "bun run check", "timeoutMs": 120000 },\n    { "name": "Tests", "command": "bun run test", "timeoutMs": 120000 }\n  ]\n}\n`,
   );
   const config = path.join(cwd, ".cadence/assistant/config.json");
   writeFileSync(config, example);

@@ -427,9 +427,12 @@ it("built readonly history, exact Unicode/full copy, timeline and drawers across
           "🚀",
         );
         assert(
-          (await page.locator(".coverage").last().textContent()).includes(
-            "limited",
-          ),
+          (
+            await page
+              .locator(".main .detail-pane .coverage")
+              .last()
+              .textContent()
+          ).includes("limited"),
         );
         await page
           .getByRole("button", { name: "Copy full retained field" })
@@ -462,11 +465,13 @@ it("built readonly history, exact Unicode/full copy, timeline and drawers across
             .querySelector(".rtr-row.sel")
             ?.textContent?.includes("#1 ready"),
         );
+        // The string renderer replaces rows on animation frames. Query the
+        // current row and active element atomically, rather than comparing a
+        // Playwright-resolved handle that may have been detached meanwhile.
         assert.equal(
-          await page
-            .locator(".rtr-row")
-            .first()
-            .evaluate((el) => el === document.activeElement),
+          await page.evaluate(
+            () => document.querySelector(".rtr-row") === document.activeElement,
+          ),
           true,
           "timeline selection must retain keyboard focus",
         );
@@ -495,7 +500,7 @@ it("built readonly history, exact Unicode/full copy, timeline and drawers across
           .click();
         if (viewport.width <= 900) {
           const opener = page.getByRole("button", {
-            name: "Plan / review",
+            name: "Files / history",
             exact: true,
           });
           await opener.click();

@@ -1,12 +1,14 @@
 # Checks, publication and review
 
-How configured and manual checks run, how task summaries publish and what human Review binds.
+Legacy recording/regression semantics: how checks ran, task summaries publish and historical human Review binds.
+Task mutation ingress and client controls are retired; these contracts preserve existing evidence, not a supported execution route.
+The current execution product is described under Automatic conversation workflow below.
 Read this before changing checks, change observation, task publication or Review.
 
 ## Checks and changes
 
-- Configured checks are available on both clients.
-  Manual shell checks require the native local capability and fresh command/cwd/timeout confirmation.
+- Existing configured/manual check and human Review records remain readable on both clients.
+  New checks belong to the approved conversation workflow plan; clients cannot run legacy checks or submit legacy Review.
 - Checks use the service launch's ordinary project environment, never resolved model auth or a browser environment overlay.
 - Changes are bounded observations including pre-existing dirt, not proof of causation or a complete filesystem snapshot.
   The change identity hashes each Git command's complete raw output; a command cut off by its output or time bound contributes only its fixed outcome (for example `ENOBUFS`), never the partial bytes, and marks coverage incomplete.

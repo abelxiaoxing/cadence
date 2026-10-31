@@ -16,6 +16,7 @@ import {
   publicError,
   type RunIdentity,
 } from "../src/service-contract.ts";
+import { legacyTaskStore } from "../src/task-store.ts";
 import {
   admitFixtureRun,
   failedCompletion,
@@ -755,7 +756,7 @@ it("sequential summary publication identities advance independently of execution
     expect(result.status).toBe("published");
     expect(result.observed).toEqual({
       revision: revision + 1,
-      identity: f.c.store.loadSnapshot(f.link.taskId)!.identity,
+      identity: legacyTaskStore(f.c).loadSnapshot(f.link.taskId)!.identity,
     });
   }
   expect(await f.writer.lookup(f.intent.commandId)).toMatchObject({

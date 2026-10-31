@@ -19,6 +19,7 @@ import {
   decodeWorkflowRequest,
   decodeWorkflowResponse,
   decodeWorkflowRun,
+  WORKFLOW_LIMITS,
   type WorkflowProposal,
   type WorkflowRequest,
   type WorkflowResponse,
@@ -67,6 +68,7 @@ export interface WorkflowLink {
 export type WorkbenchRead =
   | { kind: "cadence-conversation"; id: string }
   | { kind: "workflow-active" }
+  | { kind: "workflow-history"; after: string | null; scan?: string }
   | { kind: "workflow-detail"; id: string; stepId: string }
   | { kind: "workflow-transcript"; id: string; stepId: string }
   | { kind: "workflow"; id: string }
@@ -119,13 +121,6 @@ export type WorkbenchCommand =
       commandId: string;
       epoch: string;
       request: WorkflowRequest;
-    }
-  | {
-      kind: "link-task";
-      commandId: string;
-      epoch: string;
-      taskId: string;
-      conversationId: string;
     }
   | {
       kind: "send";
@@ -183,6 +178,12 @@ export interface FileEntry {
   directory: boolean;
 }
 export type WorkbenchResult =
+  | { kind: "workflow-history-progress"; after: string | null; scan: string }
+  | {
+      kind: "workflow-history";
+      entries: { id: string; run: WorkflowRun | null }[];
+      next: string | null;
+    }
   | {
       kind: "workflow-transcript";
       runId: string;
@@ -250,6 +251,15 @@ export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
     case "cadence-conversation": {
       const o = closed(v, ["kind", "id"]);
       return { kind, id: decodeId(o.id) };
+    }
+    case "workflow-history": {
+      const continued = Object.hasOwn(v as object, "scan");
+      const o = closed(v, ["kind", "after", ...(continued ? ["scan"] : [])]);
+      return {
+        kind,
+        after: nullable(o.after, decodeId),
+        ...(continued ? { scan: decodeId(o.scan) } : {}),
+      };
     }
     case "workflow-active":
       closed(v, ["kind"]);
@@ -366,22 +376,7 @@ export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
       request: decodeWorkflowRequest(o.request),
     };
   }
-  if (kind === "link-task") {
-    const o = closed(v, [
-      "kind",
-      "commandId",
-      "epoch",
-      "taskId",
-      "conversationId",
-    ]);
-    return {
-      kind,
-      commandId: decodeId(o.commandId),
-      epoch: decodeId(o.epoch),
-      taskId: decodeId(o.taskId),
-      conversationId: decodeId(o.conversationId),
-    };
-  }
+
   if (kind === "send") {
     const o = closed(v, [
       "kind",
@@ -491,6 +486,31 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
   if (k === "cadence-conversation") {
     const o = closed(v, ["kind", "state"]);
     return { kind: k, state: decodeCadenceConversation(o.state) };
+  }
+  if (k === "workflow-history-progress") {
+    const o = closed(v, ["kind", "after", "scan"]);
+    return {
+      kind: k,
+      after: nullable(o.after, decodeId),
+      scan: decodeId(o.scan),
+    };
+  }
+  if (k === "workflow-history") {
+    const o = closed(v, ["kind", "entries", "next"]);
+    const entries = list(o.entries, WORKFLOW_LIMITS.historyPage, (v) => {
+      const e = closed(v, ["id", "run"]);
+      const id = decodeId(e.id),
+        run = nullable(e.run, decodeWorkflowRun);
+      if (run && run.id !== id) throw new ContractError("invalid");
+      return { id, run };
+    });
+    const next = nullable(o.next, decodeId);
+    if (
+      new Set(entries.map((e) => e.id)).size !== entries.length ||
+      (next !== null && next !== entries.at(-1)?.id)
+    )
+      throw new ContractError("invalid");
+    return { kind: k, entries, next };
   }
   if (k === "workflow-active") {
     const linked =

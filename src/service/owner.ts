@@ -72,10 +72,10 @@ export class ServiceOwner {
   detach(): void {
     /* View lifetime is deliberately not owner lifetime. */
   }
-  /** Exactly one actual action owner, including externally composed cores. */
-  registerActions(
+  /** Exactly one runtime composition, including its checkout/configuration guard. */
+  registerRuntime(
     quiesce: () => void,
-    configuration?: { assertQuiescent(): void; changed(): void },
+    configuration?: { assertQuiescent(): void; changed?(): void },
   ): void {
     this.lease.assert();
     if (this.actionQuiesce || this.admissionClosed || this.phase !== "idle")

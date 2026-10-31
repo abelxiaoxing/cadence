@@ -10,7 +10,7 @@ const result = spawnSync(
     "test",
     "--",
     "test/lightweight-store-controller.test.ts",
-    "test/lightweight-shell.test.ts",
+    "test/history-shell.test.ts",
     "test/lightweight-process-diff.test.ts",
     "test/lightweight-sdk.test.ts",
     "test/distribution.test.mjs",

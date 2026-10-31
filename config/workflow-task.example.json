@@ -1,7 +1,0 @@
-{
-  "schema": "cadence-assistant-checks/1",
-  "checks": [
-    { "name": "Type check", "command": "bun run check", "timeoutMs": 120000 },
-    { "name": "Tests", "command": "bun run test", "timeoutMs": 120000 }
-  ]
-}

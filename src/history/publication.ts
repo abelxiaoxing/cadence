@@ -16,11 +16,7 @@ import {
   type OwnerLink,
   settlementOutcome,
 } from "../service-contract.ts";
-import {
-  safeDirectory,
-  savedRecordIdentity,
-  type TaskStore,
-} from "../task-store.ts";
+import { savedRecordIdentity, type TaskStore } from "../task-store.ts";
 import {
   decodeTask,
   MAX_RECORD_BYTES,
@@ -28,6 +24,7 @@ import {
   type TaskPhase,
   type TaskRecord,
 } from "../task-types.ts";
+import { safeDirectory } from "../workspace.ts";
 import type { HistoryReader } from "./reader.ts";
 import type { RunState } from "./run-state.ts";
 

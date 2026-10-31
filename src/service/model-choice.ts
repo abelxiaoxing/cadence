@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type { HistoryWriter } from "../history/writer.ts";
 import {
   type ChooseModelRequest,
   ContractError,
@@ -26,14 +25,14 @@ export class OwnerModelChoice {
   constructor(
     private readonly options: {
       owner: ServiceOwner;
-      writer: HistoryWriter;
       models: OwnerModelContext;
       access: AccessMaterial;
       remember?(choice: ModelSelector): void;
     },
   ) {
     if (choiceOwners.has(options.owner)) throw new ContractError("conflict");
-    this.revision = options.writer.configurationRevisionFloor + 1;
+    // Revision is scoped by the exact owner epoch, never by archived task policy.
+    this.revision = 1;
     if (!Number.isSafeInteger(this.revision))
       throw new ContractError("capacity");
     choiceOwners.add(options.owner);
@@ -63,22 +62,12 @@ export class OwnerModelChoice {
     const request = decodeChooseModelRequest(value);
     if (this.installing) throw new ContractError("conflict");
     const assertCurrent = () => {
-      const { owner, writer, models } = this.options;
+      const { owner, models } = this.options;
       owner.assertQuiescent();
-      if (writer.quarantined) throw new ContractError("quarantine");
+      if (models.pending || models.loading) throw new ContractError("conflict");
       if (
-        writer.accounting.owner.leases ||
-        writer.accounting.children.some((pool) => pool.leases) ||
-        writer.pendingWrites ||
-        writer.accounting.episodes.count ||
-        models.pending ||
-        models.loading
-      )
-        throw new ContractError("conflict");
-      if (
-        this.revision < writer.configurationRevisionFloor ||
         canonicalJson(request.expected) !==
-          canonicalJson(this.snapshot().version)
+        canonicalJson(this.snapshot().version)
       )
         throw new ContractError("stale");
     };

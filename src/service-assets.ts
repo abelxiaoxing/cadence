@@ -3,8 +3,8 @@ import { lstatSync, readdirSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { StaticAsset } from "./service/http.ts";
-import { readBounded, safeDirectory } from "./task-store.ts";
 import { parseWireJson } from "./worker-public.mjs";
+import { readBounded, safeDirectory } from "./workspace.ts";
 
 export const ASSET_MEMBER_BYTES = 16 * 1024 * 1024;
 export const ASSET_TOTAL_BYTES = 64 * 1024 * 1024;

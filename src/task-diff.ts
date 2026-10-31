@@ -2,9 +2,9 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readlinkSync } from "node:fs";
 import { join, relative } from "node:path";
-import { gitArguments, gitEnvironment, readBounded } from "./task-store.ts";
 import type { ChangeView } from "./task-types.ts";
 import { diagnosticText } from "./verification-diagnostics.ts";
+import { gitArguments, gitEnvironment, readBounded } from "./workspace.ts";
 
 const admin = (path: string) =>
   path === ".cadence/assistant/tasks" ||

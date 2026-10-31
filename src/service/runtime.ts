@@ -12,7 +12,8 @@ import {
   ERROR_CODES,
   type ErrorCode,
 } from "../service-contract.ts";
-import { resolveWorkspace } from "../task-store.ts";
+import { resolveWorkspace } from "../workspace.ts";
+
 import { decodeHttpPolicy, type HttpPolicy, localOrigin } from "./config.ts";
 import { closed, integer, literal, oneOf, text } from "./contracts/core.ts";
 import { ServiceCoordination } from "./coordination.ts";

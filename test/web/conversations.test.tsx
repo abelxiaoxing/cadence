@@ -94,7 +94,6 @@ it("an unavailable roster is not empty or inferred from historical lifecycle", (
       onCancel={() => {}}
       onTask={() => {}}
       onScope={() => {}}
-      onNew={() => {}}
     />,
   );
   for (const label of [

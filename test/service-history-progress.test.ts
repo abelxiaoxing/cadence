@@ -116,7 +116,7 @@ describe("additive read navigation transport (injected projection, actual HTTP)"
       value: { cursor: input, hits: [], next: null, coverage: coverage() },
     });
     expect(calls).toBe(1);
-    expect(f.adapters.admission).toBeNull();
+    expect(f.adapters.workbench).toBeUndefined();
   });
   it("keeps small GET and authenticates readonly POST before private parsing", async () => {
     let calls = 0;

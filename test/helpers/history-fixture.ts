@@ -35,6 +35,24 @@ export function historyFixture(
   });
   const files = HistoryFiles.initialize(lease);
   const writer = new HistoryWriter(lease, options);
+  return historyFixtureContext({ dir, root, c, lease, files, writer });
+}
+/** Fabricated archived record identities; no model or execution admission. */
+export function historyFixtureContext({
+  dir,
+  root,
+  c,
+  lease,
+  files,
+  writer,
+}: {
+  dir: string;
+  root: string;
+  c: ServiceCoordination;
+  lease: import("../../src/service/coordination.ts").OwnerLease;
+  files: HistoryFiles;
+  writer: HistoryWriter;
+}) {
   const taskId = randomUUID(),
     runId = randomUUID(),
     childRunId = randomUUID(),

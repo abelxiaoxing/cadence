@@ -4,7 +4,7 @@
 
 Cadence turns [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) into a conversation-driven engineering workflow.
 Enter `/cadence [goal]`, align the plan through conversation, then let the persistent owner implement and verify it.
-The optional WebUI supports the same persistent conversation workflow without a live Pi terminal, alongside ordinary chat and explicitly labelled legacy tasks.
+The optional WebUI supports the same persistent conversation workflow without a live Pi terminal, alongside ordinary chat and readonly retained history.
 
 ## Why Cadence
 
@@ -49,8 +49,6 @@ The port and token live in `~/.pi/agent/cadence/.env`; anyone with the token can
 5. Follow actual progress and local merge results in the conversation; open any subagent's full context from the lower-left **Subagents** dock.
    Refresh and completion keep Cadence on; **Exit Cadence** only exits the mode, while **Cancel workflow — request stop** requests cancellation.
 
-**Legacy task** retains the old create/plan/Save/Start/check/human-Review route explicitly.
-
 ### In the terminal
 
 Enter `/cadence <goal>` once in any trusted project's Pi conversation.
@@ -65,7 +63,8 @@ Native use starts/reuses a local project owner on demand, without installing a s
 Model preferences are remembered in `~/.pi/agent/cadence/settings.json`; authentication stays with Pi.
 
 See [Conversation mode](docs/conversation-mode.md) for exact approval, worktree prerequisites and cancellation.
-`/cadence-inspect` retains the advanced legacy task/history UI, including separate checks and human review; it is not the daily entrypoint.
+`/cadence-history [run-id]`: readonly run details and retained history; no service startup or task execution.
+See [History and diagnostics](docs/history.md).
 Browser approval is separately bound to the displayed plan and conversation; authentication alone never authorizes execution.
 
 ### More projects
@@ -80,15 +79,8 @@ Opening another project never stops work in the previous one.
 
 ### Checks
 
-New workflows declare their checks in the approved plan.
-For legacy tasks, list configured checks in `.cadence/assistant/config.json`:
-
-```json
-{
-  "schema": "cadence-assistant-checks/1",
-  "checks": [{ "name": "Tests", "command": "bun run test", "timeoutMs": 120000 }]
-}
-```
+Checks are declared in the exact plan you approve, including baseline and acceptance commands.
+Their actual outcomes remain separate from automatic Agent review.
 
 ## Manage the service
 

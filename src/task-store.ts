@@ -1,31 +1,15 @@
-import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
-  constants,
-  fstatSync,
   fsyncSync,
-  lstatSync,
-  mkdirSync,
   openSync,
   readdirSync,
-  readSync,
-  realpathSync,
   renameSync,
-  type Stats,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, hostname } from "node:os";
-import {
-  dirname,
-  isAbsolute,
-  join,
-  parse,
-  relative,
-  resolve,
-  sep,
-} from "node:path";
+import { hostname } from "node:os";
+import { join } from "node:path";
 import {
   decodeCheck,
   decodeTask,
@@ -36,210 +20,30 @@ import {
 } from "./task-types.ts";
 import { diagnosticText } from "./verification-diagnostics.ts";
 
-function parseRecord(data: Buffer): unknown {
-  try {
-    return JSON.parse(data.toString("utf8"));
-  } catch {
-    throw new Error("Corrupt JSON state; preserved without reset");
-  }
-}
-function absent(error: unknown): boolean {
-  return object(error) && error.code === "ENOENT";
-}
-/** Reject links in every existing ancestor. Missing observation never creates paths.
- * The readonly hook inspects each existing directory synchronously, including
- * the root, before visiting its child. It must not await, mutate or retain state
- * as authority for a later call/effect. Legacy/default traversal is unchanged.
- */
-export function safeDirectory(path: string, create?: boolean): boolean;
-export function safeDirectory(
-  path: string,
-  create: false,
-  inspectExisting: (path: string, stat: Stats) => void,
-): boolean;
-export function safeDirectory(
-  path: string,
-  create = false,
-  inspectExisting?: (path: string, stat: Stats) => void,
-): boolean {
-  const full = resolve(path);
-  const root = parse(full).root;
-  if (inspectExisting) {
-    const st = lstatSync(root);
-    if (!st.isDirectory() || st.isSymbolicLink())
-      throw new Error("Unsafe directory");
-    inspectExisting(root, st);
-  }
-  let at = root;
-  for (const part of full.slice(root.length).split(sep).filter(Boolean)) {
-    at = join(at, part);
-    let existing: Stats | undefined;
-    try {
-      // One no-follow observation per component: a link is never reported as
-      // a directory, and the inspection sees this same, latest observation.
-      const checked = lstatSync(at);
-      if (!checked.isDirectory() || checked.isSymbolicLink())
-        throw new Error("Unsafe directory");
-      existing = checked;
-    } catch (error) {
-      if (!absent(error)) throw error;
-      if (!create) return false;
-      try {
-        mkdirSync(at, { mode: 0o700 });
-      } catch (mkdirError) {
-        if (!object(mkdirError) || mkdirError.code !== "EEXIST")
-          throw mkdirError;
-      }
-      const created = lstatSync(at);
-      if (!created.isDirectory() || created.isSymbolicLink())
-        throw new Error("Unsafe directory");
-    }
-    // Outside the ENOENT handler: an inspection refusal is never absence and
-    // must not authorize creation, even if its error happens to carry ENOENT.
-    if (existing) inspectExisting?.(at, existing);
-  }
-  return true;
-}
-const transientWindows = new Set(["EPERM", "EACCES", "EBUSY"]);
-/** Windows refuses to replace, remove or recreate a path while another process
- * holds it (a polling reader, antivirus, a delete still pending), which POSIX
- * never does. Retry the same operation briefly; `recheck` reasserts the
- * caller's expected bytes before every retry, so a retry never overwrites a
- * change. Other errors, including EEXIST and ENOENT, keep their meaning. */
-export function retryWindowsFileOperation<T>(
-  operation: () => T,
-  recheck?: () => void,
-): T {
-  if (process.platform !== "win32") return operation();
-  const deadline = performance.now() + 2000;
-  for (let delay = 2; ; delay = Math.min(delay * 2, 50)) {
-    try {
-      return operation();
-    } catch (error) {
-      if (
-        !object(error) ||
-        !transientWindows.has(String(error.code)) ||
-        performance.now() >= deadline
-      )
-        throw error;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
-      recheck?.();
-    }
-  }
-}
-/** `packaged` reads the installed package's own files (web assets, Agent
- * profiles). A package manager may hard-link them into its store (Bun's default
- * backend), so a second link is not an alias of workspace or task state; their
- * callers bind content instead. Every other read stays single-link. */
-export function readBounded(
-  path: string,
-  max: number,
-  packaged = false,
-): Buffer | undefined {
-  if (!safeDirectory(dirname(path))) return undefined;
-  let fd: number;
-  try {
-    const st = lstatSync(path);
-    if (
-      !st.isFile() ||
-      st.isSymbolicLink() ||
-      (!packaged && st.nlink !== 1) ||
-      st.size > max
-    )
-      throw new Error("Unsafe or oversized file");
-    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-  } catch (error) {
-    if (absent(error)) return undefined;
-    throw error;
-  }
-  try {
-    const st = fstatSync(fd);
-    if (!st.isFile() || (!packaged && st.nlink !== 1) || st.size > max)
-      throw new Error("Unsafe or oversized file");
-    // Read at most max+1 even if another editor grows the file after stat.
-    const buffer = Buffer.alloc(max + 1);
-    let size = 0;
-    while (size < buffer.length) {
-      const n = readSync(fd, buffer, size, buffer.length - size, null);
-      if (!n) break;
-      size += n;
-    }
-    if (size > max) throw new Error("Oversized file");
-    return buffer.subarray(0, size);
-  } finally {
-    closeSync(fd);
-  }
-}
+export type { CheckoutLock } from "./service/checkout-lock.ts";
+export {
+  canonicalAmbientRoot,
+  defaultStateHome,
+  effectiveWorkspace,
+  gitArguments,
+  gitEnvironment,
+  privateWorkspace,
+  readBounded,
+  resolveWorkspace,
+  retryWindowsFileOperation,
+  safeDirectory,
+  stateHomeInside,
+} from "./workspace.ts";
 
-/** Git observations describe the physical cwd, not inherited alternate
- * index/worktree overrides. Root never borrows sudo's original user's trust. */
-export function gitEnvironment(): NodeJS.ProcessEnv {
-  const root = process.getuid?.() === 0;
-  return {
-    ...Object.fromEntries(
-      Object.entries(process.env).filter(
-        ([name]) => !name.startsWith("GIT_") && !(root && name === "SUDO_UID"),
-      ),
-    ),
-    GIT_OPTIONAL_LOCKS: "0",
-    LC_ALL: "C",
-  };
-}
-/** Observation is not permission to trust another account's repository.
- * Even with fsmonitor/textconv/ext-diff disabled, status/diff can invoke clean
- * or process filters. Root therefore requires Git's own ownership check, with
- * no safe.directory exceptions (including inherited wildcards). No config is
- * written and ordinary-user trust behavior stays unchanged. */
-export function gitArguments(args: string[]): string[] {
-  return process.platform !== "win32" && process.getuid?.() === 0
-    ? ["-c", "safe.directory=", "-c", "core.fsmonitor=false", ...args]
-    : args;
-}
-export function resolveWorkspace(cwd: string): { root: string; cwd: string } {
-  const actual = realpathSync(cwd);
-  const result = spawnSync(
-    "git",
-    gitArguments(["rev-parse", "--show-toplevel"]),
-    {
-      cwd: actual,
-      env: gitEnvironment(),
-      encoding: "utf8",
-      timeout: 3000,
-      maxBuffer: 8192,
-      windowsHide: true,
-    },
-  );
-  // Remove only Git's record terminator, not valid whitespace in a path.
-  const topLevel = result.stdout?.replace(
-    process.platform === "win32" ? /\r?\n$/ : /\n$/,
-    "",
-  );
-  if (result.status === 0 && topLevel)
-    return { root: realpathSync(topLevel), cwd: actual };
-  if (result.error && !object(result.error))
-    throw new Error("Cannot resolve workspace");
-  if (result.error && object(result.error) && result.error.code !== "ENOENT")
-    throw new Error("Workspace lookup failed");
-  // A missing Git executable or a confirmed non-repository is an honest non-Git workspace.
-  if (!result.error && !result.stderr.includes("not a git repository"))
-    throw new Error("Git workspace lookup refused");
-  return { root: actual, cwd: actual };
-}
-export function defaultStateHome(): string {
-  const candidate =
-    process.platform === "win32"
-      ? process.env.LOCALAPPDATA
-      : process.env.XDG_STATE_HOME;
-  if (candidate && !isAbsolute(candidate))
-    throw new Error("State home must be absolute");
-  return (
-    candidate ??
-    join(
-      homedir(),
-      process.platform === "win32" ? "AppData/Local" : ".local/state",
-    )
-  );
-}
+import { type CheckoutLock, CheckoutStore } from "./service/checkout-lock.ts";
+import {
+  defaultStateHome,
+  parseRecord,
+  readBounded,
+  retryWindowsFileOperation,
+  safeDirectory,
+} from "./workspace.ts";
+
 /** Canonical bytes written by save; identity is optimistic record concurrency, not consent. */
 function recordText(record: TaskRecord): string {
   return `${JSON.stringify(record, null, 2)}\n`;
@@ -250,193 +54,11 @@ function contentIdentity(text: string | Buffer): string {
 export function savedRecordIdentity(record: TaskRecord): string {
   return contentIdentity(recordText(record));
 }
-/** Resolve ambient aliases, including a missing tail, without creating anything. */
-export function canonicalAmbientRoot(path: string): string {
-  const full = resolve(path);
-  try {
-    return realpathSync(full);
-  } catch (error) {
-    if (!absent(error)) throw error;
-    // A dangling alias is not a missing ambient directory.
-    try {
-      lstatSync(full);
-      throw new Error("Dangling ambient root");
-    } catch (statError) {
-      if (!absent(statError)) throw statError;
-    }
-    const parent = dirname(full);
-    if (parent === full) throw error;
-    return join(canonicalAmbientRoot(parent), full.slice(parent.length));
-  }
-}
-function privateRootFor(canonicalRoot: string, stateHome: string): string {
-  return join(
-    canonicalAmbientRoot(stateHome),
-    "cadence-assistant-v1",
-    createHash("sha256").update(canonicalRoot).digest("hex"),
-  );
-}
-function contains(root: string, path: string): boolean {
-  const within = relative(root, resolve(path));
-  return (
-    !within ||
-    (!within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within))
-  );
-}
-/** Private history, locks and access material must stay outside the working
- * copy, or change observation, check freshness and review would see them. */
-export function stateHomeInside(
-  root: string,
-  stateHome = defaultStateHome(),
-): boolean {
-  const canonical = realpathSync(root);
-  return contains(canonical, privateRootFor(canonical, stateHome));
-}
-/** Also exclude projects *inside* our reserved private namespace. Root access
- * does not turn private history/coordination into an ordinary engineering tree.
- * Resolves missing tails without creating anything (for explicit project mkdir). */
-export function privateWorkspace(
-  requested: string,
-  stateHome = defaultStateHome(),
-): boolean {
-  return contains(
-    join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1"),
-    canonicalAmbientRoot(requested),
-  );
-}
-/** A project must be explicit and outside private state. Never choose, create or
- * reconstruct a default workspace. The workbench itself has no project cwd. */
-export function effectiveWorkspace(
-  requested: string,
-  stateHome?: string,
-  _home?: string,
-): { workspace: string; redirected: boolean } {
-  if (
-    privateWorkspace(requested, stateHome) ||
-    stateHomeInside(resolveWorkspace(requested).root, stateHome)
-  )
-    throw new Error(
-      "Choose a project outside Cadence private state; no default workspace was created",
-    );
-  return { workspace: requested, redirected: false };
-}
-export interface CheckoutLock {
-  schema: "cadence-assistant-lock/1";
-  token: string;
-  pid: number;
-  host: string;
-  runId: string;
-  root: string;
-}
-export class TaskStore {
-  readonly root: string;
+export class TaskStore extends CheckoutStore {
   readonly tasks: string;
-  readonly privateRoot: string;
   constructor(root: string, stateHome = defaultStateHome()) {
-    this.root = realpathSync(root);
-    if (privateWorkspace(this.root, stateHome))
-      throw new Error("Private state cannot be a workspace");
+    super(root, stateHome);
     this.tasks = join(this.root, ".cadence", "assistant", "tasks");
-    this.privateRoot = privateRootFor(this.root, stateHome);
-    if (contains(this.root, this.privateRoot))
-      throw new Error("Private state home must be outside the working copy");
-  }
-  get lockPath(): string {
-    return join(this.privateRoot, "checkout.lock");
-  }
-  private inspectPrivate(): void {
-    const namespace = dirname(this.privateRoot);
-    for (const path of [namespace, this.privateRoot]) {
-      if (!safeDirectory(path)) continue;
-      const st = lstatSync(path);
-      if (
-        process.platform !== "win32" &&
-        ((st.mode & 0o077) !== 0 ||
-          (process.getuid && st.uid !== process.getuid()))
-      )
-        throw new Error("Private state permissions refused");
-    }
-  }
-  private inspectPrivateFile(path: string, max: number): void {
-    this.inspectPrivate();
-    if (!safeDirectory(this.privateRoot)) return;
-    try {
-      const st = lstatSync(path);
-      if (
-        !st.isFile() ||
-        st.isSymbolicLink() ||
-        st.nlink !== 1 ||
-        st.size > max ||
-        (process.platform !== "win32" &&
-          ((st.mode & 0o077) !== 0 ||
-            (process.getuid && st.uid !== process.getuid())))
-      )
-        throw new Error("Unsafe private state file");
-    } catch (error) {
-      if (!absent(error)) throw error;
-    }
-  }
-  inspectLock(): CheckoutLock | undefined {
-    this.inspectPrivateFile(this.lockPath, 8192);
-    const data = readBounded(this.lockPath, 8192);
-    if (!data) return undefined;
-    const lock: unknown = parseRecord(data);
-    if (
-      !object(lock) ||
-      lock.schema !== "cadence-assistant-lock/1" ||
-      lock.root !== this.root ||
-      typeof lock.token !== "string" ||
-      !validId(lock.token) ||
-      typeof lock.runId !== "string" ||
-      !validId(lock.runId) ||
-      typeof lock.host !== "string" ||
-      !Number.isInteger(lock.pid) ||
-      Number(lock.pid) < 1
-    )
-      throw new Error("Unknown or corrupt coordination lock");
-    return lock as unknown as CheckoutLock;
-  }
-  acquire(): CheckoutLock {
-    this.inspectPrivate();
-    safeDirectory(this.privateRoot, true);
-    const lock: CheckoutLock = {
-      schema: "cadence-assistant-lock/1",
-      token: randomUUID(),
-      runId: randomUUID(),
-      pid: process.pid,
-      host: hostname(),
-      root: this.root,
-    };
-    let fd: number;
-    try {
-      fd = retryWindowsFileOperation(() =>
-        openSync(this.lockPath, "wx", 0o600),
-      );
-    } catch {
-      throw new Error(
-        "Checkout busy or unresolved lock; inspect and explicitly recover only a dead owner",
-      );
-    }
-    try {
-      writeFileSync(fd, JSON.stringify(lock));
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-    return lock;
-  }
-  assertOwner(lock: CheckoutLock): void {
-    if (JSON.stringify(this.inspectLock()) !== JSON.stringify(lock))
-      throw new Error("Coordination lock changed");
-  }
-  release(lock: CheckoutLock): void {
-    if (lock.pid !== process.pid || lock.host !== hostname())
-      throw new Error("Only the owning process may release a lock");
-    this.assertOwner(lock);
-    retryWindowsFileOperation(
-      () => unlinkSync(this.lockPath),
-      () => this.assertOwner(lock),
-    );
   }
   recover(expected: CheckoutLock, acknowledgeEscapedProcesses: boolean): void {
     if (!acknowledgeEscapedProcesses || expected.host !== hostname())
@@ -591,3 +213,17 @@ export class TaskStore {
   }
 }
 export const TASK_CONFIG_SCHEMA = "cadence-assistant-checks/1";
+
+/** Only legacy readers/producers use this adapter; coordination owns no task CRUD. */
+const stores = new WeakMap<object, TaskStore>();
+export function legacyTaskStore(c: {
+  store: { root: string };
+  stateHome: string;
+}): TaskStore {
+  let store = stores.get(c);
+  if (!store) {
+    store = new TaskStore(c.store.root, c.stateHome);
+    stores.set(c, store);
+  }
+  return store;
+}

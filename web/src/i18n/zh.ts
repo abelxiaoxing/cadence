@@ -2,6 +2,22 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
+  "Files / history": "文件 / 历史",
+  "Files and history drawer": "文件与历史面板",
+  History: "历史",
+  "History details": "历史详情",
+  "Select retained history to inspect": "选择保留的历史记录查看",
+  "History is readonly. Start new work in a conversation with /cadence.":
+    "历史记录只读。请在对话中通过 /cadence 开始新工作。",
+  "Scanning retained workflow IDs; no complete page yet.":
+    "正在扫描保留的工作流 ID；尚未形成完整页面。",
+  "Continue reading history": "继续读取历史",
+  "Workflow history": "工作流历史",
+  "ID order; refresh to observe new runs. Unreadable records are not removed.":
+    "按 ID 排序；刷新查看新运行。无法读取的记录不会被删除。",
+  "No retained workflows on this page.": "此页没有保留的工作流。",
+  Next: "下一页",
+
   "Cadence research, implementation and review agents appear here.":
     "Cadence 的调研、实施和审查代理会显示在这里。",
   "Subagent context": "子代理上下文",
@@ -31,7 +47,6 @@ export const zh = {
   "Ready for conversation": "可以继续对话",
   "Cadence conversation": "Cadence 对话",
   "Cadence on": "Cadence 已开启",
-  "Legacy task": "旧版任务",
   "Exit Cadence": "退出 Cadence",
   "Message, or /cadence to enter continuous Cadence mode…":
     "输入消息，或输入 /cadence 进入持续 Cadence 模式…",
@@ -162,25 +177,6 @@ export const zh = {
     "任务准备不可用，请先查看原始请求结果，不要重复发送。",
   "Task preparation stopped: {reason}. Observe the original receipt; no automatic retry.":
     "任务准备已停止：{reason}。请查看原始请求结果，不会自动重试。",
-  "Plan approval": "计划确认",
-  "Plan metadata read in progress. Try again after observation completes.":
-    "计划信息仍在读取，请等状态更新后再试。",
-  "This task already has a plan. Review it in Task details instead.":
-    "此任务已有计划，请在任务详情中查看，避免覆盖现有计划。",
-  "Analysis complete. Review the plan before making changes.":
-    "分析完成，请在修改代码前确认计划。",
-  "Analysis and progress appear below. No edits start before plan approval.":
-    "分析过程与进度显示在下方，确认计划前不会修改代码。",
-  "Review implementation plan": "查看实施计划",
-  "Confirm plan and execute": "确认计划并执行",
-  "Approving saves this exact plan and starts it. No separate Start confirmation is needed.":
-    "确认后将保存并执行当前计划，无需再次点击启动。",
-  "Context changed. Close and review the plan again.":
-    "任务上下文已变化，请关闭后重新查看计划。",
-  "Plan confirmation expired. Review the plan again.":
-    "计划确认已过期，请重新查看计划。",
-  "Plan execution stopped: {reason}. Observe the original receipt; no automatic retry.":
-    "计划执行流程已停止：{reason}。请查看原始请求结果，不会自动重试。",
   "Prepare a plan first; Start requires confirmation.":
     "先准备计划，执行需另行确认 Start。",
   "Direct host tools · no Cadence task":
@@ -356,40 +352,10 @@ export const zh = {
   "Close dialog — no cancellation of accepted work":
     "关闭对话框——不会取消已接受的工作",
   "Close — accepted work is not cancelled": "关闭——不会取消已接受的工作",
-  "Admission pending/unknown — observe this exact receipt.":
-    "准入待定/未知——请观察这个确切回执。",
-  "{code}; effect {effect}": "{code}；效果 {effect}",
-  "Uncertain; do not repeat the action.": "结果不确定；请勿重复此操作。",
-  "Confirm {action}": "确认{action}",
-  "Access is not consent. This confirmation applies only to the displayed context, once.":
-    "访问权限不等于同意。此确认仅对所显示的上下文生效一次。",
   Checkout: "工作副本",
-  "Working directory": "工作目录",
-  "Model / API / thinking": "模型 / API / 思考",
-  "Check environment": "检查环境",
-  "Service launch environment policy, generation {generation}; no browser environment overlays.":
-    "服务启动环境策略，第 {generation} 代；不叠加浏览器环境。",
   Observation: "观察",
-  "Complete within bounded scope": "在限定范围内完整",
-  "Incomplete bounded coverage": "限定范围覆盖不完整",
   Expires: "过期时间",
-  "Exact parent check": "确切的父级检查",
-  "{name}; timeout {timeout} ms; cwd above.":
-    "{name}；超时 {timeout} 毫秒；工作目录见上。",
-  "Readonly proposal only. It will not save itself or dispatch editing.":
-    "仅为只读提案。它不会自行保存，也不会分派编辑。",
-  "Issues: {issues}": "问题：{issues}",
-  "Context changed or confirmation expired. Close, observe again and request a new preview.":
-    "上下文已变化或确认已过期。请关闭、重新观察并请求新的预览。",
-  "Back — no new effect": "返回——不产生新效果",
-  "Create {kind} task": "创建{kind}任务",
-  "No Start is included.": "不包含启动。",
   "Expected: {output}": "预期产出：{output}",
-  "Exact proposed graph and identities (not yet committed)":
-    "确切的提议任务图与标识（尚未提交）",
-  "Exact human review targets": "确切的人工审阅对象",
-  "Human review only; failures, native exit, stale and not-run checks remain unchanged. Issues acknowledgment: {accepted}.":
-    "仅为人工审阅；失败、原生退出、过期和未运行的检查保持不变。问题确认：{accepted}。",
   "Explicit owner-wide choice, only while quiescent. This does not resolve credentials, probe a provider, save a plan or Start work.":
     "显式的所有者级选择，仅在空闲时可用。它不会解析凭据、探测提供方、保存计划或启动工作。",
   "Current: {model}": "当前：{model}",
@@ -541,8 +507,6 @@ export const zh = {
   "Owner metadata is stale.": "所有者元数据已过期。",
   "Owner metadata unavailable.": "所有者元数据不可用。",
   "Plan proposal unavailable.": "计划提案不可用。",
-  "Current plan metadata unavailable. Observe again; historical text is not action authority.":
-    "当前计划元数据不可用。请重新观察；历史文本不能作为操作依据。",
   "Saved graph proof in progress.": "已保存任务图的证明正在进行。",
   "Continue saved graph read": "继续读取已保存的任务图",
   "Load observed saved plan into local draft":
@@ -560,49 +524,10 @@ export const zh = {
   "Preview human review / Done": "预览人工审阅 / 完成",
   "Observe current obligations in Checks before requesting review.":
     "请求审阅前，请先在“检查”中观察当前检查项。",
-  "Readable plan & decomposition": "可读计划与分解",
-  "{count} required assignments": "{count} 个必需子任务",
-  "Preview readonly Generate proposal": "预览只读生成提案",
-  "Preview Save plan": "预览保存计划",
-  "Preview Start saved graph": "预览启动已保存的任务图",
-  "Draft changes never execute. Start uses the saved graph shown in its fresh preview, not unsaved text. Generated proposals never save or start themselves.":
-    "草稿修改永远不会执行。启动使用其最新预览中显示的已保存任务图，而不是未保存的文本。生成的提案不会自行保存或启动。",
-  "Saved assignments name an old model selection. Reading does not rebind them.":
-    "已保存的子任务指定了旧的模型选择。读取不会重新绑定它们。",
-  "Explicitly rebind draft to current model (requires new Save)":
-    "将草稿显式重新绑定到当前模型（需要重新保存）",
-  "Readable plan": "可读计划",
-  "Read rendered plan": "阅读渲染后的计划",
-  "checkout writer": "工作副本写入者",
   readonly: "只读",
   Edit: "编辑",
-  "Remove draft assignment": "移除草稿子任务",
   Purpose: "用途",
   Instructions: "指令",
-  "Expected output": "预期产出",
-  "Current-episode dependencies (whole final text by default)":
-    "本轮依赖（默认使用完整最终文本）",
-  "Require complete observation": "要求完整观察",
-  "Selection: {range}": "选择范围：{range}",
-  "reviewed UTF-8 bytes {start}–{end}": "已审阅的 UTF-8 字节 {start}–{end}",
-  "whole final text; no silent clipping": "完整最终文本；不会静默截断",
-  "Reviewed edge JSON (range/null and exact historical identity)":
-    "已审阅的依赖边 JSON（范围/null 与确切历史标识）",
-  "Remove edge": "移除依赖边",
-  "Explicit historical/advisory edge JSON": "显式的历史/参考依赖边 JSON",
-  "Exact committed run/child/result/version plus range and coverage requirement":
-    "确切的已提交运行/子运行/结果/版本，以及范围和覆盖要求",
-  "Add reviewed historical edge": "添加已审阅的历史依赖边",
-  "Discard inline edits": "放弃行内编辑",
-  "Apply to local draft": "应用到本地草稿",
-  "Role {role}": "角色 {role}",
-  "Add assignment": "添加子任务",
-  "Remove dependent edges explicitly before deleting this assignment.":
-    "删除此子任务前，请先显式移除依赖它的边。",
-  "Invalid dependency. Original edge retained; review before Save.":
-    "依赖无效。已保留原依赖边；请在保存前审阅。",
-  "Historical edge requires actual committed identity; no guessed result reference.":
-    "历史依赖边需要真实的已提交标识；不接受猜测的结果引用。",
   View: "视图",
   "Raw text / lines": "原始文本 / 行",
   "Safe Markdown": "安全 Markdown",
@@ -617,26 +542,6 @@ export const zh = {
   "Select page line {line}": "选择页内第 {line} 行",
   "Selected page lines {start}–{end}": "已选页内第 {start}–{end} 行",
   "Clear selection": "清除选择",
-  "Current configured obligations": "当前已配置的检查项",
-  "Observe obligations": "观察检查项",
-  "Obligations unavailable: {error}": "检查项不可用：{error}",
-  "Obligations unavailable.": "检查项不可用。",
-  "No configured obligations. This is not passing check coverage.":
-    "没有已配置的检查项。这不代表检查已通过。",
-  "Timeout {timeout} ms. Native outcome and freshness remain separate.":
-    "超时 {timeout} 毫秒。原生结果与是否最新分别记录。",
-  "Preview exact configured check": "预览确切的已配置检查",
-  "Browser checks are configured selections only. Native-local manual commands are not a browser shell endpoint.":
-    "浏览器中只能运行已配置的检查。本地原生手动命令不是浏览器 shell 端点。",
-  "Current checkout changes": "当前工作副本变更",
-  "Current checkout changes (not a captured historical diff)":
-    "当前工作副本变更（不是捕获的历史 diff）",
-  "Observe current changes": "观察当前变更",
-  "Current observation unavailable": "当前观察不可用",
-  "Fingerprint {identity} · {coverage} · includes pre-existing dirt; not attribution.":
-    "指纹 {identity} · {coverage} · 包含既有的未提交修改；不代表归属。",
-  "complete within bounded scope": "在限定范围内完整",
-  "incomplete coverage": "覆盖不完整",
   "Captured observations include pre-existing dirt. They do not attribute every change to Cadence; bounded fingerprints are not filesystem snapshots.":
     "捕获的观察包含既有的未提交修改。它们不会把每处变更都归于 Cadence；限定指纹不是文件系统快照。",
   "committed #{seq}": "已提交 #{seq}",
@@ -742,8 +647,6 @@ export const zh = {
   final: "最终",
   observed: "已观察",
   create: "创建",
-  "generate-plan": "生成计划",
-  "save-plan": "保存计划",
   start: "启动",
   research: "调研",
   diagnosis: "诊断",

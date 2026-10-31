@@ -14,7 +14,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { retryWindowsFileOperation, safeDirectory } from "../task-store.ts";
+import { retryWindowsFileOperation, safeDirectory } from "../workspace.ts";
+
 import { ContractError, parseWireJson } from "./contracts/core.ts";
 
 export const METADATA_BYTES = 16 * 1024;

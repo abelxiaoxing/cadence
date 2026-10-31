@@ -1279,11 +1279,10 @@ summary:focus-visible,
   color: var(--search-active-fg);
 }
 
-/* ---- Cards: receipts, run summaries, observations, plan steps ---- */
+/* ---- Cards: receipts, run summaries, observations ---- */
 .receipt,
 .run-summary,
 .scm-file,
-.plan-board-step,
 .card {
   margin: 8px 0;
   padding: 10px 12px;
@@ -1327,23 +1326,6 @@ summary:focus-visible,
 }
 .receipt > button {
   align-self: flex-start;
-}
-.plan-board-head,
-.plan-board-head-main,
-.plan-step-head {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-.plan-board-steps {
-  padding-inline-start: 22px;
-}
-.dependency-editor {
-  margin: 6px 0;
-  padding: 6px 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
 }
 .scm-body {
   display: block;
@@ -2213,10 +2195,6 @@ summary:focus-visible,
 .lp-new .new-conversation {
   flex: 1;
 }
-.new-task-shortcut {
-  flex: none;
-  padding: 6px;
-}
 .workbench-right {
   display: flex;
   flex-direction: column;
@@ -2885,4 +2863,12 @@ summary.chat-steps-head:hover {
 .workflow-agent .workflow-card {
   max-width: 920px;
   margin: 0 auto;
+}
+
+.workflow-history {
+  flex: 0 0 auto;
+  max-height: 40%;
+  overflow: auto;
+  padding: 8px;
+  border-top: 1px solid var(--border-soft);
 }

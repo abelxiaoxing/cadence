@@ -14,7 +14,7 @@ import {
   type SessionBootstrap,
 } from "./service-contract.ts";
 import { HttpServiceTransport } from "./service-http-client.ts";
-import { effectiveWorkspace } from "./task-store.ts";
+import { effectiveWorkspace } from "./workspace.ts";
 
 export const MANAGEMENT_GUIDANCE =
   "Cadence owner absent, unavailable or incompatible. Explicitly run cadence-service status --workspace <path>, cadence-service diagnose --workspace <path>, or cadence-service start --workspace <path>. Stop older Cadence sessions first. For retained fences use cadence-service recover inspect; resolve requires a local terminal and separate process, credential and storage acknowledgments. Never treat unavailable/quarantined as stopped. No service was started and no embedded executor is available.";

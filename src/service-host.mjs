@@ -14,511 +14,9 @@ import { WebSocket, WebSocketServer as WebSocketServer2 } from "ws";
 
 // src/service-assets.ts
 import { createHash as createHash2 } from "node:crypto";
-import { lstatSync as lstatSync2, readdirSync as readdirSync2 } from "node:fs";
+import { lstatSync as lstatSync2, readdirSync } from "node:fs";
 import { join as join2 } from "node:path";
 import { fileURLToPath } from "node:url";
-
-// src/task-store.ts
-import { spawnSync } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
-import {
-  closeSync,
-  constants,
-  fstatSync,
-  fsyncSync,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  readdirSync,
-  readSync,
-  realpathSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync
-} from "node:fs";
-import { homedir, hostname } from "node:os";
-import {
-  dirname,
-  isAbsolute,
-  join,
-  parse,
-  relative,
-  resolve,
-  sep
-} from "node:path";
-
-// src/task-types.ts
-var TASK_SCHEMA = "cadence-workflow-assistant/1";
-var MAX_RECORD_BYTES = 128 * 1024;
-function object(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-function boundedString(value, max) {
-  return typeof value === "string" && Buffer.byteLength(value) <= max && !value.includes("\x00");
-}
-function validId(value) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
-}
-function decodeCheck(value) {
-  if (!object(value) || !boundedString(value.name, 128) || !value.name.trim() || !boundedString(value.command, 4096) || !value.command.trim() || !Number.isInteger(value.timeoutMs) || Number(value.timeoutMs) < 100 || Number(value.timeoutMs) > 1200000)
-    throw new Error("Invalid check definition");
-  const controls = /[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/u;
-  if (controls.test(value.command) || controls.test(value.name) || /[\n\t]/u.test(value.name))
-    throw new Error("Check commands/names must be visibly representable in the terminal");
-  return {
-    name: value.name,
-    command: value.command,
-    timeoutMs: Number(value.timeoutMs)
-  };
-}
-function decodeTask(value) {
-  if (!object(value) || value.schema !== TASK_SCHEMA || typeof value.id !== "string" || !validId(value.id) || !Number.isSafeInteger(value.revision) || Number(value.revision) < 1 || typeof value.kind !== "string" || !["code", "research", "diagnosis"].includes(value.kind) || typeof value.phase !== "string" || ![
-    "planning",
-    "running",
-    "review",
-    "interrupted",
-    "failed",
-    "done"
-  ].includes(value.phase) || !boundedString(value.goal, 8192) || !value.goal.trim() || !boundedString(value.plan, 32768) || !boundedString(value.cwd, 4096) || !boundedString(value.result, 16384) || !boundedString(value.baseline, 16384) || !Array.isArray(value.checks) || value.checks.length > 32 || !Array.isArray(value.activity) || value.activity.length > 64)
-    throw new Error("Unknown or corrupt task record");
-  for (const check of value.checks) {
-    decodeCheck(check);
-    if (!object(check) || !boundedString(check.cwd, 4096) || !(check.exitCode === null || Number.isInteger(check.exitCode)) || typeof check.durationMs !== "number" || !Number.isFinite(check.durationMs) || check.durationMs < 0 || typeof check.status !== "string" || !["passed", "failed", "canceled", "stale"].includes(check.status) || !boundedString(check.fingerprint, 128) || check.log !== undefined && (typeof check.log !== "string" || !/^[a-f0-9-]+\.log$/.test(check.log)))
-      throw new Error("Corrupt check record");
-  }
-  for (const entry of value.activity) {
-    if (!object(entry) || !boundedString(entry.at, 64) || !boundedString(entry.text, 512))
-      throw new Error("Corrupt activity");
-  }
-  if (value.review !== undefined && (!object(value.review) || !boundedString(value.review.fingerprint, 128) || typeof value.review.outcome !== "string" || !["reviewed", "reviewed-with-issues"].includes(value.review.outcome)))
-    throw new Error("Corrupt review");
-  const allowed = new Set([
-    "schema",
-    "id",
-    "revision",
-    "kind",
-    "goal",
-    "plan",
-    "cwd",
-    "phase",
-    "result",
-    "baseline",
-    "checks",
-    "review",
-    "activity"
-  ]);
-  if (Object.keys(value).some((key) => !allowed.has(key)))
-    throw new Error("Unknown task fields");
-  return structuredClone(value);
-}
-
-// src/verification-diagnostics.ts
-function diagnosticText(value, maximum = 4096, secrets = []) {
-  maximum = Math.max(0, Math.floor(maximum));
-  let clean = value;
-  for (const secret of [...new Set(secrets)].filter(Boolean).sort((a, b) => b.length - a.length))
-    clean = clean.split(secret).join("[redacted]");
-  clean = clean.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, "").replace(/(Bearer\s+)\S+/gi, "$1[redacted]").replace(/((?:api[_-]?key|token|password|secret)\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]").replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[redacted]@");
-  if (Buffer.byteLength(clean) <= maximum)
-    return clean;
-  const marker = maximum >= 12 ? `
-[truncated]` : ".".repeat(maximum);
-  const bytes = Buffer.from(clean).subarray(0, Math.max(0, maximum - Buffer.byteLength(marker)));
-  return bytes.toString("utf8").replace(/\ufffd$/, "") + marker;
-}
-
-// src/task-store.ts
-function parseRecord(data) {
-  try {
-    return JSON.parse(data.toString("utf8"));
-  } catch {
-    throw new Error("Corrupt JSON state; preserved without reset");
-  }
-}
-function absent(error) {
-  return object(error) && error.code === "ENOENT";
-}
-function safeDirectory(path, create = false, inspectExisting) {
-  const full = resolve(path);
-  const root = parse(full).root;
-  if (inspectExisting) {
-    const st = lstatSync(root);
-    if (!st.isDirectory() || st.isSymbolicLink())
-      throw new Error("Unsafe directory");
-    inspectExisting(root, st);
-  }
-  let at = root;
-  for (const part of full.slice(root.length).split(sep).filter(Boolean)) {
-    at = join(at, part);
-    let existing;
-    try {
-      const checked = lstatSync(at);
-      if (!checked.isDirectory() || checked.isSymbolicLink())
-        throw new Error("Unsafe directory");
-      existing = checked;
-    } catch (error) {
-      if (!absent(error))
-        throw error;
-      if (!create)
-        return false;
-      try {
-        mkdirSync(at, { mode: 448 });
-      } catch (mkdirError) {
-        if (!object(mkdirError) || mkdirError.code !== "EEXIST")
-          throw mkdirError;
-      }
-      const created = lstatSync(at);
-      if (!created.isDirectory() || created.isSymbolicLink())
-        throw new Error("Unsafe directory");
-    }
-    if (existing)
-      inspectExisting?.(at, existing);
-  }
-  return true;
-}
-var transientWindows = new Set(["EPERM", "EACCES", "EBUSY"]);
-function retryWindowsFileOperation(operation, recheck) {
-  if (process.platform !== "win32")
-    return operation();
-  const deadline = performance.now() + 2000;
-  for (let delay = 2;; delay = Math.min(delay * 2, 50)) {
-    try {
-      return operation();
-    } catch (error) {
-      if (!object(error) || !transientWindows.has(String(error.code)) || performance.now() >= deadline)
-        throw error;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
-      recheck?.();
-    }
-  }
-}
-function readBounded(path, max, packaged = false) {
-  if (!safeDirectory(dirname(path)))
-    return;
-  let fd;
-  try {
-    const st = lstatSync(path);
-    if (!st.isFile() || st.isSymbolicLink() || !packaged && st.nlink !== 1 || st.size > max)
-      throw new Error("Unsafe or oversized file");
-    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-  } catch (error) {
-    if (absent(error))
-      return;
-    throw error;
-  }
-  try {
-    const st = fstatSync(fd);
-    if (!st.isFile() || !packaged && st.nlink !== 1 || st.size > max)
-      throw new Error("Unsafe or oversized file");
-    const buffer = Buffer.alloc(max + 1);
-    let size = 0;
-    while (size < buffer.length) {
-      const n = readSync(fd, buffer, size, buffer.length - size, null);
-      if (!n)
-        break;
-      size += n;
-    }
-    if (size > max)
-      throw new Error("Oversized file");
-    return buffer.subarray(0, size);
-  } finally {
-    closeSync(fd);
-  }
-}
-function gitEnvironment() {
-  const root = process.getuid?.() === 0;
-  return {
-    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_") && !(root && name === "SUDO_UID"))),
-    GIT_OPTIONAL_LOCKS: "0",
-    LC_ALL: "C"
-  };
-}
-function gitArguments(args) {
-  return process.platform !== "win32" && process.getuid?.() === 0 ? ["-c", "safe.directory=", "-c", "core.fsmonitor=false", ...args] : args;
-}
-function resolveWorkspace(cwd) {
-  const actual = realpathSync(cwd);
-  const result = spawnSync("git", gitArguments(["rev-parse", "--show-toplevel"]), {
-    cwd: actual,
-    env: gitEnvironment(),
-    encoding: "utf8",
-    timeout: 3000,
-    maxBuffer: 8192,
-    windowsHide: true
-  });
-  const topLevel = result.stdout?.replace(process.platform === "win32" ? /\r?\n$/ : /\n$/, "");
-  if (result.status === 0 && topLevel)
-    return { root: realpathSync(topLevel), cwd: actual };
-  if (result.error && !object(result.error))
-    throw new Error("Cannot resolve workspace");
-  if (result.error && object(result.error) && result.error.code !== "ENOENT")
-    throw new Error("Workspace lookup failed");
-  if (!result.error && !result.stderr.includes("not a git repository"))
-    throw new Error("Git workspace lookup refused");
-  return { root: actual, cwd: actual };
-}
-function defaultStateHome() {
-  const candidate = process.platform === "win32" ? process.env.LOCALAPPDATA : process.env.XDG_STATE_HOME;
-  if (candidate && !isAbsolute(candidate))
-    throw new Error("State home must be absolute");
-  return candidate ?? join(homedir(), process.platform === "win32" ? "AppData/Local" : ".local/state");
-}
-function recordText(record) {
-  return `${JSON.stringify(record, null, 2)}
-`;
-}
-function contentIdentity(text) {
-  return createHash("sha256").update(text).digest("hex");
-}
-function savedRecordIdentity(record) {
-  return contentIdentity(recordText(record));
-}
-function canonicalAmbientRoot(path) {
-  const full = resolve(path);
-  try {
-    return realpathSync(full);
-  } catch (error) {
-    if (!absent(error))
-      throw error;
-    try {
-      lstatSync(full);
-      throw new Error("Dangling ambient root");
-    } catch (statError) {
-      if (!absent(statError))
-        throw statError;
-    }
-    const parent = dirname(full);
-    if (parent === full)
-      throw error;
-    return join(canonicalAmbientRoot(parent), full.slice(parent.length));
-  }
-}
-function privateRootFor(canonicalRoot, stateHome) {
-  return join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1", createHash("sha256").update(canonicalRoot).digest("hex"));
-}
-function contains(root, path) {
-  const within = relative(root, resolve(path));
-  return !within || !within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within);
-}
-function stateHomeInside(root, stateHome = defaultStateHome()) {
-  const canonical = realpathSync(root);
-  return contains(canonical, privateRootFor(canonical, stateHome));
-}
-function privateWorkspace(requested, stateHome = defaultStateHome()) {
-  return contains(join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1"), canonicalAmbientRoot(requested));
-}
-function effectiveWorkspace(requested, stateHome, _home) {
-  if (privateWorkspace(requested, stateHome) || stateHomeInside(resolveWorkspace(requested).root, stateHome))
-    throw new Error("Choose a project outside Cadence private state; no default workspace was created");
-  return { workspace: requested, redirected: false };
-}
-
-class TaskStore {
-  root;
-  tasks;
-  privateRoot;
-  constructor(root, stateHome = defaultStateHome()) {
-    this.root = realpathSync(root);
-    if (privateWorkspace(this.root, stateHome))
-      throw new Error("Private state cannot be a workspace");
-    this.tasks = join(this.root, ".cadence", "assistant", "tasks");
-    this.privateRoot = privateRootFor(this.root, stateHome);
-    if (contains(this.root, this.privateRoot))
-      throw new Error("Private state home must be outside the working copy");
-  }
-  get lockPath() {
-    return join(this.privateRoot, "checkout.lock");
-  }
-  inspectPrivate() {
-    const namespace = dirname(this.privateRoot);
-    for (const path of [namespace, this.privateRoot]) {
-      if (!safeDirectory(path))
-        continue;
-      const st = lstatSync(path);
-      if (process.platform !== "win32" && ((st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
-        throw new Error("Private state permissions refused");
-    }
-  }
-  inspectPrivateFile(path, max) {
-    this.inspectPrivate();
-    if (!safeDirectory(this.privateRoot))
-      return;
-    try {
-      const st = lstatSync(path);
-      if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size > max || process.platform !== "win32" && ((st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
-        throw new Error("Unsafe private state file");
-    } catch (error) {
-      if (!absent(error))
-        throw error;
-    }
-  }
-  inspectLock() {
-    this.inspectPrivateFile(this.lockPath, 8192);
-    const data = readBounded(this.lockPath, 8192);
-    if (!data)
-      return;
-    const lock = parseRecord(data);
-    if (!object(lock) || lock.schema !== "cadence-assistant-lock/1" || lock.root !== this.root || typeof lock.token !== "string" || !validId(lock.token) || typeof lock.runId !== "string" || !validId(lock.runId) || typeof lock.host !== "string" || !Number.isInteger(lock.pid) || Number(lock.pid) < 1)
-      throw new Error("Unknown or corrupt coordination lock");
-    return lock;
-  }
-  acquire() {
-    this.inspectPrivate();
-    safeDirectory(this.privateRoot, true);
-    const lock = {
-      schema: "cadence-assistant-lock/1",
-      token: randomUUID(),
-      runId: randomUUID(),
-      pid: process.pid,
-      host: hostname(),
-      root: this.root
-    };
-    let fd;
-    try {
-      fd = retryWindowsFileOperation(() => openSync(this.lockPath, "wx", 384));
-    } catch {
-      throw new Error("Checkout busy or unresolved lock; inspect and explicitly recover only a dead owner");
-    }
-    try {
-      writeFileSync(fd, JSON.stringify(lock));
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-    return lock;
-  }
-  assertOwner(lock) {
-    if (JSON.stringify(this.inspectLock()) !== JSON.stringify(lock))
-      throw new Error("Coordination lock changed");
-  }
-  release(lock) {
-    if (lock.pid !== process.pid || lock.host !== hostname())
-      throw new Error("Only the owning process may release a lock");
-    this.assertOwner(lock);
-    retryWindowsFileOperation(() => unlinkSync(this.lockPath), () => this.assertOwner(lock));
-  }
-  recover(expected, acknowledgeEscapedProcesses) {
-    if (!acknowledgeEscapedProcesses || expected.host !== hostname())
-      throw new Error("Recovery requires informed local-owner confirmation");
-    this.assertOwner(expected);
-    try {
-      process.kill(expected.pid, 0);
-    } catch (error) {
-      if (!object(error) || error.code !== "ESRCH")
-        throw new Error("Owner status unknown");
-      this.assertOwner(expected);
-      unlinkSync(this.lockPath);
-      return;
-    }
-    throw new Error("Owner is live; stop it first");
-  }
-  load(id) {
-    return this.loadSnapshot(id)?.record;
-  }
-  loadSnapshot(id) {
-    if (!validId(id))
-      throw new Error("Invalid task id");
-    const directory = join(this.tasks, id);
-    if (safeDirectory(directory) && readdirSync(directory).some((name) => name !== "task.json"))
-      throw new Error("Unknown task directory content; preserved without reset");
-    const data = readBounded(join(this.tasks, id, "task.json"), MAX_RECORD_BYTES);
-    if (!data)
-      return;
-    const record = decodeTask(parseRecord(data));
-    if (record.id !== id)
-      throw new Error("Task identity mismatch");
-    return { record, identity: contentIdentity(data) };
-  }
-  list() {
-    if (!safeDirectory(this.tasks))
-      return [];
-    const entries = readdirSync(this.tasks);
-    if (entries.length > 1000)
-      throw new Error("Task listing limit exceeded");
-    return entries.map((id) => {
-      const task = this.load(id);
-      if (!task)
-        throw new Error("Unknown task directory");
-      return task;
-    });
-  }
-  save(record, expectedRevision, held, expectedIdentity) {
-    const next = decodeTask(record);
-    if (next.revision !== expectedRevision + 1)
-      throw new Error("Revision conflict");
-    const text = recordText(next);
-    if (Buffer.byteLength(text) > MAX_RECORD_BYTES)
-      throw new Error("Task record limit");
-    const lock = held ?? this.acquire();
-    if (lock.pid !== process.pid || lock.host !== hostname())
-      throw new Error("Not the lock owner");
-    try {
-      this.assertOwner(lock);
-      const current = this.loadSnapshot(next.id);
-      if ((current?.record.revision ?? 0) !== expectedRevision)
-        throw new Error("Revision conflict");
-      if (current?.identity !== expectedIdentity)
-        throw new Error("Task content changed; reopen it");
-      const dir = join(this.tasks, next.id);
-      safeDirectory(dir, true);
-      if (!current && readdirSync(dir).length)
-        throw new Error("Unknown task directory");
-      const temporary = join(dir, `task.${randomUUID()}.tmp`);
-      const fd = openSync(temporary, "wx", 384);
-      try {
-        writeFileSync(fd, text);
-        fsyncSync(fd);
-      } finally {
-        closeSync(fd);
-      }
-      this.assertOwner(lock);
-      const latest = readBounded(join(dir, "task.json"), MAX_RECORD_BYTES);
-      if ((latest ? contentIdentity(latest) : undefined) !== expectedIdentity)
-        throw new Error("Task content changed; replacement preserved without overwrite");
-      retryWindowsFileOperation(() => renameSync(temporary, join(dir, "task.json")), () => {
-        this.assertOwner(lock);
-        const now = readBounded(join(dir, "task.json"), MAX_RECORD_BYTES);
-        if ((now ? contentIdentity(now) : undefined) !== expectedIdentity)
-          throw new Error("Task content changed; replacement preserved without overwrite");
-      });
-      return next;
-    } finally {
-      if (!held)
-        this.release(lock);
-    }
-  }
-  checks() {
-    const data = readBounded(join(this.root, ".cadence", "assistant", "config.json"), 32768);
-    if (!data)
-      return [];
-    const value = parseRecord(data);
-    if (!object(value) || value.schema !== TASK_CONFIG_SCHEMA || !Array.isArray(value.checks) || value.checks.length > 32 || Object.keys(value).some((key) => !["schema", "checks"].includes(key)))
-      throw new Error("Unknown check configuration");
-    const checks = value.checks.map(decodeCheck);
-    if (new Set(checks.map((check) => check.name)).size !== checks.length || checks.some((check) => check.name === "Manual command"))
-      throw new Error("Duplicate or reserved check name");
-    return checks;
-  }
-  readLog(name) {
-    if (!/^[a-f0-9-]{36}\.log$/.test(name))
-      throw new Error("Invalid diagnostic name");
-    this.inspectPrivateFile(join(this.privateRoot, name), 65536);
-    const data = readBounded(join(this.privateRoot, name), 65536);
-    return data ? diagnosticText(data.toString("utf8"), 65536) : "Private diagnostic unavailable";
-  }
-  writeLog(lock, output) {
-    if (lock.pid !== process.pid || lock.host !== hostname())
-      throw new Error("Not the lock owner");
-    this.assertOwner(lock);
-    const name = `${randomUUID()}.log`;
-    writeFileSync(join(this.privateRoot, name), diagnosticText(output, 65536), {
-      flag: "wx",
-      mode: 384
-    });
-    return name;
-  }
-}
-var TASK_CONFIG_SCHEMA = "cadence-assistant-checks/1";
 
 // src/worker-public.mjs
 var SERVICE_PROTOCOL = 1;
@@ -827,20 +325,20 @@ function parseWireJson(source, maximum = LIMITS.controlBytes) {
     if (source[at] === '"')
       return string();
     if (source[at] === "{" || source[at] === "[") {
-      const object2 = source[at++] === "{";
-      const end = object2 ? "}" : "]";
+      const object = source[at++] === "{";
+      const end = object ? "}" : "]";
       const out = Object.create(null);
       const arr = [];
       const keys = new Set;
       ws();
       if (source[at] === end) {
         at++;
-        return object2 ? out : arr;
+        return object ? out : arr;
       }
       for (;; ) {
         ws();
         let key = "";
-        if (object2) {
+        if (object) {
           if (source[at] !== '"')
             invalid();
           key = string();
@@ -852,7 +350,7 @@ function parseWireJson(source, maximum = LIMITS.controlBytes) {
             invalid();
         }
         const item = value(depth + 1);
-        if (object2)
+        if (object)
           out[key] = item;
         else
           arr.push(item);
@@ -863,7 +361,7 @@ function parseWireJson(source, maximum = LIMITS.controlBytes) {
         if (c !== ",")
           invalid();
       }
-      return object2 ? out : arr;
+      return object ? out : arr;
     }
     const token = /^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)/.exec(source.slice(at))?.[0];
     if (!token)
@@ -2099,6 +1597,217 @@ function decodeCommittedBatch(v) {
   };
 }
 
+// src/workspace.ts
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  realpathSync
+} from "node:fs";
+import { homedir } from "node:os";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  parse,
+  relative,
+  resolve,
+  sep
+} from "node:path";
+
+// src/data-shapes.ts
+function object(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function boundedString(value, max) {
+  return typeof value === "string" && Buffer.byteLength(value) <= max && !value.includes("\x00");
+}
+function validId(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
+}
+
+// src/workspace.ts
+function parseRecord(data) {
+  try {
+    return JSON.parse(data.toString("utf8"));
+  } catch {
+    throw new Error("Corrupt JSON state; preserved without reset");
+  }
+}
+function absent(error) {
+  return object(error) && error.code === "ENOENT";
+}
+function safeDirectory(path, create = false, inspectExisting) {
+  const full = resolve(path);
+  const root = parse(full).root;
+  if (inspectExisting) {
+    const st = lstatSync(root);
+    if (!st.isDirectory() || st.isSymbolicLink())
+      throw new Error("Unsafe directory");
+    inspectExisting(root, st);
+  }
+  let at = root;
+  for (const part of full.slice(root.length).split(sep).filter(Boolean)) {
+    at = join(at, part);
+    let existing;
+    try {
+      const checked = lstatSync(at);
+      if (!checked.isDirectory() || checked.isSymbolicLink())
+        throw new Error("Unsafe directory");
+      existing = checked;
+    } catch (error) {
+      if (!absent(error))
+        throw error;
+      if (!create)
+        return false;
+      try {
+        mkdirSync(at, { mode: 448 });
+      } catch (mkdirError) {
+        if (!object(mkdirError) || mkdirError.code !== "EEXIST")
+          throw mkdirError;
+      }
+      const created = lstatSync(at);
+      if (!created.isDirectory() || created.isSymbolicLink())
+        throw new Error("Unsafe directory");
+    }
+    if (existing)
+      inspectExisting?.(at, existing);
+  }
+  return true;
+}
+var transientWindows = new Set(["EPERM", "EACCES", "EBUSY"]);
+function retryWindowsFileOperation(operation, recheck) {
+  if (process.platform !== "win32")
+    return operation();
+  const deadline = performance.now() + 2000;
+  for (let delay = 2;; delay = Math.min(delay * 2, 50)) {
+    try {
+      return operation();
+    } catch (error) {
+      if (!object(error) || !transientWindows.has(String(error.code)) || performance.now() >= deadline)
+        throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+      recheck?.();
+    }
+  }
+}
+function readBounded(path, max, packaged = false) {
+  if (!safeDirectory(dirname(path)))
+    return;
+  let fd;
+  try {
+    const st = lstatSync(path);
+    if (!st.isFile() || st.isSymbolicLink() || !packaged && st.nlink !== 1 || st.size > max)
+      throw new Error("Unsafe or oversized file");
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  } catch (error) {
+    if (absent(error))
+      return;
+    throw error;
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || !packaged && st.nlink !== 1 || st.size > max)
+      throw new Error("Unsafe or oversized file");
+    const buffer = Buffer.alloc(max + 1);
+    let size = 0;
+    while (size < buffer.length) {
+      const n = readSync(fd, buffer, size, buffer.length - size, null);
+      if (!n)
+        break;
+      size += n;
+    }
+    if (size > max)
+      throw new Error("Oversized file");
+    return buffer.subarray(0, size);
+  } finally {
+    closeSync(fd);
+  }
+}
+function gitEnvironment() {
+  const root = process.getuid?.() === 0;
+  return {
+    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_") && !(root && name === "SUDO_UID"))),
+    GIT_OPTIONAL_LOCKS: "0",
+    LC_ALL: "C"
+  };
+}
+function gitArguments(args) {
+  return process.platform !== "win32" && process.getuid?.() === 0 ? ["-c", "safe.directory=", "-c", "core.fsmonitor=false", ...args] : args;
+}
+function resolveWorkspace(cwd) {
+  const actual = realpathSync(cwd);
+  const result = spawnSync("git", gitArguments(["rev-parse", "--show-toplevel"]), {
+    cwd: actual,
+    env: gitEnvironment(),
+    encoding: "utf8",
+    timeout: 3000,
+    maxBuffer: 8192,
+    windowsHide: true
+  });
+  const topLevel = result.stdout?.replace(process.platform === "win32" ? /\r?\n$/ : /\n$/, "");
+  if (result.status === 0 && topLevel)
+    return { root: realpathSync(topLevel), cwd: actual };
+  if (result.error && !object(result.error))
+    throw new Error("Cannot resolve workspace");
+  if (result.error && object(result.error) && result.error.code !== "ENOENT")
+    throw new Error("Workspace lookup failed");
+  if (!result.error && !result.stderr.includes("not a git repository"))
+    throw new Error("Git workspace lookup refused");
+  return { root: actual, cwd: actual };
+}
+function defaultStateHome() {
+  const candidate = process.platform === "win32" ? process.env.LOCALAPPDATA : process.env.XDG_STATE_HOME;
+  if (candidate && !isAbsolute(candidate))
+    throw new Error("State home must be absolute");
+  return candidate ?? join(homedir(), process.platform === "win32" ? "AppData/Local" : ".local/state");
+}
+function canonicalAmbientRoot(path) {
+  const full = resolve(path);
+  try {
+    return realpathSync(full);
+  } catch (error) {
+    if (!absent(error))
+      throw error;
+    try {
+      lstatSync(full);
+      throw new Error("Dangling ambient root");
+    } catch (statError) {
+      if (!absent(statError))
+        throw statError;
+    }
+    const parent = dirname(full);
+    if (parent === full)
+      throw error;
+    return join(canonicalAmbientRoot(parent), full.slice(parent.length));
+  }
+}
+function privateRootFor(canonicalRoot, stateHome) {
+  return join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1", createHash("sha256").update(canonicalRoot).digest("hex"));
+}
+function contains(root, path) {
+  const within = relative(root, resolve(path));
+  return !within || !within.startsWith(`..${sep}`) && within !== ".." && !isAbsolute(within);
+}
+function stateHomeInside(root, stateHome = defaultStateHome()) {
+  const canonical = realpathSync(root);
+  return contains(canonical, privateRootFor(canonical, stateHome));
+}
+function privateWorkspace(requested, stateHome = defaultStateHome()) {
+  return contains(join(canonicalAmbientRoot(stateHome), "cadence-assistant-v1"), canonicalAmbientRoot(requested));
+}
+function effectiveWorkspace(requested, stateHome, _home) {
+  if (privateWorkspace(requested, stateHome) || stateHomeInside(resolveWorkspace(requested).root, stateHome))
+    throw new Error("Choose a project outside Cadence private state; no default workspace was created");
+  return { workspace: requested, redirected: false };
+}
+
 // src/service-assets.ts
 var ASSET_MEMBER_BYTES = 16 * 1024 * 1024;
 var ASSET_TOTAL_BYTES = 64 * 1024 * 1024;
@@ -2204,8 +1913,8 @@ function loadWebAssets(directory = fileURLToPath(new URL("../web/dist/", import.
   const bytes = read(join2(directory, "manifest.json"), 128 * 1024);
   const manifest = decodeAssetManifest(parseWireJson(new TextDecoder("utf-8", { fatal: true }).decode(bytes), 128 * 1024));
   const members = [
-    ...readdirSync2(directory).filter((n) => n !== "assets"),
-    ...readdirSync2(join2(directory, "assets")).map((n) => `assets/${n}`)
+    ...readdirSync(directory).filter((n) => n !== "assets"),
+    ...readdirSync(join2(directory, "assets")).map((n) => `assets/${n}`)
   ].sort();
   if (JSON.stringify(members) !== JSON.stringify(["manifest.json", ...manifest.assets.map((a) => a.name)].sort()))
     throw new Error("asset-members-refused");
@@ -3918,7 +3627,10 @@ var WORKFLOW_LIMITS = {
   checks: 16,
   repairs: 2,
   bytes: 256 * 1024,
-  runs: 200,
+  historyScanEntries: 200,
+  historyPage: 20,
+  historyScans: 16,
+  historyIdleMs: 120000,
   durationMs: 90 * 60 * 1000
 };
 function clipUnits(value, units) {
@@ -4282,6 +3994,15 @@ function decodeWorkbenchRead(v) {
       const o = closed(v, ["kind", "id"]);
       return { kind, id: decodeId(o.id) };
     }
+    case "workflow-history": {
+      const continued = Object.hasOwn(v, "scan");
+      const o = closed(v, ["kind", "after", ...continued ? ["scan"] : []]);
+      return {
+        kind,
+        after: nullable(o.after, decodeId),
+        ...continued ? { scan: decodeId(o.scan) } : {}
+      };
+    }
     case "workflow-active":
       closed(v, ["kind"]);
       return { kind };
@@ -4388,22 +4109,6 @@ function decodeWorkbenchCommand(v) {
       request: decodeWorkflowRequest(o2.request)
     };
   }
-  if (kind === "link-task") {
-    const o2 = closed(v, [
-      "kind",
-      "commandId",
-      "epoch",
-      "taskId",
-      "conversationId"
-    ]);
-    return {
-      kind,
-      commandId: decodeId(o2.commandId),
-      epoch: decodeId(o2.epoch),
-      taskId: decodeId(o2.taskId),
-      conversationId: decodeId(o2.conversationId)
-    };
-  }
   if (kind === "send") {
     const o2 = closed(v, [
       "kind",
@@ -4508,6 +4213,28 @@ function decodeWorkbenchResult(v) {
   if (k === "cadence-conversation") {
     const o2 = closed(v, ["kind", "state"]);
     return { kind: k, state: decodeCadenceConversation(o2.state) };
+  }
+  if (k === "workflow-history-progress") {
+    const o2 = closed(v, ["kind", "after", "scan"]);
+    return {
+      kind: k,
+      after: nullable(o2.after, decodeId),
+      scan: decodeId(o2.scan)
+    };
+  }
+  if (k === "workflow-history") {
+    const o2 = closed(v, ["kind", "entries", "next"]);
+    const entries = list(o2.entries, WORKFLOW_LIMITS.historyPage, (v2) => {
+      const e = closed(v2, ["id", "run"]);
+      const id = decodeId(e.id), run = nullable(e.run, decodeWorkflowRun);
+      if (run && run.id !== id)
+        throw new ContractError("invalid");
+      return { id, run };
+    });
+    const next = nullable(o2.next, decodeId);
+    if (new Set(entries.map((e) => e.id)).size !== entries.length || next !== null && next !== entries.at(-1)?.id)
+      throw new ContractError("invalid");
+    return { kind: k, entries, next };
   }
   if (k === "workflow-active") {
     const linked = v !== null && typeof v === "object" && Object.hasOwn(v, "links");
@@ -4854,7 +4581,7 @@ function decodeSocketInput(value) {
 import {
   createHash as createHash4,
   randomBytes,
-  randomUUID as randomUUID3,
+  randomUUID as randomUUID2,
   timingSafeEqual
 } from "node:crypto";
 import { dirname as dirname4, isAbsolute as isAbsolute3, join as join5 } from "node:path";
@@ -4908,19 +4635,19 @@ function localOrigin(policy, actualPort) {
 }
 
 // src/service/private-files.ts
-import { createHash as createHash3, randomUUID as randomUUID2 } from "node:crypto";
+import { createHash as createHash3, randomUUID } from "node:crypto";
 import {
   closeSync as closeSync2,
   constants as constants2,
   fstatSync as fstatSync2,
-  fsyncSync as fsyncSync2,
+  fsyncSync,
   lstatSync as lstatSync3,
   mkdirSync as mkdirSync2,
   openSync as openSync2,
   readSync as readSync2,
-  renameSync as renameSync2,
-  unlinkSync as unlinkSync2,
-  writeFileSync as writeFileSync2
+  renameSync,
+  unlinkSync,
+  writeFileSync
 } from "node:fs";
 import { dirname as dirname2, isAbsolute as isAbsolute2, join as join3, relative as relative2, resolve as resolve2, sep as sep2 } from "node:path";
 var METADATA_BYTES = 16 * 1024;
@@ -5090,8 +4817,8 @@ class PrivateFiles {
     this.directory(dirname2(path), true);
     const fd = retryWindowsFileOperation(() => openSync2(path, "wx", 384));
     try {
-      writeFileSync2(fd, bytes);
-      fsyncSync2(fd);
+      writeFileSync(fd, bytes);
+      fsyncSync(fd);
     } finally {
       closeSync2(fd);
     }
@@ -5103,10 +4830,10 @@ class PrivateFiles {
   }
   replace(path, expected, bytes, maximum = METADATA_BYTES) {
     this.assert(path, expected, maximum);
-    const temporary = join3(dirname2(path), `pending-${randomUUID2()}.json`);
+    const temporary = join3(dirname2(path), `pending-${randomUUID()}.json`);
     this.create(temporary, bytes, maximum);
     this.assert(path, expected, maximum);
-    retryWindowsFileOperation(() => renameSync2(temporary, path), () => this.assert(path, expected, maximum));
+    retryWindowsFileOperation(() => renameSync(temporary, path), () => this.assert(path, expected, maximum));
     this.syncDirectory(dirname2(path));
     const result = this.read(path, maximum);
     if (!result || result.identity !== hash2(bytes))
@@ -5115,7 +4842,7 @@ class PrivateFiles {
   }
   remove(path, expected, maximum = METADATA_BYTES) {
     this.assert(path, expected, maximum);
-    retryWindowsFileOperation(() => unlinkSync2(path), () => this.assert(path, expected, maximum));
+    retryWindowsFileOperation(() => unlinkSync(path), () => this.assert(path, expected, maximum));
     this.syncDirectory(dirname2(path));
   }
   syncDirectory(path) {
@@ -5123,7 +4850,7 @@ class PrivateFiles {
       return;
     const fd = openSync2(path, constants2.O_RDONLY | constants2.O_DIRECTORY);
     try {
-      fsyncSync2(fd);
+      fsyncSync(fd);
     } finally {
       closeSync2(fd);
     }
@@ -5666,7 +5393,7 @@ class HttpAuthentication {
   material;
   epoch;
   localCapability;
-  csrf = randomUUID3();
+  csrf = randomUUID2();
   cookieName;
   constructor(material, epoch, workspaceId, localCapability) {
     this.material = material;
@@ -5726,7 +5453,7 @@ class HttpAuthentication {
 import { spawn } from "node:child_process";
 import { request } from "node:http";
 import { homedir as homedir3 } from "node:os";
-import { dirname as dirname9, join as join11, resolve as resolve5 } from "node:path";
+import { dirname as dirname10, join as join12, resolve as resolve5 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/sdk-network.ts
@@ -5868,7 +5595,106 @@ function sdkNetworkEnvironment(ambient, scoped) {
 import { randomBytes as randomBytes2, randomUUID as randomUUID4 } from "node:crypto";
 import { opendirSync } from "node:fs";
 import { hostname as hostname2 } from "node:os";
-import { dirname as dirname5, isAbsolute as isAbsolute4, join as join6, relative as relative3, sep as sep3 } from "node:path";
+import { dirname as dirname6, isAbsolute as isAbsolute4, join as join7, relative as relative3, sep as sep3 } from "node:path";
+
+// src/service/checkout-lock.ts
+import { randomUUID as randomUUID3 } from "node:crypto";
+import {
+  closeSync as closeSync3,
+  fsyncSync as fsyncSync2,
+  lstatSync as lstatSync5,
+  openSync as openSync3,
+  realpathSync as realpathSync3,
+  unlinkSync as unlinkSync2,
+  writeFileSync as writeFileSync2
+} from "node:fs";
+import { hostname } from "node:os";
+import { dirname as dirname5, join as join6 } from "node:path";
+class CheckoutStore {
+  root;
+  privateRoot;
+  constructor(root, stateHome = defaultStateHome()) {
+    this.root = realpathSync3(root);
+    if (privateWorkspace(this.root, stateHome))
+      throw new Error("Private state cannot be a workspace");
+    this.privateRoot = privateRootFor(this.root, stateHome);
+    if (contains(this.root, this.privateRoot))
+      throw new Error("Private state home must be outside the working copy");
+  }
+  get lockPath() {
+    return join6(this.privateRoot, "checkout.lock");
+  }
+  inspectPrivate() {
+    const namespace = dirname5(this.privateRoot);
+    for (const path of [namespace, this.privateRoot]) {
+      if (!safeDirectory(path))
+        continue;
+      const st = lstatSync5(path);
+      if (process.platform !== "win32" && ((st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
+        throw new Error("Private state permissions refused");
+    }
+  }
+  inspectPrivateFile(path, max) {
+    this.inspectPrivate();
+    if (!safeDirectory(this.privateRoot))
+      return;
+    try {
+      const st = lstatSync5(path);
+      if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size > max || process.platform !== "win32" && ((st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
+        throw new Error("Unsafe private state file");
+    } catch (error) {
+      if (!absent(error))
+        throw error;
+    }
+  }
+  inspectLock() {
+    this.inspectPrivateFile(this.lockPath, 8192);
+    const data = readBounded(this.lockPath, 8192);
+    if (!data)
+      return;
+    const lock = parseRecord(data);
+    if (!object(lock) || lock.schema !== "cadence-assistant-lock/1" || lock.root !== this.root || typeof lock.token !== "string" || !validId(lock.token) || typeof lock.runId !== "string" || !validId(lock.runId) || typeof lock.host !== "string" || !Number.isInteger(lock.pid) || Number(lock.pid) < 1)
+      throw new Error("Unknown or corrupt coordination lock");
+    return lock;
+  }
+  acquire() {
+    this.inspectPrivate();
+    safeDirectory(this.privateRoot, true);
+    const lock = {
+      schema: "cadence-assistant-lock/1",
+      token: randomUUID3(),
+      runId: randomUUID3(),
+      pid: process.pid,
+      host: hostname(),
+      root: this.root
+    };
+    let fd;
+    try {
+      fd = retryWindowsFileOperation(() => openSync3(this.lockPath, "wx", 384));
+    } catch {
+      throw new Error("Checkout busy or unresolved lock; inspect and explicitly recover only a dead owner");
+    }
+    try {
+      writeFileSync2(fd, JSON.stringify(lock));
+      fsyncSync2(fd);
+    } finally {
+      closeSync3(fd);
+    }
+    return lock;
+  }
+  assertOwner(lock) {
+    if (JSON.stringify(this.inspectLock()) !== JSON.stringify(lock))
+      throw new Error("Coordination lock changed");
+  }
+  release(lock) {
+    if (lock.pid !== process.pid || lock.host !== hostname())
+      throw new Error("Only the owning process may release a lock");
+    this.assertOwner(lock);
+    retryWindowsFileOperation(() => unlinkSync2(this.lockPath), () => this.assertOwner(lock));
+  }
+}
+
+// src/service/coordination.ts
 var registrationKeys = [
   "schema",
   "root",
@@ -6007,11 +5833,11 @@ class ServiceCoordination {
   registryDirectory;
   stateHome;
   constructor(workspace, stateHome) {
-    this.project = workspace === null ? undefined : new TaskStore(resolveWorkspace(workspace).root, stateHome);
-    this.stateHome = this.project ? dirname5(dirname5(this.project.privateRoot)) : canonicalAmbientRoot(stateHome ?? defaultStateHome());
-    const namespace = join6(this.stateHome, "cadence-assistant-v1");
+    this.project = workspace === null ? undefined : new CheckoutStore(resolveWorkspace(workspace).root, stateHome);
+    this.stateHome = this.project ? dirname6(dirname6(this.project.privateRoot)) : canonicalAmbientRoot(stateHome ?? defaultStateHome());
+    const namespace = join7(this.stateHome, "cadence-assistant-v1");
     this.files = new PrivateFiles(namespace);
-    this.registryDirectory = join6(namespace, "service-registry-v1");
+    this.registryDirectory = join7(namespace, "service-registry-v1");
   }
   get store() {
     if (!this.project)
@@ -6019,13 +5845,13 @@ class ServiceCoordination {
     return this.project;
   }
   get directory() {
-    return join6(this.store.privateRoot, "service-v1");
+    return join7(this.store.privateRoot, "service-v1");
   }
   path(name) {
-    return join6(this.directory, name);
+    return join7(this.directory, name);
   }
   registryPath(name) {
-    return join6(this.registryDirectory, name);
+    return join7(this.registryDirectory, name);
   }
   registry() {
     if (!this.files.directory(this.registryDirectory))
@@ -6072,14 +5898,14 @@ class ServiceCoordination {
       "conversation-workflows-v1",
       "workflows-v1"
     ]);
-    this.files.directory(join6(directory, "history-v2"), false, walks);
+    this.files.directory(join7(directory, "history-v2"), false, walks);
   }
   selected(directory = this.directory, root = this.store.root, stoppedOnly = false) {
     const walks = new DirectoryWalks;
     if (!this.files.directory(directory, false, walks))
       return;
     this.assertNamespace(walks, directory);
-    const path = (name) => join6(directory, name);
+    const path = (name) => join7(directory, name);
     const manifest = this.files.read(path("format.json"), undefined, walks);
     const config = this.files.read(path("config.json"), undefined, walks);
     if (!manifest || !config)
@@ -6101,7 +5927,7 @@ class ServiceCoordination {
     const registration = this.files.read(path("registration.json"), undefined, walks);
     const owner = this.files.read(path("owner.lock"), undefined, walks);
     const capability = this.files.read(path("local-capability.json"), undefined, walks);
-    const checkout = this.files.read(join6(dirname5(directory), "checkout.lock"), 8192, walks);
+    const checkout = this.files.read(join7(dirname6(directory), "checkout.lock"), 8192, walks);
     const value = registration ? decodeRegistration(json(registration)) : undefined;
     if (value && (value.root !== root || value.stateHome !== this.stateHome || value.configIdentity !== config.identity || !endpointMatches(c.endpoint, value.endpoint)))
       refused();
@@ -6391,10 +6217,10 @@ class ServiceCoordination {
           throw new ContractError("capacity");
         if (!/^[a-f0-9]{64}$/.test(entry.name) || protectedRoots.has(entry.name))
           continue;
-        const service = join6(this.files.namespace, entry.name, "service-v1");
+        const service = join7(this.files.namespace, entry.name, "service-v1");
         if (!this.files.directory(service))
           continue;
-        const manifest = this.files.read(join6(service, "format.json"));
+        const manifest = this.files.read(join7(service, "format.json"));
         if (!manifest)
           refused();
         const f = closed(json(manifest), [
@@ -6431,13 +6257,13 @@ class ServiceCoordination {
       proofs
     ]));
     const epoch = hash2(encoded([lock.identity, lock.stamp]));
-    const archive = this.registryPath(join6("recovery-v1", epoch));
+    const archive = this.registryPath(join7("recovery-v1", epoch));
     const attempts = [];
     let previousResolver = null;
     if (this.files.directory(archive)) {
       names(archive, Array.from({ length: 128 }, (_, n) => `${n}.json`));
       for (let n = 0;n < 128; n++) {
-        const attempt = this.files.read(join6(archive, `${n}.json`), 32768);
+        const attempt = this.files.read(join7(archive, `${n}.json`), 32768);
         if (!attempt) {
           names(archive, attempts.map((_, i) => `${i}.json`));
           break;
@@ -6481,7 +6307,7 @@ class ServiceCoordination {
     if (state.attempts.length >= 128)
       throw new ContractError("capacity");
     assertAuthority();
-    const receiptPath = join6(state.archive, `${state.attempts.length}.json`);
+    const receiptPath = join7(state.archive, `${state.attempts.length}.json`);
     const receipt = this.files.create(receiptPath, encoded({
       schema: "cadence-registry-recovery/1",
       lock: state.lock.bytes.toString("utf8"),
@@ -6494,7 +6320,7 @@ class ServiceCoordination {
     if (current.stateDigest !== state.stateDigest || current.inspection.owner !== "absent" || current.attempts.length !== state.attempts.length + 1)
       throw new ContractError("conflict");
     for (const [n, attempt] of state.attempts.entries())
-      this.files.assert(join6(state.archive, `${n}.json`), attempt, 32768);
+      this.files.assert(join7(state.archive, `${n}.json`), attempt, 32768);
     this.files.assert(receiptPath, receipt, 32768);
     assertAuthority();
     this.files.remove(this.registryPath("registry.lock"), state.lock);
@@ -6658,7 +6484,7 @@ class OwnerLease {
 import { randomBytes as randomBytes3, randomUUID as randomUUID5 } from "node:crypto";
 import { opendirSync as opendirSync2 } from "node:fs";
 import { hostname as hostname3 } from "node:os";
-import { join as join7, resolve as resolve3 } from "node:path";
+import { join as join8, resolve as resolve3 } from "node:path";
 
 // src/service/contracts/gateway.ts
 function decodeProjectEntry(value) {
@@ -6756,11 +6582,11 @@ class GatewayStore {
   constructor(serverConfig, stateHome = defaultStateHome()) {
     this.serverConfig = serverConfig;
     this.stateHome = canonicalAmbientRoot(stateHome);
-    this.files = new PrivateFiles(join7(this.stateHome, "cadence-assistant-v1"));
-    this.directory = join7(this.files.namespace, "workbenches-v1", hash2(resolve3(serverConfig)));
+    this.files = new PrivateFiles(join8(this.stateHome, "cadence-assistant-v1"));
+    this.directory = join8(this.files.namespace, "workbenches-v1", hash2(resolve3(serverConfig)));
   }
   path(name) {
-    return join7(this.directory, name);
+    return join8(this.directory, name);
   }
   read() {
     const file = this.files.read(this.path("gateway.json"));
@@ -6852,7 +6678,7 @@ class GatewayStore {
       for (let entry = stream.readSync();entry; entry = stream.readSync()) {
         if (!entry.isFile() || !/^[a-f0-9]{64}\.json$/.test(entry.name) || out.length >= 128)
           throw new ContractError("corrupt-selected");
-        const file = this.files.read(join7(directory, entry.name));
+        const file = this.files.read(join8(directory, entry.name));
         if (!file)
           throw new ContractError("corrupt-selected");
         const project = decodeGatewayProject(json(file));
@@ -6897,8 +6723,8 @@ class GatewayStore {
 
 // src/history/recovery.ts
 import { createHash as createHash8, randomUUID as randomUUID7 } from "node:crypto";
-import { lstatSync as lstatSync7, opendirSync as opendirSync4 } from "node:fs";
-import { join as join9, relative as relative4 } from "node:path";
+import { lstatSync as lstatSync8, opendirSync as opendirSync4 } from "node:fs";
+import { join as join10, relative as relative4 } from "node:path";
 
 // src/service/recovery.ts
 async function inspectRecovery(coordination, history) {
@@ -6920,17 +6746,17 @@ async function inspectRecovery(coordination, history) {
 // src/history/files.ts
 import { createHash as createHash7, randomBytes as randomBytes4, randomUUID as randomUUID6 } from "node:crypto";
 import {
-  closeSync as closeSync4,
+  closeSync as closeSync5,
   constants as constants4,
   fstatSync as fstatSync4,
   fsyncSync as fsyncSync3,
-  lstatSync as lstatSync6,
+  lstatSync as lstatSync7,
   opendirSync as opendirSync3,
-  openSync as openSync4,
+  openSync as openSync5,
   statfsSync
 } from "node:fs";
 import { open } from "node:fs/promises";
-import { dirname as dirname7, join as join8 } from "node:path";
+import { dirname as dirname8, join as join9 } from "node:path";
 
 // src/history/admission.ts
 function decodeRunAdmission(value) {
@@ -6952,34 +6778,34 @@ function decodeRunAdmission(value) {
 // src/history/read-io.ts
 import { createHash as createHash5 } from "node:crypto";
 import {
-  closeSync as closeSync3,
+  closeSync as closeSync4,
   constants as constants3,
   fstatSync as fstatSync3,
-  lstatSync as lstatSync5,
-  openSync as openSync3,
+  lstatSync as lstatSync6,
+  openSync as openSync4,
   readSync as readSync3
 } from "node:fs";
-import { dirname as dirname6 } from "node:path";
+import { dirname as dirname7 } from "node:path";
 function bad() {
   throw new ContractError("corrupt-selected");
 }
 var stamp2 = (s) => [s.dev, s.ino, s.size, s.mode, s.uid, s.nlink, s.ctimeMs, s.mtimeMs].join(":");
 function selected(files, path, read, walks) {
-  if (!files.files.directory(dirname6(path), false, walks))
+  if (!files.files.directory(dirname7(path), false, walks))
     bad();
-  const before = lstatSync5(path);
+  const before = lstatSync6(path);
   if (!before.isFile() || before.nlink !== 1 || process.platform !== "win32" && (before.mode & 63 || process.getuid && before.uid !== process.getuid()))
     bad();
-  const fd = openSync3(path, constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0));
+  const fd = openSync4(path, constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0));
   try {
     if (stamp2(fstatSync3(fd)) !== stamp2(before))
       bad();
     const result = read(fd, before.size, stamp2(before));
-    if (stamp2(fstatSync3(fd)) !== stamp2(before) || stamp2(lstatSync5(path)) !== stamp2(before))
+    if (stamp2(fstatSync3(fd)) !== stamp2(before) || stamp2(lstatSync6(path)) !== stamp2(before))
       bad();
     return result;
   } finally {
-    closeSync3(fd);
+    closeSync4(fd);
   }
 }
 function assertIncarnation(files, path, expected) {
@@ -7520,14 +7346,14 @@ class HistoryFiles {
     this.coordination = coordination;
     this.format = format;
     this.formatSnapshot = formatSnapshot;
-    this.directory = join8(coordination.directory, "history-v2");
+    this.directory = join9(coordination.directory, "history-v2");
     this.files = coordination.files;
   }
   static open(coordination) {
-    const dir = join8(coordination.directory, "history-v2");
+    const dir = join9(coordination.directory, "history-v2");
     if (!coordination.files.directory(dir))
       return;
-    const file = coordination.files.read(join8(dir, "format.json"));
+    const file = coordination.files.read(join9(dir, "format.json"));
     if (!file)
       corrupt();
     const format = decodeFormat(json(file));
@@ -7543,7 +7369,7 @@ class HistoryFiles {
       existing.assertWritable();
       return existing;
     }
-    const dir = join8(c.directory, "history-v2");
+    const dir = join9(c.directory, "history-v2");
     const format = {
       schema: FORMAT,
       storeId: randomUUID6(),
@@ -7553,19 +7379,19 @@ class HistoryFiles {
     c.files.directory(dir, true);
     for (const name of ["commands", "ledger", "runs", "indexes"]) {
       lease.assert();
-      c.files.directory(join8(dir, name), true);
+      c.files.directory(join9(dir, name), true);
     }
     lease.assert();
-    const keyPath = join8(dir, "read-proof-key.json");
+    const keyPath = join9(dir, "read-proof-key.json");
     c.files.create(keyPath, encoded({
       schema: "cadence-history-read-key/1",
       storeId: format.storeId,
       key: randomBytes4(32).toString("base64url")
     }));
     lease.assert();
-    const snapshot = c.files.create(join8(dir, "format.json"), encoded(format));
+    const snapshot = c.files.create(join9(dir, "format.json"), encoded(format));
     const result = new HistoryFiles(c, format, snapshot);
-    result.syncParents(join8(dir, "format.json"));
+    result.syncParents(join9(dir, "format.json"));
     result.assertWritable();
     return result;
   }
@@ -7600,7 +7426,7 @@ class HistoryFiles {
       throw new ContractError("quarantine");
   }
   assertFormat() {
-    this.files.assert(join8(this.directory, "format.json"), this.formatSnapshot);
+    this.files.assert(join9(this.directory, "format.json"), this.formatSnapshot);
   }
   readProofMaterial(budget) {
     if (this.format.schema !== FORMAT)
@@ -7609,7 +7435,7 @@ class HistoryFiles {
       this.assertReadFormat(budget);
     else
       this.assertFormat();
-    const selected2 = this.readBudgeted(join8(this.directory, "read-proof-key.json"), 512, budget);
+    const selected2 = this.readBudgeted(join9(this.directory, "read-proof-key.json"), 512, budget);
     if (!selected2 || this.proofSnapshot && (selected2.identity !== this.proofSnapshot.identity || selected2.stamp !== this.proofSnapshot.stamp))
       corrupt();
     try {
@@ -7637,17 +7463,17 @@ class HistoryFiles {
       return;
     }
     this.assertFormat();
-    assertIncarnation(this, join8(this.directory, "read-proof-key.json"), this.proofSnapshot.stamp);
+    assertIncarnation(this, join9(this.directory, "read-proof-key.json"), this.proofSnapshot.stamp);
   }
   segmentPath(segment) {
-    return join8(this.directory, "ledger", `${String(segment).padStart(12, "0")}.jsonl`);
+    return join9(this.directory, "ledger", `${String(segment).padStart(12, "0")}.jsonl`);
   }
   artifactPath(ref) {
-    return join8(this.directory, "runs", ref.runId, "artifacts", ref.artifactId, `${ref.part}.part`);
+    return join9(this.directory, "runs", ref.runId, "artifacts", ref.artifactId, `${ref.part}.part`);
   }
   admissionPath(runId) {
     decodeId(runId);
-    return join8(this.directory, "runs", runId, "admission.json");
+    return join9(this.directory, "runs", runId, "admission.json");
   }
   writeAdmission(lease, input) {
     lease.assert();
@@ -7661,7 +7487,7 @@ class HistoryFiles {
       return this.files.read(path, maximum);
     let size;
     try {
-      size = lstatSync6(path).size;
+      size = lstatSync7(path).size;
     } catch {
       return this.files.read(path, 0, budget.walks);
     }
@@ -7673,7 +7499,7 @@ class HistoryFiles {
   readCommand(commandId, budget) {
     decodeId(commandId);
     this.assertReadFormat(budget);
-    return this.readBudgeted(join8(this.directory, "commands", commandId, "intent.json"), RECORD_BYTES, budget);
+    return this.readBudgeted(join9(this.directory, "commands", commandId, "intent.json"), RECORD_BYTES, budget);
   }
   readAdmission(runId, identity, budget) {
     return this.readAdmissionIdentity(runId, hash2(canonicalJson(identity)), budget);
@@ -7694,24 +7520,24 @@ class HistoryFiles {
   syncParents(file) {
     if (process.platform === "win32")
       return;
-    for (let path = dirname7(file);; path = dirname7(path)) {
+    for (let path = dirname8(file);; path = dirname8(path)) {
       if (!this.files.directory(path))
         corrupt();
-      const fd = openSync4(path, constants4.O_RDONLY | constants4.O_DIRECTORY);
+      const fd = openSync5(path, constants4.O_RDONLY | constants4.O_DIRECTORY);
       try {
         fsyncSync3(fd);
       } finally {
-        closeSync4(fd);
+        closeSync5(fd);
       }
       if (path === this.coordination.directory)
         break;
-      if (path === dirname7(path))
+      if (path === dirname8(path))
         corrupt();
     }
   }
   assertReadFormat(budget) {
     budget.reserve(this.formatSnapshot.bytes.length);
-    this.files.assert(join8(this.directory, "format.json"), this.formatSnapshot, this.formatSnapshot.bytes.length);
+    this.files.assert(join9(this.directory, "format.json"), this.formatSnapshot, this.formatSnapshot.bytes.length);
   }
   assertPublished(segment, end, seq) {
     const fence = publicationFences.get(this.directory);
@@ -7749,7 +7575,7 @@ class HistoryFiles {
       const dir = opendirSync3(path);
       try {
         for (let e = dir.readSync();e; e = dir.readSync()) {
-          const p = join8(path, e.name), st = lstatSync6(p);
+          const p = join9(path, e.name), st = lstatSync7(p);
           if (st.isDirectory())
             bytes += walk(p, depth + 1);
           else {
@@ -7784,7 +7610,7 @@ class HistoryFiles {
     state.bytes = 0;
     state.identity = null;
     let count = 0;
-    const ledger = join8(this.directory, "ledger");
+    const ledger = join9(this.directory, "ledger");
     if (!this.files.directory(ledger))
       corrupt();
     const dir = opendirSync3(ledger);
@@ -7949,7 +7775,7 @@ class HistoryFiles {
     let committed;
     const fd = await open(path, constants4.O_WRONLY | constants4.O_APPEND | (constants4.O_NOFOLLOW ?? 0));
     const assertOriginal = (bytes) => {
-      const original = fstatSync4(fd.fd), selected2 = lstatSync6(path);
+      const original = fstatSync4(fd.fd), selected2 = lstatSync7(path);
       if (original.dev !== selected2.dev || original.ino !== selected2.ino || original.nlink !== 1)
         corrupt();
       const snapshot = this.files.read(path, LIMITS.segmentBytes);
@@ -8066,7 +7892,7 @@ class HistoryFiles {
     try {
       lease.assert();
       this.files.assert(path, before, LIMITS.segmentBytes);
-      const opened = await fd.stat(), selected2 = lstatSync6(path);
+      const opened = await fd.stat(), selected2 = lstatSync7(path);
       if (opened.ino !== selected2.ino || opened.dev !== selected2.dev || opened.nlink !== 1)
         corrupt();
       beforeEffect?.();
@@ -8101,7 +7927,7 @@ class HistoryFiles {
   checkpoint(lease, state) {
     lease.assert();
     this.assertWritable();
-    const path = join8(this.directory, "checkpoint.json"), old = this.files.read(path);
+    const path = join9(this.directory, "checkpoint.json"), old = this.files.read(path);
     const body = encoded({
       schema: "cadence-history-checkpoint/2",
       storeId: this.format.storeId,
@@ -8694,7 +8520,7 @@ function digestHistory(files, exclude) {
   const walk = (path, depth) => {
     if (depth > 8 || !files.files.directory(path))
       throw new ContractError("corrupt-selected");
-    const directory = lstatSync7(path);
+    const directory = lstatSync8(path);
     digest.update(`incarnation:${directory.dev}:${directory.ino}
 `);
     const dir = opendirSync4(path), names2 = [];
@@ -8708,11 +8534,11 @@ function digestHistory(files, exclude) {
       dir.closeSync();
     }
     for (const name of names2.sort()) {
-      const selected2 = join9(path, name);
+      const selected2 = join10(path, name);
       if (selected2 === exclude)
         continue;
       const rel = relative4(files.directory, selected2);
-      if (lstatSync7(selected2).isDirectory()) {
+      if (lstatSync8(selected2).isDirectory()) {
         digest.update(`directory:${Buffer.byteLength(rel)}:${rel}
 `);
         walk(selected2, depth + 1);
@@ -8896,9 +8722,24 @@ class HistoryRecovery {
   }
 }
 
+// src/verification-diagnostics.ts
+function diagnosticText(value, maximum = 4096, secrets = []) {
+  maximum = Math.max(0, Math.floor(maximum));
+  let clean = value;
+  for (const secret of [...new Set(secrets)].filter(Boolean).sort((a, b) => b.length - a.length))
+    clean = clean.split(secret).join("[redacted]");
+  clean = clean.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, "").replace(/(Bearer\s+)\S+/gi, "$1[redacted]").replace(/((?:api[_-]?key|token|password|secret)\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]").replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[redacted]@");
+  if (Buffer.byteLength(clean) <= maximum)
+    return clean;
+  const marker = maximum >= 12 ? `
+[truncated]` : ".".repeat(maximum);
+  const bytes = Buffer.from(clean).subarray(0, Math.max(0, maximum - Buffer.byteLength(marker)));
+  return bytes.toString("utf8").replace(/\ufffd$/, "") + marker;
+}
+
 // src/service/runtime.ts
 import { homedir as homedir2 } from "node:os";
-import { dirname as dirname8, isAbsolute as isAbsolute5, join as join10, resolve as resolve4 } from "node:path";
+import { dirname as dirname9, isAbsolute as isAbsolute5, join as join11, resolve as resolve4 } from "node:path";
 var STARTUP_INPUT_BYTES = 16 * 1024;
 function absolute(value) {
   const result = text(value, 4096, true);
@@ -8992,7 +8833,7 @@ function selectStart(options, ambient) {
     throw new ContractError("invalid");
   let fromFile;
   if (options.config) {
-    const path = resolve4(options.config), f = new PrivateFiles(dirname8(path));
+    const path = resolve4(options.config), f = new PrivateFiles(dirname9(path));
     const bytes = f.read(path);
     if (!bytes)
       throw new ContractError("corrupt-selected");
@@ -9007,7 +8848,7 @@ function selectStart(options, ambient) {
       port: options.port ?? 17423,
       proxy: null
     },
-    agentDir: resolve4(options.agentDir ?? ambient.PI_CODING_AGENT_DIR ?? join10(ambient.HOME ?? ambient.USERPROFILE ?? homedir2(), ".pi", "agent")),
+    agentDir: resolve4(options.agentDir ?? ambient.PI_CODING_AGENT_DIR ?? join11(ambient.HOME ?? ambient.USERPROFILE ?? homedir2(), ".pi", "agent")),
     tokenSource: options.tokenFile ? "file" : env ? "environment" : "generated",
     tokenFile: options.tokenFile ? resolve4(options.tokenFile) : null
   });
@@ -9242,10 +9083,10 @@ function startupGuidance(result, input) {
       return `Pi's agent directory ${agent} must be an existing real directory (not a symlink) owned by you.
 `;
     case "pi-auth":
-      return `${join11(agent, "auth.json")} must be your own single-link regular file holding valid Pi credentials; log in to Pi first.
+      return `${join12(agent, "auth.json")} must be your own single-link regular file holding valid Pi credentials; log in to Pi first.
 `;
     case "pi-models":
-      return `${join11(agent, "models.json")} must be your own single-link regular file using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.
+      return `${join12(agent, "models.json")} must be your own single-link regular file using only fields Cadence's pinned Pi SDK supports; a field only newer Pi understands is refused.
 `;
     case "pi-runtime":
       return `Loading Pi's SDK model runtime failed after the owner registered (optional SDK packages missing, or sources the SDK refuses); it stays quarantined.
@@ -9574,7 +9415,7 @@ Content-Length: 0\r
       ...options.build ? { build: decodeServiceBuild(options.build) } : {}
     };
     this.unRevoke = options.auth.material.onRevoke(() => {
-      options.adapters.admission?.revokeGrants();
+      options.adapters.attachments?.revokeGrants();
       for (const attachment of [...this.attachments.values()])
         this.detach(attachment);
       for (const request2 of this.requests)
@@ -9616,7 +9457,7 @@ Content-Length: 0\r
   }
   quiesce() {
     this.accepting = false;
-    this.configuration?.adapters.admission?.revokeGrants();
+    this.configuration?.adapters.attachments?.revokeGrants();
   }
   close() {
     if (this.closePromise)
@@ -9665,7 +9506,7 @@ Content-Length: 0\r
     if (this.attachments.get(attachment.caller.attachmentId) !== attachment)
       return;
     this.attachments.delete(attachment.caller.attachmentId);
-    this.options.adapters.admission?.detach(attachment.caller.attachmentId);
+    this.options.adapters.attachments?.detach(attachment.caller.attachmentId);
     if (attachment.socket) {
       for (const viewer of this.viewers)
         if (viewer.attachment === attachment)
@@ -9954,11 +9795,10 @@ Content-Length: 0\r
         this.detach(this.attachment(caller));
         return { kind: "ok", value: null };
       case "preflight":
-        return a.admission?.preflight(decodePreflightRequest(input), caller) ?? unavailable();
       case "command":
-        return a.admission?.submit(decodeCommand(input), caller) ?? unavailable();
+        return refusal("unsupported-context");
       case "cancel":
-        return a.admission?.cancel(decodeCancel(input), caller) ?? unavailable();
+        return refusal("unsupported-context");
       case "receipt":
         return a.receipts ? decodeReceiptLookup(await a.receipts(decodeId(input))) : {
           status: "inconclusive",
@@ -9979,8 +9819,8 @@ Content-Length: 0\r
           authority: caller.authority,
           csrf: caller.authority === "browser" ? this.options.auth.csrf : null,
           capabilities: {
-            actions: original.capabilities.actions && !!a.admission && compatibleBuild(this.options.build, build2),
-            manualChecks: original.capabilities.manualChecks && caller.authority === "local" && !!a.admission && compatibleBuild(this.options.build, build2),
+            actions: original.capabilities.actions && !!a.workbench && compatibleBuild(this.options.build, build2),
+            manualChecks: false,
             history: original.capabilities.history
           }
         });
@@ -10288,17 +10128,17 @@ Content-Length: 0\r
 
 // src/service/workbench-files.ts
 import {
-  closeSync as closeSync5,
+  closeSync as closeSync6,
   constants as constants5,
   fstatSync as fstatSync5,
-  lstatSync as lstatSync8,
+  lstatSync as lstatSync9,
   opendirSync as opendirSync5,
-  openSync as openSync5,
+  openSync as openSync6,
   readSync as readSync4,
-  realpathSync as realpathSync3
+  realpathSync as realpathSync4
 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { dirname as dirname10, isAbsolute as isAbsolute6, join as join12, relative as relative5, resolve as resolve6, sep as sep4 } from "node:path";
+import { dirname as dirname11, isAbsolute as isAbsolute6, join as join13, relative as relative5, resolve as resolve6, sep as sep4 } from "node:path";
 
 // src/worker-redaction.mjs
 var marker = "[redacted]";
@@ -10767,7 +10607,7 @@ class WorkbenchFiles {
   excluded;
   constructor(root, excluded, secrets) {
     this.secrets = secrets;
-    this.root = realpathSync3(root);
+    this.root = realpathSync4(root);
     this.excluded = excluded.flatMap((path) => [
       resolve6(path),
       canonicalAmbientRoot(path)
@@ -10776,14 +10616,14 @@ class WorkbenchFiles {
   allowed(path) {
     if (path.split(/[\\/]/).some(sensitive2) || this.excluded.some((root) => inside(root, path)))
       throw new ContractError("forbidden");
-    const stat = lstatSync8(path);
+    const stat = lstatSync9(path);
     if (stat.isSymbolicLink() || stat.isFile() && stat.nlink !== 1 || process.platform !== "win32" && process.getuid && stat.uid !== process.getuid())
       throw new ContractError("forbidden");
   }
   directory(path) {
     if (!isAbsolute6(path) || !safeDirectory(path))
       throw new ContractError("invalid");
-    const canonical = realpathSync3(path);
+    const canonical = realpathSync4(path);
     this.allowed(canonical);
     return canonical;
   }
@@ -10791,15 +10631,15 @@ class WorkbenchFiles {
     if (isAbsolute6(path) || path.split(/[\\/]/).some((part) => part === ".." || sensitive2(part)))
       throw new ContractError("forbidden");
     const target = resolve6(this.root, path);
-    if (!inside(this.root, target) || !safeDirectory(dirname10(target)))
+    if (!inside(this.root, target) || !safeDirectory(dirname11(target)))
       throw new ContractError("forbidden");
     this.allowed(target);
-    if (lstatSync8(target).isSymbolicLink())
+    if (lstatSync9(target).isSymbolicLink())
       throw new ContractError("forbidden");
     return target;
   }
   browsed(path) {
-    const full = /^~(?:[\\/]|$)/.test(path) ? join12(homedir4(), path.slice(1)) : path || this.root;
+    const full = /^~(?:[\\/]|$)/.test(path) ? join13(homedir4(), path.slice(1)) : path || this.root;
     try {
       return this.directory(full);
     } catch (error) {
@@ -10822,7 +10662,7 @@ class WorkbenchFiles {
         }
         if (sensitive2(entry.name) || entry.isSymbolicLink() || !entry.isFile() && !entry.isDirectory() || directories && !entry.isDirectory())
           continue;
-        const absolute2 = join12(selected2, entry.name);
+        const absolute2 = join13(selected2, entry.name);
         try {
           this.allowed(absolute2);
         } catch {
@@ -10845,7 +10685,7 @@ class WorkbenchFiles {
       dir.closeSync();
     }
     entries.sort((a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name));
-    const parent = dirname10(selected2);
+    const parent = dirname11(selected2);
     return {
       kind: directories ? "directories" : "files",
       path: directories ? selected2 : path,
@@ -10855,10 +10695,10 @@ class WorkbenchFiles {
     };
   }
   read(path) {
-    const selected2 = this.selected(path), before = lstatSync8(selected2);
+    const selected2 = this.selected(path), before = lstatSync9(selected2);
     if (!before.isFile())
       throw new ContractError("forbidden");
-    const fd = openSync5(selected2, constants5.O_RDONLY | (constants5.O_NOFOLLOW ?? 0));
+    const fd = openSync6(selected2, constants5.O_RDONLY | (constants5.O_NOFOLLOW ?? 0));
     try {
       const opened = fstatSync5(fd);
       if (!opened.isFile() || opened.nlink !== 1 || before.dev !== opened.dev || before.ino !== opened.ino)
@@ -10871,7 +10711,7 @@ class WorkbenchFiles {
           break;
         at += n;
       }
-      const after = fstatSync5(fd), current = lstatSync8(selected2);
+      const after = fstatSync5(fd), current = lstatSync9(selected2);
       if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.nlink !== 1 || current.isSymbolicLink() || current.nlink !== 1 || current.ino !== opened.ino || current.dev !== opened.dev)
         throw new ContractError("stale");
       const decoded2 = new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, at), { stream: at < opened.size });
@@ -10884,7 +10724,7 @@ class WorkbenchFiles {
         limited: at < opened.size
       };
     } finally {
-      closeSync5(fd);
+      closeSync6(fd);
     }
   }
 }
@@ -10906,7 +10746,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "02a8164a76a61a8c58a2858885dc3900628c07003313f10c5cb1cf68a930dc9b",
+    contractHash: "f0ff0c9d0481dab9fd21cdbc7c0d72b427bee60033a9af4c789f859c4c83fe75",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -11475,8 +11315,8 @@ Content-Length: 0\r
 }
 
 // src/service/host.ts
-import { lstatSync as lstatSync16, opendirSync as opendirSync11 } from "node:fs";
-import { join as join28 } from "node:path";
+import { lstatSync as lstatSync18, opendirSync as opendirSync12 } from "node:fs";
+import { join as join29 } from "node:path";
 
 // src/agent-registry.ts
 import { createHash as createHash10 } from "node:crypto";
@@ -11504,16 +11344,16 @@ function loadAgentDefinitions() {
 }
 
 // src/cadence-preferences.ts
-import { realpathSync as realpathSync4 } from "node:fs";
-import { basename, dirname as dirname11, join as join13, resolve as resolve7 } from "node:path";
+import { realpathSync as realpathSync5 } from "node:fs";
+import { basename, dirname as dirname12, join as join14, resolve as resolve7 } from "node:path";
 function agentNamespace(agentDir) {
   let at = resolve7(agentDir);
   const missing2 = [];
   for (;; ) {
     try {
-      return join13(realpathSync4(at), ...missing2.reverse());
+      return join14(realpathSync5(at), ...missing2.reverse());
     } catch {
-      const parent = dirname11(at);
+      const parent = dirname12(at);
       if (parent === at)
         return resolve7(agentDir);
       missing2.push(basename(at));
@@ -11527,7 +11367,7 @@ class CadencePreferences {
   files;
   constructor(agentDir) {
     const namespace = agentNamespace(agentDir);
-    this.path = join13(namespace, "cadence", "settings.json");
+    this.path = join14(namespace, "cadence", "settings.json");
     this.files = new PrivateFiles(namespace, false);
   }
   read() {
@@ -11820,12 +11660,12 @@ class HistoryLive {
 
 // src/history/navigation.ts
 import { createHash as createHash11 } from "node:crypto";
-import { lstatSync as lstatSync10 } from "node:fs";
-import { dirname as dirname12, join as join15 } from "node:path";
+import { lstatSync as lstatSync11 } from "node:fs";
+import { dirname as dirname13, join as join16 } from "node:path";
 
 // src/history/index-tree.ts
-import { lstatSync as lstatSync9 } from "node:fs";
-import { join as join14 } from "node:path";
+import { lstatSync as lstatSync10 } from "node:fs";
+import { join as join15 } from "node:path";
 var MAX_NODE = 16 * 1024;
 var ACTIVE_KEY = "active";
 function chainHash(seq, previous, previousHash) {
@@ -11868,7 +11708,7 @@ class IndexTree {
     this.files = files;
   }
   path(id) {
-    return join14(this.files.directory, "indexes", "nodes", id.slice(0, 2), `${id}.json`);
+    return join15(this.files.directory, "indexes", "nodes", id.slice(0, 2), `${id}.json`);
   }
   load(id, budget, unit) {
     decodeHash(id);
@@ -11883,7 +11723,7 @@ class IndexTree {
       if (budget) {
         const path = this.path(id);
         budget.reserve(0);
-        const selected2 = lstatSync9(path).size;
+        const selected2 = lstatSync10(path).size;
         if (selected2 > MAX_NODE)
           throw new ContractError("receipt-inconclusive");
         bytes = readRange(this.files, path, 0, selected2, budget);
@@ -12123,7 +11963,7 @@ class HistoryNavigation {
   cacheBytes = 0;
   blocks = new Map;
   block(path, at, size, budget) {
-    const start = Math.floor(at / (1024 * 1024)) * 1024 * 1024, key = `${path}/${start}`, st = stamp3(lstatSync10(path));
+    const start = Math.floor(at / (1024 * 1024)) * 1024 * 1024, key = `${path}/${start}`, st = stamp3(lstatSync11(path));
     let old = this.blocks.get(key);
     if (!old || old.budget !== budget || old.stamp !== st) {
       const bytes = readRange(this.files, path, start, Math.min(1024 * 1024, size - start), budget);
@@ -12201,7 +12041,7 @@ class HistoryNavigation {
     }
   }
   indexPath(group, id) {
-    return join15(this.files.directory, "indexes", group, `${id}.json`);
+    return join16(this.files.directory, "indexes", group, `${id}.json`);
   }
   hintKey(group, id) {
     return `${this.files.directory}/${this.files.format.storeId}/${group}/${id}`;
@@ -12258,9 +12098,9 @@ class HistoryNavigation {
       return structuredClone(source.value);
     }
     try {
-      if (!this.files.files.directory(dirname12(path), false, budget.walks))
+      if (!this.files.files.directory(dirname13(path), false, budget.walks))
         return source ? structuredClone(source.value) : undefined;
-      const size = lstatSync10(path).size;
+      const size = lstatSync11(path).size;
       if (size > RECORD_BYTES)
         return source ? structuredClone(source.value) : undefined;
       return parseWireJson(readRange(this.files, path, 0, size, budget).toString("utf8"), RECORD_BYTES);
@@ -12392,7 +12232,7 @@ class HistoryNavigation {
   }
   batch(p, budget) {
     const key = canonicalJson(p), cached = this.cache.get(key), path = this.files.segmentPath(p.segment);
-    if (cached && cached.budget === budget && cached.stamp === stamp3(lstatSync10(path))) {
+    if (cached && cached.budget === budget && cached.stamp === stamp3(lstatSync11(path))) {
       this.validateBridge(cached.batch.rows, p, budget);
       this.rememberBoundary(p, cached.batch.navigationRoot, budget);
       return cached.batch;
@@ -12403,7 +12243,7 @@ class HistoryNavigation {
       if (cached.identity !== identity)
         bad2();
       cached.budget = budget;
-      cached.stamp = stamp3(lstatSync10(path));
+      cached.stamp = stamp3(lstatSync11(path));
       this.files.assertPublished(p.segment, p.offset + p.bytes, p.seq);
       this.validateBridge(cached.batch.rows, p, budget);
       this.rememberBoundary(p, cached.batch.navigationRoot, budget);
@@ -12454,7 +12294,7 @@ class HistoryNavigation {
         identity,
         batch,
         bytes: bytes.length,
-        stamp: stamp3(lstatSync10(path)),
+        stamp: stamp3(lstatSync11(path)),
         budget
       });
       this.cacheBytes += bytes.length;
@@ -12471,7 +12311,7 @@ class HistoryNavigation {
       const path = this.files.segmentPath(segment);
       let size;
       try {
-        size = lstatSync10(path).size;
+        size = lstatSync11(path).size;
       } catch (e) {
         if (e instanceof Error && "code" in e && e.code === "ENOENT")
           return null;
@@ -17031,7 +16871,7 @@ class HistoryProjection {
 // src/history/reader.ts
 import { createHash as createHash18 } from "node:crypto";
 import { existsSync as existsSync2 } from "node:fs";
-import { join as join16 } from "node:path";
+import { join as join17 } from "node:path";
 
 // src/history/saved-graph-state.ts
 var freshSavedGraph = () => ({
@@ -17799,7 +17639,7 @@ class HistoryReader {
   }
   async readDetail(value) {
     const cursor = decodeCursor(value);
-    if (cursor.navigation !== undefined || this.files.format.schema === FORMAT && !existsSync2(join16(this.files.directory, "indexes", "heads", "latest.json")))
+    if (cursor.navigation !== undefined || this.files.format.schema === FORMAT && !existsSync2(join17(this.files.directory, "indexes", "heads", "latest.json")))
       return readRetainedDetail(this, cursor);
     if (this.files.format.schema !== FORMAT)
       return this.detail(cursor);
@@ -18000,31 +17840,237 @@ class HistoryReader {
 }
 
 // src/history/writer.ts
-import { createHash as createHash20, randomUUID as randomUUID12 } from "node:crypto";
+import { createHash as createHash21, randomUUID as randomUUID13 } from "node:crypto";
+import { join as join20 } from "node:path";
+
+// src/task-store.ts
+import { createHash as createHash19, randomUUID as randomUUID11 } from "node:crypto";
+import {
+  closeSync as closeSync7,
+  fsyncSync as fsyncSync4,
+  openSync as openSync7,
+  readdirSync as readdirSync2,
+  renameSync as renameSync2,
+  unlinkSync as unlinkSync3,
+  writeFileSync as writeFileSync3
+} from "node:fs";
+import { hostname as hostname4 } from "node:os";
 import { join as join18 } from "node:path";
+// src/task-types.ts
+var TASK_SCHEMA = "cadence-workflow-assistant/1";
+var MAX_RECORD_BYTES = 128 * 1024;
+function decodeCheck(value) {
+  if (!object(value) || !boundedString(value.name, 128) || !value.name.trim() || !boundedString(value.command, 4096) || !value.command.trim() || !Number.isInteger(value.timeoutMs) || Number(value.timeoutMs) < 100 || Number(value.timeoutMs) > 1200000)
+    throw new Error("Invalid check definition");
+  const controls = /[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/u;
+  if (controls.test(value.command) || controls.test(value.name) || /[\n\t]/u.test(value.name))
+    throw new Error("Check commands/names must be visibly representable in the terminal");
+  return {
+    name: value.name,
+    command: value.command,
+    timeoutMs: Number(value.timeoutMs)
+  };
+}
+function decodeTask(value) {
+  if (!object(value) || value.schema !== TASK_SCHEMA || typeof value.id !== "string" || !validId(value.id) || !Number.isSafeInteger(value.revision) || Number(value.revision) < 1 || typeof value.kind !== "string" || !["code", "research", "diagnosis"].includes(value.kind) || typeof value.phase !== "string" || ![
+    "planning",
+    "running",
+    "review",
+    "interrupted",
+    "failed",
+    "done"
+  ].includes(value.phase) || !boundedString(value.goal, 8192) || !value.goal.trim() || !boundedString(value.plan, 32768) || !boundedString(value.cwd, 4096) || !boundedString(value.result, 16384) || !boundedString(value.baseline, 16384) || !Array.isArray(value.checks) || value.checks.length > 32 || !Array.isArray(value.activity) || value.activity.length > 64)
+    throw new Error("Unknown or corrupt task record");
+  for (const check of value.checks) {
+    decodeCheck(check);
+    if (!object(check) || !boundedString(check.cwd, 4096) || !(check.exitCode === null || Number.isInteger(check.exitCode)) || typeof check.durationMs !== "number" || !Number.isFinite(check.durationMs) || check.durationMs < 0 || typeof check.status !== "string" || !["passed", "failed", "canceled", "stale"].includes(check.status) || !boundedString(check.fingerprint, 128) || check.log !== undefined && (typeof check.log !== "string" || !/^[a-f0-9-]+\.log$/.test(check.log)))
+      throw new Error("Corrupt check record");
+  }
+  for (const entry of value.activity) {
+    if (!object(entry) || !boundedString(entry.at, 64) || !boundedString(entry.text, 512))
+      throw new Error("Corrupt activity");
+  }
+  if (value.review !== undefined && (!object(value.review) || !boundedString(value.review.fingerprint, 128) || typeof value.review.outcome !== "string" || !["reviewed", "reviewed-with-issues"].includes(value.review.outcome)))
+    throw new Error("Corrupt review");
+  const allowed = new Set([
+    "schema",
+    "id",
+    "revision",
+    "kind",
+    "goal",
+    "plan",
+    "cwd",
+    "phase",
+    "result",
+    "baseline",
+    "checks",
+    "review",
+    "activity"
+  ]);
+  if (Object.keys(value).some((key2) => !allowed.has(key2)))
+    throw new Error("Unknown task fields");
+  return structuredClone(value);
+}
+// src/task-store.ts
+function recordText(record2) {
+  return `${JSON.stringify(record2, null, 2)}
+`;
+}
+function contentIdentity(text2) {
+  return createHash19("sha256").update(text2).digest("hex");
+}
+function savedRecordIdentity(record2) {
+  return contentIdentity(recordText(record2));
+}
+
+class TaskStore extends CheckoutStore {
+  tasks;
+  constructor(root, stateHome = defaultStateHome()) {
+    super(root, stateHome);
+    this.tasks = join18(this.root, ".cadence", "assistant", "tasks");
+  }
+  recover(expected, acknowledgeEscapedProcesses) {
+    if (!acknowledgeEscapedProcesses || expected.host !== hostname4())
+      throw new Error("Recovery requires informed local-owner confirmation");
+    this.assertOwner(expected);
+    try {
+      process.kill(expected.pid, 0);
+    } catch (error) {
+      if (!object(error) || error.code !== "ESRCH")
+        throw new Error("Owner status unknown");
+      this.assertOwner(expected);
+      unlinkSync3(this.lockPath);
+      return;
+    }
+    throw new Error("Owner is live; stop it first");
+  }
+  load(id) {
+    return this.loadSnapshot(id)?.record;
+  }
+  loadSnapshot(id) {
+    if (!validId(id))
+      throw new Error("Invalid task id");
+    const directory = join18(this.tasks, id);
+    if (safeDirectory(directory) && readdirSync2(directory).some((name) => name !== "task.json"))
+      throw new Error("Unknown task directory content; preserved without reset");
+    const data = readBounded(join18(this.tasks, id, "task.json"), MAX_RECORD_BYTES);
+    if (!data)
+      return;
+    const record2 = decodeTask(parseRecord(data));
+    if (record2.id !== id)
+      throw new Error("Task identity mismatch");
+    return { record: record2, identity: contentIdentity(data) };
+  }
+  list() {
+    if (!safeDirectory(this.tasks))
+      return [];
+    const entries = readdirSync2(this.tasks);
+    if (entries.length > 1000)
+      throw new Error("Task listing limit exceeded");
+    return entries.map((id) => {
+      const task = this.load(id);
+      if (!task)
+        throw new Error("Unknown task directory");
+      return task;
+    });
+  }
+  save(record2, expectedRevision, held, expectedIdentity) {
+    const next = decodeTask(record2);
+    if (next.revision !== expectedRevision + 1)
+      throw new Error("Revision conflict");
+    const text2 = recordText(next);
+    if (Buffer.byteLength(text2) > MAX_RECORD_BYTES)
+      throw new Error("Task record limit");
+    const lock = held ?? this.acquire();
+    if (lock.pid !== process.pid || lock.host !== hostname4())
+      throw new Error("Not the lock owner");
+    try {
+      this.assertOwner(lock);
+      const current2 = this.loadSnapshot(next.id);
+      if ((current2?.record.revision ?? 0) !== expectedRevision)
+        throw new Error("Revision conflict");
+      if (current2?.identity !== expectedIdentity)
+        throw new Error("Task content changed; reopen it");
+      const dir = join18(this.tasks, next.id);
+      safeDirectory(dir, true);
+      if (!current2 && readdirSync2(dir).length)
+        throw new Error("Unknown task directory");
+      const temporary = join18(dir, `task.${randomUUID11()}.tmp`);
+      const fd = openSync7(temporary, "wx", 384);
+      try {
+        writeFileSync3(fd, text2);
+        fsyncSync4(fd);
+      } finally {
+        closeSync7(fd);
+      }
+      this.assertOwner(lock);
+      const latest = readBounded(join18(dir, "task.json"), MAX_RECORD_BYTES);
+      if ((latest ? contentIdentity(latest) : undefined) !== expectedIdentity)
+        throw new Error("Task content changed; replacement preserved without overwrite");
+      retryWindowsFileOperation(() => renameSync2(temporary, join18(dir, "task.json")), () => {
+        this.assertOwner(lock);
+        const now = readBounded(join18(dir, "task.json"), MAX_RECORD_BYTES);
+        if ((now ? contentIdentity(now) : undefined) !== expectedIdentity)
+          throw new Error("Task content changed; replacement preserved without overwrite");
+      });
+      return next;
+    } finally {
+      if (!held)
+        this.release(lock);
+    }
+  }
+  checks() {
+    const data = readBounded(join18(this.root, ".cadence", "assistant", "config.json"), 32768);
+    if (!data)
+      return [];
+    const value = parseRecord(data);
+    if (!object(value) || value.schema !== TASK_CONFIG_SCHEMA || !Array.isArray(value.checks) || value.checks.length > 32 || Object.keys(value).some((key2) => !["schema", "checks"].includes(key2)))
+      throw new Error("Unknown check configuration");
+    const checks = value.checks.map(decodeCheck);
+    if (new Set(checks.map((check) => check.name)).size !== checks.length || checks.some((check) => check.name === "Manual command"))
+      throw new Error("Duplicate or reserved check name");
+    return checks;
+  }
+  readLog(name) {
+    if (!/^[a-f0-9-]{36}\.log$/.test(name))
+      throw new Error("Invalid diagnostic name");
+    this.inspectPrivateFile(join18(this.privateRoot, name), 65536);
+    const data = readBounded(join18(this.privateRoot, name), 65536);
+    return data ? diagnosticText(data.toString("utf8"), 65536) : "Private diagnostic unavailable";
+  }
+  writeLog(lock, output) {
+    if (lock.pid !== process.pid || lock.host !== hostname4())
+      throw new Error("Not the lock owner");
+    this.assertOwner(lock);
+    const name = `${randomUUID11()}.log`;
+    writeFileSync3(join18(this.privateRoot, name), diagnosticText(output, 65536), {
+      flag: "wx",
+      mode: 384
+    });
+    return name;
+  }
+}
+var TASK_CONFIG_SCHEMA = "cadence-assistant-checks/1";
+var stores = new WeakMap;
+function legacyTaskStore(c) {
+  let store = stores.get(c);
+  if (!store) {
+    store = new TaskStore(c.store.root, c.stateHome);
+    stores.set(c, store);
+  }
+  return store;
+}
 
 // src/history/plans.ts
-import { createHash as createHash19, randomUUID as randomUUID11 } from "node:crypto";
+import { createHash as createHash20, randomUUID as randomUUID12 } from "node:crypto";
 function assertPlanContent(plan, reference, secrets) {
   text(plan, 32768);
   const ref = decodeContentRef(reference);
-  if (ref.field !== "plan" || ref.bytes !== Buffer.byteLength(plan) || ref.sha256 !== createHash19("sha256").update(plan).digest("hex") || sanitizeText(plan, secrets) !== plan)
+  if (ref.field !== "plan" || ref.bytes !== Buffer.byteLength(plan) || ref.sha256 !== createHash20("sha256").update(plan).digest("hex") || sanitizeText(plan, secrets) !== plan)
     throw new ContractError("invalid");
 }
-function proposePlanContent(plan, version, secrets) {
-  text(plan, 32768);
-  const reference = decodeContentRef({
-    recordId: randomUUID11(),
-    version,
-    field: "plan",
-    bytes: Buffer.byteLength(plan),
-    sha256: createHash19("sha256").update(plan).digest("hex")
-  });
-  assertPlanContent(plan, reference, secrets);
-  return reference;
-}
 function planRecording(plan, graph, operationId, epoch) {
-  const detailId = randomUUID11();
+  const detailId = randomUUID12();
   const input = {
     link: { epoch, taskId: graph.taskId, runId: null, operationId },
     observedMs: 0,
@@ -18074,13 +18120,13 @@ function planRecording(plan, graph, operationId, epoch) {
 
 // src/history/publication.ts
 import {
-  closeSync as closeSync6,
+  closeSync as closeSync8,
   constants as constants6,
-  fsyncSync as fsyncSync4,
-  openSync as openSync6,
-  realpathSync as realpathSync5
+  fsyncSync as fsyncSync5,
+  openSync as openSync8,
+  realpathSync as realpathSync6
 } from "node:fs";
-import { dirname as dirname13, isAbsolute as isAbsolute7, join as join17, relative as relative6, sep as sep5 } from "node:path";
+import { dirname as dirname14, isAbsolute as isAbsolute7, join as join19, relative as relative6, sep as sep5 } from "node:path";
 function summary(text2, maximum, runId) {
   const label = `[Cadence summary${runId ? `; run ${runId}` : ""}; retained history is separate]
 `;
@@ -18129,7 +18175,7 @@ function publicationRecord(store, reader, intent, link, run, request3, expected,
   else {
     if (action.kind !== "create" || !request3.cwd || store.list().length >= 1000)
       bad11();
-    const cwd = realpathSync5(request3.cwd), within = relative6(store.root, cwd);
+    const cwd = realpathSync6(request3.cwd), within = relative6(store.root, cwd);
     if (isAbsolute7(within) || within === ".." || within.startsWith(`..${sep5}`))
       bad11();
     record2 = {
@@ -18265,18 +18311,18 @@ ${result}`;
 function syncTaskPublication(store, taskId2) {
   if (process.platform === "win32")
     return;
-  for (let path = join17(store.tasks, taskId2);; path = dirname13(path)) {
+  for (let path = join19(store.tasks, taskId2);; path = dirname14(path)) {
     if (!safeDirectory(path))
       throw new ContractError("conflict");
-    const fd = openSync6(path, constants6.O_RDONLY | constants6.O_DIRECTORY);
+    const fd = openSync8(path, constants6.O_RDONLY | constants6.O_DIRECTORY);
     try {
-      fsyncSync4(fd);
+      fsyncSync5(fd);
     } finally {
-      closeSync6(fd);
+      closeSync8(fd);
     }
     if (path === store.root)
       return;
-    if (dirname13(path) === path)
+    if (dirname14(path) === path)
       throw new ContractError("conflict");
   }
 }
@@ -18614,7 +18660,7 @@ class HistoryWriter {
             kind: "fact",
             fact: {
               kind: "publication-settled",
-              publicationId: last?.kind === "publication-intent" ? last.publicationId : randomUUID12(),
+              publicationId: last?.kind === "publication-intent" ? last.publicationId : randomUUID13(),
               status: "uncertain",
               observed: null
             }
@@ -18744,7 +18790,7 @@ class HistoryWriter {
             const row = {
               kind: "record",
               seq: seq2,
-              id: randomUUID12(),
+              id: randomUUID13(),
               value
             };
             rows.push(row);
@@ -19018,7 +19064,7 @@ class HistoryWriter {
     try {
       const budget = HistoryReadBudget.authority();
       const intent = this.files.readCommand(commandId, budget);
-      const directoryExists = this.files.files.directory(join18(this.files.directory, "commands", commandId));
+      const directoryExists = this.files.files.directory(join20(this.files.directory, "commands", commandId));
       const wanted = intent ? decodeAdmissionIntent(json(intent, RECORD_BYTES)) : null;
       let found = null;
       let run = null;
@@ -19128,7 +19174,7 @@ class HistoryWriter {
         refused2 = { status: "refused", error: publicError("conflict") };
         return;
       }
-      if (intent.identity.kind === "action" && intent.identity.action.kind === "create" && this.lease.coordination.store.list().length >= 1000) {
+      if (intent.identity.kind === "action" && intent.identity.action.kind === "create" && legacyTaskStore(this.lease.coordination).list().length >= 1000) {
         refused2 = { status: "refused", error: publicError("capacity") };
         return;
       }
@@ -19164,8 +19210,8 @@ class HistoryWriter {
       this.assertOrdinary();
       const bytes = encoded(intent);
       this.charge(Buffer.byteLength(bytes), intent.runId, true);
-      this.files.files.create(join18(this.files.directory, "commands", intent.commandId, "intent.json"), bytes, RECORD_BYTES);
-      this.files.syncParents(join18(this.files.directory, "commands", intent.commandId, "intent.json"));
+      this.files.files.create(join20(this.files.directory, "commands", intent.commandId, "intent.json"), bytes, RECORD_BYTES);
+      this.files.syncParents(join20(this.files.directory, "commands", intent.commandId, "intent.json"));
       await this.options.observeWrite?.("intent");
       const policy = this.resourcePolicy(intent.identity.kind === "action" ? intent.identity.expected.configRev : 1);
       return { kind: "admission", intent, record: record2, policy };
@@ -19220,7 +19266,7 @@ class HistoryWriter {
       if (intent.runId !== null || action.kind !== "save-plan" || !expected.task || action.taskId !== expected.task.id || state.receipt()?.receipt.publication !== "pending")
         return refuse2("conflict");
       const current2 = this.contexts.get(action.taskId);
-      const selected2 = this.lease.coordination.store.loadSnapshot(action.taskId);
+      const selected2 = legacyTaskStore(this.lease.coordination).loadSnapshot(action.taskId);
       if (!current2 || canonicalJson({
         ...current2,
         accessGeneration: expected.accessGeneration
@@ -19271,7 +19317,7 @@ class HistoryWriter {
       const operation = readOperationStateForPublication(this.files, operationId), intent = operation.intent;
       if (operation.recovered || intent.identity.kind !== "action" || intent.identity.action.kind !== "start" || !intent.runId)
         throw new ContractError("conflict");
-      const expected = intent.identity.expected, task = expected.task, snapshot = task ? this.lease.coordination.store.loadSnapshot(task.id) : undefined;
+      const expected = intent.identity.expected, task = expected.task, snapshot = task ? legacyTaskStore(this.lease.coordination).loadSnapshot(task.id) : undefined;
       const current2 = task ? this.contexts.get(task.id) : undefined;
       if (!snapshot || !task || expected.epoch !== this.lease.registration.epoch || snapshot.identity !== task.identity || snapshot.record.revision !== task.revision || selected2.taskId !== task.id || selected2.taskKind !== task.kind || selected2.taskRevision !== task.revision || selected2.revision !== task.graphRevision || hash2(canonicalJson(selected2)) !== task.graphIdentity || !current2 || canonicalJson({
         ...current2,
@@ -19330,7 +19376,7 @@ class HistoryWriter {
       };
     }
     this.publishing.add(request3.operationId);
-    const publicationId = randomUUID12();
+    const publicationId = randomUUID13();
     let link;
     let record2;
     let expected;
@@ -19376,7 +19422,7 @@ class HistoryWriter {
         const reader = HistoryReader.open(this.lease.coordination);
         if (!reader)
           throw new ContractError("unavailable");
-        record2 = publicationRecord(this.lease.coordination.store, reader, intent, link, run, request3, expected, operation.facts, this.state.committedSeq);
+        record2 = publicationRecord(legacyTaskStore(this.lease.coordination), reader, intent, link, run, request3, expected, operation.facts, this.state.committedSeq);
         this.charge(2 * Buffer.byteLength(`${JSON.stringify(record2, null, 2)}
 `), intent.runId, true);
         return this.ownerValue({
@@ -19432,7 +19478,7 @@ class HistoryWriter {
       const outcome = await this.enqueue(async () => {
         await this.options.observeWrite?.("publication-before-save");
         this.assertWritable(false, true);
-        const store = this.lease.coordination.store;
+        const store = legacyTaskStore(this.lease.coordination);
         try {
           if (before.revision === 0 && store.list().length >= 1000)
             throw new ContractError("capacity");
@@ -19682,10 +19728,10 @@ class HistoryWriter {
       owner,
       descriptor,
       field,
-      recordId: randomUUID12(),
+      recordId: randomUUID13(),
       version: 1,
       bytes: 0,
-      hash: createHash20("sha256"),
+      hash: createHash21("sha256"),
       parts: 0,
       ended: null,
       committedSeq: null
@@ -19805,7 +19851,7 @@ class HistoryWriter {
           throw new ContractError("invalid");
         child.final = { messageId: event.messageId, detailId: event.detailId };
       }
-      events.push({ kind: "capture", id: randomUUID12(), value: item });
+      events.push({ kind: "capture", id: randomUUID13(), value: item });
     }
     return { kind: "capture", link: input.link, source: input.source, events };
   }
@@ -19931,12 +19977,12 @@ class HistoryWriter {
         candidate.apply({
           kind: "record",
           seq: "1",
-          id: randomUUID12(),
+          id: randomUUID13(),
           value: {
             kind: "owner",
             link: value.link,
             observedMs: value.observedMs,
-            events: [{ kind: "owner", id: randomUUID12(), value: event }]
+            events: [{ kind: "owner", id: randomUUID13(), value: event }]
           }
         }, this.state.committedSeq);
         const children = new Set(identity.assignments.map((a) => a.childRunId));
@@ -19955,7 +20001,7 @@ class HistoryWriter {
       if (event.kind === "fact") {
         const fact = event.fact;
         if (fact.kind === "publication-settled" && fact.status === "published") {
-          const actual = this.lease.coordination.store.loadSnapshot(value.link.taskId);
+          const actual = legacyTaskStore(this.lease.coordination).loadSnapshot(value.link.taskId);
           if (!actual || actual.identity !== fact.observed?.identity || actual.record.revision !== fact.observed.revision)
             throw new ContractError("conflict");
         }
@@ -20018,7 +20064,7 @@ class HistoryWriter {
           events.push(ended);
         }
       } else
-        events.push({ kind: "owner", id: randomUUID12(), value: event });
+        events.push({ kind: "owner", id: randomUUID13(), value: event });
     }
     return {
       kind: "owner",
@@ -20131,21 +20177,108 @@ class AuthNetwork {
   }
 }
 
+// src/service/checkout-gate.ts
+var CHECKOUT_WAITERS = 16;
+
+class CheckoutGate {
+  owner;
+  waiting = [];
+  holder = null;
+  closed = false;
+  constructor(owner) {
+    this.owner = owner;
+  }
+  assertOpen() {
+    this.owner.lease.assert();
+    if (this.closed || this.owner.state !== "idle")
+      throw new ContractError("quarantine");
+  }
+  assertQuiescent() {
+    this.assertOpen();
+    if (this.holder || this.waiting.length)
+      throw new ContractError("conflict");
+  }
+  acquire(id, signal) {
+    decodeId(id);
+    this.assertOpen();
+    if (signal.aborted)
+      throw new ContractError("stale");
+    if (this.holder?.id === id || this.waiting.some((w) => w.id === id))
+      throw new ContractError("conflict");
+    if (this.waiting.length >= CHECKOUT_WAITERS)
+      throw new ContractError("capacity");
+    const result = new Promise((resolve8, reject) => {
+      const abort = () => {
+        const at = this.waiting.indexOf(waiter);
+        if (at >= 0)
+          this.waiting.splice(at, 1)[0].reject(new ContractError("stale"));
+      };
+      const waiter = {
+        id,
+        resolve: (permit) => {
+          signal.removeEventListener("abort", abort);
+          resolve8(permit);
+        },
+        reject: (error) => {
+          signal.removeEventListener("abort", abort);
+          reject(error);
+        }
+      };
+      this.waiting.push(waiter);
+      signal.addEventListener("abort", abort, { once: true });
+    });
+    this.pump();
+    return result;
+  }
+  closeAdmission() {
+    this.closed = true;
+    for (const w of this.waiting.splice(0))
+      w.reject(new ContractError("quarantine"));
+  }
+  pump() {
+    if (this.closed || this.holder || !this.waiting.length)
+      return;
+    try {
+      this.assertOpen();
+    } catch {
+      this.closeAdmission();
+      return;
+    }
+    const waiter = this.waiting.shift();
+    if (!waiter)
+      return;
+    this.holder = waiter;
+    const assertHeld = () => {
+      this.assertOpen();
+      if (this.holder !== waiter)
+        throw new ContractError("stale");
+    };
+    waiter.resolve({
+      assertHeld,
+      release: () => {
+        assertHeld();
+        this.holder = null;
+        this.pump();
+      }
+    });
+  }
+}
+
 // src/service/model-choice.ts
-import { randomUUID as randomUUID13 } from "node:crypto";
+import { randomUUID as randomUUID14 } from "node:crypto";
 var choiceOwners = new WeakSet;
 
 class OwnerModelChoice {
   options;
   selection = null;
   revision;
-  catalogId = randomUUID13();
+  catalogId = randomUUID14();
   installing = false;
   constructor(options) {
     this.options = options;
     if (choiceOwners.has(options.owner))
       throw new ContractError("conflict");
-    this.revision = options.writer.configurationRevisionFloor + 1;
+    this.revision = 1;
     if (!Number.isSafeInteger(this.revision))
       throw new ContractError("capacity");
     choiceOwners.add(options.owner);
@@ -20177,13 +20310,11 @@ class OwnerModelChoice {
     if (this.installing)
       throw new ContractError("conflict");
     const assertCurrent = () => {
-      const { owner, writer, models } = this.options;
+      const { owner, models } = this.options;
       owner.assertQuiescent();
-      if (writer.quarantined)
-        throw new ContractError("quarantine");
-      if (writer.accounting.owner.leases || writer.accounting.children.some((pool) => pool.leases) || writer.pendingWrites || writer.accounting.episodes.count || models.pending || models.loading)
+      if (models.pending || models.loading)
         throw new ContractError("conflict");
-      if (this.revision < writer.configurationRevisionFloor || canonicalJson(request3.expected) !== canonicalJson(this.snapshot().version))
+      if (canonicalJson(request3.expected) !== canonicalJson(this.snapshot().version))
         throw new ContractError("stale");
     };
     assertCurrent();
@@ -20196,7 +20327,7 @@ class OwnerModelChoice {
       if (this.selection?.sourceSelectionId !== selected2.sourceSelectionId) {
         this.selection = selected2;
         ++this.revision;
-        this.catalogId = randomUUID13();
+        this.catalogId = randomUUID14();
         this.options.owner.configurationInstalled();
       }
       try {
@@ -20210,8 +20341,8 @@ class OwnerModelChoice {
 }
 
 // src/service/model-config.ts
-import { lstatSync as lstatSync11, realpathSync as realpathSync6 } from "node:fs";
-import { dirname as dirname14, isAbsolute as isAbsolute8, join as join19, resolve as resolve8 } from "node:path";
+import { lstatSync as lstatSync12, realpathSync as realpathSync7 } from "node:fs";
+import { dirname as dirname15, isAbsolute as isAbsolute8, join as join21, resolve as resolve8 } from "node:path";
 var CONFIG_BYTES2 = 1024 * 1024;
 var ENTRY_LIMIT = 256;
 function refuse2() {
@@ -20278,14 +20409,14 @@ function captureEnvironment(value) {
 function piSource(agentDir, home, cwd, env) {
   if (!isAbsolute8(home) || !isAbsolute8(cwd))
     refuse2();
-  let selected2 = agentDir ?? env.PI_CODING_AGENT_DIR ?? join19(home, ".pi", "agent");
+  let selected2 = agentDir ?? env.PI_CODING_AGENT_DIR ?? join21(home, ".pi", "agent");
   if (!selected2 || selected2.includes("\x00"))
     refuse2();
   if (selected2 === "~" || selected2.startsWith("~/"))
     selected2 = home + selected2.slice(1);
   selected2 = resolve8(cwd, selected2);
-  const directory = join19(realpathSync6(dirname14(selected2)), selected2.slice(dirname14(selected2).length + 1));
-  if (!lstatSync11(directory).isDirectory() || lstatSync11(directory).isSymbolicLink())
+  const directory = join21(realpathSync7(dirname15(selected2)), selected2.slice(dirname15(selected2).length + 1));
+  if (!lstatSync12(directory).isDirectory() || lstatSync12(directory).isSymbolicLink())
     refuse2();
   const files = new PrivateFiles(directory, false);
   if (!files.directory(directory))
@@ -20293,8 +20424,8 @@ function piSource(agentDir, home, cwd, env) {
   return {
     directory,
     files,
-    authPath: join19(directory, "auth.json"),
-    modelsPath: join19(directory, "models.json")
+    authPath: join21(directory, "auth.json"),
+    modelsPath: join21(directory, "models.json")
   };
 }
 function templateNames(value) {
@@ -20737,7 +20868,7 @@ function clonePrivate(value) {
 }
 
 // src/service/model-context.ts
-import { randomUUID as randomUUID14 } from "node:crypto";
+import { randomUUID as randomUUID15 } from "node:crypto";
 function committed(result) {
   if (result.status !== "committed")
     throw new ContractError("recording-exhausted");
@@ -21042,7 +21173,7 @@ class OwnerModelContext {
     const current2 = this.catalogSource();
     const validated = this.validateModel(selector, current2);
     this.#options.owner.assertQuiescent();
-    const selection = { sourceSelectionId: randomUUID14(), ...selector };
+    const selection = { sourceSelectionId: randomUUID15(), ...selector };
     const selected2 = {
       ...validated,
       model: clonePrivate(validated.model),
@@ -21124,7 +21255,7 @@ class OwnerModelContext {
       throw new ContractError("capacity");
     const selector = decodeModelSelector(input);
     const validated = this.validateModel(selector, this.catalogSource());
-    const selection = { sourceSelectionId: randomUUID14(), ...selector };
+    const selection = { sourceSelectionId: randomUUID15(), ...selector };
     this.#selected.set(selection.sourceSelectionId, {
       ...validated,
       model: clonePrivate(validated.model),
@@ -21460,7 +21591,7 @@ class ServiceOwner {
     throw new ContractError("unavailable");
   }
   detach() {}
-  registerActions(quiesce, configuration) {
+  registerRuntime(quiesce, configuration) {
     this.lease.assert();
     if (this.actionQuiesce || this.admissionClosed || this.phase !== "idle")
       throw new ContractError("conflict");
@@ -21720,911 +21851,27 @@ class ServiceOwner {
   }
 }
 
-// src/service/task-actions.ts
+// src/service/workbench.ts
+import { opendirSync as opendirSync11 } from "node:fs";
+import { join as join28 } from "node:path";
+
+// src/service/conversation-workflow.ts
 import { randomUUID as randomUUID18 } from "node:crypto";
-import { realpathSync as realpathSync7 } from "node:fs";
+import { opendirSync as opendirSync8 } from "node:fs";
+import { dirname as dirname17, join as join24 } from "node:path";
 
-// src/task-diff.ts
-import { spawnSync as spawnSync2 } from "node:child_process";
-import { createHash as createHash21 } from "node:crypto";
-import { lstatSync as lstatSync12, readdirSync as readdirSync3, readlinkSync } from "node:fs";
-import { join as join20, relative as relative7 } from "node:path";
-var admin = (path) => path === ".cadence/assistant/tasks" || path.startsWith(".cadence/assistant/tasks/");
-var GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
-function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
-  const deadline = Date.now() + 3000;
-  const hash3 = createHash21("sha256");
-  const parts = [];
-  let complete = true;
-  const limits = [];
-  let fileCount = 0;
-  let fileBytes = 0;
-  const add = (label, data2) => {
-    hash3.update(label).update("\x00").update(data2).update("\x00");
-  };
-  const git = (args) => {
-    let outcome;
-    if (Date.now() >= deadline)
-      outcome = "time budget exhausted";
-    else {
-      const result = spawnSync2("git", gitArguments(["-c", "core.quotepath=true", ...args]), {
-        cwd: root,
-        encoding: "buffer",
-        timeout: Math.max(1, deadline - Date.now()),
-        maxBuffer: outputBytes,
-        windowsHide: true,
-        env: gitEnvironment()
-      });
-      if (!result.error && result.status === 0)
-        return { stdout: result.stdout, limited: false };
-      outcome = result.error ? result.error.code ?? "error" : result.signal ? `signal ${result.signal}` : `exit ${result.status}`;
-    }
-    complete = false;
-    limits.push(`Unavailable/limited Git observation: ${args[0]} (${outcome})`);
-    return { stdout: Buffer.from(`[limited: ${outcome}]`), limited: true };
-  };
-  const inventory = (name) => {
-    if (admin(name))
-      return;
-    if (++fileCount > 2000 || Date.now() >= deadline) {
-      complete = false;
-      return;
-    }
-    try {
-      const path = join20(root, name);
-      const st = lstatSync12(path);
-      add(name, `${st.mode}:${st.size}`);
-      if (st.isSymbolicLink()) {
-        add(name, readlinkSync(path));
-        limits.push(`Link target not inspected: ${name}`);
-        complete = false;
-        return;
-      }
-      if (!st.isFile() || st.size > 1024 * 1024 || fileBytes + st.size > 8 * 1024 * 1024) {
-        limits.push(`Not inspected: ${name}`);
-        complete = false;
-        return;
-      }
-      const data2 = readBounded(path, 1024 * 1024);
-      if (!data2)
-        throw new Error("Disappeared");
-      fileBytes += data2.length;
-      add(name, data2);
-      const binary = data2.includes(0);
-      parts.push(`${name} (${binary ? "binary" : "text"}, ${data2.length} bytes, sha256 ${createHash21("sha256").update(data2).digest("hex")})`);
-    } catch {
-      complete = false;
-      limits.push(`Unreadable/changing: ${name}`);
-    }
-  };
-  const probe = spawnSync2("git", gitArguments(["rev-parse", "--is-inside-work-tree"]), {
-    cwd: root,
-    env: gitEnvironment(),
-    timeout: 3000,
-    maxBuffer: 8192,
-    encoding: "utf8",
-    windowsHide: true
-  });
-  const isGit = probe.status === 0 && probe.stdout.trim() === "true";
-  if (isGit) {
-    const pathspec = [
-      "--",
-      ".",
-      ":(exclude).cadence/assistant/tasks",
-      ":(exclude).cadence/assistant/tasks/**"
-    ];
-    const head = git(["rev-parse", "--verify", "HEAD"]);
-    add("HEAD", head.stdout);
-    for (const [label, args] of [
-      [
-        "Status (includes pre-existing dirt)",
-        [
-          "status",
-          "--porcelain=v1",
-          "-uall",
-          "--ignore-submodules=none",
-          ...pathspec
-        ]
-      ],
-      [
-        "Staged",
-        [
-          "diff",
-          "--cached",
-          "--ignore-submodules=none",
-          "--binary",
-          "--no-ext-diff",
-          "--no-textconv",
-          ...pathspec
-        ]
-      ],
-      [
-        "Unstaged",
-        [
-          "diff",
-          "--binary",
-          "--no-ext-diff",
-          "--no-textconv",
-          "--ignore-submodules=none",
-          ...pathspec
-        ]
-      ]
-    ]) {
-      const data2 = git([...args]).stdout;
-      add(label, data2);
-      parts.push(`## ${label}
-${data2.toString("utf8")}`);
-    }
-    const index = git(["ls-files", "--stage", "-z", ...pathspec]);
-    add("Index entries", index.stdout);
-    for (const entry of index.stdout.toString("utf8").split("\x00")) {
-      if (!entry.startsWith("160000 "))
-        continue;
-      complete = false;
-      limits.push(`Submodule content not inspected: ${entry.slice(entry.indexOf("\t") + 1)}`);
-    }
-    const untracked = git([
-      "ls-files",
-      "--others",
-      "--exclude-standard",
-      "-z",
-      ...pathspec
-    ]);
-    parts.push("## Untracked identities (content not automatically sent to model)");
-    if (untracked.limited)
-      add("Untracked", untracked.stdout);
-    else
-      for (const name of untracked.stdout.toString("utf8").split("\x00").filter(Boolean))
-        inventory(name);
-    const ignored = git([
-      "ls-files",
-      "--others",
-      "--ignored",
-      "--exclude-standard",
-      "--directory",
-      "--no-empty-directory",
-      "-z",
-      ...pathspec
-    ]);
-    if (ignored.stdout.length) {
-      complete = false;
-      if (!ignored.limited)
-        limits.push("Ignored files exist and are not inspected; review coverage is incomplete.");
-      add("ignored paths", ignored.stdout);
-    }
-    parts.push("Administrative .cadence/assistant/tasks records are excluded from business freshness; configuration is not excluded.");
-  } else {
-    parts.push("Non-Git bounded regular-file inventory; no staged/unstaged distinction. Excludes .git and Cadence task records. Content identities, not a transactional snapshot.");
-    if (probe.error || probe.status !== 0 && !probe.stderr?.includes("not a git repository")) {
-      complete = false;
-      limits.push("Git availability/lookup uncertain; using bounded inventory.");
-    }
-    const walk = (dir, depth) => {
-      if (depth > 16 || fileCount > 2000 || Date.now() >= deadline) {
-        complete = false;
-        return;
-      }
-      let names2;
-      try {
-        names2 = readdirSync3(dir).sort();
-      } catch {
-        complete = false;
-        return;
-      }
-      for (const name of names2) {
-        const path = join20(dir, name);
-        const rel = relative7(root, path).split("\\").join("/");
-        if (rel === ".git" || admin(rel))
-          continue;
-        if (++fileCount > 2000 || Date.now() >= deadline) {
-          complete = false;
-          break;
-        }
-        try {
-          const st = lstatSync12(path);
-          if (st.isDirectory())
-            walk(path, depth + 1);
-          else
-            inventory(rel);
-        } catch {
-          complete = false;
-          limits.push(`Unreadable: ${rel}`);
-        }
-      }
-    };
-    walk(root, 0);
-  }
-  if (!complete)
-    limits.push("Coverage incomplete: bounds, ignored files, links, or unavailable observations. Human review cannot certify unobserved files.");
-  parts.push("Display strips terminal controls and redacts secret-like values; fingerprints use raw observed bytes. Not a literal complete patch or a sandbox snapshot.");
-  const raw = [...parts, ...limits].join(`
-`);
-  const text2 = diagnosticText(raw, 128 * 1024);
-  if (Buffer.byteLength(raw) > 128 * 1024)
-    complete = false;
-  add("coverage", String(complete));
-  return { fingerprint: hash3.digest("hex"), text: text2, complete, git: isGit };
-}
+// src/cadence-instructions.ts
+var CADENCE_INSTRUCTIONS = `CADENCE CONVERSATION MODE — stays enabled for this entire conversation, including after a goal completes, until the user explicitly exits by typing 退出 Cadence or exit cadence. Only the user can exit; leaving never cancels accepted work. When asked how to leave, say exactly this.
+You are the sole user-facing coordinator. Continue normal conversation, not a task-manager UI. Do not ask the user to manage tasks, IDs, JSON, service ports, Save/Start/check menus or agent assignments.
+For each new goal: inspect relevant project evidence through cadence_research (up to two independent readonly subagents); read existing AGENTS/docs/.cadence/project.md before proposing conventions. Reuse still-current findings; do not rescan the entire repository or spawn agents merely to fill slots. Aggregate questions yourself. Investigate discoverable facts and ask focused, frequent questions only for unresolved product/technical decisions. Preserve confirmed decisions across turns. Diagnosis/research alone never imply implementation.
+Once material decisions and acceptance criteria are aligned, use cadence_plan with a readable design, explicit non-goals/decisions, exact file scopes, a finite dependency DAG, real verification commands, worktree prerequisites and a bounded repair budget. Independent writes may run concurrently; shared files need a single owner or dependency. Investigate local tool/dependency prerequisites BEFORE finalizing: isolated worktrees do not inherit ignored node_modules. Setup commands require inclusion in the final approval; never silently install/download/copy dependencies or credentials. local-merge needs an existing Git branch and commit identity; working-copy is explicit direct editing without Git mutation and is serialized.
+Present the returned complete plan and invite a single clear execution approval (the user can type 按计划实施). cadence_start binds the exact displayed plan and obtains fresh user consent; never interpret a vague acknowledgement as approval. No further confirmations are needed for the approved bounded pipeline. No push, publication, deployment, recursive delegation or scope expansion. If a material decision changes, revise the plan and seek fresh approval.
+During accepted work answer questions, report actual retained progress, and let the service execute. cadence_cancel is explicit cancellation, not navigation/exit. Never claim a worker's prose is a passing check or automatic review is human review. Failed/unknown/blocked outcomes are not success. A completed goal leaves Cadence ON and ready for the next goal; do not require /cadence again. Unrelated discussion is still ordinary conversation within this mode, not implicit permission to start another implementation. Tools operate on the host; this is not a sandbox.`;
 
-// src/service/admission.ts
-var ok = (value) => ({ kind: "ok", value });
-var error = (e) => ({ kind: "error", error: e });
-function failure2(e) {
-  return error(publicError(e instanceof ContractError ? e.code : "unavailable"));
-}
-function identity(command) {
-  return { kind: "action", expected: command.expected, action: command.action };
-}
-function episode(action) {
-  return action.kind === "start" || action.kind === "generate-plan" || action.kind === "check";
-}
-
-class ActionAdmission {
-  persistence;
-  owner;
-  clock;
-  tail = Promise.resolve();
-  grants = new Map;
-  confirmations = new Map;
-  fenced = false;
-  pending = new Set;
-  get accounting() {
-    return {
-      count: this.pending.size,
-      bytes: [...this.pending].reduce((n, p) => n + p.bytes, 0),
-      unresolved: [...this.pending].reduce((n, p) => n + p.originals.size, 0)
-    };
-  }
-  reserve(lane) {
-    const entries = [...this.pending].filter((p) => p.lane === lane);
-    const bytes = lane === "ordinary" ? LIMITS.controlBytes * 4 : 4096;
-    const maximum = lane === "ordinary" ? LIMITS.admissionBytes : LIMITS.cancelBytes;
-    if (entries.length >= LIMITS.admissionCount || entries.reduce((n, p) => n + p.bytes, 0) + bytes > maximum)
-      throw new ContractError("capacity");
-    let expire;
-    const deadline = new Promise((_, reject) => {
-      expire = reject;
-    });
-    deadline.catch(() => {});
-    const pending = {
-      lane,
-      bytes,
-      deadline,
-      expired: false,
-      reason: "context",
-      originals: new Set,
-      finished: false,
-      released: false,
-      timer: setTimeout(() => {
-        pending.expired = true;
-        if (pending.originals.size)
-          this.quarantine(pending.reason);
-        expire(new ContractError("unavailable"));
-      }, LIMITS.recordingStallMs)
-    };
-    this.pending.add(pending);
-    return pending;
-  }
-  claim(pending, id, requested) {
-    for (const p of this.pending)
-      if (p.command?.id === id && canonicalJson(p.command.identity) !== canonicalJson(requested))
-        throw new ContractError("conflict");
-    if (requested.kind === "cancel") {
-      const stored = this.persistence.reservedIdentity?.(id);
-      if (stored && canonicalJson(stored) !== canonicalJson(requested))
-        throw new ContractError("conflict");
-    }
-    if (pending)
-      pending.command = { id, identity: requested };
-  }
-  release(pending) {
-    if (pending.finished && !pending.originals.size && !pending.released) {
-      pending.released = true;
-      this.pending.delete(pending);
-    }
-  }
-  async bounded(pending, operation, reason) {
-    if (pending.expired)
-      throw new ContractError("unavailable");
-    pending.reason = reason;
-    const original = Promise.resolve().then(operation);
-    pending.originals.add(original);
-    const settled = () => {
-      pending.originals.delete(original);
-      this.release(pending);
-    };
-    original.then(settled, settled);
-    return Promise.race([original, pending.deadline]);
-  }
-  async reserved(lane, body) {
-    let pending;
-    try {
-      pending = this.reserve(lane);
-    } catch (e) {
-      return failure2(e);
-    }
-    try {
-      return await body(pending);
-    } finally {
-      pending.finished = true;
-      clearTimeout(pending.timer);
-      this.release(pending);
-    }
-  }
-  constructor(persistence, owner, clock) {
-    this.persistence = persistence;
-    this.owner = owner;
-    this.clock = clock;
-  }
-  serial(body) {
-    const result = this.tail.then(body);
-    this.tail = result.then(() => {}, () => {});
-    return result;
-  }
-  detach(attachmentId) {
-    const lease = this.confirmations.get(attachmentId);
-    if (lease)
-      lease.valid = false;
-    this.confirmations.delete(attachmentId);
-    for (const [id, grant] of this.grants)
-      if (grant.caller === attachmentId)
-        this.grants.delete(id);
-  }
-  revokeGrants() {
-    for (const lease of this.confirmations.values())
-      lease.valid = false;
-    this.confirmations.clear();
-    this.grants.clear();
-  }
-  quarantine(reason) {
-    if (this.fenced)
-      return;
-    this.fenced = true;
-    this.revokeGrants();
-    try {
-      this.owner.quarantine(reason);
-    } catch {}
-  }
-  access(caller, epoch, generation) {
-    decodeId(caller.attachmentId);
-    const current2 = this.owner.currentAccess();
-    if (current2.epoch !== epoch || current2.accessGeneration !== caller.accessGeneration || generation !== undefined && generation !== current2.accessGeneration)
-      throw new ContractError("stale");
-    if (caller.authority !== "local" && caller.authority !== "browser")
-      throw new ContractError("forbidden");
-  }
-  authorize(preview, caller) {
-    const { action, version, graph } = preview;
-    const task = version.task;
-    this.access(caller, version.epoch, version.accessGeneration);
-    if (action.kind === "create") {
-      if (task !== null)
-        throw new ContractError("stale");
-      return;
-    }
-    if (!task || task.id !== action.taskId)
-      throw new ContractError("stale");
-    if (preview.activeRunId !== null)
-      throw new ContractError("conflict");
-    if (action.kind === "check") {
-      if (task.kind !== "code" || action.check.kind === "manual" && caller.authority !== "local")
-        throw new ContractError("forbidden");
-      if (action.check.kind === "configured" && !preview.configuredChecks.some((check) => canonicalJson(check) === canonicalJson(action.check)))
-        throw new ContractError("forbidden");
-    }
-    if (action.kind === "review") {
-      if (action.runId !== preview.reviewRunId || action.checksRevision !== preview.checksRevision)
-        throw new ContractError("stale");
-      if (action.changesIdentity !== version.observation.identity)
-        throw new ContractError("stale");
-      if ((preview.issues.length || !version.observation.complete) && !action.acceptIssues)
-        throw new ContractError("conflict");
-    }
-    if (action.kind === "generate-plan" && task.kind !== "code")
-      throw new ContractError("forbidden");
-    if (action.kind === "start" || action.kind === "save-plan") {
-      const selected2 = action.kind === "save-plan" ? action.graph : graph;
-      if (!selected2 || selected2.taskId !== task.id || selected2.taskKind !== task.kind)
-        throw new ContractError("stale");
-      const next = action.kind === "save-plan" ? 1 : 0;
-      if (selected2.taskRevision !== task.revision + next && !(action.kind === "start" && selected2.taskRevision < task.revision && this.owner.currentGraph?.(selected2, version) === true) || selected2.revision !== (task.graphRevision ?? 0) + next)
-        throw new ContractError("stale");
-      if (action.kind === "start" && task.kind === "code" && !preview.readablePlan.trim())
-        throw new ContractError("unsupported-context");
-      if (selected2.assignments.some((a) => canonicalJson(a.model) !== canonicalJson(version.model)))
-        throw new ContractError("unsupported-context");
-    }
-  }
-  async observe(action, expected, caller, pending) {
-    const preview = decodePreview(await this.bounded(pending, () => this.owner.observe(action), "context"));
-    if (canonicalJson(preview.action) !== canonicalJson(action) || canonicalJson(preview.version) !== canonicalJson(expected))
-      throw new ContractError("stale");
-    this.authorize(preview, caller);
-    return preview;
-  }
-  preflight(input, caller) {
-    return this.reserved("ordinary", (pending) => this.preflightReserved(input, caller, pending));
-  }
-  async preflightReserved(input, caller, pending) {
-    let request3;
-    try {
-      request3 = decodePreflightRequest(input);
-    } catch (e) {
-      return failure2(e);
-    }
-    caller = { ...caller };
-    const lease = { valid: true };
-    try {
-      this.access(caller, request3.expected.epoch, request3.expected.accessGeneration);
-      this.detach(caller.attachmentId);
-      const now = this.clock.now();
-      for (const g of this.grants.values())
-        if (now >= g.expires || now < g.issued)
-          this.detach(g.caller);
-      if (this.confirmations.size >= LIMITS.viewers)
-        throw new ContractError("capacity");
-      this.confirmations.set(caller.attachmentId, lease);
-    } catch (e) {
-      return failure2(e);
-    }
-    return this.serial(async () => {
-      try {
-        if (!lease.valid)
-          throw new ContractError("stale");
-        if (this.fenced)
-          throw new ContractError("quarantine");
-        const preview = await this.observe(request3.action, request3.expected, caller, pending);
-        if (!lease.valid)
-          throw new ContractError("stale");
-        if (this.fenced)
-          throw new ContractError("quarantine");
-        const now = this.clock.now();
-        for (const g of this.grants.values())
-          if (now >= g.expires || now < g.issued)
-            this.detach(g.caller);
-        if (this.grants.size >= LIMITS.viewers)
-          throw new ContractError("capacity");
-        const grant = decodeId(this.clock.uuid());
-        if (this.grants.has(grant))
-          throw new ContractError("conflict");
-        const expires = now + LIMITS.grantMs;
-        this.grants.set(grant, {
-          caller: caller.attachmentId,
-          issued: now,
-          expires,
-          preview,
-          lease
-        });
-        return ok({
-          grant,
-          expiresAt: new Date(expires).toISOString(),
-          preview: structuredClone(preview)
-        });
-      } catch (e) {
-        if (this.confirmations.get(caller.attachmentId) === lease)
-          this.detach(caller.attachmentId);
-        return failure2(e);
-      }
-    });
-  }
-  existing(record2, commandId, requested) {
-    const decoded2 = decodeStoredCommand(record2);
-    const receipt = decoded2.receipt;
-    if (receipt.commandId !== commandId || canonicalJson(decoded2.identity) !== canonicalJson(requested))
-      return error(publicError("conflict"));
-    return ok(receipt);
-  }
-  submit(input, caller) {
-    return this.reserved("ordinary", (pending) => this.submitReserved(input, caller, pending));
-  }
-  async submitReserved(input, caller, pending) {
-    let command;
-    try {
-      command = decodeCommand(input);
-      this.claim(pending, command.commandId, identity(command));
-    } catch (e) {
-      return failure2(e);
-    }
-    caller = { ...caller };
-    return this.serial(async () => {
-      let selected2;
-      try {
-        const requested = identity(command);
-        try {
-          this.access(caller, this.owner.currentAccess().epoch);
-          const found = await this.bounded(pending, () => this.persistence.lookupForAdmission ? this.persistence.lookupForAdmission(command.commandId) : this.persistence.lookup(command.commandId), "persistence");
-          this.access(caller, this.owner.currentAccess().epoch);
-          if (found.status === "found")
-            return this.existing(found.record, command.commandId, requested);
-          if (found.status === "inconclusive") {
-            this.quarantine("persistence");
-            return error(publicError("receipt-inconclusive", "uncertain"));
-          }
-          decodeSequence(found.committedSeq);
-        } catch {
-          this.quarantine("persistence");
-          return error(publicError("receipt-inconclusive", "uncertain"));
-        }
-        try {
-          if (this.fenced)
-            throw new ContractError("quarantine");
-          const grant = this.grants.get(command.grant);
-          if (!grant?.lease.valid || grant.caller !== caller.attachmentId)
-            throw new ContractError("consumed-grant");
-          selected2 = grant;
-          this.grants.delete(command.grant);
-          const now = this.clock.now();
-          if (now < grant.issued || now >= grant.expires)
-            throw new ContractError("expired-grant");
-          if (canonicalJson({
-            expected: grant.preview.version,
-            action: grant.preview.action
-          }) !== canonicalJson({
-            expected: command.expected,
-            action: command.action
-          }))
-            throw new ContractError("conflict");
-          const current2 = await this.observe(command.action, command.expected, caller, pending);
-          if (!grant.lease.valid || canonicalJson(current2) !== canonicalJson(grant.preview))
-            throw new ContractError("stale");
-          if (this.clock.now() >= grant.expires || this.clock.now() < grant.issued)
-            throw new ContractError("expired-grant");
-        } catch (e) {
-          return failure2(e);
-        }
-        try {
-          const intent = {
-            commandId: command.commandId,
-            operationId: decodeId(this.clock.uuid()),
-            runId: episode(command.action) ? decodeId(this.clock.uuid()) : null,
-            identity: requested,
-            createdTaskId: command.action.kind === "create" ? decodeId(this.clock.uuid()) : null
-          };
-          const committed3 = await this.bounded(pending, () => this.persistence.commit(intent), "persistence");
-          if (committed3.status === "refused") {
-            if ([
-              "recording-exhausted",
-              "corrupt-selected",
-              "quarantine",
-              "unavailable"
-            ].includes(committed3.error.code))
-              this.quarantine("persistence");
-            return error(committed3.error);
-          }
-          if (committed3.status === "uncertain") {
-            this.quarantine("persistence");
-            return error(publicError("receipt-inconclusive", "uncertain"));
-          }
-          const reply = this.existing(committed3.record, command.commandId, requested);
-          if (committed3.status === "existing")
-            return reply;
-          if (reply.kind !== "ok" || reply.value.admission !== "accepted" || reply.value.operationId !== intent.operationId || reply.value.runId !== intent.runId || (reply.value.created?.taskId ?? null) !== intent.createdTaskId)
-            throw new ContractError("corrupt-selected");
-          if (this.fenced)
-            return error(publicError("quarantine", "accepted"));
-          try {
-            const current2 = decodePreview(await this.bounded(pending, () => this.owner.observe(command.action), "context"));
-            if (this.fenced)
-              return error(publicError("quarantine", "accepted"));
-            const normalized = {
-              ...current2,
-              version: {
-                ...current2.version,
-                controlRev: current2.version.controlRev - 1,
-                accessGeneration: command.expected.accessGeneration
-              }
-            };
-            if (canonicalJson(normalized) !== canonicalJson(selected2.preview) || this.owner.currentAccess().epoch !== command.expected.epoch)
-              throw new ContractError("stale");
-          } catch {
-            this.quarantine("context");
-            return error(publicError("stale", "accepted"));
-          }
-          try {
-            this.owner.activate(intent, reply.value);
-          } catch {
-            this.quarantine("activation");
-            return error(publicError("unavailable", "uncertain"));
-          }
-          return reply;
-        } catch {
-          this.quarantine("persistence");
-          return error(publicError("receipt-inconclusive", "uncertain"));
-        }
-      } finally {
-        if (selected2 && this.confirmations.get(caller.attachmentId) === selected2.lease)
-          this.confirmations.delete(caller.attachmentId);
-      }
-    });
-  }
-  cancel(input, caller) {
-    let pending;
-    try {
-      pending = this.reserve("cancel");
-    } catch {
-      try {
-        const command = decodeCancel(input);
-        this.access(caller, command.epoch);
-        this.claim(null, command.commandId, {
-          kind: "cancel",
-          epoch: command.epoch,
-          runId: command.runId
-        });
-        const run = this.owner.run(command.runId);
-        if (!run || run.epoch !== command.epoch || run.runId !== command.runId)
-          throw new ContractError("stale");
-        if (run.state !== "settled" && !run.cancelRequested)
-          this.owner.requestCancel(command);
-        this.quarantine("persistence");
-        return Promise.resolve(error(publicError("receipt-inconclusive", "uncertain")));
-      } catch (e) {
-        return Promise.resolve(failure2(e));
-      }
-    }
-    return this.cancelReserved(input, caller, pending).finally(() => {
-      pending.finished = true;
-      clearTimeout(pending.timer);
-      this.release(pending);
-    });
-  }
-  async cancelReserved(input, caller, pending) {
-    let command;
-    try {
-      command = decodeCancel(input);
-      this.claim(pending, command.commandId, {
-        kind: "cancel",
-        epoch: command.epoch,
-        runId: command.runId
-      });
-    } catch (e) {
-      return failure2(e);
-    }
-    caller = { ...caller };
-    return (async () => {
-      const requested = {
-        kind: "cancel",
-        epoch: command.epoch,
-        runId: command.runId
-      };
-      let conclusive = false;
-      try {
-        this.access(caller, this.owner.currentAccess().epoch);
-        const found = await this.bounded(pending, () => this.persistence.lookup(command.commandId), "persistence");
-        this.access(caller, this.owner.currentAccess().epoch);
-        if (found.status === "found")
-          return this.existing(found.record, command.commandId, requested);
-        this.claim(pending, command.commandId, requested);
-        conclusive = found.status === "absent";
-      } catch (e) {
-        if (e instanceof ContractError && e.code === "conflict")
-          return failure2(e);
-      }
-      try {
-        this.access(caller, command.epoch);
-        const run = this.owner.run(command.runId);
-        if (!run || run.runId !== command.runId || run.epoch !== command.epoch)
-          throw new ContractError("stale");
-      } catch (e) {
-        return failure2(e);
-      }
-      try {
-        const run = this.owner.run(command.runId);
-        if (run && run.state !== "settled" && !run.cancelRequested)
-          this.owner.requestCancel(command);
-      } catch {
-        this.quarantine("activation");
-      }
-      const lookupAfterStop = this.persistence.lookupForAdmission?.bind(this.persistence);
-      if (!conclusive && lookupAfterStop) {
-        try {
-          const found = await this.bounded(pending, () => lookupAfterStop(command.commandId), "persistence");
-          this.access(caller, command.epoch);
-          if (found.status === "found")
-            return this.existing(found.record, command.commandId, requested);
-          conclusive = found.status === "absent";
-        } catch {}
-      }
-      let reply = error(publicError("receipt-inconclusive", "uncertain"));
-      if (conclusive) {
-        try {
-          const intent = {
-            commandId: command.commandId,
-            operationId: decodeId(this.clock.uuid()),
-            runId: command.runId,
-            identity: requested,
-            createdTaskId: null
-          };
-          const result = await this.bounded(pending, () => this.persistence.commit(intent), "persistence");
-          if (result.status === "existing")
-            return this.existing(result.record, command.commandId, requested);
-          if (result.status === "refused" && ![
-            "recording-exhausted",
-            "unavailable",
-            "quarantine",
-            "corrupt-selected",
-            "receipt-inconclusive"
-          ].includes(result.error.code))
-            return error(result.error);
-          if (result.status === "committed") {
-            reply = this.existing(result.record, command.commandId, requested);
-            if (reply.kind !== "ok" || reply.value.admission !== "accepted" || reply.value.operationId !== intent.operationId || reply.value.runId !== command.runId)
-              reply = error(publicError("receipt-inconclusive", "uncertain"));
-          }
-        } catch {}
-      }
-      try {
-        if (reply.kind !== "ok")
-          this.access(caller, command.epoch);
-        else if (this.owner.currentAccess().epoch !== command.epoch)
-          throw new ContractError("stale");
-        const run = this.owner.run(command.runId);
-        if (!run || run.epoch !== command.epoch)
-          throw new ContractError("stale");
-        if (run.state !== "settled" && !run.cancelRequested) {
-          this.owner.requestCancel(command);
-        }
-      } catch {
-        reply = error(publicError("unavailable", "uncertain"));
-      }
-      if (reply.kind === "error")
-        this.quarantine("persistence");
-      return reply;
-    })();
-  }
-}
-
-// src/service/graph.ts
-import { createHash as createHash22 } from "node:crypto";
-import { join as join21 } from "node:path";
-var hash3 = (text2) => createHash22("sha256").update(text2).digest("hex");
-
-class GraphContext {
-  root;
-  roles = loadAgentDefinitions();
-  hints;
-  identity;
-  constructor(root) {
-    this.root = root;
-    const bytes = readBounded(join21(root, "AGENTS.md"), 32768);
-    this.hints = bytes ? new TextDecoder("utf-8", { fatal: true }).decode(bytes) : "";
-    this.identity = hash3(canonicalJson({
-      hints: bytes === undefined ? null : hash3(bytes),
-      roles: this.roles.map((r) => ({ role: r.role, sha256: r.sha256 }))
-    }));
-  }
-  current() {
-    try {
-      return new GraphContext(this.root).identity === this.identity;
-    } catch {
-      return false;
-    }
-  }
-  validate(graph, model) {
-    const value = decodeGraph(graph);
-    for (const assignment of value.assignments) {
-      const selected2 = this.roles.find((r) => r.role === roleForPurpose(assignment.purpose));
-      if (!selected2 || selected2.sha256 !== assignment.role.sha256 || canonicalJson(assignment.model) !== canonicalJson(model))
-        throw new ContractError("stale");
-    }
-    return value;
-  }
-  planningAssignment(model) {
-    const role2 = this.roles.find((r) => r.role === "design-explorer");
-    if (!role2)
-      throw new ContractError("unavailable");
-    return {
-      id: "plan",
-      purpose: "research",
-      role: { role: "design-explorer", sha256: role2.sha256 },
-      model: structuredClone(model),
-      instructions: "Research the goal without editing. Propose a readable implementation plan with at most 16 assignments, their purposes, dependencies, expected outputs and checks. Treat the existing plan only as context. Do not execute it. Your output is advisory: a human must explicitly edit/accept and save a plan, then separately Start.",
-      expectedOutput: "A readable advisory plan, with finite decomposition and remaining uncertainties; not an execution instruction or passing check.",
-      dependencies: []
-    };
-  }
-  planningRequest(task, model, runId, childRunId) {
-    return this.publicRequest(task, runId, childRunId, this.planningAssignment(model), { graphRevision: 1, inputs: [] });
-  }
-  request(task, graph, runId, childRunId, assignment, handoff) {
-    this.validate(graph, assignment.model);
-    return this.publicRequest(task, runId, childRunId, assignment, handoff);
-  }
-  publicRequest(task, runId, childRunId, assignment, handoff) {
-    const role2 = this.roles.find((r) => r.role === assignment.role.role);
-    if (!role2)
-      throw new ContractError("stale");
-    return decodeWorkerPublicRequest({
-      protocol: 2,
-      taskId: task.id,
-      taskKind: task.kind,
-      runId,
-      childRunId,
-      assignmentId: assignment.id,
-      purpose: assignment.purpose,
-      model: assignment.model,
-      role: assignment.role,
-      instructions: `${role2.content}
-Do not delegate, retry, install, publish or mutate Git. Worker completion is not a parent check.`,
-      context: task.plan,
-      prompt: canonicalJson({
-        goal: task.goal,
-        assignment: assignment.instructions,
-        expectedOutput: assignment.expectedOutput,
-        untrustedProjectConventions: this.hints
-      }, 32768),
-      handoff
-    });
-  }
-}
-function dependencyHandoff(reader, graph, identity2, runId, assignment, snapshot, observation, currentAfter) {
-  let total = 0;
-  const inputs = assignment.dependencies.map((edge, dependencyIndex) => {
-    const sourceRun = edge.source.kind === "current" ? runId : edge.source.runId;
-    const childRunId = edge.source.kind === "current" ? identity2.assignments.find((a) => a.assignmentId === (edge.source.kind === "current" ? edge.source.assignmentId : ""))?.childRunId : edge.source.childRunId;
-    if (!childRunId)
-      throw new ContractError("stale");
-    const source = readRunState(reader.files, sourceRun, snapshot);
-    const child = source.children.get(childRunId);
-    const recording = child?.completion?.recording;
-    if (!child?.settlementSeq || child.completion?.native.outcome !== "completed" || child.completion.native.closure !== "direct-child-closed" || recording?.status !== "committed")
-      throw new ContractError("stale");
-    if (edge.source.kind === "current") {
-      const after = currentAfter.get(childRunId);
-      if (!after || canonicalJson(after) !== canonicalJson(observation))
-        throw new ContractError("stale");
-    } else if (canonicalJson(edge.source.result) !== canonicalJson(recording.detail.content))
-      throw new ContractError("stale");
-    if (edge.requireCompleteObservation && !observation.complete)
-      throw new ContractError("stale");
-    const result = recording.detail.content;
-    const range2 = edge.range ?? { start: 0, end: result.bytes };
-    const size = range2.end - range2.start;
-    if (range2.end > result.bytes || size > LIMITS.predecessorBytes || total + size > LIMITS.handoffBytes)
-      throw new ContractError("oversize");
-    total += size;
-    const detail = reader.selected({
-      storeId: reader.storeId,
-      scope: { kind: "child", id: childRunId },
-      snapshotSeq: snapshot,
-      recordId: result.recordId,
-      recordVersion: result.version,
-      field: result.field,
-      query: null,
-      offset: 0
-    });
-    if (canonicalJson(detail.content) !== canonicalJson(result))
-      throw new ContractError("corrupt-selected");
-    const chunks = [];
-    for (const part of reader.parts(detail, snapshot)) {
-      const start = Math.max(0, range2.start - part.offset), end = Math.min(part.bytes.length, range2.end - part.offset);
-      if (end > start)
-        chunks.push(Buffer.from(part.bytes.subarray(start, end)));
-    }
-    const text2 = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
-    if (Buffer.byteLength(text2) !== size)
-      throw new ContractError("corrupt-selected");
-    return {
-      assignmentId: assignment.id,
-      dependencyIndex,
-      runId: sourceRun,
-      childRunId,
-      result,
-      range: edge.range,
-      text: text2,
-      coverage: detail.coverage
-    };
-  });
-  return decodeHandoff({ graphRevision: graph.revision, inputs });
-}
-
-// src/service/scheduler.ts
+// src/service/conversations.ts
 import { randomUUID as randomUUID17 } from "node:crypto";
-
-// src/subagent-process.ts
-import { spawn as spawn2 } from "node:child_process";
-import { join as join22 } from "node:path";
-import { StringDecoder } from "node:string_decoder";
-import { fileURLToPath as fileURLToPath4 } from "node:url";
+import { lstatSync as lstatSync13, opendirSync as opendirSync7, realpathSync as realpathSync8, statfsSync as statfsSync2 } from "node:fs";
+import { dirname as dirname16, join as join23 } from "node:path";
 
 // src/conversation-context.mjs
 var CONTEXT_BYTES = 2 * 1024 * 1024;
@@ -22713,8 +21960,14 @@ function conversationMessages(messages, secrets = []) {
     };
   });
 }
+
+// src/subagent-process.ts
+import { spawn as spawn2 } from "node:child_process";
+import { join as join22 } from "node:path";
+import { StringDecoder } from "node:string_decoder";
+import { fileURLToPath as fileURLToPath4 } from "node:url";
 // src/worker-capture.mjs
-import { createHash as createHash23, randomUUID as randomUUID15 } from "node:crypto";
+import { createHash as createHash22, randomUUID as randomUUID16 } from "node:crypto";
 var completeCoverage = () => ({
   observed: "complete",
   source: "complete",
@@ -22800,7 +22053,7 @@ class CaptureState {
           final: null,
           stopReason: null,
           finalIndices: new Set,
-          finalHash: createHash23("sha256"),
+          finalHash: createHash22("sha256"),
           finalBytes: 0,
           finalIndex: -1
         });
@@ -22827,7 +22080,7 @@ class CaptureState {
         }
         this.details.set(e.detailId, {
           descriptor: e.descriptor,
-          hash: createHash23("sha256"),
+          hash: createHash22("sha256"),
           bytes: 0,
           ended: false,
           preview: ""
@@ -23735,83 +22988,6 @@ function launchEncoded(encoded2, signal, timeoutMs, extra = {}) {
     ...extra
   });
 }
-function preparedWorker(prepared, request3, link, ownerSecrets, timeoutMs = LIMITS.workerMs, maySignal) {
-  const expected = decodeWorkerPublicRequest(request3);
-  link = decodeRecordingLink(link);
-  if (expected.childRunId !== link.childRunId || expected.runId !== link.runId || expected.taskId !== link.taskId)
-    throw new Error("Invalid recording identity");
-  return {
-    request: expected,
-    async launch(signal, sink) {
-      const controller = new AbortController;
-      const abort = () => controller.abort();
-      signal.addEventListener("abort", abort, { once: true });
-      if (signal.aborted)
-        abort();
-      let native = {
-        outcome: signal.aborted ? "canceled" : "failed",
-        closure: "not-launched",
-        exitCode: null,
-        signal: null,
-        durationMs: 0,
-        stdin: "not-required",
-        final: "missing",
-        cleanup: "settled",
-        capture: {
-          observed: "incomplete",
-          source: "unavailable",
-          redacted: false,
-          omissions: ["gap"]
-        }
-      };
-      let state;
-      let recorder;
-      try {
-        if (!sink || typeof sink.reserve !== "function")
-          throw new Error("Recording required");
-        if (!controller.signal.aborted) {
-          let encoded2;
-          await prepared.consume((material) => {
-            if (JSON.stringify(material.request) !== JSON.stringify(expected))
-              throw new Error("Prepared request changed");
-            encoded2 = encodeEnvelope({
-              ...material,
-              model: { ...material.model }
-            });
-            recorder = new WorkerRecording(link, sink, [...ownerSecrets, ...encoded2.secrets], abort);
-            return encoded2.input;
-          }, (input) => {
-            if (!encoded2 || encoded2.input !== input || controller.signal.aborted)
-              throw new Error("Prepared request unavailable");
-            return launchEncoded(encoded2, controller.signal, timeoutMs, {
-              recording: recorder,
-              maySignal,
-              onNative: (facts, observed) => {
-                native = facts;
-                state = observed;
-              }
-            });
-          });
-        }
-        await recorder?.drain();
-      } catch {} finally {
-        recorder?.closeIngress();
-        signal.removeEventListener("abort", abort);
-      }
-      const selected2 = state?.selected ?? null;
-      return {
-        childRunId: expected.childRunId,
-        native,
-        selected: selected2,
-        recording: (native.closure !== "not-launched" ? recorder?.result(selected2) : undefined) ?? {
-          status: "refused",
-          selected: selected2,
-          error: { code: "unavailable", effect: "none", recovery: "operator" }
-        }
-      };
-    }
-  };
-}
 function launchConversation(prepared, conversation, signal, options) {
   let encoded2;
   return prepared.consume((material) => {
@@ -23863,2082 +23039,8 @@ function launchWorkflowWorker(prepared, cwd, signal, options) {
     });
   });
 }
-function runCheck(check, cwd, signal, service) {
-  return runProcess({
-    command: process.platform === "win32" ? (service?.environment ?? process.env).COMSPEC ?? "cmd.exe" : "/bin/sh",
-    args: process.platform === "win32" ? ["/d", "/s", "/c", `"${check.command}"`] : ["-c", check.command],
-    windowsVerbatimArguments: process.platform === "win32" ? true : undefined,
-    cwd,
-    timeoutMs: check.timeoutMs,
-    env: {
-      ...service?.environment ?? process.env,
-      CADENCE_SUBAGENT_CHILD: "1"
-    },
-    ...service ? {
-      checkRecording: service.recording,
-      maySignal: service.maySignal,
-      onCheckNative: service.onNative
-    } : {},
-    signal
-  });
-}
-
-// src/service/check-recording.ts
-import { randomUUID as randomUUID16 } from "node:crypto";
-var CHECK_RAW_BYTES = 16 * 1024 * 1024;
-
-class CheckRecording {
-  port;
-  link;
-  checkId;
-  source;
-  detailId = randomUUID16();
-  raw = 0;
-  bytes = 0;
-  failed = false;
-  ended = false;
-  content = null;
-  tails = {
-    stdout: Promise.resolve(),
-    stderr: Promise.resolve()
-  };
-  streams;
-  prefix;
-  unsubscribe;
-  refreshing = false;
-  constructor(port, link, checkId, secrets, source) {
-    this.port = port;
-    this.link = link;
-    this.checkId = checkId;
-    this.source = source;
-    this.prefix = this.reserve(2 * (4 * LIMITS.workerRequestBytes + 2 * 8192 + 4), 0, 0);
-    try {
-      this.streams = {
-        stdout: {
-          decoder: new TextDecoder("utf-8", { fatal: true }),
-          sanitizer: new TextSanitizer(secrets)
-        },
-        stderr: {
-          decoder: new TextDecoder("utf-8", { fatal: true }),
-          sanitizer: new TextSanitizer(secrets)
-        }
-      };
-      this.refresh();
-      this.unsubscribe = source?.onChange(() => {
-        if (this.refreshing || this.failed || this.ended)
-          return;
-        try {
-          this.refresh();
-        } catch {
-          this.failed = true;
-        }
-      });
-    } catch (error2) {
-      this.prefix.release();
-      throw error2;
-    }
-  }
-  refresh() {
-    if (this.failed)
-      throw new ContractError("unavailable");
-    if (!this.source)
-      return;
-    this.refreshing = true;
-    try {
-      const literals = this.source.current();
-      this.streams.stdout.sanitizer.addSecrets(literals);
-      this.streams.stderr.sanitizer.addSecrets(literals);
-    } catch (error2) {
-      this.failed = true;
-      throw error2;
-    } finally {
-      this.refreshing = false;
-    }
-  }
-  reserve(retainedBytes, outputBytes, outputChunks) {
-    const reserved = this.port.reserve({
-      sourceFrames: 0,
-      retainedBytes,
-      outputBytes,
-      outputChunks,
-      lane: "data"
-    });
-    if (reserved.status !== "reserved")
-      throw new ContractError("capacity");
-    return reserved.reservation;
-  }
-  async commit(events, reservation2 = this.reserve(0, 64 * 1024, events.length)) {
-    const result = await reservation2.commit({
-      link: this.link,
-      observedMs: Math.floor(performance.now()),
-      events
-    });
-    if (result.status !== "committed")
-      throw new ContractError("recording-exhausted");
-    return result.batch;
-  }
-  async begin() {
-    try {
-      this.refresh();
-      await this.commit([
-        {
-          kind: "content-begin",
-          detailId: this.detailId,
-          owner: {
-            taskId: this.link.taskId,
-            runId: this.link.runId,
-            childRunId: null,
-            entity: { kind: "check", id: this.checkId, version: 1 }
-          },
-          field: "check",
-          encoding: "utf8"
-        }
-      ]);
-      await this.text(`Native check output: independently sanitized stdout/stderr chunks in owner observation order; not a reconstructed OS write order.
-`);
-    } catch (error2) {
-      this.failed = true;
-      this.unsubscribe?.();
-      this.prefix.release();
-      throw error2;
-    }
-  }
-  async text(text2) {
-    this.bytes += Buffer.byteLength(text2);
-    if (this.bytes > LIMITS.detailBytes)
-      throw new ContractError("oversize");
-    const count2 = Math.ceil(text2.length / 2047) + 1;
-    const reserved = this.reserve(Buffer.byteLength(text2) * 2, Buffer.byteLength(text2) * 6 + count2 * 1024, count2);
-    const events = [];
-    for (let at = 0;at < text2.length; ) {
-      let end = Math.min(at + 2048, text2.length);
-      if (end < text2.length && /[\uD800-\uDBFF]/.test(text2[end - 1]))
-        end--;
-      events.push({
-        kind: "content-chunk",
-        detailId: this.detailId,
-        text: text2.slice(at, end)
-      });
-      at = end;
-    }
-    await this.commit(events, reserved);
-  }
-  receive(chunk, stream) {
-    if (this.failed || this.ended)
-      return Promise.reject(new ContractError("unavailable"));
-    this.refresh();
-    this.raw += chunk.length;
-    if (chunk.length > 64 * 1024 || this.raw > CHECK_RAW_BYTES) {
-      this.failed = true;
-      return Promise.reject(new ContractError("oversize"));
-    }
-    const raw = this.reserve(chunk.length + 1024, 0, 0);
-    const original = this.tails[stream].then(async () => {
-      if (this.failed)
-        throw new ContractError("unavailable");
-      const state = this.streams[stream];
-      const transform = this.reserve((chunk.length + state.sanitizer.retainedBytes + 4) * 12 + 64, 0, 0);
-      try {
-        this.refresh();
-        const text2 = state.sanitizer.write(state.decoder.decode(chunk, { stream: true }));
-        if (text2)
-          await this.text(`
-[${stream}]
-${text2}`);
-      } finally {
-        transform.release();
-      }
-    }).catch((error2) => {
-      this.failed = true;
-      throw error2;
-    }).finally(() => raw.release());
-    this.tails[stream] = original;
-    return original;
-  }
-  async end(complete) {
-    if (this.ended)
-      return;
-    this.ended = true;
-    try {
-      await Promise.allSettled(Object.values(this.tails));
-      if (!complete || this.failed) {
-        this.failed = true;
-        return;
-      }
-      this.refresh();
-      for (const stream of ["stdout", "stderr"]) {
-        const state = this.streams[stream];
-        const transform = this.reserve((state.sanitizer.retainedBytes + 4) * 12 + 64, 0, 0);
-        try {
-          const text2 = state.sanitizer.write(state.decoder.decode(), true);
-          if (text2)
-            await this.text(`
-[${stream}]
-${text2}`);
-        } finally {
-          transform.release();
-        }
-      }
-      const batch = await this.commit([
-        {
-          kind: "content-end",
-          detailId: this.detailId,
-          coverage: this.coverage
-        }
-      ]);
-      if (batch.ownerDetails.length !== 1)
-        throw new ContractError("conflict");
-      this.content = batch.ownerDetails[0].content;
-    } catch (error2) {
-      this.failed = true;
-      throw error2;
-    } finally {
-      this.unsubscribe?.();
-      this.prefix.release();
-    }
-  }
-  get coverage() {
-    return {
-      observed: this.failed ? "incomplete" : "complete",
-      source: this.failed ? "limited" : "complete",
-      redacted: this.streams.stdout.sanitizer.redacted || this.streams.stderr.sanitizer.redacted,
-      omissions: this.failed ? ["capture-limit"] : []
-    };
-  }
-  result() {
-    if (!this.ended || !this.content)
-      this.failed = true;
-    return { output: this.content, coverage: this.coverage };
-  }
-}
-
-// src/service/scheduler.ts
-async function recordOwner(writer, link, events) {
-  const reservation2 = writer.owner().reserve({
-    sourceFrames: 0,
-    retainedBytes: 0,
-    outputBytes: events.reduce((bytes, event) => bytes + (event.kind === "fact" && event.fact.kind === "handoff" ? 256 * 1024 : 64 * 1024), 1024),
-    outputChunks: events.length,
-    lane: "control"
-  });
-  if (reservation2.status !== "reserved")
-    throw new ContractError("capacity");
-  const result = await reservation2.reservation.commit({
-    link,
-    observedMs: Math.floor(performance.now()),
-    events
-  });
-  if (result.status !== "committed")
-    throw new ContractError("recording-exhausted");
-  return result.batch.committedSeq;
-}
-
-class TaskScheduler {
-  options;
-  episodes = new Map;
-  recent = new Map;
-  holders = new Map;
-  barriers = [];
-  barrier = null;
-  sequence = 0;
-  turn = 0;
-  pumping = false;
-  timer;
-  closed = false;
-  now;
-  timeout;
-  constructor(options) {
-    this.options = options;
-    this.now = options.now ?? (() => performance.now());
-    this.timeout = options.workerTimeoutMs ?? LIMITS.workerMs;
-    if (!Number.isSafeInteger(this.timeout) || this.timeout < 100 || this.timeout > LIMITS.workerMs)
-      throw new ContractError("invalid");
-  }
-  get accounting() {
-    return {
-      episodes: this.episodes.size,
-      queued: [...this.episodes.values()].reduce((n, e) => n + e.nodes.filter((a) => a.state === "queued").length, 0),
-      reservations: this.holders.size,
-      retainedAllowance: this.episodes.size * (LIMITS.graphBytes + 256 * 1024) + this.holders.size * (LIMITS.workerRequestBytes * 5)
-    };
-  }
-  assertQuiescent() {
-    if (this.closed)
-      throw new ContractError("quarantine");
-    if (this.episodes.size || this.holders.size || this.barriers.length || this.barrier || this.pumping)
-      throw new ContractError("conflict");
-  }
-  assertCapacity(assignments) {
-    if (this.closed || this.options.owner.state !== "idle")
-      throw new ContractError("quarantine");
-    if (this.episodes.size >= LIMITS.episodes || this.accounting.queued + assignments > LIMITS.queuedAssignments)
-      throw new ContractError("capacity");
-  }
-  reviewBarrier(operationId, signal) {
-    return this.acquireBarrier(operationId, false, signal);
-  }
-  conversationBarrier(operationId, signal) {
-    return this.acquireBarrier(operationId, true, signal);
-  }
-  acquireBarrier(operationId, conversation, signal) {
-    if (signal?.aborted)
-      throw new ContractError("stale");
-    if (this.closed || this.options.owner.state !== "idle")
-      throw new ContractError("quarantine");
-    if (this.barriers.length >= 16 || this.barrier === operationId || this.barriers.some((b) => b.id === operationId))
-      throw new ContractError("capacity");
-    const promise = new Promise((resolve9, reject) => {
-      const abort = () => {
-        const index = this.barriers.findIndex((row) => row.id === operationId);
-        if (index >= 0)
-          this.barriers.splice(index, 1)[0].reject(new ContractError("stale"));
-      };
-      this.barriers.push({
-        id: operationId,
-        order: ++this.sequence,
-        conversation,
-        resolve: (value) => {
-          signal?.removeEventListener("abort", abort);
-          resolve9(value);
-        },
-        reject: (error2) => {
-          signal?.removeEventListener("abort", abort);
-          reject(error2);
-        }
-      });
-      signal?.addEventListener("abort", abort, { once: true });
-    });
-    this.pump();
-    return promise;
-  }
-  closeBarriers() {
-    for (const b of this.barriers.splice(0))
-      b.reject(new ContractError("quarantine"));
-  }
-  run(id) {
-    return this.episodes.get(id)?.target ?? this.recent.get(id);
-  }
-  activeRefs() {
-    return [...this.episodes.values()].map((e) => ({
-      taskId: e.link.taskId,
-      runId: e.target.runId,
-      operationId: e.link.operationId,
-      epoch: e.link.epoch,
-      kind: e.input.kind,
-      stage: e.reason || e.settling || this.closed ? "draining" : e.allocated ? "active" : "accepted-unallocated"
-    }));
-  }
-  activeTask(taskId2) {
-    return [...this.episodes.values()].find((e) => e.link.taskId === taskId2)?.target.runId ?? null;
-  }
-  async settled(runId) {
-    await this.episodes.get(runId)?.done;
-  }
-  activate(input) {
-    this.assertCapacity(input.kind === "start" ? input.graph.assignments.length : 1);
-    input = input.kind === "start" ? {
-      ...input,
-      intent: structuredClone(input.intent),
-      graph: decodeGraph(input.graph),
-      task: structuredClone(input.task)
-    } : {
-      ...input,
-      intent: structuredClone(input.intent),
-      task: structuredClone(input.task)
-    };
-    const { intent } = input;
-    if (!intent.runId || intent.identity.kind !== "action" || intent.identity.action.kind !== input.kind || input.kind === "start" && !intent.identity.expected.task?.graphIdentity || input.kind === "generate-plan" && (input.graph !== null || input.task.kind !== "code") || this.activeTask(input.task.id))
-      throw new ContractError("conflict");
-    let graphReference = null;
-    if (input.kind === "start") {
-      const sha256 = intent.identity.expected.task?.graphIdentity;
-      if (!sha256)
-        throw new ContractError("conflict");
-      graphReference = {
-        recordId: intent.runId,
-        revision: input.graph.revision,
-        sha256
-      };
-    }
-    const assignments = input.kind === "start" ? input.graph.assignments : input.kind === "generate-plan" ? [input.sources.planningAssignment(intent.identity.expected.model)] : [null];
-    const nodes = assignments.map((assignment) => {
-      const childRunId = randomUUID17();
-      return {
-        assignment,
-        childRunId,
-        state: "queued",
-        readyAt: null,
-        order: ++this.sequence,
-        waitReason: assignment?.dependencies.length ? "dependency" : "capacity",
-        observing: false,
-        abort: new AbortController,
-        result: assignment ? {
-          assignmentId: assignment.id,
-          childRunId,
-          native: null,
-          settlementSeq: null,
-          recording: {
-            status: "refused",
-            selected: null,
-            error: publicError("unavailable")
-          }
-        } : null
-      };
-    });
-    const original = Promise.resolve().then(() => this.lifetime(e));
-    const e = {
-      input,
-      nodes,
-      started: this.now(),
-      allocated: false,
-      initialized: false,
-      expectedObservation: {
-        ...intent.identity.expected.observation,
-        checkoutGeneration: intent.identity.expected.checkoutGeneration
-      },
-      reason: null,
-      settling: false,
-      settlementStarted: false,
-      after: new Map,
-      identity: {
-        operationId: intent.operationId,
-        commandId: intent.commandId,
-        kind: input.kind,
-        context: structuredClone(intent.identity.expected),
-        assignments: nodes.flatMap((n) => n.assignment ? [
-          {
-            assignmentId: n.assignment.id,
-            childRunId: n.childRunId
-          }
-        ] : []),
-        graph: graphReference
-      },
-      link: {
-        epoch: intent.identity.expected.epoch,
-        taskId: input.task.id,
-        runId: intent.runId,
-        operationId: intent.operationId
-      },
-      done: original,
-      jobs: new Set,
-      finished: false,
-      target: {
-        runId: intent.runId,
-        epoch: intent.identity.expected.epoch,
-        state: "active",
-        cancelRequested: false
-      }
-    };
-    this.episodes.set(intent.runId, e);
-    return e.done;
-  }
-  async lifetime(e) {
-    await Promise.resolve();
-    this.job(e, () => this.initialize(e));
-    while (e.jobs.size || !e.finished && e.target.state !== "unknown")
-      await new Promise((resolve9) => {
-        e.wake = resolve9;
-      });
-    if (e.target.state === "settled")
-      return { status: "settled" };
-    e.target.state = "unknown";
-    await this.options.writer.abandonPublication(e.link.operationId);
-    return { status: "uncertain" };
-  }
-  job(e, work) {
-    const original = Promise.resolve().then(work).catch(() => {
-      this.quarantine();
-    }).finally(() => {
-      e.jobs.delete(original);
-      e.wake?.();
-    });
-    e.jobs.add(original);
-  }
-  async settledAll() {
-    await Promise.all([...this.episodes.values()].map((e) => e.done));
-  }
-  fact(e, fact) {
-    return recordOwner(this.options.writer, e.link, [{ kind: "fact", fact }]);
-  }
-  async initialize(e) {
-    if (this.closed) {
-      e.finished = true;
-      return;
-    }
-    if (e.input.planUnretained) {
-      const retained = await this.options.writer.retainAcceptedRunPlan(e.link.operationId, e.input.graph, this.options.ownerSecrets);
-      if (retained.status !== "committed")
-        throw new ContractError("recording-exhausted");
-    }
-    if (this.closed) {
-      e.finished = true;
-      return;
-    }
-    const result = await this.options.writer.admitRun(e.target.runId, e.identity, e.input.graph);
-    if (result.status !== "committed")
-      throw new ContractError("recording-exhausted");
-    e.allocated = true;
-    if (!this.closed)
-      await e.input.publish();
-    if (e.reason)
-      await this.close(e, e.reason);
-    else if (e.input.kind !== "check")
-      for (const n of e.nodes) {
-        if (this.closed || e.reason)
-          break;
-        await this.fact(e, {
-          kind: "assignment-state",
-          childRunId: n.childRunId,
-          state: "waiting",
-          reason: n.assignment?.dependencies.length ? "dependency" : "capacity"
-        });
-      }
-    e.initialized = true;
-    this.pump();
-  }
-  owned() {
-    try {
-      this.options.owner.lease.assert();
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  cancel(runId) {
-    const e = this.episodes.get(runId);
-    if (!e || e.target.cancelRequested || e.settlementStarted)
-      return;
-    e.target.cancelRequested = true;
-    e.reason ??= "canceled";
-    for (const n of e.nodes)
-      if (this.owned())
-        n.abort.abort();
-    this.job(e, async () => {
-      await this.close(e, e.reason ?? "canceled");
-      this.pump();
-    });
-  }
-  quiesce() {
-    this.closed = true;
-    this.closeBarriers();
-    clearTimeout(this.timer);
-    for (const e of this.episodes.values())
-      for (const n of e.nodes)
-        if (this.owned())
-          n.abort.abort();
-    for (const id of this.episodes.keys())
-      this.cancel(id);
-  }
-  quarantine() {
-    this.closed = true;
-    this.closeBarriers();
-    for (const e of this.episodes.values()) {
-      e.reason ??= "quarantine";
-      e.target.state = "unknown";
-      e.wake?.();
-    }
-    this.options.owner.quarantine();
-    for (const e of this.episodes.values())
-      for (const n of e.nodes)
-        if (this.owned())
-          n.abort.abort();
-  }
-  async close(e, reason) {
-    e.reason ??= reason;
-    if (!e.allocated || e.settlementStarted)
-      return;
-    e.closeWrite ??= this.fact(e, {
-      kind: "admission-closed",
-      reason: e.reason
-    }).then(() => {});
-    await e.closeWrite;
-  }
-  ready(e, n) {
-    return !n.assignment || n.assignment.dependencies.every((d) => d.source.kind === "historical" || e.nodes.some((p) => p.assignment?.id === (d.source.kind === "current" ? d.source.assignmentId : "") && p.state === "done" && p.result !== null && childSatisfied(p.result)));
-  }
-  pump() {
-    if (this.pumping)
-      return;
-    this.pumping = true;
-    try {
-      clearTimeout(this.timer);
-      const list2 = [...this.episodes.values()];
-      for (const e of list2) {
-        if (!e.initialized || e.settling)
-          continue;
-        if (!e.reason && !e.settlementStarted && this.now() - e.started >= LIMITS.episodeMs) {
-          e.reason = "timeout";
-          for (const n of e.nodes)
-            if (this.owned())
-              n.abort.abort();
-        }
-        for (const n of e.nodes)
-          if (n.state === "queued" && this.ready(e, n))
-            n.readyAt ??= this.now();
-        if (!e.reason && e.nodes.some((n) => n.state === "queued" && n.readyAt !== null && this.now() - n.readyAt >= LIMITS.readyWaitMs))
-          e.reason = "wait-expired";
-        if (e.reason) {
-          if (!e.closeWrite)
-            this.job(e, async () => {
-              await this.close(e, e.reason ?? "canceled");
-            });
-          if (!e.nodes.some((n) => n.state === "active"))
-            this.finishEpisode(e);
-        } else if (e.nodes.every((n) => n.state === "done"))
-          this.finishEpisode(e);
-      }
-      const candidates = list2.flatMap((e) => !this.closed && e.initialized && !e.reason && !e.settling ? e.nodes.filter((n) => n.state === "queued" && n.readyAt !== null).map((n) => ({ e, n })) : []);
-      const barrierOrder = this.barriers[0]?.order ?? Infinity;
-      if (!this.closed && this.barrier === null && this.holders.size === 0 && this.barriers.length && !candidates.some((c) => c.n.order < barrierOrder)) {
-        const b = this.barriers.shift();
-        if (!b)
-          throw new ContractError("conflict");
-        this.barrier = b.id;
-        b.resolve({
-          assertHeld: () => {
-            if (this.closed || this.barrier !== b.id || this.holders.size || !this.owned() || this.options.owner.state !== "idle")
-              throw new ContractError("quarantine");
-          },
-          release: () => {
-            if (this.barrier !== b.id || this.options.writer.quarantined || !b.conversation && this.options.writer.pendingWrites)
-              throw new ContractError("quarantine");
-            this.barrier = null;
-            this.pump();
-          }
-        });
-      }
-      const writerOrder = Math.min(barrierOrder, ...candidates.filter(({ n }) => n.assignment === null || n.assignment.purpose === "edit").map(({ n }) => n.order));
-      for (const { e, n } of candidates) {
-        const reason = this.barrier !== null || [...this.holders.values()].some((lane) => lane !== "reader") || (n.assignment === null || n.assignment.purpose === "edit") && this.holders.size > 0 || n.order > writerOrder ? "writer" : "capacity";
-        if (n.assignment && n.waitReason !== reason && !n.observing) {
-          n.waitReason = reason;
-          n.observing = true;
-          this.job(e, async () => {
-            if (!this.closed && !e.reason)
-              await this.fact(e, {
-                kind: "assignment-state",
-                childRunId: n.childRunId,
-                state: "waiting",
-                reason
-              });
-            n.observing = false;
-            this.pump();
-          });
-        }
-      }
-      while (this.barrier === null && this.holders.size < LIMITS.childReservations) {
-        let picked;
-        for (let count2 = 0;count2 < list2.length; count2++) {
-          const e2 = list2[(this.turn + count2) % list2.length];
-          picked = candidates.find((c) => c.e === e2 && c.n.state === "queued" && !c.n.observing && (c.n.assignment === null || c.n.assignment.purpose === "edit" ? this.holders.size === 0 && c.n.order < barrierOrder : ![...this.holders.values()].some((lane) => lane !== "reader") && c.n.order < writerOrder));
-          if (picked)
-            break;
-        }
-        if (!picked)
-          break;
-        const { e, n } = picked;
-        n.state = "active";
-        this.holders.set(n.childRunId, n.assignment === null ? "check" : n.assignment.purpose === "edit" ? "writer" : "reader");
-        this.turn = (list2.indexOf(e) + 1) % list2.length;
-        this.job(e, () => e.input.kind === "check" ? this.executeCheck(e, n) : this.execute(e, n));
-      }
-      if (this.episodes.size && !this.closed) {
-        this.timer = setTimeout(() => this.pump(), 1000);
-        this.timer.unref();
-      }
-    } finally {
-      this.pumping = false;
-    }
-  }
-  current(e, n, changes = false) {
-    return !this.closed && !e.reason && !n.abort.signal.aborted && this.options.owner.state === "idle" && this.owned() && e.input.current() && e.input.sources.current() && (!changes || canonicalJson(e.input.observe(false).observation) === canonicalJson(e.expectedObservation));
-  }
-  async execute(e, n) {
-    if (!n.assignment || !n.result || e.input.kind === "check")
-      throw new ContractError("invalid");
-    const lane = n.assignment.purpose === "edit" ? "writer" : "reader";
-    let held = false, originalAuth;
-    try {
-      if (!this.current(e, n)) {
-        await this.close(e, "stale-dependency");
-        return;
-      }
-      await this.fact(e, {
-        kind: "assignment-state",
-        childRunId: n.childRunId,
-        state: "ready",
-        reason: null
-      });
-      if (!this.current(e, n)) {
-        await this.close(e, e.reason ?? "stale-dependency");
-        return;
-      }
-      await this.fact(e, {
-        kind: "gate",
-        reservationId: n.childRunId,
-        lane,
-        state: "held",
-        checkoutGeneration: e.input.generation()
-      });
-      held = true;
-      if (!this.current(e, n)) {
-        await this.close(e, e.reason ?? "stale-dependency");
-        return;
-      }
-      const observed = e.input.observe(false), before = observed.observation;
-      const baseline = await this.changes(e, "before", observed);
-      e.baseline ??= baseline;
-      if (!this.current(e, n) || canonicalJson(before) !== canonicalJson(e.expectedObservation)) {
-        await this.close(e, e.reason ?? "stale-dependency");
-        return;
-      }
-      let request3;
-      try {
-        if (e.input.kind === "generate-plan") {
-          request3 = e.input.sources.planningRequest(e.input.task, e.identity.context.model, e.target.runId, n.childRunId);
-        } else {
-          const handoff = dependencyHandoff(this.options.reader, e.input.graph, e.identity, e.target.runId, n.assignment, this.options.writer.committedSeq, before, e.after);
-          request3 = e.input.sources.request(e.input.task, e.input.graph, e.target.runId, n.childRunId, n.assignment, handoff);
-          await this.fact(e, {
-            kind: "handoff",
-            childRunId: n.childRunId,
-            handoff,
-            observation: before
-          });
-        }
-      } catch (error2) {
-        await this.close(e, error2 instanceof ContractError && error2.code === "oversize" ? "handoff-overflow" : "stale-dependency");
-        return;
-      }
-      if (!this.current(e, n)) {
-        await this.close(e, "stale-dependency");
-        return;
-      }
-      await this.fact(e, {
-        kind: "assignment-state",
-        childRunId: n.childRunId,
-        state: "preparing",
-        reason: null
-      });
-      if (!this.current(e, n)) {
-        await this.close(e, e.reason ?? "stale-dependency");
-        return;
-      }
-      const auth = this.options.models.prepareTracked({
-        request: request3,
-        operationId: randomUUID17(),
-        epoch: e.link.epoch,
-        timeoutMs: this.timeout,
-        signal: n.abort.signal,
-        current: () => this.current(e, n)
-      });
-      originalAuth = auth.settled;
-      const prepared = await auth.result;
-      if (prepared.status !== "prepared" || !this.current(e, n, true)) {
-        await this.close(e, e.reason ?? "failed");
-        await this.fact(e, {
-          kind: "assignment-state",
-          childRunId: n.childRunId,
-          state: "closing",
-          reason: "parent-stopped"
-        });
-        return;
-      }
-      const link = {
-        epoch: e.link.epoch,
-        taskId: e.link.taskId,
-        runId: e.target.runId,
-        childRunId: n.childRunId
-      };
-      const launch = await this.options.writer.processes.launchIntent(link, e.link.operationId);
-      if (launch.status !== "committed")
-        throw new ContractError("recording-exhausted");
-      const worker = preparedWorker(prepared.prepared, request3, link, this.options.ownerSecrets, this.timeout, () => this.owned());
-      const original = worker.launch(n.abort.signal, this.options.writer.capture(link));
-      this.options.owner.trackWorker(original, () => {
-        if (this.owned())
-          n.abort.abort();
-      });
-      const completion = await original;
-      if (completion.native.outcome !== "completed")
-        await this.close(e, completion.native.outcome === "canceled" ? "canceled" : completion.native.outcome === "timeout" ? "timeout" : "failed");
-      await this.fact(e, {
-        kind: "assignment-state",
-        childRunId: n.childRunId,
-        state: "closing",
-        reason: null
-      });
-      const settled = await this.options.writer.processes.settlement(link, completion);
-      if (settled.status !== "committed")
-        throw new ContractError("recording-exhausted");
-      n.result = {
-        ...n.result,
-        native: completion.native,
-        recording: completion.recording,
-        settlementSeq: settled.batch.committedSeq
-      };
-      if (this.closed)
-        return;
-      const observedAfter = e.input.observe(lane === "writer"), after = observedAfter.observation;
-      await this.changes(e, "after", observedAfter);
-      e.after.set(n.childRunId, after);
-      if (lane === "writer")
-        e.expectedObservation = after;
-      if (!childSatisfied(n.result))
-        await this.close(e, completion.native.outcome === "canceled" ? "canceled" : completion.native.outcome === "timeout" ? "timeout" : "failed");
-    } finally {
-      await originalAuth;
-      if (this.options.writer.quarantined || ["quarantined", "stopped"].includes(this.options.owner.state)) {
-        this.quarantine();
-      } else {
-        if (!n.result?.native)
-          await this.fact(e, {
-            kind: "assignment-state",
-            childRunId: n.childRunId,
-            state: "unstarted",
-            reason: this.reason(e)
-          });
-        if (held)
-          await this.fact(e, {
-            kind: "gate",
-            reservationId: n.childRunId,
-            lane,
-            state: "released",
-            checkoutGeneration: e.input.generation()
-          });
-        this.holders.delete(n.childRunId);
-        n.state = "done";
-        this.pump();
-      }
-    }
-  }
-  async executeCheck(e, n) {
-    const input = e.input;
-    if (input.kind !== "check")
-      throw new ContractError("invalid");
-    const before = e.expectedObservation, checkId = n.childRunId;
-    let held = false;
-    let native = {
-      outcome: e.reason === "canceled" ? "canceled" : "failed",
-      closure: "not-launched",
-      exitCode: null,
-      signal: null,
-      durationMs: 0,
-      stdin: "not-required"
-    };
-    let recording;
-    try {
-      await this.fact(e, {
-        kind: "check-start",
-        checkId,
-        selection: input.check,
-        cwdId: e.identity.context.cwdId,
-        cwdLabel: input.cwd,
-        checkEnvGeneration: e.identity.context.checkEnvGeneration,
-        before
-      });
-      if (this.current(e, n) && input.definitionCurrent()) {
-        await this.fact(e, {
-          kind: "gate",
-          reservationId: checkId,
-          lane: "check",
-          state: "held",
-          checkoutGeneration: before.checkoutGeneration
-        });
-        held = true;
-        if (this.current(e, n) && input.definitionCurrent()) {
-          recording = new CheckRecording(this.options.writer.checkOutput(e.link, checkId), e.link, checkId, input.secrets, input.secretSource);
-          await recording.begin();
-          if (this.current(e, n) && input.definitionCurrent()) {
-            const output = recording;
-            const original = Promise.resolve().then(async () => {
-              if (!this.current(e, n, true) || !input.definitionCurrent())
-                return native;
-              await runCheck(input.check, input.cwd, n.abort.signal, {
-                environment: input.environment,
-                recording: output,
-                maySignal: () => this.owned(),
-                onNative: (observed2) => {
-                  native = observed2;
-                }
-              });
-              return native;
-            });
-            this.options.owner.trackCheck(original, () => {
-              if (this.owned())
-                n.abort.abort();
-            });
-            native = await original;
-          }
-        }
-      }
-      if (recording)
-        await recording.end(native.closure === "direct-child-closed");
-      const retained = recording?.result() ?? {
-        output: null,
-        coverage: {
-          observed: "incomplete",
-          source: "unavailable",
-          redacted: false,
-          omissions: ["gap"]
-        }
-      };
-      const observed = input.observe(false).observation;
-      const after = held ? { ...observed, checkoutGeneration: input.advance() } : observed;
-      const ownAdvance = held && observed.checkoutGeneration === before.checkoutGeneration ? {
-        operationId: e.link.operationId,
-        reservationId: checkId,
-        from: before.checkoutGeneration,
-        to: after.checkoutGeneration
-      } : undefined;
-      const fresh2 = input.current() && input.definitionCurrent() && observed.identity === before.identity && observed.complete === before.complete && after.identity === before.identity && after.complete === before.complete && ownAdvance !== undefined && ownAdvance.to === ownAdvance.from + 1;
-      const status = native.outcome === "canceled" || native.outcome === "timeout" ? "canceled" : native.outcome !== "completed" || retained.coverage.observed !== "complete" || !retained.output ? "failed" : fresh2 ? "passed" : "stale";
-      e.settlementStarted = true;
-      await this.fact(e, {
-        kind: "check-settled",
-        checkId,
-        native,
-        status,
-        before,
-        after,
-        ...ownAdvance ? { ownAdvance } : {},
-        ...retained
-      });
-      if (native.closure === "unconfirmed" || this.options.writer.quarantined || this.options.owner.state === "quarantined") {
-        this.quarantine();
-        return;
-      }
-      if (held)
-        await this.fact(e, {
-          kind: "gate",
-          reservationId: checkId,
-          lane: "check",
-          state: "released",
-          checkoutGeneration: after.checkoutGeneration
-        });
-      this.holders.delete(checkId);
-      n.state = "done";
-      this.pump();
-    } catch {
-      this.quarantine();
-    }
-  }
-  async changes(e, stage, view) {
-    if (Buffer.byteLength(view.text) > 128 * 1024)
-      throw new ContractError("oversize");
-    const reserved = this.options.writer.owner().reserve({
-      sourceFrames: 0,
-      retainedBytes: 256 * 1024,
-      outputBytes: 512 * 1024,
-      outputChunks: 20,
-      lane: "data"
-    });
-    if (reserved.status !== "reserved")
-      throw new ContractError("capacity");
-    let consumed = false;
-    try {
-      const text2 = sanitizeText(view.text, this.options.ownerSecrets), bytes = Buffer.from(text2), detailId = randomUUID17(), observationId = randomUUID17();
-      const events = [
-        {
-          kind: "content-begin",
-          detailId,
-          owner: {
-            taskId: e.link.taskId,
-            runId: e.link.runId,
-            childRunId: null,
-            entity: { kind: "changes", id: observationId, version: 1 }
-          },
-          field: "changes",
-          encoding: "utf8"
-        }
-      ];
-      for (let at = 0;at < bytes.length; ) {
-        let end = Math.min(at + LIMITS.chunkBytes, bytes.length);
-        while (end < bytes.length && (bytes[end] & 192) === 128)
-          end--;
-        events.push({
-          kind: "content-chunk",
-          detailId,
-          text: bytes.subarray(at, end).toString("utf8")
-        });
-        at = end;
-      }
-      events.push({
-        kind: "content-end",
-        detailId,
-        coverage: {
-          ...COMPLETE,
-          redacted: text2 !== view.text,
-          source: view.observation.complete ? "complete" : "limited",
-          omissions: view.observation.complete ? [] : ["source-limit"]
-        }
-      });
-      const promise = reserved.reservation.commit({
-        link: e.link,
-        observedMs: Math.floor(this.now()),
-        events
-      });
-      consumed = true;
-      const result = await promise;
-      if (result.status !== "committed" || result.batch.ownerDetails.length !== 1)
-        throw new ContractError("recording-exhausted");
-      const content = result.batch.ownerDetails[0].content;
-      await this.fact(e, {
-        kind: "changes",
-        observationId,
-        stage,
-        observation: view.observation,
-        content
-      });
-      return content;
-    } finally {
-      if (!consumed)
-        reserved.reservation.release();
-    }
-  }
-  reason(e) {
-    return e.reason && [
-      "wait-expired",
-      "handoff-overflow",
-      "stale-dependency",
-      "quarantine"
-    ].includes(e.reason) ? e.reason : "parent-stopped";
-  }
-  finishEpisode(e) {
-    if (e.settling)
-      return;
-    e.settling = true;
-    this.job(e, async () => {
-      await e.closeWrite;
-      if (e.input.kind === "check") {
-        if (e.nodes[0].state === "queued")
-          await this.executeCheck(e, e.nodes[0]);
-      } else {
-        for (const n of e.nodes)
-          if (n.state === "queued") {
-            await this.fact(e, {
-              kind: "assignment-state",
-              childRunId: n.childRunId,
-              state: "unstarted",
-              reason: this.reason(e)
-            });
-            n.state = "done";
-          }
-        const required = e.nodes.flatMap((n) => n.result ? [n.result] : []);
-        const outcome = required.every(childSatisfied) ? "completed" : e.reason === "canceled" ? "canceled" : e.reason === "timeout" ? "timeout" : e.reason === "failed" ? "failed" : "blocked";
-        e.settlementStarted = true;
-        await this.fact(e, {
-          kind: "parent-settled",
-          runId: e.target.runId,
-          settlement: { kind: "parent", outcome, required }
-        });
-      }
-      if (this.closed) {
-        e.finished = true;
-        return;
-      }
-      await e.input.publish(e.baseline);
-      e.target.state = "settled";
-      this.recent.set(e.target.runId, { ...e.target });
-      if (this.recent.size > LIMITS.episodes * 2)
-        this.recent.delete(this.recent.keys().next().value ?? "");
-      this.episodes.delete(e.target.runId);
-      e.finished = true;
-      this.pump();
-    });
-  }
-}
-
-// src/service/task-actions.ts
-var actionOwners = new WeakSet;
-function snapshotReads() {
-  const kept = new Map;
-  return (key2, read2) => {
-    if (!kept.has(key2))
-      kept.set(key2, read2());
-    return kept.get(key2);
-  };
-}
-
-class TaskActions {
-  options;
-  admission;
-  scheduler;
-  sources;
-  cwd;
-  launchCwd;
-  checkEnvironment;
-  cwdId = randomUUID18();
-  generation = 0;
-  checkEnvGeneration = 1;
-  legacyConfigRev;
-  checkDefinitions = "";
-  checksRevision = 0;
-  metadata = new Map;
-  accepted = new Map;
-  closed = false;
-  reviewRevision = 0;
-  reviewVersions = new Map;
-  reviewing = new Map;
-  drafts = new Map;
-  committed = null;
-  constructor(options) {
-    this.options = options;
-    if (actionOwners.has(options.host.owner))
-      throw new ContractError("conflict");
-    this.options = options.choice ? { ...options, ownerSecrets: [...options.ownerSecrets] } : {
-      ...options,
-      selection: structuredClone(options.selection),
-      ownerSecrets: [...options.ownerSecrets]
-    };
-    this.cwd = realpathSync7(options.cwd);
-    const config = readHostConfig(options.host.coordination);
-    if (!config || realpathSync7(config.cwd) !== this.cwd)
-      throw new ContractError("unsupported-context");
-    this.launchCwd = config.cwd;
-    this.checkEnvironment = options.host.checkEnvironment;
-    if (!Object.isFrozen(this.checkEnvironment))
-      throw new ContractError("unsupported-context");
-    if (resolveWorkspace(this.cwd).root !== options.host.coordination.store.root)
-      throw new ContractError("conflict");
-    this.sources = new GraphContext(options.host.coordination.store.root);
-    this.legacyConfigRev = options.host.writer.configurationRevisionFloor + 1;
-    const initial4 = this.choiceSnapshot();
-    if (initial4.selection)
-      options.host.models.assertCurrent(initial4.selection);
-    actionOwners.add(options.host.owner);
-    this.scheduler = new TaskScheduler({
-      ...options.host,
-      ownerSecrets: options.ownerSecrets,
-      workerTimeoutMs: options.workerTimeoutMs,
-      now: options.policyClock
-    });
-    this.admission = new ActionAdmission({
-      reservedIdentity: (id) => options.host.writer.reservedIdentity(id),
-      lookup: (id) => options.host.writer.lookup(id),
-      lookupForAdmission: (id) => options.host.writer.lookupForAdmission(id),
-      commit: (intent) => this.commit(intent)
-    }, this, { now: () => Date.now(), uuid: () => randomUUID18() });
-    options.host.writer.bindReviewContext((taskId2, published) => {
-      const current2 = this.reviewing.get(taskId2);
-      if (!current2)
-        throw new ContractError("unavailable");
-      return current2(published);
-    });
-    options.host.owner.registerActions(() => this.quiesce(), {
-      assertQuiescent: () => {
-        if (this.closed)
-          throw new ContractError("quarantine");
-        if (this.admission.accounting.count || this.admission.accounting.unresolved || this.accepted.size || this.metadata.size || this.reviewing.size)
-          throw new ContractError("conflict");
-        this.scheduler.assertQuiescent();
-        if (!this.options.choice)
-          throw new ContractError("unavailable");
-      },
-      changed: () => this.admission.revokeGrants()
-    });
-  }
-  commit(intent) {
-    const h = this.options.host;
-    if (intent.identity.kind !== "action")
-      return h.writer.commit(intent);
-    this.assertChoice(intent.identity.expected);
-    let report;
-    let reject;
-    const result = new Promise((yes, no) => {
-      report = yes;
-      reject = no;
-    });
-    let activate;
-    const activated = new Promise((yes) => {
-      activate = yes;
-    });
-    const original = Promise.resolve().then(async () => {
-      const previousSeq = h.writer.committedSeq;
-      const committed3 = await h.writer.commit(intent);
-      if (committed3.status !== "committed") {
-        report(committed3);
-        if (committed3.status === "uncertain")
-          await h.writer.abandonPublication(intent.operationId);
-        return {
-          status: committed3.status === "uncertain" ? "uncertain" : "settled"
-        };
-      }
-      const tracked2 = this.accepted.get(intent.operationId);
-      if (!tracked2)
-        throw new ContractError("conflict");
-      tracked2.committed = true;
-      this.committed = { intent, previousSeq };
-      report(committed3);
-      const outcome = await activated;
-      if (outcome)
-        return outcome;
-      await h.writer.abandonPublication(intent.operationId);
-      return { status: "uncertain" };
-    }).catch(async (error2) => {
-      reject(error2);
-      this.quarantine("activation");
-      return { status: "uncertain" };
-    }).finally(() => {
-      this.accepted.delete(intent.operationId);
-    });
-    const tracked = {
-      intent,
-      committed: false,
-      activated: false,
-      original,
-      activate: (work) => {
-        tracked.activated = true;
-        activate(work);
-      }
-    };
-    this.accepted.set(intent.operationId, tracked);
-    h.owner.trackAccepted(original);
-    return result;
-  }
-  conversationBoundary(barrier) {
-    barrier.assertHeld();
-    this.options.host.owner.lease.assert();
-    if (!Number.isSafeInteger(this.generation + 1))
-      throw new ContractError("capacity");
-    ++this.generation;
-    this.admission.revokeGrants();
-  }
-  async settledAll() {
-    await Promise.all([...this.accepted.values()].map((a) => a.original));
-  }
-  currentAccess() {
-    return {
-      epoch: this.options.host.owner.lease.registration.epoch,
-      accessGeneration: this.options.host.access.generation
-    };
-  }
-  alive() {
-    if (this.closed || this.options.host.owner.state !== "idle" || this.options.host.writer.quarantined)
-      throw new ContractError("quarantine");
-    this.options.host.owner.lease.assert();
-    if (!this.sources.current() || realpathSync7(this.cwd) !== this.cwd || realpathSync7(this.launchCwd) !== this.cwd || this.options.host.checkEnvironment !== this.checkEnvironment)
-      throw new ContractError("stale");
-  }
-  choiceSnapshot() {
-    const state = this.options.choice?.snapshot();
-    const access = this.currentAccess();
-    if (state && (state.version.epoch !== access.epoch || state.version.accessGeneration !== access.accessGeneration))
-      throw new ContractError("stale");
-    const configRev = state?.version.configRev ?? this.legacyConfigRev;
-    if (!Number.isSafeInteger(configRev) || configRev < this.options.host.writer.configurationRevisionFloor)
-      throw new ContractError("stale");
-    return {
-      selection: state ? state.selected : this.options.selection ?? null,
-      configRev,
-      checkEnvGeneration: this.checkEnvGeneration
-    };
-  }
-  requireChoice() {
-    this.alive();
-    const choice = this.choiceSnapshot();
-    if (!choice.selection)
-      throw new ContractError("unavailable");
-    this.options.host.models.assertCurrent(choice.selection);
-    return { ...choice, selection: choice.selection };
-  }
-  assertChoice(version) {
-    const choice = this.requireChoice();
-    if (canonicalJson(choice.selection) !== canonicalJson(version.model) || choice.configRev !== version.configRev || choice.checkEnvGeneration !== version.checkEnvGeneration)
-      throw new ContractError("stale");
-  }
-  savedGraph(taskId2, snapshot = this.options.host.writer.committedSeq) {
-    const h = this.options.host, saved = h.coordination.store.loadSnapshot(taskId2);
-    if (!saved)
-      throw new ContractError("stale");
-    return h.reader.publishedPlan(taskId2, snapshot, {
-      identity: saved.identity,
-      revision: saved.record.revision,
-      plan: saved.record.plan
-    });
-  }
-  defaultGraph(record2, identity2, selection) {
-    identity2 = canonicalJson({ identity: identity2, selection });
-    const old = this.drafts.get(record2.id);
-    if (old?.identity === identity2)
-      return old.graph;
-    const purpose = record2.kind === "code" ? "edit" : record2.kind;
-    const role2 = this.sources.roles.find((r) => r.role === roleForPurpose(purpose));
-    if (!role2)
-      throw new ContractError("unavailable");
-    const graph = {
-      schema: "cadence-graph/2",
-      taskId: record2.id,
-      taskKind: record2.kind,
-      taskRevision: record2.revision,
-      revision: 1,
-      planRevision: 1,
-      plan: proposePlanContent(record2.plan, 1, this.options.ownerSecrets),
-      assignments: [
-        {
-          id: "task",
-          purpose,
-          instructions: "Perform the explicitly reviewed task and report observations.",
-          expectedOutput: "Report the result and remaining uncertainty.",
-          role: { role: roleForPurpose(purpose), sha256: role2.sha256 },
-          model: selection,
-          dependencies: []
-        }
-      ]
-    };
-    if (this.drafts.size >= 16)
-      this.drafts.delete(this.drafts.keys().next().value ?? "");
-    this.drafts.set(record2.id, { identity: identity2, graph });
-    return graph;
-  }
-  checks(taskId2) {
-    if (!this.options.host.coordination.store.loadSnapshot(taskId2))
-      throw new ContractError("stale");
-    const selections = this.configuredChecks();
-    const identity2 = canonicalJson(selections);
-    if (identity2 !== this.checkDefinitions) {
-      this.checkDefinitions = identity2;
-      this.checksRevision++;
-    }
-    return { revision: this.checksRevision, selections };
-  }
-  configuredChecks() {
-    const selections = this.options.host.coordination.store.checks().map((c) => ({ kind: "configured", ...c }));
-    const identity2 = canonicalJson(selections);
-    if (sanitizeText(identity2, this.viewSecrets()) !== identity2)
-      throw new ContractError("unsupported-context");
-    return selections;
-  }
-  viewSecrets() {
-    const h = this.options.host;
-    return [
-      ...this.options.ownerSecrets,
-      ...h.access.redactionLiterals(),
-      h.coordination.localAccess().capability,
-      ...h.models.viewRedactionLiterals()
-    ];
-  }
-  checkSecrets(selection = this.requireChoice().selection) {
-    const h = this.options.host;
-    return [
-      ...this.options.ownerSecrets,
-      ...h.access.redactionLiterals(),
-      h.coordination.localAccess().capability,
-      ...h.models.redactionLiterals(selection)
-    ];
-  }
-  observeCurrent(taskId2, snapshot, legacyStart = false) {
-    this.alive();
-    const h = this.options.host, choice = this.choiceSnapshot();
-    const access = this.currentAccess();
-    const committedSeq = snapshot ?? h.writer.committedSeq;
-    const selected2 = taskId2 ? h.coordination.store.loadSnapshot(taskId2) : null;
-    if (selected2 && realpathSync7(selected2.record.cwd) !== this.cwd)
-      throw new ContractError("unsupported-context");
-    const secrets = this.viewSecrets();
-    const roles = this.sources.roles.map(({ role: role2, sha256 }) => ({
-      role: role2,
-      sha256
-    }));
-    if (sanitizeText(canonicalJson(roles), secrets) !== canonicalJson(roles))
-      throw new ContractError("unsupported-context");
-    const plan = selected2 ? sanitizeText(selected2.record.plan, secrets) : null;
-    const editable = selected2 ? plan === selected2.record.plan : true;
-    let descriptor = null;
-    let unavailable2 = taskId2 && !selected2 ? publicError("unavailable") : null;
-    let saved = { status: "none" };
-    if (selected2) {
-      try {
-        descriptor = this.savedGraph(selected2.record.id, committedSeq);
-        if (descriptor)
-          saved = {
-            status: "saved",
-            planRevision: descriptor.graph.planRevision,
-            request: {
-              storeId: h.reader.storeId,
-              scope: { kind: "task", id: selected2.record.id },
-              snapshotSeq: committedSeq,
-              graph: descriptor.reference
-            }
-          };
-      } catch (error2) {
-        unavailable2 = publicError(error2 instanceof ContractError ? error2.code : "unavailable");
-        saved = { status: "unavailable", error: unavailable2 };
-      }
-    }
-    if (choice.selection)
-      h.models.assertCurrent(choice.selection);
-    const graph = descriptor?.graph ?? (!unavailable2 && editable && selected2 && choice.selection && (this.options.choice || legacyStart) ? this.defaultGraph(selected2.record, selected2.identity, choice.selection) : null);
-    const changes = captureChanges(h.coordination.store.root);
-    const observation = {
-      identity: changes.fingerprint,
-      complete: changes.complete,
-      checkoutGeneration: this.generation
-    };
-    if (!editable)
-      unavailable2 ??= publicError("unsupported-context");
-    const context = choice.selection && !unavailable2 ? {
-      status: "available",
-      version: {
-        ...access,
-        configRev: choice.configRev,
-        controlRev: h.writer.controlRevision(taskId2),
-        workspaceId: h.reader.files.format.workspaceId,
-        cwdId: this.cwdId,
-        model: choice.selection,
-        checkEnvGeneration: choice.checkEnvGeneration,
-        checkoutGeneration: this.generation,
-        observation: {
-          identity: observation.identity,
-          complete: observation.complete
-        },
-        task: selected2 ? {
-          id: selected2.record.id,
-          kind: selected2.record.kind,
-          revision: selected2.record.revision,
-          identity: selected2.identity,
-          graphRevision: graph?.revision ?? null,
-          graphIdentity: graph ? hash2(canonicalJson(graph)) : null
-        } : null
-      }
-    } : {
-      status: "unavailable",
-      workspaceId: h.reader.files.format.workspaceId,
-      taskId: taskId2,
-      error: unavailable2 ?? publicError("unavailable")
-    };
-    const view = decodeCurrentView({
-      request: { storeId: h.reader.storeId, taskId: taskId2 },
-      workspaceId: h.reader.files.format.workspaceId,
-      epoch: access.epoch,
-      committedSeq,
-      context,
-      task: selected2 ? {
-        id: selected2.record.id,
-        kind: selected2.record.kind,
-        revision: selected2.record.revision,
-        identity: selected2.identity
-      } : null,
-      roles,
-      readablePlan: selected2 ? {
-        source: "current-v1",
-        text: plan,
-        editable,
-        coverage: {
-          observed: "complete",
-          source: "complete",
-          redacted: !editable,
-          omissions: []
-        }
-      } : null,
-      savedGraph: saved
-    });
-    const assertCurrent = () => {
-      this.alive();
-      if (canonicalJson(secrets) !== canonicalJson(this.viewSecrets()))
-        throw new ContractError("stale");
-      if (choice.selection)
-        h.models.assertCurrent(choice.selection);
-      const latest = taskId2 ? h.coordination.store.loadSnapshot(taskId2) : null;
-      if (latest?.identity !== selected2?.identity || canonicalJson(choice) !== canonicalJson(this.choiceSnapshot()) || canonicalJson(access) !== canonicalJson(this.currentAccess()) || context.status === "available" && (h.writer.controlRevision(taskId2) !== context.version.controlRev || this.generation !== context.version.checkoutGeneration))
-        throw new ContractError("stale");
-    };
-    assertCurrent();
-    return {
-      view,
-      selected: selected2,
-      graph,
-      changes,
-      observation,
-      secrets,
-      assertCurrent
-    };
-  }
-  current(input, signal) {
-    const request3 = decodeCurrentRequest(input);
-    if (signal?.aborted)
-      throw new ContractError("unavailable");
-    if (request3.storeId !== this.options.host.reader.storeId)
-      throw new ContractError("stale");
-    return this.observeCurrent(request3.taskId).view;
-  }
-  currentChanges(input, signal) {
-    const request3 = decodeCurrentChangesRequest(input);
-    if (signal?.aborted)
-      throw new ContractError("unavailable");
-    if (request3.storeId !== this.options.host.reader.storeId)
-      throw new ContractError("stale");
-    const { view, changes, observation, secrets } = this.observeCurrent(request3.taskId);
-    if (!view.task)
-      throw new ContractError("unavailable");
-    const text2 = sanitizeText(changes.text, secrets);
-    return decodeCurrentChanges({
-      request: request3,
-      workspaceId: view.workspaceId,
-      epoch: view.epoch,
-      committedSeq: view.committedSeq,
-      context: view.context,
-      task: view.task,
-      observation,
-      text: text2,
-      git: changes.git,
-      coverage: {
-        observed: "complete",
-        source: changes.complete ? "complete" : "limited",
-        redacted: text2 !== changes.text,
-        omissions: changes.complete ? [] : ["source-limit"]
-      }
-    });
-  }
-  activeRuns(signal) {
-    if (signal?.aborted)
-      throw new ContractError("unavailable");
-    const h = this.options.host;
-    h.owner.lease.assert();
-    const base = {
-      storeId: h.reader.storeId,
-      workspaceId: h.reader.files.format.workspaceId,
-      epoch: this.currentAccess().epoch
-    };
-    const runs = this.scheduler.activeRefs();
-    for (const a of this.accepted.values()) {
-      const { intent } = a;
-      if (!intent.runId || intent.identity.kind !== "action" || !intent.identity.expected.task)
-        continue;
-      if (!a.committed)
-        return decodeActiveRuns({
-          ...base,
-          status: "unavailable",
-          error: publicError("receipt-inconclusive")
-        });
-      const kind = intent.identity.action.kind;
-      if (kind !== "start" && kind !== "generate-plan" && kind !== "check")
-        throw new ContractError("conflict");
-      if (!runs.some((r) => r.runId === intent.runId))
-        runs.push({
-          taskId: intent.identity.expected.task.id,
-          runId: intent.runId,
-          operationId: intent.operationId,
-          epoch: intent.identity.expected.epoch,
-          kind,
-          stage: this.closed || a.activated ? "draining" : "accepted-unallocated"
-        });
-    }
-    return decodeActiveRuns({ ...base, status: "complete", runs });
-  }
-  context(taskId2) {
-    return this.current({ storeId: this.options.host.reader.storeId, taskId: taskId2 }).context;
-  }
-  workspace() {
-    const { view, secrets } = this.observeCurrent(null);
-    return {
-      rootLabel: diagnosticText(sanitizeText(this.options.host.coordination.store.root, secrets), 4096),
-      context: view.context,
-      models: view.context.status === "available" ? [view.context.version.model] : [],
-      activeRuns: this.activeRuns()
-    };
-  }
-  checkObligations(taskId2) {
-    const { view, assertCurrent } = this.observeCurrent(taskId2);
-    if (!view.task)
-      throw new ContractError("unavailable");
-    const checks = this.obligationsFor(taskId2, view.task.kind, view.context, view.committedSeq).checks;
-    assertCurrent();
-    return checks;
-  }
-  obligations(version, snapshot, reads) {
-    if (!version.task)
-      throw new ContractError("stale");
-    return this.obligationsFor(version.task.id, version.task.kind, { status: "available", version }, snapshot, reads);
-  }
-  obligationsFor(taskId2, kind, context, snapshot, reads) {
-    const configured = this.checks(taskId2);
-    const selections = kind === "code" ? configured : { revision: configured.revision, selections: [] };
-    const fold = () => currentChecks(this.options.host.reader.files, taskId2, selections, context, snapshot);
-    const state = reads ? reads(`checks:${canonicalJson({ taskId: taskId2, selections, context, snapshot })}`, fold) : fold();
-    if (canonicalJson(configured) !== canonicalJson(this.checks(taskId2)))
-      throw new ContractError("stale");
-    if (context.status !== "available")
-      return {
-        ...state,
-        checks: {
-          ...state.checks,
-          revision: this.reviewVersions.get(taskId2)?.revision ?? configured.revision
-        }
-      };
-    const signature = canonicalJson({ configured, ...state });
-    let prior = this.reviewVersions.get(taskId2);
-    if (!prior || prior.signature !== signature) {
-      if (this.reviewVersions.size >= 16 && !prior)
-        this.reviewVersions.delete(this.reviewVersions.keys().next().value ?? "");
-      if (!Number.isSafeInteger(this.reviewRevision + 1))
-        throw new ContractError("capacity");
-      prior = { signature, revision: ++this.reviewRevision };
-      this.reviewVersions.set(taskId2, prior);
-    }
-    return { ...state, checks: { ...state.checks, revision: prior.revision } };
-  }
-  async observe(action) {
-    const h = this.options.host;
-    const taskId2 = action.kind === "create" ? null : action.taskId;
-    if (this.metadata.size >= 16 || this.metadata.has(taskId2 ?? "workspace"))
-      throw new ContractError("conflict");
-    const pending = this.committed;
-    const ownAcceptance = pending?.intent.identity.kind === "action" && canonicalJson(pending.intent.identity.action) === canonicalJson(action);
-    const current2 = this.observeCurrent(taskId2, ownAcceptance ? pending.previousSeq : undefined, action.kind === "start");
-    const { selected: selected2, graph, changes } = current2;
-    if (current2.view.context.status !== "available")
-      throw new ContractError(current2.view.context.error.code);
-    const version = current2.view.context.version;
-    const selection = version.model;
-    if (action.kind === "save-plan") {
-      assertPlanContent(action.plan, action.graph.plan, current2.secrets);
-      this.sources.validate(action.graph, selection);
-      if (sanitizeText(canonicalJson(action), current2.secrets) !== canonicalJson(action))
-        throw new ContractError("invalid");
-    }
-    if (action.kind === "create" && sanitizeText(action.goal, current2.secrets) !== action.goal)
-      throw new ContractError("invalid");
-    if (action.kind === "generate-plan") {
-      if (selected2?.record.kind !== "code")
-        throw new ContractError("forbidden");
-      this.scheduler.assertCapacity(1);
-      this.sources.planningRequest(selected2.record, selection, randomUUID18(), randomUUID18());
-    }
-    if (action.kind === "check") {
-      if (selected2?.record.kind !== "code")
-        throw new ContractError("forbidden");
-      if (selected2.record.checks.length >= 32)
-        throw new ContractError("capacity");
-      this.scheduler.assertCapacity(0);
-      if (sanitizeText(canonicalJson(action.check), this.checkSecrets()) !== canonicalJson(action.check))
-        throw new ContractError("invalid");
-    }
-    if (action.kind === "start") {
-      if (!graph || !selected2)
-        throw new ContractError("unsupported-context");
-      this.sources.validate(graph, selection);
-      this.scheduler.assertCapacity(graph.assignments.length);
-      for (const assignment of graph.assignments)
-        this.sources.request(selected2.record, graph, randomUUID18(), randomUUID18(), assignment, { graphRevision: graph.revision, inputs: [] });
-    }
-    const checks = taskId2 ? this.checks(taskId2).selections : this.configuredChecks();
-    if (sanitizeText(canonicalJson(checks), current2.secrets) !== canonicalJson(checks))
-      throw new ContractError("unsupported-context");
-    const review = action.kind === "review" ? this.reviewObservation(action.runId, version) : null;
-    const preview = decodePreview({
-      version,
-      action,
-      rootLabel: diagnosticText(sanitizeText(h.coordination.store.root, current2.secrets), 4096),
-      cwdLabel: diagnosticText(sanitizeText(this.cwd, current2.secrets), 4096),
-      readablePlan: action.kind === "save-plan" ? action.plan : review?.readablePlan ?? selected2?.record.plan ?? "",
-      graph: action.kind === "save-plan" ? action.graph : action.kind === "generate-plan" ? null : review ? review.graph : graph,
-      activeRunId: taskId2 ? this.scheduler.activeTask(taskId2) : null,
-      issues: review?.issues ?? (changes.complete ? [] : ["incomplete-observation"]),
-      configuredChecks: checks,
-      ...action.kind === "check" ? { checkEnvironmentPolicy: "service-launch-ordinary/1" } : {},
-      checksRevision: review?.checks.revision ?? (taskId2 && this.options.choice ? this.obligations(version, current2.view.committedSeq).checks.revision : taskId2 ? this.checks(taskId2).revision : 0),
-      reviewRunId: action.kind === "review" ? action.runId : null
-    });
-    const latestChecks = taskId2 ? this.checks(taskId2).selections : this.configuredChecks();
-    if (canonicalJson(checks) !== canonicalJson(latestChecks))
-      throw new ContractError("stale");
-    current2.assertCurrent();
-    h.writer.supplyContext(version);
-    return preview;
-  }
-  currentGraph(graph, version) {
-    this.alive();
-    if (!version.task)
-      return false;
-    const selected2 = this.options.host.coordination.store.loadSnapshot(version.task.id);
-    if (selected2?.identity !== version.task.identity || selected2.record.revision !== version.task.revision)
-      return false;
-    const saved = this.savedGraph(version.task.id);
-    return !!saved && canonicalJson(saved.graph) === canonicalJson(graph) && hash2(canonicalJson(graph)) === version.task.graphIdentity;
-  }
-  run(id) {
-    return this.scheduler.run(id);
-  }
-  activate(intent, _receipt) {
-    this.alive();
-    if (intent.identity.kind !== "action")
-      throw new ContractError("invalid");
-    const { action, expected } = intent.identity;
-    this.assertChoice(expected);
-    const previousSeq = this.committed?.previousSeq;
-    this.committed = null;
-    const accepted2 = this.accepted.get(intent.operationId);
-    if (!accepted2)
-      throw new ContractError("conflict");
-    const key2 = expected.task?.id ?? "workspace", h = this.options.host;
-    if (this.metadata.has(key2))
-      throw new ContractError("conflict");
-    if (action.kind === "review") {
-      if (!previousSeq || !expected.task)
-        throw new ContractError("conflict");
-      const work2 = Promise.resolve().then(() => this.performReview(intent, previousSeq)).catch(async () => {
-        this.quarantine("activation");
-        await h.writer.abandonPublication(intent.operationId);
-        return { status: "uncertain" };
-      }).finally(() => {
-        this.metadata.delete(key2);
-        this.reviewing.delete(key2);
-      });
-      this.metadata.set(key2, work2);
-      accepted2.activate(work2);
-      return;
-    }
-    if (action.kind === "create" || action.kind === "save-plan") {
-      const work2 = Promise.resolve().then(async () => {
-        if (this.closed) {
-          await h.writer.abandonPublication(intent.operationId);
-          return { status: "uncertain" };
-        }
-        this.assertChoice(expected);
-        if (action.kind === "save-plan") {
-          const retained = await h.writer.retainAcceptedPlan(intent.operationId, this.options.ownerSecrets);
-          if (retained.status !== "committed")
-            throw new ContractError("recording-exhausted");
-        }
-        if (this.closed) {
-          await h.writer.abandonPublication(intent.operationId);
-          return { status: "uncertain" };
-        }
-        this.assertChoice(expected);
-        const publication = await h.writer.publishTask({
-          operationId: intent.operationId,
-          ...action.kind === "create" ? { cwd: this.cwd } : {}
-        });
-        if (publication.status !== "published")
-          throw new ContractError("conflict");
-        return { status: "settled" };
-      }).catch(async () => {
-        this.quarantine("activation");
-        await h.writer.abandonPublication(intent.operationId);
-        return { status: "uncertain" };
-      }).finally(() => {
-        this.metadata.delete(key2);
-      });
-      this.metadata.set(key2, work2);
-      accepted2.activate(work2);
-      return;
-    }
-    if (action.kind !== "start" && action.kind !== "generate-plan" && action.kind !== "check" || !expected.task || !intent.runId)
-      throw new ContractError("unavailable");
-    const selected2 = h.coordination.store.loadSnapshot(action.taskId), plan = this.savedGraph(action.taskId, previousSeq);
-    if (!selected2 || selected2.identity !== expected.task.identity)
-      throw new ContractError("stale");
-    const graph = action.kind === "start" ? plan?.graph ?? this.defaultGraph(selected2.record, selected2.identity, expected.model) : null;
-    if (graph && hash2(canonicalJson(graph)) !== expected.task.graphIdentity)
-      throw new ContractError("stale");
-    let own3 = {
-      revision: selected2.record.revision,
-      identity: selected2.identity
-    };
-    const work = this.scheduler.activate({
-      intent,
-      ...graph ? { kind: "start", graph, planUnretained: !plan } : action.kind === "check" ? {
-        kind: "check",
-        graph: null,
-        planUnretained: false,
-        check: action.check,
-        cwd: this.cwd,
-        environment: this.checkEnvironment,
-        secrets: this.checkSecrets(expected.model),
-        secretSource: {
-          current: () => this.checkSecrets(expected.model),
-          onChange: (listener) => h.access.onRevoke(listener)
-        },
-        definitionCurrent: () => action.check.kind === "manual" || this.checks(action.taskId).selections.some((c) => canonicalJson(c) === canonicalJson(action.check))
-      } : {
-        kind: "generate-plan",
-        graph: null,
-        planUnretained: false
-      },
-      task: selected2.record,
-      sources: this.sources,
-      current: () => {
-        try {
-          this.assertChoice(expected);
-          const latest = h.coordination.store.loadSnapshot(action.taskId);
-          return latest?.identity === own3.identity && latest.record.revision === own3.revision && this.sources.current();
-        } catch {
-          return false;
-        }
-      },
-      generation: () => this.generation,
-      advance: () => ++this.generation,
-      observe: (advance) => {
-        if (advance)
-          this.generation++;
-        const view = captureChanges(h.coordination.store.root);
-        return {
-          observation: {
-            identity: view.fingerprint,
-            complete: view.complete,
-            checkoutGeneration: this.generation
-          },
-          text: view.text
-        };
-      },
-      publish: async (baseline) => {
-        this.assertChoice(expected);
-        const publication = await h.writer.publishTask({
-          operationId: intent.operationId,
-          ...baseline ? { baseline } : {}
-        });
-        if (publication.status !== "published" || !publication.observed)
-          throw new ContractError("conflict");
-        own3 = publication.observed;
-      }
-    });
-    accepted2.activate(work);
-  }
-  reviewObservation(runId, version, snapshot = this.options.host.writer.committedSeq, reads) {
-    if (!version.task)
-      throw new ContractError("stale");
-    const h = this.options.host, taskId2 = version.task.id;
-    const select = () => h.reader.reviewSelection(taskId2, runId, snapshot);
-    const selection = reads ? reads(`selection:${taskId2}:${runId}:${snapshot}`, select) : select();
-    const { run } = selection;
-    const state = this.obligations(version, snapshot, reads);
-    const current2 = {
-      ...state,
-      checks: state.checks,
-      observation: {
-        ...version.observation,
-        checkoutGeneration: version.checkoutGeneration
-      }
-    };
-    return {
-      ...current2,
-      ...selection,
-      issues: reviewIssues(run, current2, version.task.kind === "code", version.epoch)
-    };
-  }
-  async performReview(intent, snapshot) {
-    if (intent.identity.kind !== "action" || intent.identity.action.kind !== "review" || !intent.identity.expected.task)
-      throw new ContractError("invalid");
-    const h = this.options.host, { action, expected } = intent.identity, task = expected.task;
-    if (!task)
-      throw new ContractError("stale");
-    let barrier;
-    try {
-      barrier = await this.scheduler.reviewBarrier(intent.operationId);
-      const held = barrier;
-      const selected2 = h.coordination.store.loadSnapshot(task.id);
-      if (!selected2 || selected2.identity !== task.identity || selected2.record.revision !== task.revision)
-        throw new ContractError("stale");
-      const graph = this.savedGraph(task.id, snapshot);
-      const currentGraph = graph?.graph ?? (this.options.choice ? this.defaultGraph(selected2.record, selected2.identity, expected.model) : null);
-      if ((currentGraph ? hash2(canonicalJson(currentGraph)) : null) !== task.graphIdentity || (currentGraph?.revision ?? null) !== task.graphRevision)
-        throw new ContractError("stale");
-      const reads = snapshotReads();
-      const validate = (published) => {
-        this.assertChoice(expected);
-        held.assertHeld();
-        const actual = h.coordination.store.loadSnapshot(task.id), want = published ?? task;
-        if (!actual || actual.identity !== want.identity || actual.record.revision !== want.revision || realpathSync7(actual.record.cwd) !== this.cwd || this.generation !== expected.checkoutGeneration || h.writer.controlRevision(task.id) !== expected.controlRev + 1 || this.scheduler.activeTask(task.id))
-          throw new ContractError("stale");
-        const changes2 = captureChanges(h.coordination.store.root);
-        if (changes2.fingerprint !== expected.observation.identity || changes2.complete !== expected.observation.complete)
-          throw new ContractError("stale");
-        const proven = reads(`plan:${task.id}:${snapshot}`, () => h.reader.publishedPlan(task.id, snapshot, {
-          revision: selected2.record.revision,
-          identity: selected2.identity,
-          plan: selected2.record.plan
-        }));
-        if ((proven?.reference.sha256 ?? (currentGraph ? hash2(canonicalJson(currentGraph)) : null)) !== task.graphIdentity)
-          throw new ContractError("stale");
-        const current3 = this.reviewObservation(action.runId, expected, snapshot, reads);
-        if (current3.checks.revision !== action.checksRevision || current3.issues.length && !action.acceptIssues)
-          throw new ContractError("stale");
-        return current3;
-      };
-      this.reviewing.set(task.id, validate);
-      const current2 = validate();
-      const port = h.writer.reviewOutput(intent.operationId);
-      const link = {
-        epoch: expected.epoch,
-        taskId: task.id,
-        runId: action.runId,
-        operationId: intent.operationId
-      };
-      const view = captureChanges(h.coordination.store.root), observationId = randomUUID18();
-      const changes = await this.reviewContent(port, link, "changes", observationId, view.text, view.complete);
-      validate();
-      await recordOwner(h.writer, link, [
-        {
-          kind: "fact",
-          fact: {
-            kind: "changes",
-            stage: "review",
-            observationId,
-            observation: current2.observation,
-            content: changes
-          }
-        }
-      ]);
-      validate();
-      const reviewId = randomUUID18();
-      const reviewedRun = h.reader.reviewRun(task.id, action.runId, snapshot);
-      const text2 = canonicalJson({
-        kind: "human-review",
-        task: expected.task,
-        runId: action.runId,
-        runSettlementSeq: reviewedRun.settledSeq,
-        graphReference: reviewedRun.admission?.graph ?? null,
-        currentGraphReference: graph?.reference ?? null,
-        model: expected.model,
-        cwdId: expected.cwdId,
-        checkEnvGeneration: expected.checkEnvGeneration,
-        observation: current2.observation,
-        checks: current2.checks,
-        recorded: current2.recorded,
-        recordingIncomplete: current2.recordingIncomplete,
-        acceptIssues: action.acceptIssues,
-        issues: reviewIssues(reviewedRun, current2, task.kind === "code", expected.epoch),
-        note: "Explicit human acknowledgment; agent review is advisory. Execution/check/native facts are unchanged."
-      });
-      const content = await this.reviewContent(port, link, "review", reviewId, text2, true);
-      validate();
-      await recordOwner(h.writer, link, [
-        {
-          kind: "fact",
-          fact: {
-            kind: "review",
-            reviewId,
-            runId: action.runId,
-            changesIdentity: action.changesIdentity,
-            checksRevision: action.checksRevision,
-            acceptIssues: action.acceptIssues,
-            outcome: action.acceptIssues ? "reviewed-with-issues" : "reviewed",
-            content
-          }
-        }
-      ]);
-      validate();
-      const publication = await h.writer.publishTask({
-        operationId: intent.operationId
-      });
-      if (publication.status !== "published" || !publication.observed)
-        throw new ContractError("conflict");
-      validate(publication.observed);
-      barrier.release();
-      barrier = undefined;
-      return { status: "settled" };
-    } catch {
-      throw new ContractError("conflict");
-    }
-  }
-  async reviewContent(port, link, field, id, source, complete) {
-    if (Buffer.byteLength(source) > (field === "changes" ? 128 : 512) * 1024)
-      throw new ContractError("oversize");
-    const lease = port.reserve({
-      sourceFrames: 0,
-      retainedBytes: 1024 * 1024,
-      outputBytes: 2 * 1024 * 1024,
-      outputChunks: 160,
-      lane: "data"
-    });
-    if (lease.status !== "reserved")
-      throw new ContractError("capacity");
-    let consumed = false;
-    try {
-      const text2 = sanitizeText(source, this.checkSecrets()), bytes = Buffer.from(text2), detailId = randomUUID18();
-      const events = [
-        {
-          kind: "content-begin",
-          detailId,
-          field,
-          encoding: "utf8",
-          owner: {
-            taskId: link.taskId,
-            runId: link.runId,
-            childRunId: null,
-            entity: { kind: field, id, version: 1 }
-          }
-        }
-      ];
-      for (let at = 0;at < bytes.length; ) {
-        let end = Math.min(at + LIMITS.chunkBytes, bytes.length);
-        while (end < bytes.length && (bytes[end] & 192) === 128)
-          end--;
-        events.push({
-          kind: "content-chunk",
-          detailId,
-          text: bytes.subarray(at, end).toString("utf8")
-        });
-        at = end;
-      }
-      events.push({
-        kind: "content-end",
-        detailId,
-        coverage: {
-          observed: "complete",
-          source: complete ? "complete" : "limited",
-          redacted: text2 !== source,
-          omissions: complete ? [] : ["source-limit"]
-        }
-      });
-      consumed = true;
-      const result = await lease.reservation.commit({
-        link,
-        observedMs: Math.floor(performance.now()),
-        events
-      });
-      if (result.status !== "committed" || result.batch.ownerDetails.length !== 1)
-        throw new ContractError("recording-exhausted");
-      return result.batch.ownerDetails[0].content;
-    } finally {
-      if (!consumed)
-        lease.reservation.release();
-    }
-  }
-  async settled(taskId2) {
-    await this.metadata.get(taskId2 ?? "workspace");
-  }
-  requestCancel(command) {
-    this.scheduler.cancel(command.runId);
-  }
-  quiesce() {
-    if (this.closed)
-      return;
-    this.closed = true;
-    this.admission.revokeGrants();
-    this.options.host.writer.quiesce();
-    this.scheduler.quiesce();
-    for (const accepted2 of this.accepted.values())
-      accepted2.activate(null);
-  }
-  quarantine(_reason) {
-    this.quiesce();
-    this.scheduler.quarantine();
-  }
-}
-
-// src/service/workbench.ts
-import { opendirSync as opendirSync10 } from "node:fs";
-import { join as join27 } from "node:path";
-
-// src/service/conversation-workflow.ts
-import { randomUUID as randomUUID20 } from "node:crypto";
-import { opendirSync as opendirSync8 } from "node:fs";
-import { dirname as dirname16, join as join24 } from "node:path";
-
-// src/cadence-instructions.ts
-var CADENCE_INSTRUCTIONS = `CADENCE CONVERSATION MODE — stays enabled for this entire conversation, including after a goal completes, until the user explicitly exits by typing 退出 Cadence or exit cadence. Only the user can exit; leaving never cancels accepted work. When asked how to leave, say exactly this.
-You are the sole user-facing coordinator. Continue normal conversation, not a task-manager UI. Do not ask the user to manage tasks, IDs, JSON, service ports, Save/Start/check menus or agent assignments.
-For each new goal: inspect relevant project evidence through cadence_research (up to two independent readonly subagents); read existing AGENTS/docs/.cadence/project.md before proposing conventions. Reuse still-current findings; do not rescan the entire repository or spawn agents merely to fill slots. Aggregate questions yourself. Investigate discoverable facts and ask focused, frequent questions only for unresolved product/technical decisions. Preserve confirmed decisions across turns. Diagnosis/research alone never imply implementation.
-Once material decisions and acceptance criteria are aligned, use cadence_plan with a readable design, explicit non-goals/decisions, exact file scopes, a finite dependency DAG, real verification commands, worktree prerequisites and a bounded repair budget. Independent writes may run concurrently; shared files need a single owner or dependency. Investigate local tool/dependency prerequisites BEFORE finalizing: isolated worktrees do not inherit ignored node_modules. Setup commands require inclusion in the final approval; never silently install/download/copy dependencies or credentials. local-merge needs an existing Git branch and commit identity; working-copy is explicit direct editing without Git mutation and is serialized.
-Present the returned complete plan and invite a single clear execution approval (the user can type 按计划实施). cadence_start binds the exact displayed plan and obtains fresh user consent; never interpret a vague acknowledgement as approval. No further confirmations are needed for the approved bounded pipeline. No push, publication, deployment, recursive delegation or scope expansion. If a material decision changes, revise the plan and seek fresh approval.
-During accepted work answer questions, report actual retained progress, and let the service execute. cadence_cancel is explicit cancellation, not navigation/exit. Never claim a worker's prose is a passing check or automatic review is human review. Failed/unknown/blocked outcomes are not success. A completed goal leaves Cadence ON and ready for the next goal; do not require /cadence again. Unrelated discussion is still ordinary conversation within this mode, not implicit permission to start another implementation. Tools operate on the host; this is not a sandbox.`;
 
 // src/service/conversations.ts
-import { randomUUID as randomUUID19 } from "node:crypto";
-import { lstatSync as lstatSync13, opendirSync as opendirSync7, realpathSync as realpathSync8, statfsSync as statfsSync2 } from "node:fs";
-import { dirname as dirname15, join as join23 } from "node:path";
 var TURN_BYTES = 384 * 1024;
 var META_BYTES = 64 * 1024;
 var SESSION_LIMIT = 200;
@@ -25951,10 +23053,10 @@ function observedFile(path) {
   try {
     const s = lstatSync13(path);
     return [s.dev, s.ino, s.size, s.mode, s.nlink, s.ctimeMs, s.mtimeMs].join(":");
-  } catch (error2) {
-    if (error2 instanceof Error && "code" in error2 && (error2.code === "ENOENT" || error2.code === "ENOTDIR"))
+  } catch (error) {
+    if (error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR"))
       return "absent";
-    throw error2;
+    throw error;
   }
 }
 
@@ -25978,10 +23080,10 @@ class ConversationCapture {
       this.turn.items.push(item);
       try {
         canonicalJson(this.turn, TURN_BYTES - 2048);
-      } catch (error2) {
+      } catch (error) {
         this.turn.items.pop();
         this.turn.notice = "Conversation capture limit exceeded.";
-        throw error2;
+        throw error;
       }
     }
     return item;
@@ -25993,10 +23095,10 @@ class ConversationCapture {
         throw new ContractError("capacity");
       item[field] = value;
       canonicalJson(this.turn, TURN_BYTES - 2048);
-    } catch (error2) {
+    } catch (error) {
       item[field] = before;
       this.turn.notice = "Conversation capture limit exceeded.";
-      throw error2;
+      throw error;
     }
   }
   accept(frame) {
@@ -26101,21 +23203,21 @@ class Conversations {
     const source = canonicalJson(value, max);
     try {
       return expected ? this.files.replace(path, expected, source, max) : this.files.create(path, source, max);
-    } catch (error2) {
+    } catch (error) {
       this.o.owner.quarantine();
-      throw error2;
+      throw error;
     }
   }
   metadata(id) {
     const value = this.read(this.metadataPath(id), META_BYTES);
     if (value === undefined)
       return null;
-    const identity2 = closed(this.read(this.identityPath(id), META_BYTES), [
+    const identity = closed(this.read(this.identityPath(id), META_BYTES), [
       "schema",
       "id",
       "cwd"
     ]);
-    if (identity2.schema !== "cadence-conversation/1" || identity2.id !== id || identity2.cwd !== this.cwd)
+    if (identity.schema !== "cadence-conversation/1" || identity.id !== id || identity.cwd !== this.cwd)
       throw new ContractError("corrupt-selected");
     const m = closed(value, ["id", "title", "turns", "checkpoint"]);
     const turns = list(m.turns, 1000, decodeId);
@@ -26304,7 +23406,7 @@ class Conversations {
   attempted(conversationId, commandId) {
     this.o.owner.lease.assert();
     const meta = this.metadata(conversationId);
-    return this.active.has(commandId) || this.files.directory(dirname15(this.path(commandId, "accepted.json"))) || !!meta?.turns.includes(commandId) || !meta && !!this.files.read(this.identityPath(conversationId), META_BYTES);
+    return this.active.has(commandId) || this.files.directory(dirname16(this.path(commandId, "accepted.json"))) || !!meta?.turns.includes(commandId) || !meta && !!this.files.read(this.identityPath(conversationId), META_BYTES);
   }
   command(input, reply) {
     return {
@@ -26328,7 +23430,7 @@ class Conversations {
     const receipt = this.receipt(input, !!control?.reply);
     if (receipt)
       return receipt;
-    if (this.files.directory(dirname15(this.path(input.commandId, "accepted.json"))))
+    if (this.files.directory(dirname16(this.path(input.commandId, "accepted.json"))))
       throw new ContractError("corrupt-selected");
     if (this.o.owner.state !== "idle")
       throw new ContractError("quarantine");
@@ -26412,10 +23514,10 @@ class Conversations {
       next.turns.push(turn.id);
       live.metaFile = this.write(this.metadataPath(next.id), next, META_BYTES, beforeMeta);
       control?.accept();
-    } catch (error2) {
+    } catch (error) {
       abort.abort();
       begin();
-      throw error2;
+      throw error;
     }
     begin();
     return { kind: "accepted", commandId: turn.id };
@@ -26431,18 +23533,6 @@ class Conversations {
       taskId: taskId2,
       conversationId: decodeId(row.conversationId)
     };
-  }
-  link(taskId2, conversationId, epoch) {
-    this.o.owner.lease.assert();
-    if (epoch !== this.o.owner.lease.registration.epoch || this.o.owner.state !== "idle")
-      throw new ContractError("stale");
-    if (!this.metadata(conversationId) || !this.o.coordination.store.load(taskId2))
-      throw new ContractError("unavailable");
-    const existing = this.origin(taskId2).conversationId;
-    if (existing !== null && existing !== conversationId)
-      throw new ContractError("conflict");
-    if (existing === null)
-      this.write(join23(this.root, "task-links", `${decodeId(taskId2)}.json`), { conversationId }, META_BYTES);
   }
   interrupt(id, turnId, epoch) {
     this.o.owner.lease.assert();
@@ -26502,9 +23592,8 @@ class Conversations {
         return { status: "settled" };
       }
       if (!control) {
-        barrier = await this.o.actions.scheduler.conversationBarrier(turn.id, abort.signal);
+        barrier = await this.o.gate.acquire(turn.id, abort.signal);
         barrier.assertHeld();
-        this.o.actions.conversationBoundary(barrier);
       }
       if (!current2())
         throw new ContractError("stale");
@@ -26516,7 +23605,7 @@ class Conversations {
         taskId: meta.id,
         taskKind: control ? "research" : "code",
         runId: turn.id,
-        childRunId: randomUUID19(),
+        childRunId: randomUUID17(),
         assignmentId: "conversation",
         purpose: control ? "research" : "edit",
         model: selected2,
@@ -26531,7 +23620,7 @@ class Conversations {
       });
       const auth = this.o.models.prepareTracked({
         request: request3,
-        operationId: randomUUID19(),
+        operationId: randomUUID17(),
         epoch: turn.epoch,
         timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
         signal: abort.signal,
@@ -26595,10 +23684,10 @@ class Conversations {
           throw new ContractError("corrupt-selected");
         live.metaFile = this.write(this.metadataPath(meta.id), meta, META_BYTES, live.metaFile);
       }
-    } catch (error2) {
+    } catch (error) {
       uncertain ||= this.o.owner.state === "quarantined";
       turn.status = uncertain ? "unknown" : abort.signal.aborted ? "canceled" : "failed";
-      turn.notice ||= error2 instanceof ContractError ? error2.code : "Conversation failed.";
+      turn.notice ||= error instanceof ContractError ? error.code : "Conversation failed.";
     } finally {
       await control?.settle();
       await authSettled;
@@ -26607,8 +23696,6 @@ class Conversations {
         turn.status = "unknown";
       try {
         this.write(this.path(turn.id, "native.json"), native, META_BYTES);
-        if (barrier && !uncertain && this.o.owner.state === "idle")
-          this.o.actions.conversationBoundary(barrier);
         if (turn.status !== "completed")
           turn.notice = [
             turn.notice,
@@ -26665,8 +23752,8 @@ function fresh2(id) {
     runs: []
   };
 }
-function transient(error2) {
-  return error2 instanceof Error && !(error2 instanceof ContractError) && "code" in error2 && typeof error2.code === "string" && /^E[A-Z0-9]+$/u.test(error2.code);
+function transient(error) {
+  return error instanceof Error && !(error instanceof ContractError) && "code" in error && typeof error.code === "string" && /^E[A-Z0-9]+$/u.test(error.code);
 }
 function unusable2(id) {
   return {
@@ -26695,7 +23782,7 @@ class ConversationWorkflow {
       const bound = this.o.conversations.controlBound(id);
       const file = this.o.coordination.files.read(path, BYTES);
       if (!file)
-        return bound || this.o.coordination.files.directory(dirname16(path)) ? unusable2(id) : { state: fresh2(id) };
+        return bound || this.o.coordination.files.directory(dirname17(path)) ? unusable2(id) : { state: fresh2(id) };
       const record2 = closed(parseWireJson(file.bytes.toString("utf8"), BYTES), [
         "schema",
         "state"
@@ -26709,9 +23796,9 @@ class ConversationWorkflow {
           problem: true
         };
       return { state, file };
-    } catch (error2) {
+    } catch (error) {
       this.o.owner.lease.assert();
-      if (transient(error2))
+      if (transient(error))
         return {
           state: { ...fresh2(id), enabled: true, notice: UNAVAILABLE },
           problem: true,
@@ -26831,8 +23918,8 @@ class ConversationWorkflow {
     try {
       this.o.workflows.view(runId);
       return true;
-    } catch (error2) {
-      return !(error2 instanceof ContractError && error2.code === "unavailable");
+    } catch (error) {
+      return !(error instanceof ContractError && error.code === "unavailable");
     }
   }
   attach(conversationId, runId, consume) {
@@ -26962,21 +24049,21 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     let plan;
     try {
       plan = decodeWorkflowPlan(args);
-    } catch (error2) {
-      return refusal3("invalid-plan", `The plan was not published: ${diagnosticText(error2 instanceof ContractError ? error2.code : error2 instanceof Error ? error2.message : "invalid", 256, this.o.secrets())}. Revise it before publishing again.`);
+    } catch (error) {
+      return refusal3("invalid-plan", `The plan was not published: ${diagnosticText(error instanceof ContractError ? error.code : error instanceof Error ? error.message : "invalid", 256, this.o.secrets())}. Revise it before publishing again.`);
     }
     let published;
     try {
-      published = this.o.workflows.command(randomUUID20(), epoch, {
+      published = this.o.workflows.command(randomUUID18(), epoch, {
         action: "propose",
         plan,
         model
       });
-    } catch (error2) {
+    } catch (error) {
       if (this.o.owner.state !== "idle")
-        throw error2;
-      const code2 = error2 instanceof ContractError ? error2.code : "invalid-plan";
-      return refusal3(code2, PLAN_REFUSALS[code2] ?? `The plan was not published: ${diagnosticText(error2 instanceof Error ? error2.message : code2, 256, this.o.secrets())}.`);
+        throw error;
+      const code2 = error instanceof ContractError ? error.code : "invalid-plan";
+      return refusal3(code2, PLAN_REFUSALS[code2] ?? `The plan was not published: ${diagnosticText(error instanceof Error ? error.message : code2, 256, this.o.secrets())}.`);
     }
     if (published.kind !== "workflow" || published.response.type !== "proposal")
       throw new ContractError("unavailable");
@@ -27008,7 +24095,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     const busy = this.o.workflows.activeRuns().runs.filter((r) => r.phase !== "research").map((r) => r.id);
     if (busy.length)
       return refusal3("checkout-busy", `An approved workflow (${busy.join(", ")}) is using this checkout. New investigations start only after it settles; meanwhile discuss recorded evidence or use cadence_status. Nothing was started.`);
-    const id = randomUUID20(), conversationId = current2.state.id;
+    const id = randomUUID18(), conversationId = current2.state.id;
     try {
       this.o.workflows.command(id, epoch, {
         action: "research",
@@ -27016,13 +24103,13 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
         questions,
         model
       });
-    } catch (error2) {
+    } catch (error) {
       if (this.o.owner.state === "idle" && !this.exists(id)) {
-        const code2 = error2 instanceof ContractError ? error2.code : "invalid";
+        const code2 = error instanceof ContractError ? error.code : "invalid";
         return refusal3(code2, RESEARCH_REFUSALS[code2] ?? "The investigation was refused.");
       }
       this.attach(conversationId, id, false);
-      throw error2;
+      throw error;
     }
     this.save({
       ...current2.state,
@@ -27031,7 +24118,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     }, current2.file);
     const cancel = () => {
       try {
-        this.o.workflows.command(randomUUID20(), epoch, {
+        this.o.workflows.command(randomUUID18(), epoch, {
           action: "cancel",
           runId: id
         });
@@ -27064,10 +24151,10 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
       return this.decide(c, caller, evidence, () => {
         effects = true;
       });
-    } catch (error2) {
-      if (!effects && error2 instanceof ContractError)
-        throw new UnacceptedConversationCommand(error2.code);
-      throw error2;
+    } catch (error) {
+      if (!effects && error instanceof ContractError)
+        throw new UnacceptedConversationCommand(error.code);
+      throw error;
     }
   }
   receipt(c, prior) {
@@ -27109,7 +24196,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
       });
       if (prepared.kind !== "workflow" || prepared.response.type !== "grant")
         throw new ContractError("unavailable");
-      const g = prepared.response, grant2 = randomUUID20();
+      const g = prepared.response, grant2 = randomUUID18();
       this.grants.set(grant2, {
         caller: canonicalJson(caller),
         revision: c.revision,
@@ -27160,10 +24247,10 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
         digest: c.digest,
         grant: grant.nativeGrant
       });
-    } catch (error2) {
+    } catch (error) {
       if (this.o.owner.state !== "idle" || this.exists(c.commandId))
         this.attach(state.id, c.commandId, true);
-      throw error2;
+      throw error;
     }
     this.save({
       ...state,
@@ -27176,33 +24263,255 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
 }
 
 // src/service/workflows.ts
-import { randomUUID as randomUUID21 } from "node:crypto";
+import { randomUUID as randomUUID20 } from "node:crypto";
 import {
-  lstatSync as lstatSync15,
-  opendirSync as opendirSync9,
+  lstatSync as lstatSync17,
+  opendirSync as opendirSync10,
   realpathSync as realpathSync10,
   rmdirSync,
   statfsSync as statfsSync3,
-  writeFileSync as writeFileSync3
+  writeFileSync as writeFileSync4
 } from "node:fs";
-import { basename as basename2, dirname as dirname18, join as join26 } from "node:path";
+import { basename as basename2, dirname as dirname19, join as join27 } from "node:path";
+
+// src/task-diff.ts
+import { spawnSync as spawnSync2 } from "node:child_process";
+import { createHash as createHash23 } from "node:crypto";
+import { lstatSync as lstatSync14, readdirSync as readdirSync3, readlinkSync } from "node:fs";
+import { join as join25, relative as relative7 } from "node:path";
+var admin = (path) => path === ".cadence/assistant/tasks" || path.startsWith(".cadence/assistant/tasks/");
+var GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
+function captureChanges(root, outputBytes = GIT_OUTPUT_BYTES) {
+  const deadline = Date.now() + 3000;
+  const hash3 = createHash23("sha256");
+  const parts = [];
+  let complete = true;
+  const limits = [];
+  let fileCount = 0;
+  let fileBytes = 0;
+  const add = (label, data2) => {
+    hash3.update(label).update("\x00").update(data2).update("\x00");
+  };
+  const git = (args) => {
+    let outcome;
+    if (Date.now() >= deadline)
+      outcome = "time budget exhausted";
+    else {
+      const result = spawnSync2("git", gitArguments(["-c", "core.quotepath=true", ...args]), {
+        cwd: root,
+        encoding: "buffer",
+        timeout: Math.max(1, deadline - Date.now()),
+        maxBuffer: outputBytes,
+        windowsHide: true,
+        env: gitEnvironment()
+      });
+      if (!result.error && result.status === 0)
+        return { stdout: result.stdout, limited: false };
+      outcome = result.error ? result.error.code ?? "error" : result.signal ? `signal ${result.signal}` : `exit ${result.status}`;
+    }
+    complete = false;
+    limits.push(`Unavailable/limited Git observation: ${args[0]} (${outcome})`);
+    return { stdout: Buffer.from(`[limited: ${outcome}]`), limited: true };
+  };
+  const inventory = (name) => {
+    if (admin(name))
+      return;
+    if (++fileCount > 2000 || Date.now() >= deadline) {
+      complete = false;
+      return;
+    }
+    try {
+      const path = join25(root, name);
+      const st = lstatSync14(path);
+      add(name, `${st.mode}:${st.size}`);
+      if (st.isSymbolicLink()) {
+        add(name, readlinkSync(path));
+        limits.push(`Link target not inspected: ${name}`);
+        complete = false;
+        return;
+      }
+      if (!st.isFile() || st.size > 1024 * 1024 || fileBytes + st.size > 8 * 1024 * 1024) {
+        limits.push(`Not inspected: ${name}`);
+        complete = false;
+        return;
+      }
+      const data2 = readBounded(path, 1024 * 1024);
+      if (!data2)
+        throw new Error("Disappeared");
+      fileBytes += data2.length;
+      add(name, data2);
+      const binary = data2.includes(0);
+      parts.push(`${name} (${binary ? "binary" : "text"}, ${data2.length} bytes, sha256 ${createHash23("sha256").update(data2).digest("hex")})`);
+    } catch {
+      complete = false;
+      limits.push(`Unreadable/changing: ${name}`);
+    }
+  };
+  const probe = spawnSync2("git", gitArguments(["rev-parse", "--is-inside-work-tree"]), {
+    cwd: root,
+    env: gitEnvironment(),
+    timeout: 3000,
+    maxBuffer: 8192,
+    encoding: "utf8",
+    windowsHide: true
+  });
+  const isGit = probe.status === 0 && probe.stdout.trim() === "true";
+  if (isGit) {
+    const pathspec = [
+      "--",
+      ".",
+      ":(exclude).cadence/assistant/tasks",
+      ":(exclude).cadence/assistant/tasks/**"
+    ];
+    const head = git(["rev-parse", "--verify", "HEAD"]);
+    add("HEAD", head.stdout);
+    for (const [label, args] of [
+      [
+        "Status (includes pre-existing dirt)",
+        [
+          "status",
+          "--porcelain=v1",
+          "-uall",
+          "--ignore-submodules=none",
+          ...pathspec
+        ]
+      ],
+      [
+        "Staged",
+        [
+          "diff",
+          "--cached",
+          "--ignore-submodules=none",
+          "--binary",
+          "--no-ext-diff",
+          "--no-textconv",
+          ...pathspec
+        ]
+      ],
+      [
+        "Unstaged",
+        [
+          "diff",
+          "--binary",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--ignore-submodules=none",
+          ...pathspec
+        ]
+      ]
+    ]) {
+      const data2 = git([...args]).stdout;
+      add(label, data2);
+      parts.push(`## ${label}
+${data2.toString("utf8")}`);
+    }
+    const index = git(["ls-files", "--stage", "-z", ...pathspec]);
+    add("Index entries", index.stdout);
+    for (const entry of index.stdout.toString("utf8").split("\x00")) {
+      if (!entry.startsWith("160000 "))
+        continue;
+      complete = false;
+      limits.push(`Submodule content not inspected: ${entry.slice(entry.indexOf("\t") + 1)}`);
+    }
+    const untracked = git([
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+      "-z",
+      ...pathspec
+    ]);
+    parts.push("## Untracked identities (content not automatically sent to model)");
+    if (untracked.limited)
+      add("Untracked", untracked.stdout);
+    else
+      for (const name of untracked.stdout.toString("utf8").split("\x00").filter(Boolean))
+        inventory(name);
+    const ignored = git([
+      "ls-files",
+      "--others",
+      "--ignored",
+      "--exclude-standard",
+      "--directory",
+      "--no-empty-directory",
+      "-z",
+      ...pathspec
+    ]);
+    if (ignored.stdout.length) {
+      complete = false;
+      if (!ignored.limited)
+        limits.push("Ignored files exist and are not inspected; review coverage is incomplete.");
+      add("ignored paths", ignored.stdout);
+    }
+    parts.push("Administrative .cadence/assistant/tasks records are excluded from business freshness; configuration is not excluded.");
+  } else {
+    parts.push("Non-Git bounded regular-file inventory; no staged/unstaged distinction. Excludes .git and Cadence task records. Content identities, not a transactional snapshot.");
+    if (probe.error || probe.status !== 0 && !probe.stderr?.includes("not a git repository")) {
+      complete = false;
+      limits.push("Git availability/lookup uncertain; using bounded inventory.");
+    }
+    const walk = (dir, depth) => {
+      if (depth > 16 || fileCount > 2000 || Date.now() >= deadline) {
+        complete = false;
+        return;
+      }
+      let names2;
+      try {
+        names2 = readdirSync3(dir).sort();
+      } catch {
+        complete = false;
+        return;
+      }
+      for (const name of names2) {
+        const path = join25(dir, name);
+        const rel = relative7(root, path).split("\\").join("/");
+        if (rel === ".git" || admin(rel))
+          continue;
+        if (++fileCount > 2000 || Date.now() >= deadline) {
+          complete = false;
+          break;
+        }
+        try {
+          const st = lstatSync14(path);
+          if (st.isDirectory())
+            walk(path, depth + 1);
+          else
+            inventory(rel);
+        } catch {
+          complete = false;
+          limits.push(`Unreadable: ${rel}`);
+        }
+      }
+    };
+    walk(root, 0);
+  }
+  if (!complete)
+    limits.push("Coverage incomplete: bounds, ignored files, links, or unavailable observations. Human review cannot certify unobserved files.");
+  parts.push("Display strips terminal controls and redacts secret-like values; fingerprints use raw observed bytes. Not a literal complete patch or a sandbox snapshot.");
+  const raw = [...parts, ...limits].join(`
+`);
+  const text2 = diagnosticText(raw, 128 * 1024);
+  if (Buffer.byteLength(raw) > 128 * 1024)
+    complete = false;
+  add("coverage", String(complete));
+  return { fingerprint: hash3.digest("hex"), text: text2, complete, git: isGit };
+}
 
 // src/service/workflow-git.ts
 import { spawn as spawn3, spawnSync as spawnSync3 } from "node:child_process";
 import { createHash as createHash24 } from "node:crypto";
 import {
-  closeSync as closeSync7,
+  closeSync as closeSync9,
   constants as constants7,
   fstatSync as fstatSync6,
-  lstatSync as lstatSync14,
-  openSync as openSync7,
+  lstatSync as lstatSync15,
+  openSync as openSync9,
   readdirSync as readdirSync4,
   readlinkSync as readlinkSync2,
   readSync as readSync5,
   realpathSync as realpathSync9
 } from "node:fs";
 import { lstat, open as open2, readdir, readlink } from "node:fs/promises";
-import { dirname as dirname17, isAbsolute as isAbsolute9, join as join25, relative as relative8, resolve as resolve9, sep as sep6 } from "node:path";
+import { dirname as dirname18, isAbsolute as isAbsolute9, join as join26, relative as relative8, resolve as resolve9, sep as sep6 } from "node:path";
 var NAMES_BYTES = 64 * 1024 * 1024;
 var SYNC_MS = 30000;
 var READ_MS = 120000;
@@ -27298,9 +24607,9 @@ function safeWorkflowFile(cwd, name) {
   const p = resolve9(cwd, name);
   if (relative8(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
-  safeDirectory(dirname17(p));
+  safeDirectory(dirname18(p));
   try {
-    const st = lstatSync14(p);
+    const st = lstatSync15(p);
     if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1)
       throw new ContractError("forbidden");
   } catch (e) {
@@ -27314,9 +24623,9 @@ function declaredTarget(cwd, name) {
   const p = resolve9(cwd, name);
   if (relative8(cwd, p).startsWith(".."))
     throw new ContractError("forbidden");
-  safeDirectory(dirname17(p));
+  safeDirectory(dirname18(p));
   try {
-    const st = lstatSync14(p);
+    const st = lstatSync15(p);
     if (st.isSymbolicLink() || !st.isFile() && !st.isDirectory() || st.isFile() && st.nlink !== 1)
       throw new ContractError("forbidden");
   } catch (e) {
@@ -27342,7 +24651,7 @@ function fileIdentity(p, st, hashBytes) {
     return quick;
   let fd;
   try {
-    fd = openSync7(p, constants7.O_RDONLY | (constants7.O_NOFOLLOW ?? 0));
+    fd = openSync9(p, constants7.O_RDONLY | (constants7.O_NOFOLLOW ?? 0));
   } catch (e) {
     if (absent2(e))
       return null;
@@ -27356,7 +24665,7 @@ function fileIdentity(p, st, hashBytes) {
       digest.update(buffer.subarray(0, n));
     return `sha256:${digest.digest("hex")}`;
   } finally {
-    closeSync7(fd);
+    closeSync9(fd);
   }
 }
 async function fileIdentityAsync(p, st, hashBytes) {
@@ -27396,8 +24705,8 @@ function directoryIdentity(root, name) {
         continue;
       if (++count2 > DIRECTORY_ENTRIES)
         throw tooLarge(name);
-      const full = join25(directory, entry), relative9 = `${prefix}${entry}`;
-      const st = lstatSync14(full);
+      const full = join26(directory, entry), relative9 = `${prefix}${entry}`;
+      const st = lstatSync15(full);
       if (st.isDirectory()) {
         rows.push(`${relative9}/`);
         visit(full, `${relative9}/`);
@@ -27418,7 +24727,7 @@ async function directoryIdentityAsync(root, name) {
         continue;
       if (++count2 > DIRECTORY_ENTRIES)
         throw tooLarge(name);
-      const full = join25(directory, entry), relative9 = `${prefix}${entry}`;
+      const full = join26(directory, entry), relative9 = `${prefix}${entry}`;
       const st = await lstat(full);
       if (st.isDirectory()) {
         rows.push(`${relative9}/`);
@@ -27437,7 +24746,7 @@ function pathIdentity(cwd, name, walk = true) {
     throw new ContractError("forbidden");
   let st;
   try {
-    st = lstatSync14(p);
+    st = lstatSync15(p);
   } catch (e) {
     if (absent2(e))
       return null;
@@ -27659,8 +24968,108 @@ async function assertWorktree(root, cwd) {
   if (await common(root) !== await common(cwd))
     throw new ContractError("stale");
   const marker2 = resolve9(cwd, ".git");
-  if (!lstatSync14(marker2).isFile() || !(readBounded(marker2, 8192)?.toString("utf8") ?? "").startsWith("gitdir: "))
+  if (!lstatSync15(marker2).isFile() || !(readBounded(marker2, 8192)?.toString("utf8") ?? "").startsWith("gitdir: "))
     throw new ContractError("stale");
+}
+
+// src/service/workflow-history.ts
+import { randomUUID as randomUUID19 } from "node:crypto";
+import { lstatSync as lstatSync16, opendirSync as opendirSync9 } from "node:fs";
+class WorkflowHistoryScanner {
+  path;
+  directory;
+  scans = new Map;
+  closed = false;
+  constructor(path, directory) {
+    this.path = path;
+    this.directory = directory;
+  }
+  incarnation() {
+    const st = lstatSync16(this.path, { bigint: true });
+    if (!st.isDirectory() || st.isSymbolicLink())
+      throw new ContractError("corrupt-selected");
+    return `${st.dev}:${st.ino}`;
+  }
+  read(after, cursor) {
+    if (after !== null)
+      decodeId(after);
+    if (cursor !== undefined)
+      decodeId(cursor);
+    if (this.closed)
+      throw new ContractError("unavailable");
+    let state;
+    if (cursor !== undefined) {
+      const selected2 = this.scans.get(cursor);
+      if (!selected2 || selected2.after !== after)
+        throw new ContractError("stale");
+      this.scans.delete(cursor);
+      clearTimeout(selected2.timer);
+      state = selected2;
+    } else {
+      if (!this.directory())
+        return { kind: "ids", ids: [], next: null };
+      if (this.scans.size >= WORKFLOW_LIMITS.historyScans)
+        throw new ContractError("capacity");
+      const incarnation3 = this.incarnation();
+      state = { dir: opendirSync9(this.path), incarnation: incarnation3, after, ids: [] };
+    }
+    let suspended = false;
+    try {
+      if (!this.directory() || this.incarnation() !== state.incarnation)
+        throw new ContractError("stale");
+      for (let n = 0;n < WORKFLOW_LIMITS.historyScanEntries; n++) {
+        const entry = state.dir.readSync();
+        if (!entry) {
+          const ids = state.ids.slice(0, WORKFLOW_LIMITS.historyPage);
+          return {
+            kind: "ids",
+            ids,
+            next: state.ids.length > ids.length ? ids.at(-1) ?? null : null
+          };
+        }
+        if (!entry.isDirectory())
+          throw new ContractError("corrupt-selected");
+        const id = decodeId(entry.name);
+        if (after !== null && id <= after || state.ids.includes(id))
+          continue;
+        state.ids.push(id);
+        state.ids.sort();
+        if (state.ids.length > WORKFLOW_LIMITS.historyPage + 1)
+          state.ids.pop();
+      }
+      const scan = randomUUID19();
+      state.timer = setTimeout(() => {
+        this.scans.delete(scan);
+        try {
+          state.dir.closeSync();
+        } catch {
+          this.closed = true;
+        }
+      }, WORKFLOW_LIMITS.historyIdleMs);
+      state.timer.unref();
+      this.scans.set(scan, state);
+      suspended = true;
+      return { kind: "workflow-history-progress", after, scan };
+    } finally {
+      if (!suspended)
+        state.dir.closeSync();
+    }
+  }
+  close() {
+    this.closed = true;
+    let failed = false;
+    for (const state of this.scans.values()) {
+      clearTimeout(state.timer);
+      try {
+        state.dir.closeSync();
+      } catch {
+        failed = true;
+      }
+    }
+    this.scans.clear();
+    if (failed)
+      throw new ContractError("unavailable");
+  }
 }
 
 // src/service/workflows.ts
@@ -27836,6 +25245,7 @@ class WorkflowTranscript {
 
 class Workflows {
   o;
+  historyScanner;
   root;
   cwd;
   worktreeRoot;
@@ -27843,16 +25253,20 @@ class Workflows {
   grants = new Map;
   constructor(o) {
     this.o = o;
-    this.root = join26(o.coordination.directory, "workflows-v1");
+    this.root = join27(o.coordination.directory, "workflows-v1");
     this.cwd = realpathSync10(o.coordination.store.root);
-    this.worktreeRoot = join26(o.coordination.stateHome, "cadence-worktrees-v1", basename2(o.coordination.store.privateRoot));
+    this.worktreeRoot = join27(o.coordination.stateHome, "cadence-worktrees-v1", basename2(o.coordination.store.privateRoot));
+    this.historyScanner = new WorkflowHistoryScanner(join27(this.root, "runs"), () => {
+      this.o.owner.lease.assert();
+      return this.files.directory(join27(this.root, "runs"));
+    });
     this.recover();
   }
   get files() {
     return this.o.coordination.files;
   }
   path(id, name) {
-    return join26(this.root, "runs", decodeId(id), name);
+    return join27(this.root, "runs", decodeId(id), name);
   }
   write(path, value, expected, max = RECORD_BYTES2) {
     this.o.owner.lease.assert();
@@ -27869,11 +25283,11 @@ class Workflows {
 `), 2048, this.o.secrets());
   }
   recover() {
-    const runs = join26(this.root, "runs");
+    const runs = join27(this.root, "runs");
     if (!this.files.directory(runs))
       return;
     const ids = [];
-    const dir = opendirSync9(runs);
+    const dir = opendirSync10(runs);
     try {
       for (let e = dir.readSync();e; e = dir.readSync()) {
         if (!e.isDirectory())
@@ -27980,7 +25394,7 @@ class Workflows {
     };
   }
   proposal(id) {
-    const file = this.files.read(join26(this.root, "proposals", `${decodeId(id)}.json`), RECORD_BYTES2);
+    const file = this.files.read(join27(this.root, "proposals", `${decodeId(id)}.json`), RECORD_BYTES2);
     if (!file)
       throw new ContractError("unavailable");
     return decodeWorkflowProposal(parseWireJson(file.bytes.toString("utf8"), RECORD_BYTES2));
@@ -28009,6 +25423,39 @@ class Workflows {
       }))
     };
   }
+  history(after, scan) {
+    const selected2 = this.historyScanner.read(after, scan);
+    if (selected2.kind === "workflow-history-progress")
+      return selected2;
+    const remaining = selected2.ids;
+    const entries = remaining.slice(0, WORKFLOW_LIMITS.historyPage).map((id) => {
+      try {
+        const view = this.view(id);
+        if (view.kind !== "workflow" || view.response.type !== "run")
+          throw new ContractError("invalid");
+        const run = view.response.run;
+        return {
+          id,
+          run: {
+            ...run,
+            goal: clipUnits(sanitizeText(run.goal, this.o.secrets()), 320),
+            notice: this.notice(run.notice),
+            steps: []
+          }
+        };
+      } catch {
+        return { id, run: null };
+      }
+    });
+    return {
+      kind: "workflow-history",
+      entries,
+      next: selected2.next
+    };
+  }
+  closeHistory() {
+    this.historyScanner.close();
+  }
   async join(id) {
     await this.active.get(id)?.original;
   }
@@ -28019,6 +25466,8 @@ class Workflows {
     if (!live && !file)
       throw new ContractError("unavailable");
     const run = decodeWorkflowRun(live ? live.run : parseWireJson(file ? file.bytes.toString("utf8") : "null", RECORD_BYTES2));
+    if (run.id !== id)
+      throw new ContractError("corrupt-selected");
     if (!live && ["running", "queued"].includes(run.status))
       run.status = "unknown";
     return {
@@ -28086,10 +25535,10 @@ class Workflows {
       return this.admit(commandId, epoch, r, () => {
         effects = true;
       });
-    } catch (error2) {
-      if (!effects && error2 instanceof ContractError && !(error2 instanceof UnacceptedConversationCommand) && this.o.owner.state === "idle")
-        throw new UnacceptedWorkflowCommand(error2.code, error2 instanceof WorkflowRefusal ? error2.detail : undefined);
-      throw error2;
+    } catch (error) {
+      if (!effects && error instanceof ContractError && !(error instanceof UnacceptedConversationCommand) && this.o.owner.state === "idle")
+        throw new UnacceptedWorkflowCommand(error.code, error instanceof WorkflowRefusal ? error.detail : undefined);
+      throw error;
     }
   }
   attempted(commandId, action) {
@@ -28099,8 +25548,8 @@ class Workflows {
     if (action === "prepare")
       return [...this.grants.values()].some((g) => g.commandId === id && g.expiresAt >= Date.now());
     if (action === "propose")
-      return !!this.files.read(join26(this.root, "proposals", `${id}.json`), RECORD_BYTES2);
-    return this.files.directory(join26(this.root, "runs", id));
+      return !!this.files.read(join27(this.root, "proposals", `${id}.json`), RECORD_BYTES2);
+    return this.files.directory(join27(this.root, "runs", id));
   }
   admit(commandId, epoch, r, effect) {
     this.current();
@@ -28129,7 +25578,7 @@ class Workflows {
       };
       if (sanitizeData(p, secrets) !== canonicalJson(p))
         throw new ContractError("forbidden");
-      const target3 = join26(this.root, "proposals", `${commandId}.json`);
+      const target3 = join27(this.root, "proposals", `${commandId}.json`);
       const previous = this.files.read(target3, RECORD_BYTES2);
       if (previous) {
         if (previous.bytes.toString("utf8") !== canonicalJson(p))
@@ -28152,7 +25601,7 @@ class Workflows {
           this.grants.delete(key2);
       if (this.grants.size >= 16)
         throw new ContractError("capacity");
-      const grant = randomUUID21(), expiresAt = Date.now() + 120000;
+      const grant = randomUUID20(), expiresAt = Date.now() + 120000;
       effect();
       this.grants.set(grant, {
         commandId,
@@ -28178,7 +25627,7 @@ class Workflows {
         throw new ContractError("conflict");
       return { ...this.view(commandId), commandId };
     }
-    if (this.files.directory(dirname18(acceptedPath)))
+    if (this.files.directory(dirname19(acceptedPath)))
       throw new ContractError("quarantine");
     let proposal;
     let target2;
@@ -28283,7 +25732,7 @@ class Workflows {
     if (live.run.steps.length >= MAX_STEPS)
       throw new ContractError("capacity");
     const s = {
-      id: `${clipUnits(id, STEP_UNITS)}-${randomUUID21()}`,
+      id: `${clipUnits(id, STEP_UNITS)}-${randomUUID20()}`,
       ...childRunId ? { childRunId } : {},
       kind,
       status: "running",
@@ -28340,7 +25789,7 @@ class Workflows {
       throw new ContractError("unavailable");
     if (cwd !== this.cwd)
       await assertWorktree(this.cwd, cwd);
-    const childRunId = randomUUID21(), op = randomUUID21();
+    const childRunId = randomUUID20(), op = randomUUID20();
     const plan = live.proposal?.plan;
     const request3 = decodeWorkerPublicRequest({
       protocol: 2,
@@ -28467,7 +25916,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
     const shell = "check" in operation;
     if (cwd !== this.cwd && shell)
       await assertWorktree(this.cwd, cwd);
-    const id = randomUUID21();
+    const id = randomUUID20();
     this.write(this.path(live.run.id, `operations/${id}-intent.json`), {
       cwd,
       args: shell ? operation.check : operation.git
@@ -28481,7 +25930,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       command: shell ? process.platform === "win32" ? environment2.COMSPEC ?? "cmd.exe" : "/bin/sh" : "git",
       args: shell ? process.platform === "win32" ? ["/d", "/s", "/c", `"${operation.check.command}"`] : ["-c", operation.check.command] : gitArguments([
         "-c",
-        `core.hooksPath=${join26(this.root, "empty-hooks")}`,
+        `core.hooksPath=${join27(this.root, "empty-hooks")}`,
         "-c",
         "commit.gpgsign=false",
         "-c",
@@ -28561,14 +26010,14 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
         this.save(live);
       }
       return value;
-    } catch (error2) {
+    } catch (error) {
       if (last && step.status === "running")
         this.finishStep(live, step, {
           ...last,
           outcome: last.outcome === "completed" ? "failed" : last.outcome
-        }, [...lines, this.describe(error2)].join(`
+        }, [...lines, this.describe(error)].join(`
 `));
-      throw error2;
+      throw error;
     } finally {
       this.closeStep(live, step, lines.join(`
 `));
@@ -28623,7 +26072,7 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
   async review(live, cwd, p) {
     live.run.phase = "reviewing";
     this.save(live);
-    const { result, step } = await this.worker(live, cwd, `review-${randomUUID21()}`, `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":["..."]}. Automatic review is not human review.
+    const { result, step } = await this.worker(live, cwd, `review-${randomUUID20()}`, `Independently inspect the implemented files against the approved plan and acceptance. Look for missing behavior, regressions, weakened tests and scope violations. Do not edit or run commands. Reply with exactly JSON {"approved":true|false,"summary":"...","blockingIssues":["..."]}. Automatic review is not human review.
 Files: ${p.plan.tasks.flatMap((t) => t.writes).join(", ")}`, true, p.model);
     this.success(result);
     const verdict = reviewVerdict(result.text);
@@ -28637,8 +26086,8 @@ Files: ${p.plan.tasks.flatMap((t) => t.writes).join(", ")}`, true, p.model);
     let outcome;
     try {
       outcome = { ok: true, value: await work() };
-    } catch (error2) {
-      outcome = { ok: false, error: error2 };
+    } catch (error) {
+      outcome = { ok: false, error };
     }
     const after = await workingSnapshot(this.cwd, [
       ...allowed,
@@ -28718,9 +26167,9 @@ ${changed.map((p) => `- ${p}`).join(`
   publish(live, cwd, plan, names3, changed) {
     for (const name of names3) {
       const file = safeWorkflowFile(cwd, name);
-      if (!safeDirectory(dirname18(file), true))
+      if (!safeDirectory(dirname19(file), true))
         throw new ContractError("forbidden");
-      writeFileSync3(file, this.documentBody(live, cwd, plan, name, changed), {
+      writeFileSync4(file, this.documentBody(live, cwd, plan, name, changed), {
         flag: name === ".cadence/project.md" ? "w" : "wx"
       });
     }
@@ -28728,17 +26177,17 @@ ${changed.map((p) => `- ${p}`).join(`
   worktreeHome(id) {
     if (nested(this.cwd, this.worktreeRoot))
       throw new ContractError("unsupported-context");
-    for (const directory of [dirname18(this.worktreeRoot), this.worktreeRoot]) {
+    for (const directory of [dirname19(this.worktreeRoot), this.worktreeRoot]) {
       if (!safeDirectory(directory, true))
         throw new ContractError("forbidden");
-      const st = lstatSync15(directory);
+      const st = lstatSync17(directory);
       if (process.platform !== "win32" && ((st.mode & 63) !== 0 || process.getuid && st.uid !== process.getuid()))
         throw new ContractError("forbidden");
     }
-    const home = join26(this.worktreeRoot, decodeId(id));
+    const home = join27(this.worktreeRoot, decodeId(id));
     if (safeDirectory(home))
       throw new ContractError("conflict");
-    safeDirectory(join26(home, "tasks"), true);
+    safeDirectory(join27(home, "tasks"), true);
     return home;
   }
   async merge(live, candidate) {
@@ -28792,8 +26241,8 @@ ${result.output}`}`);
             removed.push(label);
           else
             retained.push(`${label} (${diagnosticText(r.output, 160, this.o.secrets()).trim() || "git refused"})`);
-        } catch (error2) {
-          retained.push(`${label} (${this.describe(error2)})`);
+        } catch (error) {
+          retained.push(`${label} (${this.describe(error)})`);
         }
       }
       step.status = "completed";
@@ -28806,7 +26255,7 @@ ${result.output}`}`);
     } finally {
       this.closeStep(live, step);
     }
-    for (const directory of [join26(home, "tasks"), home])
+    for (const directory of [join27(home, "tasks"), home])
       try {
         rmdirSync(directory);
       } catch {}
@@ -28838,8 +26287,8 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
       throw new ContractError("invalid");
     const base = target2.head;
     const home = this.worktreeHome(live.run.id);
-    const taskHome = join26(home, "tasks");
-    const integration = join26(home, "integration");
+    const taskHome = join27(home, "tasks");
+    const integration = join27(home, "integration");
     await this.gitStep(live, this.cwd, "worktree-integration", (git) => git(["worktree", "add", "--detach", integration, base]));
     await assertWorktree(this.cwd, integration);
     await this.setup(live, integration, plan);
@@ -28856,7 +26305,7 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
       live.run.phase = "implementing";
       this.save(live);
       const outcomes2 = await Promise.allSettled(batch.map(async (task) => {
-        const cwd = join26(taskHome, task.id);
+        const cwd = join27(taskHome, task.id);
         await this.gitStep(live, this.cwd, `worktree-${task.id}`, (git) => git(["worktree", "add", "--detach", cwd, base]));
         const picks2 = workflowAncestors(plan.tasks, task.id).map((dep) => commits.get(dep.id)).filter((c) => !!c);
         if (picks2.length)
@@ -28921,9 +26370,9 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
         const file = safeWorkflowFile(this.cwd, name), before = documentBefore.get(name) ?? null;
         if (before !== pathIdentity(this.cwd, name))
           throw new WorkflowRefusal("conflict", `${name} changed during the run; the generated note was not written.`);
-        if (!safeDirectory(dirname18(file), true))
+        if (!safeDirectory(dirname19(file), true))
           throw new ContractError("unavailable");
-        writeFileSync3(file, this.documentBody(live, this.cwd, plan, name, [...live.delivered].sort(), true), { flag: before ? "w" : "wx" });
+        writeFileSync4(file, this.documentBody(live, this.cwd, plan, name, [...live.delivered].sort(), true), { flag: before ? "w" : "wx" });
       }
       if (!await this.checks(live, this.cwd, plan))
         throw new Error("Local merge completed, but post-merge checks failed. No reset or rollback was attempted.");
@@ -28939,8 +26388,8 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
               scope: [...allowed, ...committed3]
             }
           ], home);
-        } catch (error2) {
-          live.notes.push(`Worktrees retained: removal did not complete (${this.describe(error2)}).`);
+        } catch (error) {
+          live.notes.push(`Worktrees retained: removal did not complete (${this.describe(error)}).`);
         }
     }
   }
@@ -28955,19 +26404,18 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
     else if (await contentsIdentityAsync(this.cwd, writes) !== live.declared)
       throw new WorkflowRefusal("stale", "Declared targets changed between approval and start; nothing was edited.");
   }
-  describe(error2) {
-    return error2 instanceof WorkflowRefusal ? `${error2.code}: ${error2.detail}` : error2 instanceof ContractError ? error2.code : error2 instanceof Error ? error2.message : "Workflow failed";
+  describe(error) {
+    return error instanceof WorkflowRefusal ? `${error.code}: ${error.detail}` : error instanceof ContractError ? error.code : error instanceof Error ? error.message : "Workflow failed";
   }
   async execute(live, request3) {
     let barrier;
     let budgetExpired = false;
     let timer;
-    let failure3 = "";
+    let failure2 = "";
     try {
       this.assertRunning(live);
-      barrier = await this.o.actions.scheduler.conversationBarrier(live.run.id, live.abort.signal);
+      barrier = await this.o.gate.acquire(live.run.id, live.abort.signal);
       barrier.assertHeld();
-      this.o.actions.conversationBoundary(barrier);
       timer = setTimeout(() => {
         budgetExpired = true;
         live.abort.abort();
@@ -28990,17 +26438,15 @@ Read only. Cite paths and distinguish evidence, assumptions, user decisions and 
       else
         throw new ContractError("invalid");
       live.run.status = "completed";
-    } catch (error2) {
-      live.run.status = this.o.owner.state === "quarantined" ? "unknown" : budgetExpired ? "timeout" : live.abort.signal.aborted ? "canceled" : error2 instanceof WorkflowFailure && error2.outcome !== "completed" ? error2.outcome : "failed";
-      failure3 = this.describe(error2);
+    } catch (error) {
+      live.run.status = this.o.owner.state === "quarantined" ? "unknown" : budgetExpired ? "timeout" : live.abort.signal.aborted ? "canceled" : error instanceof WorkflowFailure && error.outcome !== "completed" ? error.outcome : "failed";
+      failure2 = this.describe(error);
     } finally {
       clearTimeout(timer);
       live.run.phase = "finished";
       const delivered = [...live.delivered].sort();
-      live.run.notice = this.notice(failure3, delivered.length ? `${live.run.status === "completed" ? "Changed files" : "Changed files so far"}: ${delivered.join(", ")}` : "", ...live.notes);
+      live.run.notice = this.notice(failure2, delivered.length ? `${live.run.status === "completed" ? "Changed files" : "Changed files so far"}: ${delivered.join(", ")}` : "", ...live.notes);
       try {
-        if (barrier && this.o.owner.state === "idle")
-          this.o.actions.conversationBoundary(barrier);
         this.saveFinal(live);
       } catch {
         this.o.owner.quarantine();
@@ -29036,7 +26482,10 @@ class Workbench {
     if (this.conversations.list().entries.some((entry) => entry.status === "unknown"))
       throw new ContractError("quarantine");
     this.files = new WorkbenchFiles(o.cwd, [o.coordination.files.namespace, o.agentDir], o.secrets);
-    this.projectRoot = join27(o.coordination.files.namespace, "workbench-projects-v1");
+    this.projectRoot = join28(o.coordination.files.namespace, "workbench-projects-v1");
+  }
+  closeReads() {
+    this.workflows.closeHistory();
   }
   read(value) {
     const request3 = decodeWorkbenchRead(value);
@@ -29051,6 +26500,8 @@ class Workbench {
           links: this.cadence.links(active.runs.map((run) => run.id))
         };
       }
+      case "workflow-history":
+        return this.workflows.history(request3.after, request3.scan);
       case "workflow-transcript":
         return this.workflows.transcript(request3.id, request3.stepId);
       case "workflow-detail":
@@ -29108,10 +26559,10 @@ class Workbench {
           intent: "exit"
         }, accepting);
       return this.cadence.send(request3, accepting);
-    } catch (error2) {
-      if (!mayHaveEffects && error2 instanceof ContractError)
-        throw new UnacceptedConversationCommand(error2.code);
-      throw error2;
+    } catch (error) {
+      if (!mayHaveEffects && error instanceof ContractError)
+        throw new UnacceptedConversationCommand(error.code);
+      throw error;
     }
   }
   projects() {
@@ -29121,12 +26572,12 @@ class Workbench {
     const entries = [{ path: this.o.cwd, current: true }], files = this.o.coordination.files;
     if (!files.directory(this.projectRoot))
       return { kind: "projects", entries };
-    const directory = opendirSync10(this.projectRoot);
+    const directory = opendirSync11(this.projectRoot);
     try {
       for (let e = directory.readSync();e; e = directory.readSync()) {
         if (!e.isFile() || !/^[a-f0-9]{64}\.json$/.test(e.name) || entries.length > 128)
           throw new ContractError("corrupt-selected");
-        const saved = files.read(join27(this.projectRoot, e.name));
+        const saved = files.read(join28(this.projectRoot, e.name));
         if (!saved)
           throw new ContractError("corrupt-selected");
         const row = closed(parseWireJson(saved.bytes.toString("utf8")), [
@@ -29175,10 +26626,6 @@ class Workbench {
     }
     if (request3.kind === "workflow")
       return this.workflows.command(request3.commandId, request3.epoch, request3.request, { definite: true });
-    if (request3.kind === "link-task") {
-      this.conversations.link(request3.taskId, request3.conversationId, request3.epoch);
-      return { kind: "accepted", commandId: request3.commandId };
-    }
     if (request3.kind === "interrupt") {
       this.conversations.interrupt(request3.conversationId, request3.turnId, request3.epoch);
       return { kind: "accepted", commandId: request3.commandId };
@@ -29190,16 +26637,16 @@ class Workbench {
       throw new ContractError("quarantine");
     if (request3.epoch !== this.o.owner.lease.registration.epoch)
       throw new ContractError("stale");
-    const identity2 = canonicalJson(request3), old = this.opening.get(request3.commandId);
+    const identity = canonicalJson(request3), old = this.opening.get(request3.commandId);
     if (old) {
-      if (old.identity !== identity2)
+      if (old.identity !== identity)
         throw new ContractError("conflict");
       return old.result;
     }
     if (this.opening.size >= 64)
       throw new ContractError("capacity");
     const path = this.files.directory(request3.path);
-    const marker2 = join27(this.o.coordination.directory, "conversations-v1", "project-commands", `${request3.commandId}.json`);
+    const marker2 = join28(this.o.coordination.directory, "conversations-v1", "project-commands", `${request3.commandId}.json`);
     const files = this.o.coordination.files;
     if (files.read(marker2))
       throw new ContractError("receipt-inconclusive");
@@ -29210,14 +26657,14 @@ class Workbench {
       if (this.o.owner.state !== "idle")
         throw new ContractError("quarantine");
       try {
-        files.create(marker2, identity2);
-      } catch (error2) {
+        files.create(marker2, identity);
+      } catch (error) {
         this.o.owner.quarantine();
-        throw error2;
+        throw error;
       }
       const opened = await openProjectDirectory(path, this.o.coordination.stateHome, this.o.agentDir, this.o.hostUrl);
       for (const root of [this.o.cwd, opened.path]) {
-        const entry = join27(this.projectRoot, `${hash2(root)}.json`);
+        const entry = join28(this.projectRoot, `${hash2(root)}.json`);
         const saved = files.read(entry);
         if (!saved)
           files.create(entry, canonicalJson({ path: root }));
@@ -29226,7 +26673,7 @@ class Workbench {
       }
       return { kind: "project", commandId: request3.commandId, ...opened };
     });
-    this.opening.set(request3.commandId, { identity: identity2, result });
+    this.opening.set(request3.commandId, { identity, result });
     this.o.owner.trackAccepted(result.then(() => ({ status: "settled" }), () => ({ status: "settled" })));
     return result;
   }
@@ -29248,7 +26695,7 @@ function legacy(store, budget, reader) {
           throw new ContractError("capacity");
       }
     }
-  const dir = opendirSync11(store.tasks), records = [];
+  const dir = opendirSync12(store.tasks), records = [];
   let entries = 0;
   try {
     for (let entry = dir.readSync();entry; entry = dir.readSync()) {
@@ -29257,8 +26704,8 @@ function legacy(store, budget, reader) {
       decodeId(entry.name);
       if (created.has(entry.name))
         continue;
-      const path = join28(store.tasks, entry.name, "task.json");
-      const size = lstatSync16(path).size;
+      const path = join29(store.tasks, entry.name, "task.json");
+      const size = lstatSync18(path).size;
       if (size > 128 * 1024)
         throw new ContractError("corrupt-selected");
       budget.reserve(size);
@@ -29275,17 +26722,17 @@ function legacy(store, budget, reader) {
 function refuseAt(stage, step) {
   try {
     return step();
-  } catch (error2) {
-    throw new StartupRefusal(error2 instanceof ContractError ? error2.code : "unavailable", stage);
+  } catch (error) {
+    throw new StartupRefusal(error instanceof ContractError ? error.code : "unavailable", stage);
   }
 }
 async function createServiceHost(value, sourceBuild) {
-  const embedded = "02a8164a76a61a8c58a2858885dc3900628c07003313f10c5cb1cf68a930dc9b";
+  const embedded = "f0ff0c9d0481dab9fd21cdbc7c0d72b427bee60033a9af4c789f859c4c83fe75";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);
   const web = refuseAt("package", () => {
-    if (!sourceBuild?.deferActions)
+    if (!sourceBuild?.deferRuntime)
       loadAgentDefinitions();
     return loadWebAssets(sourceBuild?.webDirectory);
   });
@@ -29352,6 +26799,7 @@ async function createServiceHost(value, sourceBuild) {
       c.files.replace(c.path("host-config.json"), previous, encoded(resolved));
     } : undefined);
     let writer, live;
+    let workbench = null;
     owner = new ServiceOwner(lease, {
       quiesce: () => http.quiesce(),
       flush: () => {
@@ -29360,6 +26808,7 @@ async function createServiceHost(value, sourceBuild) {
         return writer.flush();
       },
       closeListener: async () => {
+        workbench?.closeReads();
         live?.close();
         const results = await Promise.allSettled([
           network.close(),
@@ -29395,49 +26844,35 @@ async function createServiceHost(value, sourceBuild) {
     const preferences = new CadencePreferences(input.config.agentDir);
     const choice = new OwnerModelChoice({
       owner,
-      writer,
       models,
       access,
       remember: (value2) => preferences.save(value2)
     });
     const { PI_OFFLINE: _offline, ...ordinary } = launch;
     const checkEnvironment = Object.freeze(ordinary);
-    const actions = sourceBuild?.deferActions ? null : new TaskActions({
-      host: {
-        coordination: c,
-        owner,
-        writer,
-        reader,
-        models,
-        access,
-        checkEnvironment
-      },
-      choice,
-      cwd: input.config.cwd,
-      ownerSecrets: [
-        ...access.redactionLiterals(),
-        native.capability,
-        ...network.literals
-      ],
-      workerTimeoutMs: sourceBuild?.workerTimeoutMs
-    });
-    const workbench = actions ? new Workbench({
+    const gate = new CheckoutGate(owner);
+    if (!sourceBuild?.deferRuntime)
+      owner.registerRuntime(() => gate.closeAdmission(), {
+        assertQuiescent: () => gate.assertQuiescent()
+      });
+    const ownerLiterals = () => [
+      ...access.redactionLiterals(),
+      native.capability,
+      ...network.literals,
+      ...models.viewRedactionLiterals()
+    ];
+    workbench = !sourceBuild?.deferRuntime ? new Workbench({
       coordination: c,
       owner,
       models,
       choice,
-      actions,
+      gate,
       cwd: input.config.cwd,
       agentDir: input.config.agentDir,
       projectsEnabled: !input.config.http.proxy,
       checkEnvironment,
       hostUrl: new URL(sourceBuild ? "../service-host.mjs" : "./service-host.mjs", import.meta.url),
-      secrets: () => [
-        ...access.redactionLiterals(),
-        native.capability,
-        ...network.literals,
-        ...models.viewRedactionLiterals()
-      ],
+      secrets: ownerLiterals,
       timeoutMs: sourceBuild?.workerTimeoutMs
     }) : null;
     const unavailable2 = (taskId2) => ({
@@ -29457,36 +26892,32 @@ async function createServiceHost(value, sourceBuild) {
           authority: "local",
           csrf: null,
           capabilities: {
-            actions: !!actions && !!choice.snapshot().selected,
-            manualChecks: !!actions && !!choice.snapshot().selected,
+            actions: !!workbench && !!choice.snapshot().selected,
+            manualChecks: false,
             history: true
           }
         };
       },
-      workspace: () => actions?.workspace() ?? {
-        rootLabel: diagnosticText(c.store.root, 4096),
-        models: models.observe(),
-        context: unavailable2(null)
+      workspace: () => {
+        const before = ownerLiterals();
+        const view = {
+          rootLabel: diagnosticText(sanitizeText(c.store.root, before), 4096),
+          models: models.observe(),
+          context: unavailable2(null)
+        };
+        if (canonicalJson(before) !== canonicalJson(ownerLiterals()))
+          throw new ContractError("stale");
+        return view;
       },
-      context: (id) => actions?.context(id) ?? unavailable2(id),
-      checkObligations: actions ? (id) => actions.checkObligations(id) : undefined,
-      checks: (id) => {
-        if (actions)
-          return actions.checks(id);
-        throw new ContractError("unavailable");
-      },
+      context: (id) => unavailable2(id),
+      checks: () => ({ revision: 1, selections: [] }),
       legacyTasks: (budget) => {
-        const literals = () => [
-          ...access.redactionLiterals(),
-          native.capability,
-          ...models.viewRedactionLiterals()
-        ];
-        const before = literals();
-        const records = legacy(c.store, budget, reader).map((record2) => ({
+        const before = ownerLiterals();
+        const records = legacy(legacyTaskStore(c), budget, reader).map((record2) => ({
           ...record2,
           goal: sanitizeText(record2.goal, before)
         }));
-        if (canonicalJson(before) !== canonicalJson(literals()))
+        if (canonicalJson(before) !== canonicalJson(ownerLiterals()))
           throw new ContractError("stale");
         return records;
       }
@@ -29499,10 +26930,23 @@ async function createServiceHost(value, sourceBuild) {
       build: build2,
       adapters: {
         workbench: workbench ?? undefined,
-        admission: actions?.admission ?? null,
         models: choice,
-        modelChoice: actions ? choice : undefined,
-        current: actions ?? undefined,
+        modelChoice: workbench ? choice : undefined,
+        current: {
+          current: () => {
+            throw new ContractError("unsupported-context");
+          },
+          currentChanges: () => {
+            throw new ContractError("unsupported-context");
+          },
+          activeRuns: () => ({
+            storeId: reader.storeId,
+            workspaceId: reader.files.format.workspaceId,
+            epoch: native.epoch,
+            status: "complete",
+            runs: []
+          })
+        },
         projection,
         live,
         receipts: async (id) => {
@@ -29520,7 +26964,7 @@ async function createServiceHost(value, sourceBuild) {
             return {
               status: heldOwner.state === "idle" ? ready2 ? "alive" : "unavailable" : heldOwner.state,
               epoch: native.epoch,
-              actions: heldOwner.state === "idle" && !!actions && ready2 && !!choice.snapshot().selected,
+              actions: heldOwner.state === "idle" && !!workbench && ready2 && !!choice.snapshot().selected,
               ...operation === "diagnose" ? {
                 recording: heldWriter.quarantined ? "quarantined" : "available",
                 pendingWrites: heldWriter.pendingWrites,
@@ -29566,7 +27010,7 @@ async function createServiceHost(value, sourceBuild) {
     ready2 = true;
     http.admit();
     return {
-      actions,
+      gate,
       workbench,
       coordination: c,
       owner,
@@ -29581,7 +27025,7 @@ async function createServiceHost(value, sourceBuild) {
       endpoint: endpoint2,
       checkEnvironment
     };
-  } catch (error2) {
+  } catch (error) {
     if (owner) {
       owner.quarantine();
       const closing = network.close();
@@ -29591,7 +27035,7 @@ async function createServiceHost(value, sourceBuild) {
       } catch {}
     } else
       await http.close();
-    throw new StartupRefusal(error2 instanceof ContractError ? error2.code : "unavailable", stage, !!owner);
+    throw new StartupRefusal(error instanceof ContractError ? error.code : "unavailable", stage, !!owner);
   }
 }
 
@@ -29613,8 +27057,8 @@ try {
   const host = input.kind === "workbench" ? await createGateway(input, new URL("./service-host.mjs", import.meta.url)) : await createServiceHost(input);
   process.stdout.write(`${JSON.stringify({ status: "ready", epoch: "epoch" in host ? host.epoch : host.owner.lease.registration.epoch })}
 `);
-} catch (error2) {
-  process.stdout.write(`${JSON.stringify(startupReport(error2))}
+} catch (error) {
+  process.stdout.write(`${JSON.stringify(startupReport(error))}
 `);
   process.stderr.write(`{"error":"service-host-refused"}
 `);

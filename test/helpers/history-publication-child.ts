@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs, { appendFileSync, writeFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
+import { legacyTaskStore } from "../../src/task-store.ts";
 import { admitFixtureRun, historyFixture } from "./history-fixture.ts";
 
 const directory = process.argv[2],
@@ -57,8 +58,8 @@ if (
 ) {
   let saves = 0;
   // Native save is not replaced. The original post-save observer arms the real outcome write crash.
-  const original = f.c.store.save.bind(f.c.store);
-  f.c.store.save = (...args) => {
+  const original = legacyTaskStore(f.c).save.bind(legacyTaskStore(f.c));
+  legacyTaskStore(f.c).save = (...args) => {
     const result = original(...args);
     saves++;
     if (boundary.startsWith("outcome")) armed = true;
@@ -130,7 +131,7 @@ if (boundary === "large-tail") {
 }
 if (boundary === "tail") appendFileSync(f.files.segmentPath(1), '{"torn":');
 if (boundary === "auth" || boundary === "launch") {
-  const task = f.c.store.save(
+  const task = legacyTaskStore(f.c).save(
     {
       schema: "cadence-workflow-assistant/1",
       id: f.link.taskId,
@@ -148,7 +149,7 @@ if (boundary === "auth" || boundary === "launch") {
     0,
     f.lease.checkout,
   );
-  const snapshot = f.c.store.loadSnapshot(task.id);
+  const snapshot = legacyTaskStore(f.c).loadSnapshot(task.id);
   if (!snapshot) throw Error("fixture task absent");
   const context = {
     ...f.context,

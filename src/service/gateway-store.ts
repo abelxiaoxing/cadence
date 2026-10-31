@@ -3,7 +3,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { opendirSync } from "node:fs";
 import { hostname } from "node:os";
 import { join, resolve } from "node:path";
-import { canonicalAmbientRoot, defaultStateHome } from "../task-store.ts";
+import { canonicalAmbientRoot, defaultStateHome } from "../workspace.ts";
+
 import { AccessMaterial } from "./auth.ts";
 import { decodeHttpPolicy, type HttpPolicy } from "./config.ts";
 import {

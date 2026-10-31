@@ -41,6 +41,15 @@ it("workbench codecs are closed, do not invoke getters, and reject implicit exec
   expect(() => decodeWorkbenchCommand(getter)).toThrow();
   expect(calls).toBe(0);
   expect(() =>
+    decodeWorkbenchCommand({
+      kind: "link-task",
+      commandId: randomUUID(),
+      epoch: randomUUID(),
+      taskId: randomUUID(),
+      conversationId: randomUUID(),
+    }),
+  ).toThrow();
+  expect(() =>
     decodeWorkbenchRead({ kind: "files", path: "", command: "ls" }),
   ).toThrow();
   expect(() =>

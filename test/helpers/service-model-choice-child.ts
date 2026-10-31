@@ -213,7 +213,6 @@ assert.throws(
   () =>
     new OwnerModelChoice({
       owner: host.owner,
-      writer: host.writer,
       models: host.models,
       access: host.access,
     }),
@@ -525,19 +524,18 @@ try {
       // Join all registered original reactions; this is fixture scheduling, not a timeout policy.
       await new Promise((r) => setImmediate(r));
     }
-    const reserved = host.writer.owner().reserve({
-      lane: "data",
-      sourceFrames: 0,
-      retainedBytes: 1,
-      outputBytes: 1,
-      outputChunks: 0,
+    host.owner.registerRuntime(() => host.gate.closeAdmission(), {
+      assertQuiescent: () => host.gate.assertQuiescent(),
     });
-    assert.equal(reserved.status, "reserved");
+    const permit = await host.gate.acquire(
+      randomUUID(),
+      new AbortController().signal,
+    );
     failed(chooseCore({ expected: before.version, choice }), "conflict");
-    if (reserved.status === "reserved") reserved.reservation.release();
+    permit.release();
     assert.deepEqual(ok(await choose()), before);
   } else if (scenario === "closed-action-owner") {
-    host.owner.registerActions(() => {}); // Deliberately absent configuration participant must refuse.
+    host.owner.registerRuntime(() => {}); // Deliberately absent configuration participant must refuse.
     failed(await choose(), "unavailable");
     assert.equal(host.choice.snapshot().selected, null);
   } else if (scenario === "stop") {
@@ -613,9 +611,16 @@ try {
     ok(await client.session());
     const fresh = ok(await client.models());
     assert.equal(fresh.selected, null);
-    assert.equal(fresh.version.configRev, plain.configRev + 1);
+    assert.equal(fresh.version.configRev, 1); // Prior task policy never sets current choice authority.
     assert.deepEqual(host.models.observe(), []);
     failed(chooseCore({ expected: chosen.version, choice }), "stale");
+    if (scenario === "revision-ceiling") {
+      // Explicit counter-ceiling injection, not authority reconstructed from old task records.
+      Object.defineProperty(host.choice, "revision", {
+        value: Number.MAX_SAFE_INTEGER - 1,
+        writable: true,
+      });
+    }
     const replacement = ok(await choose());
     assert.notEqual(
       replacement.selected?.sourceSelectionId,

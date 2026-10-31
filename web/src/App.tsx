@@ -23,30 +23,19 @@ import {
   FiLogOut,
   FiMenu,
   FiMessageSquare,
-  FiPlus,
   FiRefreshCw,
   FiSidebar,
   FiSquare,
   FiTool,
 } from "react-icons/fi";
 import { canonicalJson } from "../../src/service-contract.ts";
-import {
-  type CommandObservation,
-  type PreparedAction,
-  prepare,
-} from "./client/actions";
 import { type BrowserClient, browserClient } from "./client/browser";
 import { localBuild } from "./client/build-identity";
-import {
-  type PlanMetadataPort,
-  planMetadataClient,
-} from "./client/plan-metadata";
+import type { CommandObservation } from "./client/receipts";
 import { mergeObservation } from "./client/receipts";
-import { beginTask } from "./client/task-entry";
 import { useWorkbench } from "./client/use-workbench";
 import { useWorkspace } from "./client/use-workspace";
 import { ViewLifetime } from "./client/view-lifetime";
-import { ConfirmAction } from "./components/actions/ConfirmAction";
 import { ModelChooser } from "./components/actions/ModelChooser";
 import { ReceiptPanel } from "./components/actions/ReceiptPanel";
 import { ContentExplorer } from "./components/history/ContentExplorer";
@@ -57,7 +46,6 @@ import { GlobalSearchModal } from "./components/history/GlobalSearchModal";
 import { PageControls } from "./components/history/PageControls";
 import { RunBrowser } from "./components/history/RunBrowser";
 import { SearchBar } from "./components/history/SearchBar";
-import { PlanApproval } from "./components/plan/PlanApproval";
 import { MessageList } from "./components/transcript/MessageList";
 import { ToolCallBlock } from "./components/transcript/ToolCallBlock";
 import {
@@ -74,6 +62,7 @@ import { ProjectPicker } from "./components/workspace/ProjectPicker";
 import { RunSummary } from "./components/workspace/RunSummary";
 import { TaskSidebar } from "./components/workspace/TaskSidebar";
 import { WorkflowAgentView } from "./components/workspace/WorkflowAgentView";
+import { WorkflowHistory } from "./components/workspace/WorkflowHistory";
 import { cancelWorkflow } from "./components/workspace/WorkflowPanel";
 import { WorkingFolderButton } from "./components/workspace/WorkingFolderButton";
 import { historyUrl, readHistoryUrl } from "./history/history-url";
@@ -85,14 +74,7 @@ import { useDrawerFocus } from "./layout/use-drawer-focus";
 import { useSwipeDrawer } from "./layout/use-swipe-drawer";
 import { copyTextToClipboard } from "./rich/use-copy-feedback";
 import { TimelineView } from "./timeline/TimelineView";
-import type {
-  Action,
-  ContextVersion,
-  ListRequest,
-  ReadCursor,
-  Scope,
-  SearchHit,
-} from "./types";
+import type { ListRequest, ReadCursor, Scope, SearchHit } from "./types";
 
 function chatFromLocation(): string | null {
   const value = new URLSearchParams(window.location.hash?.slice(1)).get("chat");
@@ -148,14 +130,12 @@ export function WorkspaceNotice({
 }
 export function App({
   api: provided,
-  planMetadata,
   onOpenProject,
   onWorkbenchHome,
   workbenchHome,
   projectEntries,
 }: {
   api?: BrowserClient;
-  planMetadata?: PlanMetadataPort;
   onOpenProject?(path: string): Promise<void>;
   onWorkbenchHome?(): void;
   workbenchHome?: string;
@@ -170,7 +150,6 @@ export function App({
   const [chatId, setChatId] = useState<string | null>(() =>
     initial ? null : (chatFromLocation() ?? crypto.randomUUID()),
   );
-  const [taskComposer, setTaskComposer] = useState(false);
   // A workflow subagent (or run) shown in the main area over the current view.
   const [agent, setAgent] = useState<WorkflowAgent | null>(null);
   const [chatRuns, setChatRuns] = useState<string[]>([]);
@@ -238,28 +217,11 @@ export function App({
     error: workspace.error,
     refresh: workspace.refresh,
   };
-  const metadataStore = workspace.workspace?.storeId;
-  const metadata = useMemo(
-    () =>
-      planMetadata ??
-      (metadataStore
-        ? planMetadataClient(api.client, metadataStore)
-        : undefined),
-    [planMetadata, api, metadataStore],
-  );
   const current =
     observation.state?.snapshot.scope.kind === "task" &&
     observation.state.snapshot.scope.id === taskId
       ? observation.state.snapshot.context
       : undefined;
-  const context: ContextVersion | null =
-    current?.status === "available" ? current.version : null;
-  const canAct =
-    workspace.actions &&
-    observation.state?.connection === "current" &&
-    observation.transportStatus === "current" &&
-    !!context &&
-    context.epoch === workspace.workspace?.epoch;
   const [drawer, setDrawer] = useState<DrawerSide | null>(null),
     [mobile, setMobile] = useState(false),
     layout = useRef<HTMLDivElement>(null);
@@ -292,15 +254,10 @@ export function App({
     [exportOpen, setExportOpen] = useState(false);
   const [hit, setHit] = useState<SearchHit>(),
     [detail, setDetail] = useState<ReadCursor | undefined>(initial?.cursor);
-  const [enteringTask, setEnteringTask] = useState(false);
-  const [prepared, setPrepared] = useState<PreparedAction>(),
-    [preparing, setPreparing] = useState(false),
-    [error, setError] = useState("");
+  const [error, setError] = useState("");
   const [receipts, setReceipts] = useState<CommandObservation[]>([]),
     [canceling, setCanceling] = useState(new Set<string>());
   const mounted = useRef(true);
-  const creationRead = useRef<AbortController | null>(null);
-  const entryBusy = useRef(false);
   const setReceipt = (value: CommandObservation) => {
     if (!mounted.current) return;
     setReceipts((previous) => {
@@ -319,68 +276,22 @@ export function App({
     scope,
     selectedSnapshot: selectedSnapshot ?? null,
     detached,
-    context,
     attachment: workspace.attachmentVersion,
     workspaceContext: workspace.workspace?.context ?? null,
     observationError: workspace.error ?? null,
   });
   lifetime.current.select(viewIdentity);
-  const [actionView, setActionView] = useState(viewIdentity);
-  if (actionView !== viewIdentity) {
-    setActionView(viewIdentity);
-    setPreparing(false);
-    setPrepared(undefined);
-  }
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      creationRead.current?.abort();
       lifetime.current.depart();
     };
   }, []);
-  const actionContext =
-    prepared?.preflight.preview.action.kind === "create"
-      ? workspace.workspace?.context.status === "available"
-        ? workspace.workspace.context.version
-        : null
-      : context;
-  const action = async (a: Action) => {
-    const expected =
-      a.kind === "create"
-        ? workspace.workspace?.context.status === "available"
-          ? workspace.workspace.context.version
-          : null
-        : context;
-    if (!workspace.actions || !expected || preparing || detached) {
-      setError(t("Current action context unavailable; observe again."));
-      return;
-    }
-    lifetime.current.depart();
-    const ticket = lifetime.current.ticket();
-    setPreparing(true);
-    setError("");
-    try {
-      const reply = await prepare(api.client, expected, a);
-      if (!lifetime.current.current(ticket)) return;
-      if (reply.kind === "error")
-        setError(t("Preflight refused: {code}", { code: reply.error.code }));
-      else setPrepared(reply.value);
-    } catch {
-      if (lifetime.current.current(ticket))
-        setError(t("Preflight unavailable. No automatic retry."));
-    } finally {
-      if (lifetime.current.current(ticket)) setPreparing(false);
-    }
-  };
-  const selectChat = (id: string = crypto.randomUUID(), cadence = false) => {
-    setTaskComposer(cadence);
+  const selectChat = (id: string = crypto.randomUUID()) => {
     setAgent(null);
     if (id !== chatId) setChatRuns([]);
-    creationRead.current?.abort();
     lifetime.current.depart();
-    setPrepared(undefined);
-    setPreparing(false);
     setChatId(id);
     setTaskId(null);
     setScope(null);
@@ -407,7 +318,6 @@ export function App({
       );
   }, [chatId]);
   const selectTask = (id: string, title?: string) => {
-    creationRead.current?.abort();
     setAgent(null);
     setChatRuns([]);
     setChatId(null);
@@ -416,8 +326,6 @@ export function App({
     setScopeTitle("");
     setSelectedSnapshot(undefined);
     lifetime.current.depart();
-    setPrepared(undefined);
-    setPreparing(false);
     setTaskId(id);
     setScope({ kind: "task", id });
     setHit(undefined);
@@ -428,7 +336,6 @@ export function App({
   };
   useEffect(() => {
     const navigate = () => {
-      creationRead.current?.abort();
       const target = readHistoryUrl();
       if (!target) {
         const chat = chatFromLocation();
@@ -439,7 +346,6 @@ export function App({
           setTaskId(null);
           setScope(null);
           setRightTab("files");
-          setPrepared(undefined);
           lifetime.current.depart();
           closeDrawer();
         }
@@ -452,8 +358,6 @@ export function App({
       // Same-document links/back navigation observe the exact new task too.
       // Changing a hash never refreshes a grant or replays an action.
       lifetime.current.depart();
-      setPrepared(undefined);
-      setPreparing(false);
       setSelectedSnapshot(target.snapshotSeq);
       setTaskTitle("");
       setScopeTitle("");
@@ -472,8 +376,6 @@ export function App({
     setSelectedSnapshot(snapshot);
     setScopeTitle(label ?? "");
     lifetime.current.depart();
-    setPrepared(undefined);
-    setPreparing(false);
     setScope(value);
     setHit(undefined);
     setDetail(undefined);
@@ -521,88 +423,6 @@ export function App({
     setReceipt(value);
     if (value.receipt && lifetime.current.current(resultTicket))
       workspace.refresh();
-  };
-  const sendTask = async (goal: string): Promise<boolean> => {
-    const base = workspace.workspace;
-    if (
-      entryBusy.current ||
-      !workspace.actions ||
-      !base ||
-      base.context.status !== "available" ||
-      detached
-    )
-      return false;
-    const abort = new AbortController();
-    creationRead.current?.abort();
-    creationRead.current = abort;
-    entryBusy.current = true;
-    setEnteringTask(true);
-    setError("");
-    const creation: {
-      value?: { taskId: string; commandId: string };
-    } = {};
-    const origin =
-      chats.value?.kind === "conversations" &&
-      chats.value.entries.some((chat) => chat.id === chatId)
-        ? chatId
-        : null;
-    try {
-      const id = await beginTask({
-        client: api.client,
-        storeId: base.storeId,
-        context: base.context.version,
-        goal,
-        signal: abort.signal,
-        observe: (value) => {
-          setReceipt(value);
-          const receipt =
-            value.receipt ??
-            (value.lookup?.status === "found"
-              ? value.lookup.receipt
-              : undefined);
-          if (receipt?.created?.state === "published")
-            creation.value = {
-              taskId: receipt.created.taskId,
-              commandId: value.commandId,
-            };
-        },
-      });
-      if (abort.signal.aborted) return false;
-      if (origin && creation.value) {
-        const linked = await api.client.workbenchCommand({
-          kind: "link-task",
-          commandId: creation.value.commandId,
-          epoch: base.epoch,
-          taskId: id,
-          conversationId: origin,
-        });
-        if (abort.signal.aborted) return false;
-        if (linked.kind !== "ok")
-          setError(
-            t("Task created, but its conversation link was not confirmed."),
-          );
-      }
-      selectTask(id);
-      workspace.refresh();
-      return true;
-    } catch (error) {
-      if (!abort.signal.aborted && mounted.current) {
-        if (creation.value) selectTask(creation.value.taskId);
-        setError(
-          t(
-            "Task preparation stopped: {reason}. Observe the original receipt; no automatic retry.",
-            {
-              reason: error instanceof Error ? error.message : "unavailable",
-            },
-          ),
-        );
-        workspace.refresh();
-      }
-      return false;
-    } finally {
-      entryBusy.current = false;
-      if (mounted.current) setEnteringTask(false);
-    }
   };
   const cancel = (runId: string) => {
     if (
@@ -855,13 +675,10 @@ export function App({
               aria-label={t("Return — work continues")}
               data-tip={t("Return — accepted work continues")}
               onClick={() => {
-                setPrepared(undefined);
                 setDrawer(null);
                 setSearchOpen(false);
                 setExportOpen(false);
                 lifetime.current.depart();
-                setPreparing(false);
-                creationRead.current?.abort();
                 setDetached(true);
               }}
             >
@@ -885,7 +702,7 @@ export function App({
         <button
           type="button"
           className="panel-toggle has-label inspector-toggle"
-          aria-label={t("Plan / review")}
+          aria-label={t("Files / history")}
           aria-expanded={mobile ? drawer === "right" : inspectorOpen}
           onClick={() =>
             mobile
@@ -894,7 +711,7 @@ export function App({
           }
         >
           <FiSidebar aria-hidden="true" />
-          <span>{chatId ? t("Files") : t("Plan")}</span>
+          <span>{chatId ? t("Files") : t("History")}</span>
         </button>
       </header>
       {!workspace.workspace && activeRuns.length > 0 && (
@@ -984,12 +801,14 @@ export function App({
               }}
               onTask={selectTask}
               onScope={selectScope}
-              onNew={() => {
-                // From an open chat, a legacy task keeps that chat as its origin.
-                if (chatId) {
-                  setAgent(null);
-                  setTaskComposer(true);
-                } else selectChat(undefined, true);
+            />
+          )}
+          {workspace.workspace && (
+            <WorkflowHistory
+              client={api.client}
+              onOpen={(next) => {
+                setAgent(next);
+                closeDrawer();
               }}
             />
           )}
@@ -1052,10 +871,6 @@ export function App({
               workspaceId={chatWorkspace.current ?? "connecting"}
               available={!!workspace.workspace}
               canInterrupt={!!workspace.cancelCompatible}
-              cadenceEnabled={
-                workspace.actions &&
-                workspace.workspace?.context.status === "available"
-              }
               enabled={
                 !!workspace.workspace &&
                 !!workspace.compatible &&
@@ -1068,11 +883,6 @@ export function App({
               }}
               reference={reference}
               onReferenceUsed={clearReference}
-              initialMode={taskComposer ? "cadence" : "chat"}
-              legacyTask={taskComposer}
-              onModeChanged={() => setTaskComposer(false)}
-              taskPending={enteringTask}
-              onCadence={sendTask}
             />
           )}
           {scope && !agent && (
@@ -1123,39 +933,18 @@ export function App({
               </details>
             </header>
           )}
-          {taskId && !agent && (
-            <PlanApproval
-              key={taskId}
-              client={api.client}
-              storeId={storeId}
-              context={context}
-              runs={runs}
-              snapshotSeq={snapshotSeq}
-              canAct={canAct && !preparing}
-              onResult={result}
-            />
-          )}
           <div className="workspace-content" hidden={!!chatId || !!agent}>
             {!seed && (
               <section className="empty-state">
                 <span className="empty-logo" aria-hidden="true">
                   C
                 </span>
-                <h2>{t("Open a task or create one explicitly")}</h2>
+                <h2>{t("Select retained history to inspect")}</h2>
                 <p>
                   {t(
-                    "Plans, children, checks and human review share one service owner. No chat or discovery activates execution.",
+                    "History is readonly. Start new work in a conversation with /cadence.",
                   )}
                 </p>
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={!workspace.workspace}
-                  onClick={() => selectChat(undefined, true)}
-                >
-                  <FiPlus aria-hidden="true" />
-                  {t("New task")}
-                </button>
               </section>
             )}
             {seed && detail ? (
@@ -1262,7 +1051,7 @@ export function App({
         />
         <section
           className={`panel-drawer drawer-right${drawer === "right" ? " open" : ""}`}
-          aria-label={t("Plan and review drawer")}
+          aria-label={t("Files and history drawer")}
           tabIndex={-1}
           inert={mobile && drawer !== "right"}
         >
@@ -1285,7 +1074,7 @@ export function App({
                 onClick={() => setRightTab("task")}
               >
                 <FiLayers />
-                {t("Task details")}
+                {t("History details")}
               </button>
             </nav>
             {rightTab === "files" ? (
@@ -1302,15 +1091,10 @@ export function App({
               <InspectorPanel
                 key={taskId}
                 client={api.client}
-                context={context}
                 seed={{
                   ...seed,
                   scope: { kind: "task", id: taskId ?? seed.scope.id },
                 }}
-                runs={runs}
-                canAct={canAct && !preparing}
-                onAction={(a) => void action(a)}
-                planMetadata={metadata}
               />
             ) : (
               <InspectorPlaceholder />
@@ -1427,31 +1211,9 @@ export function App({
           }
           onClose={() => setModelOpen(false)}
           onChanged={() => {
-            setPrepared(undefined);
             lifetime.current.depart();
             workspace.refresh(true);
           }}
-        />
-      )}
-      {prepared && (
-        <ConfirmAction
-          key={prepared.commandId}
-          prepared={prepared}
-          client={api.client}
-          current={
-            workspace.actions &&
-            (canAct || prepared.preflight.preview.action.kind === "create")
-              ? actionContext
-              : null
-          }
-          attachmentVersion={workspace.attachmentVersion}
-          onClose={() => {
-            if (lifetime.current.current(resultTicket)) {
-              lifetime.current.depart();
-              setPrepared((value) => (value === prepared ? undefined : value));
-            }
-          }}
-          onResult={result}
         />
       )}
       {searchOpen && searchSeed && (

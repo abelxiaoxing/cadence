@@ -47,13 +47,13 @@ Removing development tooling must never delete consumer `.cadence` data or priva
 - `cadence-mode`, `cadence-mode-pty`, `workflow-contract`, `service-workflow`: persistent conversation activation/exit/branch restoration, actual Pi POSIX TUI/on-demand-owner flow, global model preference, exact plan approval, DAG validation, real SDK worktrees/checks/local integration and cancellation.
 - `service-conversation-workflow`, `test/web/workflow.test.tsx`, `test/web/cadence-browser.e2e.mjs`: actual SDK dialogue tools, persistent mode/model restoration, caller-bound single admission, exit/cancel separation, browser-only approval/local merge and lost-reply observation.
 - `workflow-git`, `workbench-send-admission`: staged-versus-worktree scope, actual commit ancestry, and pre-/post-acceptance error classification without erasing uncertain attempts.
-- `service-contract`, `service-current`, `service-model-choice`, `service-auth`: closed DTOs, exact source/choice/current authority, security and compatibility.
-- `service-owner`, `service-accepted-work`, `service-recovery`, `service-registry-recovery`: original operations, overlap, Stop, unknown fences and informed recovery.
+- `service-contract`, `service-model-choice`, `service-auth`: closed DTOs, exact source/choice/current authority, security and compatibility.
+- `checkout-gate`, `service-owner`, `service-recovery`, `service-registry-recovery`: original operations, overlap, Stop, unknown fences and informed recovery.
 - `worker-*`, `lightweight-sdk`, `lightweight-process-diff`: genuine SDK/tool capture, split redaction, no-spill bounds and original native facts.
 - `service-history-*`: durable ordering, cold/no-index/restarted proof/search/export, corruption/torn/quota and expected-byte publication.
-- `lightweight-shell`, `native-client`, `native-history`, `terminal-integration`: native consent, shared service, Unicode/paging and detach/cancel.
+- `history-shell`, `native-client`, `native-history`, `terminal-integration`: readonly entry guards, shared service, Unicode/paging and detach; daily native approval/cancel belongs to `cadence-mode`.
 - `agent-panel`, `agent-panel-model`, `agent-panel-cadence`: panel keys/rendering and readonly owner observation that never starts, cancels or replays work.
-- `test/web/`: adapted pure/SSR tests separately from actual built-browser contexts; `accepting-browser` drives one real SDK Start, check, review and departure-without-cancel workflow with mixed clients, focus/viewports and complete downloads.
+- `test/web/`: adapted pure/SSR tests separately from actual built-browser contexts; `accepting-browser` seeds fabricated archived records without a task executor or model call, then checks a cold generated owner, retired controls, exact search, complete downloads and viewports; `cadence-browser` covers current browser approval/execution/cancel.
 - `package-*`, `distribution`, `service-package`, `independence`: exact tar/member/body/import/notice closure and nonactivating discovery.
 - `service-autostart`, `project-start`, `install-config`: explicit `cadence server` registration on systemd (root system scope without linger, legacy user scope), launchd and the Windows Run key, separate named service definitions and directory owners, definition escaping, restart/disable/mask/foreign handling, orderly Stop before every change, the `.env` port and token lines and a package without install scripts.
 - `service-cli`: real owners started from the `.env` port and token, reselection of a stopped workspace, edits while running and rotation of the token line.
@@ -98,7 +98,8 @@ Preserve original license bytes through their precise Git attributes; line-endin
 | Optional Pi usage keys (`reasoning`, `cacheWrite1h`)           | Checkpoint only the counts every message carries; a provider breakdown never fails the turn           |
 | A turn's steps watched live, then failing without an answer    | Derive the fold from the settled turn on every render, not from mount-time state; user toggles win    |
 
-Good: current context → explicit grant → durable acceptance → genuine original native/storage settlement → exact retained dependency → real checks → human review.
+Good: current context → exact plan approval → durable acceptance → genuine original native/auth/storage settlement → real checks → automatic Agent review.
+Archived human Review is not a new workflow approval.
 Base: a client leaves and another reattaches to the same accepted run without launching it again.
 Bad: model prose, a valid cursor, a prepared graph, one native exit or a human Done checkbox becomes fabricated execution/check success.
 

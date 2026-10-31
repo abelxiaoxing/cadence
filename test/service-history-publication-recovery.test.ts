@@ -30,7 +30,7 @@ import { ServiceCoordination } from "../src/service/coordination.ts";
 import { ServiceOwner } from "../src/service/owner.ts";
 import { inspectRecovery } from "../src/service/recovery.ts";
 import { canonicalJson, LIMITS } from "../src/service-contract.ts";
-import { savedRecordIdentity } from "../src/task-store.ts";
+import { legacyTaskStore, savedRecordIdentity } from "../src/task-store.ts";
 import { TASK_SCHEMA } from "../src/task-types.ts";
 import {
   admitFixtureRun,
@@ -64,17 +64,17 @@ function createFixture(options: Parameters<typeof historyFixture>[0] = {}) {
 it("real held-checkout create publishes exact saved bytes and a separately committed receipt", async () => {
   const f = createFixture();
   expect((await f.writer.commit(f.intent)).status).toBe("committed");
-  expect(f.c.store.load(f.link.taskId)).toBeUndefined();
+  expect(legacyTaskStore(f.c).load(f.link.taskId)).toBeUndefined();
   const result = await f.writer.publishTask({
     operationId: f.intent.operationId,
     cwd: f.root,
   });
   expect(result.status).toBe("published");
-  const saved = f.c.store.loadSnapshot(f.link.taskId)!;
+  const saved = legacyTaskStore(f.c).loadSnapshot(f.link.taskId)!;
   expect(result.observed).toEqual({ revision: 1, identity: saved.identity });
   expect(saved.identity).toBe(savedRecordIdentity(saved.record));
   expect(saved.record.phase).toBe("planning");
-  expect(readdirSync(join(f.c.store.tasks, f.link.taskId))).toEqual([
+  expect(readdirSync(join(legacyTaskStore(f.c).tasks, f.link.taskId))).toEqual([
     "task.json",
   ]);
   expect(await f.writer.lookup(f.intent.commandId)).toMatchObject({
@@ -83,7 +83,7 @@ it("real held-checkout create publishes exact saved bytes and a separately commi
       receipt: { publication: "published", created: { state: "published" } },
     },
   });
-  expect(f.c.store.inspectLock()).toEqual(f.lease.checkout);
+  expect(legacyTaskStore(f.c).inspectLock()).toEqual(f.lease.checkout);
 });
 it("Stop drains an already-started exact publication through original save/flush instead of quarantining its continuation", async () => {
   let reached!: () => void, resume!: () => void;
@@ -125,12 +125,12 @@ it("Stop drains an already-started exact publication through original save/flush
   await atSave;
   const stop = owner.stop();
   expect(closed).toBe(false);
-  expect(existsSync(f.c.store.lockPath)).toBe(true);
+  expect(existsSync(legacyTaskStore(f.c).lockPath)).toBe(true);
   resume();
   expect((await publication).status).toBe("published");
   expect((await stop).state).toBe("stopped");
   expect(closed).toBe(true);
-  expect(f.c.store.load(f.link.taskId)?.phase).toBe("planning");
+  expect(legacyTaskStore(f.c).load(f.link.taskId)?.phase).toBe("planning");
 });
 it.each(["edit", "delete", "corrupt"])(
   "publication %s conflict preserves exact external state and fences continuation",
@@ -144,7 +144,7 @@ it.each(["edit", "delete", "corrupt"])(
     legacy(f);
     await f.writer.commit(f.intent);
     await admitFixtureRun(f);
-    const path = join(f.c.store.tasks, f.link.taskId, "task.json"),
+    const path = join(legacyTaskStore(f.c).tasks, f.link.taskId, "task.json"),
       bytes = readFileSync(path);
     const external =
       mode === "edit"
@@ -173,7 +173,7 @@ it("creation cap refuses the 1001st acceptance without reserving a command or hi
   const f = createFixture();
   for (let i = 0; i < 1000; i++) {
     const id = randomUUID(),
-      dir = join(f.c.store.tasks, id);
+      dir = join(legacyTaskStore(f.c).tasks, id);
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(dir, "task.json"),
@@ -194,7 +194,7 @@ it("creation cap refuses the 1001st acceptance without reserving a command or hi
     );
   }
   expect((await f.writer.commit(f.intent)).status).toBe("refused");
-  expect(f.c.store.list()).toHaveLength(1000);
+  expect(legacyTaskStore(f.c).list()).toHaveLength(1000);
   expect(
     existsSync(join(f.files.directory, "commands", f.intent.commandId)),
   ).toBe(false);
@@ -305,7 +305,7 @@ it.each([
     expect(state.receipt()?.receipt.publication).toBe(
       published ? "published" : "pending",
     );
-    expect(!!f.c.store.load(f.selected.taskId)).toBe(
+    expect(!!legacyTaskStore(f.c).load(f.selected.taskId)).toBe(
       boundary !== "publication-before-save",
     );
     const recovery = new HistoryRecovery(f.c);
@@ -347,7 +347,7 @@ it.each([
     const f = crash("tail"),
       recovery = new HistoryRecovery(f.c),
       selected = await confirmation(f.c);
-    const lock = readFileSync(f.c.store.lockPath);
+    const lock = readFileSync(legacyTaskStore(f.c).lockPath);
     if (mode === "authority")
       selected.assertLocalAuthority = () => {
         throw Error("fabricated local authority refusal");
@@ -360,7 +360,7 @@ it.each([
     if (["processes", "credentials", "storage"].includes(mode))
       Object.assign(selected, { [mode]: "unknown" });
     await expect(recovery.append(selected)).rejects.toThrow();
-    expect(readFileSync(f.c.store.lockPath)).toEqual(lock);
+    expect(readFileSync(legacyTaskStore(f.c).lockPath)).toEqual(lock);
     expect(existsSync(f.files.segmentPath(2))).toBe(false);
   },
 );
@@ -441,7 +441,7 @@ it.each(["rename-before", "rename-after"])(
   "original child dies at actual TaskStore %s boundary without repair",
   (boundary) => {
     const f = crash(boundary),
-      dir = join(f.c.store.tasks, f.selected.taskId),
+      dir = join(legacyTaskStore(f.c).tasks, f.selected.taskId),
       before = diskIdentity(f.dir);
     expect(
       readOperationState(f.files, f.selected.operationId).receipt()?.receipt
@@ -450,11 +450,13 @@ it.each(["rename-before", "rename-after"])(
     if (boundary === "rename-before") {
       expect(existsSync(join(dir, "task.json"))).toBe(false);
       expect(readdirSync(dir).some((name) => name.endsWith(".tmp"))).toBe(true);
-      expect(() => f.c.store.loadSnapshot(f.selected.taskId)).toThrow();
+      expect(() =>
+        legacyTaskStore(f.c).loadSnapshot(f.selected.taskId),
+      ).toThrow();
     } else
-      expect(f.c.store.loadSnapshot(f.selected.taskId)?.record.revision).toBe(
-        1,
-      );
+      expect(
+        legacyTaskStore(f.c).loadSnapshot(f.selected.taskId)?.record.revision,
+      ).toBe(1);
     expect(diskIdentity(f.dir)).toEqual(before);
   },
 );
@@ -686,7 +688,7 @@ it("explicit human closure preserves not-run and stale native-zero checks instea
   expect(
     (await f.writer.publishTask({ operationId: f.intent.operationId })).status,
   ).toBe("published");
-  const saved = f.c.store.load(taskId)!;
+  const saved = legacyTaskStore(f.c).load(taskId)!;
   expect(saved.phase).toBe("done");
   expect(saved.review?.outcome).toBe("reviewed-with-issues");
   expect(saved.checks[0]).toMatchObject({ status: "stale", exitCode: 0 });
@@ -742,7 +744,7 @@ it.each(
           .status,
       ).toBe("published");
     await settleFixtureRun(f, "blocked");
-    const path = join(f.c.store.tasks, f.link.taskId, "task.json");
+    const path = join(legacyTaskStore(f.c).tasks, f.link.taskId, "task.json");
     if (mode === "missing") unlinkSync(path);
     else
       writeFileSync(
@@ -851,13 +853,15 @@ it.each([0, 32])(
       expect(new HistoryWriter(f.lease).quarantined).toBe(true);
     } else {
       expect(result.status).toBe("published");
-      expect(f.c.store.load(f.link.taskId)?.checks[0]).toMatchObject({
-        exitCode: 0,
-        status: "stale",
-      });
-      expect(f.c.store.load(f.link.taskId)?.phase).toBe("review");
+      expect(legacyTaskStore(f.c).load(f.link.taskId)?.checks[0]).toMatchObject(
+        {
+          exitCode: 0,
+          status: "stale",
+        },
+      );
+      expect(legacyTaskStore(f.c).load(f.link.taskId)?.phase).toBe("review");
     }
-    expect(f.c.store.load(f.link.taskId)?.checks).toHaveLength(
+    expect(legacyTaskStore(f.c).load(f.link.taskId)?.checks).toHaveLength(
       count === 32 ? 32 : 1,
     );
   },
@@ -1046,7 +1050,7 @@ it.each(["reused-id", "invented-success", "observed-refusal"])(
     expect(published.status).toBe("published");
     if (!published.publicationId || !published.observed)
       throw Error("publication");
-    const path = join(f.c.store.tasks, f.link.taskId, "task.json");
+    const path = join(legacyTaskStore(f.c).tasks, f.link.taskId, "task.json");
     const before = readFileSync(path);
     expect(
       (

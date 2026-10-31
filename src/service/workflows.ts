@@ -12,12 +12,6 @@ import { basename, dirname, join } from "node:path";
 import { loadAgentDefinitions } from "../agent-registry.ts";
 import { launchWorkflowWorker, runProcess } from "../subagent-process.ts";
 import { captureChanges } from "../task-diff.ts";
-import {
-  gitArguments,
-  gitEnvironment,
-  resolveWorkspace,
-  safeDirectory,
-} from "../task-store.ts";
 import type { RunResult } from "../task-types.ts";
 import { diagnosticText } from "../verification-diagnostics.ts";
 import {
@@ -28,6 +22,13 @@ import {
   type NativeSettlement,
 } from "../worker-public.mjs";
 import { sanitizeData, sanitizeText } from "../worker-redaction.mjs";
+import {
+  gitArguments,
+  gitEnvironment,
+  resolveWorkspace,
+  safeDirectory,
+} from "../workspace.ts";
+import type { CheckoutGate, CheckoutPermit } from "./checkout-gate.ts";
 import {
   ContractError,
   canonicalJson,
@@ -67,8 +68,6 @@ import type { OwnerModelChoice } from "./model-choice.ts";
 import type { OwnerModelContext } from "./model-context.ts";
 import type { AcceptedWorkResult, ServiceOwner } from "./owner.ts";
 import { type FileSnapshot, hash } from "./private-files.ts";
-import type { ReviewBarrier } from "./scheduler.ts";
-import type { TaskActions } from "./task-actions.ts";
 import { UnacceptedConversationCommand } from "./workbench-send-refusal.ts";
 import {
   assertTarget,
@@ -92,6 +91,7 @@ import {
   workflowObservation,
   workingSnapshot,
 } from "./workflow-git.ts";
+import { WorkflowHistoryScanner } from "./workflow-history.ts";
 
 const RECORD_BYTES = 384 * 1024;
 const MAX_STEPS = 256;
@@ -111,7 +111,7 @@ interface Options {
   owner: ServiceOwner;
   models: OwnerModelContext;
   choice: OwnerModelChoice;
-  actions: TaskActions;
+  gate: CheckoutGate;
   cwd: string;
   checkEnvironment?: Readonly<NodeJS.ProcessEnv>;
   secrets(): readonly string[];
@@ -319,6 +319,7 @@ export class WorkflowTranscript {
 }
 
 export class Workflows {
+  private readonly historyScanner: WorkflowHistoryScanner;
   private readonly root: string;
   private readonly cwd: string;
   private readonly worktreeRoot: string;
@@ -336,6 +337,13 @@ export class Workflows {
       o.coordination.stateHome,
       "cadence-worktrees-v1",
       basename(o.coordination.store.privateRoot),
+    );
+    this.historyScanner = new WorkflowHistoryScanner(
+      join(this.root, "runs"),
+      () => {
+        this.o.owner.lease.assert();
+        return this.files.directory(join(this.root, "runs"));
+      },
     );
     this.recover();
   }
@@ -557,6 +565,47 @@ export class Workflows {
       })),
     };
   }
+  /** Bounded readonly listing. Progress is not an empty or complete page. */
+  history(
+    after: string | null,
+    scan?: string,
+  ): Extract<
+    WorkbenchResult,
+    { kind: "workflow-history" | "workflow-history-progress" }
+  > {
+    const selected = this.historyScanner.read(after, scan);
+    if (selected.kind === "workflow-history-progress") return selected;
+    const remaining = selected.ids;
+    const entries = remaining
+      .slice(0, WORKFLOW_LIMITS.historyPage)
+      .map((id) => {
+        try {
+          const view = this.view(id);
+          if (view.kind !== "workflow" || view.response.type !== "run")
+            throw new ContractError("invalid");
+          const run = view.response.run;
+          return {
+            id,
+            run: {
+              ...run,
+              goal: clipUnits(sanitizeText(run.goal, this.o.secrets()), 320),
+              notice: this.notice(run.notice),
+              steps: [],
+            },
+          };
+        } catch {
+          return { id, run: null };
+        }
+      });
+    return {
+      kind: "workflow-history",
+      entries,
+      next: selected.next,
+    };
+  }
+  closeHistory(): void {
+    this.historyScanner.close();
+  }
   async join(id: string): Promise<void> {
     await this.active.get(id)?.original;
   }
@@ -575,6 +624,7 @@ export class Workflows {
             RECORD_BYTES,
           ),
     );
+    if (run.id !== id) throw new ContractError("corrupt-selected");
     if (!live && ["running", "queued"].includes(run.status))
       run.status = "unknown";
     return {
@@ -1913,18 +1963,14 @@ export class Workflows {
     live: Live,
     request: WorkflowRequest,
   ): Promise<AcceptedWorkResult> {
-    let barrier: ReviewBarrier | undefined;
+    let barrier: CheckoutPermit | undefined;
     let budgetExpired = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let failure = "";
     try {
       this.assertRunning(live);
-      barrier = await this.o.actions.scheduler.conversationBarrier(
-        live.run.id,
-        live.abort.signal,
-      );
+      barrier = await this.o.gate.acquire(live.run.id, live.abort.signal);
       barrier.assertHeld();
-      this.o.actions.conversationBoundary(barrier);
       // The budget covers the run's own work, not time queued for the gate.
       timer = setTimeout(() => {
         budgetExpired = true;
@@ -1978,8 +2024,6 @@ export class Workflows {
         ...live.notes,
       );
       try {
-        if (barrier && this.o.owner.state === "idle")
-          this.o.actions.conversationBoundary(barrier);
         this.saveFinal(live);
       } catch {
         this.o.owner.quarantine();

@@ -60,7 +60,6 @@ pi install "$(npm root -g)/@abelxiaoxing/cadence"
    再読み込みや目標完了でもモードは維持されます。
    **Exit Cadence** はモード終了のみ、**Cancel workflow — request stop** は作業のキャンセル要求です。
 
-**Legacy task**: previous task/history workflow.
 No live Pi terminal is required for the browser conversation workflow.
 
 ### ターミナルで
@@ -77,7 +76,8 @@ Cadence がプロジェクトを調査し、必要な判断を確認して計画
 ローカル owner は必要時に起動します。
 システムサービスのインストールは WebUI・自動起動を使う場合のみ必要です。
 
-`/cadence-inspect`: legacy task/history UI.
+`/cadence-history [run-id]`: readonly run details and retained history; no service startup or task execution.
+See [History and diagnostics](docs/history.md).
 [Conversation mode](docs/conversation-mode.md): native/browser approval, limits and worktree setup.
 Browser authentication is not execution consent.
 
@@ -94,14 +94,8 @@ WebUI のフォルダピッカーも同じ方法でプロジェクトを開く�
 
 ### チェック
 
-`.cadence/assistant/config.json` にプロジェクトを検証するコマンドを列挙すると、タスクはレビュー前にそれを実際のチェックとして実行できる：
-
-```json
-{
-  "schema": "cadence-assistant-checks/1",
-  "checks": [{ "name": "Tests", "command": "bun run test", "timeoutMs": 120000 }]
-}
-```
+チェックコマンドは、明示的に承認する計画に記載します。
+開始前のチェックと受け入れチェックの実際の結果は、自動 Agent レビューとは別に記録されます。
 
 ## サービスの管理
 
