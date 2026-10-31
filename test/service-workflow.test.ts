@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { expect, it } from "vitest";
 import type {
   WorkflowProposal,
@@ -9,6 +9,7 @@ import type {
   WorkflowResponse,
   WorkflowRun,
 } from "../src/service/contracts/workflow.ts";
+import { canonicalJson } from "../src/worker-public.mjs";
 import { acceptingFixture } from "./helpers/accepting-fixture.ts";
 import { plan } from "./helpers/workflow-plan.ts";
 
@@ -100,6 +101,11 @@ async function setup(initializeGit = true) {
     return {
       f,
       git,
+      worktrees: join(
+        f.c.stateHome,
+        "cadence-worktrees-v1",
+        basename(f.c.store.privateRoot),
+      ),
       command,
       propose,
       start,
@@ -123,11 +129,15 @@ it("workflow output redacts owner and provider literals before retention and def
     );
     const accepted = await command({
       action: "research",
-      goal: "Inspect readonly",
-      questions: ["Report evidence"],
+      goal: "Inspect readonly token: string handling",
+      questions: ["Report evidence about the Authorization: Bearer header"],
       model,
     });
     if (accepted.type !== "run") throw Error("run");
+    // Credential-looking text is redacted, not a reason to refuse the request.
+    expect(accepted.run.goal).toBe(
+      "Inspect readonly token: [redacted] handling",
+    );
     const run = await wait(accepted.run.id);
     expect(run.status).toBe("completed");
     expect(run.steps).toHaveLength(1);
@@ -170,20 +180,54 @@ it("workflow output redacts owner and provider literals before retention and def
     expect(JSON.stringify(retained)).not.toContain(providerSecret);
     expect(JSON.stringify(retained)).toContain("[redacted]");
     expect(readFileSync(path, "utf8")).toBe(legacyBytes);
+    // Transcript reads apply the same read-time filter to retained records.
+    const transcriptPath = join(
+      f.c.directory,
+      "workflows-v1",
+      "runs",
+      run.id,
+      "transcripts",
+      `${step.childRunId}.json`,
+    );
+    const transcript = JSON.parse(readFileSync(transcriptPath, "utf8"));
+    transcript.items[0].text = `Legacy transcript: ${ownerSecret}`;
+    const transcriptBytes = canonicalJson(transcript, 384 * 1024);
+    writeFileSync(transcriptPath, transcriptBytes);
+    const read = await f.client.workbenchRead({
+      kind: "workflow-transcript",
+      id: run.id,
+      stepId: step.id,
+    });
+    expect(read.kind, JSON.stringify(read).slice(0, 400)).toBe("ok");
+    expect(JSON.stringify(read)).not.toContain(ownerSecret);
+    expect(JSON.stringify(read)).toContain("Legacy transcript: [redacted]");
+    expect(readFileSync(transcriptPath, "utf8")).toBe(transcriptBytes);
   } finally {
     await f.close();
   }
 }, 30000);
 
 it("real generated owner: task IDs integration/tasks stay disjoint, run parallel SDK workers and merge while preserving dirt", async () => {
-  const { f, git, propose, start, wait } = await setup();
+  const { f, git, propose, start, wait, worktrees } = await setup();
   try {
     writeFileSync(join(f.root, "unrelated.txt"), "user-owned bytes\n");
+    // Tracked but dirty project context: delivered after the fast-forward
+    // around the user's uncommitted text, never silently dropped.
+    writeFileSync(join(f.root, ".cadence/project.md"), "# Team notes\n");
+    git("add", ".cadence/project.md");
+    git("commit", "-qm", "Team notes");
+    writeFileSync(
+      join(f.root, ".cadence/project.md"),
+      "# Team notes\nUncommitted user line.\n",
+    );
     f.mode("workflow-parallel");
     const definition = plan();
     definition.tasks[0].id = "integration";
     definition.tasks[1].id = "tasks";
+    definition.design += " Add a token: string field.";
     const p = await propose(definition);
+    // The approved plan is the displayed, redacted one; nothing was refused.
+    expect(p.plan.design).toContain("token: [redacted] field");
     expect(existsSync(join(f.root, "a.txt"))).toBe(false);
     const run = await wait(await start(p));
     expect(run, JSON.stringify(run)).toMatchObject({
@@ -191,19 +235,43 @@ it("real generated owner: task IDs integration/tasks stay disjoint, run parallel
       humanReviewed: false,
     });
     expect(f.maxActive()).toBeGreaterThanOrEqual(2);
-    for (const name of ["integration", "tasks/integration", "tasks/tasks"])
+    // Worktrees lived outside the private namespace and were removed by plain
+    // `git worktree remove` once merged and clean.
+    const operations = run.steps.filter((s) => s.kind === "git");
+    for (const name of [
+      "worktree-integration",
+      "worktree-integration",
+      "worktree-tasks",
+      "integrate-task-commits",
+      "merge",
+      "remove-merged-worktrees",
+    ])
       expect(
-        existsSync(
-          join(
-            f.c.directory,
-            "workflows-v1",
-            "worktrees",
-            run.id,
-            name,
-            ".git",
-          ),
+        operations.some(
+          (s) => s.id.startsWith(`${name}-`) && s.status === "completed",
         ),
+        name,
       ).toBe(true);
+    expect(existsSync(join(worktrees, run.id))).toBe(false);
+    expect(
+      git("worktree", "list", "--porcelain").match(/^worktree /gmu),
+    ).toHaveLength(1);
+    expect(run.notice).toContain("Changed files:");
+    expect(run.notice).toContain("a.txt, b.txt");
+    expect(
+      readFileSync(
+        join(f.root, ".cadence/assistant/workflows", run.id, "result.md"),
+        "utf8",
+      ),
+    ).toMatch(
+      /^# Workflow delivery notes\n\nWritten before final candidate checks/u,
+    );
+    expect(
+      run.steps.some(
+        (s) =>
+          s.kind === "review" && s.text.startsWith("Agent review approved"),
+      ),
+    ).toBe(true);
     expect(run.mergedCommit).toBe(git("rev-parse", "HEAD").trim());
     expect(readFileSync(join(f.root, "a.txt"), "utf8")).toBe(
       "implemented a.txt\n",
@@ -220,7 +288,25 @@ it("real generated owner: task IDs integration/tasks stay disjoint, run parallel
         .filter((s) => s.kind === "check")
         .every((s) => s.exitCode === 0),
     ).toBe(true);
-    expect(existsSync(join(f.root, ".cadence/project.md"))).toBe(true);
+    const context = readFileSync(join(f.root, ".cadence/project.md"), "utf8");
+    expect(context).toContain("Uncommitted user line.");
+    expect(context).toContain("<!-- CADENCE:PROJECT:START -->");
+    expect(context).toContain(definition.projectContext);
+    // An interrupted run never fences startup: it settles honestly as unknown.
+    const interrupted = randomUUID();
+    f.c.files.create(
+      join(f.c.directory, "workflows-v1", "runs", interrupted, "state.json"),
+      canonicalJson({
+        ...run,
+        id: interrupted,
+        status: "running",
+        phase: "integrating",
+        mergedCommit: null,
+        notice: "",
+        steps: [{ ...run.steps[0], status: "running" }],
+      }),
+      384 * 1024,
+    );
     const restarted = await f.restart();
     const retained = await restarted.client.workbenchRead({
       kind: "workflow",
@@ -230,6 +316,26 @@ it("real generated owner: task IDs integration/tasks stay disjoint, run parallel
       kind: "ok",
       value: { response: { run: { status: "completed" } } },
     });
+    const recovered = await restarted.client.workbenchRead({
+      kind: "workflow",
+      id: interrupted,
+    });
+    if (
+      recovered.kind !== "ok" ||
+      recovered.value.kind !== "workflow" ||
+      recovered.value.response.type !== "run"
+    )
+      throw Error(JSON.stringify(recovered));
+    expect(recovered.value.response.run).toMatchObject({
+      status: "unknown",
+      phase: "finished",
+      mergedCommit: null,
+    });
+    expect(recovered.value.response.run.notice).toContain("restarted");
+    expect(recovered.value.response.run.notice).toContain(
+      "fast-forward may have completed",
+    );
+    expect(recovered.value.response.run.steps[0].status).toBe("unknown");
   } finally {
     await f.close();
   }
@@ -259,6 +365,31 @@ it("stale plans refuse before effects; generated research remains readonly and C
     expect(f.observations[0].tools).not.toContain("write");
     expect(f.observations[0].tools).not.toContain("bash");
     expect(readFileSync(join(f.root, "a.txt"), "utf8")).toBe("user change");
+    // A second approved plan is refused up front instead of queueing to go stale.
+    const other = (writes: string) => {
+      const definition = plan();
+      definition.tasks = [{ ...definition.tasks[0], writes: [writes] }];
+      return definition;
+    };
+    const first = await propose(other("c.txt"));
+    const second = await propose(other("d.txt"));
+    const running = await start(first);
+    const grant = await command({
+      action: "prepare",
+      proposalId: second.id,
+      digest: second.digest,
+    });
+    if (grant.type !== "grant") throw Error("grant");
+    await expect(
+      command({
+        action: "execute",
+        proposalId: second.id,
+        digest: second.digest,
+        grant: grant.grant,
+      }),
+    ).rejects.toThrow("conflict");
+    await command({ action: "cancel", runId: running });
+    expect((await wait(running)).status).toBe("canceled");
   } finally {
     await f.close();
   }
@@ -292,6 +423,20 @@ it("failed verification uses only the approved repair budget and never merges a 
     expect(run.mergedCommit).toBeNull();
     expect(git("rev-parse", "HEAD")).toBe(baseline);
     expect(existsSync(join(f.root, "a.txt"))).toBe(false);
+    // Working-copy delivery in Git enforces the declared scope: the fixture
+    // worker writes b.txt for a task declared to write c.txt.
+    const direct = plan();
+    direct.delivery = "working-copy";
+    direct.tasks = [{ ...direct.tasks[1], writes: ["c.txt"] }];
+    const scoped = await command({ action: "propose", plan: direct, model });
+    if (scoped.type !== "proposal") throw Error("proposal");
+    const outside = await wait(await start(scoped.proposal));
+    expect(outside.status).toBe("failed");
+    expect(outside.notice).toContain("outside the approved scope");
+    expect(outside.notice).toContain("b.txt");
+    expect(readFileSync(join(f.root, "b.txt"), "utf8")).toBe(
+      "implemented b.txt\n",
+    );
   } finally {
     await f.close();
   }
@@ -320,7 +465,7 @@ it("explicit working-copy delivery works without Git and never initializes or co
 }, 30000);
 
 it("a baseline command cannot hide out-of-scope changes by committing them in the candidate", async () => {
-  const { f, git, command, start, wait, model } = await setup();
+  const { f, git, command, start, wait, model, worktrees } = await setup();
   try {
     writeFileSync(
       join(f.root, "rogue-check.cjs"),
@@ -349,13 +494,8 @@ it("a baseline command cannot hide out-of-scope changes by committing them in th
     expect(f.contacts()).toBe(0);
     expect(git("rev-parse", "HEAD")).toBe(head);
     expect(existsSync(join(f.root, "out-of-scope.txt"))).toBe(false);
-    const candidate = join(
-      f.c.directory,
-      "workflows-v1",
-      "worktrees",
-      run.id,
-      "integration",
-    );
+    // Failed runs retain their worktrees for inspection.
+    const candidate = join(worktrees, run.id, "integration");
     expect(readFileSync(join(candidate, "out-of-scope.txt"), "utf8")).toBe(
       "unapproved",
     );

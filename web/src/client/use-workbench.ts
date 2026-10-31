@@ -61,7 +61,9 @@ export function cadenceInput(
   value: string,
   selected: "chat" | "cadence",
 ): { mode: "chat" | "cadence"; text: string } {
-  const prefix = /^(?:\/cadence|cadence)(?:\s+|$)/.exec(value.trimStart());
+  // Only the slash command: a bare "cadence ..." sentence would otherwise turn
+  // on persistent Cadence mode for the whole conversation.
+  const prefix = /^\/cadence(?:\s+|$)/.exec(value.trimStart());
   return prefix
     ? { mode: "cadence", text: value.trimStart().slice(prefix[0].length) }
     : { mode: selected, text: value };

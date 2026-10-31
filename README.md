@@ -46,7 +46,7 @@ The port and token live in `~/.pi/agent/cadence/.env`; anyone with the token can
 3. Send `/cadence [goal]` once to enter Cadence in this conversation; continue with normal messages to investigate and clarify requirements.
 4. Review the complete inline plan and click **Implement this plan** (or send `按计划实施`).
    The owner implements, verifies, repairs within budget and delivers as approved.
-5. Follow actual progress, subagent transcripts and local merge results in the conversation.
+5. Follow actual progress and local merge results in the conversation; open any subagent's full context from the lower-left **Subagents** dock.
    Refresh and completion keep Cadence on; **Exit Cadence** only exits the mode, while **Cancel workflow — request stop** requests cancellation.
 
 **Legacy task** retains the old create/plan/Save/Start/check/human-Review route explicitly.

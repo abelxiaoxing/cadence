@@ -268,12 +268,37 @@ it("browser-only persistent Cadence: clarification, exact approval, lost reply, 
     await childSummary.click();
     const child = childSummary.locator("..");
     await child
-      .getByRole("button", { name: "Subagent transcript", exact: true })
+      .getByRole("button", { name: "Open subagent context", exact: true })
       .click();
-    await child
-      .getByLabel("Subagent transcript", { exact: true })
+    // The subagent's context opens in the main area, not inside the chat.
+    const context = page.getByLabel("Subagent context", { exact: true });
+    await context
+      .getByRole("region", { name: "Conversation turn" })
       .getByText("Implemented the declared file.", { exact: true })
       .waitFor();
+    assert(
+      await page
+        .getByRole("textbox", { name: "Message", exact: true })
+        .isHidden(),
+    );
+    await page
+      .getByRole("button", { name: "Back to conversation", exact: true })
+      .click();
+    await composer().waitFor();
+    // The same agent is listed in the subagent dock and opens from there.
+    const dockRow = page
+      .locator(".agent-dock-row")
+      .filter({ hasText: /^implementation/i })
+      .first();
+    await dockRow.waitFor();
+    await dockRow.click();
+    await context
+      .getByRole("region", { name: "Conversation turn" })
+      .getByText("Implemented the declared file.", { exact: true })
+      .waitFor();
+    await page
+      .getByRole("button", { name: "Back to conversation", exact: true })
+      .click();
     await page.reload();
     await page
       .locator(".conversation-badge")

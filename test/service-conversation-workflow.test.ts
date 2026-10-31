@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import type {
@@ -270,10 +270,66 @@ it("mode survives owner restart without replay or model restoration on reads; ex
     );
     expect(prefs).not.toContain("sourceSelectionId");
     expect(prefs).not.toContain("fabricated-accepting-key");
+    // A partially written 2.0.21 control record (head without a recorded turn)
+    // and stray entries must not block startup or hide other conversations.
+    const partial = randomUUID(),
+      records = join(f.c.directory, "conversation-workflows-v1");
+    mkdirSync(join(records, partial), { mode: 0o700 });
+    const partialBytes = JSON.stringify({
+      schema: "cadence-conversation-workflow/1",
+      state: {
+        id: partial,
+        revision: 1,
+        enabled: true,
+        head: randomUUID(),
+        proposal: null,
+        runs: [],
+      },
+    });
+    writeFileSync(join(records, partial, "state.json"), partialBytes, {
+      mode: 0o600,
+    });
+    writeFileSync(
+      join(
+        f.c.directory,
+        "conversations-v1",
+        "control-links",
+        `${partial}.json`,
+      ),
+      JSON.stringify({
+        schema: "cadence-conversation-control/1",
+        conversationId: partial,
+      }),
+      { mode: 0o600 },
+    );
+    writeFileSync(join(records, "stray.txt"), "not a record", { mode: 0o600 });
     const restartedAgain = await f.restart();
     client = restartedAgain.client;
     const catalog = await client.models();
     if (catalog.kind !== "ok") throw Error("models");
+    expect(await client.workbenchRead({ kind: "conversations" })).toMatchObject(
+      { kind: "ok", value: { entries: [{ id, cadence: true }] } },
+    );
+    const degraded = await client.workbenchRead({
+      kind: "cadence-conversation",
+      id: partial,
+    });
+    expect(degraded).toMatchObject({
+      kind: "ok",
+      value: { state: { enabled: true, proposal: null } },
+    });
+    expect(
+      degraded.kind === "ok" &&
+        degraded.value.kind === "cadence-conversation" &&
+        degraded.value.state.notice,
+    ).toBeTruthy();
+    expect(await client.workbenchRead({ kind: "workflow-active" })).toEqual({
+      kind: "ok",
+      value: { kind: "workflow-active", runs: [], links: [] },
+    });
+    expect(readFileSync(join(records, partial, "state.json"), "utf8")).toBe(
+      partialBytes,
+    );
     const mode = await client.workbenchRead({
       kind: "cadence-conversation",
       id,
@@ -597,11 +653,13 @@ it("generated owner reports fresh stale Sends as no-effect, but never reclassifi
         view.value.turns.some((t) => t.id === rejectedId),
     ).toBe(false);
     expect(f.contacts()).toBe(contacts);
+    // A lost-reply retry observes the original acceptance; it never runs twice.
     const replay = await f.client.workbenchCommand(enter);
     expect(replay).toMatchObject({
-      kind: "error",
-      error: { code: "stale", effect: "uncertain", recovery: "observe" },
+      kind: "ok",
+      value: { kind: "accepted", commandId: first },
     });
+    expect(f.contacts()).toBe(contacts);
     const mode = await f.client.workbenchRead({
       kind: "cadence-conversation",
       id,
@@ -619,12 +677,22 @@ it("generated owner reports fresh stale Sends as no-effect, but never reclassifi
       kind: "error",
       error: { code: "stale", effect: "none" },
     });
+    const listed = async () => {
+      const list = await f.client.workbenchRead({ kind: "conversations" });
+      if (list.kind !== "ok" || list.value.kind !== "conversations")
+        throw Error("list");
+      return list.value.entries;
+    };
+    expect(await listed()).toMatchObject([
+      { id, head: first, status: "completed", cadence: true },
+    ]);
     // Only a new explicit command proceeds; neither refusal replays anything.
+    const next = randomUUID();
     expect(
       (
         await f.client.workbenchCommand({
           ...enter,
-          commandId: randomUUID(),
+          commandId: next,
           head: first,
           intent: "message",
           revision: mode.value.state.revision,
@@ -633,6 +701,10 @@ it("generated owner reports fresh stale Sends as no-effect, but never reclassifi
     ).toBe("ok");
     await settleTurn(f.client, id);
     expect(f.contacts()).toBe(contacts + 1);
+    // Cached list projections follow the new head once its files change.
+    expect(await listed()).toMatchObject([
+      { id, head: next, status: "completed", cadence: true },
+    ]);
   } finally {
     await f.close();
   }

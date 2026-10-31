@@ -60,7 +60,10 @@ import { SearchBar } from "./components/history/SearchBar";
 import { PlanApproval } from "./components/plan/PlanApproval";
 import { MessageList } from "./components/transcript/MessageList";
 import { ToolCallBlock } from "./components/transcript/ToolCallBlock";
-import { AgentDock } from "./components/workspace/AgentDock";
+import {
+  AgentDock,
+  type WorkflowAgent,
+} from "./components/workspace/AgentDock";
 import { ChatWorkspace } from "./components/workspace/ChatWorkspace";
 import { FilesPanel } from "./components/workspace/FilesPanel";
 import {
@@ -70,7 +73,8 @@ import {
 import { ProjectPicker } from "./components/workspace/ProjectPicker";
 import { RunSummary } from "./components/workspace/RunSummary";
 import { TaskSidebar } from "./components/workspace/TaskSidebar";
-import { WorkflowCard } from "./components/workspace/WorkflowPanel";
+import { WorkflowAgentView } from "./components/workspace/WorkflowAgentView";
+import { cancelWorkflow } from "./components/workspace/WorkflowPanel";
 import { WorkingFolderButton } from "./components/workspace/WorkingFolderButton";
 import { historyUrl, readHistoryUrl } from "./history/history-url";
 import { usePage } from "./history/use-page";
@@ -167,6 +171,9 @@ export function App({
     initial ? null : (chatFromLocation() ?? crypto.randomUUID()),
   );
   const [taskComposer, setTaskComposer] = useState(false);
+  // A workflow subagent (or run) shown in the main area over the current view.
+  const [agent, setAgent] = useState<WorkflowAgent | null>(null);
+  const [chatRuns, setChatRuns] = useState<string[]>([]);
   const [projectOpen, setProjectOpen] = useState<string | null>(null);
   const [rightTab, setRightTab] = useState<"files" | "task">(
     initial ? "task" : "files",
@@ -191,13 +198,22 @@ export function App({
   );
   const workflowActivity = useWorkbench(
     api.client,
-    !detached ? { kind: "workflow-active" } : null,
-    1000,
+    workspace.workspace && !detached ? { kind: "workflow-active" } : null,
+    2000,
   );
   const background =
     workflowActivity.value?.kind === "workflow-active"
-      ? workflowActivity.value.runs
+      ? workflowActivity.value
       : undefined;
+  const workflowIds = useMemo(
+    () => [
+      ...new Set([
+        ...(background?.runs.map((run) => run.id) ?? []),
+        ...chatRuns,
+      ]),
+    ],
+    [background, chatRuns],
+  );
   const projects = useWorkbench(
     api.client,
     workspace.workspace && !detached ? { kind: "projects" } : null,
@@ -359,6 +375,8 @@ export function App({
   };
   const selectChat = (id: string = crypto.randomUUID(), cadence = false) => {
     setTaskComposer(cadence);
+    setAgent(null);
+    if (id !== chatId) setChatRuns([]);
     creationRead.current?.abort();
     lifetime.current.depart();
     setPrepared(undefined);
@@ -390,6 +408,8 @@ export function App({
   }, [chatId]);
   const selectTask = (id: string, title?: string) => {
     creationRead.current?.abort();
+    setAgent(null);
+    setChatRuns([]);
     setChatId(null);
     setRightTab("task");
     setTaskTitle(title ?? "");
@@ -413,6 +433,8 @@ export function App({
       if (!target) {
         const chat = chatFromLocation();
         if (chat) {
+          setAgent(null);
+          setChatRuns([]);
           setChatId(chat);
           setTaskId(null);
           setScope(null);
@@ -423,6 +445,8 @@ export function App({
         }
         return;
       }
+      setAgent(null);
+      setChatRuns([]);
       setChatId(null);
       setRightTab("task");
       // Same-document links/back navigation observe the exact new task too.
@@ -444,6 +468,7 @@ export function App({
     return () => window.removeEventListener("hashchange", navigate);
   }, [closeDrawer]);
   const selectScope = (value: Scope, snapshot?: string, label?: string) => {
+    setAgent(null);
     setSelectedSnapshot(snapshot);
     setScopeTitle(label ?? "");
     lifetime.current.depart();
@@ -941,12 +966,30 @@ export function App({
               conversationId={chatId}
               onConversation={selectChat}
               onNewConversation={() => selectChat()}
-              workflowActiveCount={background?.length}
+              workflows={background?.runs}
+              workflowLinks={background?.links}
+              workflowError={!!workflowActivity.error}
+              selectedWorkflow={agent?.runId}
+              onWorkflow={(run, conversationId) => {
+                if (conversationId) selectChat(conversationId);
+                else {
+                  setAgent({ runId: run.id, stepId: null, label: run.goal });
+                  closeDrawer();
+                }
+              }}
+              onCancelWorkflow={async (run) => {
+                const code = await cancelWorkflow(api.client, run);
+                if (code) setError(code);
+                workflowActivity.refresh();
+              }}
               onTask={selectTask}
               onScope={selectScope}
               onNew={() => {
-                if (chatId) setTaskComposer(true);
-                else selectChat(undefined, true);
+                // From an open chat, a legacy task keeps that chat as its origin.
+                if (chatId) {
+                  setAgent(null);
+                  setTaskComposer(true);
+                } else selectChat(undefined, true);
               }}
             />
           )}
@@ -957,6 +1000,12 @@ export function App({
               taskId={taskId}
               runs={runs}
               snapshot={snapshotSeq}
+              workflowRuns={workflowIds}
+              selected={agent}
+              onOpenWorkflow={(next) => {
+                setAgent(next);
+                closeDrawer();
+              }}
               onOpen={(parent, child, snapshot, label) => {
                 selectTask(parent);
                 setScope({ kind: "child", id: child });
@@ -976,33 +1025,30 @@ export function App({
         </section>
         <ResizeHandle side="left" width={leftWidth} onResize={setLeftWidth} />
         <main className="main" inert={mobile && drawer !== null}>
-          {background?.length || workflowActivity.error ? (
-            <details className="background-workflows">
-              <summary>
-                {t("Background workflows")} · {background?.length ?? "?"}
-              </summary>
-              {workflowActivity.error && (
-                <p role="alert">
-                  {t(
-                    "Workflow activity unavailable; retained work may still be running.",
-                  )}
-                </p>
-              )}
-              {background?.map((run) => (
-                <WorkflowCard
-                  key={run.id}
-                  client={api.client}
-                  id={run.id}
-                  onChanged={workflowActivity.refresh}
-                />
-              ))}
-            </details>
-          ) : null}
+          {agent && (
+            <WorkflowAgentView
+              key={`${agent.runId}:${agent.stepId ?? ""}`}
+              client={api.client}
+              agent={agent}
+              backLabel={
+                chatId
+                  ? t("Back to conversation")
+                  : taskId
+                    ? t("Back to task")
+                    : t("Back")
+              }
+              onBack={() => setAgent(null)}
+              onOpenAgent={setAgent}
+            />
+          )}
           {chatId && (
             <ChatWorkspace
               key={`${chatWorkspace.current ?? "connecting"}:${chatId}`}
               client={api.client}
               id={chatId}
+              hidden={!!agent}
+              onOpenAgent={setAgent}
+              onWorkflowRuns={setChatRuns}
               workspaceId={chatWorkspace.current ?? "connecting"}
               available={!!workspace.workspace}
               canInterrupt={!!workspace.cancelCompatible}
@@ -1029,7 +1075,7 @@ export function App({
               onCadence={sendTask}
             />
           )}
-          {scope && (
+          {scope && !agent && (
             <header className="conversation-header">
               <div className="conversation-heading">
                 {scope.kind !== "task" && taskId && (
@@ -1077,7 +1123,7 @@ export function App({
               </details>
             </header>
           )}
-          {taskId && (
+          {taskId && !agent && (
             <PlanApproval
               key={taskId}
               client={api.client}
@@ -1089,7 +1135,7 @@ export function App({
               onResult={result}
             />
           )}
-          <div className="workspace-content" hidden={!!chatId}>
+          <div className="workspace-content" hidden={!!chatId || !!agent}>
             {!seed && (
               <section className="empty-state">
                 <span className="empty-logo" aria-hidden="true">

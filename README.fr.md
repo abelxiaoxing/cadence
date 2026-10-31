@@ -45,7 +45,7 @@ Le port et le jeton se trouvent dans `~/.pi/agent/cadence/.env` ; quiconque poss
    Cette conversation reste en mode Cadence ; précisez les besoins par des messages ordinaires.
 4. Lisez le plan complet et cliquez sur **Implement this plan**.
    L’implémentation, les vérifications, les réparations bornées et la livraison locale convenue sont automatiques.
-5. Suivez la progression et les traces des sous-agents dans la conversation.
+5. Suivez la progression dans la conversation ; ouvrez les traces des sous-agents depuis le panneau **Subagents** en bas à gauche.
    Actualiser ou terminer un objectif ne quitte pas le mode.
    **Exit Cadence** quitte le mode ; **Cancel workflow — request stop** demande l’annulation.
 

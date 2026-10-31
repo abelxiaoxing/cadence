@@ -32,15 +32,17 @@ it("only an explicit leading command selects Cadence; mentions, quoted commands 
     mode: "cadence",
     text: "fix auth",
   });
-  expect(cadenceInput("  cadence\nresearch", "chat")).toEqual({
+  expect(cadenceInput("  /cadence\nresearch", "chat")).toEqual({
     mode: "cadence",
     text: "research",
   });
-  expect(cadenceInput("cadence", "chat")).toEqual({
+  expect(cadenceInput("/cadence", "chat")).toEqual({
     mode: "cadence",
     text: "",
   });
   for (const value of [
+    "cadence",
+    "cadence is a mode",
     "What is cadence?",
     "cadences are useful",
     "`/cadence fix`",

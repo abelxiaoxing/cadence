@@ -10,6 +10,7 @@ import {
   FiSquare,
 } from "react-icons/fi";
 import type { ChatSummary } from "../../../../src/service/contracts/workbench.ts";
+import type { WorkflowRun } from "../../../../src/service/contracts/workflow.ts";
 import { usePage } from "../../history/use-page";
 import { useT } from "../../i18n/locale";
 import { buildNavigationRows } from "../../navigation/assignment-rows";
@@ -223,7 +224,12 @@ export function TaskSidebar({
   conversationId,
   onConversation,
   onNewConversation,
-  workflowActiveCount,
+  workflows,
+  workflowLinks = [],
+  workflowError = false,
+  selectedWorkflow,
+  onWorkflow,
+  onCancelWorkflow,
 }: {
   client: ServiceClient;
   workspace: WorkspaceBootstrap;
@@ -242,7 +248,13 @@ export function TaskSidebar({
   conversationId?: string | null;
   onConversation?: (id: string) => void;
   onNewConversation?: () => void;
-  workflowActiveCount?: number;
+  /** Active Cadence workflow runs; undefined until first observed. */
+  workflows?: WorkflowRun[];
+  workflowLinks?: { runId: string; conversationId: string }[];
+  workflowError?: boolean;
+  selectedWorkflow?: string;
+  onWorkflow?: (run: WorkflowRun, conversationId: string | null) => void;
+  onCancelWorkflow?: (run: WorkflowRun) => Promise<void>;
 }) {
   const { t, tx } = useT();
   const request: ListRequest = {
@@ -290,6 +302,50 @@ export function TaskSidebar({
       />
     </section>
   );
+  const [stopping, setStopping] = useState<Set<string>>(() => new Set());
+  const workflowRow = (run: WorkflowRun) => {
+    const link =
+      workflowLinks.find((entry) => entry.runId === run.id)?.conversationId ??
+      null;
+    return (
+      <div key={run.id} className="conversation-group">
+        <button
+          type="button"
+          className={`session-item${selectedWorkflow === run.id || (link && link === conversationId) ? " active" : ""}`}
+          onClick={() => onWorkflow?.(run, link)}
+          title={run.goal}
+        >
+          <span className="status-dot busy" aria-hidden="true" />
+          <span className="session-info">
+            <span className="session-title">{run.goal}</span>
+            <span className="session-sub">
+              {t("Cadence workflow")} · {tx(run.phase)} · {tx(run.status)}
+            </span>
+          </span>
+        </button>
+        {onCancelWorkflow && (
+          <button
+            type="button"
+            className="conversation-stop"
+            disabled={stopping.has(run.id)}
+            onClick={() => {
+              setStopping((value) => new Set(value).add(run.id));
+              void onCancelWorkflow(run).finally(() =>
+                setStopping((value) => {
+                  const next = new Set(value);
+                  next.delete(run.id);
+                  return next;
+                }),
+              );
+            }}
+          >
+            <FiSquare aria-hidden="true" />
+            {t("Cancel workflow — request stop")}
+          </button>
+        )}
+      </div>
+    );
+  };
   const liveChats = chats.filter(
     (chat) =>
       chat.status === "running" ||
@@ -311,11 +367,11 @@ export function TaskSidebar({
         <span className="session-title">{chat.title}</span>
         <span className="session-sub">
           {chat.cadence ? t("Cadence on") : t("Ordinary")} ·{" "}
-          {chat.cadence
-            ? ["running", "queued"].includes(chat.status)
-              ? t("Discussing")
-              : t("See workflow progress")
-            : tx(chat.status)}
+          {chat.cadence && ["running", "queued"].includes(chat.status)
+            ? t("Discussing")
+            : chat.cadence && chat.status === "completed"
+              ? t("Ready for conversation")
+              : tx(chat.status)}
         </span>
       </span>
     </button>
@@ -326,10 +382,8 @@ export function TaskSidebar({
       <SidebarSection
         title={t("Running conversations")}
         count={
-          activeRuns?.status === "complete"
-            ? workflowActiveCount === undefined
-              ? "?"
-              : String(active.length + liveChats.length + workflowActiveCount)
+          activeRuns?.status === "complete" && workflows && !workflowError
+            ? String(active.length + liveChats.length + workflows.length)
             : "?"
         }
         className="running-conversations"
@@ -341,13 +395,20 @@ export function TaskSidebar({
             )}
           </p>
         )}
+        {workflowError && (
+          <p className="panel-hint">
+            {t(
+              "Workflow activity unavailable; retained work may still be running.",
+            )}
+          </p>
+        )}
         {liveChats.map(chatRow)}
+        {workflows?.map(workflowRow)}
         {activeRuns?.status === "complete" &&
           active.length === 0 &&
           liveChats.length === 0 &&
-          workflowActiveCount === 0 && (
-            <p className="panel-hint">{t("No active runs")}</p>
-          )}
+          workflows?.length === 0 &&
+          !workflowError && <p className="panel-hint">{t("No active runs")}</p>}
         {active.map((run) => {
           const title = records.find(
             (r) => r.owner.taskId === run.taskId,

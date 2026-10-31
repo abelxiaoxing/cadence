@@ -3,7 +3,7 @@
 In a trusted Pi terminal or a WebUI conversation in an explicitly selected project, enter `/cadence <goal>` once (or `/cadence` to discuss the goal).
 Cadence stays enabled for the entire conversation, including after a goal finishes.
 Continue using normal messages; do not repeat the command for clarification or another goal.
-Type `退出 Cadence` or `exit cadence` to leave the mode explicitly.
+Type `退出 Cadence` or `exit cadence` (in Pi also `/cadence exit`) to leave the mode explicitly.
 Leaving, closing Pi/browser and switching conversations detach; they do not cancel accepted work.
 Browser conversation mode is retained by the project owner, not by a browser-only toggle, and works without a live Pi terminal.
 
@@ -23,6 +23,8 @@ Browser conversation mode is retained by the project owner, not by a browser-onl
    Ask for status, more detail, cancellation, or the next goal normally.
 
 Native mode is branch-aware; browser mode follows its server-owned conversation identity.
+A saved native mode is active only in a trusted interactive terminal; print/RPC sessions keep ordinary tools and can still exit with `/cadence exit`.
+In Pi, the agent panel lists workflow subagents and opens their transcripts; `cadence_status` can read one step's transcript.
 Resume and compaction retain the mode/context, not execution grants.
 Opening a different conversation does not enable Cadence there.
 Restore never replays a command or automatically resumes an interrupted queue.
@@ -34,7 +36,7 @@ The first native use defaults to the current Pi provider/model/API/thinking sele
 The selected preference is remembered in `<agent-dir>/cadence/settings.json` (normally `~/.pi/agent/cadence/settings.json`) and reused across projects.
 Ask Cadence to change its model in Pi, or use **Model** in the browser.
 The browser restores an available saved preference on explicit Send; reads/login do not install a choice.
-If no usable preference exists, choose once.
+If no usable preference exists, choose once; an unreadable preference file falls back to the current Pi model, and choosing a model rewrites it.
 An accepted run keeps its original exact model.
 An unavailable remembered model is not silently substituted.
 Pi's original model and authentication sources remain authoritative; Cadence does not copy credentials.
@@ -63,11 +65,17 @@ The plan chooses one delivery policy:
   Failed or canceled work leaves actual edits in place; this is not transactional application or a sandbox.
 
 A local-merge plan does not adopt existing dirty inputs into its committed baseline.
-Dirty declared targets refuse before implementation; unrelated user changes are preserved and rechecked before integration.
+Dirty declared targets refuse before implementation; unrelated user changes made during a run are preserved and do not block integration (Git refuses a genuine overlap).
+A write path naming a directory covers the files below it; in Git, working-copy edits outside the declared writes fail the run (the edits stay).
 Unresolved conflicts or a changed target stop integration.
 Cadence never resets, stashes, force-pushes or silently cleans uncertain worktrees.
 Ignored generated Markdown remains ignored and is published without forcing it into Git.
-Worktrees and all results are retained; there is no automatic eviction/cleanup.
+Clean worktrees are removed after a successful merge (plain `git worktree remove`, which also deletes their ignored setup output such as `node_modules`); dirty or moved ones and all results are retained.
+Only one approved implementation runs at a time; approving a second while one is active is refused with `conflict`.
+The 90-minute budget starts when the run acquires the checkout; Cancel/Stop never interrupt the final fast-forward (a hung `git merge` therefore delays Stop until Git exits).
+Local-merge plans cannot declare files that Git ignores; use working-copy delivery for those.
+After an owner restart, an unfinished run is shown as `unknown` with its retained worktrees; it is never resumed.
+Credential-looking text in plans and research questions is shown and approved redacted.
 
 An isolated worktree does **not** inherit ignored `node_modules`, build output, credentials or profiles.
 Investigate prerequisites during planning.
@@ -80,7 +88,7 @@ Final candidate checks must pass before merge.
 Post-merge failures remain failures and report the actual merge commit; no rollback is fabricated.
 Automatic review is never recorded as human review.
 
-Ask to cancel to request orderly closure.
+To request orderly closure, ask Cadence to cancel in Pi, or use **Cancel workflow — request stop** in the browser (the browser coordinator cannot cancel).
 A pending or unknown cancellation is not reported as stopped.
 Failures, timeouts and unknown process/auth/storage outcomes remain distinct; unknown resources retain fences for explicit informed recovery.
 
@@ -88,13 +96,15 @@ Failures, timeouts and unknown process/auth/storage outcomes remain distinct; un
 
 An explicit native mode entry/current user Send may start or reuse its local project owner on demand.
 It does not install a system service, enable boot startup, select another account's credentials or expose a public listener.
+Pi says once which command stops an owner it started; when Pi runs on Bun, Node must be on `PATH`.
 An existing owner/configuration is reused, not silently replaced after a connection failure.
 System-service installation and remote access remain separate explicit operations described in [Service management](service-management.md) and [Remote access](remote-access.md).
 
 `/cadence-inspect` retains the previous advanced task/history UI for diagnostics and legacy workflows; it is not needed for conversation mode.
 The WebUI uses the same execution engine with a separate, context-bound browser confirmation path.
-Its main composer stays in the same conversation; plan, workflow progress, retained step results and actual merge outcomes appear inline.
-The background-workflow observer includes native-started workflows; an unavailable observation is not proof of no work.
+Its main composer stays in the same conversation; the plan card, workflow progress and actual merge outcomes appear inline.
+Research, implementation and review subagents are listed in the lower-left **Subagents** dock, together with legacy task children; selecting one (or **Open subagent context** on a step) opens its full transcript and retained result in the main area, and **Back to conversation** returns.
+Active workflows are listed under **Running conversations** with **Cancel workflow — request stop**; this includes native-started workflows, and an unavailable observation is not proof of no work.
 **Legacy task** retains the old create/plan/Save/Start/check/human-Review route explicitly, rather than making `/cadence` create a legacy task.
 Existing browser conversations enter the new mode only on explicit Send/activation; old tasks and Pi transcripts are not converted or imported.
 Approval grants are neither stored in the browser nor restored after restart.

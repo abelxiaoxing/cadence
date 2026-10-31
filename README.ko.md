@@ -54,7 +54,7 @@ pi install "$(npm root -g)/@abelxiaoxing/cadence"
    이 대화는 Cadence 모드를 유지하며 이후에는 일반 메시지로 요구사항을 구체화합니다.
 4. 전체 계획을 확인하고 **Implement this plan**을 누르세요.
    구현, 검사, 제한된 수정 및 합의한 로컬 전달을 자동으로 진행합니다.
-5. 같은 대화에서 진행 상황과 서브에이전트 기록을 확인하세요.
+5. 같은 대화에서 진행 상황을 확인하고, 서브에이전트 기록은 왼쪽 아래 **Subagents** 패널에서 여세요.
    새로고침이나 목표 완료로 모드가 꺼지지 않습니다.
    **Exit Cadence**는 모드만 종료하고, **Cancel workflow — request stop**은 작업 취소를 요청합니다.
 

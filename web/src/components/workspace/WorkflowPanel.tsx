@@ -5,26 +5,29 @@ import type { ServiceClient } from "../../../../src/service-client.ts";
 import { useWorkbench } from "../../client/use-workbench";
 import { useT } from "../../i18n/locale";
 import { Markdown } from "../rich/Markdown";
-import { ChatTurnView } from "./ChatTurnView";
+import { type WorkflowAgent, workflowAgentLabel } from "./AgentDock";
 
 export function WorkflowPanel({
   client,
   state,
   canApprove,
+  approvalHint,
   onApprove,
   onChanged,
-  pending,
+  onOpenAgent,
 }: {
   client: ServiceClient;
   state: CadenceConversation;
   canApprove: boolean;
+  /** Why approval is unavailable for the displayed plan, if known. */
+  approvalHint?: string;
   onApprove(): void;
   onChanged(): void;
-  pending: string;
+  onOpenAgent?(agent: WorkflowAgent): void;
 }) {
   const { t } = useT();
   const [count, setCount] = useState(2);
-  const ids = [...new Set([...state.runs, ...(pending ? [pending] : [])])];
+  const ids = [...new Set(state.runs)];
   return (
     <section className="workflow-panel" aria-label={t("Cadence workflow")}>
       {ids.length > count && (
@@ -37,7 +40,13 @@ export function WorkflowPanel({
         </button>
       )}
       {ids.slice(-count).map((id) => (
-        <WorkflowCard key={id} client={client} id={id} onChanged={onChanged} />
+        <WorkflowCard
+          key={id}
+          client={client}
+          id={id}
+          onChanged={onChanged}
+          onOpenAgent={onOpenAgent}
+        />
       ))}
       {state.enabled && state.proposal && (
         <section
@@ -71,6 +80,7 @@ export function WorkflowPanel({
           >
             {t("Implement this plan")}
           </button>
+          {approvalHint && <p className="inspector-note">{approvalHint}</p>}
           <p>
             {t(
               "To change the plan, continue the conversation. A changed plan requires fresh approval.",
@@ -88,14 +98,29 @@ export function WorkflowPanel({
     </section>
   );
 }
+/** Request orderly closure of one workflow; the reply is an observation, never a retry. */
+export async function cancelWorkflow(
+  client: Pick<ServiceClient, "workbenchCommand">,
+  run: { id: string; epoch: string },
+): Promise<string> {
+  const reply = await client.workbenchCommand({
+    kind: "workflow-cancel",
+    commandId: crypto.randomUUID(),
+    epoch: run.epoch,
+    runId: run.id,
+  });
+  return reply.kind === "error" ? reply.error.code : "";
+}
 export function WorkflowCard({
   client,
   id,
   onChanged,
+  onOpenAgent,
 }: {
   client: ServiceClient;
   id: string;
   onChanged?(): void;
+  onOpenAgent?(agent: WorkflowAgent): void;
 }) {
   const { t, tx } = useT();
   const [poll, setPoll] = useState(1000);
@@ -105,7 +130,6 @@ export function WorkflowCard({
       ? page.value.response.run
       : null;
   const [detail, setDetail] = useState<string | null>(null);
-  const [transcript, setTranscript] = useState<string | null>(null);
   const result = useWorkbench(
     client,
     detail ? { kind: "workflow-detail", id, stepId: detail } : null,
@@ -158,7 +182,7 @@ export function WorkflowCard({
       {run?.steps.map((step) => (
         <details key={step.id} className="chat-tool">
           <summary>
-            {tx(step.kind)} · {step.id} · {tx(step.status)}
+            {tx(step.kind)} · {workflowAgentLabel(step.id)} · {tx(step.status)}
           </summary>
           {step.exitCode !== null && (
             <p>
@@ -166,27 +190,20 @@ export function WorkflowCard({
             </p>
           )}
           <Markdown text={step.text} />
-          {step.childRunId && (
-            <>
-              <p>
-                <code>{step.childRunId}</code>
-              </p>
-              <button
-                type="button"
-                className="ghost"
-                onClick={() => setTranscript(step.id)}
-              >
-                {t("Subagent transcript")}
-              </button>
-            </>
-          )}
-          {transcript === step.id && (
-            <WorkflowTranscript
-              client={client}
-              id={id}
-              stepId={step.id}
-              running={step.status === "running"}
-            />
+          {step.childRunId && onOpenAgent && (
+            <button
+              type="button"
+              className="ghost"
+              onClick={() =>
+                onOpenAgent({
+                  runId: id,
+                  stepId: step.id,
+                  label: workflowAgentLabel(step.id),
+                })
+              }
+            >
+              {t("Open subagent context")}
+            </button>
           )}
           {step.truncated && <p>{t("Preview is truncated.")}</p>}
           <button
@@ -212,16 +229,10 @@ export function WorkflowCard({
           onClick={() => {
             if (!run) return;
             setBusy(true);
-            void client
-              .workbenchCommand({
-                kind: "workflow-cancel",
-                commandId: crypto.randomUUID(),
-                epoch: run.epoch,
-                runId: id,
-              })
-              .then((reply) => {
+            void cancelWorkflow(client, run)
+              .then((code) => {
                 if (!alive.current) return;
-                if (reply.kind === "error") setError(reply.error.code);
+                setError(code);
                 page.refresh();
                 onChanged?.();
               })
@@ -237,40 +248,5 @@ export function WorkflowCard({
         {t("Observe current state")}
       </button>
     </article>
-  );
-}
-
-function WorkflowTranscript({
-  client,
-  id,
-  stepId,
-  running,
-}: {
-  client: ServiceClient;
-  id: string;
-  stepId: string;
-  running: boolean;
-}) {
-  const { t } = useT();
-  const page = useWorkbench(
-    client,
-    { kind: "workflow-transcript", id, stepId },
-    running ? 1000 : 0,
-  );
-  const turn =
-    page.value?.kind === "workflow-transcript" ? page.value.turn : null;
-  return (
-    <section aria-label={t("Subagent transcript")}>
-      {page.error && <p role="alert">{page.error}</p>}
-      {turn ? (
-        <ChatTurnView turn={turn} />
-      ) : (
-        <p>
-          {t(
-            "No retained transcript observed yet; absence is not proof of no activity.",
-          )}
-        </p>
-      )}
-    </section>
   );
 }

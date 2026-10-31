@@ -45,7 +45,7 @@ El puerto y el token están en `~/.pi/agent/cadence/.env`; cualquiera con el tok
    Esta conversación permanece en modo Cadence; aclara los requisitos con mensajes normales.
 4. Revisa el plan completo y pulsa **Implement this plan**.
    La implementación, comprobaciones, reparaciones limitadas y entrega local acordada son automáticas.
-5. Sigue el progreso y los registros de subagentes en la conversación.
+5. Sigue el progreso en la conversación; abre los registros de los subagentes desde el panel **Subagents** abajo a la izquierda.
    Recargar o terminar un objetivo no desactiva el modo.
    **Exit Cadence** sale del modo; **Cancel workflow — request stop** solicita cancelar el trabajo.
 

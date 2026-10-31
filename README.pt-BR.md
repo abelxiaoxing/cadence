@@ -45,7 +45,7 @@ A porta e o token ficam em `~/.pi/agent/cadence/.env`; qualquer pessoa com o tok
    Esta conversa permanece no modo Cadence; esclareça os requisitos com mensagens normais.
 4. Revise o plano completo e clique em **Implement this plan**.
    Implementação, verificações, reparos limitados e entrega local acordada são automáticos.
-5. Acompanhe o progresso e os registros dos subagentes na conversa.
+5. Acompanhe o progresso na conversa; abra os registros dos subagentes no painel **Subagents**, no canto inferior esquerdo.
    Atualizar a página ou concluir um objetivo não desativa o modo.
    **Exit Cadence** sai do modo; **Cancel workflow — request stop** solicita o cancelamento.
 

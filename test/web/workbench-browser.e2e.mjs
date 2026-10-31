@@ -172,7 +172,7 @@ it("built workbench: ordinary chat, file reference, explicit Cadence transition,
       await p.setViewportSize({ width, height: 844 });
       await p.getByRole("button", { name: "Tasks", exact: true }).click();
       await drawer("left", true);
-      await p.getByRole("button", { name: /Legacy subagents/ }).waitFor();
+      await p.getByRole("button", { name: /^Subagents/ }).waitFor();
       await p.screenshot({
         path: join(root, `left-${width}.png`),
         fullPage: true,

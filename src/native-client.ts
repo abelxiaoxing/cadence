@@ -57,8 +57,19 @@ const bootStart = (o: AutostartObservation) =>
   o.platform === "linux" && (o.uid === 0 || o.env.CADENCE_LINGER !== "0");
 /** Pi's managed copy puts no `cadence` bin on PATH; CADENCE_LINGER=0 keeps
  * the suggested command login-only, too. */
+const cliCommand = (o: AutostartObservation) =>
+  piUserCopy(o)
+    ? `node ${JSON.stringify(join(o.root, "src", "service-cli.mjs"))}`
+    : "cadence";
 const installCommand = (o: AutostartObservation) =>
-  `${piUserCopy(o) ? `node ${JSON.stringify(join(o.root, "src", "service-cli.mjs"))}` : "cadence"} server install${o.platform === "linux" && o.uid === 0 ? " --system" : o.platform === "linux" && o.env.CADENCE_LINGER === "0" ? " --no-linger" : ""}`;
+  `${cliCommand(o)} server install${o.platform === "linux" && o.uid === 0 ? " --system" : o.platform === "linux" && o.env.CADENCE_LINGER === "0" ? " --no-linger" : ""}`;
+/** The explicit command that stops one project owner. Text only. */
+export function projectStopCommand(
+  workspace: string,
+  o: AutostartObservation = hostObservation(),
+): string {
+  return `${cliCommand(o)} stop --workspace ${JSON.stringify(workspace)}`;
+}
 
 /** Name the explicit command while no background service is registered.
  * Reads paths only. */
@@ -240,6 +251,38 @@ export class NativeConnection {
   }
   compatible(safety = false): boolean {
     return compatibleBuild(this.session?.build, nativeBuild, safety);
+  }
+  /** Forget an attachment only when the registry proves its owner instance is
+   * gone: absent, stopped, or replaced by another epoch. Its slot ended with
+   * that process, so no detach request is sent and a later attach may proceed.
+   * A live or unobservable same-epoch owner keeps the exact attachment. */
+  forgetSuperseded(cwd: string): boolean {
+    if ((!this.transport && !this.network) || this.closing || this.allocating)
+      return false;
+    let observed: { status: string; epoch?: string | null };
+    try {
+      observed = new ServiceCoordination(
+        effectiveWorkspace(cwd).workspace,
+      ).inspect();
+    } catch {
+      return false;
+    }
+    const epoch = "epoch" in observed ? observed.epoch : undefined;
+    const gone =
+      observed.status === "absent" ||
+      (observed.status === "stopped" &&
+        (epoch === null || epoch === this.epoch)) ||
+      (typeof epoch === "string" && epoch !== this.epoch);
+    if (!gone) return false;
+    const network = this.network;
+    this.network = undefined;
+    this.networkClose = undefined;
+    this.transport = undefined;
+    this.client = undefined;
+    this.session = undefined;
+    this.epoch = undefined;
+    void network?.close().catch(() => {});
+    return true;
   }
   detach(): Promise<void> {
     if (this.closing) return this.closing;

@@ -1,12 +1,19 @@
 /** Cadence service children on the background-agent panel. Observation only:
  * a Pi TUI session attaches to the owner already running for its workspace
- * (never starting one), polls the active roster and task snapshots, and
- * announces each child run on Pi's `subagent:*` bus. Reads go through the
+ * (never starting one), polls the active task roster and task snapshots plus
+ * the conversation-workflow roster and runs, and announces each child run
+ * (task children and workflow research/implementation/review subagents) on
+ * Pi's `subagent:*` bus. Reads go through the
  * typed ServiceClient; nothing here starts, cancels, retries or keeps work
  * alive, and leaving the session only detaches. */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { SUBAGENT_EVENTS, SUBAGENT_VIEW } from "./agent-panel-model.ts";
 import { departure, NativeConnection } from "./native-client.ts";
+import type { ChatTurn } from "./service/contracts/workbench.ts";
+import type {
+  WorkflowRun,
+  WorkflowStep,
+} from "./service/contracts/workflow.ts";
 import type { ServiceClient } from "./service-client.ts";
 import {
   type ContentRef,
@@ -25,6 +32,8 @@ export interface FeedConnection {
   refresh(): Promise<unknown>;
   compatible(): boolean;
   detach(): Promise<void>;
+  /** Drop an attachment whose owner the registry proves gone or replaced. */
+  forgetSuperseded?(cwd: string): boolean;
 }
 /** Readonly ServiceClient reads only: no command, preflight or Cancel. */
 export type FeedClient = Pick<
@@ -36,6 +45,7 @@ export type FeedClient = Pick<
   | "tools"
   | "contents"
   | "detail"
+  | "workbenchRead"
 >;
 export interface CadenceFeedOptions {
   connection?: () => FeedConnection;
@@ -56,7 +66,7 @@ export const FEED_TIMING: FeedTiming = {
   idleMs: LIMITS.heartbeatMs,
   retryMs: 15_000,
 };
-/** Retained reads are paged; a child larger than this stays in /cadence History. */
+/** Retained reads are paged; a child larger than this stays in /cadence-inspect History. */
 const MAX_PAGES = 50;
 const MAX_DETAIL_STEPS = 8;
 /** Characters of one field shown in the panel; the rest stays retained. */
@@ -64,6 +74,14 @@ const TEXT_CAP = 64 * 1024;
 const CACHE_CHARS = 16 * 1024 * 1024;
 /** Snapshots after an episode drained, while its children still look unsettled. */
 const DRAIN_LOOKS = 5;
+/** A running workflow subagent not shown in a view refreshes its activity at
+ * most this often; its retained transcript is one bounded owner file. */
+const WORKFLOW_ACTIVITY_MS = 10_000;
+const WORKFLOW_KINDS: Partial<Record<WorkflowStep["kind"], string>> = {
+  research: "Research",
+  implementation: "Implementation",
+  review: "Review",
+};
 
 type Child = {
   id: string;
@@ -84,6 +102,14 @@ type Child = {
   failedSeq?: string;
   /** Final transcript messages already announced. */
   sent: number;
+  /** A conversation-workflow subagent, read through workflow transcripts. */
+  workflow?: {
+    runId: string;
+    stepId: string;
+    /** The final transcript was announced after the step ended. */
+    done?: boolean;
+    readAt?: number;
+  };
 };
 type Tool = Extract<HistoryRecord, { kind: "tool" }>;
 type Block = { index: number; ref: ContentRef };
@@ -176,6 +202,74 @@ function parseArgs(text: string | undefined): object {
     return {};
   }
 }
+const capped = (text: string) =>
+  text.length > TEXT_CAP
+    ? `${text.slice(0, TEXT_CAP)}\n… (truncated; the project owner retains the full text)`
+    : text;
+/** A workflow step transcript in Pi's message shapes. Each assistant message
+ * carries its tool calls, followed by their results; while the turn runs, its
+ * last group may still grow and is a streaming snapshot. */
+export function turnMessages(
+  turn: ChatTurn,
+  finished: boolean,
+): { messages: object[]; partial?: object } {
+  const messages: object[] = [];
+  let group:
+    | { assistant: { role: string; content: object[] }; results: object[] }
+    | undefined;
+  const close = () => {
+    if (group) messages.push(group.assistant, ...group.results);
+    group = undefined;
+  };
+  for (const item of turn.items) {
+    if (item.role === "user") {
+      close();
+      messages.push({
+        role: "user",
+        content: [{ type: "text", text: capped(item.text) }],
+      });
+    } else if (item.role === "assistant") {
+      close();
+      group = {
+        assistant: {
+          role: "assistant",
+          content: item.text ? [{ type: "text", text: capped(item.text) }] : [],
+        },
+        results: [],
+      };
+    } else {
+      group ??= { assistant: { role: "assistant", content: [] }, results: [] };
+      const name = item.name || "tool";
+      group.assistant.content.push({
+        type: "toolCall",
+        id: item.id,
+        name,
+        arguments: parseArgs(item.args),
+      });
+      group.results.push({
+        role: "toolResult",
+        toolCallId: item.id,
+        toolName: name,
+        content: [{ type: "text", text: capped(item.text) }],
+        isError: item.error,
+      });
+    }
+  }
+  if (finished || !group) {
+    close();
+    return { messages };
+  }
+  return { messages, partial: group.assistant };
+}
+function turnWorking(turn: ChatTurn, finished: boolean): string {
+  const tools = turn.items.filter((i) => i.role === "tool");
+  const last = tools.at(-1);
+  if (!last) return "Working";
+  if (!finished && turn.items.at(-1) === last && !last.text && !last.error)
+    return `Running ${last.name || "tool"}`;
+  const n = tools.length;
+  return `Working · ${n} tool call${n === 1 ? "" : "s"} (last: ${last.name || "tool"})`;
+}
 
 class Feed {
   private client: FeedClient | undefined;
@@ -192,6 +286,9 @@ class Feed {
     string,
     { taskId: string; drained: number }
   >();
+  /** Conversation workflow → consecutive unreadable looks, followed until
+   * its run is observed finished. */
+  private readonly workflows = new Map<string, number>();
   constructor(
     private readonly pi: ExtensionAPI,
     private readonly cwd: string,
@@ -245,13 +342,19 @@ class Feed {
       next = await this.observe(this.client);
     } catch {
       // Absent, stopped, restarted or incompatible owner: detach and look
-      // again later. Observation never starts one.
+      // again later. Observation never starts one. An owner the registry
+      // proves gone or replaced cannot accept a detach (a restarted one on the
+      // same port refuses the old capability), so its attachment is dropped.
       this.client = undefined;
-      await this.connection.detach().catch(() => {});
+      if (!this.connection.forgetSuperseded?.(this.cwd))
+        await this.connection.detach().catch(() => {});
       // Still no compatible owner a whole retry after losing it: the children
       // followed so far can no longer be observed from this session.
-      if (attaching)
+      if (attaching) {
         this.abandon([...this.episodes.keys()], "owner unavailable");
+        for (const runId of [...this.workflows.keys()])
+          this.abandonWorkflow(runId, "owner unavailable");
+      }
     } finally {
       this.busy = false;
     }
@@ -291,12 +394,183 @@ class Feed {
           this.abandon([runId], "no settled row after the run ended");
       }
     }
+    await this.observeWorkflows(client, ends);
+    if (this.stopped) return this.timing.activeMs;
     await this.refreshActivity(client);
     await this.refreshTranscript(client);
     // Ends follow the transcript so its last streaming snapshot is replaced
     // by the final message rather than kept beside it.
     for (const end of ends) this.emit("end", end);
-    return this.episodes.size ? this.timing.activeMs : this.timing.idleMs;
+    return this.episodes.size || this.workflows.size
+      ? this.timing.activeMs
+      : this.timing.idleMs;
+  }
+
+  /** Conversation-workflow subagents: the live roster names runs, each run
+   * read names its steps' child IDs. Readonly; an older owner without these
+   * reads leaves only task children. */
+  private async observeWorkflows(
+    client: FeedClient,
+    ends: object[],
+  ): Promise<void> {
+    if (typeof client.workbenchRead !== "function") return;
+    const signal = this.abort.signal;
+    const roster = await client.workbenchRead(
+      { kind: "workflow-active" },
+      signal,
+    );
+    if (this.stopped) return;
+    const live = new Set<string>();
+    if (roster.kind === "ok" && roster.value.kind === "workflow-active")
+      for (const run of roster.value.runs) {
+        live.add(run.id);
+        if (!this.workflows.has(run.id)) this.workflows.set(run.id, 0);
+      }
+    for (const [runId, misses] of [...this.workflows]) {
+      const reply = await client.workbenchRead(
+        { kind: "workflow", id: runId },
+        signal,
+      );
+      if (this.stopped) return;
+      if (
+        reply.kind === "error" ||
+        reply.value.kind !== "workflow" ||
+        reply.value.response.type !== "run" ||
+        reply.value.response.run.id !== runId
+      ) {
+        if (misses + 1 >= DRAIN_LOOKS)
+          this.abandonWorkflow(runId, "workflow not readable");
+        else this.workflows.set(runId, misses + 1);
+        continue;
+      }
+      this.workflows.set(runId, 0);
+      const run = reply.value.response.run;
+      const open =
+        live.has(runId) || ["queued", "running"].includes(run.status);
+      for (const step of run.steps) this.followStep(run, step, open, ends);
+      if (!open) this.workflows.delete(runId);
+    }
+  }
+  private followStep(
+    run: WorkflowRun,
+    step: WorkflowStep,
+    open: boolean,
+    ends: object[],
+  ): void {
+    const kind = WORKFLOW_KINDS[step.kind];
+    if (!step.childRunId || !kind) return;
+    const id = step.childRunId;
+    // A step still marked running in a finished run did not report its end.
+    const outcome =
+      step.status === "running" ? (open ? null : "unknown") : step.status;
+    let child = this.state.children.get(id);
+    if (!child) {
+      child = {
+        id,
+        label: step.id,
+        runId: `workflow:${run.id}`,
+        storeId: "",
+        seq: "",
+        lifecycle: outcome ? "settled" : "running",
+        ended: false,
+        activity: "",
+        sent: 0,
+        workflow: { runId: run.id, stepId: step.id },
+      };
+      this.state.children.set(id, child);
+      this.emit("start", {
+        id,
+        label: step.id,
+        kind,
+        // A subagent first seen settled ran before this session looked.
+        startedAt: outcome ? null : this.now(),
+      });
+    }
+    if (child.ended) return;
+    if (!outcome) {
+      this.activity(child, child.working ?? `Working · ${run.phase}`);
+      return;
+    }
+    child.lifecycle = "settled";
+    this.activity(child, outcome);
+    child.ended = true;
+    ends.push({
+      id,
+      status:
+        outcome === "completed"
+          ? "done"
+          : outcome === "canceled"
+            ? "cancelled"
+            : "error",
+      endedAt: this.now(),
+      ...(outcome === "completed" || outcome === "canceled"
+        ? {}
+        : { error: `${child.label} · ${outcome}` }),
+    });
+  }
+  private abandonWorkflow(runId: string, why: string): void {
+    this.workflows.delete(runId);
+    for (const child of this.state.children.values()) {
+      if (child.workflow?.runId !== runId || child.ended) continue;
+      this.activity(child, "outcome not observed");
+      child.ended = true;
+      this.emit("end", {
+        id: child.id,
+        status: "error",
+        endedAt: this.now(),
+        error: `${child.label} · outcome not observed here (${why}); ask cadence_status or open the WebUI`,
+      });
+    }
+  }
+  /** Reads one workflow step transcript; undefined when it is unreadable. */
+  private async workflowTurn(
+    client: FeedClient,
+    child: Child,
+  ): Promise<ChatTurn | null | undefined> {
+    const w = child.workflow;
+    if (!w || typeof client.workbenchRead !== "function") return undefined;
+    w.readAt = this.now();
+    const reply = await client.workbenchRead(
+      { kind: "workflow-transcript", id: w.runId, stepId: w.stepId },
+      this.abort.signal,
+    );
+    if (
+      reply.kind === "error" ||
+      reply.value.kind !== "workflow-transcript" ||
+      reply.value.runId !== w.runId ||
+      reply.value.stepId !== w.stepId
+    )
+      return undefined;
+    return reply.value.turn;
+  }
+  private async refreshWorkflowTranscript(
+    client: FeedClient,
+    child: Child,
+  ): Promise<void> {
+    const w = child.workflow;
+    if (!w || w.done || child.failedSeq !== undefined) return;
+    const turn = await this.workflowTurn(client, child);
+    if (this.stopped) return;
+    if (turn === undefined) {
+      // Reopening the view retries, like a failed task transcript read.
+      child.failedSeq = "workflow";
+      return;
+    }
+    if (!turn) return;
+    const finished = !["queued", "running"].includes(turn.status);
+    const built = turnMessages(turn, finished);
+    child.working = turnWorking(turn, finished);
+    if (!child.ended) this.activity(child, child.working);
+    for (let i = child.sent; i < built.messages.length; i++)
+      this.emit("message", { id: child.id, message: built.messages[i] });
+    child.sent = Math.max(child.sent, built.messages.length);
+    if (built.partial)
+      this.emit("message", {
+        id: child.id,
+        message: built.partial,
+        streaming: true,
+      });
+    if (finished && child.ended) w.done = true;
   }
 
   /** Announce this episode's children; true while any still looks unsettled. */
@@ -381,7 +655,7 @@ class Feed {
   }
   /** Stop following these episodes. Their unsettled children end as errors
    * that say the outcome was not observed, instead of spinning as running for
-   * the rest of the session; /cadence History keeps the actual outcome. */
+   * the rest of the session; /cadence-inspect History keeps the actual outcome. */
   private abandon(runIds: string[], why: string): void {
     for (const runId of runIds) {
       this.episodes.delete(runId);
@@ -393,7 +667,7 @@ class Feed {
           id: child.id,
           status: "error",
           endedAt: this.now(),
-          error: `${child.label} · outcome not observed here (${why}); see /cadence History`,
+          error: `${child.label} · outcome not observed here (${why}); see /cadence-inspect History`,
         });
       }
     }
@@ -440,6 +714,23 @@ class Feed {
   /** Latest tool for running children not shown in a view (that read covers it). */
   private async refreshActivity(client: FeedClient): Promise<void> {
     for (const child of this.state.children.values()) {
+      if (child.workflow) {
+        if (
+          child.ended ||
+          child.id === this.state.viewing ||
+          !this.workflows.has(child.workflow.runId) ||
+          this.now() - (child.workflow.readAt ?? 0) < WORKFLOW_ACTIVITY_MS
+        )
+          continue;
+        const turn = await this.workflowTurn(client, child);
+        if (this.stopped || !turn) continue;
+        child.working = turnWorking(
+          turn,
+          !["queued", "running"].includes(turn.status),
+        );
+        this.activity(child, child.working);
+        continue;
+      }
       if (
         child.ended ||
         child.lifecycle !== "running" ||
@@ -459,6 +750,7 @@ class Feed {
   private async refreshTranscript(client: FeedClient): Promise<void> {
     const id = this.state.viewing;
     const child = id === undefined ? undefined : this.state.children.get(id);
+    if (child?.workflow) return this.refreshWorkflowTranscript(client, child);
     if (
       !child ||
       child.transcriptSeq === child.seq ||
@@ -539,7 +831,7 @@ class Feed {
     }
     // One detail page can exceed the cap on its own, with no cursor left.
     if (cursor || text.length > TEXT_CAP)
-      text = `${text.slice(0, TEXT_CAP)}\n… (truncated; the full text is in /cadence History)`;
+      text = `${text.slice(0, TEXT_CAP)}\n… (truncated; the full text is in /cadence-inspect History)`;
     this.state.remember(key, text);
     return text;
   }
