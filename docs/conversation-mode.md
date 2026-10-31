@@ -100,12 +100,13 @@ Pi says once which command stops an owner it started; when Pi runs on Bun, Node 
 An existing owner/configuration is reused, not silently replaced after a connection failure.
 System-service installation and remote access remain separate explicit operations described in [Service management](service-management.md) and [Remote access](remote-access.md).
 
-`/cadence-inspect` retains the previous advanced task/history UI for diagnostics and legacy workflows; it is not needed for conversation mode.
+`/cadence-history [run-id]` provides readonly diagnostics without model calls or service startup; see [History and diagnostics](history.md).
 The WebUI uses the same execution engine with a separate, context-bound browser confirmation path.
 Its main composer stays in the same conversation; the plan card, workflow progress and actual merge outcomes appear inline.
 Research, implementation and review subagents are listed in the lower-left **Subagents** dock, together with legacy task children; selecting one (or **Open subagent context** on a step) opens its full transcript and retained result in the main area, and **Back to conversation** returns.
 Active workflows are listed under **Running conversations** with **Cancel workflow — request stop**; this includes native-started workflows, and an unavailable observation is not proof of no work.
-**Legacy task** retains the old create/plan/Save/Start/check/human-Review route explicitly, rather than making `/cadence` create a legacy task.
+The old task creation/Save/Start/check/human-Review controls are retired on both clients and refused by the service.
+Existing task records remain readonly; they are not converted into workflows.
 Existing browser conversations enter the new mode only on explicit Send/activation; old tasks and Pi transcripts are not converted or imported.
 Approval grants are neither stored in the browser nor restored after restart.
 Losing a response only observes its original command/run identity; it never retries execution.

@@ -41,8 +41,8 @@ import {
   type PublicError,
   type Reply,
 } from "./service-contract.ts";
-import { effectiveWorkspace } from "./task-store.ts";
 import { diagnosticText } from "./verification-diagnostics.ts";
+import { effectiveWorkspace } from "./workspace.ts";
 
 export const CADENCE_MODE_ENTRY = "cadence-conversation-mode/1";
 const CONTEXT = "cadence-mode-context";

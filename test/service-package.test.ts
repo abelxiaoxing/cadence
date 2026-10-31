@@ -77,6 +77,32 @@ it("reviewed package closes native and maintained worker imports without a termi
     expect(body).not.toMatch(/(?:from|import\()\s*["'][^"']+\.ts["']/);
   }
 });
+it("current execution and emitted owner have no retired task engine", () => {
+  const body = readFileSync(join(root, "src/service-host.mjs"), "utf8");
+  for (const name of [
+    "TaskActions",
+    "ActionAdmission",
+    "TaskScheduler",
+    "TaskController",
+  ])
+    expect(body).not.toContain(name);
+  for (const name of [
+    "workflows",
+    "conversations",
+    "workbench",
+    "model-choice",
+  ]) {
+    const source = readFileSync(join(root, `src/service/${name}.ts`), "utf8");
+    expect(source).not.toMatch(
+      /(?:task-actions|scheduler|history\/writer)\.ts/,
+    );
+  }
+  const coordination = readFileSync(
+    join(root, "src/service/coordination.ts"),
+    "utf8",
+  );
+  expect(coordination).not.toContain("task-store.ts");
+});
 it("full emitted dependency, embedded vendor, font and notice policy is exact, not a root MIT assertion", () => {
   expect(auditNotices(root)).toMatchObject({
     families: 105,

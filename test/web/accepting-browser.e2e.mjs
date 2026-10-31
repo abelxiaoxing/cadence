@@ -1,282 +1,91 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { once } from "node:events";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
-import { it } from "vitest";
+import { it, vi } from "vitest";
 import { acceptingFixture } from "../helpers/accepting-fixture.ts";
+import { archivedRun } from "../helpers/archived-run.ts";
+import { keepOnlyEnvironment } from "../helpers/windows-environment.ts";
 
-it("built loopback browser-only accepting workflow, two contexts, original service work, full durable downloads and four viewports", async () => {
-  const f = await acceptingFixture("generated");
+it("retired task controls stay absent; a cold generated owner reads fabricated archived history, exact search and complete downloads", async () => {
+  // Format-level archived evidence only; current SDK execution is tested separately.
+  // No legacy task executor, model selection or provider request is used here.
+  const executablePath = process.env.CADENCE_BROWSER_PATH;
+  const f = await acceptingFixture("source", (env) => {
+    keepOnlyEnvironment(Object.keys(env));
+    for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
+  });
   const root = mkdtempSync(join(tmpdir(), "cdb-"));
-  let launcher, browser, original, failure, secondPage;
-  const receipt = {
-    passed: false,
-    paidProvider: false,
-    physicalHuman: false,
-    viewports: [],
-    downloads: [],
-    errors: [],
-  };
+  let browser, page;
+  const errors = [],
+    downloads = [];
   try {
-    const executablePath = process.env.CADENCE_BROWSER_PATH;
-    assert(
-      executablePath,
-      "explicit existing Chromium required; never download",
-    );
-    launcher = await chromium.launchServer({
+    assert.equal((await f.client.session()).kind, "ok");
+    const seeded = await archivedRun(f.host, f.longText);
+    const taskId = seeded.taskId;
+    const started = { runId: seeded.runId };
+    const snapshot = await f.client.snapshot({ kind: "task", id: taskId });
+    assert.equal(snapshot.kind, "ok");
+    const child = snapshot.value.runs.find((run) => run.childRunId);
+    assert(child);
+    const contacts = f.contacts();
+    assert.equal(contacts, 0);
+    const restarted = await f.restart();
+    assert.equal((await restarted.client.models()).value.selected, null);
+
+    assert(executablePath, "existing Chromium required; never download");
+    browser = await chromium.launch({
       executablePath,
       headless: true,
       env: {
         PATH: process.env.PATH,
-        HOME: f.browserHome ?? root,
+        HOME: root,
         TMPDIR: root,
         TEMP: root,
         TMP: root,
       },
       args: ["--no-sandbox", "--disable-dev-shm-usage"],
     });
-    original = once(launcher.process(), "close");
-    browser = await chromium.connect(launcher.wsEndpoint());
-    const one = await browser.newContext({
+    const context = await browser.newContext({
       viewport: { width: 1440, height: 900 },
       locale: "en-US",
       acceptDownloads: true,
     });
-    const two = await browser.newContext({
-      viewport: { width: 390, height: 844 },
-      locale: "en-US",
-      acceptDownloads: true,
+    page = await context.newPage();
+    const p = page;
+    p.setDefaultTimeout(15000);
+    p.on("pageerror", (e) => errors.push(e.message));
+    const mutations = [];
+    p.on("request", (request) => {
+      if (/\/(commands|preflight)$/.test(new URL(request.url()).pathname))
+        mutations.push(request.url());
     });
-    const p = await one.newPage(),
-      other = await two.newPage();
-    secondPage = other;
-    for (const page of [p, other]) {
-      page.setDefaultTimeout(15000);
-      page.on("pageerror", (e) => receipt.errors.push(e.message));
-      await page.goto(f.tokenLink);
-      assert(!page.url().includes("token="));
-      await page
-        .getByText("Shared compatibility: compatible", { exact: false })
-        .waitFor();
-    }
-    await p.getByRole("button", { name: "Choose owner model" }).click();
-    await p
-      .getByLabel("Exact model / API / thinking")
-      .selectOption({ label: "fixture/fixed · openai-completions · off" });
-    await p.getByRole("button", { name: "Confirm owner model choice" }).click();
-    // The second already-attached tab must observe the new owner choice without
-    // reloading, allocating another attachment, choosing again or starting work.
-    await other
-      .getByRole("button", { name: "Observe current state", exact: true })
-      .click();
-    await other.getByRole("button", { name: "Tasks", exact: true }).click();
-    await other
-      .getByRole("button", { name: "Legacy task", exact: true })
-      .click();
-    await other
-      .getByLabel("Message", { exact: true })
-      .fill("Local unsent draft");
-    await other
-      .getByRole("button", { name: "Prepare task", exact: true })
-      .waitFor();
-    assert.equal(await other.getByRole("dialog").count(), 0);
-    assert.equal(f.contacts(), 0);
-    await p.getByRole("button", { name: "Legacy task", exact: true }).click();
-    await p
-      .getByLabel("Message", { exact: true })
-      .fill("Browser independent readonly collaboration");
-    const creation = p.waitForResponse(
-      (r) =>
-        r.url().endsWith("/api/v1/commands") &&
-        r.request().method() === "POST" &&
-        r.request().postDataJSON()?.action?.kind === "create",
-    );
-    void creation.catch(() => {});
-    await p.getByRole("button", { name: "Prepare task", exact: true }).click();
-    async function confirm(kind) {
-      const response = p.waitForResponse(
-        (r) =>
-          r.url().endsWith("/api/v1/commands") &&
-          r.request().method() === "POST",
-      );
-      void response.catch(() => {});
-      await p
-        .getByRole("button", { name: `Confirm ${kind}`, exact: true })
-        .click();
-      const body = await (await response).json();
-      assert.equal(body.kind, "ok", JSON.stringify(body));
-      return body.value;
-    }
-    async function drained(id, publishedReceipt) {
-      let lastRoster;
-      const deadline = Date.now() + 15000;
-      while (Date.now() < deadline) {
-        const reply = await f.client.activeRuns();
-        lastRoster = reply;
-        if (
-          reply.kind === "ok" &&
-          reply.value.status === "complete" &&
-          !reply.value.runs.some((r) => r.runId === id)
-        )
-          return;
-        await new Promise((r) => setTimeout(r, 100));
-      }
-      // Preserve observations BEFORE fixture Stop; teardown cannot diagnose
-      // whether the original native work, recording or publication failed.
-      const evidence = { runId: id, publishedReceipt, lastRoster };
-      receipt.drainFailure = evidence;
-      writeFileSync(
-        join(root, "drain-failure.json"),
-        JSON.stringify(evidence, null, 2),
-      );
-      throw Error("original run did not drain within action allowance");
-    }
-    async function published(command) {
-      const deadline = Date.now() + 15000;
-      while (Date.now() < deadline) {
-        const r = await f.client.receipt(command.commandId);
-        if (r.status === "found" && r.receipt.publication === "published") {
-          if (command.runId) await drained(command.runId, r.receipt);
-          return r.receipt;
-        }
-        await new Promise((r) => setTimeout(r, 100));
-      }
-      throw Error("publication unavailable");
-    }
-    const creationReply = await (await creation).json();
-    assert.equal(creationReply.kind, "ok");
-    const created = await published(creationReply.value);
-    await p.waitForFunction(() =>
-      [...document.querySelectorAll("button")].some(
-        (button) =>
-          button.textContent === "Review implementation plan" &&
-          !button.disabled,
-      ),
-    );
-    assert.equal(await p.getByRole("dialog").count(), 0);
-    assert.equal(f.contacts(), 1, "Send starts readonly analysis");
-    const taskId = created.created.taskId;
-    await p
-      .locator(".task-list > .page-controls")
-      .getByRole("button", { name: "Observe a new snapshot" })
-      .click();
-    await p
-      .getByRole("button", {
-        name: /Browser independent readonly collaboration/,
-      })
-      .click();
-    await p
-      .getByLabel("Readable plan", { exact: true })
-      .fill(
-        "Inspect two independent readonly questions. Run the real configured check and review current changes.",
-      );
-    for (const name of ["first", "second"]) {
-      await p
-        .getByRole("button", { name: "Add assignment", exact: true })
-        .click();
-      await p
-        .getByLabel("Instructions", { exact: true })
-        .fill(`Inspect ${name} independently without editing.`);
-      await p
-        .getByLabel("Expected output", { exact: true })
-        .fill("Report full retained observations.");
-      await p.getByRole("button", { name: "Apply to local draft" }).click();
-    }
-    await p
-      .getByRole("button", { name: "Preview Save plan", exact: true })
-      .click();
-    await published(await confirm("save-plan"));
-    await p
-      .getByRole("button", { name: "Observe current state", exact: true })
-      .click();
-    await p
-      .getByRole("button", {
-        name: "Load observed saved plan into local draft",
-      })
-      .waitFor();
-    await p
-      .getByRole("button", { name: "Preview readonly Generate proposal" })
-      .click();
-    const generated = await confirm("generate-plan");
-    await published(generated);
-    assert.equal(
-      f.contacts(),
-      2,
-      "Each Generate is exactly one readonly advisory child",
-    );
-    await p
-      .getByRole("button", { name: "Observe current state", exact: true })
-      .click();
-    f.mode("parallel");
-    await p.getByRole("button", { name: "Preview Start saved graph" }).click();
-    const started = await confirm("start");
-    // Departure is not Cancel. The other context attaches to the actual task.
-    await p.getByRole("button", { name: "Return — work continues" }).click();
-    await other.goto(`${f.endpoint}/app#task=${taskId}`);
-    await published(started);
-    assert(f.maxActive() >= 2, "genuine overlapping SDK HTTP requests");
-    assert.equal(f.contacts(), 4);
-    await other
-      .getByRole("button", { name: "Observe current state", exact: true })
-      .click();
-    await other.locator(".view-menu > summary").click();
-    await other.getByRole("button", { name: "runs", exact: true }).click();
-    await other
-      .locator(".run-current")
-      .getByText(started.runId, { exact: true })
-      .waitFor();
-    receipt.secondContextRunId = started.runId;
-    await p.getByRole("button", { name: "Reconnect as a viewer" }).click();
-    await p
-      .getByRole("button", { name: "Observe current state", exact: true })
-      .click();
-    await p.getByRole("button", { name: "checks", exact: true }).click();
-    await p
-      .getByRole("button", { name: "Preview exact configured check" })
-      .click();
-    const checked = await confirm("check");
-    await published(checked);
-    await p
-      .getByRole("button", { name: "Observe current state", exact: true })
-      .click();
-    await p
-      .getByRole("button", { name: "Observe obligations", exact: true })
-      .click();
-    await p
-      .getByRole("heading", { name: "Actual configured: passed" })
-      .waitFor();
-    await p.getByRole("button", { name: "changes", exact: true }).click();
-    await p
-      .getByRole("heading", {
-        name: "Current checkout changes (not a captured historical diff)",
-      })
-      .waitFor();
-    await p
-      .getByText(/Fingerprint/)
-      .first()
-      .waitFor();
-    await p.getByRole("button", { name: "review", exact: true }).click();
-    await p.getByLabel("Episode to review").selectOption(started.runId);
-    await p.getByLabel(/I acknowledge current unresolved issues/).check();
-    await p
-      .getByRole("button", { name: "Preview human review / Done" })
-      .click();
-    await published(await confirm("review"));
-    await p
-      .getByRole("button", { name: "Observe current state", exact: true })
-      .click();
-    const contacts = f.contacts();
-    const prior = await f.client.session();
-    assert.equal(prior.kind, "ok");
-    const restarted = await f.restart();
-    assert.notEqual(restarted.epoch, prior.value.epoch);
-    assert.equal((await restarted.client.models()).value.selected, null);
-    assert.equal((await restarted.client.activeRuns()).value.runs.length, 0);
     await p.goto(f.tokenLink);
+    await p.getByRole("textbox", { name: "Message", exact: true }).waitFor();
+    assert.equal(
+      await p.getByRole("button", { name: "Legacy task", exact: true }).count(),
+      0,
+    );
     await p.goto(`${f.endpoint}/app#task=${taskId}`);
+    await p
+      .getByText(
+        "History is readonly. Start new work in a conversation with /cadence.",
+      )
+      .waitFor();
+    assert.equal(
+      await p.getByLabel("Readable plan", { exact: true }).count(),
+      0,
+    );
+    assert.equal(
+      await p
+        .getByRole("button", {
+          name: /Preview Start|Confirm plan and execute|Review implementation plan/,
+        })
+        .count(),
+      0,
+    );
     await p
       .getByRole("button", {
         name: "Search all retained pages in selected scope",
@@ -287,76 +96,56 @@ it("built loopback browser-only accepting workflow, two contexts, original servi
       .getByRole("textbox", { name: "Case-sensitive literal query" })
       .fill("END-RETAINED");
     const deadline = Date.now() + 15000;
-    while (!(await p.locator(".gs-item").count()) && Date.now() < deadline) {
-      const next = p.getByRole("button", {
-        name: "Continue same snapshot search",
-      });
-      if (await next.count()) await next.click();
-      else await new Promise((resolve) => setTimeout(resolve, 50));
+    await p.locator(".gs-section-head").waitFor();
+    while (!(await p.locator(".gs-item").count())) {
+      assert(Date.now() < deadline, "retained search did not reach a hit");
+      const response = p.waitForResponse((r) =>
+        new URL(r.url()).pathname.endsWith("/search"),
+      );
+      await p
+        .getByRole("button", { name: "Continue same snapshot search" })
+        .click();
+      await response;
+      await p
+        .getByText("Searching bounded retained range…", { exact: true })
+        .waitFor({ state: "hidden" });
     }
-    await p.locator(".gs-item").first().click();
-    const detailDeadline = Date.now() + 15000;
-    while (
-      !(await p.locator(".detail-text mark").count()) &&
-      Date.now() < detailDeadline
-    ) {
-      const next = p.getByRole("button", {
-        name: "Continue validation",
-        exact: true,
-      });
-      if (await next.count()) await next.click();
-      else await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+    // The exact-hit keyboard path does not depend on pointer layout while
+    // asynchronous source-coverage messages arrive.
+    await p
+      .getByRole("textbox", { name: "Case-sensitive literal query" })
+      .press("Enter");
+    await p.locator(".detail-text mark").first().waitFor();
     assert.equal(
       await p.locator(".detail-text mark").first().textContent(),
       "END-RETAINED",
     );
-    assert.equal(
-      f.contacts(),
-      contacts,
-      "cold readers/search never replay work or auth",
-    );
-    receipt.coldRestart = {
-      priorEpoch: prior.value.epoch,
-      epoch: restarted.epoch,
-      taskId,
-      runId: started.runId,
-      exactHit: "END-RETAINED",
-      contactsUnchanged: true,
-    };
-    await p.goto(`${f.endpoint}/app#task=${taskId}`);
-    for (const [scopeLabel, format] of [
-      ["task", "ndjson"],
-      ["task", "markdown"],
-      ["run", "ndjson"],
-      ["child", "markdown"],
+    for (const [kind, id, format] of [
+      ["task", taskId, "ndjson"],
+      ["task", taskId, "markdown"],
+      ["run", started.runId, "ndjson"],
+      ["child", child.childRunId, "markdown"],
     ]) {
-      if (scopeLabel === "run")
-        await p
-          .getByRole("button", { name: "start completed", exact: true })
-          .click();
-      if (scopeLabel === "child")
-        await p
-          .getByRole("button", { name: /assignment-1.*Subagent.*completed/ })
-          .click();
+      const hash = new URLSearchParams({
+        task: taskId,
+        scope: JSON.stringify({ kind, id }),
+        snapshot: snapshot.value.committedSeq,
+      });
+      await p.goto(`${f.endpoint}/app#${hash}`);
       await p.locator(".view-menu > summary").click();
       await p.getByRole("button", { name: "Export selected scope" }).click();
       const dialog = p.getByRole("dialog");
       await dialog.getByLabel("Format").selectOption(format);
-      const download = p.waitForEvent("download");
+      const pending = p.waitForEvent("download");
       await dialog
         .getByRole("button", { name: "Request selected-scope download" })
         .click();
-      const d = await download;
-      const path = join(root, `${scopeLabel}.${format}`);
-      await d.saveAs(path);
-      assert.equal(await d.failure(), null);
+      const download = await pending;
+      const path = join(root, `${kind}.${format}`);
+      await download.saveAs(path);
+      assert.equal(await download.failure(), null);
       const text = readFileSync(path, "utf8");
       assert(text.includes("END-RETAINED"));
-      if (scopeLabel === "task") assert(text.includes("ACTUAL-PARENT-CHECK"));
-      assert(
-        text.includes('"kind":"trailer"') || text.includes('"kind": "trailer"'),
-      );
       const marker =
         format === "ndjson"
           ? text.lastIndexOf("\n", text.length - 2) + 1
@@ -367,38 +156,26 @@ it("built loopback browser-only accepting workflow, two contexts, original servi
           ? tail.trim()
           : tail.slice("\n\n```json\n".length, -"\n```\n".length),
       );
-      const prefix = text.slice(0, marker);
       assert.equal(frame.event.kind, "trailer");
       assert.equal(frame.event.complete, true);
-      assert.equal(frame.event.encodedBytes, Buffer.byteLength(prefix));
+      assert.equal(
+        frame.event.encodedBytes,
+        Buffer.byteLength(text.slice(0, marker)),
+      );
       assert.equal(
         frame.event.sha256,
-        createHash("sha256").update(prefix).digest("hex"),
+        createHash("sha256").update(text.slice(0, marker)).digest("hex"),
       );
       assert.equal(frame.event.frames, frame.ordinal - 1);
-      if (format === "ndjson")
-        assert.equal(prefix.trimEnd().split("\n").length, frame.event.frames);
-      receipt.downloads.push({
-        scope: scopeLabel,
-        format,
-        bytes: Buffer.byteLength(text),
-        path,
-      });
+      downloads.push({ kind, format, bytes: Buffer.byteLength(text) });
       await p.keyboard.press("Escape");
     }
-    for (const [width, height] of [
-      [1440, 900],
-      [768, 1024],
-      [390, 844],
-      [320, 568],
-    ]) {
-      await p.setViewportSize({ width, height });
+    for (const width of [1440, 768, 390, 320]) {
+      await p.setViewportSize({ width, height: 900 });
       if (width <= 900) {
         await p
-          .getByRole("button", { name: "Plan / review", exact: true })
+          .getByRole("button", { name: "Files / history", exact: true })
           .click();
-        // Establish real drawer focus before dispatching Escape; click delivery
-        // alone is not evidence that React's focus-containment effect ran.
         await p.waitForFunction(
           () => document.activeElement?.closest(".drawer-right.open") !== null,
         );
@@ -406,66 +183,36 @@ it("built loopback browser-only accepting workflow, two contexts, original servi
         await p.waitForFunction(
           () => !document.querySelector(".panel-drawer.open"),
         );
-        assert.equal(
-          await p
-            .getByRole("button", { name: "Plan / review", exact: true })
-            .evaluate((button) => button === document.activeElement),
-          true,
-        );
       }
       assert(
         await p.evaluate(
           () => document.documentElement.scrollWidth <= innerWidth,
         ),
       );
-      receipt.viewports.push({ width, height });
     }
-    assert.deepEqual(receipt.errors, []);
-    await f.rotate();
-    await p
-      .getByRole("button", { name: "Observe current state", exact: true })
-      .click();
-    await p
-      .getByText(/explicit.*re-entry required/)
-      .first()
-      .waitFor();
     assert.equal(
       f.contacts(),
-      4,
-      "reconnect and rotation never replay mutations",
+      contacts,
+      "history never needs model authentication or starts work",
     );
-    receipt.passed = true;
+    assert.deepEqual(mutations, []);
+    assert.deepEqual(errors, []);
+    writeFileSync(
+      join(root, "receipt.json"),
+      JSON.stringify({ passed: true, contacts, downloads, errors }),
+    );
   } catch (error) {
-    failure = error;
-    if (secondPage)
-      writeFileSync(
-        join(root, "second-failed-dom.html"),
-        await secondPage.content(),
-      );
+    if (page)
+      await page.screenshot({
+        path: join(root, "failure.png"),
+        fullPage: true,
+      });
+    if (page)
+      writeFileSync(join(root, "failed-dom.html"), await page.content());
+    throw error;
   } finally {
-    for (const close of [
-      () => browser?.close(),
-      () => launcher?.close(),
-      () => f.close(),
-    ])
-      try {
-        await close();
-      } catch (error) {
-        failure ??= error;
-      }
-    if (original) {
-      receipt.originalBrowserClose = await original;
-      if (receipt.originalBrowserClose[0] !== 0)
-        failure ??= Error("browser original close not zero");
-    }
-    receipt.passed &&= !failure;
-    writeFileSync(join(root, "receipt.json"), JSON.stringify(receipt, null, 2));
-    console.log(
-      JSON.stringify({
-        receipt: join(root, "receipt.json"),
-        passed: receipt.passed,
-      }),
-    );
+    await browser?.close();
+    await f.close();
+    vi.unstubAllEnvs();
   }
-  if (failure) throw failure;
 }, 120000);

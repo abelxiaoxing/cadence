@@ -3,7 +3,8 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { networkSnapshot } from "../sdk-network.ts";
-import { defaultStateHome } from "../task-store.ts";
+import { defaultStateHome } from "../workspace.ts";
+
 import {
   launchHost,
   managementExitCode,

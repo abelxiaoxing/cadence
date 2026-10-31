@@ -15,15 +15,15 @@ const STEPS: [tool: string, args: object, activity: string, output: string][] =
     ],
     [
       "read",
-      { path: "src/service/scheduler.ts" },
-      "Inspecting scheduler.ts admission and overlap exclusion rules",
+      { path: "src/service/checkout-gate.ts" },
+      "Inspecting checkout-gate.ts admission and overlap exclusion rules",
       "export class Scheduler {\n  …\n}",
     ],
     [
       "bash",
       { command: "ls src/service" },
       "Listing src/service",
-      "admission.ts\ngraph.ts\nscheduler.ts",
+      "workflows.ts\nowner.ts\ncheckout-gate.ts",
     ],
     [
       "read",

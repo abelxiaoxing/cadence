@@ -7,6 +7,7 @@ import { expect, it, vi } from "vitest";
 import { HistoryRecovery } from "../src/history/recovery.ts";
 import { inspectRecovery } from "../src/service/recovery.ts";
 import { canonicalJson, type ExportFrame } from "../src/service-contract.ts";
+import { legacyTaskStore } from "../src/task-store.ts";
 import {
   admitFixtureRun,
   historyFixture,
@@ -39,7 +40,7 @@ it("final review: publication snapshots its caller request before the first queu
   request.cwd = join(f.dir, "does-not-exist");
   request.operationId = randomUUID();
   expect((await original).status).toBe("published");
-  expect(f.c.store.load(f.link.taskId)?.cwd).toBe(f.root);
+  expect(legacyTaskStore(f.c).load(f.link.taskId)?.cwd).toBe(f.root);
 });
 
 it.each(["intent", "artifacts"] as const)(

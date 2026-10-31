@@ -26,7 +26,8 @@ import {
   win32,
 } from "node:path";
 import { ContractError } from "../service-contract.ts";
-import { effectiveWorkspace } from "../task-store.ts";
+import { effectiveWorkspace } from "../workspace.ts";
+
 import { serverConfigPath } from "./server-config.ts";
 
 export const UNIT = "cadence.service";

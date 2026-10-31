@@ -66,7 +66,7 @@ export const FEED_TIMING: FeedTiming = {
   idleMs: LIMITS.heartbeatMs,
   retryMs: 15_000,
 };
-/** Retained reads are paged; a child larger than this stays in /cadence-inspect History. */
+/** Retained reads are paged; a child larger than this stays in /cadence-history. */
 const MAX_PAGES = 50;
 const MAX_DETAIL_STEPS = 8;
 /** Characters of one field shown in the panel; the rest stays retained. */
@@ -655,7 +655,7 @@ class Feed {
   }
   /** Stop following these episodes. Their unsettled children end as errors
    * that say the outcome was not observed, instead of spinning as running for
-   * the rest of the session; /cadence-inspect History keeps the actual outcome. */
+   * the rest of the session; /cadence-history keeps the actual outcome. */
   private abandon(runIds: string[], why: string): void {
     for (const runId of runIds) {
       this.episodes.delete(runId);
@@ -667,7 +667,7 @@ class Feed {
           id: child.id,
           status: "error",
           endedAt: this.now(),
-          error: `${child.label} · outcome not observed here (${why}); see /cadence-inspect History`,
+          error: `${child.label} · outcome not observed here (${why}); see /cadence-history`,
         });
       }
     }
@@ -831,7 +831,7 @@ class Feed {
     }
     // One detail page can exceed the cap on its own, with no cursor left.
     if (cursor || text.length > TEXT_CAP)
-      text = `${text.slice(0, TEXT_CAP)}\n… (truncated; the full text is in /cadence-inspect History)`;
+      text = `${text.slice(0, TEXT_CAP)}\n… (truncated; the full text is in /cadence-history)`;
     this.state.remember(key, text);
     return text;
   }

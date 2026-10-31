@@ -11,8 +11,8 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { canonicalAmbientRoot, safeDirectory } from "../task-store.ts";
 import { sanitizeText, TextSanitizer } from "../worker-redaction.mjs";
+import { canonicalAmbientRoot, safeDirectory } from "../workspace.ts";
 import { ContractError } from "./contracts/core.ts";
 import type { FileEntry, WorkbenchResult } from "./contracts/workbench.ts";
 

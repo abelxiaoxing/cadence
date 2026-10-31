@@ -1,5 +1,5 @@
 /** Shared SDK startup route policy. Selection does not install a dispatcher. */
-import { object } from "./task-types.ts";
+import { object } from "./data-shapes.ts";
 
 export function safeChildEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};

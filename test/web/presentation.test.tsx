@@ -5,21 +5,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ServiceClient } from "../../src/service-client.ts";
 import {
-  type Action,
-  type ActionPreview,
   type DetailPage,
-  decodeAction,
-  decodePreflight,
   dependency,
   type HistoryReadResult,
   type ListRequest,
 } from "../../src/service-contract.ts";
 import { dependency as workerDependency } from "../../src/worker-public.mjs";
-import { confirm } from "../../web/src/client/actions";
 import { appendDetailPage } from "../../web/src/client/message-delta";
 import { mergeObservation } from "../../web/src/client/receipts";
 import { ViewLifetime } from "../../web/src/client/view-lifetime";
-import { ActionProposal } from "../../web/src/components/actions/ConfirmAction";
 import { ReceiptPanel } from "../../web/src/components/actions/ReceiptPanel";
 import { PageControls } from "../../web/src/components/history/PageControls";
 import { DiffView } from "../../web/src/components/review/DiffView";
@@ -32,16 +26,7 @@ import {
   buildNavigationRows,
   type NavigationNode,
 } from "../../web/src/navigation/assignment-rows";
-import {
-  content,
-  context,
-  coverage,
-  cursor,
-  graph,
-  id,
-  receipt,
-  transport,
-} from "./fixtures";
+import { content, coverage, cursor, id, receipt, transport } from "./fixtures";
 
 afterEach(() => vi.unstubAllGlobals());
 const node = (
@@ -117,77 +102,6 @@ it("renders escaped readonly diff with header/add/delete classes", () => {
   expect(html).toContain("scm-diff-line add");
   expect(html).toContain("scm-diff-line del");
   expect(html).not.toContain("<script>");
-});
-function preview(action: Action): ActionPreview {
-  const c = context();
-  return decodePreflight({
-    grant: id(),
-    expiresAt: "2099-01-01T00:00:00.000Z",
-    preview: {
-      action,
-      version: c,
-      rootLabel: "fixture",
-      cwdLabel: "fixture",
-      readablePlan: "OLD SAVED PLAN",
-      graph: null,
-      activeRunId: null,
-      configuredChecks: [],
-      checksRevision: 1,
-      reviewRunId: null,
-      issues: [],
-    },
-  }).preview;
-}
-it("confirms exact CREATE goal/kind, not a historical plan", () => {
-  const html = renderToStaticMarkup(
-    <ActionProposal
-      preview={preview(
-        decodeAction({
-          kind: "create",
-          taskKind: "diagnosis",
-          goal: "Exact <goal>\nsecond line",
-        }),
-      )}
-    />,
-  );
-  expect(html).toContain("Create diagnosis task");
-  expect(html).not.toContain("OLD SAVED PLAN");
-  expect(html).toContain("Exact &lt;goal&gt;\nsecond line");
-  expect(html).toContain("No Start");
-});
-it("confirms proposed SAVE plan/assignments/models, not prior preview plan", () => {
-  const c = context(),
-    g = graph(c);
-  const html = renderToStaticMarkup(
-    <ActionProposal
-      preview={preview({
-        kind: "save-plan",
-        taskId: g.taskId,
-        plan: "NEW PROPOSED PLAN",
-        graph: g,
-      })}
-    />,
-  );
-  expect(html).toContain("NEW PROPOSED PLAN");
-  expect(html).not.toContain("OLD SAVED PLAN");
-  expect(html).toContain("Exact proposed assignment");
-  expect(html).toContain(c.model.sourceSelectionId);
-  expect(html).toContain(g.plan.recordId);
-});
-it("confirms exact REVIEW run/change/check/issue acknowledgment", () => {
-  const a: Action = {
-    kind: "review",
-    taskId: id(),
-    runId: id(),
-    changesIdentity: "b".repeat(64),
-    checksRevision: 19,
-    acceptIssues: true,
-  };
-  const html = renderToStaticMarkup(<ActionProposal preview={preview(a)} />);
-  expect(html).toContain(a.runId);
-  expect(html).toContain(a.changesIdentity);
-  expect(html).toContain("19");
-  expect(html).toContain("true");
 });
 it("late pending lookup never replaces newer committed receipt or another ID", () => {
   const pending = receipt(),
@@ -378,34 +292,6 @@ describe("durable reader adaptation", () => {
     expect(value).not.toContain("private-proof");
     expect(decodeURIComponent(value)).toContain('"offset":4');
   });
-});
-
-it("lost command reply keeps exact identity and never replays after dismissal", async () => {
-  const version = context();
-  if (!version.task) throw new Error("fixture");
-  const command = vi.fn(async () => {
-    throw new Error("lost reply");
-  });
-  const client = new ServiceClient(transport({ command }));
-  const prepared = {
-    commandId: id(),
-    submitted: false,
-    preflight: {
-      grant: id(),
-      expiresAt: "2099-01-01T00:00:00.000Z",
-      preview: {
-        ...preview({ kind: "start", taskId: version.task.id }),
-        version,
-      },
-    },
-  };
-  expect(await confirm(client, prepared)).toMatchObject({
-    kind: "error",
-    error: { effect: "uncertain" },
-  });
-  expect(() => confirm(client, prepared)).toThrow("Already submitted");
-  expect(command).toHaveBeenCalledTimes(1);
-  expect(prepared.submitted).toBe(true);
 });
 
 // Exercise every named reader through the real shared correlation/union decoder.

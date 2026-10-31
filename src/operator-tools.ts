@@ -1,9 +1,6 @@
-import {
-  effectiveWorkspace,
-  resolveWorkspace,
-  TaskStore,
-} from "./task-store.ts";
+import { TaskStore } from "./task-store.ts";
 import { diagnosticText } from "./verification-diagnostics.ts";
+import { effectiveWorkspace, resolveWorkspace } from "./workspace.ts";
 
 /** Observe only the explicit project; private-state ancestors are refused,
  * never redirected to or reconstructed as a default workspace. */

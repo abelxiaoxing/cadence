@@ -219,7 +219,6 @@ export function TaskSidebar({
   onCancel,
   onTask,
   onScope,
-  onNew,
   chats = [],
   conversationId,
   onConversation,
@@ -243,7 +242,6 @@ export function TaskSidebar({
   onCancel: (runId: string) => void;
   onTask: (id: string, title?: string) => void;
   onScope: OpenScope;
-  onNew: () => void;
   chats?: ChatSummary[];
   conversationId?: string | null;
   onConversation?: (id: string) => void;
@@ -378,7 +376,7 @@ export function TaskSidebar({
   );
   return (
     <aside className="panel panel-left lp-panel">
-      <ConversationActions onConversation={onNewConversation} onTask={onNew} />
+      <ConversationActions onConversation={onNewConversation} />
       <SidebarSection
         title={t("Running conversations")}
         count={

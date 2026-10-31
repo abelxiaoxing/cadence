@@ -3,6 +3,7 @@ import { opendirSync } from "node:fs";
 import { join } from "node:path";
 import { CadencePreferences } from "../cadence-preferences.ts";
 import { sanitizeText } from "../worker-redaction.mjs";
+import type { CheckoutGate } from "./checkout-gate.ts";
 import { openProjectDirectory } from "./cli.ts";
 import {
   ContractError,
@@ -27,7 +28,6 @@ import type { OwnerModelContext } from "./model-context.ts";
 import type { ServiceOwner } from "./owner.ts";
 import type { Caller } from "./ports.ts";
 import { hash } from "./private-files.ts";
-import type { TaskActions } from "./task-actions.ts";
 import { WorkbenchFiles } from "./workbench-files.ts";
 import { UnacceptedConversationCommand } from "./workbench-send-refusal.ts";
 import { Workflows } from "./workflows.ts";
@@ -48,7 +48,7 @@ export class Workbench implements WorkbenchPort {
       owner: ServiceOwner;
       models: OwnerModelContext;
       choice: OwnerModelChoice;
-      actions: TaskActions;
+      gate: CheckoutGate;
       cwd: string;
       agentDir: string;
       projectsEnabled: boolean;
@@ -83,6 +83,9 @@ export class Workbench implements WorkbenchPort {
       "workbench-projects-v1",
     );
   }
+  closeReads(): void {
+    this.workflows.closeHistory();
+  }
   read(value: WorkbenchRead): WorkbenchResult {
     const request = decodeWorkbenchRead(value);
     this.o.owner.lease.assert();
@@ -96,6 +99,8 @@ export class Workbench implements WorkbenchPort {
           links: this.cadence.links(active.runs.map((run) => run.id)),
         };
       }
+      case "workflow-history":
+        return this.workflows.history(request.after, request.scan);
       case "workflow-transcript":
         return this.workflows.transcript(request.id, request.stepId);
       case "workflow-detail":
@@ -249,14 +254,6 @@ export class Workbench implements WorkbenchPort {
         request.request,
         { definite: true },
       );
-    if (request.kind === "link-task") {
-      this.conversations.link(
-        request.taskId,
-        request.conversationId,
-        request.epoch,
-      );
-      return { kind: "accepted", commandId: request.commandId };
-    }
     if (request.kind === "interrupt") {
       this.conversations.interrupt(
         request.conversationId,

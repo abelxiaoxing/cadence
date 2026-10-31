@@ -23,7 +23,8 @@ import {
   gitEnvironment,
   readBounded,
   safeDirectory,
-} from "../task-store.ts";
+} from "../workspace.ts";
+
 import { ContractError } from "./contracts/core.ts";
 import {
   type WorkflowPlan,

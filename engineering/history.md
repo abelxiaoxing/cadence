@@ -81,3 +81,15 @@ Control revision, accepted proposal and run-attempt identities are retained sepa
 Approval evidence records the exact proposal/revision and authenticated caller, never a reusable grant or browser cookie.
 Ordinary and coordinator messages still use the existing capture sanitizer and bounded checkpoint pipe.
 A separate bounded IPC channel admits only named research/plan/status requests; it cannot carry a browser/native execution capability.
+
+## Readonly diagnostics
+
+Native `/cadence-history` and browser History details retain old task search/export without its creation, plan editing, checks or human Review controls.
+Workflow history selects exact IDs in ID order with bounded directory-scan continuations, then reads at most `WORKFLOW_LIMITS.historyPage` retained summaries.
+A progress reply is not an empty or complete page; its one-use scan token resumes the same exclusive ID boundary.
+Scans retain only the next page plus lookahead and a bounded native directory buffer, never the full inventory.
+Idle expiry and owner teardown close only owned readonly handles; expired, consumed or foreign-owner tokens refuse and require an explicit fresh observation, never replay of work.
+The cursor is an exclusive ID boundary, not an immutable snapshot: concurrent new IDs before it require a new first-page observation.
+Unreadable run entries remain visibly unavailable; unsafe directory entries refuse, and listing never repairs or removes records.
+Step results and subagent transcripts are selected by exact run/step identity, independent of model availability.
+Workflow history has full retained detail lookup, not the legacy task engine's exact-search/export protocol.

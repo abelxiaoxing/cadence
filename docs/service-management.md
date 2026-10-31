@@ -113,7 +113,7 @@ For an explicit single-project definition, the older guards remain: no SDK means
 
 While no service is registered, Pi's session-start card shows a separate warning naming `cadence server install` for an installed package copy (`node <copy>/src/service-cli.mjs server install` for Pi's managed copy, which puts no bin on `PATH`); a checkout loaded with `pi -e` stays quiet.
 It is a warning rather than part of the info card because Pi's TUI replaces one info status with the next.
-The legacy `/cadence-inspect` client names the same management command when no owner exists; daily `/cadence` instead uses explicit on-demand project startup, without requiring a boot service.
+The readonly `/cadence-history` client names the same management command when no owner exists; daily `/cadence` instead uses explicit on-demand project startup, without requiring a boot service.
 A machine without a supported user service manager and `CADENCE_AUTOSTART=0` keep both quiet; with `CADENCE_LINGER=0` they suggest `--no-linger`.
 
 ### One copy for Pi and the service

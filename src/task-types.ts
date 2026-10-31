@@ -56,21 +56,9 @@ export interface RunResult {
   output: string;
   truncated: boolean;
 }
-export function object(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-export function boundedString(value: unknown, max: number): value is string {
-  return (
-    typeof value === "string" &&
-    Buffer.byteLength(value) <= max &&
-    !value.includes("\0")
-  );
-}
-export function validId(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
-    value,
-  );
-}
+export { boundedString, object, validId } from "./data-shapes.ts";
+
+import { boundedString, object, validId } from "./data-shapes.ts";
 export function decodeCheck(value: unknown): CheckDefinition {
   if (
     !object(value) ||

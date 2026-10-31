@@ -45,3 +45,10 @@ The bridge refuses requests/replies above 64KiB; status and investigation eviden
 Control records are bounded at 384KiB, inherit the 200-conversation/1000-turn ceilings, and link at most 200 workflow attempts; no eviction.
 There are at most 16 outstanding browser confirmation grants, each with the existing 120s lifetime.
 The additional coordinator slot is owner-accounted and does not expand the two implementation-worker slots or bypass the checkout barrier.
+
+The current checkout gate permits one holder and at most 16 waiting operations (`CHECKOUT_WAITERS` in `src/service/checkout-gate.ts`).
+Waiting cancellation releases only that queue entry; holder abort/Stop/quarantine never releases an uncertain original.
+
+Workflow history reads at most 200 directory entries per quantum and returns at most 20 summaries per page, retaining 21 candidate IDs per scan (`WORKFLOW_LIMITS.historyScanEntries`, `historyPage`).
+At most 16 scans hold readonly directory handles; 120s idle expiry or owner teardown closes them (`historyScans`, `historyIdleMs`).
+These are read budgets, not a lifetime retained-run cap; history is never evicted to satisfy them.

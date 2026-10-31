@@ -560,7 +560,7 @@ describe("Cadence owner feed", () => {
         status: "error",
         endedAt: T0 + 30_000,
         error:
-          "inspect-api · outcome not observed here (owner unavailable); see /cadence-inspect History",
+          "inspect-api · outcome not observed here (owner unavailable); see /cadence-history",
       },
     ]);
     expect(h.published(E.activity).at(-1)).toEqual({

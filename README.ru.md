@@ -49,7 +49,6 @@ pi install "$(npm root -g)/@abelxiaoxing/cadence"
    Обновление страницы и завершение цели не выключают режим.
    **Exit Cadence** выходит из режима; **Cancel workflow — request stop** запрашивает отмену работы.
 
-**Legacy task**: previous task/history workflow.
 No live Pi terminal is required for the browser conversation workflow.
 
 ### В терминале
@@ -64,7 +63,8 @@ Cadence исследует проект, уточняет решения и со
 
 Локальный владелец запускается по требованию; системная служба нужна только для дополнительного WebUI и автозапуска.
 
-`/cadence-inspect`: legacy task/history UI.
+`/cadence-history [run-id]`: readonly run details and retained history; no service startup or task execution.
+See [History and diagnostics](docs/history.md).
 [Conversation mode](docs/conversation-mode.md): native/browser approval, limits and worktree setup.
 Browser authentication is not execution consent.
 
@@ -80,14 +80,8 @@ cadence project open /absolute/new-project --create
 
 ### Проверки
 
-Перечислите команды, которые проверяют ваш проект, в `.cadence/assistant/config.json`, и задачи могут выполнять их как реальные проверки перед обзором:
-
-```json
-{
-  "schema": "cadence-assistant-checks/1",
-  "checks": [{ "name": "Tests", "command": "bun run test", "timeoutMs": 120000 }]
-}
-```
+Команды исходных и приёмочных проверок указываются в явно одобренном плане.
+Их фактические результаты отделены от автоматической проверки агентом.
 
 ## Управление службой
 

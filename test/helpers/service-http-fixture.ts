@@ -154,7 +154,6 @@ export async function httpFixture(
   };
   const adapters: HttpAdapters = {
     projection,
-    admission: null,
     receipts: null,
     live: {
       subscribe: (_scope, callback) => {

@@ -22,12 +22,14 @@ export async function acceptingFixture(
   mode: "source" | "generated",
   environment?: (env: NodeJS.ProcessEnv) => void,
   proxy: HostInput["config"]["http"]["proxy"] = null,
+  options: { rootName?: string; accessToken?: string } = {},
 ) {
   const packageRoot = process.env.CADENCE_TEST_PACKAGE_ROOT;
   const dir = mkdtempSync(join(tmpdir(), "accepting-"));
-  for (const name of ["project", "agent", "home", "tmp"])
+  const rootName = options.rootName ?? "project";
+  for (const name of [rootName, "agent", "home", "tmp"])
     mkdirSync(join(dir, name), { mode: 0o700 });
-  const root = join(dir, "project"),
+  const root = join(dir, rootName),
     agentDir = join(dir, "agent");
   let providerMode:
     | "coordinator"
@@ -309,12 +311,12 @@ export async function acceptingFixture(
   const input: HostInput = {
     workspace: root,
     stateHome: join(dir, "state"),
-    environmentToken: null,
+    environmentToken: options.accessToken ?? null,
     config: {
       schema: "cadence-service-host/1",
       cwd: root,
       agentDir,
-      tokenSource: "generated",
+      tokenSource: options.accessToken ? "environment" : "generated",
       tokenFile: null,
       http: {
         schema: "cadence-service-http/1",
@@ -419,21 +421,28 @@ export async function acceptingFixture(
     observations,
     rotate: () => nativeCall(c, "token-rotate"),
     async restart() {
-      if (mode !== "generated")
-        throw Error("restart requires original generated owner");
       await transport.detach();
-      await nativeCall(c, "stop");
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const result = await Promise.race([
-        original,
-        new Promise<null>((resolve) => {
-          timer = setTimeout(() => resolve(null), 5000);
-        }),
-      ]);
-      clearTimeout(timer);
-      if (result === null || child?.exitCode !== 0 || child.signalCode !== null)
-        throw Error("restart original owner close unavailable");
-      restartedCloses.push(result);
+      if (host) {
+        await host.owner.stop();
+        host = undefined;
+      } else {
+        await nativeCall(c, "stop");
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const result = await Promise.race([
+          original,
+          new Promise<null>((resolve) => {
+            timer = setTimeout(() => resolve(null), 5000);
+          }),
+        ]);
+        clearTimeout(timer);
+        if (
+          result === null ||
+          child?.exitCode !== 0 ||
+          child.signalCode !== null
+        )
+          throw Error("restart original owner close unavailable");
+        restartedCloses.push(result);
+      }
       const config = readHostConfig(c);
       if (!config) throw Error("restart configuration unavailable");
       input.config = config;

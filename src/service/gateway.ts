@@ -23,7 +23,8 @@ import {
   publicError,
 } from "../service-contract.ts";
 import { assertRequestTarget, readRoute, WS_PATH } from "../service-wire.ts";
-import { effectiveWorkspace } from "../task-store.ts";
+import { effectiveWorkspace } from "../workspace.ts";
+
 import { HttpAuthentication, requestBoundary } from "./auth.ts";
 import {
   nativeCall,

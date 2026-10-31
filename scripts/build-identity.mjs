@@ -32,7 +32,6 @@ export function contractIdentity(root) {
         "src/service-client.ts",
         "src/service-http-client.ts",
         "src/service-wire.ts",
-        "src/plan-proposal.ts",
         ...inputFiles(root, join(root, "src/service/contracts")).map(
           ([name]) => name,
         ),

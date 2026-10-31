@@ -4,7 +4,6 @@ import { lstatSync, opendirSync, realpathSync, statfsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CONTEXT_BYTES } from "../conversation-context.mjs";
 import { launchConversation, type ProcessSpec } from "../subagent-process.ts";
-import { resolveWorkspace } from "../task-store.ts";
 import {
   type CaptureFrame,
   type DetailDescriptor,
@@ -13,6 +12,8 @@ import {
   type NativeSettlement,
 } from "../worker-public.mjs";
 import { DetailSanitizer, sanitizeText } from "../worker-redaction.mjs";
+import { resolveWorkspace } from "../workspace.ts";
+import type { CheckoutGate, CheckoutPermit } from "./checkout-gate.ts";
 import {
   ContractError,
   canonicalJson,
@@ -37,8 +38,6 @@ import type { OwnerModelChoice } from "./model-choice.ts";
 import type { OwnerModelContext } from "./model-context.ts";
 import type { AcceptedWorkResult, ServiceOwner } from "./owner.ts";
 import { type FileSnapshot, hash } from "./private-files.ts";
-import type { ReviewBarrier } from "./scheduler.ts";
-import type { TaskActions } from "./task-actions.ts";
 
 const TURN_BYTES = 384 * 1024;
 const META_BYTES = 64 * 1024;
@@ -60,7 +59,7 @@ interface Options {
   owner: ServiceOwner;
   models: OwnerModelContext;
   choice: OwnerModelChoice;
-  actions: TaskActions;
+  gate: CheckoutGate;
   agentDir: string;
   cwd: string;
   secrets(): readonly string[];
@@ -735,28 +734,6 @@ export class Conversations {
       conversationId: decodeId(row.conversationId),
     };
   }
-  link(taskId: string, conversationId: string, epoch: string): void {
-    this.o.owner.lease.assert();
-    if (
-      epoch !== this.o.owner.lease.registration.epoch ||
-      this.o.owner.state !== "idle"
-    )
-      throw new ContractError("stale");
-    if (
-      !this.metadata(conversationId) ||
-      !this.o.coordination.store.load(taskId)
-    )
-      throw new ContractError("unavailable");
-    const existing = this.origin(taskId).conversationId;
-    if (existing !== null && existing !== conversationId)
-      throw new ContractError("conflict");
-    if (existing === null)
-      this.write(
-        join(this.root, "task-links", `${decodeId(taskId)}.json`),
-        { conversationId },
-        META_BYTES,
-      );
-  }
   interrupt(id: string, turnId: string, epoch: string): void {
     this.o.owner.lease.assert();
     const live = this.active.get(turnId);
@@ -780,7 +757,7 @@ export class Conversations {
     abort: AbortController,
     control?: ConversationControl,
   ): Promise<AcceptedWorkResult> {
-    let barrier: ReviewBarrier | undefined;
+    let barrier: CheckoutPermit | undefined;
     let authSettled: Promise<void> | undefined;
     let uncertain = false;
     let native: NativeSettlement = {
@@ -827,12 +804,8 @@ export class Conversations {
         return { status: "settled" };
       }
       if (!control) {
-        barrier = await this.o.actions.scheduler.conversationBarrier(
-          turn.id,
-          abort.signal,
-        );
+        barrier = await this.o.gate.acquire(turn.id, abort.signal);
         barrier.assertHeld();
-        this.o.actions.conversationBoundary(barrier);
       }
       if (!current()) throw new ContractError("stale");
       const choice = this.o.choice.snapshot(),
@@ -974,8 +947,6 @@ export class Conversations {
       if (uncertain) turn.status = "unknown";
       try {
         this.write(this.path(turn.id, "native.json"), native, META_BYTES);
-        if (barrier && !uncertain && this.o.owner.state === "idle")
-          this.o.actions.conversationBoundary(barrier);
         if (turn.status !== "completed")
           turn.notice = [
             turn.notice,

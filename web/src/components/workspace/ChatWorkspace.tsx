@@ -41,16 +41,10 @@ export function ChatWorkspace({
   enabled,
   available = enabled,
   canInterrupt = enabled,
-  cadenceEnabled = enabled,
-  onCadence,
   onModel,
   onChanged,
   reference,
   onReferenceUsed,
-  initialMode = "chat",
-  taskPending = false,
-  legacyTask = false,
-  onModeChanged,
   hidden = false,
   onOpenAgent,
   onWorkflowRuns,
@@ -61,12 +55,6 @@ export function ChatWorkspace({
   enabled: boolean;
   available?: boolean;
   canInterrupt?: boolean;
-  cadenceEnabled?: boolean;
-  onCadence(goal: string): Promise<boolean>;
-  initialMode?: "chat" | "cadence";
-  taskPending?: boolean;
-  legacyTask?: boolean;
-  onModeChanged?(): void;
   /** Kept mounted (draft, scroll, observations) while a subagent view covers it. */
   hidden?: boolean;
   onOpenAgent?(agent: WorkflowAgent): void;
@@ -81,7 +69,7 @@ export function ChatWorkspace({
   const draftKey = `cadence:draft:${workspaceId}:${id}`;
   const [draft, setDraft] = useState(() => stored(draftKey));
   const [mode, setMode] = useState<"chat" | "cadence">(() =>
-    stored(`${draftKey}:mode`) === "cadence" ? "cadence" : initialMode,
+    stored(`${draftKey}:mode`) === "cadence" ? "cadence" : "chat",
   );
   const [before, setBefore] = useState<string | null>(null);
   const [busy, setBusy] = useState(false),
@@ -114,9 +102,7 @@ export function ChatWorkspace({
   // never needs a client-side lock: the next observation shows the run.
   const [approving, setApproving] = useState("");
   const attempted = useRef("");
-  const input = cadenceInput(draft, cadence || legacyTask ? "cadence" : mode);
-  const legacy =
-    legacyTask && !cadence && cadenceInput(draft, "chat").mode !== "cadence";
+  const input = cadenceInput(draft, cadence ? "cadence" : mode);
   const canSend =
     enabled &&
     !!view &&
@@ -124,9 +110,7 @@ export function ChatWorkspace({
     modeObserved &&
     !(cadence && (workflow.error || state?.notice)) &&
     !busy &&
-    !taskPending &&
-    !pending &&
-    (legacy ? cadenceEnabled : true);
+    !pending;
   const summary = view?.summary;
   const running =
     summary && (summary.status === "queued" || summary.status === "running");
@@ -137,7 +121,6 @@ export function ChatWorkspace({
     cadenceKnown &&
     !page.error &&
     !busy &&
-    !taskPending &&
     !pending &&
     !running;
   // The plan card survives later messages; the owner refuses approval only
@@ -161,7 +144,6 @@ export function ChatWorkspace({
       scroll.current.scrollTop = lastTop.current;
   }, [hidden]);
   const alive = useRef(true);
-  const taskSending = useRef(false);
   const observedHead = useRef("");
   const sentDraft = useRef(draft);
   useEffect(() => {
@@ -279,38 +261,12 @@ export function ChatWorkspace({
     if (
       !(exiting ? canExit : canSend) ||
       running ||
-      taskSending.current ||
       !message.trim() ||
       before !== null
     )
       return;
     if (!override && cadence && cadenceApproval(message)) {
       await approve();
-      return;
-    }
-    if (legacy && !override) {
-      taskSending.current = true;
-      setBusy(true);
-      try {
-        if (await onCadence(input.text.trim())) {
-          try {
-            sessionStorage.removeItem(draftKey);
-          } catch {
-            // Storage availability cannot change an accepted task's outcome.
-          }
-          if (alive.current) setDraft("");
-        }
-      } catch {
-        if (alive.current)
-          setError(
-            t(
-              "Task preparation unavailable. Observe the original receipt before sending again.",
-            ),
-          );
-      } finally {
-        taskSending.current = false;
-        if (alive.current) setBusy(false);
-      }
       return;
     }
     const selecting = cadenceInput(message, mode).mode === "cadence";
@@ -344,7 +300,6 @@ export function ChatWorkspace({
         } else {
           setPending("");
           setMode("chat");
-          onModeChanged?.();
           setDraft((value) => (value === message ? "" : value));
         }
         workflow.refresh();
@@ -409,7 +364,6 @@ export function ChatWorkspace({
         setPending("");
         if (command.kind === "cadence-send") {
           setMode("chat");
-          onModeChanged?.();
         }
       }
       workflow.refresh();
@@ -455,11 +409,7 @@ export function ChatWorkspace({
           <FiMessageSquare aria-hidden="true" />
           <h2>{summary?.title ?? t("New conversation")}</h2>
           <span className="conversation-badge">
-            {cadence
-              ? t("Cadence on")
-              : legacy
-                ? t("Legacy task")
-                : t("Ordinary")}
+            {cadence ? t("Cadence on") : t("Ordinary")}
           </span>
           {cadence && (
             <button
@@ -610,7 +560,6 @@ export function ChatWorkspace({
             !modeObserved ||
             !!page.error ||
             busy ||
-            taskPending ||
             !!pending
           }
           aria-label={t("Message")}
@@ -640,7 +589,6 @@ export function ChatWorkspace({
               const selected =
                 event.target.value === "cadence" ? "cadence" : "chat";
               setMode(selected);
-              if (selected === "chat") onModeChanged?.();
               if (
                 selected === "chat" &&
                 cadenceInput(draft, "chat").mode === "cadence"
@@ -649,9 +597,7 @@ export function ChatWorkspace({
             }}
           >
             <option value="chat">{t("Ordinary conversation")}</option>
-            <option value="cadence">
-              {legacy ? t("Legacy task") : t("Cadence on Send")}
-            </option>
+            <option value="cadence">{t("Cadence on Send")}</option>
           </select>
           <button type="button" className="ghost" onClick={onModel}>
             <FiCpu />
@@ -684,11 +630,7 @@ export function ChatWorkspace({
               }
             >
               <FiArrowUp />
-              {taskPending
-                ? t("Analyzing task…")
-                : legacy
-                  ? t("Prepare task")
-                  : t("Send")}
+              {t("Send")}
             </button>
           )}
         </div>

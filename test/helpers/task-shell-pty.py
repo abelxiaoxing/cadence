@@ -18,21 +18,6 @@ import time
 config = json.load(open(sys.argv[1], encoding="utf-8"))
 root = config["root"]
 control = config["controlFd"]
-# Additional readonly mixed-client lane, never a replacement for the HTTP4
-# production barrier. Exact finite interactions cannot confirm Start or Cancel.
-observer_run = config.get("readonlyObserverRun")
-if observer_run is not None:
-    if not re.fullmatch(r"[0-9a-f-]{36}", observer_run):
-        raise RuntimeError("observer-run-invalid")
-    expected_steps = [
-        {"expect": "Context7", "send": ["/cadence-inspect", "\r"]},
-        {"expect": "Cadence service", "send": ["\x1b[B", "\x1b[B", "\x1b[B", "\r"]},
-        {"expect": observer_run, "send": ["\x1b"]},
-        {"expect": "Cadence service", "send": ["\x1b"]},
-        {"expect": "detached locally", "send": ["/quit", "\r"]},
-    ]
-    if config["steps"] != expected_steps:
-        raise RuntimeError("observer-steps-invalid")
 expected_event = {"event": "cancellation-http-pending", "requestOrdinal": 4, "editingOrdinal": 3}
 pid, descriptor = pty.fork()
 if pid == 0:

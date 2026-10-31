@@ -13,6 +13,7 @@ import {
   type OwnerFact,
   type RunProjection,
 } from "../src/service-contract.ts";
+import { legacyTaskStore } from "../src/task-store.ts";
 import {
   admitFixtureRun,
   historyFixture,
@@ -31,7 +32,7 @@ it("subsequent candidate-less uncertainty survives reopened/finite projections a
   });
   expect(first.status).toBe("published");
   expect((await settleFixtureRun(f, "blocked")).status).toBe("committed");
-  const path = join(f.c.store.tasks, f.link.taskId, "task.json");
+  const path = join(legacyTaskStore(f.c).tasks, f.link.taskId, "task.json");
   const external = Buffer.concat([readFileSync(path), Buffer.from(" \n")]);
   writeFileSync(path, external);
   const second = await f.writer.publishTask({
@@ -159,7 +160,7 @@ it("accepted but unallocated Stop records uncertain publication, never fabricate
   const f = historyFixture();
   selectLegacy(f);
   expect((await f.writer.commit(f.intent)).status).toBe("committed");
-  const path = join(f.c.store.tasks, f.link.taskId, "task.json"),
+  const path = join(legacyTaskStore(f.c).tasks, f.link.taskId, "task.json"),
     bytes = readFileSync(path);
   f.writer.quiesce();
   expect((await f.writer.abandonPublication(f.intent.operationId)).status).toBe(

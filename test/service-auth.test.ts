@@ -21,11 +21,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
-import { ActionAdmission } from "../src/service/admission.ts";
 import { AccessMaterial } from "../src/service/auth.ts";
 import { decodeHttpPolicy } from "../src/service/config.ts";
 import { ServiceCoordination } from "../src/service/coordination.ts";
-import type { AdmissionOwner, StoredCommand } from "../src/service/ports.ts";
 import { PrivateFiles } from "../src/service/private-files.ts";
 import { ServiceClient } from "../src/service-client.ts";
 import type {
@@ -135,79 +133,25 @@ function actionFixture(f: Fixture) {
     observation: { identity: "a".repeat(64), complete: true },
     task: null,
   };
-  const rows = new Map<string, StoredCommand>(),
-    effects: string[] = [];
-  const owner: AdmissionOwner = {
-    currentAccess: () => ({
-      epoch: f.epoch,
-      accessGeneration: f.material.generation,
-    }),
-    observe: async (action) => ({
-      version: { ...context, accessGeneration: f.material.generation },
-      action,
-      rootLabel: "fixture",
-      cwdLabel: "fixture",
-      readablePlan: "",
-      graph: null,
-      activeRunId: null,
-      issues: [],
-      configuredChecks: [],
-      checksRevision: 1,
-      reviewRunId: null,
-    }),
-    run: () => undefined,
-    activate: (intent) => {
-      effects.push(intent.commandId);
+  const effects: string[] = [];
+  const owner = { requestCancel: vi.fn() };
+  // Actual current application port spy, not a second legacy admission engine.
+  f.adapters.workbench = {
+    read: () => ({ kind: "conversations", entries: [] }),
+    command: (request) => {
+      effects.push(request.commandId);
+      if (request.kind === "interrupt") owner.requestCancel();
+      return { kind: "accepted", commandId: request.commandId };
     },
-    requestCancel: () => {
-      throw new Error("no run");
-    },
-    quarantine: () => {},
   };
-  const admission = new ActionAdmission(
-    {
-      lookup: async (id) =>
-        rows.has(id)
-          ? { status: "found", record: rows.get(id)! }
-          : { status: "absent", committedSeq: "0" },
-      commit: async (intent) => {
-        const record: StoredCommand = {
-          identity: intent.identity,
-          receipt: {
-            commandId: intent.commandId,
-            operationId: intent.operationId,
-            runId: intent.runId,
-            admission: "accepted",
-            committedSeq: "1",
-            execution: null,
-            settlement: null,
-            created: {
-              kind: "task",
-              taskId: intent.createdTaskId!,
-              state: "reserved",
-            },
-            publication: "pending",
-          },
-        };
-        context.controlRev++;
-        rows.set(intent.commandId, record);
-        return { status: "committed", record };
-      },
-    },
-    owner,
-    { now: Date.now, uuid: randomUUID },
-  );
-  f.adapters.admission = admission;
-  f.adapters.receipts = async (id) =>
-    rows.has(id)
-      ? { status: "found", receipt: rows.get(id)!.receipt }
-      : { status: "absent", committedSeq: "0" };
+  f.adapters.attachments = { detach: vi.fn(), revokeGrants: vi.fn() };
+  f.adapters.receipts = async () => ({ status: "absent", committedSeq: "0" });
   const action = {
     kind: "create",
     taskKind: "code",
     goal: "injected metadata only",
   } as const;
-  return { admission, owner, context, action, effects, rows };
+  return { owner, context, action, effects };
 }
 
 describe("explicit private access setup (no user/provider credentials)", () => {
@@ -512,7 +456,7 @@ describe("actual Node HTTP security boundary, injected task/history ports", () =
     expect(browser.value.authority).toBe("browser");
     expect(browser.value.csrf).toMatch(/^[a-f0-9-]{36}$/);
     expect(browser.value.capabilities.manualChecks).toBe(false);
-    expect(browser.value.capabilities.actions).toBe(false); // no ActionAdmission composition
+    expect(browser.value.capabilities.actions).toBe(false); // no current workbench composition
     for (const extra of [
       { origin: f.origin },
       { cookie: f.cookie },
@@ -608,85 +552,36 @@ describe("actual Node HTTP security boundary, injected task/history ports", () =
       expect(a.effects).toEqual([]);
     },
   );
-  it("real ActionAdmission, exact attachment grants, lost response lookup and duplicate command do not replay injected effects", async () => {
+  it("retired task HTTP controls refuse browser and native callers before admission, including stale grant-shaped requests", async () => {
     const f = await setup(),
-      a = actionFixture(f),
-      s = await session(f),
-      other = await session(f);
-    const preflight = await request(f.origin, "/api/v1/preflight", {
-      method: "POST",
-      headers: s.headers,
-      body: JSON.stringify({ expected: a.context, action: a.action }),
-    });
-    expect(preflight.status, preflight.text).toBe(200);
-    const command = {
-      commandId: randomUUID(),
-      expected: structuredClone(a.context),
-      action: a.action,
-      grant: JSON.parse(preflight.text).value.grant,
-    };
-    const wrong = await request(f.origin, "/api/v1/commands", {
-      method: "POST",
-      headers: other.headers,
-      body: JSON.stringify(command),
-    });
-    expect(wrong.status).toBe(409);
-    const accepted = await request(f.origin, "/api/v1/commands", {
-      method: "POST",
-      headers: s.headers,
-      body: JSON.stringify(command),
-    });
-    expect(accepted.status, accepted.text).toBe(200);
-    expect(
-      (
-        await request(f.origin, "/api/v1/commands", {
+      a = actionFixture(f);
+    for (const local of [false, true]) {
+      const s = await session(f, local);
+      for (const [path, body] of [
+        ["/api/v1/preflight", { expected: a.context, action: a.action }],
+        [
+          "/api/v1/commands",
+          {
+            commandId: randomUUID(),
+            expected: a.context,
+            action: a.action,
+            grant: randomUUID(),
+          },
+        ],
+      ] as const) {
+        const reply = await request(f.origin, path, {
           method: "POST",
           headers: s.headers,
-          body: JSON.stringify(command),
-        })
-      ).text,
-    ).toBe(accepted.text);
-    expect(
-      JSON.parse(
-        (
-          await request(f.origin, wireUrl("receipt", command.commandId), {
-            headers: s.headers,
-          })
-        ).text,
-      ).status,
-    ).toBe("found");
-    expect(a.effects).toEqual([command.commandId]);
-  });
-  it("rotation during awaited preflight/read invalidates without late mutation/private output; admitted work is not canceled", async () => {
-    const f = await setup(),
-      a = actionFixture(f),
-      s = await session(f),
-      entered = deferred(),
-      release = deferred();
-    const observe = a.owner.observe;
-    a.owner.observe = async (...args) => {
-      entered.resolve();
-      await release.promise;
-      return observe(...args);
-    };
-    const pending = request(f.origin, "/api/v1/preflight", {
-      method: "POST",
-      headers: s.headers,
-      body: JSON.stringify({ expected: a.context, action: a.action }),
-    });
-    await entered.promise;
-    f.material.rotate();
-    release.resolve();
-    expect((await pending).status).not.toBe(200);
-    expect(a.effects).toEqual([]);
-    expect(
-      (await request(f.origin, "/app", { headers: { cookie: f.cookie } }))
-        .status,
-    ).toBe(401);
-    const newer = new URL(f.material.tokenLink(f.origin)).searchParams.get(
-      "token",
-    )!;
-    expect((await request(f.origin, `/?token=${newer}`)).status).toBe(303);
+          body: JSON.stringify(body),
+        });
+        expect(JSON.parse(reply.text)).toMatchObject({
+          kind: "error",
+          error: { code: "unsupported-context", effect: "none" },
+        });
+      }
+      expect(a.effects).toEqual([]);
+      expect(s.value.capabilities.manualChecks).toBe(false);
+    }
   });
   it("awaited private reads recheck generation before response", async () => {
     const f = await setup(),
@@ -743,19 +638,23 @@ describe("actual Node HTTP security boundary, injected task/history ports", () =
     });
     const client = new ServiceClient(transport);
     expect((await client.session()).kind).toBe("ok");
-    const preflight = await client.preflight(a.context, a.action);
-    expect(preflight.kind).toBe("ok");
-    if (preflight.kind !== "ok") return;
+    expect(await client.preflight(a.context, a.action)).toMatchObject({
+      kind: "error",
+      error: { code: "unsupported-context", effect: "none" },
+    });
     const command = {
       commandId: randomUUID(),
       expected: structuredClone(a.context),
       action: a.action,
-      grant: preflight.value.grant,
+      grant: randomUUID(),
     };
-    expect((await client.create(command)).kind).toBe("ok");
-    expect((await client.receipt(command.commandId)).status).toBe("found");
+    expect(await client.create(command)).toMatchObject({
+      kind: "error",
+      error: { code: "unsupported-context", effect: "none" },
+    });
+    expect((await client.receipt(command.commandId)).status).toBe("absent");
     await transport.detach();
-    expect(a.effects).toEqual([command.commandId]);
+    expect(a.effects).toEqual([]);
     const fetcher = vi.fn(async () => {
       throw new Error("lost response");
     });
@@ -851,12 +750,6 @@ describe("real read-only WebSockets and bounded history transport", () => {
       cancel = vi.spyOn(a.owner, "requestCancel");
     const ws = await socket(f, undefined, s.headers["x-cadence-attachment"]),
       close = once(ws, "close");
-    const pre = await request(f.origin, "/api/v1/preflight", {
-      method: "POST",
-      headers: s.headers,
-      body: JSON.stringify({ expected: a.context, action: a.action }),
-    });
-    expect(pre.status).toBe(200);
     f.material.rotate();
     await close;
     expect(cancel).not.toHaveBeenCalled();
@@ -869,7 +762,7 @@ describe("real read-only WebSockets and bounded history transport", () => {
             commandId: randomUUID(),
             expected: a.context,
             action: a.action,
-            grant: JSON.parse(pre.text).value.grant,
+            grant: randomUUID(),
           }),
         })
       ).status,
@@ -917,7 +810,7 @@ describe("real read-only WebSockets and bounded history transport", () => {
       ).status,
     ).toBe(429);
   });
-  it("actual heartbeat carries committed watermark; socket departure invalidates only its attachment grant", async () => {
+  it("actual heartbeat carries committed watermark; socket departure detaches and retired controls remain unavailable", async () => {
     const f = await setup(),
       a = actionFixture(f),
       s = await session(f),
@@ -930,11 +823,6 @@ describe("real read-only WebSockets and bounded history transport", () => {
     expect((await heartbeat).event).toMatchObject({
       kind: "heartbeat",
       committedSeq: "1",
-    });
-    const pre = await request(f.origin, "/api/v1/preflight", {
-      method: "POST",
-      headers: s.headers,
-      body: JSON.stringify({ expected: a.context, action: a.action }),
     });
     const close = once(ws, "close");
     ws.close();
@@ -949,11 +837,11 @@ describe("real read-only WebSockets and bounded history transport", () => {
             commandId: randomUUID(),
             expected: a.context,
             action: a.action,
-            grant: JSON.parse(pre.text).value.grant,
+            grant: randomUUID(),
           }),
         })
       ).status,
-    ).toBe(409);
+    ).toBe(422);
     expect(a.effects).toEqual([]);
   });
   it("valid export frames preserve original trailer/EOF through native HTTP and portable client", async () => {
@@ -1362,26 +1250,27 @@ describe("transport regression controls and original settlement", () => {
       a = actionFixture(f),
       s = await session(f),
       cancel = vi.spyOn(a.owner, "requestCancel");
-    const pre = await request(f.origin, "/api/v1/preflight", {
-      method: "POST",
-      headers: s.headers,
-      body: JSON.stringify({ expected: a.context, action: a.action }),
-    });
+    // A current application port accepts the injected work before rotation.
+    // This tests attachment lifetime, not SDK execution or task admission.
     const command = {
+      kind: "send" as const,
       commandId: randomUUID(),
-      expected: structuredClone(a.context),
-      action: a.action,
-      grant: JSON.parse(pre.text).value.grant,
+      conversationId: randomUUID(),
+      head: null,
+      text: "Injected ordinary turn",
+      model: {
+        epoch: f.epoch,
+        accessGeneration: f.material.generation,
+        configRev: 1,
+        catalogId: randomUUID(),
+      },
     };
-    expect(
-      (
-        await request(f.origin, "/api/v1/commands", {
-          method: "POST",
-          headers: s.headers,
-          body: JSON.stringify(command),
-        })
-      ).status,
-    ).toBe(200);
+    f.adapters.workbench!.command(command, {
+      attachmentId: s.headers["x-cadence-attachment"],
+      authority: "browser",
+      accessGeneration: f.material.generation,
+    });
+    expect(cancel).not.toHaveBeenCalled();
     const ws = await socket(f),
       closed = once(ws, "close");
     f.material.rotate();
@@ -1580,7 +1469,7 @@ it("portable socket factory accepts stock ws public API and observes real snapsh
   await closed;
 });
 
-it("lost command HTTP acknowledgment remains uncertain with one request/effect, explicit receipt lookup repairs observation only", async () => {
+it("lost retired-command HTTP refusal stays uncertain to the caller; receipt lookup observes absence without replay", async () => {
   const f = await setup(),
     a = actionFixture(f);
   let commands = 0;
@@ -1602,24 +1491,21 @@ it("lost command HTTP acknowledgment remains uncertain with one request/effect, 
     }),
   );
   await client.session();
-  const pre = await client.preflight(a.context, a.action);
-  expect(pre.kind).toBe("ok");
-  if (pre.kind !== "ok") return;
   const command = {
     commandId: randomUUID(),
     expected: structuredClone(a.context),
     action: a.action,
-    grant: pre.value.grant,
+    grant: randomUUID(),
   };
   expect(await client.create(command)).toMatchObject({
     kind: "error",
     error: { effect: "uncertain" },
   });
   expect(commands).toBe(1);
-  expect(a.effects).toEqual([command.commandId]);
-  expect((await client.receipt(command.commandId)).status).toBe("found");
+  expect(a.effects).toEqual([]);
+  expect((await client.receipt(command.commandId)).status).toBe("absent");
   expect(commands).toBe(1);
-  expect(a.effects).toHaveLength(1);
+  expect(a.effects).toHaveLength(0);
 });
 
 it("detached unresolved original snapshots retain bounded slots; established control/detach is independent", async () => {

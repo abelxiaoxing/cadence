@@ -6,7 +6,7 @@ import { chromium } from "playwright-core";
 import { it } from "vitest";
 import { acceptingFixture } from "../helpers/accepting-fixture.ts";
 
-it("built workbench: ordinary chat, file reference, explicit Cadence transition, retained link and responsive drawers", async () => {
+it("built workbench: ordinary chat, file reference, no legacy creation and responsive drawers", async () => {
   const f = await acceptingFixture("generated");
   const root = mkdtempSync(join(tmpdir(), "wb-"));
   let browser, page;
@@ -113,40 +113,17 @@ it("built workbench: ordinary chat, file reference, explicit Cadence transition,
     );
     assert.equal(await input.inputValue(), "@existing.txt");
     await p.screenshot({ path: join(root, "desktop.png"), fullPage: true });
-    await p.getByRole("button", { name: "Legacy task", exact: true }).click();
-    await input.fill("Prepare a safe task from this chat");
-    await p.getByRole("button", { name: "Prepare task", exact: true }).click();
-    await p
-      .getByRole("button", { name: "Review implementation plan", exact: true })
-      .waitFor();
-    await p.waitForFunction(() =>
-      [...document.querySelectorAll("button")].some(
-        (button) =>
-          button.textContent === "Review implementation plan" &&
-          !button.disabled,
-      ),
-    );
-    assert.equal(await p.getByRole("dialog").count(), 0);
-    assert.equal(await p.getByLabel("Kind", { exact: true }).count(), 0);
-    await p.getByLabel("Readable plan", { exact: true }).waitFor();
-    await p
-      .getByRole("button", {
-        name: "Back to ordinary conversation",
-        exact: true,
-      })
-      .waitFor();
     assert.equal(
-      f.contacts(),
-      base + 2,
-      "Send starts one readonly analysis without editing",
+      await p.getByRole("button", { name: "Legacy task", exact: true }).count(),
+      0,
+    );
+    assert.equal(
+      await p
+        .getByRole("button", { name: "Prepare task", exact: true })
+        .count(),
+      0,
     );
     await p.reload();
-    await p
-      .getByRole("button", {
-        name: "Back to ordinary conversation",
-        exact: true,
-      })
-      .click();
     assert.equal(p.url(), chatUrl);
     await p
       .locator(".chat-message.assistant")
@@ -180,7 +157,7 @@ it("built workbench: ordinary chat, file reference, explicit Cadence transition,
       await p.keyboard.press("Escape");
       await drawer("left", false);
       await p
-        .getByRole("button", { name: "Plan / review", exact: true })
+        .getByRole("button", { name: "Files / history", exact: true })
         .click();
       await drawer("right", true);
       await p.getByRole("region", { name: "File list", exact: true }).waitFor();
@@ -207,48 +184,13 @@ it("built workbench: ordinary chat, file reference, explicit Cadence transition,
     await p
       .getByRole("dialog", { name: "Open working folder", exact: true })
       .waitFor();
-    assert.equal(f.contacts(), base + 2);
+    assert.equal(f.contacts(), base + 1);
     await p.keyboard.press("Escape");
-    await p.setViewportSize({ width: 1440, height: 900 });
-    await p
-      .getByRole("button", { name: /Prepare a safe task from this chat/ })
-      .click();
-    await p
-      .getByRole("button", { name: "Review implementation plan", exact: true })
-      .click();
-    await p
-      .getByRole("dialog", { name: "Confirm plan and execute", exact: true })
-      .waitFor();
     assert.equal(
       f.contacts(),
-      base + 2,
-      "Opening a plan confirmation does not edit",
+      base + 1,
+      "readonly navigation does not send or create tasks",
     );
-    await p
-      .getByRole("button", { name: "Confirm plan and execute", exact: true })
-      .click();
-    await p.waitForFunction(() => !document.querySelector('[role="dialog"]'));
-    const deadline = Date.now() + 15000;
-    while (f.contacts() < base + 3 && Date.now() < deadline)
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    assert.equal(
-      f.contacts(),
-      base + 3,
-      "One plan confirmation starts exactly one implementation worker",
-    );
-    // The started worker settles before the fixture's orderly close.
-    const drainBy = Date.now() + 15000;
-    for (;;) {
-      const active = await f.client.activeRuns();
-      if (
-        active.kind === "ok" &&
-        active.value.status === "complete" &&
-        active.value.runs.length === 0
-      )
-        break;
-      assert(Date.now() < drainBy, "implementation run did not drain");
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
     assert.deepEqual(errors, []);
     writeFileSync(
       join(root, "receipt.json"),

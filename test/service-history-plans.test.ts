@@ -7,6 +7,7 @@ import { proposePlanContent } from "../src/history/plans.ts";
 import { HistoryReader } from "../src/history/reader.ts";
 import type { AdmissionIntent } from "../src/service/ports.ts";
 import { canonicalJson, type Graph } from "../src/service-contract.ts";
+import { legacyTaskStore } from "../src/task-store.ts";
 import { historyFixture } from "./helpers/history-fixture.ts";
 import { retainedText, storedTree } from "./helpers/history-read-fixture.ts";
 
@@ -40,7 +41,7 @@ async function created(options: Parameters<typeof historyFixture>[0] = {}) {
       })
     ).status,
   ).toBe("published");
-  const saved = f.c.store.loadSnapshot(f.link.taskId)!;
+  const saved = legacyTaskStore(f.c).loadSnapshot(f.link.taskId)!;
   f.context = {
     ...f.context,
     controlRev: 2,
@@ -137,7 +138,7 @@ it.each([
     expect(storedTree(f.dir)).toEqual(before);
     expect(f.writer.quarantined).toBe(false);
     const publication = await save(f, p);
-    const saved = f.c.store.loadSnapshot(f.link.taskId)!;
+    const saved = legacyTaskStore(f.c).loadSnapshot(f.link.taskId)!;
     expect(saved.record.plan).toBe(plan);
     expect(saved.record.revision).toBe(2);
     expect(saved.record.phase).toBe("planning");
@@ -187,7 +188,7 @@ it.each(["hash", "length", "secret", "task", "context", "kind"])(
     if (fault === "kind") p.graph.taskKind = "diagnosis";
     expect((await f.writer.commit(p.intent)).status).toBe("committed");
     if (fault === "task") {
-      const path = join(f.c.store.tasks, f.link.taskId, "task.json");
+      const path = join(legacyTaskStore(f.c).tasks, f.link.taskId, "task.json");
       writeFileSync(path, `${readFileSync(path, "utf8")} `);
     }
     if (fault === "context")
@@ -299,7 +300,9 @@ it("ordinary content remains randomly allocated at version1 and cannot be adopte
   expect(
     (await f.writer.publishTask({ operationId: p.intent.operationId })).status,
   ).not.toBe("published");
-  expect(f.c.store.loadSnapshot(f.link.taskId)!.record.plan).toBe("");
+  expect(legacyTaskStore(f.c).loadSnapshot(f.link.taskId)!.record.plan).toBe(
+    "",
+  );
 });
 
 it("publication conflict preserves external bytes and never exposes a current saved graph", async () => {
@@ -309,7 +312,7 @@ it("publication conflict preserves external bytes and never exposes a current sa
   expect(
     (await f.writer.retainAcceptedPlan(p.intent.operationId, [])).status,
   ).toBe("committed");
-  const path = join(f.c.store.tasks, f.link.taskId, "task.json");
+  const path = join(legacyTaskStore(f.c).tasks, f.link.taskId, "task.json");
   const external = `${readFileSync(path, "utf8")} \n`;
   writeFileSync(path, external);
   expect(

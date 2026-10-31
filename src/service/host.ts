@@ -1,4 +1,4 @@
-/** One real owner, original lifetimes, actions, retained readers and authenticated clients. */
+/** One real owner, original lifetimes, current workflows, retained readers and authenticated clients. */
 import { lstatSync, opendirSync } from "node:fs";
 import { join } from "node:path";
 import { loadAgentDefinitions } from "../agent-registry.ts";
@@ -18,20 +18,18 @@ import {
   decodeId,
   publicError,
 } from "../service-contract.ts";
-import {
-  resolveWorkspace,
-  safeDirectory,
-  type TaskStore,
-} from "../task-store.ts";
+import { legacyTaskStore, type TaskStore } from "../task-store.ts";
 import type { TaskRecord } from "../task-types.ts";
 import { diagnosticText } from "../verification-diagnostics.ts";
 import { sanitizeText } from "../worker-redaction.mjs";
+import { resolveWorkspace, safeDirectory } from "../workspace.ts";
 import {
   AccessMaterial,
   HttpAuthentication,
   type TokenSource,
 } from "./auth.ts";
 import { AuthNetwork } from "./auth-network.ts";
+import { CheckoutGate } from "./checkout-gate.ts";
 import { ServiceCoordination } from "./coordination.ts";
 import { ServiceHttpServer } from "./http.ts";
 import { OwnerModelChoice } from "./model-choice.ts";
@@ -49,7 +47,6 @@ import {
   type StartupStage,
 } from "./runtime.ts";
 import { readServerConfig } from "./server-config.ts";
-import { TaskActions } from "./task-actions.ts";
 import { Workbench } from "./workbench.ts";
 
 function legacy(
@@ -103,8 +100,8 @@ function legacy(
 }
 declare const __CADENCE_SERVICE_CONTRACT__: string;
 export interface ServiceHost {
-  /** Null only in explicitly deferred source-boundary fixtures, never compiled production. */
-  actions: TaskActions | null;
+  /** Checkout ownership is independent of legacy tasks and history. */
+  gate: CheckoutGate;
   workbench: Workbench | null;
   coordination: ServiceCoordination;
   owner: ServiceOwner;
@@ -137,7 +134,7 @@ export async function createServiceHost(
   value: HostInput,
   sourceBuild?: {
     contractHash: string;
-    deferActions?: true;
+    deferRuntime?: true;
     workerTimeoutMs?: number;
     webDirectory?: string;
   },
@@ -149,9 +146,9 @@ export async function createServiceHost(
   if (embedded && sourceBuild) throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);
   // Validate the full package-relative closure BEFORE bind, including the Agent
-  // profiles TaskActions reads at construction (only deferred by source tests).
+  // profiles the current workflows load (only deferred by source tests).
   const web = refuseAt("package", () => {
-    if (!sourceBuild?.deferActions) loadAgentDefinitions();
+    if (!sourceBuild?.deferRuntime) loadAgentDefinitions();
     return loadWebAssets(sourceBuild?.webDirectory);
   });
   const build = {
@@ -245,6 +242,7 @@ export async function createServiceHost(
         : undefined,
     );
     let writer: HistoryWriter | undefined, live: HistoryLive | undefined;
+    let workbench: Workbench | null = null;
     owner = new ServiceOwner(lease, {
       quiesce: () => http.quiesce(),
       flush: () => {
@@ -252,6 +250,7 @@ export async function createServiceHost(
         return writer.flush();
       },
       closeListener: async () => {
+        workbench?.closeReads();
         live?.close();
         // Both originals are started/handled independently. No lock release until
         // the owned dispatcher AND listener actually close.
@@ -295,41 +294,32 @@ export async function createServiceHost(
     const preferences = new CadencePreferences(input.config.agentDir);
     const choice = new OwnerModelChoice({
       owner,
-      writer,
       models,
       access,
       remember: (value) => preferences.save(value),
     });
     const { PI_OFFLINE: _offline, ...ordinary } = launch;
     const checkEnvironment = Object.freeze(ordinary);
-    const actions = sourceBuild?.deferActions
-      ? null
-      : new TaskActions({
-          host: {
-            coordination: c,
-            owner,
-            writer,
-            reader,
-            models,
-            access,
-            checkEnvironment,
-          },
-          choice,
-          cwd: input.config.cwd,
-          ownerSecrets: [
-            ...access.redactionLiterals(),
-            native.capability,
-            ...network.literals,
-          ],
-          workerTimeoutMs: sourceBuild?.workerTimeoutMs,
-        });
-    const workbench = actions
+    const gate = new CheckoutGate(owner);
+    if (!sourceBuild?.deferRuntime)
+      owner.registerRuntime(() => gate.closeAdmission(), {
+        assertQuiescent: () => gate.assertQuiescent(),
+      });
+    // One complete, current literal source for every owner-facing projection.
+    // Access material is deliberately excluded from the ordinary launch env.
+    const ownerLiterals = () => [
+      ...access.redactionLiterals(),
+      native.capability,
+      ...network.literals,
+      ...models.viewRedactionLiterals(),
+    ];
+    workbench = !sourceBuild?.deferRuntime
       ? new Workbench({
           coordination: c,
           owner,
           models,
           choice,
-          actions,
+          gate,
           cwd: input.config.cwd,
           agentDir: input.config.agentDir,
           projectsEnabled: !input.config.http.proxy,
@@ -338,12 +328,7 @@ export async function createServiceHost(
             sourceBuild ? "../service-host.mjs" : "./service-host.mjs",
             import.meta.url,
           ),
-          secrets: () => [
-            ...access.redactionLiterals(),
-            native.capability,
-            ...network.literals,
-            ...models.viewRedactionLiterals(),
-          ],
+          secrets: ownerLiterals,
           timeoutMs: sourceBuild?.workerTimeoutMs,
         })
       : null;
@@ -366,40 +351,36 @@ export async function createServiceHost(
           authority: "local",
           csrf: null,
           capabilities: {
-            actions: !!actions && !!choice.snapshot().selected,
-            manualChecks: !!actions && !!choice.snapshot().selected,
+            actions: !!workbench && !!choice.snapshot().selected,
+            manualChecks: false,
             history: true,
           },
         };
       },
-      workspace: () =>
-        actions?.workspace() ?? {
-          rootLabel: diagnosticText(c.store.root, 4096),
+      workspace: () => {
+        const before = ownerLiterals();
+        const view = {
+          rootLabel: diagnosticText(sanitizeText(c.store.root, before), 4096),
           models: models.observe(),
           context: unavailable(null),
-        },
-      context: (id) => actions?.context(id) ?? unavailable(id),
-      checkObligations: actions
-        ? (id) => actions.checkObligations(id)
-        : undefined,
-      checks: (id) => {
-        if (actions) return actions.checks(id);
-        throw new ContractError("unavailable");
+        };
+        if (canonicalJson(before) !== canonicalJson(ownerLiterals()))
+          throw new ContractError("stale");
+        return view;
       },
+      context: (id) => unavailable(id),
+      checks: () => ({ revision: 1, selections: [] }),
       legacyTasks: (budget) => {
-        const literals = () => [
-          ...access.redactionLiterals(),
-          native.capability,
-          ...models.viewRedactionLiterals(),
-        ];
-        const before = literals();
+        const before = ownerLiterals();
         // The retained projector uses only the legacy goal; never expose an old
         // human-readable summary as an unsanitized private-credential channel.
-        const records = legacy(c.store, budget, reader).map((record) => ({
-          ...record,
-          goal: sanitizeText(record.goal, before),
-        }));
-        if (canonicalJson(before) !== canonicalJson(literals()))
+        const records = legacy(legacyTaskStore(c), budget, reader).map(
+          (record) => ({
+            ...record,
+            goal: sanitizeText(record.goal, before),
+          }),
+        );
+        if (canonicalJson(before) !== canonicalJson(ownerLiterals()))
           throw new ContractError("stale");
         return records;
       },
@@ -412,10 +393,23 @@ export async function createServiceHost(
       build,
       adapters: {
         workbench: workbench ?? undefined,
-        admission: actions?.admission ?? null,
         models: choice,
-        modelChoice: actions ? choice : undefined,
-        current: actions ?? undefined,
+        modelChoice: workbench ? choice : undefined,
+        current: {
+          current: () => {
+            throw new ContractError("unsupported-context");
+          },
+          currentChanges: () => {
+            throw new ContractError("unsupported-context");
+          },
+          activeRuns: () => ({
+            storeId: reader.storeId,
+            workspaceId: reader.files.format.workspaceId,
+            epoch: native.epoch,
+            status: "complete",
+            runs: [], // Retired task roster only; workflows have their own typed read.
+          }),
+        },
         projection,
         live,
         receipts: async (id) => {
@@ -444,7 +438,7 @@ export async function createServiceHost(
               epoch: native.epoch,
               actions:
                 heldOwner.state === "idle" &&
-                !!actions &&
+                !!workbench &&
                 ready &&
                 !!choice.snapshot().selected,
               ...(operation === "diagnose"
@@ -494,7 +488,7 @@ export async function createServiceHost(
     ready = true;
     http.admit();
     return {
-      actions,
+      gate,
       workbench,
       coordination: c,
       owner,

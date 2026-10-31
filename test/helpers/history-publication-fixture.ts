@@ -1,4 +1,4 @@
-import { savedRecordIdentity } from "../../src/task-store.ts";
+import { legacyTaskStore, savedRecordIdentity } from "../../src/task-store.ts";
 import { TASK_SCHEMA, type TaskRecord } from "../../src/task-types.ts";
 import type { historyFixture } from "./history-fixture.ts";
 /** Real v1 bytes, explicit selected context; never imported execution approval. */
@@ -21,7 +21,7 @@ export function selectLegacy(
     activity: [],
     ...patch,
   };
-  f.c.store.save(record, 0, f.lease.checkout);
+  legacyTaskStore(f.c).save(record, 0, f.lease.checkout);
   if (!f.context.task) throw Error("fixture requires selected task");
   f.context.task.identity = savedRecordIdentity(record);
   f.context.task.kind = record.kind;

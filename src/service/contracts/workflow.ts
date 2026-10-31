@@ -19,7 +19,11 @@ export const WORKFLOW_LIMITS = {
   checks: 16,
   repairs: 2,
   bytes: 256 * 1024,
-  runs: 200,
+  // Read budgets, never a lifetime cap on retained runs.
+  historyScanEntries: 200,
+  historyPage: 20,
+  historyScans: 16,
+  historyIdleMs: 120000,
   durationMs: 90 * 60 * 1000,
 } as const;
 export interface WorkflowCheck {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { CommandObservation } from "../../client/actions";
+import type { CommandObservation } from "../../client/receipts";
 import { useT } from "../../i18n/locale";
 import type { ServiceClient } from "../../types";
 export function ReceiptPanel({

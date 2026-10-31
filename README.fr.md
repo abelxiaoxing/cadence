@@ -49,7 +49,6 @@ Le port et le jeton se trouvent dans `~/.pi/agent/cadence/.env` ; quiconque poss
    Actualiser ou terminer un objectif ne quitte pas le mode.
    **Exit Cadence** quitte le mode ; **Cancel workflow — request stop** demande l’annulation.
 
-**Legacy task**: previous task/history workflow.
 No live Pi terminal is required for the browser conversation workflow.
 
 ### Dans le terminal
@@ -64,7 +63,8 @@ Les préférences de modèle sont conservées entre projets dans `~/.pi/agent/ca
 
 Le propriétaire local démarre à la demande ; le service système est facultatif pour la WebUI et le démarrage automatique.
 
-`/cadence-inspect`: legacy task/history UI.
+`/cadence-history [run-id]`: readonly run details and retained history; no service startup or task execution.
+See [History and diagnostics](docs/history.md).
 [Conversation mode](docs/conversation-mode.md): native/browser approval, limits and worktree setup.
 Browser authentication is not execution consent.
 
@@ -80,14 +80,8 @@ Ouvrir un autre projet n'arrête jamais le travail du précédent.
 
 ### Vérifications
 
-Listez les commandes qui vérifient votre projet dans `.cadence/assistant/config.json`, et les tâches peuvent les exécuter comme de véritables vérifications avant l'examen :
-
-```json
-{
-  "schema": "cadence-assistant-checks/1",
-  "checks": [{ "name": "Tests", "command": "bun run test", "timeoutMs": 120000 }]
-}
-```
+Les commandes de vérification figurent dans le plan explicitement approuvé, avec les vérifications initiales et d’acceptation.
+Leurs résultats restent distincts de la revue automatique par un Agent.
 
 ## Gérer le service
 

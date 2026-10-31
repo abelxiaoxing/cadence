@@ -425,87 +425,13 @@ it("unified loopback workbench: no default project, same-origin switching, ordin
       .waitFor();
     assert.equal(g.f.contacts(), 1);
     const chatUrl = page.url();
-    await page
-      .getByRole("button", { name: "Legacy task", exact: true })
-      .click();
-    await page
-      .getByRole("textbox", { name: "Message", exact: true })
-      .fill("A task in the unified workbench");
-    // A readonly refresh temporarily closes action readiness. The composer must
-    // expose that state instead of accepting a click which sendTask silently drops.
-    const workspaceRoute = (url) => url.pathname.endsWith("/workspace");
-    let releaseWorkspace, observedWorkspace;
-    const heldWorkspace = new Promise((resolve) => {
-      releaseWorkspace = resolve;
-    });
-    const workspaceStarted = new Promise((resolve) => {
-      observedWorkspace = resolve;
-    });
-    await page.waitForFunction(() =>
-      [...document.querySelectorAll("button")].some(
-        (b) => b.textContent === "Prepare task" && !b.disabled,
-      ),
-    );
-    await page.route(workspaceRoute, async (route) => {
-      observedWorkspace();
-      await heldWorkspace;
-      await route.continue().catch(() => {});
-    });
-    try {
-      await Promise.all([
-        workspaceStarted,
-        page
-          .getByRole("button", { name: "Observe current state", exact: true })
-          .click(),
-      ]);
-      await page.waitForFunction(() =>
-        [...document.querySelectorAll("button")].some(
-          (b) => b.textContent === "Prepare task" && b.disabled,
-        ),
-      );
-      await page
-        .getByRole("textbox", { name: "Message", exact: true })
-        .press("Enter");
-      assert.equal(g.f.contacts(), 1);
-    } finally {
-      releaseWorkspace();
-      await page.unroute(workspaceRoute);
-    }
-    await page
-      .getByRole("button", { name: "Prepare task", exact: true })
-      .click();
-    await page
-      .getByRole("button", { name: "Review implementation plan", exact: true })
-      .waitFor();
-    await page.waitForFunction(() =>
-      [...document.querySelectorAll("button")].some(
-        (button) =>
-          button.textContent === "Review implementation plan" &&
-          !button.disabled,
-      ),
-    );
-    assert.equal(await page.getByRole("dialog").count(), 0);
-    await page.getByLabel("Readable plan", { exact: true }).waitFor();
-    assert.equal(new URL(page.url()).searchParams.get("project"), projectB);
     assert.equal(
-      g.f.contacts(),
-      2,
-      "Send starts readonly analysis, not editing",
+      await page
+        .getByRole("button", { name: "Legacy task", exact: true })
+        .count(),
+      0,
     );
-    await page.reload();
-    await page
-      .getByRole("button", {
-        name: "Back to ordinary conversation",
-        exact: true,
-      })
-      .click();
-    await page
-      .locator(".chat-message.assistant")
-      .getByText(/Advisory:/)
-      .waitFor();
-    assert.equal(page.url(), chatUrl);
-    // The new mode also traverses the authenticated gateway as browser authority,
-    // independently of the legacy task route above and without any Pi terminal.
+    // The only engineering workflow traverses the gateway as browser authority.
     g.f.mode("coordinator");
     await page
       .getByRole("textbox", { name: "Message", exact: true })

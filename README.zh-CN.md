@@ -47,8 +47,6 @@ pi install "$(npm root -g)/@abelxiaoxing/cadence"
 5. 在同一对话查看真实进度和合并结果；子代理的完整上下文从左下角**子代理**面板打开。
    刷新、完成目标后仍保持 Cadence；**退出 Cadence**不取消后台工作，**取消工作流 — 请求停止**才请求取消。
 
-“旧版任务”入口明确保留原有创建任务、Save/Start、独立检查和人工 Review 路径。
-
 ### 在终端中：一次进入，持续对话
 
 在任意已信任项目的 Pi 对话里输入一次 `/cadence <目标>`，之后正常对话即可。
@@ -66,7 +64,8 @@ Cadence 自动调查仓库、汇总需要你决定的问题，并与你反复对
 项目知识维护在 `.cadence/project.md`；隔离 worktree 不会自动复制依赖或凭据，必要的准备命令会列入计划确认。
 
 详细边界见 [对话模式](docs/conversation-mode.md)。
-旧高级检查入口保留为 `/cadence-inspect`，不再作为日常流程。
+`/cadence-history [运行 ID]` 提供只读诊断、运行详情和已有任务历史，不创建或执行任务，也不启动服务。
+见[历史与诊断](docs/history.md)。
 浏览器批准与所展示的计划、会话和访问身份绑定；登录本身不是执行授权。
 
 ### 更多项目
@@ -81,15 +80,8 @@ cadence project open /absolute/new-project --create
 
 ### 检查
 
-新工作流的检查命令在批准的计划中明确列出。
-旧版任务可以在 `.cadence/assistant/config.json` 中配置检查：
-
-```json
-{
-  "schema": "cadence-assistant-checks/1",
-  "checks": [{ "name": "Tests", "command": "bun run test", "timeoutMs": 120000 }]
-}
-```
+检查命令在你批准的具体计划中列出，包括基线检查和验收检查。
+真实检查结果与自动 Agent 审查保持独立。
 
 ## 管理服务
 

@@ -15,10 +15,8 @@ import {
   canonicalJson,
   compareSequence,
   compatibleBuild,
-  decodeCancel,
   decodeChooseModelRequest,
   decodeClientBuild,
-  decodeCommand,
   decodeCurrentChangesRequest,
   decodeCurrentRequest,
   decodeCursor,
@@ -28,7 +26,6 @@ import {
   decodeId,
   decodeListRequest,
   decodeLiveEvent,
-  decodePreflightRequest,
   decodePublicError,
   decodeReceiptLookup,
   decodeScope,
@@ -58,7 +55,6 @@ import {
   type SocketOutput,
   WS_PATH,
 } from "../service-wire.ts";
-import type { ActionAdmission } from "./admission.ts";
 import { type HttpAuthentication, requestBoundary } from "./auth.ts";
 import { decodeHttpPolicy, type HttpPolicy, localOrigin } from "./config.ts";
 import { closed, list } from "./contracts/core.ts";
@@ -84,7 +80,7 @@ export interface LiveProjectionPort {
 }
 export interface HttpAdapters {
   workbench?: WorkbenchPort;
-  admission: ActionAdmission | null;
+  attachments?: { detach(id: string): void; revokeGrants(): void };
   models?: Pick<ModelChoicePort, "catalog">;
   modelChoice?: Pick<ModelChoicePort, "choose">;
   current?: CurrentMetadataPort;
@@ -312,7 +308,7 @@ export class ServiceHttpServer {
       ...(options.build ? { build: decodeServiceBuild(options.build) } : {}),
     };
     this.unRevoke = options.auth.material.onRevoke(() => {
-      options.adapters.admission?.revokeGrants();
+      options.adapters.attachments?.revokeGrants();
       for (const attachment of [...this.attachments.values()])
         this.detach(attachment);
       for (const request of this.requests) request.abort();
@@ -351,7 +347,7 @@ export class ServiceHttpServer {
   }
   quiesce(): void {
     this.accepting = false;
-    this.configuration?.adapters.admission?.revokeGrants();
+    this.configuration?.adapters.attachments?.revokeGrants();
   }
   /** Original native server/socket close, reusable by ServiceOwner stop. No workers
    * are canceled here. Production owner calls only after its own original drain. */
@@ -413,7 +409,7 @@ export class ServiceHttpServer {
     if (this.attachments.get(attachment.caller.attachmentId) !== attachment)
       return;
     this.attachments.delete(attachment.caller.attachmentId);
-    this.options.adapters.admission?.detach(attachment.caller.attachmentId);
+    this.options.adapters.attachments?.detach(attachment.caller.attachmentId);
     if (attachment.socket) {
       for (const viewer of this.viewers)
         if (viewer.attachment === attachment) this.closeViewer(viewer);
@@ -813,19 +809,14 @@ export class ServiceHttpServer {
       case "detach":
         this.detach(this.attachment(caller));
         return { kind: "ok", value: null };
+      // Retired task controls cannot mint a grant or dispatch old work, even
+      // through a stale client. Receipts/history and explicit Cancel remain.
       case "preflight":
-        return (
-          a.admission?.preflight(decodePreflightRequest(input), caller) ??
-          unavailable()
-        );
       case "command":
-        return (
-          a.admission?.submit(decodeCommand(input), caller) ?? unavailable()
-        );
+        return refusal("unsupported-context");
       case "cancel":
-        return (
-          a.admission?.cancel(decodeCancel(input), caller) ?? unavailable()
-        );
+        // Old run identities are archived data, not handles to current processes.
+        return refusal("unsupported-context");
       case "receipt":
         return a.receipts
           ? decodeReceiptLookup(await a.receipts(decodeId(input)))
@@ -852,13 +843,9 @@ export class ServiceHttpServer {
           capabilities: {
             actions:
               original.capabilities.actions &&
-              !!a.admission &&
+              !!a.workbench &&
               compatibleBuild(this.options.build, build),
-            manualChecks:
-              original.capabilities.manualChecks &&
-              caller.authority === "local" &&
-              !!a.admission &&
-              compatibleBuild(this.options.build, build),
+            manualChecks: false,
             history: original.capabilities.history,
           },
         });

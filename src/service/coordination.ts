@@ -3,12 +3,11 @@ import { opendirSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import {
-  type CheckoutLock,
   canonicalAmbientRoot,
   defaultStateHome,
   resolveWorkspace,
-  TaskStore,
-} from "../task-store.ts";
+} from "../workspace.ts";
+import { type CheckoutLock, CheckoutStore } from "./checkout-lock.ts";
 import {
   ContractError,
   closed,
@@ -247,7 +246,7 @@ export type CoordinationStatus =
  * task creation, stale reclaim or accepting execution route lives here.
  */
 export class ServiceCoordination {
-  private readonly project?: TaskStore;
+  private readonly project?: CheckoutStore;
   readonly files: PrivateFiles;
   readonly registryDirectory: string;
   readonly stateHome: string;
@@ -256,7 +255,7 @@ export class ServiceCoordination {
     this.project =
       workspace === null
         ? undefined
-        : new TaskStore(resolveWorkspace(workspace).root, stateHome);
+        : new CheckoutStore(resolveWorkspace(workspace).root, stateHome);
     this.stateHome = this.project
       ? dirname(dirname(this.project.privateRoot))
       : canonicalAmbientRoot(stateHome ?? defaultStateHome());
@@ -264,7 +263,7 @@ export class ServiceCoordination {
     this.files = new PrivateFiles(namespace);
     this.registryDirectory = join(namespace, "service-registry-v1");
   }
-  get store(): TaskStore {
+  get store(): CheckoutStore {
     if (!this.project) throw new ContractError("forbidden");
     return this.project;
   }
@@ -1079,7 +1078,7 @@ export class ServiceCoordination {
 }
 
 /** Held only by the original owner. Raw-byte AND inode/time identities supplement
- * TaskStore's semantic lock assertion, including whitespace-only interference. */
+ * CheckoutStore's semantic lock assertion, including whitespace-only interference. */
 export class OwnerLease {
   private released = false;
   constructor(
