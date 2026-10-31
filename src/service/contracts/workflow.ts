@@ -117,7 +117,22 @@ export type WorkflowResponse =
     }
   | { type: "run"; run: WorkflowRun };
 
-export function workflowPath(v: unknown): string {
+/** Clip by UTF-16 units without leaving a lone surrogate (unencodable on the wire). */
+export function clipUnits(value: string, units: number): string {
+  if (value.length <= units) return value;
+  const last = value.charCodeAt(units - 1);
+  return value.slice(0, last >= 0xd800 && last <= 0xdbff ? units - 1 : units);
+}
+/** A declared write path owns itself and, as a directory, everything below it. */
+export function workflowCovers(
+  scope: readonly string[],
+  name: string,
+): boolean {
+  return scope.some((p) => name === p || name.startsWith(`${p}/`));
+}
+/** Read decoding accepts every path 2.0.21 accepted; `strict` (new plans only)
+ * additionally refuses invisible format characters. */
+export function workflowPath(v: unknown, strict = false): string {
   const p = text(v, 1024, true);
   if (
     p.startsWith("/") ||
@@ -125,6 +140,9 @@ export function workflowPath(v: unknown): string {
     [...p].some(
       (c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127 || c === ":",
     ) ||
+    // Bidi overrides/isolates/marks, zero-width and other format characters
+    // make a displayed scope differ from the enforced one.
+    (strict && /[\p{Cf}\p{Zl}\p{Zp}]/u.test(p)) ||
     p
       .split("/")
       .some(
@@ -135,9 +153,12 @@ export function workflowPath(v: unknown): string {
     throw new Error("Invalid workflow file path");
   return p;
 }
-const taskId = (v: unknown) => {
+// Task IDs are worker assignment IDs and worktree names. New plans use the
+// assignmentId bound (48); reads still accept retained 2.0.21 IDs (64).
+const taskId = (v: unknown, strict = false) => {
   const s = text(v, 64, true);
-  if (!/^[a-z][a-z0-9-]*$/u.test(s)) throw new Error("Invalid task id");
+  if (!/^[a-z][a-z0-9-]*$/u.test(s) || (strict && s.length > 48))
+    throw new Error("Invalid task id");
   return s;
 };
 export function decodeWorkflowCheck(v: unknown): WorkflowCheck {
@@ -180,7 +201,13 @@ export function workflowAncestors(
   visit(id);
   return workflowOrder(tasks).filter((t) => needed.has(t.id));
 }
-export function decodeWorkflowPlan(v: unknown): WorkflowPlan {
+/** Retained plans decode with the rules they were accepted under; `strict` is
+ * for validating a new plan before publication or execution. */
+export function decodeWorkflowPlan(
+  v: unknown,
+  options: { strict?: boolean } = {},
+): WorkflowPlan {
+  const strict = options.strict === true;
   canonicalJson(v, WORKFLOW_LIMITS.bytes);
   const o = closed(v, [
     "goal",
@@ -198,11 +225,13 @@ export function decodeWorkflowPlan(v: unknown): WorkflowPlan {
   const tasks = list(o.tasks, WORKFLOW_LIMITS.tasks, (value) => {
     const t = closed(value, ["id", "title", "instructions", "writes", "after"]);
     return {
-      id: taskId(t.id),
+      id: taskId(t.id, strict),
       title: text(t.title, 256, true),
       instructions: text(t.instructions, 8192, true),
-      writes: list(t.writes, 128, workflowPath),
-      after: list(t.after, WORKFLOW_LIMITS.tasks, taskId),
+      writes: list(t.writes, 128, (p: unknown) => workflowPath(p, strict)),
+      after: list(t.after, WORKFLOW_LIMITS.tasks, (id: unknown) =>
+        taskId(id, strict),
+      ),
     };
   });
   if (
@@ -225,11 +254,8 @@ export function decodeWorkflowPlan(v: unknown): WorkflowPlan {
       )
         continue;
       if (
-        a.writes.some((p) =>
-          b.writes.some(
-            (q) => p === q || p.startsWith(`${q}/`) || q.startsWith(`${p}/`),
-          ),
-        )
+        a.writes.some((p) => workflowCovers(b.writes, p)) ||
+        b.writes.some((q) => workflowCovers(a.writes, q))
       )
         throw new Error(
           "Independent tasks share write paths; assign an owner and dependency",

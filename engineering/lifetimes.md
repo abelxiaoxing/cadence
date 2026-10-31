@@ -8,7 +8,8 @@ Read this before changing admission, scheduling, Stop, registry or recovery beha
 Conversation workflows have their own versioned private journal under the existing exact project owner.
 They acquire the same checkout barrier as ordinary conversations and retain it until all original workers/checks/auth/storage settle.
 Within that barrier, independent implementation assignments use separate Git worktrees (two at once); dependent worktrees consume committed ancestor outputs in topological order.
-Task worktrees use a separate `tasks/<task-id>` directory below the run, disjoint from the integration candidate; valid task IDs cannot collide with internal names.
+Worktrees live under `<stateHome>/cadence-worktrees-v1/<project-hash>/<run>/` (0700, outside the private service namespace, never nested with the checkout): `integration` plus a disjoint `tasks/<task-id>` per task; valid task IDs cannot collide with internal names.
+Worktrees created by 2.0.21 inside the service namespace are left where they are.
 Direct working-copy delivery serializes edits.
 The terminal is never an embedded executor.
 One fresh 120s grant binds the exact proposal/plan, model source, project observation and owner epoch; accepted durable work owns the declared finite steps, not fabricated user clicks.
@@ -22,7 +23,10 @@ Prior attempts, partial writes and lost replies remain uncertain and observe-onl
 Coordinator turns are owner-accounted originals but hold no checkout barrier; only their finite delegated investigations acquire that gate.
 Coordinator interruption joins its own investigations, not a previously approved implementation.
 No restart replays an unfinished workflow.
-Unknown/incomplete retained state fences startup; Stop joins the shared owner accounting.
+At startup a run left queued/running (or accepted without a snapshot) is recorded as `unknown` with a notice that the owner restarted, nothing was inferred or replayed, and worktrees and partial edits are retained (an integrating run may have fast-forwarded); unreadable records stay untouched and do not fence startup.
+Stop joins the shared owner accounting.
+Workflow cancel needs only the lease and epoch, so it works while the owner is quarantined or stopping; the fast-forward merge itself is never interrupted, and if HEAD cannot be re-read after it the run ends `unknown`, not failed.
+A native workflow command refused before any write, grant or admission for a never-attempted ID, by a healthy owner, reports no effect; anything else stays uncertain.
 Access rotation does not revoke an accepted worker's pinned model choice; source/epoch changes still refuse.
 
 ## Legacy execution graph

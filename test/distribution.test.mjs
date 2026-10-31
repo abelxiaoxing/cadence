@@ -81,7 +81,8 @@ function bodyChecks(treeRoot) {
       if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1)
         return { ...check, status: "nonregular" };
       bytes += stat.size;
-      if (stat.size > 1024 * 1024 || bytes > 8 * 1024 * 1024)
+      // The generated service host is just over 1MiB; diagnostics stay bounded.
+      if (stat.size > 2 * 1024 * 1024 || bytes > 8 * 1024 * 1024)
         return { ...check, status: "diagnostic-bound" };
       const actualSha256 = sha256(readFileSync(file));
       return {

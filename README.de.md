@@ -45,7 +45,7 @@ Port und Token liegen in `~/.pi/agent/cadence/.env`; wer das Token hat, kann dei
    Dieses Gespräch bleibt im Cadence-Modus; kläre Anforderungen mit normalen Nachrichten.
 4. Prüfe den vollständigen Plan und klicke **Implement this plan**.
    Implementierung, Checks, begrenzte Reparaturen und die vereinbarte lokale Lieferung laufen automatisch.
-5. Verfolge Fortschritt und Subagent-Protokolle im Gespräch.
+5. Verfolge den Fortschritt im Gespräch; die Protokolle der Subagenten öffnest du über das Dock **Subagents** unten links.
    Aktualisieren und Abschluss beenden den Modus nicht.
    **Exit Cadence** beendet nur den Modus; **Cancel workflow — request stop** fordert den Abbruch an.
 

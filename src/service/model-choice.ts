@@ -103,7 +103,14 @@ export class OwnerModelChoice {
         this.catalogId = randomUUID();
         this.options.owner.configurationInstalled();
       }
-      this.options.remember?.(request.choice);
+      // Remembering is a convenience for later sessions. The installed choice
+      // is the actual result: an unreadable, unsupported or unwritable
+      // preference file is never replaced and never reported as a failed choice.
+      try {
+        this.options.remember?.(request.choice);
+      } catch {
+        /* Not remembered; the explicit choice stays installed. */
+      }
       return this.snapshot();
     } finally {
       this.installing = false;

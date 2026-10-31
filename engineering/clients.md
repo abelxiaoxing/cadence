@@ -5,18 +5,28 @@ Read this before changing a client, its consent rules or what the WebUI shows.
 
 ## Native terminal
 
-`src/cadence-mode.ts` owns persistent conversation mode; `/cadence [goal]` enables it until explicit `exit cadence` or `退出 Cadence`.
+`src/cadence-mode.ts` owns persistent conversation mode; `/cadence [goal]` enables it until explicit `exit cadence`, `退出 Cadence` or `/cadence exit`.
+The exit phrase is named in the activation message, command description and instructions; it is trimmed before matching, accepted while Pi is busy and from RPC input, and never cancels accepted work.
+A saved mode engages only in a trusted interactive terminal for the same cwd; in print, RPC or untrusted sessions it is inert (ordinary tools, nothing injected), and `/cadence exit` still leaves it.
+Mode instructions go into the per-turn system prompt; a context filter keeps only the newest small Cadence state message.
+Tool sets change only in a session that actually applied Cadence tools; `/tree` navigation elsewhere leaves other extensions' tool choices alone.
 A completed goal leaves the conversation in ready mode, not ordinary mode.
 Subsequent messages never require another activation command.
 Active-branch session entries retain mode and the last observed run, not a reusable proposal/grant or an execution replay.
 Session replacement restores normal tools before rebinding the new branch; compaction does not disable the mode.
 Entry and typed exact plan approval require fresh trusted/idle raw-terminal evidence; paste, quoted commands, RPC and extension-origin input cannot provide it.
 Planning tools expose coordinated readonly subagents, proposals and observations rather than uncoordinated edits.
+`cadence_plan` returns the complete plan in its own tool result; no message is injected while a tool call is open, and workflow results notify at once and are appended as a message once Pi is idle.
+An attempted run ID is restored on a definite refusal (and Start keeps its proposal); one the owner proves absent is forgotten on observation; an `unknown` run blocks new research or planning until one `cadence_status` has observed it.
+Start, Cancel and the model picker list the safe choice first and accept the acting choice only by a typed, non-paste Enter at least 250ms after the dialog opened; the approval grant is prepared after that confirmation.
 The main conversation consolidates clarification; only native confirmation of the complete current plan or exact fresh `按计划实施` authorizes execution.
 On-demand project owner startup is explicit mode/user-Send behavior, not discovery; `CADENCE_AUTOSTART=0` refuses it.
+It runs the service CLI with `node` when Pi itself runs on Bun, counts a killed or non-zero launch as failure, and tells the user once per project which command stops the started owner.
+A connection whose owner restarted or stopped is re-attached on the next call (and by `/cadence` while the mode is on); a live owner's configuration is never replaced.
 A lost/uncertain command reply is not replayed.
 Departure only detaches; the owner holds accepted work through actual closure.
-Model preferences persist as exact selectors in the user's agent directory, never credentials, grants or source selection IDs.
+Model preferences persist as exact selectors in the user's agent directory (Pi's `getAgentDir()`, symlinked directories followed), never credentials, grants or source selection IDs.
+An unreadable preference file falls back to the current Pi model with one warning; an explicit model choice atomically replaces it.
 
 The previous native task/history UI remains under `/cadence-inspect`, with its original raw guard, typed attachment, independent Save/Start/Checks and human Review.
 It is an optional diagnostic/legacy route, not the daily entrypoint.
@@ -28,9 +38,10 @@ Every TUI session, not only `/cadence`, looks for the owner already running for 
 That observation holds one of the owner's viewer attachments, so departure (including Pi quit) waits up to 1.5s for the detach to reach the owner rather than leaving the slot to its idle expiry; `/cadence` departs the same way.
 `CADENCE_AGENT_PANEL=off` turns that observation off.
 It reads the active roster every 5s, and every 2s together with the task's snapshot while it follows an episode, announcing each child of the active episodes: its assignment ID as label, purpose as kind, lifecycle or latest tool as activity, and completed, canceled or any other outcome (with its reason) as done, cancelled or error.
-A child whose outcome the session can no longer observe (no compatible owner a whole retry after losing it, or no settled row five looks after its run left the roster) ends as an error that says so; `/cadence` History keeps the actual outcome.
+A child whose outcome the session can no longer observe (no compatible owner a whole retry after losing it, or no settled row five looks after its run left the roster) ends as an error that says so; `/cadence-inspect` History keeps the actual outcome.
+Workflow research, implementation and review subagents are announced the same way from the workflow roster; the viewed one streams its retained transcript, others refresh their activity at most every 10s, and an unreadable run ends as not observed.
 Elapsed time counts from when the session first observed a child (`—` for one first seen settled); no tokens are shown because the owner records no usage.
-Opening a child reads its retained messages, tool calls and results through the history readers, up to 64KiB per field; complete fields, search and export stay in `/cadence` History.
+Opening a child reads its retained messages, tool calls and results through the history readers, up to 64KiB per field; complete fields, search and export stay in `/cadence-inspect` History.
 A retained `edit` call shows its call and result without Pi's diff preview, which would compare against the file as it is now.
 Producers emit `subagent:start {id,label,kind,startedAt}`, `subagent:message {id,message,streaming?}`, `subagent:activity {id,activity,tokensIn?,tokensOut?}`, `subagent:stats {id,tokensIn,tokensOut?}` and `subagent:end {id,status,endedAt,error?}` with status `done`, `error` or `cancelled`; `startedAt: null` marks an unobserved start.
 A message has the main session's message shape; `streaming: true` marks a snapshot that the next message replaces.
@@ -55,7 +66,11 @@ Prefix-only entry asks for a goal; ordinary subsequent messages, refresh, comple
 Mode/plan/run links belong to the owner-private versioned conversation-control store; browser storage holds only drafts/display preferences and uncertain attempt IDs.
 The coordinator is an isolated SDK child with only bounded research/proposal/status tools; it cannot call write/edit/bash, approve itself, or load arbitrary extensions.
 It holds no checkout barrier while awaiting research, so the existing worker barrier cannot deadlock its parent and status conversation can proceed during implementation.
-One coordinator turn per project owner is admitted at a time; separate project owners remain independent.
+One coordinator turn per conversation is admitted at a time (bounded per owner); separate project owners remain independent.
+A plan card persists across later messages until a new plan replaces it, the user exits or execution is admitted; a refused approval keeps the card.
+Plans may be published while other workflows run; research is refused with an explanation only behind an approved implementation, and its run ID is recorded only once accepted.
+An unreadable or incomplete control record degrades only its own conversation: the read carries a notice, every Cadence command there refuses, and nothing is repaired; other conversations and owner startup are unaffected.
+Lost replies to Send or approval return the original receipt or run on a retry with the same command ID.
 One human plan approval binds the exact visible proposal, conversation revision/head, model, project observation, owner epoch and authenticated attachment/access generation.
 Prepare is a fresh confirmation operation, not a background read; a second tab, changed context, departure or expired grant cannot inherit it.
 The browser-specific approval channel retains browser authority and existing build/CSRF/origin checks; the native general workflow command remains forbidden to browsers.
@@ -67,6 +82,7 @@ The independent project workflow roster includes native-started work; missing ob
 Mode exit only detaches from orchestration; actual workflow cancellation remains a separately explicit, exact-run request and waits for original settlement.
 Known closed failed coordinator turns may continue on a new explicit Send from the last complete checkpoint; no incomplete tool call is resumed.
 A saved model preference is restored only on explicit Send, never readonly browsing; no silent model substitution.
+Remembering the chosen model is best-effort: a broken preference file never fails or reverts an installed choice.
 Exit does not require a usable selected model.
 The explicitly labelled Legacy task entry retains the old task-origin link, creation/readonly analysis, plan Save/Start and separate checks/human Review.
 Its composer still shares the workspace action-readiness guard for click and Enter.
@@ -79,7 +95,7 @@ Ordinary Send binds its exact text, conversation head, epoch, access and selecte
 The WebUI provides task/run/assignment navigation, long retained messages and tool detail, exact literal search, timeline and complete scoped NDJSON/Markdown downloads.
 Desktop panes and phone drawers retain cancellation and keyboard controls.
 Its chrome: a compact topbar with view tabs and icon actions, a sectioned task sidebar, pill inspector tabs, transcript/tool cards and a bottom statusbar; phones wrap the topbar into an action row and an icon tab row.
-The left sidebar provides New conversation and an explicitly labelled Legacy task shortcut alongside running/retained conversations; a separate lower-left dock observes Cadence subagents and opens their retained transcripts.
+The left sidebar provides New conversation and an explicitly labelled Legacy task shortcut alongside running/retained conversations; a separate lower-left dock observes Cadence subagents — workflow research/implementation/review workers and legacy task children — and opens their retained transcripts in the main area.
 It is not a subagent engine.
 The right sidebar defaults to readonly files, bounded text previews and path-only references; task plan/check/change/review controls occupy its Task details tab.
 The lower-right folder button contains recent projects, browses directories on the service host and explicitly opens another independent project owner.
@@ -132,6 +148,12 @@ Folder browsing (not Open) accepts `~` for the service account's home and report
 One service still owns one checkout.
 The recent-project directory records only explicit project openings in the same private namespace; navigation opens that project's independent authenticated entry rather than changing global cwd, importing Pi sessions or adopting another account's state.
 The center shows ordinary/coordinator messages, exact plan cards and actual workflow progress/results as Markdown, plus retained legacy task text.
+A workflow subagent's transcript and retained result open in the center as their own view over the conversation, which stays mounted (draft, scroll and observations) behind it; the chat card links to that view instead of embedding the transcript.
+Running conversations lists active workflows with their exact-run cancel; one that belongs to a browser conversation opens that conversation, a native-started one opens its run card.
+In Cadence mode a failed, interrupted or unknown turn keeps its actual status in the header and sidebar; approval is available after a failed, canceled or timed-out turn and waits while the turn is live or unknown.
+An approval attempt guards only its own in-flight request: the owner consumes a plan once, so a lost reply is resolved by the next observation, not by a browser-side lock.
+Ordinary Send does not depend on the Cadence-mode read; when that read fails the owner still refuses an ordinary Send to a Cadence conversation.
+Only `/cadence` (with the slash) at the start of a Send activates the mode; a sentence beginning with "cadence" is ordinary text.
 Task tools/context/timeline/runs and export/link actions live under Details, shown only for a task or child scope; an ordinary conversation has no view switch and folds its tool calls into the transcript.
 An ordinary turn shows one speaker label: everything through its last tool call folds into a steps line that names what the tools touched (live while running; it opens by itself when the turn ends without an answer, until the user toggles it), and the assistant text after it is the answer.
 Tool names are model-chosen data: one matching no known kind, `constructor` included, counts as a plain tool.

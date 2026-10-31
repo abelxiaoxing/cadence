@@ -49,6 +49,7 @@ function fixture(
     },
     conversations: {
       attempted: () => prior,
+      receipt: () => undefined,
       send: (_request: unknown, _control: unknown, accepting?: () => void) =>
         refuse(accepting),
     },

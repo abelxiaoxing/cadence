@@ -30,13 +30,17 @@ Rows naming a module are maintained by hand; update them in the same change as t
 | Unified workbench     | 128 associated projects; 1024 durable opening receipts; 64 connections; bounded proxy frames and bodies; no eviction                                         | `src/service/gateway.ts`, `src/service/gateway-store.ts`                                                     |
 | Assets                | 16MiB per member/64MiB closure; fixed complete manifest and all font bodies                                                                                  | `src/service-assets.ts`                                                                                      |
 
-Conversation workflow bounds live in `src/service/contracts/workflow.ts` (`WORKFLOW_LIMITS`) and `src/service/workflows.ts`: 16 tasks, two concurrent isolated workers, 16 checks per set, four explicit setup commands, at most two repair rounds and a 90min deadline.
-There are at most four accepted workflows and 200 retained runs; journals refuse above 10,000 entries/512MiB and use the existing 256MiB free-space floor.
+Conversation workflow bounds live in `src/service/contracts/workflow.ts` (`WORKFLOW_LIMITS`) and `src/service/workflows.ts`: 16 tasks (IDs up to 48 characters), two concurrent isolated workers, 16 checks per set, four explicit setup commands, at most two repair rounds and a 90min deadline counted from acquiring the checkout gate.
+At most four workflows are active (one approved implementation at a time); retained history has no lifetime run or journal cap, only the existing 256MiB free-space floor.
+The fast-forward merge has no timeout and is never signalled (output beyond 256KiB is dropped and labelled), so a hung `git merge` holds the run, the checkout gate and orderly Stop until Git exits; other in-run Git operations have 10min; admission observation is names-only with a 64MiB/30s bound and target contents are stream-hashed.
+A declared directory's identity hashes up to 20,000 entries; a larger one is refused as `invalid` with a request for narrower paths.
 Run snapshots allow 384KiB and 256 status steps; original process output retains its existing launcher bounds and labelled previews.
-Private worktrees are retained, not evicted.
+A subagent transcript beyond the conversation capture bounds (384KiB, 256 items) keeps a labelled prefix and the worker continues.
+Clean worktrees at their expected commit are removed after a merge with plain `git worktree remove`; any other worktree is retained and listed.
 Worker context remains the existing 32KiB bound and is refused rather than clipped.
 
-Browser coordination permits one active SDK coordinator turn per project owner, at most 16 bridge calls and two investigation batches per explicit Send (each at most two readonly workers).
+Browser coordination permits one active SDK coordinator turn per conversation and at most 8 per project owner (`conversation-workflow.ts`), at most 16 bridge calls and two investigation batches per explicit Send (each at most two readonly workers).
+New conversation-control records stop at 200 record directories (or more than 256 entries); existing records stay readable.
 The bridge refuses requests/replies above 64KiB; status and investigation evidence previews label truncation and omitted steps.
 Control records are bounded at 384KiB, inherit the 200-conversation/1000-turn ceilings, and link at most 200 workflow attempts; no eviction.
 There are at most 16 outstanding browser confirmation grants, each with the existing 120s lifetime.

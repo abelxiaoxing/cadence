@@ -73,6 +73,24 @@ export interface ConversationControl {
   onTool: NonNullable<ProcessSpec["onCoordinator"]>;
   settle(): Promise<void>;
 }
+/** Cheap no-follow identity of a retained file ("absent" when missing). It
+ * selects cached projections only; every miss re-reads through PrivateFiles. */
+export function observedFile(path: string): string {
+  try {
+    const s = lstatSync(path);
+    return [s.dev, s.ino, s.size, s.mode, s.nlink, s.ctimeMs, s.mtimeMs].join(
+      ":",
+    );
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error.code === "ENOENT" || error.code === "ENOTDIR")
+    )
+      return "absent";
+    throw error;
+  }
+}
 interface LiveTurn {
   conversationId: string;
   title: string;
@@ -223,6 +241,10 @@ export class Conversations {
   private readonly root: string;
   private readonly cwd: string;
   private readonly active = new Map<string, LiveTurn>();
+  private readonly summaries = new Map<
+    string,
+    { key: string; summary: ChatSummary }
+  >();
   constructor(private readonly o: Options) {
     this.root = join(o.coordination.directory, "conversations-v1");
     this.cwd = realpathSync(o.cwd);
@@ -324,6 +346,12 @@ export class Conversations {
       throw new ContractError("corrupt-selected");
     return true;
   }
+  /** Cheap observation key for a control link; not a validation. */
+  controlKey(id: string): string {
+    return observedFile(
+      join(this.root, "control-links", `${decodeId(id)}.json`),
+    );
+  }
   bindControl(id: string): void {
     if (!this.controlBound(id))
       this.write(
@@ -358,6 +386,40 @@ export class Conversations {
       updatedAt: integer(accepted.at, 0),
     };
   }
+  private headKey(head: string): string {
+    return [this.path(head, "turn.json"), this.path(head, "accepted.json")]
+      .map(observedFile)
+      .join("|");
+  }
+  /** A settled summary is re-read only when one of its files changed: list
+   * polls otherwise parse every head turn (up to 384 KiB each). Keys are taken
+   * before each read, so a concurrent change can only cause a later re-read. */
+  private retainedSummary(id: string): ChatSummary {
+    const base = [this.metadataPath(id), this.identityPath(id)]
+      .map(observedFile)
+      .join("|");
+    const hit = this.summaries.get(id);
+    if (
+      hit &&
+      !this.active.has(hit.summary.head) &&
+      hit.key === `${base}|${this.headKey(hit.summary.head)}`
+    )
+      return { ...hit.summary };
+    const meta = this.metadata(id);
+    if (!meta) throw new ContractError("corrupt-selected");
+    const head = meta.turns.at(-1) as string;
+    const key = `${base}|${this.headKey(head)}`;
+    const summary = this.summary(meta);
+    this.summaries.delete(id);
+    if (
+      !this.active.has(head) &&
+      !["queued", "running"].includes(summary.status)
+    ) {
+      if (this.summaries.size >= SESSION_LIMIT) this.summaries.clear();
+      this.summaries.set(id, { key, summary: { ...summary } });
+    }
+    return summary;
+  }
   private liveSummary(live: LiveTurn): ChatSummary {
     return {
       id: live.conversationId,
@@ -387,9 +449,7 @@ export class Conversations {
           entries.length >= SESSION_LIMIT
         )
           throw new ContractError("capacity");
-        const meta = this.metadata(decodeId(e.name.slice(0, -5)));
-        if (!meta) throw new ContractError("corrupt-selected");
-        entries.push(this.summary(meta));
+        entries.push(this.retainedSummary(decodeId(e.name.slice(0, -5))));
       }
     } finally {
       opened.closeSync();
@@ -488,28 +548,37 @@ export class Conversations {
         !!this.files.read(this.identityPath(conversationId), META_BYTES))
     );
   }
+  private command(input: Send, reply: boolean): Send {
+    return {
+      ...input,
+      text: reply ? "exit cadence" : sanitizeText(input.text, this.o.secrets()),
+    };
+  }
+  /** A lost reply observes its original acceptance; it never admits again.
+   * Any caller-side freshness check must come after this lookup. */
+  receipt(input: Send, reply = false): WorkbenchResult | undefined {
+    this.o.owner.lease.assert();
+    const prior = this.read(
+      this.path(input.commandId, "accepted.json"),
+      META_BYTES,
+    );
+    if (prior === undefined) return undefined;
+    const saved = closed(prior, ["command", "at"]);
+    if (
+      canonicalJson(saved.command) !== canonicalJson(this.command(input, reply))
+    )
+      throw new ContractError("conflict");
+    return { kind: "accepted", commandId: input.commandId };
+  }
   send(
     input: Send,
     control?: ConversationControl,
     beforeAccept?: () => void,
   ): WorkbenchResult {
     this.o.owner.lease.assert();
-    const command = {
-      ...input,
-      text: control?.reply
-        ? "exit cadence"
-        : sanitizeText(input.text, this.o.secrets()),
-    };
-    const prior = this.read(
-      this.path(input.commandId, "accepted.json"),
-      META_BYTES,
-    );
-    if (prior !== undefined) {
-      const saved = closed(prior, ["command", "at"]);
-      if (canonicalJson(saved.command) !== canonicalJson(command))
-        throw new ContractError("conflict");
-      return { kind: "accepted", commandId: input.commandId };
-    }
+    const command = this.command(input, !!control?.reply);
+    const receipt = this.receipt(input, !!control?.reply);
+    if (receipt) return receipt;
     if (
       this.files.directory(dirname(this.path(input.commandId, "accepted.json")))
     )
@@ -617,7 +686,6 @@ export class Conversations {
     this.active.set(turn.id, live);
     this.o.owner.trackConversation(original, () => abort.abort());
     try {
-      control?.accept();
       if (!meta)
         this.write(
           this.identityPath(next.id),
@@ -641,6 +709,9 @@ export class Conversations {
         META_BYTES,
         beforeMeta,
       );
+      // Control state commits last: it never names a turn that is not durably
+      // recorded. A failure here leaves an older, still-valid control record.
+      control?.accept();
     } catch (error) {
       abort.abort();
       begin();

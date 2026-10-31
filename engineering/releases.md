@@ -3,6 +3,22 @@
 An append-only record of what each release or integration review actually executed, newest first.
 It is not required reading for a change: add a section for each release and never rewrite an older one.
 
+## Release 2.0.22 acceptance snapshot
+
+Fixes the regressions found in a full review of 2.0.21's persistent conversation workflows.
+Full `verify` passed on its third attempt: 1990 root/native tests in 83 files (27 platform skips on Linux), 19 legacy task-entry node tests, 146 web tests in 13 files, six real-browser scenarios in five files and the 148-member real-pack audit.
+The first attempt failed the distribution diagnostic's 1MiB per-member read bound, which the generated service host (about 1.04MiB) now exceeds; that diagnostic bound became 2MiB (the 8MiB total and the 128MiB pack audit are unchanged).
+The second failed one 5s registry-oversize case in `service-owner.test.ts` under host load (load average about 5); that file then passed alone (103/103) and in the third full run, with no code or deadline change.
+A separate `bun pm pack --destination <private-disk-temp>` archive had 148 members; SHA-256 `0b957a1cc90d07dfe391d3004159d983c88c113dbc5107fc594fa89d12a36231`, SHA-1 `8deb944ebeb0090593a64c81c2822eb324afd7d4`.
+Observed environment: Linux, official Node 22.22.1, Bun 1.3.14, installed public Pi/SDK 0.84.3 and existing Chrome for Testing (Playwright chromium-1243).
+WebUI: workflow research/implementation/review subagents are back in the lower-left Subagents dock and open their transcript and retained result in a main-area view; running workflows are listed with exact-run cancel; failure states stay visible in Cadence mode; ordinary Send no longer depends on the Cadence-mode read; the approval guard is in-flight only.
+Owner: interrupted runs settle as `unknown` instead of fencing startup; a degraded or partially written control record affects only its own conversation; per-conversation coordinator turns; idempotent Send/approval receipts; plans survive later messages.
+Workflows: transcript overflow no longer kills a worker; coordinator calls are refused per call; credential-looking plan text is redacted, not refused; integration ignores unrelated checkout edits; working-copy scope is enforced; directory write paths are scopes; the fast-forward is never interrupted; clean merged worktrees are removed (never ignored work under approved paths); lifetime run/journal caps are gone; review verdicts must be unambiguous.
+Native: definite refusals restore state; no message injection during an open tool call; safe-first dialogs with a typed-Enter guard; inert mode outside the trusted terminal and `/cadence exit`; workflow subagents in the agent panel; reconnection after an owner restart.
+Downgrade: a 2.0.20 owner refuses a project namespace once 2.0.21 or later has created `workflows-v1` or `conversation-workflows-v1`; there is no migration, and that state must not be deleted to downgrade.
+Commit, merge to `main`, push and npm publication were explicitly authorized; no consumer installation/service change, dependency/browser download or enlarged time budget occurred.
+Paid-provider, physical-human, service-manager and native Windows/macOS qualification remain outside these executed lanes; the `ci/windows` workflow was not run.
+
 ## Release 2.0.21 acceptance snapshot
 
 The versioned candidate passed full `verify` on its first release-validation attempt: 1941 root/native tests in 78 files (27 platform skips on Linux), 19 legacy task-entry node tests, 145 web tests in 13 files, six real-browser scenarios in five files and the 148-member real-pack audit.

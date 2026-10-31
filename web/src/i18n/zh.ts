@@ -2,10 +2,26 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
-  "Legacy subagents": "旧版子代理",
-  "Legacy task agents appear here. New workflow agents are shown in the conversation.":
-    "此处显示旧版任务代理。新工作流的代理记录在对话中展示。",
-  "Subagent transcript": "子代理记录",
+  "Cadence research, implementation and review agents appear here.":
+    "Cadence 的调研、实施和审查代理会显示在这里。",
+  "Subagent context": "子代理上下文",
+  "Open subagent context": "打开子代理上下文",
+  "Back to conversation": "返回对话",
+  Back: "返回",
+  Workflow: "工作流",
+  "Step result": "步骤结果",
+  "No result yet.": "暂无结果。",
+  "The latest turn's outcome is unknown. Approval waits until it is observed.":
+    "最新一轮的结果未知。需要先观察到结果才能批准。",
+  "Cadence control state for this conversation is missing, incomplete or unreadable. No mode, plan or run is inferred and nothing was repaired. Start a new conversation; preserve this state for local diagnosis.":
+    "此会话的 Cadence 控制状态缺失、不完整或无法读取。系统不会推断模式、计划或运行，也没有做任何修复。请新建会话；保留这些状态以便本地诊断。",
+  "The last Cadence message of this conversation was not durably recorded. Its plan is not approvable and nothing was replayed or repaired. Start a new conversation; preserve this state for local diagnosis.":
+    "此会话最后一条 Cadence 消息没有被持久记录。它的计划不可批准，系统没有重放或修复任何内容。请新建会话；保留这些状态以便本地诊断。",
+  "No plan is awaiting approval.": "当前没有等待批准的计划。",
+  "Cadence state unavailable. Observe the conversation before sending.":
+    "暂时无法获取 Cadence 状态。请先刷新观察会话再发送。",
+  "The last turn did not complete. A new message continues from the last complete checkpoint; incomplete work is not replayed.":
+    "上一轮未完成。新消息会从最近一次完整的检查点继续；未完成的工作不会被重放。",
   "No retained transcript observed yet; absence is not proof of no activity.":
     "暂未观察到保留记录；这不代表没有活动。",
   "Tools and checks run on the service host, not in a sandbox.":
@@ -13,7 +29,6 @@ export const zh = {
   Discussing: "对话中",
   "Awaiting plan approval": "等待批准计划",
   "Ready for conversation": "可以继续对话",
-  "See workflow progress": "查看工作流进度",
   "Cadence conversation": "Cadence 对话",
   "Cadence on": "Cadence 已开启",
   "Legacy task": "旧版任务",
@@ -44,7 +59,6 @@ export const zh = {
   "Preview is truncated.": "预览已截断。",
   "Read retained step result": "读取保留的步骤结果",
   "Cancel workflow — request stop": "取消工作流 — 请求停止",
-  "Background workflows": "后台工作流",
   "Workflow activity unavailable; retained work may still be running.":
     "工作流状态不可用；已接受的工作可能仍在运行。",
   "Cadence is off. Accepted work continues; exit does not cancel it.":

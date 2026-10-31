@@ -65,9 +65,8 @@ export class Workbench implements WorkbenchPort {
       conversations: this.conversations,
       workflows: this.workflows,
     });
-    this.cadence.assertRecords();
-    for (const entry of this.conversations.list().entries)
-      this.cadence.state(entry.id);
+    // Control records are not a startup gate: one unusable record degrades
+    // only its own conversation (see ConversationWorkflow.read).
     if (
       this.conversations
         .list()
@@ -90,8 +89,13 @@ export class Workbench implements WorkbenchPort {
     switch (request.kind) {
       case "cadence-conversation":
         return { kind: request.kind, state: this.cadence.state(request.id) };
-      case "workflow-active":
-        return this.workflows.activeRuns();
+      case "workflow-active": {
+        const active = this.workflows.activeRuns();
+        return {
+          ...active,
+          links: this.cadence.links(active.runs.map((run) => run.id)),
+        };
+      }
       case "workflow-transcript":
         return this.workflows.transcript(request.id, request.stepId);
       case "workflow-detail":
@@ -106,7 +110,7 @@ export class Workbench implements WorkbenchPort {
           ...value,
           entries: value.entries.map((entry) => ({
             ...entry,
-            cadence: this.cadence.state(entry.id).enabled,
+            cadence: this.cadence.observe(entry.id).enabled,
           })),
         };
       }
@@ -139,6 +143,10 @@ export class Workbench implements WorkbenchPort {
         mayHaveEffects = true;
       };
       if (request.kind === "send") {
+        // A lost reply observes its original acceptance before mode checks.
+        const receipt = this.conversations.receipt(request);
+        if (receipt) return receipt;
+        if (state.notice) throw new ContractError("corrupt-selected");
         if (state.enabled) throw new ContractError("conflict");
         return this.conversations.send(request, undefined, accepting);
       }
@@ -203,7 +211,13 @@ export class Workbench implements WorkbenchPort {
         throw new ContractError("stale");
       const before = this.o.choice.snapshot();
       if (!before.selected) {
-        const choice = new CadencePreferences(this.o.agentDir).read();
+        let choice: ReturnType<CadencePreferences["read"]>;
+        try {
+          choice = new CadencePreferences(this.o.agentDir).read();
+        } catch {
+          // An unreadable or unsupported preference is reported, never replaced.
+          throw new ContractError("unavailable");
+        }
         if (!choice) throw new ContractError("unavailable");
         this.o.choice.choose({ expected: before.version, choice });
       }
@@ -228,10 +242,12 @@ export class Workbench implements WorkbenchPort {
       });
     }
     if (request.kind === "workflow")
+      // The native route reports a provably effect-free refusal as such.
       return this.workflows.command(
         request.commandId,
         request.epoch,
         request.request,
+        { definite: true },
       );
     if (request.kind === "link-task") {
       this.conversations.link(

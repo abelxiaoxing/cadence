@@ -1033,7 +1033,7 @@ export function registerTaskShell(pi: ExtensionAPI): void {
         }
       } catch (error) {
         ctx.ui.notify(
-          `${error instanceof ContractError ? error.code : "unavailable"}: Cadence refused or observation unavailable. No automatic action replay.\n${attached ? "Reopen /cadence for a fresh observation and confirmation. Accepted work may continue. For quarantined/unavailable ownership use cadence-service diagnose --workspace <path>; no locks were cleared." : `${MANAGEMENT_GUIDANCE}${autostartHint()}`}`,
+          `${error instanceof ContractError ? error.code : "unavailable"}: Cadence refused or observation unavailable. No automatic action replay.\n${attached ? "Reopen /cadence-inspect for a fresh observation and confirmation. Accepted work may continue. For quarantined/unavailable ownership use cadence-service diagnose --workspace <path>; no locks were cleared." : `${MANAGEMENT_GUIDANCE}${autostartHint()}`}`,
           "error",
         );
       } finally {

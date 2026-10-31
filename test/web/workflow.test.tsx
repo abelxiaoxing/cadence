@@ -11,6 +11,7 @@ import {
   cadenceApproval,
   cadenceExit,
 } from "../../web/src/client/workflow-entry";
+import { workflowAgentLabel } from "../../web/src/components/workspace/AgentDock";
 import { WorkflowPanel } from "../../web/src/components/workspace/WorkflowPanel";
 import { plan } from "../helpers/workflow-plan.ts";
 import { transport } from "./fixtures";
@@ -138,8 +139,8 @@ it("plan cards expose actual checks and local delivery, not old Save/Start/Revie
     <WorkflowPanel
       client={new ServiceClient(transport())}
       state={s}
-      pending=""
       canApprove={false}
+      approvalHint="The latest turn's outcome is unknown."
       onApprove={() => {}}
       onChanged={() => {}}
     />,
@@ -147,5 +148,12 @@ it("plan cards expose actual checks and local delivery, not old Save/Start/Revie
   expect(html).toContain("Implement this plan");
   expect(html).toContain("No push, publication or deployment");
   expect(html).toContain("disabled");
+  expect(html).toContain("outcome is unknown");
   expect(html).not.toContain("Confirm start");
+});
+it("workflow subagent rows use the readable assignment, not the step's random suffix", () => {
+  expect(
+    workflowAgentLabel("implement-a-1b4e28ba-2fa1-11d2-883f-0016d3cca427"),
+  ).toBe("implement-a");
+  expect(workflowAgentLabel("question-1")).toBe("question-1");
 });

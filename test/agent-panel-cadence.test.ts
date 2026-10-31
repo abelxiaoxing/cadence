@@ -156,6 +156,7 @@ function connection(client: unknown) {
     refresh: vi.fn(async () => ({})),
     compatible: vi.fn(() => true),
     detach: vi.fn(async () => {}),
+    forgetSuperseded: vi.fn((_cwd: string) => false),
   } satisfies Record<keyof FeedConnection, unknown>;
 }
 function bus() {
@@ -239,6 +240,21 @@ describe("Cadence owner feed", () => {
     await advance(1);
     expect(conn.attach).toHaveBeenCalledTimes(2);
     expect(h.published()).toEqual([]);
+  });
+
+  it("drops an attachment whose owner the registry proves replaced instead of awaiting its detach", async () => {
+    const conn = {
+      ...connection(undefined),
+      attach: vi.fn(async () => {
+        throw new Error("forbidden");
+      }),
+      forgetSuperseded: vi.fn((_cwd: string) => true),
+    };
+    const h = host(conn);
+    await h.emit("session_start");
+    await advance(FEED_TIMING.firstMs);
+    expect(conn.forgetSuperseded).toHaveBeenCalledWith("/work/project");
+    expect(conn.detach).not.toHaveBeenCalled();
   });
 
   it("stays off outside the TUI and with CADENCE_AGENT_PANEL=off", async () => {
@@ -544,7 +560,7 @@ describe("Cadence owner feed", () => {
         status: "error",
         endedAt: T0 + 30_000,
         error:
-          "inspect-api · outcome not observed here (owner unavailable); see /cadence History",
+          "inspect-api · outcome not observed here (owner unavailable); see /cadence-inspect History",
       },
     ]);
     expect(h.published(E.activity).at(-1)).toEqual({
@@ -677,6 +693,185 @@ describe("Cadence owner feed bounds", () => {
       true,
     );
     expect(text.length).toBeLessThan(65 * 1024);
+  });
+});
+
+describe("Cadence workflow subagents", () => {
+  const WF = "66666666-6666-4666-8666-666666666666",
+    W1 = "77777777-7777-4777-8777-777777777777",
+    W2 = "88888888-8888-4888-8888-888888888888";
+  const step = (
+    id: string,
+    kind: string,
+    status: string,
+    childRunId?: string,
+  ) => ({
+    id,
+    ...(childRunId ? { childRunId } : {}),
+    kind,
+    status,
+    text: "",
+    exitCode: null,
+    truncated: false,
+  });
+  const item = (
+    id: string,
+    role: string,
+    text: string,
+    name = "",
+    args = "",
+  ) => ({ id, role, text, name, args, error: false });
+  function workflowOwner() {
+    const { s, client } = owner();
+    s.roster = [];
+    const w = {
+      live: [WF],
+      run: {
+        id: WF,
+        epoch: STORE,
+        goal: "goal",
+        status: "running",
+        phase: "implementing",
+        steps: [
+          step("inspect", "research", "completed", W1),
+          step("impl-a", "implementation", "running", W2),
+          step("outputs", "check", "running"),
+        ],
+        notice: "",
+        mergedCommit: null,
+        humanReviewed: false,
+      },
+      turns: {} as Record<string, object>,
+    };
+    const turn = (status: string, items: object[]) => ({
+      id: W2,
+      epoch: STORE,
+      status,
+      items,
+      notice: "",
+      omitted: { thinking: false, media: false, other: false },
+    });
+    const reader = vi.fn(async (r: any) => {
+      if (r.kind === "workflow-active")
+        return ok({
+          kind: "workflow-active",
+          runs: w.live.map((id) => ({ ...w.run, id, steps: [] })),
+        });
+      if (r.kind === "workflow")
+        return ok({
+          kind: "workflow",
+          commandId: null,
+          response: { type: "run", run: w.run },
+        });
+      if (r.kind === "workflow-transcript")
+        return ok({
+          kind: "workflow-transcript",
+          runId: r.id,
+          stepId: r.stepId,
+          turn: w.turns[r.stepId] ?? null,
+        });
+      return refused;
+    });
+    return { s, client: { ...client, workbenchRead: reader }, w, turn };
+  }
+  it("announces workflow subagents with kinds, activity, a viewed transcript and outcomes", async () => {
+    const { client, w, turn } = workflowOwner();
+    w.turns["impl-a"] = turn("running", [
+      item("m1", "assistant", "Editing a.txt"),
+      item("k1", "tool", "", "edit", '{"path":"a.txt"}'),
+    ]);
+    const h = host(connection(client));
+    await h.emit("session_start");
+    h.at(T0 + 500);
+    await advance(FEED_TIMING.firstMs);
+    expect(h.published(E.start)).toEqual([
+      { id: W1, label: "inspect", kind: "Research", startedAt: null },
+      { id: W2, label: "impl-a", kind: "Implementation", startedAt: T0 + 500 },
+    ]);
+    expect(h.published(E.end)).toEqual([
+      { id: W1, status: "done", endedAt: T0 + 500 },
+    ]);
+    expect(h.published(E.activity)).toContainEqual({
+      id: W2,
+      activity: "impl-a · Running edit",
+    });
+    h.events.emit(SUBAGENT_VIEW, { id: W2 });
+    await advance(0);
+    expect(h.published(E.message)).toEqual([
+      {
+        id: W2,
+        streaming: true,
+        message: {
+          role: "assistant",
+          content: [
+            { type: "text", text: "Editing a.txt" },
+            {
+              type: "toolCall",
+              id: "k1",
+              name: "edit",
+              arguments: { path: "a.txt" },
+            },
+          ],
+        },
+      },
+    ]);
+    w.turns["impl-a"] = turn("completed", [
+      item("m1", "assistant", "Editing a.txt"),
+      item("k1", "tool", "ok", "edit", '{"path":"a.txt"}'),
+      item("m2", "assistant", "Done"),
+    ]);
+    w.run = {
+      ...w.run,
+      status: "completed",
+      phase: "finished",
+      steps: [
+        step("inspect", "research", "completed", W1),
+        step("impl-a", "implementation", "completed", W2),
+      ],
+    };
+    w.live = [];
+    h.at(T0 + 9000);
+    await advance(FEED_TIMING.activeMs);
+    const messages = h.published(E.message) as any[];
+    expect(messages.slice(1).map((m) => m.message.role)).toEqual([
+      "assistant",
+      "toolResult",
+      "assistant",
+    ]);
+    expect(messages.at(-1).message.content).toEqual([
+      { type: "text", text: "Done" },
+    ]);
+    expect(h.published(E.end)).toEqual([
+      { id: W1, status: "done", endedAt: T0 + 500 },
+      { id: W2, status: "done", endedAt: T0 + 9000 },
+    ]);
+    // A finished workflow is no longer read.
+    const reads = client.workbenchRead.mock.calls.length;
+    await advance(FEED_TIMING.idleMs);
+    expect(
+      client.workbenchRead.mock.calls
+        .slice(reads)
+        .every(([r]: any) => r.kind === "workflow-active"),
+    ).toBe(true);
+  });
+  it("a workflow that stays unreadable ends its subagents as not observed", async () => {
+    const { client, w } = workflowOwner();
+    const h = host(connection(client));
+    await h.emit("session_start");
+    await advance(FEED_TIMING.firstMs);
+    w.live = [];
+    client.workbenchRead.mockImplementation(async () => refused as never);
+    for (let look = 0; look < 5; look++) await advance(FEED_TIMING.activeMs);
+    expect(h.published(E.end)).toContainEqual(
+      expect.objectContaining({ id: W2, status: "error" }),
+    );
+  });
+  it("an owner without workflow reads leaves only task children", async () => {
+    const { client } = owner();
+    const h = host(connection(client));
+    await h.emit("session_start");
+    await advance(FEED_TIMING.firstMs);
+    expect(h.published()).toEqual([]);
   });
 });
 

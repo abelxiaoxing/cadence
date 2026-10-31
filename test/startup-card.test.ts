@@ -232,7 +232,7 @@ describe("Cadence startup configuration card", () => {
         "cadence",
         expect.objectContaining({
           description:
-            "Enable Cadence for this entire conversation: /cadence [goal]. Continue in normal conversation; explicit exit only.",
+            "Enable Cadence for this conversation: /cadence [goal]. It stays on until you type 退出 Cadence / exit cadence or run /cadence exit.",
         }),
       );
       expect(h.active()).toEqual(["read", "bash"]);
@@ -282,7 +282,7 @@ describe("Cadence startup configuration card", () => {
       "cadence",
       expect.objectContaining({
         description:
-          "Enable Cadence for this entire conversation: /cadence [goal]. Continue in normal conversation; explicit exit only.",
+          "Enable Cadence for this conversation: /cadence [goal]. It stays on until you type 退出 Cadence / exit cadence or run /cadence exit.",
       }),
     );
     expect(h.active()).toEqual(["read", "bash"]);

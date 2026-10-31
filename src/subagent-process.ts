@@ -39,7 +39,7 @@ import {
   type WorkerPublicRequest,
 } from "./worker-public.mjs";
 import { WorkerRecording } from "./worker-recording.ts";
-import { sanitizeText } from "./worker-redaction.mjs";
+import { sanitizeData, sanitizeText } from "./worker-redaction.mjs";
 
 export interface RequestAuth {
   ok: true;
@@ -90,6 +90,10 @@ export interface ProcessSpec {
     args: unknown,
     signal: AbortSignal,
   ) => Promise<unknown>;
+  /** Never signalled by this runner: no timeout, cancellation or output-bound
+   * stop. For an operation that must not be interrupted mid-update (the
+   * fast-forward of a user's checkout); excess output is dropped, not fatal. */
+  uninterruptible?: boolean;
 }
 /** One bounded process owner for SDK workers and user-confirmed parent checks. */
 /** Windows has no process groups, and terminating CMD/a worker alone leaves
@@ -288,7 +292,8 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       }
     };
     const stop = (outcome: RunResult["outcome"]) => {
-      if (settled || stopping) return;
+      // An uninterruptible child is observed to its own close, never signalled.
+      if (settled || stopping || spec.uninterruptible) return;
       stopping = outcome;
       ingressStop.abort();
       if (nativeClosed) return; // Decoder/recorder waiting is not a live PID.
@@ -302,52 +307,72 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       child.on("message", (message) => {
         if (settled || stopping) return;
         void (async () => {
-          let id: number | undefined;
+          // Only a frame without a usable call ID is a broken channel. Any
+          // other refusal answers that one call; the coordinator keeps running.
+          let row: Record<string, unknown>;
           try {
-            const body = JSON.stringify(message);
-            if (
-              ++bridgeCalls > 16 ||
-              bridgeBusy ||
-              Buffer.byteLength(body) > 65536 ||
-              sanitizeText(body, spec.secrets ?? []) !== body
-            )
-              throw new Error("Invalid coordinator frame");
-            const row = closed(message, ["id", "name", "args"]);
+            row = closed(message, ["id", "name", "args"]);
             if (
               !Number.isSafeInteger(row.id) ||
               (row.id as number) < 1 ||
               typeof row.name !== "string"
             )
               throw new Error("Invalid coordinator frame");
-            id = row.id as number;
-            bridgeBusy = true;
+          } catch {
+            stop("failed");
+            return;
+          }
+          const id = row.id as number;
+          const refuse = () => {
+            if (child.connected && !settled && !stopping)
+              child.send({ id, ok: false }, () => {});
+          };
+          if (
+            ++bridgeCalls > 16 ||
+            bridgeBusy ||
+            Buffer.byteLength(JSON.stringify(message)) > 65536
+          ) {
+            refuse();
+            return;
+          }
+          bridgeBusy = true;
+          try {
+            const secrets = spec.secrets ?? [];
+            const name = row.name as string;
+            if (sanitizeText(name, secrets) !== name)
+              throw new Error("Invalid coordinator call");
+            // Credential-looking text is redacted, never forwarded verbatim
+            // and never a reason to stop the coordinator.
+            const args =
+              row.args === undefined
+                ? undefined
+                : JSON.parse(sanitizeData(row.args, secrets));
             const value = await spec.onCoordinator?.(
-              row.name,
-              row.args,
+              name,
+              args,
               ingressStop.signal,
             );
-            const text = sanitizeText(
-              JSON.stringify(value),
-              spec.secrets ?? [],
-            );
+            const text = sanitizeText(JSON.stringify(value), secrets);
             const reply = { id, ok: true, text };
             if (Buffer.byteLength(JSON.stringify(reply)) > 65536)
               throw new Error("Coordinator result exceeds bound");
             if (!settled && !stopping && child.connected)
               child.send(reply, () => {});
           } catch {
-            if (id !== undefined && child.connected && !settled && !stopping)
-              child.send({ id, ok: false }, () => {});
-            else stop("failed");
+            refuse();
           } finally {
             bridgeBusy = false;
           }
         })();
       });
     const abort = () => stop("canceled");
-    const timeout = setTimeout(() => stop("timeout"), spec.timeoutMs);
-    spec.signal.addEventListener("abort", abort, { once: true });
-    if (spec.signal.aborted) abort();
+    const timeout = spec.uninterruptible
+      ? undefined
+      : setTimeout(() => stop("timeout"), spec.timeoutMs);
+    if (!spec.uninterruptible) {
+      spec.signal.addEventListener("abort", abort, { once: true });
+      if (spec.signal.aborted) abort();
+    }
     const frame = (line: string) => {
       let lease: CaptureReservation | undefined;
       try {
@@ -387,7 +412,7 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         byteCount > (spec.protocol ? LIMITS.childProtocolBytes : 256 * 1024)
       ) {
         truncated = true;
-        stop("failed");
+        if (!spec.uninterruptible) stop("failed");
         return;
       }
       let text: string;
@@ -402,10 +427,12 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       }
       // Buffer the bounded complete stream before redacting: split secrets/UTF-8 cannot leak through progress.
       if (!spec.protocol || !stdout) {
+        if (spec.uninterruptible && truncated) return;
         output += text;
         if (Buffer.byteLength(output) > 256 * 1024) {
           truncated = true;
-          stop("failed");
+          if (spec.uninterruptible) output = clean(output, 256 * 1024);
+          else stop("failed");
         }
       } else {
         pending += text;

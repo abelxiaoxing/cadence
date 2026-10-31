@@ -2278,11 +2278,20 @@ summary:focus-visible,
   flex-direction: column;
   min-width: 0;
 }
-.agent-dock-label strong {
+.agent-dock-label strong,
+.agent-dock-label small {
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.agent-dock-label small {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.agent-dock-row.active {
+  border-radius: 6px;
+  background: var(--accent-soft);
 }
 .agent-dot {
   width: 6px;
@@ -2300,6 +2309,7 @@ summary:focus-visible,
   background: var(--green);
 }
 .agent-dot.failed,
+.agent-dot.timeout,
 .agent-dot.unknown {
   background: var(--red);
 }
@@ -2857,9 +2867,22 @@ summary.chat-steps-head:hover {
   max-height: 60vh;
   overflow: auto;
 }
-.background-workflows {
-  padding: 8px 16px;
-  max-height: 40vh;
-  overflow: auto;
-  border-bottom: 1px solid var(--border);
+.chat-workspace[hidden] {
+  display: none;
+}
+.workflow-agent-goal {
+  max-width: 920px;
+  margin: 0 auto 16px;
+  overflow-wrap: anywhere;
+}
+.workflow-agent-result {
+  max-width: 920px;
+  margin: 0 auto 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+  overflow-wrap: anywhere;
+}
+.workflow-agent .workflow-card {
+  max-width: 920px;
+  margin: 0 auto;
 }

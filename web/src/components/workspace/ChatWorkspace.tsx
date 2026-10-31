@@ -1,7 +1,7 @@
 /* Adapted from pi-web-ui ChatInput/MessageList: bottom composer, streaming
  * transcript, folded tools and per-conversation drafts. MIT (c) 2026 xing-shuyin.
  * No upstream prompt, dispatch tool, queue, plugin or subagent runtime. */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   FiArrowDown,
   FiArrowUp,
@@ -22,6 +22,7 @@ import {
   cadenceExit,
 } from "../../client/workflow-entry";
 import { useT } from "../../i18n/locale";
+import type { WorkflowAgent } from "./AgentDock";
 import { ChatTurnView } from "./ChatTurnView";
 import { ChatWelcome } from "./ChatWelcome";
 import { WorkflowPanel } from "./WorkflowPanel";
@@ -50,6 +51,9 @@ export function ChatWorkspace({
   taskPending = false,
   legacyTask = false,
   onModeChanged,
+  hidden = false,
+  onOpenAgent,
+  onWorkflowRuns,
 }: {
   client: ServiceClient;
   id: string;
@@ -63,6 +67,11 @@ export function ChatWorkspace({
   taskPending?: boolean;
   legacyTask?: boolean;
   onModeChanged?(): void;
+  /** Kept mounted (draft, scroll, observations) while a subagent view covers it. */
+  hidden?: boolean;
+  onOpenAgent?(agent: WorkflowAgent): void;
+  /** This conversation's recent workflow runs, for the subagent dock. */
+  onWorkflowRuns?(ids: string[]): void;
   onModel(): void;
   onChanged(): void;
   reference?: string;
@@ -94,11 +103,17 @@ export function ChatWorkspace({
       ? workflow.value.state
       : undefined;
   const cadence = state?.enabled === true;
+  // Ordinary chat never depends on the Cadence record: a failed mode read
+  // still allows an ordinary Send, which the owner refuses if Cadence is on.
+  const modeObserved = !!state || !!workflow.error;
+  // A degraded record (notice) is shown but takes no Cadence action.
+  const cadenceKnown = !!state && !workflow.error && !state.notice;
   const latestState = useRef(state);
   latestState.current = state;
-  const [approvalPending, setApprovalPending] = useState(() =>
-    stored(`${draftKey}:approval`),
-  );
+  // In-flight approval only. The owner consumes a plan once, so a lost reply
+  // never needs a client-side lock: the next observation shows the run.
+  const [approving, setApproving] = useState("");
+  const attempted = useRef("");
   const input = cadenceInput(draft, cadence || legacyTask ? "cadence" : mode);
   const legacy =
     legacyTask && !cadence && cadenceInput(draft, "chat").mode !== "cadence";
@@ -106,8 +121,8 @@ export function ChatWorkspace({
     enabled &&
     !!view &&
     !page.error &&
-    !!state &&
-    !workflow.error &&
+    modeObserved &&
+    !(cadence && (workflow.error || state?.notice)) &&
     !busy &&
     !taskPending &&
     !pending &&
@@ -119,17 +134,32 @@ export function ChatWorkspace({
   const canExit =
     canInterrupt &&
     !!view &&
-    !!state &&
+    cadenceKnown &&
     !page.error &&
-    !workflow.error &&
     !busy &&
     !taskPending &&
     !pending &&
     !running;
+  // The plan card survives later messages; the owner refuses approval only
+  // while this conversation's turn is live or its outcome is unknown.
+  const planApprovable =
+    !!state?.proposal && !!summary && !running && summary.status !== "unknown";
+  const approvalHint =
+    state?.proposal && summary?.status === "unknown"
+      ? t(
+          "The latest turn's outcome is unknown. Approval waits until it is observed.",
+        )
+      : undefined;
   const textarea = useRef<HTMLTextAreaElement>(null),
-    scroll = useRef<HTMLDivElement>(null);
+    scroll = useRef<HTMLDivElement>(null),
+    lastTop = useRef(0);
   const stick = useRef(true),
     [away, setAway] = useState(false);
+  // `display: none` drops the scroll offset; restore it when the view returns.
+  useLayoutEffect(() => {
+    if (!hidden && scroll.current && !stick.current)
+      scroll.current.scrollTop = lastTop.current;
+  }, [hidden]);
   const alive = useRef(true);
   const taskSending = useRef(false);
   const observedHead = useRef("");
@@ -177,8 +207,11 @@ export function ChatWorkspace({
       observedHead.current = signature;
       onChanged();
     }
-    if (approvalPending && state?.runs.includes(approvalPending))
-      setApprovalPending("");
+    if (attempted.current && state?.runs.includes(attempted.current)) {
+      attempted.current = "";
+      setApproving("");
+      setError("");
+    }
     if (pending && view?.turns.some((turn) => turn.id === pending)) {
       setPending("");
       setDraft((value) => (value === sentDraft.current ? "" : value));
@@ -186,18 +219,26 @@ export function ChatWorkspace({
     }
     if (stick.current && scroll.current)
       scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [view, pending, onChanged, approvalPending, state]);
+  }, [view, pending, onChanged, state]);
   useEffect(() => {
     try {
-      if (approvalPending)
-        sessionStorage.setItem(`${draftKey}:approval`, approvalPending);
-      else sessionStorage.removeItem(`${draftKey}:approval`);
+      // 2.0.21 kept an approval lock here that could outlive its request.
+      sessionStorage.removeItem(`${draftKey}:approval`);
     } catch {
-      /* retained server identity is authoritative */
+      /* storage is advisory */
     }
-  }, [approvalPending, draftKey]);
+  }, [draftKey]);
+  const runsKey = JSON.stringify(state?.runs.slice(-4) ?? []);
+  useEffect(() => {
+    onWorkflowRuns?.(JSON.parse(runsKey));
+  }, [runsKey, onWorkflowRuns]);
   const approve = async () => {
-    if (!state?.proposal || !canSend || running || approvalPending) return;
+    if (!state?.proposal) {
+      setError(t("No plan is awaiting approval."));
+      return;
+    }
+    if (!cadenceKnown || !canSend || running || approving || !planApprovable)
+      return;
     const observed = state;
     setBusy(true);
     setError("");
@@ -210,18 +251,15 @@ export function ChatWorkspace({
           latestState.current?.revision === observed.revision &&
           latestState.current?.enabled === true,
         submitting: (commandId) => {
-          setApprovalPending(commandId);
-          try {
-            sessionStorage.setItem(`${draftKey}:approval`, commandId);
-          } catch {
-            /* never replay */
-          }
+          attempted.current = commandId;
+          setApproving(commandId);
         },
       });
       if (!alive.current) return;
       if (reply.kind === "error") {
+        // A lost reply may still have started the run; the observation shows it.
         setError(reply.error.code);
-        if (reply.error.effect === "none") setApprovalPending("");
+        setApproving("");
       } else setDraft((value) => (cadenceApproval(value) ? "" : value));
     } catch (e) {
       if (alive.current)
@@ -275,6 +313,15 @@ export function ChatWorkspace({
       }
       return;
     }
+    const selecting = cadenceInput(message, mode).mode === "cadence";
+    if ((cadence || selecting) && !cadenceKnown) {
+      setError(
+        t(
+          "Cadence state unavailable. Observe the conversation before sending.",
+        ),
+      );
+      return;
+    }
     if (blocked && (!cadence || summary?.status === "unknown")) return;
     setBusy(true);
     setError("");
@@ -321,11 +368,10 @@ export function ChatWorkspace({
         }
         catalog = await client.models();
       }
-      if (catalog.kind !== "ok" || !catalog.value.selected || !state) {
+      if (catalog.kind !== "ok" || !catalog.value.selected) {
         onModel();
         return;
       }
-      const selecting = cadenceInput(message, mode).mode === "cadence";
       const common = {
         commandId: crypto.randomUUID(),
         conversationId: id,
@@ -333,8 +379,9 @@ export function ChatWorkspace({
         text: message,
         model: catalog.value.version,
       };
+      // A Cadence command was refused above without an observed mode record.
       const command: WorkbenchCommand =
-        cadence || selecting
+        (cadence || selecting) && state
           ? {
               kind: "cadence-send",
               ...common,
@@ -398,6 +445,7 @@ export function ChatWorkspace({
   return (
     <section
       className="chat-workspace"
+      hidden={hidden}
       aria-label={
         cadence ? t("Cadence conversation") : t("Ordinary conversation")
       }
@@ -429,9 +477,11 @@ export function ChatWorkspace({
             {cadence
               ? running
                 ? t("Discussing")
-                : state?.proposal
-                  ? t("Awaiting plan approval")
-                  : t("Ready for conversation")
+                : blocked
+                  ? tx(summary.status)
+                  : state?.proposal
+                    ? t("Awaiting plan approval")
+                    : t("Ready for conversation")
               : tx(summary.status)}
           </span>
         )}
@@ -441,7 +491,8 @@ export function ChatWorkspace({
         ref={scroll}
         onScroll={() => {
           const el = scroll.current;
-          if (el) {
+          if (el && !hidden) {
+            lastTop.current = el.scrollTop;
             stick.current =
               el.scrollHeight - el.scrollTop - el.clientHeight < 80;
             setAway(!stick.current);
@@ -480,16 +531,27 @@ export function ChatWorkspace({
           <WorkflowPanel
             client={client}
             state={state}
-            pending={approvalPending}
             canApprove={
-              canSend && !running && !approvalPending && before === null
+              canSend &&
+              cadenceKnown &&
+              planApprovable &&
+              !running &&
+              !approving &&
+              before === null
             }
+            approvalHint={approvalHint}
             onApprove={() => void approve()}
+            onOpenAgent={onOpenAgent}
             onChanged={() => {
               workflow.refresh();
               onChanged();
             }}
           />
+        )}
+        {state?.notice && (
+          <p role="alert" className="banner-notice">
+            {tx(state.notice)}
+          </p>
         )}
         {(error || page.error || workflow.error) && (
           <p role="alert" className="banner-notice">
@@ -502,6 +564,13 @@ export function ChatWorkspace({
             <button type="button" onClick={page.refresh}>
               {t("Observe current state")}
             </button>
+          </p>
+        )}
+        {blocked && cadence && summary?.status !== "unknown" && (
+          <p className="inspector-note">
+            {t(
+              "The last turn did not complete. A new message continues from the last complete checkpoint; incomplete work is not replayed.",
+            )}
           </p>
         )}
         {blocked && !cadence && (
@@ -538,9 +607,8 @@ export function ChatWorkspace({
           disabled={
             (!enabled && !(cadence && canInterrupt)) ||
             !view ||
-            !state ||
+            !modeObserved ||
             !!page.error ||
-            !!workflow.error ||
             busy ||
             taskPending ||
             !!pending

@@ -1,6 +1,7 @@
 /** Finite, authenticated workbench API. Ordinary chat is not task admission. */
 import {
   bool,
+  ContractError,
   canonicalJson,
   closed,
   decodeHash,
@@ -31,8 +32,14 @@ export interface CadenceConversation {
   head: string | null;
   proposal: WorkflowProposal | null;
   runs: string[];
+  /** Present only in a read projection of an unusable retained record: every
+   * command for that conversation refuses; nothing is inferred or repaired.
+   * Never persisted. */
+  notice?: string;
 }
 export function decodeCadenceConversation(v: unknown): CadenceConversation {
+  const degraded =
+    v !== null && typeof v === "object" && Object.hasOwn(v, "notice");
   const o = closed(v, [
     "id",
     "revision",
@@ -40,6 +47,7 @@ export function decodeCadenceConversation(v: unknown): CadenceConversation {
     "head",
     "proposal",
     "runs",
+    ...(degraded ? ["notice"] : []),
   ]);
   return {
     id: decodeId(o.id),
@@ -48,7 +56,13 @@ export function decodeCadenceConversation(v: unknown): CadenceConversation {
     head: nullable(o.head, decodeId),
     proposal: nullable(o.proposal, decodeWorkflowProposal),
     runs: list(o.runs, 200, decodeId),
+    ...(degraded ? { notice: text(o.notice, 1024, true) } : {}),
   };
+}
+/** Browser conversation that owns an active workflow; native runs have none. */
+export interface WorkflowLink {
+  runId: string;
+  conversationId: string;
 }
 export type WorkbenchRead =
   | { kind: "cadence-conversation"; id: string }
@@ -176,7 +190,12 @@ export type WorkbenchResult =
       turn: ChatTurn | null;
     }
   | { kind: "cadence-conversation"; state: CadenceConversation }
-  | { kind: "workflow-active"; runs: WorkflowRun[] }
+  | {
+      kind: "workflow-active";
+      runs: WorkflowRun[];
+      /** At most one link per listed run; set by the workbench composition. */
+      links?: WorkflowLink[];
+    }
   | {
       kind: "cadence-grant";
       commandId: string;
@@ -474,8 +493,25 @@ export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
     return { kind: k, state: decodeCadenceConversation(o.state) };
   }
   if (k === "workflow-active") {
-    const o = closed(v, ["kind", "runs"]);
-    return { kind: k, runs: list(o.runs, 4, decodeWorkflowRun) };
+    const linked =
+      v !== null && typeof v === "object" && Object.hasOwn(v, "links");
+    const o = closed(v, ["kind", "runs", ...(linked ? ["links"] : [])]);
+    const runs = list(o.runs, 4, decodeWorkflowRun);
+    const links = linked
+      ? list(o.links, 4, (value) => {
+          const l = closed(value, ["runId", "conversationId"]);
+          return {
+            runId: decodeId(l.runId),
+            conversationId: decodeId(l.conversationId),
+          };
+        })
+      : [];
+    if (
+      new Set(links.map((l) => l.runId)).size !== links.length ||
+      links.some((l) => !runs.some((r) => r.id === l.runId))
+    )
+      throw new ContractError("invalid");
+    return { kind: k, runs, links };
   }
   if (k === "cadence-grant") {
     const o = closed(v, [
