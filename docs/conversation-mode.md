@@ -113,3 +113,22 @@ Losing a response only observes its original command/run identity; it never retr
 Exit does not stop accepted work, and **Cancel workflow — request stop** remains independent of conversation mode.
 There is no generic browser shell/PTY, service management/recovery or checkpoint pause/resume feature.
 Conversation response completion is distinct from workflow completion; read the workflow card for actual delivery/check outcomes.
+
+### Research scope, timing and retained results
+
+Each research call accepts one or two questions and optional specific `roots` (default: the selected project directory).
+Provide the actual investigation directory, especially for large mounted/backup trees; do not begin by enumerating `/` or broad parent directories.
+Research tools are readonly and bounded.
+Search limits and omitted coverage are reported explicitly; a partial search does not prove that no other matching file exists.
+The bounded `grep` tool searches literal text, not regular expressions.
+No files are copied to accelerate research.
+
+Separate runs in one project wait for the shared checkout gate; questions inside a run can overlap.
+The worker's total process deadline includes model and tool time, is not an inactivity timer, and is not renewed by progress.
+A timeout that confirms direct-child close does not prove all descendants stopped, nor does it prove any survived.
+
+Research replies include `runId` and step identities.
+Ask for `cadence_status` with the exact `runId`, `stepId`, and optionally `transcript: true` to inspect an earlier result after another run.
+Selecting a retained run is readonly and does not replace the current run or restart work.
+Native status/history and the browser's **Owner timing and runtime** details show the actual owner build/epoch and recorded queue/worker timestamps; the worker SDK version can differ from the terminal Pi host.
+A parent session may record a whole batch of tool results together, so those timestamps are not the service's completion times.

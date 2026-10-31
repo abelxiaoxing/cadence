@@ -1,6 +1,6 @@
 {
   "name": "@abelxiaoxing/cadence",
-  "version": "2.0.23",
+  "version": "2.0.24",
   "description": "Conversation-driven Pi workspace: persistent native and WebUI workflows, explicit plan approval, checks and local delivery.",
   "license": "MIT",
   "type": "module",
@@ -53,6 +53,7 @@
     "src/worker-public.mjs",
     "src/worker-redaction.mjs",
     "src/worker-tools.mjs",
+    "src/research-tools.mjs",
     "web/dist",
     "docs",
     "README.md",

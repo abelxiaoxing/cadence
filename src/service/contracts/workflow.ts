@@ -61,7 +61,33 @@ export interface WorkflowProposal {
   cwd: string;
   display?: { model: string; branch: string; baseCommit: string };
 }
+export interface WorkflowTiming {
+  createdAt: number;
+  preparedAt: number | null;
+  startedAt: number | null;
+  stopRequestedAt: number | null;
+  closedAt: number | null;
+  settledAt: number | null;
+  timeoutMs: number;
+  stopReason: string | null;
+}
+export interface WorkflowDiagnostics {
+  acceptedAt: number;
+  acquiredAt: number | null;
+  settledAt: number | null;
+  owner: {
+    version: string;
+    build: string;
+    entry: string;
+    pid: number;
+    node: string;
+    platform: string;
+    startedAt: number;
+  };
+}
 export interface WorkflowStep {
+  timing?: WorkflowTiming;
+  runtime?: { sdkVersion: string; workerHash: string };
   id: string;
   childRunId?: string;
   kind: "research" | "implementation" | "review" | "check" | "git";
@@ -77,6 +103,7 @@ export interface WorkflowStep {
   truncated: boolean;
 }
 export interface WorkflowRun {
+  diagnostics?: WorkflowDiagnostics;
   id: string;
   epoch: string;
   goal: string;
@@ -105,6 +132,7 @@ export type WorkflowRequest =
       action: "research";
       goal: string;
       questions: string[];
+      roots?: string[];
       model: ChoiceVersion;
     }
   | { action: "propose"; plan: WorkflowPlan; model: ChoiceVersion }
@@ -354,15 +382,28 @@ export function decodeWorkflowProposal(v: unknown): WorkflowProposal {
 export function decodeWorkflowRequest(v: unknown): WorkflowRequest {
   const action = Object.getOwnPropertyDescriptor(v ?? {}, "action")?.value;
   if (action === "research") {
-    const o = closed(v, ["action", "goal", "questions", "model"]);
+    const o = closed(v, [
+      "action",
+      "goal",
+      "questions",
+      "model",
+      ...(Object.hasOwn(v ?? {}, "roots") ? ["roots"] : []),
+    ]);
     const questions = list(o.questions, WORKFLOW_LIMITS.parallel, (q) =>
       text(q, 8192, true),
     );
     if (!questions.length) throw new Error("Research needs a question");
+    const roots =
+      o.roots === undefined
+        ? undefined
+        : list(o.roots, 8, (p) => text(p, 4096, true));
+    if (roots && !roots.length)
+      throw new Error("Research needs a specific root");
     return {
       action,
       goal: text(o.goal, 8192, true),
       questions,
+      ...(roots ? { roots } : {}),
       model: decodeChoiceVersion(o.model),
     };
   }
@@ -403,6 +444,7 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
     "notice",
     "mergedCommit",
     "humanReviewed",
+    ...(Object.hasOwn(v ?? {}, "diagnostics") ? ["diagnostics"] : []),
   ]);
   const status = (x: unknown) =>
     oneOf(x, [
@@ -416,6 +458,9 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
   if (o.humanReviewed !== false)
     throw new Error("Automatic execution is not human review");
   return {
+    ...(o.diagnostics === undefined
+      ? {}
+      : { diagnostics: decodeWorkflowDiagnostics(o.diagnostics) }),
     id: decodeId(o.id),
     epoch: decodeId(o.epoch),
     goal: text(o.goal, 8192),
@@ -441,9 +486,25 @@ export function decodeWorkflowRun(v: unknown): WorkflowRun {
         "text",
         "exitCode",
         "truncated",
+        ...(Object.hasOwn(v ?? {}, "timing") ? ["timing"] : []),
+        ...(Object.hasOwn(v ?? {}, "runtime") ? ["runtime"] : []),
         ...(linked ? ["childRunId"] : []),
       ]);
       return {
+        ...(s.timing === undefined
+          ? {}
+          : { timing: decodeWorkflowTiming(s.timing) }),
+        ...(s.runtime === undefined
+          ? {}
+          : {
+              runtime: (() => {
+                const r = closed(s.runtime, ["sdkVersion", "workerHash"]);
+                return {
+                  sdkVersion: text(r.sdkVersion, 128, true),
+                  workerHash: decodeHash(r.workerHash),
+                };
+              })(),
+            }),
         id: text(s.id, 160, true),
         ...(linked ? { childRunId: decodeId(s.childRunId) } : {}),
         kind: oneOf(s.kind, [
@@ -492,4 +553,74 @@ export function readableWorkflowPlan(p: WorkflowPlan): string {
     .join(
       "\n\n",
     )}\n\n## Setup (explicitly authorized commands)\n${p.setup.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n") || "None; no dependency installation or copying."}\n\n## Baseline verification\n${p.baselineChecks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n") || "No separate baseline checks declared."}\n\n## Verification\n${p.checks.map((c) => `${c.name}: ${c.command} (${c.timeoutMs}ms)`).join("\n")}\n\n## Automation boundary\nAt most ${p.repairAttempts} repair rounds. ${p.delivery === "local-merge" ? "Authorize isolated task worktrees, local task commits and fast-forward integration into the current branch." : "Direct working-copy edits; failures leave actual edits for inspection. No Git commit or merge."} No push, publication, deployment, unplanned installation or recursive delegation. Generated project context and workflow Markdown are included. Worktrees/tools are not a sandbox.\n\n## Project context\n${p.projectContext}\n`;
+}
+
+const timestamp = (v: unknown) => integer(v, 0, 8640000000000000);
+function decodeWorkflowTiming(v: unknown): WorkflowTiming {
+  const o = closed(v, [
+    "createdAt",
+    "preparedAt",
+    "startedAt",
+    "stopRequestedAt",
+    "closedAt",
+    "settledAt",
+    "timeoutMs",
+    "stopReason",
+  ]);
+  return {
+    createdAt: timestamp(o.createdAt),
+    preparedAt: nullable(o.preparedAt, timestamp),
+    startedAt: nullable(o.startedAt, timestamp),
+    stopRequestedAt: nullable(o.stopRequestedAt, timestamp),
+    closedAt: nullable(o.closedAt, timestamp),
+    settledAt: nullable(o.settledAt, timestamp),
+    timeoutMs: integer(o.timeoutMs, 100, 1200000),
+    stopReason: nullable(o.stopReason, (v) => text(v, 32, true)),
+  };
+}
+function decodeWorkflowDiagnostics(v: unknown): WorkflowDiagnostics {
+  const o = closed(v, ["acceptedAt", "acquiredAt", "settledAt", "owner"]);
+  const r = closed(o.owner, [
+    "version",
+    "build",
+    "entry",
+    "pid",
+    "node",
+    "platform",
+    "startedAt",
+  ]);
+  return {
+    acceptedAt: timestamp(o.acceptedAt),
+    acquiredAt: nullable(o.acquiredAt, timestamp),
+    settledAt: nullable(o.settledAt, timestamp),
+    owner: {
+      version: text(r.version, 128, true),
+      build: text(r.build, 64, true),
+      entry: text(r.entry, 4096, true),
+      pid: integer(r.pid, 1),
+      node: text(r.node, 128, true),
+      platform: text(r.platform, 32, true),
+      startedAt: timestamp(r.startedAt),
+    },
+  };
+}
+/** Owner observations, never inferred from a parent's batched tool-result timestamp. */
+export function workflowDiagnostics(run: WorkflowRun): string {
+  const d = run.diagnostics;
+  if (!d) return "Owner timing/runtime observations not recorded.";
+  const at = (v: number | null) =>
+    v === null ? "not observed" : new Date(v).toISOString();
+  return [
+    `Owner: Cadence ${d.owner.version} · ${d.owner.platform} · Node ${d.owner.node} · PID ${d.owner.pid} · epoch ${run.epoch}`,
+    `Build: ${d.owner.build} · entry: ${d.owner.entry} · owner started: ${at(d.owner.startedAt)}`,
+    `Accepted: ${at(d.acceptedAt)} · checkout acquired: ${at(d.acquiredAt)} · settled: ${at(d.settledAt)}`,
+    `Checkout wait: ${d.acquiredAt === null ? "still waiting or not acquired" : `${Math.max(0, d.acquiredAt - d.acceptedAt)}ms`}. Runs share an exclusive checkout; questions within one research run may overlap.`,
+    ...run.steps.flatMap((s) =>
+      s.timing
+        ? [
+            `${s.id}: preparing ${at(s.timing.createdAt)} · prepared ${at(s.timing.preparedAt)} · spawned ${at(s.timing.startedAt)} · stop ${at(s.timing.stopRequestedAt)} (${s.timing.stopReason ?? "none"}) · direct child closed ${at(s.timing.closedAt)} · settled ${at(s.timing.settledAt)} · total process budget ${s.timing.timeoutMs}ms${s.runtime ? ` · worker SDK ${s.runtime.sdkVersion} · worker hash ${s.runtime.workerHash}` : ""}`,
+          ]
+        : [],
+    ),
+  ].join("\n");
 }

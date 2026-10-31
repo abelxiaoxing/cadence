@@ -3,9 +3,25 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { contractIdentity } from "./build-identity.mjs";
+import { contractIdentity, digest, inputFiles } from "./build-identity.mjs";
 
 const root = resolve(import.meta.dirname, "..");
+const version = JSON.parse(
+  readFileSync(join(root, "package.json"), "utf8"),
+).version;
+const source = digest(
+  JSON.stringify(
+    inputFiles(root, join(root, "src")).filter(
+      ([name]) =>
+        ![
+          "src/service-cli.mjs",
+          "src/service-host.mjs",
+          "src/operator-cli.mjs",
+          "src/native-build.ts",
+        ].includes(name),
+    ),
+  ),
+);
 const checking = process.argv.includes("--check");
 const temporary = checking
   ? mkdtempSync(join(tmpdir(), "cadence-service-build-"))
@@ -24,6 +40,8 @@ for (const name of ["service-cli", "service-host"]) {
     root,
     target: "node",
     define: {
+      __CADENCE_SERVICE_VERSION__: JSON.stringify(version),
+      __CADENCE_SERVICE_SOURCE__: JSON.stringify(source),
       __CADENCE_SERVICE_CONTRACT__: JSON.stringify(contractIdentity(root)),
     },
     format: "esm",

@@ -568,6 +568,7 @@ export type CaptureEvent =
   | {
       kind: "ready";
       requestProtocol: 2;
+      runtime?: { sdkVersion: string; workerHash: string };
     }
   | {
       kind: "message-start";

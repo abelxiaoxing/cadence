@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { CadenceConversation } from "../../../../src/service/contracts/workbench.ts";
-import { readableWorkflowPlan } from "../../../../src/service/contracts/workflow.ts";
+import {
+  readableWorkflowPlan,
+  workflowDiagnostics,
+} from "../../../../src/service/contracts/workflow.ts";
 import type { ServiceClient } from "../../../../src/service-client.ts";
 import { useWorkbench } from "../../client/use-workbench";
 import { useT } from "../../i18n/locale";
@@ -167,6 +170,12 @@ export function WorkflowCard({
         </p>
       )}
       {run?.notice && <p>{run.notice}</p>}
+      {run && (
+        <details>
+          <summary>Owner timing and runtime</summary>
+          <pre className="workflow-detail">{workflowDiagnostics(run)}</pre>
+        </details>
+      )}
       {run?.mergedCommit && (
         <p>
           {t("Actual local merge commit:")} <code>{run.mergedCommit}</code>

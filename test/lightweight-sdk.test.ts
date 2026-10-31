@@ -1389,6 +1389,7 @@ const mockedWorker = async (scenario: string) => {
   }));
   vi.doMock("@earendil-works/pi-ai/api/openai-completions", () => ({}));
   vi.doMock("@earendil-works/pi-coding-agent", () => ({
+    VERSION: "fixture-sdk",
     createLocalBashOperations: () => {
       throw new Error("Fixture must not execute bash");
     },
@@ -2078,7 +2079,11 @@ const eventFaults = [
   "tool-getter",
 ] as const;
 const rawCanary = "FABRICATED_RAW_NODE_LEAK_CANARY";
-const captureFixtureImports = `    import { LIMITS, closed, decodeWorkerPublicRequest, parseWireJson } from ${JSON.stringify(new URL("../src/worker-public.mjs", import.meta.url).href)};
+const captureFixtureImports = `    import { createHash } from "node:crypto";
+    const VERSION = "fixture-sdk";
+    const readFileSync = () => Buffer.from("explicit public-boundary fixture worker source");
+    import { researchClock, researchTools } from ${JSON.stringify(new URL("../src/research-tools.mjs", import.meta.url).href)};
+    import { LIMITS, closed, decodeWorkerPublicRequest, parseWireJson } from ${JSON.stringify(new URL("../src/worker-public.mjs", import.meta.url).href)};
     import { CaptureEmitter, SdkCapture } from ${JSON.stringify(new URL("../src/worker-capture.mjs", import.meta.url).href)};
     import { own } from ${JSON.stringify(new URL("../src/worker-redaction.mjs", import.meta.url).href)};
     import { captureBash, ToolIngress } from ${JSON.stringify(new URL("../src/worker-tools.mjs", import.meta.url).href)};
@@ -2591,7 +2596,7 @@ for (const mode of ["DIRECT", "VALIDATED_PROXY"] as const) {
         .update(readFileSync(new URL("../src/sdk-worker.mjs", import.meta.url)))
         .digest("hex");
       expect(workerSha256).toBe(
-        "7ed5e6ece3ab382a47674ae641c85a278f477623fe3ca632a6dbe4e6a36846f0",
+        "370557fd520e50ce38079f7e83efb0d8cc75f20e4124db86423e930b9cf95b99",
       );
       let productionObserved = false;
       let pid: number | undefined;

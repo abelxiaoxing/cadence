@@ -1203,10 +1203,25 @@ export function decodeCaptureEvent(v) {
   const kind = tag(v);
   switch (kind) {
     case "ready": {
-      const o = closed(v, ["kind", "requestProtocol"]);
+      const o = closed(v, [
+        "kind",
+        "requestProtocol",
+        ...(Object.hasOwn(v ?? {}, "runtime") ? ["runtime"] : []),
+      ]);
       return {
         kind,
         requestProtocol: literal(o.requestProtocol, WORKER_PROTOCOL),
+        ...(o.runtime === undefined
+          ? {}
+          : {
+              runtime: (() => {
+                const r = closed(o.runtime, ["sdkVersion", "workerHash"]);
+                return {
+                  sdkVersion: text(r.sdkVersion, 128, true),
+                  workerHash: decodeHash(r.workerHash),
+                };
+              })(),
+            }),
       };
     }
     case "message-start": {

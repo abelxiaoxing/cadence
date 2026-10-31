@@ -1,6 +1,7 @@
 // Isolated SDK child, not Pi CLI startup. Task discovery stays disabled;
 // ordinary conversations explicitly load only context/skills, never extensions.
-import { writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
 import {
   createProvider,
   InMemoryCredentialStore,
@@ -13,6 +14,7 @@ import {
   ModelRuntime,
   SessionManager,
   SettingsManager,
+  VERSION,
 } from "@earendil-works/pi-coding-agent";
 import {
   encodeConversationContext,
@@ -20,6 +22,7 @@ import {
 } from "./conversation-context.mjs";
 import { conversationResources } from "./conversation-resources.mjs";
 import { coordinatorTools } from "./coordinator-tools.mjs";
+import { researchClock, researchTools } from "./research-tools.mjs";
 import { CaptureEmitter, SdkCapture } from "./worker-capture.mjs";
 import {
   closed,
@@ -198,12 +201,14 @@ try {
     new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)),
     LIMITS.workerRequestBytes,
   );
-  const envelope = closed(
-    parsed,
-    Object.hasOwn(parsed ?? {}, "conversation")
-      ? ["request", "cwd", "model", "auth", "conversation"]
-      : ["request", "cwd", "model", "auth"],
-  );
+  const envelope = closed(parsed, [
+    "request",
+    "cwd",
+    "model",
+    "auth",
+    ...(Object.hasOwn(parsed ?? {}, "conversation") ? ["conversation"] : []),
+    ...(Object.hasOwn(parsed ?? {}, "investigation") ? ["investigation"] : []),
+  ]);
   const conversation =
     envelope.conversation === undefined
       ? null
@@ -221,6 +226,25 @@ try {
       typeof conversation.agentDir !== "string")
   )
     refuse("parse", "invalid-conversation");
+  const investigation =
+    envelope.investigation === undefined
+      ? null
+      : closed(envelope.investigation, ["roots", "timeoutMs", "deadlineMs"]);
+  if (
+    investigation &&
+    (!Array.isArray(investigation.roots) ||
+      investigation.roots.length < 1 ||
+      investigation.roots.length > 8 ||
+      investigation.roots.some(
+        (p) => typeof p !== "string" || !p || p.length > 4096,
+      ) ||
+      !Number.isSafeInteger(investigation.timeoutMs) ||
+      investigation.timeoutMs < 100 ||
+      investigation.timeoutMs > LIMITS.workerMs ||
+      !Number.isSafeInteger(investigation.deadlineMs) ||
+      investigation.deadlineMs < 0)
+  )
+    refuse("parse", "invalid-investigation");
   const publicRequest = decodeWorkerPublicRequest(envelope.request);
   const coordinator = conversation?.coordinator === true;
   if (
@@ -393,7 +417,19 @@ try {
               emitter.queue,
             ),
           ]
-        : [],
+        : conversation
+          ? []
+          : researchTools(
+              cwd,
+              investigation?.roots ?? [cwd],
+              investigation ?? {
+                timeoutMs: LIMITS.workerMs,
+                // Standalone protocol callers without a launcher policy still
+                // start at process birth, never at tool construction.
+                deadlineMs:
+                  researchClock() + LIMITS.workerMs - process.uptime() * 1000,
+              },
+            ),
     resourceLoader:
       conversation && !coordinator
         ? conversationResources(resourceLoader, cwd, conversation.agentDir)
@@ -506,11 +542,25 @@ try {
     }
   });
   stage = "ready";
-  await emitter.emit({ kind: "ready", requestProtocol: 2 });
+  await emitter.emit({
+    kind: "ready",
+    requestProtocol: 2,
+    runtime: {
+      sdkVersion: VERSION,
+      workerHash: createHash("sha256")
+        .update(readFileSync(new URL(import.meta.url)))
+        .digest("hex"),
+    },
+  });
   await capture.context(publicRequest, session.systemPrompt);
   stage = "prompt";
   const suppliedPrompt = [
     publicRequest.context,
+    ...(!conversation && kind !== "code"
+      ? [
+          `Investigation roots: ${JSON.stringify(investigation?.roots ?? [cwd])}. Start at these specific paths, not / or their parents. Tools use bounded cooperative reads; no shell is available. Search filenames and shallow directories before content. Do not repeat broad scans or silently exclude backup trees. Total worker deadline: ${investigation?.timeoutMs ?? LIMITS.workerMs}ms, including model and tool time; activity never extends it. Reserve the last portion for a concise final report. On any budget/coverage limit, summarize partial evidence and unresolved questions; never claim exhaustive absence.`,
+        ]
+      : []),
     ...publicRequest.handoff.inputs.map(
       (input) =>
         `Dependency ${input.assignmentId} (recorded input):\n${input.text}`,

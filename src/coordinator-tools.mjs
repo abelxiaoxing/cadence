@@ -67,6 +67,15 @@ export function coordinatorTools() {
       parameters: Type.Object({
         goal: Type.String(),
         questions: Type.Array(Type.String(), { minItems: 1, maxItems: 2 }),
+        roots: Type.Optional(
+          Type.Array(
+            Type.String({
+              description:
+                "Specific investigation directories; defaults to project cwd. Avoid filesystem roots and broad parent trees.",
+            }),
+            { minItems: 1, maxItems: 8 },
+          ),
+        ),
       }),
     },
     {
