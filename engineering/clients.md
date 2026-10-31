@@ -5,17 +5,21 @@ Read this before changing a client, its consent rules or what the WebUI shows.
 
 ## Native terminal
 
-In a trusted, idle Pi TUI, type `/cadence [goal]` using fresh native Enter.
-The optional goal does not Start; pasted/replayed/nonterminal command dispatch cannot grant native entry.
-The client attaches to the existing owner and never falls back to a local executor or starts one implicitly.
-Choose the exact owner model/API/thinking level explicitly: initial selection is absent.
-Create or open a task, edit a readable plan and finite assignments/dependencies, preview and confirm Start.
-Readonly Generate is advisory and requires a separate Save/Start.
-Native menus expose child messages/tools/timeline, checks, current changes, review, retained history/search/export and independent active-run Cancel.
+`src/cadence-mode.ts` owns persistent conversation mode; `/cadence [goal]` enables it until explicit `exit cadence` or `退出 Cadence`.
+A completed goal leaves the conversation in ready mode, not ordinary mode.
+Subsequent messages never require another activation command.
+Active-branch session entries retain mode and the last observed run, not a reusable proposal/grant or an execution replay.
+Session replacement restores normal tools before rebinding the new branch; compaction does not disable the mode.
+Entry and typed exact plan approval require fresh trusted/idle raw-terminal evidence; paste, quoted commands, RPC and extension-origin input cannot provide it.
+Planning tools expose coordinated readonly subagents, proposals and observations rather than uncoordinated edits.
+The main conversation consolidates clarification; only native confirmation of the complete current plan or exact fresh `按计划实施` authorizes execution.
+On-demand project owner startup is explicit mode/user-Send behavior, not discovery; `CADENCE_AUTOSTART=0` refuses it.
+A lost/uncertain command reply is not replayed.
+Departure only detaches; the owner holds accepted work through actual closure.
+Model preferences persist as exact selectors in the user's agent directory, never credentials, grants or source selection IDs.
 
-Return, session departure and Pi quit **detach; admitted work continues** while the service is alive.
-Reattach to observe the same IDs without replay.
-Explicit Cancel requests bounded stop; it is not proof that every escaped descendant stopped.
+The previous native task/history UI remains under `/cadence-inspect`, with its original raw guard, typed attachment, independent Save/Start/Checks and human Review.
+It is an optional diagnostic/legacy route, not the daily entrypoint.
 
 ## Background agent panel
 
@@ -46,25 +50,36 @@ The unified browser entry opens on the conversation shell, without an execution 
 Choose a working folder from the lower-right button; before a folder is selected, New conversation offers the same picker and Send stays disabled.
 Only explicit Open starts or reuses a project owner.
 Within that project, the browser opens on an ordinary conversation with a real message composer, retained multi-turn context and standard read/write/edit/bash tools; no Cadence task is created by Send.
-Use `cadence <goal>` or `/cadence <goal>` at the beginning of the input, or select Cadence task, then Send to create a task in the background and begin readonly analysis.
-New task opens the same composer in task mode; there is no task-kind picker or creation dialog.
-Mentions, quotations and fenced code do not select task mode.
-Analysis appears in the task transcript.
-Review implementation plan opens the retained proposal for one explicit Confirm plan and execute approval: save those exact bytes, then start only the matching graph under a fresh grant.
-Changed context, failed publication or an uncertain reply stops the sequence without automatic retry.
-Configured checks and human review remain separate.
-A task created from an existing ordinary conversation retains a navigation link back; the old conversation is not converted and its history is not silently injected into the task.
+Use `/cadence [goal]` at the beginning of an explicit Send, or select Cadence on Send, to enable persistent mode in that same conversation.
+Prefix-only entry asks for a goal; ordinary subsequent messages, refresh, completion and cancellation retain mode until explicit exit.
+Mode/plan/run links belong to the owner-private versioned conversation-control store; browser storage holds only drafts/display preferences and uncertain attempt IDs.
+The coordinator is an isolated SDK child with only bounded research/proposal/status tools; it cannot call write/edit/bash, approve itself, or load arbitrary extensions.
+It holds no checkout barrier while awaiting research, so the existing worker barrier cannot deadlock its parent and status conversation can proceed during implementation.
+One coordinator turn per project owner is admitted at a time; separate project owners remain independent.
+One human plan approval binds the exact visible proposal, conversation revision/head, model, project observation, owner epoch and authenticated attachment/access generation.
+Prepare is a fresh confirmation operation, not a background read; a second tab, changed context, departure or expired grant cannot inherit it.
+The browser-specific approval channel retains browser authority and existing build/CSRF/origin checks; the native general workflow command remains forbidden to browsers.
+Plan approval covers declared setup/check commands and local commits/integration, not a generic shell, push, publication, deployment or host recovery capability.
+An accepted plan is consumed at the conversation boundary before dispatch; command loss or an uncertain attempt is observed, never replayed.
+Full plan cards and retained run/step details replace daily task/Save/Start/Checks/Review management; automatic review is never human review.
+Workflow progress is distinct from the ordinary/coordinator response status, including actual merge commits after failed post-merge checks.
+The independent project workflow roster includes native-started work; missing observations never render as an empty complete roster.
+Mode exit only detaches from orchestration; actual workflow cancellation remains a separately explicit, exact-run request and waits for original settlement.
+Known closed failed coordinator turns may continue on a new explicit Send from the last complete checkpoint; no incomplete tool call is resumed.
+A saved model preference is restored only on explicit Send, never readonly browsing; no silent model substitution.
+Exit does not require a usable selected model.
+The explicitly labelled Legacy task entry retains the old task-origin link, creation/readonly analysis, plan Save/Start and separate checks/human Review.
+Its composer still shares the workspace action-readiness guard for click and Enter.
+`/cadence` no longer selects that legacy route, and no old task/history is rewritten into a new workflow.
+Native Pi session transcripts are not imported into browser conversations.
 All of this works without a live Pi terminal.
+A definite pre-acceptance Send refusal preserves the draft and permits another explicit Send or mode exit; it does not pin an impossible pending turn.
 A token grants workspace access, not action consent.
-Task Send authorizes only creation and readonly analysis.
-It reads the workspace again at Send and binds the project, access and selected model shown; the working-tree observation, checkout generation and control revision are those observed at Send, while plan approval still binds the exact observation.
-A `stale` refusal names the context fields that moved (for example `stale: observation`) from one more readonly read, without retrying.
-Editing requires context-bound plan confirmation; the advanced inspector retains independent Save/Start controls.
 Ordinary Send binds its exact text, conversation head, epoch, access and selected model; stale/duplicate/lost replies do not silently replay work.
 The WebUI provides task/run/assignment navigation, long retained messages and tool detail, exact literal search, timeline and complete scoped NDJSON/Markdown downloads.
 Desktop panes and phone drawers retain cancellation and keyboard controls.
 Its chrome: a compact topbar with view tabs and icon actions, a sectioned task sidebar, pill inspector tabs, transcript/tool cards and a bottom statusbar; phones wrap the topbar into an action row and an icon tab row.
-The left sidebar provides New conversation and New task alongside running/retained conversations; a separate lower-left dock observes Cadence subagents and opens their retained transcripts.
+The left sidebar provides New conversation and an explicitly labelled Legacy task shortcut alongside running/retained conversations; a separate lower-left dock observes Cadence subagents and opens their retained transcripts.
 It is not a subagent engine.
 The right sidebar defaults to readonly files, bounded text previews and path-only references; task plan/check/change/review controls occupy its Task details tab.
 The lower-right folder button contains recent projects, browses directories on the service host and explicitly opens another independent project owner.
@@ -102,7 +117,7 @@ This is not a filesystem sandbox for model tools.
 
 WebUI text is keyed by its English source: fixed text goes through `useT().t`, whose type requires a `web/src/i18n/zh.ts` entry with the same `{name}` marks, and run-time status words or kept notices through `tx`, which passes unknown text and codes through.
 The timeline client takes the chosen language from its bridge and is remounted on a switch; browser scenarios pin `locale: "en-US"` so English assertions do not follow the host's `LANG`.
-The browser is conversation-first, including before any project is selected: ordinary chat and explicit Cadence task conversations share its sidebar, while a lower-left dock observes actual Cadence child identities.
+The browser is conversation-first, including before any project is selected: ordinary chat and explicitly enabled Cadence conversations share its sidebar, while a lower-left dock observes actual Cadence child identities.
 The empty entry has no project welcome screen or central Create shortcut; New conversation offers folder selection until a project is explicitly opened.
 The bottom-right folder control is always present, and its picker lists recent projects.
 Conversation history belongs to each project owner, so the unselected entry's history section says so and lists the recent projects; choosing one only preselects its folder in the picker.
@@ -116,7 +131,7 @@ Every navigation makes a fresh readonly observation, including retrying the same
 Folder browsing (not Open) accepts `~` for the service account's home and reports a missing folder as `invalid`, a file or linked component as `forbidden` and a read failure as `unavailable`; the gateway passes these public codes on so the picker can explain them.
 One service still owns one checkout.
 The recent-project directory records only explicit project openings in the same private namespace; navigation opens that project's independent authenticated entry rather than changing global cwd, importing Pi sessions or adopting another account's state.
-The center shows ordinary streamed messages or retained task text as Markdown.
+The center shows ordinary/coordinator messages, exact plan cards and actual workflow progress/results as Markdown, plus retained legacy task text.
 Task tools/context/timeline/runs and export/link actions live under Details, shown only for a task or child scope; an ordinary conversation has no view switch and folds its tool calls into the transcript.
 An ordinary turn shows one speaker label: everything through its last tool call folds into a steps line that names what the tools touched (live while running; it opens by itself when the turn ends without an answer, until the user toggles it), and the assistant text after it is the answer.
 Tool names are model-chosen data: one matching no known kind, `constructor` included, counts as a plain tool.

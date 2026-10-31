@@ -73,6 +73,7 @@ import type {
   ModelChoicePort,
   ProjectionPort,
 } from "./ports.ts";
+import { UnacceptedConversationCommand } from "./workbench-send-refusal.ts";
 
 /** Real composition must provide committed projections. subscribe registers
  * synchronously BEFORE snapshot; callbacks must never await a viewer. watermark
@@ -670,7 +671,14 @@ export class ServiceHttpServer {
       else {
         const code = e instanceof ContractError ? e.code : "unavailable";
         res.setHeader("Connection", "close");
-        send(res, errorStatus(code), refusal(code, dispatched));
+        send(
+          res,
+          errorStatus(code),
+          refusal(
+            code,
+            dispatched && !(e instanceof UnacceptedConversationCommand),
+          ),
+        );
       }
     } finally {
       clearTimeout(timer);
@@ -763,12 +771,18 @@ export class ServiceHttpServer {
           kind: "ok",
           value: a.workbench.read(decodeWorkbenchRead(input)),
         };
-      case "workbenchCommand":
+      case "workbenchCommand": {
         if (!a.workbench) unavailable();
+        const command = decodeWorkbenchCommand(input);
+        // Workflow confirmation currently belongs to the native conversation.
+        // A browser access token alone cannot mint local shell/merge authority.
+        if (command.kind === "workflow" && caller.authority !== "local")
+          throw new ContractError("forbidden");
         return {
           kind: "ok",
-          value: await a.workbench.command(decodeWorkbenchCommand(input)),
+          value: await a.workbench.command(command, caller),
         };
+      }
       case "current":
         if (!a.current) unavailable();
         return {

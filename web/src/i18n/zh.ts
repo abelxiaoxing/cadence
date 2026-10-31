@@ -2,6 +2,63 @@
  * stays the default and the fallback; `{name}` marks an interpolated value.
  * Error codes, identifiers, commands and recorded content are never translated. */
 export const zh = {
+  "Legacy subagents": "旧版子代理",
+  "Legacy task agents appear here. New workflow agents are shown in the conversation.":
+    "此处显示旧版任务代理。新工作流的代理记录在对话中展示。",
+  "Subagent transcript": "子代理记录",
+  "No retained transcript observed yet; absence is not proof of no activity.":
+    "暂未观察到保留记录；这不代表没有活动。",
+  "Tools and checks run on the service host, not in a sandbox.":
+    "工具和检查直接在服务主机运行，不是安全沙箱。",
+  Discussing: "对话中",
+  "Awaiting plan approval": "等待批准计划",
+  "Ready for conversation": "可以继续对话",
+  "See workflow progress": "查看工作流进度",
+  "Cadence conversation": "Cadence 对话",
+  "Cadence on": "Cadence 已开启",
+  "Legacy task": "旧版任务",
+  "Exit Cadence": "退出 Cadence",
+  "Message, or /cadence to enter continuous Cadence mode…":
+    "输入消息，或输入 /cadence 进入持续 Cadence 模式…",
+  "Cadence on Send": "发送时进入 Cadence",
+  "Cadence stays on. Confirm one plan before implementation.":
+    "Cadence 将持续开启。确认一次计划后开始实施。",
+  "Cadence workflow": "Cadence 工作流",
+  "Earlier workflow results": "较早的工作流结果",
+  "Current implementation plan": "当前实施计划",
+  "Approval covers only this plan: implementation, checks, bounded repairs and the displayed local delivery. No push, publication or deployment.":
+    "批准仅覆盖本计划中的实施、检查、有限修复和所列的本地交付。不包含推送、发布或部署。",
+  "Implement this plan": "按此计划实施",
+  "To change the plan, continue the conversation. A changed plan requires fresh approval.":
+    "需要修改计划时继续对话。计划变更后需要重新批准。",
+  "Cadence stays on for this conversation until you explicitly exit.":
+    "本对话将持续使用 Cadence，直到你明确退出。",
+  "Workflow progress": "工作流进度",
+  "Observing workflow": "正在观察工作流",
+  "State unavailable is not completion. No automatic resubmission.":
+    "状态不可用不代表已经完成。不会自动重新提交。",
+  "Actual local merge commit:": "实际本地合并提交：",
+  "Agent review is not human review. Worktrees and retained results are preserved.":
+    "Agent 审查不是人工审阅。工作树和保留结果不会自动清理。",
+  "Exit code": "退出码",
+  "Preview is truncated.": "预览已截断。",
+  "Read retained step result": "读取保留的步骤结果",
+  "Cancel workflow — request stop": "取消工作流 — 请求停止",
+  "Background workflows": "后台工作流",
+  "Workflow activity unavailable; retained work may still be running.":
+    "工作流状态不可用；已接受的工作可能仍在运行。",
+  "Cadence is off. Accepted work continues; exit does not cancel it.":
+    "Cadence 模式已关闭。已接受的工作继续执行；退出不会取消执行。",
+  "Incomplete work is not replayed. A new explicit message may continue from the last complete checkpoint.":
+    "不会重放未完成工作。明确发送新消息后，可从上一次完整上下文继续。",
+  implementing: "实施中",
+  verifying: "验证中",
+  reviewing: "审查中",
+  integrating: "集成中",
+  finished: "已结束",
+  implementation: "实施",
+  git: "Git",
+
   "The shared registry lock is blocking projects. On the service host, run cadence recover inspect --workspace <project> with the same --state-home, then use recover resolve in a local terminal if eligible. Do not delete lock files manually.":
     "共享注册表锁正在阻止项目打开。请在服务所在主机运行 cadence recover inspect --workspace <project>，使用相同的 --state-home；符合恢复条件时，在本机终端运行 recover resolve。请勿手动删除锁文件。",
   "Start a conversation from the sidebar.": "从左侧开启一段新对话。",

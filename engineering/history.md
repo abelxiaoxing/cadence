@@ -60,3 +60,24 @@ Keep exact snapshot/entity/version/UTF-8 ranges and source coverage; do not map 
 Readonly POST uses the same finite security/decoder boundary when inputs cannot fit GET; it is not execution consent.
 Exports stream task/run/child scope with actual counts/digest/watermark/trailer and original EOF; revoked or interrupted output has no successful completion.
 Browser download requested is not UI-verified completion; native export verifies the complete stream and creates destinations exclusively.
+
+## Conversation workflow records
+
+The owner-private `workflows-v1` namespace is separate from task history and ordinary conversation turns.
+It stores immutable proposals/accepted commands, expected-byte run snapshots, original auth/native settlements, sanitized worker transcripts and complete bounded process results.
+One-use confirmation grants remain ephemeral; persisted mode or Markdown never reconstructs them.
+The shared capture sanitizer is reused, not a second credential policy.
+Worker result rendering includes owner literals as well as prepared-model literals; retained result text/output are sanitized before writing, not just in previews.
+Selected final-result previews come from the sanitized complete captured message before clipping, not a raw prefix that could bisect a known literal.
+Detail reads reapply the shared structural sanitizer for currently known secrets, including pre-fix records, without rewriting or migrating retained bytes.
+Status previews label clipping and offer exact retained step-result lookup.
+Restart treats incomplete work as uncertain, never completed or a resumable mutation queue.
+No incidental migration or cleanup occurs.
+
+Browser control records use `service-v1/conversation-workflows-v1`, with immutable binding markers in the ordinary conversation namespace.
+Missing/deleted bound controls refuse instead of silently reverting to ordinary editing tools.
+Explicit activation binds an existing/new conversation without rewriting its original turns; no bulk migration or Pi-session import occurs.
+Control revision, accepted proposal and run-attempt identities are retained separately from the sanitized conversation checkpoint.
+Approval evidence records the exact proposal/revision and authenticated caller, never a reusable grant or browser cookie.
+Ordinary and coordinator messages still use the existing capture sanitizer and bounded checkpoint pipe.
+A separate bounded IPC channel admits only named research/plan/status requests; it cannot carry a browser/native execution capability.

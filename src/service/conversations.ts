@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { lstatSync, opendirSync, realpathSync, statfsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CONTEXT_BYTES } from "../conversation-context.mjs";
-import { launchConversation } from "../subagent-process.ts";
+import { launchConversation, type ProcessSpec } from "../subagent-process.ts";
 import { resolveWorkspace } from "../task-store.ts";
 import {
   type CaptureFrame,
@@ -65,6 +65,13 @@ interface Options {
   cwd: string;
   secrets(): readonly string[];
   timeoutMs?: number;
+}
+export interface ConversationControl {
+  instructions: string;
+  reply?: string;
+  accept(): void;
+  onTool: NonNullable<ProcessSpec["onCoordinator"]>;
+  settle(): Promise<void>;
 }
 interface LiveTurn {
   conversationId: string;
@@ -305,6 +312,29 @@ export class Conversations {
         }
       : turn;
   }
+  controlBound(id: string): boolean {
+    const path = join(this.root, "control-links", `${decodeId(id)}.json`);
+    const value = this.read(path, META_BYTES);
+    if (value === undefined) return false;
+    const record = closed(value, ["schema", "conversationId"]);
+    if (
+      record.schema !== "cadence-conversation-control/1" ||
+      record.conversationId !== id
+    )
+      throw new ContractError("corrupt-selected");
+    return true;
+  }
+  bindControl(id: string): void {
+    if (!this.controlBound(id))
+      this.write(
+        join(this.root, "control-links", `${decodeId(id)}.json`),
+        { schema: "cadence-conversation-control/1", conversationId: id },
+        META_BYTES,
+      );
+  }
+  hasTurn(id: string, turnId: string): boolean {
+    return this.metadata(id)?.turns.includes(turnId) ?? false;
+  }
   private summary(meta: SavedConversation): ChatSummary {
     const head = meta.turns.at(-1) as string,
       turn = this.turn(head);
@@ -447,11 +477,28 @@ export class Conversations {
     };
     visit(this.root, 0);
   }
-  send(input: Send): WorkbenchResult {
+  attempted(conversationId: string, commandId: string): boolean {
+    this.o.owner.lease.assert();
+    const meta = this.metadata(conversationId);
+    return (
+      this.active.has(commandId) ||
+      this.files.directory(dirname(this.path(commandId, "accepted.json"))) ||
+      !!meta?.turns.includes(commandId) ||
+      (!meta &&
+        !!this.files.read(this.identityPath(conversationId), META_BYTES))
+    );
+  }
+  send(
+    input: Send,
+    control?: ConversationControl,
+    beforeAccept?: () => void,
+  ): WorkbenchResult {
     this.o.owner.lease.assert();
     const command = {
       ...input,
-      text: sanitizeText(input.text, this.o.secrets()),
+      text: control?.reply
+        ? "exit cadence"
+        : sanitizeText(input.text, this.o.secrets()),
     };
     const prior = this.read(
       this.path(input.commandId, "accepted.json"),
@@ -470,11 +517,12 @@ export class Conversations {
     if (this.o.owner.state !== "idle") throw new ContractError("quarantine");
     const choice = this.o.choice.snapshot();
     if (
-      !choice.selected ||
+      (!choice.selected && !control?.reply) ||
       canonicalJson(choice.version) !== canonicalJson(input.model)
     )
       throw new ContractError("stale");
-    this.o.models.assertCurrent(choice.selected);
+    if (choice.selected && !control?.reply)
+      this.o.models.assertCurrent(choice.selected);
     if (!this.currentDirectory()) throw new ContractError("stale");
     const beforeMeta = this.files.read(
       this.metadataPath(input.conversationId),
@@ -493,7 +541,14 @@ export class Conversations {
       throw new ContractError("corrupt-selected");
     if ((meta?.turns.at(-1) ?? null) !== input.head)
       throw new ContractError("stale");
-    if (meta && this.turn(input.head as string).status !== "completed")
+    if (
+      meta &&
+      this.turn(input.head as string).status !== "completed" &&
+      (!control ||
+        ["queued", "running", "unknown"].includes(
+          this.turn(input.head as string).status,
+        ))
+    )
       throw new ContractError("conflict");
     if (
       this.active.size >= 8 ||
@@ -545,7 +600,7 @@ export class Conversations {
       begin = resolve;
     });
     const original = ready.then(() =>
-      this.run(command, turn, previous, previousFile, next, abort),
+      this.run(command, turn, previous, previousFile, next, abort, control),
     );
     const live: LiveTurn = {
       turn,
@@ -557,9 +612,12 @@ export class Conversations {
       turnFile: null,
       metaFile: null,
     };
+    // Beyond this point even a failed registration/control write is uncertain.
+    beforeAccept?.();
     this.active.set(turn.id, live);
     this.o.owner.trackConversation(original, () => abort.abort());
     try {
+      control?.accept();
       if (!meta)
         this.write(
           this.identityPath(next.id),
@@ -649,6 +707,7 @@ export class Conversations {
     previousFile: FileSnapshot | undefined,
     meta: SavedConversation,
     abort: AbortController,
+    control?: ConversationControl,
   ): Promise<AcceptedWorkResult> {
     let barrier: ReviewBarrier | undefined;
     let authSettled: Promise<void> | undefined;
@@ -691,12 +750,19 @@ export class Conversations {
     };
     try {
       if (!current()) throw new ContractError("stale");
-      barrier = await this.o.actions.scheduler.conversationBarrier(
-        turn.id,
-        abort.signal,
-      );
-      barrier.assertHeld();
-      this.o.actions.conversationBoundary(barrier);
+      if (control?.reply) {
+        turn.status = "completed";
+        turn.notice = control.reply;
+        return { status: "settled" };
+      }
+      if (!control) {
+        barrier = await this.o.actions.scheduler.conversationBarrier(
+          turn.id,
+          abort.signal,
+        );
+        barrier.assertHeld();
+        this.o.actions.conversationBoundary(barrier);
+      }
       if (!current()) throw new ContractError("stale");
       const choice = this.o.choice.snapshot(),
         selected = choice.selected;
@@ -712,18 +778,18 @@ export class Conversations {
       const request = decodeWorkerPublicRequest({
         protocol: 2,
         taskId: meta.id,
-        taskKind: "code",
+        taskKind: control ? "research" : "code",
         runId: turn.id,
         childRunId: randomUUID(),
         assignmentId: "conversation",
-        purpose: "edit",
+        purpose: control ? "research" : "edit",
         model: selected,
         role: {
-          role: "implementation-worker",
-          sha256: hash("Ordinary conversation."),
+          role: control ? "design-explorer" : "implementation-worker",
+          sha256: hash(control?.instructions ?? "Ordinary conversation."),
         },
         context: "",
-        instructions: "Ordinary conversation.",
+        instructions: control?.instructions ?? "Ordinary conversation.",
         prompt: command.text,
         handoff: { graphRevision: 1, inputs: [] },
       });
@@ -772,11 +838,13 @@ export class Conversations {
           {
             previous,
             agentDir: this.o.agentDir,
+            ...(control ? { coordinator: true as const } : {}),
           },
           abort.signal,
           {
             timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
             ownerSecrets: this.o.secrets,
+            onCoordinator: control?.onTool,
             onContext: (messages) => {
               checkpoint = messages;
             },
@@ -829,6 +897,7 @@ export class Conversations {
       turn.notice ||=
         error instanceof ContractError ? error.code : "Conversation failed.";
     } finally {
+      await control?.settle();
       await authSettled;
       uncertain ||= this.o.owner.state === "quarantined";
       if (uncertain) turn.status = "unknown";
@@ -839,7 +908,9 @@ export class Conversations {
         if (turn.status !== "completed")
           turn.notice = [
             turn.notice,
-            "Start a new conversation; incomplete context is not replayed.",
+            control
+              ? "Incomplete work is not replayed. A new explicit message may continue from the last complete checkpoint."
+              : "Start a new conversation; incomplete context is not replayed.",
           ]
             .filter(Boolean)
             .join("\n");

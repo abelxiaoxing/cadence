@@ -10,6 +10,7 @@ import {
   type ModelCatalog,
   type ModelChoiceState,
   type ModelSelection,
+  type ModelSelector,
 } from "../service-contract.ts";
 import type { AccessMaterial } from "./auth.ts";
 import type { OwnerModelContext } from "./model-context.ts";
@@ -28,6 +29,7 @@ export class OwnerModelChoice {
       writer: HistoryWriter;
       models: OwnerModelContext;
       access: AccessMaterial;
+      remember?(choice: ModelSelector): void;
     },
   ) {
     if (choiceOwners.has(options.owner)) throw new ContractError("conflict");
@@ -101,6 +103,7 @@ export class OwnerModelChoice {
         this.catalogId = randomUUID();
         this.options.owner.configurationInstalled();
       }
+      this.options.remember?.(request.choice);
       return this.snapshot();
     } finally {
       this.installing = false;

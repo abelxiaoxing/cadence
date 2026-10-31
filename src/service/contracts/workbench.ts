@@ -3,6 +3,7 @@ import {
   bool,
   canonicalJson,
   closed,
+  decodeHash,
   decodeId,
   integer,
   list,
@@ -12,7 +13,49 @@ import {
 } from "./core.ts";
 import { type ChoiceVersion, decodeChoiceVersion } from "./models.ts";
 
+import {
+  decodeWorkflowProposal,
+  decodeWorkflowRequest,
+  decodeWorkflowResponse,
+  decodeWorkflowRun,
+  type WorkflowProposal,
+  type WorkflowRequest,
+  type WorkflowResponse,
+  type WorkflowRun,
+} from "./workflow.ts";
+
+export interface CadenceConversation {
+  id: string;
+  revision: number;
+  enabled: boolean;
+  head: string | null;
+  proposal: WorkflowProposal | null;
+  runs: string[];
+}
+export function decodeCadenceConversation(v: unknown): CadenceConversation {
+  const o = closed(v, [
+    "id",
+    "revision",
+    "enabled",
+    "head",
+    "proposal",
+    "runs",
+  ]);
+  return {
+    id: decodeId(o.id),
+    revision: integer(o.revision, 0),
+    enabled: bool(o.enabled),
+    head: nullable(o.head, decodeId),
+    proposal: nullable(o.proposal, decodeWorkflowProposal),
+    runs: list(o.runs, 200, decodeId),
+  };
+}
 export type WorkbenchRead =
+  | { kind: "cadence-conversation"; id: string }
+  | { kind: "workflow-active" }
+  | { kind: "workflow-detail"; id: string; stepId: string }
+  | { kind: "workflow-transcript"; id: string; stepId: string }
+  | { kind: "workflow"; id: string }
   | { kind: "conversations" }
   | { kind: "task-origin"; taskId: string }
   | { kind: "conversation"; id: string; before: string | null }
@@ -21,6 +64,48 @@ export type WorkbenchRead =
   | { kind: "directories"; path: string }
   | { kind: "projects" };
 export type WorkbenchCommand =
+  | {
+      kind: "cadence-exit";
+      commandId: string;
+      conversationId: string;
+      head: string | null;
+      revision: number;
+    }
+  | { kind: "restore-model"; commandId: string; epoch: string }
+  | {
+      kind: "cadence-send";
+      commandId: string;
+      conversationId: string;
+      head: string | null;
+      text: string;
+      model: ChoiceVersion;
+      revision: number;
+      intent: "message" | "enter" | "exit";
+    }
+  | {
+      kind: "cadence-prepare";
+      commandId: string;
+      conversationId: string;
+      revision: number;
+      proposalId: string;
+      digest: string;
+    }
+  | {
+      kind: "cadence-approve";
+      commandId: string;
+      conversationId: string;
+      revision: number;
+      proposalId: string;
+      digest: string;
+      grant: string;
+    }
+  | { kind: "workflow-cancel"; commandId: string; epoch: string; runId: string }
+  | {
+      kind: "workflow";
+      commandId: string;
+      epoch: string;
+      request: WorkflowRequest;
+    }
   | {
       kind: "link-task";
       commandId: string;
@@ -76,6 +161,7 @@ export interface ChatSummary {
   head: string;
   status: ChatStatus;
   updatedAt: number;
+  cadence?: boolean;
 }
 export interface FileEntry {
   name: string;
@@ -83,6 +169,23 @@ export interface FileEntry {
   directory: boolean;
 }
 export type WorkbenchResult =
+  | {
+      kind: "workflow-transcript";
+      runId: string;
+      stepId: string;
+      turn: ChatTurn | null;
+    }
+  | { kind: "cadence-conversation"; state: CadenceConversation }
+  | { kind: "workflow-active"; runs: WorkflowRun[] }
+  | {
+      kind: "cadence-grant";
+      commandId: string;
+      grant: string;
+      expiresAt: number;
+      revision: number;
+      proposal: WorkflowProposal;
+    }
+  | { kind: "workflow"; commandId: string | null; response: WorkflowResponse }
   | { kind: "task-origin"; taskId: string; conversationId: string | null }
   | { kind: "conversations"; entries: ChatSummary[] }
   | {
@@ -106,6 +209,11 @@ export interface WorkbenchPort {
   read(request: WorkbenchRead): WorkbenchResult;
   command(
     request: WorkbenchCommand,
+    caller?: {
+      attachmentId: string;
+      authority: "browser" | "local";
+      accessGeneration: number;
+    },
   ): WorkbenchResult | Promise<WorkbenchResult>;
 }
 const statuses = [
@@ -120,6 +228,22 @@ const statuses = [
 export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
   switch (kind) {
+    case "cadence-conversation": {
+      const o = closed(v, ["kind", "id"]);
+      return { kind, id: decodeId(o.id) };
+    }
+    case "workflow-active":
+      closed(v, ["kind"]);
+      return { kind };
+    case "workflow-transcript":
+    case "workflow-detail": {
+      const o = closed(v, ["kind", "id", "stepId"]);
+      return { kind, id: decodeId(o.id), stepId: text(o.stepId, 160, true) };
+    }
+    case "workflow": {
+      const o = closed(v, ["kind", "id"]);
+      return { kind, id: decodeId(o.id) };
+    }
     case "conversations":
     case "projects":
       closed(v, ["kind"]);
@@ -143,6 +267,86 @@ export function decodeWorkbenchRead(v: unknown): WorkbenchRead {
 }
 export function decodeWorkbenchCommand(v: unknown): WorkbenchCommand {
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
+  if (kind === "restore-model" || kind === "workflow-cancel") {
+    const o = closed(
+      v,
+      kind === "restore-model"
+        ? ["kind", "commandId", "epoch"]
+        : ["kind", "commandId", "epoch", "runId"],
+    );
+    const base = { commandId: decodeId(o.commandId), epoch: decodeId(o.epoch) };
+    return kind === "restore-model"
+      ? { kind, ...base }
+      : { kind, ...base, runId: decodeId(o.runId) };
+  }
+  if (kind === "cadence-exit") {
+    const o = closed(v, [
+      "kind",
+      "commandId",
+      "conversationId",
+      "head",
+      "revision",
+    ]);
+    return {
+      kind,
+      commandId: decodeId(o.commandId),
+      conversationId: decodeId(o.conversationId),
+      head: nullable(o.head, decodeId),
+      revision: integer(o.revision, 0),
+    };
+  }
+  if (kind === "cadence-send") {
+    const o = closed(v, [
+      "kind",
+      "commandId",
+      "conversationId",
+      "head",
+      "text",
+      "model",
+      "revision",
+      "intent",
+    ]);
+    return {
+      kind,
+      commandId: decodeId(o.commandId),
+      conversationId: decodeId(o.conversationId),
+      head: nullable(o.head, decodeId),
+      text: text(o.text, 16384, true),
+      model: decodeChoiceVersion(o.model),
+      revision: integer(o.revision, 0),
+      intent: oneOf(o.intent, ["message", "enter", "exit"]),
+    };
+  }
+  if (kind === "cadence-prepare" || kind === "cadence-approve") {
+    const keys = [
+      "kind",
+      "commandId",
+      "conversationId",
+      "revision",
+      "proposalId",
+      "digest",
+    ];
+    const o = closed(v, kind === "cadence-approve" ? [...keys, "grant"] : keys);
+    const base = {
+      commandId: decodeId(o.commandId),
+      conversationId: decodeId(o.conversationId),
+      revision: integer(o.revision, 0),
+      proposalId: decodeId(o.proposalId),
+      digest: decodeHash(o.digest),
+    };
+    return kind === "cadence-prepare"
+      ? { kind, ...base }
+      : { kind, ...base, grant: decodeId(o.grant) };
+  }
+  if (kind === "workflow") {
+    const o = closed(v, ["kind", "commandId", "epoch", "request"]);
+    return {
+      kind,
+      commandId: decodeId(o.commandId),
+      epoch: decodeId(o.epoch),
+      request: decodeWorkflowRequest(o.request),
+    };
+  }
   if (kind === "link-task") {
     const o = closed(v, [
       "kind",
@@ -234,19 +438,73 @@ export function decodeChatTurn(v: unknown): ChatTurn {
   };
 }
 export function decodeChatSummary(v: unknown): ChatSummary {
-  const o = closed(v, ["id", "title", "head", "status", "updatedAt"]);
+  const modern =
+    v !== null && typeof v === "object" && Object.hasOwn(v, "cadence");
+  const o = closed(v, [
+    "id",
+    "title",
+    "head",
+    "status",
+    "updatedAt",
+    ...(modern ? ["cadence"] : []),
+  ]);
   return {
     id: decodeId(o.id),
     title: text(o.title, 512, true),
     head: decodeId(o.head),
     status: oneOf(o.status, statuses),
     updatedAt: integer(o.updatedAt, 0),
+    ...(modern ? { cadence: bool(o.cadence) } : {}),
   };
 }
 export function decodeWorkbenchResult(v: unknown): WorkbenchResult {
-  // A complete finite reply fits the existing page ceiling. No arbitrary file body.
   canonicalJson(v, 512 * 1024);
+  const k = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
+  if (k === "workflow-transcript") {
+    const o = closed(v, ["kind", "runId", "stepId", "turn"]);
+    return {
+      kind: k,
+      runId: decodeId(o.runId),
+      stepId: text(o.stepId, 160, true),
+      turn: nullable(o.turn, decodeChatTurn),
+    };
+  }
+  if (k === "cadence-conversation") {
+    const o = closed(v, ["kind", "state"]);
+    return { kind: k, state: decodeCadenceConversation(o.state) };
+  }
+  if (k === "workflow-active") {
+    const o = closed(v, ["kind", "runs"]);
+    return { kind: k, runs: list(o.runs, 4, decodeWorkflowRun) };
+  }
+  if (k === "cadence-grant") {
+    const o = closed(v, [
+      "kind",
+      "commandId",
+      "grant",
+      "expiresAt",
+      "revision",
+      "proposal",
+    ]);
+    return {
+      kind: k,
+      commandId: decodeId(o.commandId),
+      grant: decodeId(o.grant),
+      expiresAt: integer(o.expiresAt, 0),
+      revision: integer(o.revision, 0),
+      proposal: decodeWorkflowProposal(o.proposal),
+    };
+  }
+  // A complete finite reply fits the existing page ceiling. No arbitrary file body.
   const kind = Object.getOwnPropertyDescriptor(v ?? {}, "kind")?.value;
+  if (kind === "workflow") {
+    const o = closed(v, ["kind", "commandId", "response"]);
+    return {
+      kind,
+      commandId: nullable(o.commandId, decodeId),
+      response: decodeWorkflowResponse(o.response),
+    };
+  }
   if (kind === "task-origin") {
     const o = closed(v, ["kind", "taskId", "conversationId"]);
     return {

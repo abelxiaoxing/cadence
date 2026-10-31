@@ -344,6 +344,8 @@ export class ServiceCoordination {
       "host-config.json",
       "history-v2",
       "conversations-v1",
+      "conversation-workflows-v1",
+      "workflows-v1",
     ]);
     this.files.directory(join(directory, "history-v2"), false, walks);
   }

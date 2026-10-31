@@ -2,6 +2,7 @@
 import { lstatSync, opendirSync } from "node:fs";
 import { join } from "node:path";
 import { loadAgentDefinitions } from "../agent-registry.ts";
+import { CadencePreferences } from "../cadence-preferences.ts";
 import { HistoryFiles, type HistoryReadBudget } from "../history/files.ts";
 import { HistoryLive } from "../history/live.ts";
 import { HistoryNavigation } from "../history/navigation.ts";
@@ -291,7 +292,14 @@ export async function createServiceHost(
       cwd: input.config.cwd,
       environment: launch,
     });
-    const choice = new OwnerModelChoice({ owner, writer, models, access });
+    const preferences = new CadencePreferences(input.config.agentDir);
+    const choice = new OwnerModelChoice({
+      owner,
+      writer,
+      models,
+      access,
+      remember: (value) => preferences.save(value),
+    });
     const { PI_OFFLINE: _offline, ...ordinary } = launch;
     const checkEnvironment = Object.freeze(ordinary);
     const actions = sourceBuild?.deferActions
@@ -325,6 +333,7 @@ export async function createServiceHost(
           cwd: input.config.cwd,
           agentDir: input.config.agentDir,
           projectsEnabled: !input.config.http.proxy,
+          checkEnvironment,
           hostUrl: new URL(
             sourceBuild ? "../service-host.mjs" : "./service-host.mjs",
             import.meta.url,

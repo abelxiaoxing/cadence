@@ -19,6 +19,7 @@ import {
   readConversationContext,
 } from "./conversation-context.mjs";
 import { conversationResources } from "./conversation-resources.mjs";
+import { coordinatorTools } from "./coordinator-tools.mjs";
 import { CaptureEmitter, SdkCapture } from "./worker-capture.mjs";
 import {
   closed,
@@ -46,6 +47,7 @@ const adapters = {
     import("@earendil-works/pi-ai/api/azure-openai-responses"),
 };
 let session;
+let ownsCoordinatorChannel = false;
 let ownedAgent;
 let unsubscribe;
 let emitter;
@@ -205,7 +207,13 @@ try {
   const conversation =
     envelope.conversation === undefined
       ? null
-      : closed(envelope.conversation, ["previous", "agentDir"]);
+      : closed(envelope.conversation, [
+          "previous",
+          "agentDir",
+          ...(Object.hasOwn(envelope.conversation, "coordinator")
+            ? ["coordinator"]
+            : []),
+        ]);
   if (
     conversation &&
     ((conversation.previous !== null &&
@@ -214,6 +222,12 @@ try {
   )
     refuse("parse", "invalid-conversation");
   const publicRequest = decodeWorkerPublicRequest(envelope.request);
+  const coordinator = conversation?.coordinator === true;
+  if (
+    conversation?.coordinator !== undefined &&
+    (!coordinator || !process.send || publicRequest.purpose !== "research")
+  )
+    refuse("parse", "invalid-coordinator");
   const request = {
     ...envelope,
     kind:
@@ -354,18 +368,22 @@ try {
   if (conversation)
     for (const message of readConversationContext(conversation.previous))
       manager.appendMessage(message);
+  const coordinationTools = coordinator ? coordinatorTools() : undefined;
+  ownsCoordinatorChannel = coordinator;
   const created = await createAgentSession({
     cwd,
     agentDir: cwd,
     model,
     modelRuntime: runtime,
     thinkingLevel: requestedThinkingLevel,
-    tools:
-      kind === "code"
+    tools: coordinator
+      ? ["cadence_research", "cadence_plan", "cadence_status"]
+      : kind === "code"
         ? ["read", "grep", "find", "ls", "write", "edit", "bash"]
         : ["read", "grep", "find", "ls"],
-    customTools:
-      kind === "code"
+    customTools: coordinator
+      ? coordinationTools
+      : kind === "code"
         ? [
             captureBash(
               cwd,
@@ -376,9 +394,10 @@ try {
             ),
           ]
         : [],
-    resourceLoader: conversation
-      ? conversationResources(resourceLoader, cwd, conversation.agentDir)
-      : resourceLoader,
+    resourceLoader:
+      conversation && !coordinator
+        ? conversationResources(resourceLoader, cwd, conversation.agentDir)
+        : resourceLoader,
     sessionManager: manager,
     settingsManager: SettingsManager.inMemory({
       compaction: { enabled: false },
@@ -583,4 +602,5 @@ try {
     // A failed diagnostic write cannot print an arbitrary exception or repair failure.
     process.exitCode = 1;
   }
+  if (ownsCoordinatorChannel && process.connected) process.disconnect();
 }

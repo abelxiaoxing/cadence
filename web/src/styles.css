@@ -2820,3 +2820,46 @@ summary.chat-steps-head:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Conversation-first workflow records. No second task editor or terminal. */
+.workflow-panel {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.workflow-plan {
+  overflow-wrap: anywhere;
+}
+.workflow-plan .primary {
+  margin-top: 12px;
+}
+.workflow-card {
+  padding: 12px;
+  min-width: 0;
+}
+.workflow-card > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.workflow-card > header strong {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.workflow-card > button {
+  margin: 8px 8px 0 0;
+}
+.workflow-detail {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 60vh;
+  overflow: auto;
+}
+.background-workflows {
+  padding: 8px 16px;
+  max-height: 40vh;
+  overflow: auto;
+  border-bottom: 1px solid var(--border);
+}

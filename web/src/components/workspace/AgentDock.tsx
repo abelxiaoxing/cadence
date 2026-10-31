@@ -100,7 +100,7 @@ export function AgentDock({
       >
         <FiChevronDown />
         <FiCpu />
-        <span>{t("Subagents")}</span>
+        <span>{t("Legacy subagents")}</span>
         <span className="lp-count">{merged.length}</span>
       </button>
       {open && (
@@ -110,7 +110,9 @@ export function AgentDock({
           )}
           {merged.length === 0 && !error && active?.status === "complete" && (
             <p className="panel-hint">
-              {t("Cadence subagents appear here when a task runs.")}
+              {t(
+                "Legacy task agents appear here. New workflow agents are shown in the conversation.",
+              )}
             </p>
           )}
           {merged.map((row) => (

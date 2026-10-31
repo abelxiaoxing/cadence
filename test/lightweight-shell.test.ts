@@ -318,12 +318,15 @@ function host() {
     on(event: string, fn: any) {
       handlers.set(event, [...(handlers.get(event) ?? []), fn]);
     },
+    registerTool() {},
+    getActiveTools: () => ["read", "write", "bash"],
+    setActiveTools() {},
     registerCommand(name: string, command: any) {
       commands.set(name, command);
     },
   };
   const rawHandlers = new Set<(text: string) => unknown>();
-  let editor = "/cadence";
+  let editor = "/cadence-inspect";
   const selections: (
       | string
       | undefined
@@ -341,7 +344,7 @@ function host() {
     isIdle: () => true,
     isProjectTrusted: () => true,
     hasPendingMessages: () => false,
-    sessionManager: { getSessionId: () => "one" },
+    sessionManager: { getSessionId: () => "one", getBranch: () => [] },
     model: { provider: "pi-independent", id: "chat" },
     thinkingLevel: "off",
     modelRegistry: { getApiKeyAndHeaders: vi.fn() },
@@ -352,6 +355,7 @@ function host() {
       },
       getEditorText: () => editor,
       setWidget: vi.fn(),
+      setStatus: vi.fn(),
       select: vi.fn(async (title: string, options: string[]) => {
         const item = selections.shift();
         const result = typeof item === "function" ? item(title, options) : item;
@@ -411,7 +415,7 @@ function host() {
     notices,
     shown,
     emit,
-    enter(text = "/cadence") {
+    enter(text = "/cadence-inspect") {
       editor = text;
       for (const fn of rawHandlers) fn("\r");
     },
@@ -425,7 +429,7 @@ function host() {
       onCustom = fn;
     },
     invoke(args = "") {
-      return commands.get("cadence")?.handler(args, ctx);
+      return commands.get("cadence-inspect")?.handler(args, ctx);
     },
   };
 }
@@ -447,14 +451,14 @@ const planAndStart = (h: ReturnType<typeof host>) => {
   h.edits.push("Inspect and edit one file.");
 };
 
-it("source registers only cadence; startup/ordinary/replayed/quoted/paste/busy/nonterminal/child remain inert", async () => {
+it("source registers conversation mode and optional inspector; startup/ordinary/replayed/quoted/paste/busy/nonterminal/child remain inert", async () => {
   const h = host();
-  expect([...h.registrations.keys()]).toEqual(["cadence"]);
+  expect([...h.registrations.keys()]).toEqual(["cadence-inspect", "cadence"]);
   await h.emit("session_start");
   await h.invoke();
-  h.enter("quote /cadence");
+  h.enter("quote /cadence-inspect");
   await h.invoke();
-  h.input("\x1b[200~/cadence\r\x1b[201~");
+  h.input("\x1b[200~/cadence-inspect\r\x1b[201~");
   await h.invoke();
   for (const mode of ["rpc", "json", "print"]) {
     h.ctx.mode = mode;
@@ -480,26 +484,26 @@ it("source registers only cadence; startup/ordinary/replayed/quoted/paste/busy/n
   expect(child.handlers.size).toBe(0);
 });
 it("raw latch is under 1500ms, consumed once, exact argument bound and cleared by other input/paste", () => {
-  const l = new TerminalEntryLatch();
-  l.input("\r", "/cadence goal", true, 100);
+  const l = new TerminalEntryLatch("cadence-inspect");
+  l.input("\r", "/cadence-inspect goal", true, 100);
   expect(l.consume("goal", 1599)).toBe(true);
   expect(l.consume("goal", 1599)).toBe(false);
-  l.input("\r", "/cadence", true, 100);
+  l.input("\r", "/cadence-inspect", true, 100);
   expect(l.consume("", 1600)).toBe(false);
-  l.input("\r", "/cadence", true);
-  l.input("a", "/cadence", true);
+  l.input("\r", "/cadence-inspect", true);
+  l.input("a", "/cadence-inspect", true);
   expect(l.consume("")).toBe(false);
-  l.input("\x1b[200~", "/cadence", true);
-  l.input("\r", "/cadence", true);
+  l.input("\x1b[200~", "/cadence-inspect", true);
+  l.input("\r", "/cadence-inspect", true);
   expect(l.consume("")).toBe(false);
-  l.input("\x1b[201~", "/cadence", true);
-  l.input("\r", "/cadence x", true);
+  l.input("\x1b[201~", "/cadence-inspect", true);
+  l.input("\r", "/cadence-inspect x", true);
   expect(l.consume("y")).toBe(false);
 });
 it("new/prefill is inert until readable plan and fresh Start; uses exact OWNER choice, never parent authentication", async () => {
   const h = await setup();
   planAndStart(h);
-  h.enter("/cadence prefill");
+  h.enter("/cadence-inspect prefill");
   await h.invoke("prefill");
   expect(h.ctx.ui.editor.mock.calls[0][1]).toBe("prefill");
   expect(h.commands.map((c) => c.action.kind)).toEqual([
@@ -574,10 +578,15 @@ it("dialog input/tools/bash are guarded; navigation/shutdown detach accepted run
   let guarded: Promise<any> | undefined;
   h.selections.splice(5, 1, (_title, options) => {
     guarded = (async () => {
-      expect(await h.emit("input")).toContainEqual({ action: "handled" });
-      expect((await h.emit("tool_call"))[0].block).toBe(true);
-      expect((await h.emit("user_bash"))[0].result.exitCode).toBe(1);
-      expect(await h.emit("session_before_tree")).toEqual([undefined]);
+      const input = h.emit("input"),
+        tool = h.emit("tool_call"),
+        bash = h.emit("user_bash");
+      expect(await input).toContainEqual({ action: "handled" });
+      expect((await tool)[0].block).toBe(true);
+      expect((await bash)[0].result.exitCode).toBe(1);
+      expect(
+        (await h.emit("session_before_tree")).every((r) => r === undefined),
+      ).toBe(true);
     })();
     return options.includes("Return") ? "Return" : undefined;
   });
@@ -587,7 +596,7 @@ it("dialog input/tools/bash are guarded; navigation/shutdown detach accepted run
   await h.emit("session_shutdown");
   expect(h.runs).toHaveLength(1);
   expect(h.client.cancel).not.toHaveBeenCalled();
-  expect(await h.emit("tool_call")).toEqual([undefined]);
+  expect((await h.emit("tool_call")).every((r) => r === undefined)).toBe(true);
 });
 for (const kind of ["research", "diagnosis"]) {
   it(`${kind} goal-only Start retains readonly kind and offers no shell checks`, async () => {

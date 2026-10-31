@@ -113,7 +113,8 @@ it("built workbench: ordinary chat, file reference, explicit Cadence transition,
     );
     assert.equal(await input.inputValue(), "@existing.txt");
     await p.screenshot({ path: join(root, "desktop.png"), fullPage: true });
-    await input.fill("/cadence Prepare a safe task from this chat");
+    await p.getByRole("button", { name: "Legacy task", exact: true }).click();
+    await input.fill("Prepare a safe task from this chat");
     await p.getByRole("button", { name: "Prepare task", exact: true }).click();
     await p
       .getByRole("button", { name: "Review implementation plan", exact: true })
@@ -171,7 +172,7 @@ it("built workbench: ordinary chat, file reference, explicit Cadence transition,
       await p.setViewportSize({ width, height: 844 });
       await p.getByRole("button", { name: "Tasks", exact: true }).click();
       await drawer("left", true);
-      await p.getByRole("button", { name: /Subagents/ }).waitFor();
+      await p.getByRole("button", { name: /Legacy subagents/ }).waitFor();
       await p.screenshot({
         path: join(root, `left-${width}.png`),
         fullPage: true,

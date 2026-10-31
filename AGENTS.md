@@ -2,14 +2,15 @@
 
 `@abelxiaoxing/cadence` is a dual-surface task workspace: native `/cadence` and built WebUI share one persistent service.
 Ordinary engineering and resource discovery never activate execution or start a service.
-Only explicit `cadence server install` registers and starts the generated service (Linux system/root unit without linger or explicit legacy user unit, LaunchAgent on macOS, Run entry on Windows); no package install hook does, `server restart|stop|uninstall` go through orderly Stop, and disable/mask/disable-linger are respected.
-Cadence code tasks require a readable plan and fresh context-bound Start consent, then direct host-tool edits, real parent checks and human review.
-Native entry retains raw-terminal guards; browser access authentication is not action consent.
+Only explicit `cadence server install` registers and starts the generated boot service (Linux system/root unit without linger or explicit legacy user unit, LaunchAgent on macOS, Run entry on Windows); no package install hook does, `server restart|stop|uninstall` go through orderly Stop, and disable/mask/disable-linger are respected.
+Native and browser `/cadence [goal]` enable a persistent conversation mode until explicit exit; completion never disables it. Native entry/current user Send may start or reuse a local project owner without installing a boot service.
+Code workflows require a readable plan and fresh context-bound execution consent, then service-owned host-tool edits, real checks and automatic Agent review (never labelled human review). Approved local delivery may include isolated parallel Git worktrees, bounded repairs, local task commits and fast-forward integration; no implicit push, deployment or source/profile copying. Legacy tasks retain their independent manual checks/human Review.
+Native entry retains raw-terminal guards; browser access authentication is not action consent. Browser execution uses an exact-plan, conversation/attachment-bound approval, never a native capability. Owner-held conversation mode survives refresh; the bounded SDK coordinator cannot edit or approve itself and does not hold the checkout gate while waiting for subagents.
 Client departure detaches, never cancels admitted work; explicit Cancel/Stop preserve actual closure and unknown fences.
 No terminal embedded executor, automatic replay, profile copying or recovery by deleting uncertain locks is allowed.
 This is not a sandbox, certified executor or transactional application system.
 Research/diagnosis are readonly; ordinary conversations remain independent and use direct host tools only on explicit Send, under the shared checkout gate.
-Human-readable task summaries live under `.cadence/assistant/tasks`; private history and coordination use `cadence-assistant-v1` outside the working copy.
+Human-readable legacy summaries live under `.cadence/assistant/tasks`; new workflow notes use `.cadence/assistant/workflows` and managed project context uses `.cadence/project.md`; private history and coordination use `cadence-assistant-v1` outside the working copy.
 The unified workbench has no project cwd and never creates a default workspace; private-state ancestors are refused as project roots, never redirected.
 Explicit Open associates independent project owners behind one authenticated origin; navigation detaches, while whole-workbench Stop joins its associated exact-epoch owners.
 Consumer data and uncertain resources must never be imported, reset or cleaned incidentally.

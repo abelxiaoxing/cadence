@@ -26,7 +26,6 @@ Você precisa de Node `>=22.19.0` com npm, e do Pi instalado e conectado a um pr
 
 ```sh
 npm install -g @abelxiaoxing/cadence
-cadence server install
 pi install "$(npm root -g)/@abelxiaoxing/cadence"
 ```
 
@@ -40,17 +39,34 @@ A porta e o token ficam em `~/.pi/agent/cadence/.env`; qualquer pessoa com o tok
 
 1. Abra o link impresso uma vez; o navegador então se lembra de você.
    Se você o perder, `cadence token-link --reveal` o imprime de novo.
-2. Escolha uma pasta de projeto com o botão de pasta no canto inferior direito, e escolha um modelo.
-3. Envie uma mensagem para uma conversa comum, ou comece com `cadence <goal>` (ou selecione Tarefa Cadence) para criar uma tarefa.
-4. Quando a análise propuser um plano, abra **Revisar plano de implementação** e escolha **Confirmar plano e executar**.
-5. Acompanhe os subagentes no dock no canto inferior esquerdo; verificações, alterações e revisão ficam sob **Detalhes da tarefa** à direita.
+2. Escolha uma pasta de projeto.
+   A preferência de modelo salva é reutilizada ao enviar; escolha uma vez se ela não existir.
+3. Envie `/cadence [objetivo]` uma vez.
+   Esta conversa permanece no modo Cadence; esclareça os requisitos com mensagens normais.
+4. Revise o plano completo e clique em **Implement this plan**.
+   Implementação, verificações, reparos limitados e entrega local acordada são automáticos.
+5. Acompanhe o progresso e os registros dos subagentes na conversa.
+   Atualizar a página ou concluir um objetivo não desativa o modo.
+   **Exit Cadence** sai do modo; **Cancel workflow — request stop** solicita o cancelamento.
+
+**Legacy task**: previous task/history workflow.
+No live Pi terminal is required for the browser conversation workflow.
 
 ### No terminal
 
-No TUI do Pi, digite `/cadence [goal]` e pressione Enter você mesmo; entrada colada ou via script não o abre.
-Escolha um modelo, crie ou abra uma tarefa, edite seu plano e confirme Start; os menus também mostram subagentes, verificações, alterações, revisão e histórico.
+Digite `/cadence <objetivo>` uma vez e continue conversando normalmente.
+O Cadence investiga o projeto, esclarece decisões e prepara um plano.
+Após aprovação explícita, executa a implementação, verificações, reparos limitados e integração local acordada.
 
-Cada sessão do Pi também mostra agentes em segundo plano em execução acima da entrada: pressione ↓ em uma entrada vazia para selecionar um e Enter para ler sua transcrição (`CADENCE_AGENT_PANEL=off` oculta o painel).
+O modo permanece ativo durante toda a conversa, mesmo após concluir um objetivo.
+Digite `exit cadence` para sair; sair não cancela trabalho aceito.
+As preferências de modelo são mantidas entre projetos em `~/.pi/agent/cadence/settings.json`.
+
+O proprietário local inicia sob demanda; o serviço do sistema é opcional para WebUI/inicialização automática.
+
+`/cadence-inspect`: legacy task/history UI.
+[Conversation mode](docs/conversation-mode.md): native/browser approval, limits and worktree setup.
+Browser authentication is not execution consent.
 
 ### Mais projetos
 

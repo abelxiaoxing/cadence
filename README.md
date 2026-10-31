@@ -2,8 +2,9 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Русский](README.ru.md)
 
-Cadence turns [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) into a persistent task workspace.
-Plan a code task, let subagents work on it, run your checks and review the result from the Pi terminal (`/cadence`) or a browser WebUI; both attach to the same background service.
+Cadence turns [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) into a conversation-driven engineering workflow.
+Enter `/cadence [goal]`, align the plan through conversation, then let the persistent owner implement and verify it.
+The optional WebUI supports the same persistent conversation workflow without a live Pi terminal, alongside ordinary chat and explicitly labelled legacy tasks.
 
 ## Why Cadence
 
@@ -14,7 +15,7 @@ Plan a code task, let subagents work on it, run your checks and review the resul
 - **Results you can trust.**
   Subagent output, real check runs and your own review stay separate: model prose or a "Done" never counts as a passed check, and failed, canceled and unknown outcomes stay distinct.
 - **Complete history.**
-  Every run keeps its messages, tool calls and outputs, with exact search and complete Markdown/NDJSON export; known secrets are redacted.
+  Conversation workflows retain sanitized transcripts and actual process results; legacy task history also provides exact search and Markdown/NDJSON export.
 - **One link for everything.**
   The WebUI (desktop and phone, English and 简体中文) also hosts ordinary Pi conversations and switches between projects, each with its own owner and history.
 
@@ -26,11 +27,11 @@ You need Node `>=22.19.0` with npm, and Pi installed and logged in to a model pr
 
 ```sh
 npm install -g @abelxiaoxing/cadence
-cadence server install
 pi install "$(npm root -g)/@abelxiaoxing/cadence"
 ```
 
-`cadence server install` registers and starts a background service (systemd on Linux, a LaunchAgent on macOS, a login entry on Windows) and prints a private link, `http://127.0.0.1:17423/?token=…`.
+For the optional WebUI/boot service, explicitly run `cadence server install`.
+It registers and starts a background service (systemd on Linux, a LaunchAgent on macOS, a login entry on Windows) and prints a private link, `http://127.0.0.1:17423/?token=…`.
 The last command lets Pi load the same copy for `/cadence`, so one npm upgrade updates both.
 The port and token live in `~/.pi/agent/cadence/.env`; anyone with the token can use your workspace, so keep the link private.
 
@@ -40,17 +41,32 @@ The port and token live in `~/.pi/agent/cadence/.env`; anyone with the token can
 
 1. Open the printed link once; the browser then remembers you.
    If you lose it, `cadence token-link --reveal` prints it again.
-2. Choose a project folder with the folder button in the lower right, and choose a model.
-3. Send a message for an ordinary conversation, or begin it with `cadence <goal>` (or select Cadence task) to create a task.
-4. When the analysis proposes a plan, open **Review implementation plan** and choose **Confirm plan and execute**.
-5. Follow subagents in the lower-left dock; checks, changes and review are under **Task details** on the right.
+2. Choose a project folder with the lower-right folder button.
+   Saved model preferences are reused on Send; choose once if none is available.
+3. Send `/cadence [goal]` once to enter Cadence in this conversation; continue with normal messages to investigate and clarify requirements.
+4. Review the complete inline plan and click **Implement this plan** (or send `按计划实施`).
+   The owner implements, verifies, repairs within budget and delivers as approved.
+5. Follow actual progress, subagent transcripts and local merge results in the conversation.
+   Refresh and completion keep Cadence on; **Exit Cadence** only exits the mode, while **Cancel workflow — request stop** requests cancellation.
+
+**Legacy task** retains the old create/plan/Save/Start/check/human-Review route explicitly.
 
 ### In the terminal
 
-In Pi's TUI, type `/cadence [goal]` and press Enter yourself; pasted or scripted input does not open it.
-Choose a model, create or open a task, edit its plan and confirm Start; the menus also show subagents, checks, changes, review and history.
+Enter `/cadence <goal>` once in any trusted project's Pi conversation.
+Continue with normal messages: Cadence investigates, consolidates questions and develops a readable plan with you.
+After explicit plan approval it automatically implements, reviews, verifies, performs bounded repairs and delivers as agreed.
+Independent Git tasks use separate worktrees and may run in parallel; approved local commits/merge never imply a remote push.
 
-Every Pi session also shows running background agents above the input: press ↓ on an empty input to select one and Enter to read its transcript (`CADENCE_AGENT_PANEL=off` hides the panel).
+**Completing a goal leaves the conversation in Cadence mode.**
+No repeated command is needed.
+Type `exit cadence` or `退出 Cadence` to leave; departure does not cancel accepted work.
+Native use starts/reuses a local project owner on demand, without installing a system service.
+Model preferences are remembered in `~/.pi/agent/cadence/settings.json`; authentication stays with Pi.
+
+See [Conversation mode](docs/conversation-mode.md) for exact approval, worktree prerequisites and cancellation.
+`/cadence-inspect` retains the advanced legacy task/history UI, including separate checks and human review; it is not the daily entrypoint.
+Browser approval is separately bound to the displayed plan and conversation; authentication alone never authorizes execution.
 
 ### More projects
 
@@ -64,7 +80,8 @@ Opening another project never stops work in the previous one.
 
 ### Checks
 
-List the commands that verify your project in `.cadence/assistant/config.json`, and tasks can run them as real checks before review:
+New workflows declare their checks in the approved plan.
+For legacy tasks, list configured checks in `.cadence/assistant/config.json`:
 
 ```json
 {

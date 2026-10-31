@@ -29,3 +29,15 @@ Rows naming a module are maintained by hand; update them in the same change as t
 | Registry recovery     | 1024 namespace entries; 128 immutable attempts per lock incarnation; no evidence eviction                                                                    | `src/service/coordination.ts`                                                                                |
 | Unified workbench     | 128 associated projects; 1024 durable opening receipts; 64 connections; bounded proxy frames and bodies; no eviction                                         | `src/service/gateway.ts`, `src/service/gateway-store.ts`                                                     |
 | Assets                | 16MiB per member/64MiB closure; fixed complete manifest and all font bodies                                                                                  | `src/service-assets.ts`                                                                                      |
+
+Conversation workflow bounds live in `src/service/contracts/workflow.ts` (`WORKFLOW_LIMITS`) and `src/service/workflows.ts`: 16 tasks, two concurrent isolated workers, 16 checks per set, four explicit setup commands, at most two repair rounds and a 90min deadline.
+There are at most four accepted workflows and 200 retained runs; journals refuse above 10,000 entries/512MiB and use the existing 256MiB free-space floor.
+Run snapshots allow 384KiB and 256 status steps; original process output retains its existing launcher bounds and labelled previews.
+Private worktrees are retained, not evicted.
+Worker context remains the existing 32KiB bound and is refused rather than clipped.
+
+Browser coordination permits one active SDK coordinator turn per project owner, at most 16 bridge calls and two investigation batches per explicit Send (each at most two readonly workers).
+The bridge refuses requests/replies above 64KiB; status and investigation evidence previews label truncation and omitted steps.
+Control records are bounded at 384KiB, inherit the 200-conversation/1000-turn ceilings, and link at most 200 workflow attempts; no eviction.
+There are at most 16 outstanding browser confirmation grants, each with the existing 120s lifetime.
+The additional coordinator slot is owner-accounted and does not expand the two implementation-worker slots or bypass the checkout barrier.

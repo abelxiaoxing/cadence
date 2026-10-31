@@ -3629,7 +3629,9 @@ class ServiceCoordination {
       "access.json",
       "host-config.json",
       "history-v2",
-      "conversations-v1"
+      "conversations-v1",
+      "conversation-workflows-v1",
+      "workflows-v1"
     ]);
     this.files.directory(join5(directory2, "history-v2"), false, walks);
   }
