@@ -40,7 +40,8 @@ export async function acceptingFixture(
     | "pending"
     | "failure"
     | "write"
-    | "read-then-fail" = "single";
+    | "read-then-fail"
+    | "research-scan" = "single";
   let finalReply: string | undefined;
   let contacts = 0,
     active = 0,
@@ -121,6 +122,16 @@ export async function acceptingFixture(
     const toolNames = (input.tools ?? []).map(
       (t: { function: { name: string } }) => t.function.name,
     );
+    if (providerMode === "research-scan") {
+      if (input.messages.at(-1)?.role === "tool")
+        finish(
+          res,
+          `Observed partial research evidence: ${input.messages.at(-1).content}`,
+        );
+      else
+        callTool(res, "bounded-find", "find", { pattern: "*.txt", limit: 1 });
+      return;
+    }
     if (
       providerMode === "coordinator" &&
       toolNames.includes("cadence_research")

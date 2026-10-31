@@ -846,3 +846,206 @@ it("a step transcript is bounded readable text", () => {
   expect(text).toContain("tool read (error)");
   expect(text.length).toBeLessThan(5000);
 });
+
+it("concurrent native mutations refuse before sending and release the guard after refusal", async () => {
+  const h = host();
+  await h.start();
+  let ready!: () => void;
+  const contacted = new Promise<void>((r) => {
+    ready = r;
+  });
+  let release!: () => void;
+  injected.client.models.mockImplementationOnce(async () => {
+    ready();
+    await new Promise<void>((r) => {
+      release = r;
+    });
+    throw new Error("fixture unavailable");
+  });
+  const first = h.call("cadence_research", { goal: "first", questions: ["q"] });
+  const observed = expect(first).rejects.toThrow("fixture unavailable");
+  await contacted;
+  for (const [tool, args] of [
+    ["cadence_research", { goal: "second", questions: ["q"] }],
+    ["cadence_plan", plan()],
+    ["cadence_start", {}],
+  ] as const)
+    await expect(h.call(tool, args)).rejects.toThrow("already in progress");
+  expect(h.effects).toEqual([]);
+  await expect(h.call("cadence_status")).resolves.toBeDefined();
+  release();
+  await observed;
+  await h.call("cadence_research", { goal: "after refusal", questions: ["q"] });
+  expect(h.effects).toEqual(["research"]);
+  await h.emit("session_shutdown");
+});
+
+it("status selects an exact older run and step without replacing current identity", async () => {
+  const h = host();
+  await h.start();
+  const runs = new Map<string, any>();
+  injected.client.workbenchCommand.mockImplementation(async (c: any) => {
+    const run = {
+      ...h.run,
+      id: c.commandId,
+      status: "timeout",
+      steps: [
+        {
+          id: `research-${c.commandId}`,
+          childRunId: randomUUID(),
+          kind: "research",
+          status: "timeout",
+          text: "timeout",
+          exitCode: null,
+          truncated: false,
+        },
+      ],
+    };
+    runs.set(run.id, run);
+    return ok({
+      kind: "workflow",
+      commandId: c.commandId,
+      response: { type: "run", run },
+    });
+  });
+  injected.client.workbenchRead.mockImplementation(async (r: any) => {
+    const run = runs.get(r.id);
+    if (!run) return refusal("unavailable", "none");
+    if (r.kind === "workflow-transcript")
+      return ok({ kind: r.kind, runId: r.id, stepId: r.stepId, turn: null });
+    if (r.kind === "workflow-detail")
+      return ok({
+        kind: "file",
+        path: `workflow/${r.id}/${r.stepId}`,
+        text: "retained timeout",
+        limited: false,
+      });
+    return ok({
+      kind: "workflow",
+      commandId: null,
+      response: { type: "run", run },
+    });
+  });
+  const a = await h.call("cadence_research", {
+    goal: "first",
+    questions: ["q"],
+  });
+  await h.call("cadence_research", { goal: "second", questions: ["q"] });
+  const [first, second] = [...runs.values()];
+  expect(a.details).toEqual({
+    runId: first.id,
+    steps: [
+      { stepId: first.steps[0].id, childRunId: first.steps[0].childRunId },
+    ],
+  });
+  await expect(
+    h.call("cadence_status", { stepId: first.steps[0].id, transcript: true }),
+  ).rejects.toThrow(`selected run ${second.id}`);
+  for (const transcript of [true, false]) {
+    await h.call("cadence_status", {
+      runId: first.id,
+      stepId: first.steps[0].id,
+      transcript,
+    });
+    expect(injected.client.workbenchRead).toHaveBeenLastCalledWith({
+      kind: transcript ? "workflow-transcript" : "workflow-detail",
+      id: first.id,
+      stepId: first.steps[0].id,
+    });
+    expect(h.last().runId).toBe(second.id);
+  }
+  await h.emit("session_shutdown");
+});
+
+it("navigation retires only the old mutation claim: fresh Cancel and planning remain usable", async () => {
+  const h = host();
+  await h.start();
+  (h.run as any).status = "running";
+  const original = injected.client.workbenchCommand.getMockImplementation()!;
+  let accepted!: () => void, releaseResearch!: () => void;
+  let proposed!: () => void, releasePlan!: () => void;
+  const received = new Promise<void>((r) => {
+    accepted = r;
+  });
+  const planning = new Promise<void>((r) => {
+    proposed = r;
+  });
+  injected.client.workbenchCommand.mockImplementation(async (c: any) => {
+    if (c.request.action === "cancel") (h.run as any).status = "canceled";
+    const response = await original(c);
+    if (c.request.action === "research") {
+      accepted();
+      await new Promise<void>((r) => {
+        releaseResearch = r;
+      });
+    } else if (c.request.action === "propose") {
+      proposed();
+      await new Promise<void>((r) => {
+        releasePlan = r;
+      });
+    }
+    return response;
+  });
+  const research = h.call("cadence_research", {
+    goal: "pending reply",
+    questions: ["q"],
+  });
+  const stale = expect(research).rejects.toThrow("stale");
+  await received;
+  const runId = h.last().runId;
+  await h.emit("session_before_tree");
+  await h.emit("session_tree");
+  typedChoice(h, "Request cancellation");
+  await h.call("cadence_cancel");
+  expect(injected.client.workbenchCommand.mock.calls.at(-1)[0].request).toEqual(
+    { action: "cancel", runId },
+  );
+  const next = h.call("cadence_plan", plan());
+  await planning;
+  releaseResearch();
+  await stale;
+  // Old finally must not release the new generation's claim.
+  await expect(h.call("cadence_plan", plan())).rejects.toThrow(
+    "already in progress",
+  );
+  releasePlan();
+  await next;
+  expect(h.effects).toEqual(["research", "cancel", "propose"]);
+  await h.emit("session_shutdown");
+});
+
+it("a mutation resumed after navigation cannot dispatch into the new generation", async () => {
+  const h = host();
+  await h.start();
+  const models = injected.client.models.getMockImplementation()!;
+  let release!: () => void,
+    reached!: () => void,
+    calls = 0;
+  const waiting = new Promise<void>((r) => {
+    reached = r;
+  });
+  injected.client.models.mockImplementation(async () => {
+    const value = await models();
+    if (++calls === 2) {
+      reached();
+      await new Promise<void>((r) => {
+        release = r;
+      });
+    }
+    return value;
+  });
+  const old = h.call("cadence_research", {
+    goal: "not sent",
+    questions: ["q"],
+  });
+  const stale = expect(old).rejects.toThrow("stale");
+  await waiting;
+  await h.emit("session_before_tree");
+  await h.emit("session_tree");
+  await h.call("cadence_plan", plan());
+  release();
+  await stale;
+  expect(h.effects).toEqual(["propose"]);
+  expect(h.last().runId).toBeNull();
+  await h.emit("session_shutdown");
+});

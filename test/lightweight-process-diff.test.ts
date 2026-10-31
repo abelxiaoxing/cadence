@@ -1028,6 +1028,24 @@ describe("SDK-only validated egress (labelled lifecycle mocks, not native waits)
     });
     expect(vi.mocked(spawn).mock.calls).toHaveLength(calls);
   });
+  it("the SDK launch envelope carries a fixed parent monotonic deadline", async () => {
+    const child = lifecycleChild("");
+    const wire = request();
+    const before = Number(process.hrtime.bigint() / 1_000_000n);
+    const run = runWorker(wire, new AbortController().signal, undefined, 1000);
+    const after = Number(process.hrtime.bigint() / 1_000_000n);
+    const envelope = JSON.parse(child.stdin!.end.mock.calls[0][0]);
+    expect(envelope.investigation).toMatchObject({
+      roots: [wire.cwd],
+      timeoutMs: 1000,
+    });
+    expect(envelope.investigation.deadlineMs).toBeGreaterThanOrEqual(
+      before + 1000,
+    );
+    expect(envelope.investigation.deadlineMs).toBeLessThanOrEqual(after + 1000);
+    child.emit("close", 1, null);
+    expect((await run).closed).toBe(true);
+  });
   it("SDK route never widens general default env or narrows ordinary parent checks", async () => {
     pair();
     process.env.NODE_USE_ENV_PROXY = "1";
@@ -1319,6 +1337,80 @@ describe("bounded real process owner", () => {
     expect(safe).not.toContain("\x1b");
     expect(safeChildEnv()).not.toHaveProperty("NODE_OPTIONS");
     expect(safeChildEnv()).not.toHaveProperty("OPENAI_API_KEY");
+  });
+  it("active output does not renew the process deadline; lifecycle observations retain actual closure", async () => {
+    const events: { kind: string; at: number; reason?: string }[] = [];
+    const result = await node(
+      "setInterval(()=>process.stdout.write('active\\n'),5)",
+      {
+        timeoutMs: 500,
+        onLifecycle: (event) => events.push(event),
+      },
+    );
+    expect(result.outcome).toBe("timeout");
+    expect(result.output).toContain("active");
+    expect(result.text).toContain("activity does not extend it");
+    expect(events.map((event) => event.kind)).toEqual([
+      "spawned",
+      "stop-requested",
+      "closed",
+    ]);
+    expect(events[1].reason).toBe("timeout");
+    expect(events[2].at).toBeGreaterThanOrEqual(events[1].at);
+    const failed = await node("setInterval(()=>{},1000)", {
+      onLifecycle: (event) => {
+        if (event.kind === "spawned")
+          throw new Error("fixture recording failure");
+      },
+    });
+    expect(failed).toMatchObject({ outcome: "failed", closed: true });
+  }, 10000);
+  it("late native close cannot revise an already unconfirmed lifecycle observation", async () => {
+    const child = lifecycleChild();
+    const events: string[] = [];
+    vi.useFakeTimers();
+    try {
+      const run = node("fixture only", {
+        timeoutMs: 100,
+        onLifecycle: (event) => events.push(event.kind),
+      });
+      child.emit("spawn");
+      await vi.advanceTimersByTimeAsync(3100);
+      expect(await run).toMatchObject({ outcome: "unknown", closed: false });
+      expect(events).toEqual(["spawned", "stop-requested"]);
+      child.emit("close", 0, null);
+      expect(events).toEqual(["spawned", "stop-requested"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("stop signals and escalation timers precede any observation callback", async () => {
+    const child = lifecycleChild();
+    const abort = new AbortController();
+    vi.useFakeTimers();
+    let observed = false;
+    try {
+      const run = node("fixture only", {
+        signal: abort.signal,
+        onLifecycle(event) {
+          if (event.kind !== "stop-requested") return;
+          // No PID on this controlled child: the cross-platform fallback is kill.
+          expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+          expect(vi.getTimerCount()).toBe(3); // process deadline, KILL, unknown
+          observed = true;
+        },
+      });
+      child.emit("spawn");
+      abort.abort();
+      expect(observed).toBe(true);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+      child.emit("close", null, "SIGKILL");
+      expect(await run).toMatchObject({ outcome: "canceled", closed: true });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it("abort and timeout settle within declared stop bound even with TERM ignored", async () => {
     const abort = new AbortController();

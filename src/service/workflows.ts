@@ -8,7 +8,8 @@ import {
   statfsSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadAgentDefinitions } from "../agent-registry.ts";
 import { launchWorkflowWorker, runProcess } from "../subagent-process.ts";
 import { captureChanges } from "../task-diff.ts";
@@ -93,6 +94,23 @@ import {
 } from "./workflow-git.ts";
 import { WorkflowHistoryScanner } from "./workflow-history.ts";
 
+declare const __CADENCE_SERVICE_VERSION__: string;
+declare const __CADENCE_SERVICE_SOURCE__: string;
+const OWNER_RUNTIME = Object.freeze({
+  version:
+    typeof __CADENCE_SERVICE_VERSION__ === "undefined"
+      ? "source"
+      : __CADENCE_SERVICE_VERSION__,
+  build:
+    typeof __CADENCE_SERVICE_SOURCE__ === "undefined"
+      ? "unbundled"
+      : __CADENCE_SERVICE_SOURCE__,
+  entry: fileURLToPath(import.meta.url),
+  pid: process.pid,
+  node: process.versions.node,
+  platform: process.platform,
+  startedAt: Math.round(Date.now() - process.uptime() * 1000),
+});
 const RECORD_BYTES = 384 * 1024;
 const MAX_STEPS = 256;
 const STEP_UNITS = 80;
@@ -827,6 +845,11 @@ export class Workflows {
         response: { type: "grant", proposal: p, grant, expiresAt },
       };
     }
+    if (
+      r.action === "research" &&
+      r.roots?.some((p) => sanitizeText(p, secrets) !== p)
+    )
+      throw new ContractError("forbidden");
     const request: WorkflowRequest =
       r.action === "research"
         ? {
@@ -889,6 +912,15 @@ export class Workflows {
       goal:
         proposal?.plan.goal ??
         (request.action === "research" ? request.goal : ""),
+      diagnostics: {
+        acceptedAt: Date.now(),
+        acquiredAt: null,
+        settledAt: null,
+        owner: {
+          ...OWNER_RUNTIME,
+          entry: diagnosticText(OWNER_RUNTIME.entry, 4096, secrets),
+        },
+      },
       status: "queued",
       phase: request.action === "research" ? "research" : "implementing",
       steps: [],
@@ -975,6 +1007,20 @@ export class Workflows {
       id: `${clipUnits(id, STEP_UNITS)}-${randomUUID()}`,
       ...(childRunId ? { childRunId } : {}),
       kind,
+      ...(childRunId
+        ? {
+            timing: {
+              createdAt: Date.now(),
+              preparedAt: null,
+              startedAt: null,
+              stopRequestedAt: null,
+              closedAt: null,
+              settledAt: null,
+              timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
+              stopReason: null,
+            },
+          }
+        : {}),
       status: "running",
       text: "",
       exitCode: null,
@@ -1048,6 +1094,7 @@ export class Workflows {
     prompt: string,
     readonly: boolean,
     version: ChoiceVersion,
+    roots?: string[],
   ): Promise<{ result: RunResult; step: WorkflowStep }> {
     this.assertRunning(live);
     const model = this.model(version, true);
@@ -1117,6 +1164,10 @@ export class Workflows {
       const prepared = await auth.result;
       if (prepared.status !== "prepared" || !current())
         throw new ContractError("auth-unavailable");
+      if (step.timing) {
+        step.timing.preparedAt = Date.now();
+        this.save(live);
+      }
       this.write(this.path(live.run.id, `launches/${childRunId}.json`), {
         cwd,
         request,
@@ -1146,6 +1197,18 @@ export class Workflows {
         launchWorkflowWorker(prepared.prepared, cwd, live.abort.signal, {
           timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
           ownerSecrets: this.o.secrets(),
+          roots: roots?.length ? roots.map((p) => resolve(cwd, p)) : [cwd],
+          onLifecycle: (event) => {
+            if (!step.timing) return;
+            if (event.kind === "spawned") step.timing.startedAt = event.at;
+            else if (event.kind === "closed") step.timing.closedAt = event.at;
+            else {
+              step.timing.stopRequestedAt = event.at;
+              step.timing.stopReason = event.reason ?? null;
+            }
+            // Memory only: never put journal I/O ahead of TERM/KILL. The
+            // running original persists these facts with its result below.
+          },
           maySignal: () => {
             try {
               this.o.owner.lease.assert();
@@ -1160,6 +1223,16 @@ export class Workflows {
           },
           onFrame: (frame, secrets) => {
             credentials = secrets;
+            if (frame.event.kind === "ready" && frame.event.runtime) {
+              step.runtime = {
+                ...frame.event.runtime,
+                sdkVersion: sanitizeText(frame.event.runtime.sdkVersion, [
+                  ...this.o.secrets(),
+                  ...secrets,
+                ]),
+              };
+              this.save(live);
+            }
             // Capture bounds never stop the worker; storage failures still do.
             if (recorder.accept(frame)) saveTranscript();
           },
@@ -1196,6 +1269,10 @@ export class Workflows {
       return { result: completed, step };
     } finally {
       await auth.settled;
+      if (step.timing) {
+        step.timing.settledAt = Date.now();
+        this.save(live);
+      }
       this.closeStep(
         live,
         step,
@@ -1971,6 +2048,7 @@ export class Workflows {
       this.assertRunning(live);
       barrier = await this.o.gate.acquire(live.run.id, live.abort.signal);
       barrier.assertHeld();
+      if (live.run.diagnostics) live.run.diagnostics.acquiredAt = Date.now();
       // The budget covers the run's own work, not time queued for the gate.
       timer = setTimeout(() => {
         budgetExpired = true;
@@ -1989,6 +2067,7 @@ export class Workflows {
               `Goal: ${request.goal}\nInvestigation: ${q}\nRead only. Cite paths and distinguish evidence, assumptions, user decisions and environment prerequisites.`,
               true,
               request.model,
+              request.roots,
             ),
           ),
         );
@@ -2015,6 +2094,7 @@ export class Workflows {
     } finally {
       clearTimeout(timer);
       live.run.phase = "finished";
+      if (live.run.diagnostics) live.run.diagnostics.settledAt = Date.now();
       const delivered = [...live.delivered].sort();
       live.run.notice = this.notice(
         failure,

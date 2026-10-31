@@ -1117,10 +1117,23 @@ function decodeCaptureEvent(v) {
   const kind = tag(v);
   switch (kind) {
     case "ready": {
-      const o = closed(v, ["kind", "requestProtocol"]);
+      const o = closed(v, [
+        "kind",
+        "requestProtocol",
+        ...Object.hasOwn(v ?? {}, "runtime") ? ["runtime"] : []
+      ]);
       return {
         kind,
-        requestProtocol: literal(o.requestProtocol, WORKER_PROTOCOL)
+        requestProtocol: literal(o.requestProtocol, WORKER_PROTOCOL),
+        ...o.runtime === undefined ? {} : {
+          runtime: (() => {
+            const r = closed(o.runtime, ["sdkVersion", "workerHash"]);
+            return {
+              sdkVersion: text(r.sdkVersion, 128, true),
+              workerHash: decodeHash(r.workerHash)
+            };
+          })()
+        }
       };
     }
     case "message-start": {
@@ -3801,14 +3814,24 @@ function decodeWorkflowProposal(v) {
 function decodeWorkflowRequest(v) {
   const action = Object.getOwnPropertyDescriptor(v ?? {}, "action")?.value;
   if (action === "research") {
-    const o2 = closed(v, ["action", "goal", "questions", "model"]);
+    const o2 = closed(v, [
+      "action",
+      "goal",
+      "questions",
+      "model",
+      ...Object.hasOwn(v ?? {}, "roots") ? ["roots"] : []
+    ]);
     const questions = list(o2.questions, WORKFLOW_LIMITS.parallel, (q) => text(q, 8192, true));
     if (!questions.length)
       throw new Error("Research needs a question");
+    const roots = o2.roots === undefined ? undefined : list(o2.roots, 8, (p) => text(p, 4096, true));
+    if (roots && !roots.length)
+      throw new Error("Research needs a specific root");
     return {
       action,
       goal: text(o2.goal, 8192, true),
       questions,
+      ...roots ? { roots } : {},
       model: decodeChoiceVersion(o2.model)
     };
   }
@@ -3841,7 +3864,8 @@ function decodeWorkflowRun(v) {
     "steps",
     "notice",
     "mergedCommit",
-    "humanReviewed"
+    "humanReviewed",
+    ...Object.hasOwn(v ?? {}, "diagnostics") ? ["diagnostics"] : []
   ]);
   const status = (x) => oneOf(x, [
     "running",
@@ -3854,6 +3878,7 @@ function decodeWorkflowRun(v) {
   if (o.humanReviewed !== false)
     throw new Error("Automatic execution is not human review");
   return {
+    ...o.diagnostics === undefined ? {} : { diagnostics: decodeWorkflowDiagnostics(o.diagnostics) },
     id: decodeId(o.id),
     epoch: decodeId(o.epoch),
     goal: text(o.goal, 8192),
@@ -3878,9 +3903,21 @@ function decodeWorkflowRun(v) {
         "text",
         "exitCode",
         "truncated",
+        ...Object.hasOwn(v2 ?? {}, "timing") ? ["timing"] : [],
+        ...Object.hasOwn(v2 ?? {}, "runtime") ? ["runtime"] : [],
         ...linked ? ["childRunId"] : []
       ]);
       return {
+        ...s.timing === undefined ? {} : { timing: decodeWorkflowTiming(s.timing) },
+        ...s.runtime === undefined ? {} : {
+          runtime: (() => {
+            const r = closed(s.runtime, ["sdkVersion", "workerHash"]);
+            return {
+              sdkVersion: text(r.sdkVersion, 128, true),
+              workerHash: decodeHash(r.workerHash)
+            };
+          })()
+        },
         id: text(s.id, 160, true),
         ...linked ? { childRunId: decodeId(s.childRunId) } : {},
         kind: oneOf(s.kind, [
@@ -3954,6 +3991,55 @@ At most ${p.repairAttempts} repair rounds. ${p.delivery === "local-merge" ? "Aut
 ## Project context
 ${p.projectContext}
 `;
+}
+var timestamp = (v) => integer(v, 0, 8640000000000000);
+function decodeWorkflowTiming(v) {
+  const o = closed(v, [
+    "createdAt",
+    "preparedAt",
+    "startedAt",
+    "stopRequestedAt",
+    "closedAt",
+    "settledAt",
+    "timeoutMs",
+    "stopReason"
+  ]);
+  return {
+    createdAt: timestamp(o.createdAt),
+    preparedAt: nullable(o.preparedAt, timestamp),
+    startedAt: nullable(o.startedAt, timestamp),
+    stopRequestedAt: nullable(o.stopRequestedAt, timestamp),
+    closedAt: nullable(o.closedAt, timestamp),
+    settledAt: nullable(o.settledAt, timestamp),
+    timeoutMs: integer(o.timeoutMs, 100, 1200000),
+    stopReason: nullable(o.stopReason, (v2) => text(v2, 32, true))
+  };
+}
+function decodeWorkflowDiagnostics(v) {
+  const o = closed(v, ["acceptedAt", "acquiredAt", "settledAt", "owner"]);
+  const r = closed(o.owner, [
+    "version",
+    "build",
+    "entry",
+    "pid",
+    "node",
+    "platform",
+    "startedAt"
+  ]);
+  return {
+    acceptedAt: timestamp(o.acceptedAt),
+    acquiredAt: nullable(o.acquiredAt, timestamp),
+    settledAt: nullable(o.settledAt, timestamp),
+    owner: {
+      version: text(r.version, 128, true),
+      build: text(r.build, 64, true),
+      entry: text(r.entry, 4096, true),
+      pid: integer(r.pid, 1),
+      node: text(r.node, 128, true),
+      platform: text(r.platform, 32, true),
+      startedAt: timestamp(r.startedAt)
+    }
+  };
 }
 
 // src/service/contracts/workbench.ts
@@ -10746,7 +10832,7 @@ async function createGateway(value, hostUrl, source) {
   const input = decodeGatewayInput(value), store = new GatewayStore(input.serverConfig, input.stateHome);
   const web = loadWebAssets(source?.webDirectory);
   const build2 = {
-    contractHash: "f0ff0c9d0481dab9fd21cdbc7c0d72b427bee60033a9af4c789f859c4c83fe75",
+    contractHash: "b855efce6a9694452dd77fcdad0b5dbecce617643cc81ac7c55dafb0f2ca7848",
     assets: {
       sourceHash: web.manifest.sourceHash,
       contractHash: web.manifest.contractHash,
@@ -21904,7 +21990,7 @@ function conversationMessages(messages, secrets = []) {
     if (!message || typeof message !== "object")
       throw new Error("Invalid context");
     const role2 = oneOf(message.role, ["user", "assistant", "toolResult"]);
-    const timestamp = integer(message.timestamp, 0);
+    const timestamp2 = integer(message.timestamp, 0);
     const content = typeof message.content === "string" ? [{ type: "text", text: clean(message.content, secrets) }] : list(message.content, 256, (block) => {
       if (block.type === "text")
         return { type: "text", text: clean(block.text, secrets) };
@@ -21918,11 +22004,11 @@ function conversationMessages(messages, secrets = []) {
       return null;
     }).filter(Boolean);
     if (role2 === "user")
-      return { role: role2, timestamp, content };
+      return { role: role2, timestamp: timestamp2, content };
     if (role2 === "toolResult")
       return {
         role: role2,
-        timestamp,
+        timestamp: timestamp2,
         content,
         toolCallId: clean(message.toolCallId, secrets, 512),
         toolName: clean(message.toolName, secrets, 128),
@@ -21944,7 +22030,7 @@ function conversationMessages(messages, secrets = []) {
     ]);
     return {
       role: role2,
-      timestamp,
+      timestamp: timestamp2,
       content,
       api: clean(message.api, secrets, 128),
       provider: clean(message.provider, secrets, 128),
@@ -22603,8 +22689,18 @@ function runProcess(spec) {
     let settled = false;
     let nativeClosed = false;
     let launched = false;
+    const observeLifecycle = (event) => {
+      if (settled)
+        return;
+      try {
+        spec.onLifecycle?.(event);
+      } catch {
+        stop("failed");
+      }
+    };
     child.once("spawn", () => {
       launched = true;
+      observeLifecycle({ kind: "spawned", at: Date.now() });
     });
     const ingressStop = new AbortController;
     let stopping;
@@ -22664,7 +22760,7 @@ function runProcess(spec) {
         exitCode,
         signal,
         durationMs: Date.now() - started,
-        text: clean2(outcome === "completed" && spec.protocol ? final ?? "" : `${outcome}${closed2 ? " (direct child closed; escaped descendants not proven stopped)" : ": stop unconfirmed; coordination lock retained"}`, 16384),
+        text: clean2(outcome === "completed" && spec.protocol ? final ?? "" : `${outcome === "timeout" ? `timeout: total process deadline ${spec.timeoutMs}ms reached (activity does not extend it)` : outcome}${closed2 ? "; direct child closed; descendant closure was not verified (not evidence of a surviving process)" : "; stop unconfirmed; coordination lock retained"}`, 16384),
         output: clean2(output),
         truncated
       });
@@ -22694,12 +22790,18 @@ function runProcess(spec) {
       if (settled || stopping || spec.uninterruptible)
         return;
       stopping = outcome;
+      const requestedAt = Date.now();
+      if (!nativeClosed) {
+        signalChild("SIGTERM");
+        killTimer = setTimeout(() => signalChild("SIGKILL"), 1000);
+        unknownTimer = setTimeout(() => finish(false, null, null), 3000);
+      }
+      observeLifecycle({
+        kind: "stop-requested",
+        at: requestedAt,
+        reason: outcome
+      });
       ingressStop.abort();
-      if (nativeClosed)
-        return;
-      signalChild("SIGTERM");
-      killTimer = setTimeout(() => signalChild("SIGKILL"), 1000);
-      unknownTimer = setTimeout(() => finish(false, null, null), 3000);
     };
     let bridgeCalls = 0;
     let bridgeBusy = false;
@@ -22896,6 +22998,8 @@ function runProcess(spec) {
     });
     child.on("close", (code2, signal) => {
       nativeClosed = true;
+      if (launched)
+        observeLifecycle({ kind: "closed", at: Date.now() });
       clearTimeout(timeout);
       clearTimeout(killTimer);
       clearTimeout(unknownTimer);
@@ -22952,7 +23056,7 @@ function runProcess(spec) {
 }
 class AmbientFileAuth extends Error {
 }
-function encodeEnvelope(material, captured) {
+function encodeEnvelope(material, timeoutMs, captured, roots = [material.cwd]) {
   const ambient = captured?.ambient ?? networkSnapshot(process.env);
   const scoped = captured?.scoped ?? scopedNetwork(material);
   if (Object.keys(material.auth.env ?? {}).some((name) => /(?:_FILE|_PATH|_CREDENTIALS)$/.test(name)))
@@ -22965,10 +23069,15 @@ function encodeEnvelope(material, captured) {
     ...literals(material.auth.env ?? {}),
     ...selected2.redactionLiterals
   ];
-  const input = JSON.stringify(material);
+  const investigation = {
+    roots,
+    timeoutMs,
+    deadlineMs: Number(process.hrtime.bigint() / 1000000n) + timeoutMs
+  };
+  const input = JSON.stringify({ ...material, investigation });
   if (!sameNetwork(scoped, scopedNetwork(JSON.parse(input)), false))
     throw new Error("network");
-  return { material, ambient, scoped, selected: selected2, secrets, input };
+  return { material, investigation, ambient, scoped, selected: selected2, secrets, input };
 }
 function launchEncoded(encoded2, signal, timeoutMs, extra = {}) {
   if (!sameNetwork(encoded2.ambient, networkSnapshot(process.env)) || !sameNetwork(encoded2.scoped, scopedNetwork(encoded2.material)))
@@ -22991,8 +23100,12 @@ function launchEncoded(encoded2, signal, timeoutMs, extra = {}) {
 function launchConversation(prepared, conversation, signal, options) {
   let encoded2;
   return prepared.consume((material) => {
-    encoded2 = encodeEnvelope({ ...material, model: { ...material.model } });
-    encoded2.input = JSON.stringify({ ...encoded2.material, conversation });
+    encoded2 = encodeEnvelope({ ...material, model: { ...material.model } }, options.timeoutMs);
+    encoded2.input = JSON.stringify({
+      ...encoded2.material,
+      investigation: encoded2.investigation,
+      conversation
+    });
     return encoded2.input;
   }, (input) => {
     if (!encoded2 || encoded2.input !== input)
@@ -23025,7 +23138,7 @@ function launchWorkflowWorker(prepared, cwd, signal, options) {
       ...material,
       cwd,
       model: { ...material.model }
-    });
+    }, options.timeoutMs, undefined, options.roots ?? [cwd]);
     return encoded2.input;
   }, (input) => {
     if (!encoded2 || encoded2.input !== input)
@@ -23034,6 +23147,7 @@ function launchWorkflowWorker(prepared, cwd, signal, options) {
     return launchEncoded(encoded2, signal, options.timeoutMs, {
       secrets,
       maySignal: options.maySignal,
+      onLifecycle: options.onLifecycle,
       onNative: (native, capture) => options.onNative(native, capture?.selected?.messageId),
       onFrame: (frame) => options.onFrame(frame, secrets)
     });
@@ -24080,10 +24194,15 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
     };
   }
   async research(current2, args, epoch, model, signal) {
-    let goal, questions;
+    let goal, questions, roots;
     try {
-      const a = closed(args, ["goal", "questions"]);
+      const a = closed(args, [
+        "goal",
+        "questions",
+        ...Object.hasOwn(args ?? {}, "roots") ? ["roots"] : []
+      ]);
       goal = text(a.goal, 8192, true);
+      roots = a.roots === undefined ? undefined : list(a.roots, 8, (p) => text(p, 4096, true));
       questions = list(a.questions, 2, (q) => text(q, 8192, true));
       if (!questions.length)
         throw new ContractError("invalid");
@@ -24101,6 +24220,7 @@ BROWSER COORDINATOR: You have only cadence_research, cadence_plan and cadence_st
         action: "research",
         goal,
         questions,
+        ...roots ? { roots } : {},
         model
       });
     } catch (error) {
@@ -24272,7 +24392,8 @@ import {
   statfsSync as statfsSync3,
   writeFileSync as writeFileSync4
 } from "node:fs";
-import { basename as basename2, dirname as dirname19, join as join27 } from "node:path";
+import { basename as basename2, dirname as dirname19, join as join27, resolve as resolve10 } from "node:path";
+import { fileURLToPath as fileURLToPath5 } from "node:url";
 
 // src/task-diff.ts
 import { spawnSync as spawnSync2 } from "node:child_process";
@@ -25073,6 +25194,15 @@ class WorkflowHistoryScanner {
 }
 
 // src/service/workflows.ts
+var OWNER_RUNTIME = Object.freeze({
+  version: "2.0.24",
+  build: "0c1c6b8c3f8f8909dc00545075370c04090965f643c7e2d38106889d3c9a2879",
+  entry: fileURLToPath5(import.meta.url),
+  pid: process.pid,
+  node: process.versions.node,
+  platform: process.platform,
+  startedAt: Math.round(Date.now() - process.uptime() * 1000)
+});
 var RECORD_BYTES2 = 384 * 1024;
 var MAX_STEPS = 256;
 var STEP_UNITS = 80;
@@ -25615,6 +25745,8 @@ class Workflows {
         response: { type: "grant", proposal: p, grant, expiresAt }
       };
     }
+    if (r.action === "research" && r.roots?.some((p) => sanitizeText(p, secrets) !== p))
+      throw new ContractError("forbidden");
     const request3 = r.action === "research" ? {
       ...r,
       goal: clipBytes(sanitizeText(r.goal, secrets), 8192),
@@ -25659,6 +25791,15 @@ class Workflows {
       id: commandId,
       epoch,
       goal: proposal?.plan.goal ?? (request3.action === "research" ? request3.goal : ""),
+      diagnostics: {
+        acceptedAt: Date.now(),
+        acquiredAt: null,
+        settledAt: null,
+        owner: {
+          ...OWNER_RUNTIME,
+          entry: diagnosticText(OWNER_RUNTIME.entry, 4096, secrets)
+        }
+      },
       status: "queued",
       phase: request3.action === "research" ? "research" : "implementing",
       steps: [],
@@ -25668,8 +25809,8 @@ class Workflows {
     };
     const abort = new AbortController;
     let begin;
-    const ready2 = new Promise((resolve10) => {
-      begin = resolve10;
+    const ready2 = new Promise((resolve11) => {
+      begin = resolve11;
     });
     const live = {
       run,
@@ -25735,6 +25876,18 @@ class Workflows {
       id: `${clipUnits(id, STEP_UNITS)}-${randomUUID20()}`,
       ...childRunId ? { childRunId } : {},
       kind,
+      ...childRunId ? {
+        timing: {
+          createdAt: Date.now(),
+          preparedAt: null,
+          startedAt: null,
+          stopRequestedAt: null,
+          closedAt: null,
+          settledAt: null,
+          timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
+          stopReason: null
+        }
+      } : {},
       status: "running",
       text: "",
       exitCode: null,
@@ -25781,7 +25934,7 @@ class Workflows {
       this.o.owner.quarantine();
     this.save(live);
   }
-  async worker(live, cwd, id, prompt, readonly, version) {
+  async worker(live, cwd, id, prompt, readonly, version, roots) {
     this.assertRunning(live);
     const model = this.model(version, true);
     const role2 = loadAgentDefinitions().find((r) => r.role === (readonly ? "design-explorer" : "implementation-worker"));
@@ -25838,6 +25991,10 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       const prepared = await auth.result;
       if (prepared.status !== "prepared" || !current2())
         throw new ContractError("auth-unavailable");
+      if (step.timing) {
+        step.timing.preparedAt = Date.now();
+        this.save(live);
+      }
       this.write(this.path(live.run.id, `launches/${childRunId}.json`), {
         cwd,
         request: request3
@@ -25862,6 +26019,19 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       const running = Promise.resolve().then(() => launchWorkflowWorker(prepared.prepared, cwd, live.abort.signal, {
         timeoutMs: this.o.timeoutMs ?? LIMITS.workerMs,
         ownerSecrets: this.o.secrets(),
+        roots: roots?.length ? roots.map((p) => resolve10(cwd, p)) : [cwd],
+        onLifecycle: (event) => {
+          if (!step.timing)
+            return;
+          if (event.kind === "spawned")
+            step.timing.startedAt = event.at;
+          else if (event.kind === "closed")
+            step.timing.closedAt = event.at;
+          else {
+            step.timing.stopRequestedAt = event.at;
+            step.timing.stopReason = event.reason ?? null;
+          }
+        },
         maySignal: () => {
           try {
             this.o.owner.lease.assert();
@@ -25876,6 +26046,16 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
         },
         onFrame: (frame, secrets) => {
           credentials = secrets;
+          if (frame.event.kind === "ready" && frame.event.runtime) {
+            step.runtime = {
+              ...frame.event.runtime,
+              sdkVersion: sanitizeText(frame.event.runtime.sdkVersion, [
+                ...this.o.secrets(),
+                ...secrets
+              ])
+            };
+            this.save(live);
+          }
           if (recorder.accept(frame))
             saveTranscript();
         }
@@ -25908,6 +26088,10 @@ Read applicable AGENTS.md, existing project conventions and relevant tests befor
       return { result: completed, step };
     } finally {
       await auth.settled;
+      if (step.timing) {
+        step.timing.settledAt = Date.now();
+        this.save(live);
+      }
       this.closeStep(live, step, "Worker did not produce a completed native/recorded result.");
     }
   }
@@ -26416,6 +26600,8 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
       this.assertRunning(live);
       barrier = await this.o.gate.acquire(live.run.id, live.abort.signal);
       barrier.assertHeld();
+      if (live.run.diagnostics)
+        live.run.diagnostics.acquiredAt = Date.now();
       timer = setTimeout(() => {
         budgetExpired = true;
         live.abort.abort();
@@ -26427,7 +26613,7 @@ Write only these exact files: ${task.writes.join(", ")} (a declared directory in
       if (request3.action === "research") {
         const answers = await Promise.allSettled(request3.questions.map((q, i) => this.worker(live, this.cwd, `research-${i + 1}`, `Goal: ${request3.goal}
 Investigation: ${q}
-Read only. Cite paths and distinguish evidence, assumptions, user decisions and environment prerequisites.`, true, request3.model)));
+Read only. Cite paths and distinguish evidence, assumptions, user decisions and environment prerequisites.`, true, request3.model, request3.roots)));
         for (const a of answers) {
           if (a.status === "rejected")
             throw a.reason;
@@ -26444,6 +26630,8 @@ Read only. Cite paths and distinguish evidence, assumptions, user decisions and 
     } finally {
       clearTimeout(timer);
       live.run.phase = "finished";
+      if (live.run.diagnostics)
+        live.run.diagnostics.settledAt = Date.now();
       const delivered = [...live.delivered].sort();
       live.run.notice = this.notice(failure2, delivered.length ? `${live.run.status === "completed" ? "Changed files" : "Changed files so far"}: ${delivered.join(", ")}` : "", ...live.notes);
       try {
@@ -26727,7 +26915,7 @@ function refuseAt(stage, step) {
   }
 }
 async function createServiceHost(value, sourceBuild) {
-  const embedded = "f0ff0c9d0481dab9fd21cdbc7c0d72b427bee60033a9af4c789f859c4c83fe75";
+  const embedded = "b855efce6a9694452dd77fcdad0b5dbecce617643cc81ac7c55dafb0f2ca7848";
   if (embedded && sourceBuild)
     throw new ContractError("unsupported-context");
   const contractHash = decodeHash(embedded ?? sourceBuild?.contractHash);

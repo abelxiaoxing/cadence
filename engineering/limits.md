@@ -52,3 +52,9 @@ Waiting cancellation releases only that queue entry; holder abort/Stop/quarantin
 Workflow history reads at most 200 directory entries per quantum and returns at most 20 summaries per page, retaining 21 candidate IDs per scan (`WORKFLOW_LIMITS.historyScanEntries`, `historyPage`).
 At most 16 scans hold readonly directory handles; 120s idle expiry or owner teardown closes them (`historyScans`, `historyIdleMs`).
 These are read budgets, not a lifetime retained-run cap; history is never evicted to satisfy them.
+
+Readonly investigation tools use `RESEARCH_LIMITS` in `src/research-tools.mjs`: 64 calls per worker, 30s cooperative work per call, 2000 visited entries, depth 8, 100 results, 1MiB per text file, 8MiB read per call and 32KiB output.
+The tool-admission cutoff reserves the smaller of 120s and 10% of the process budget for the final report.
+The launcher fixes a same-host monotonic deadline before serialization/spawn; SDK bootstrap consumes that budget, and tool construction never renews it.
+These are cooperative I/O limits: outstanding filesystem operations and directory/file closure are joined, never abandoned on timeout; the unchanged parent worker deadline is the hard process bound.
+Explicit investigation roots are limited to eight; omitted roots select the project cwd.

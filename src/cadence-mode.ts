@@ -30,11 +30,13 @@ import {
   type WorkflowRequest,
   type WorkflowResponse,
   type WorkflowRun,
+  workflowDiagnostics,
 } from "./service/contracts/workflow.ts";
 import { ServiceCoordination } from "./service/coordination.ts";
 import {
   ContractError,
   canonicalJson,
+  decodeId,
   decodeModelSelector,
   type ErrorCode,
   type ModelSelector,
@@ -280,6 +282,34 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
   let state = idle(),
     context: ExtensionContext | undefined,
     generation = 0;
+  // One native conversation has one current run/proposal. Claim synchronously,
+  // before any attachment/model await; status and explicit Cancel remain usable.
+  type Mutation = { generation: number; assertCurrent(): void };
+  let mutation: Mutation | undefined;
+  const changing = async <T>(
+    ctx: ExtensionContext,
+    body: (claim: Mutation) => Promise<T>,
+  ) => {
+    active(ctx);
+    if (mutation?.generation === generation)
+      throw new Error(
+        "A Cadence request is already in progress. Use cadence_status; no additional work was sent.",
+      );
+    const claim: Mutation = {
+      generation,
+      assertCurrent() {
+        if (claim.generation !== generation || mutation !== claim)
+          throw new ContractError("stale");
+        active(ctx);
+      },
+    };
+    mutation = claim;
+    try {
+      return await body(claim);
+    } finally {
+      if (mutation === claim) mutation = undefined;
+    }
+  };
   let permission: { id: string; digest: string; at: number } | undefined;
   let allowStart = false,
     reattach = false;
@@ -353,7 +383,7 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     context = ctx;
   };
   const summarize = (run: WorkflowRun) =>
-    `Cadence ${run.status} • ${run.goal}\n${run.steps.map((s) => `${s.kind} ${s.id}: ${s.status}${s.exitCode === null ? "" : ` (exit ${s.exitCode})`}\n${s.text}${s.truncated ? "\n[Preview truncated; full result retained by owner.]" : ""}`).join("\n")}\n${run.notice}${run.mergedCommit ? `\nLocal merge: ${run.mergedCommit}` : ""}${run.status === "unknown" ? "\nOutcome unknown: neither completed nor failed. Its actual effects are not inferred, and the owner keeps any fences." : ""}\nAutomatic review is not human review. Cadence mode remains enabled.`;
+    `Cadence ${run.status} • ${run.goal}\nRun: ${run.id}\n${workflowDiagnostics(run)}\n${run.steps.map((s) => `${s.kind} ${s.id}: ${s.status}${s.exitCode === null ? "" : ` (exit ${s.exitCode})`}\n${s.text}${s.truncated ? "\n[Preview truncated; full result retained by owner.]" : ""}`).join("\n")}\n${run.notice}${run.mergedCommit ? `\nLocal merge: ${run.mergedCommit}` : ""}${run.status === "unknown" ? "\nOutcome unknown: neither completed nor failed. Its actual effects are not inferred, and the owner keeps any fences." : ""}\nAutomatic review is not human review. Cadence mode remains enabled.`;
   const agentDir = () => getAgentDir();
   const launchOwner = async (ctx: ExtensionContext) => {
     if (process.env.CADENCE_AUTOSTART === "0")
@@ -501,8 +531,10 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     });
   };
   const connect = async (ctx: ExtensionContext, selectModel = true) => {
+    const expected = generation;
     active(ctx);
     await ensureAttached(ctx);
+    if (generation !== expected) throw new ContractError("stale");
     if (!connection.client || !connection.compatible()) {
       reattach = true;
       let stop = "its explicit stop command";
@@ -516,13 +548,17 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
       );
     }
     if (selectModel) await ensureModel(ctx);
+    if (generation !== expected) throw new ContractError("stale");
   };
   const request = async (
     ctx: ExtensionContext,
     input: WorkflowRequest,
     commandId = randomUUID(),
     sending?: () => void,
+    claim?: Mutation,
   ): Promise<WorkflowResponse> => {
+    claim?.assertCurrent();
+    const expected = generation;
     await connect(
       ctx,
       input.action === "research" || input.action === "propose",
@@ -535,9 +571,14 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
       epoch: connection.session.epoch,
       request: input,
     };
+    if (expected !== generation) throw new ContractError("stale");
+    claim?.assertCurrent();
+    active(ctx);
     // Everything before this point had no owner effect.
     sending?.();
     const r = value(await connection.client.workbenchCommand(command));
+    if (generation !== expected) throw new ContractError("stale");
+    claim?.assertCurrent();
     if (r.kind !== "workflow") throw new ContractError("invalid");
     const response = r.response;
     if (
@@ -590,10 +631,13 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     return `Attempted run ${id} is not known to the owner and is not active, so it was never accepted. Cadence forgot it; nothing was replayed.\n`;
   };
   /** Returns a notice when an attempted run was proven absent and forgotten. */
-  const requireSettledRun = async (ctx: ExtensionContext) => {
-    if (!state.runId) return "";
-    const seen = await observe(ctx, state.runId);
-    if ("absent" in seen) return forget(state.runId);
+  const requireSettledRun = async (ctx: ExtensionContext, claim: Mutation) => {
+    claim.assertCurrent();
+    const id = state.runId;
+    if (!id) return "";
+    const seen = await observe(ctx, id);
+    claim.assertCurrent();
+    if ("absent" in seen) return forget(id);
     const previous = seen.run;
     if (["running", "queued"].includes(previous.status))
       throw new Error(
@@ -905,53 +949,88 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     parameters: Type.Object({
       goal: Type.String(),
       questions: Type.Array(Type.String(), { minItems: 1, maxItems: 2 }),
+      roots: Type.Optional(
+        Type.Array(
+          Type.String({
+            description:
+              "Specific investigation directories; defaults to project cwd. Avoid filesystem roots and broad parent trees.",
+          }),
+          { minItems: 1, maxItems: 8 },
+        ),
+      ),
     }),
     async execute(_id, input, signal, update, ctx) {
-      active(ctx);
-      await connect(ctx);
-      const notice = await requireSettledRun(ctx);
-      const model = value(await client().models()).version;
-      const commandId = randomUUID(),
-        before = state.runId;
-      let sent = false,
-        response: WorkflowResponse;
-      try {
-        response = await request(
-          ctx,
-          { action: "research", ...input, model },
-          commandId,
-          () => {
-            // Retain the attempted identity before transport: a lost reply is
-            // observed, never replaced with another research request.
-            state.runId = commandId;
+      return changing(ctx, async (claim) => {
+        active(ctx);
+        await connect(ctx);
+        claim.assertCurrent();
+        const notice = await requireSettledRun(ctx, claim);
+        const model = value(await client().models()).version;
+        const commandId = randomUUID(),
+          before = state.runId;
+        let sent = false,
+          response: WorkflowResponse;
+        try {
+          response = await request(
+            ctx,
+            { action: "research", ...input, model },
+            commandId,
+            () => {
+              // Retain the attempted identity before transport: a lost reply is
+              // observed, never replaced with another research request.
+              state.runId = commandId;
+              persist();
+              sent = true;
+            },
+            claim,
+          );
+        } catch (error) {
+          if (
+            generation === claim.generation &&
+            (!sent || definite(error)) &&
+            state.runId === commandId
+          ) {
+            state.runId = before;
             persist();
-            sent = true;
-          },
-        );
-      } catch (error) {
-        if ((!sent || definite(error)) && state.runId === commandId) {
-          state.runId = before;
-          persist();
+          }
+          throw error;
         }
-        throw error;
-      }
-      if (response.type !== "run") throw new ContractError("invalid");
-      status("research");
-      let run = response.run;
-      while (["queued", "running"].includes(run.status) && !signal?.aborted) {
-        update?.(
-          result(
-            `Investigating: ${run.goal}\n${run.steps.map((s) => `${s.kind} ${s.id}: ${s.status}`).join("\n")}\nSubagents are listed in Pi's agent panel.`,
-          ),
-        );
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        const seen = await observe(ctx, run.id);
-        if ("absent" in seen) throw new ContractError("unavailable");
-        run = seen.run;
-      }
-      status("ready");
-      if (signal?.aborted) watch(ctx, run.id);
-      return result(`${notice}${summarize(run)}`);
+        if (response.type !== "run") throw new ContractError("invalid");
+        status("research");
+        const expected = generation;
+        let run = response.run;
+        while (
+          ["queued", "running"].includes(run.status) &&
+          !signal?.aborted &&
+          generation === expected
+        ) {
+          update?.(
+            result(
+              `Investigating: ${run.goal}\n${run.steps.map((s) => `${s.kind} ${s.id}: ${s.status}`).join("\n")}\nSubagents are listed in Pi's agent panel.`,
+            ),
+          );
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          if (generation !== expected) break;
+          const seen = await observe(ctx, run.id);
+          if (generation !== expected) break;
+          if ("absent" in seen) throw new ContractError("unavailable");
+          run = seen.run;
+        }
+        if (generation === expected) {
+          status("ready");
+          if (signal?.aborted) watch(ctx, run.id);
+        }
+        return {
+          ...result(`${notice}${summarize(run)}`),
+          details: {
+            runId: run.id,
+            steps: run.steps.map(({ id, childRunId }) => ({
+              stepId: id,
+              childRunId,
+            })),
+          },
+        };
+      });
     },
   });
   pi.registerTool({
@@ -961,38 +1040,47 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
       "After interactive clarification, publish the exact readable plan, dependency graph, checks, setup commands, repair budget and delivery policy for user approval. Does not execute.",
     parameters: PLAN,
     async execute(_id, input, _signal, _update, ctx) {
-      active(ctx);
-      await connect(ctx);
-      permission = undefined;
-      const notice = await requireSettledRun(ctx);
-      const plan = decodeWorkflowPlan(input);
-      const response = await request(ctx, {
-        action: "propose",
-        plan,
-        model: value(await client().models()).version,
-      });
-      if (response.type !== "proposal") throw new ContractError("invalid");
-      state.proposal = response.proposal;
-      persist();
-      status("awaiting plan approval");
-      const shown = readableWorkflowPlan(response.proposal.plan);
-      const redacted =
-        canonicalJson(response.proposal.plan) !== canonicalJson(plan);
-      // The plan is displayed by this tool's own result: a message sent now
-      // would land between this tool call and its result.
-      return {
-        content: [
+      return changing(ctx, async (claim) => {
+        active(ctx);
+        await connect(ctx);
+        claim.assertCurrent();
+        permission = undefined;
+        const notice = await requireSettledRun(ctx, claim);
+        const plan = decodeWorkflowPlan(input);
+        const response = await request(
+          ctx,
           {
-            type: "text" as const,
-            text: `${notice}${shown}\nPlan identity: ${response.proposal.digest}\n${redacted ? "The owner redacted credential-like text; the plan above is exactly what would run.\n" : ""}The user sees this complete plan. They can type 按计划实施 to approve these exact bytes; vague agreement is not execution consent. Existing unrelated working-copy changes are not imported into isolated candidates.`,
+            action: "propose",
+            plan,
+            model: value(await client().models()).version,
           },
-        ],
-        details: {
-          plan: shown,
-          digest: response.proposal.digest,
-          redacted,
-        },
-      };
+          undefined,
+          undefined,
+          claim,
+        );
+        if (response.type !== "proposal") throw new ContractError("invalid");
+        state.proposal = response.proposal;
+        persist();
+        status("awaiting plan approval");
+        const shown = readableWorkflowPlan(response.proposal.plan);
+        const redacted =
+          canonicalJson(response.proposal.plan) !== canonicalJson(plan);
+        // The plan is displayed by this tool's own result: a message sent now
+        // would land between this tool call and its result.
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `${notice}${shown}\nPlan identity: ${response.proposal.digest}\n${redacted ? "The owner redacted credential-like text; the plan above is exactly what would run.\n" : ""}The user sees this complete plan. They can type 按计划实施 to approve these exact bytes; vague agreement is not execution consent. Existing unrelated working-copy changes are not imported into isolated candidates.`,
+            },
+          ],
+          details: {
+            plan: shown,
+            digest: response.proposal.digest,
+            redacted,
+          },
+        };
+      });
     },
     renderResult(output) {
       const d = output.details as
@@ -1021,110 +1109,133 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
       "Start the current exact plan after fresh user approval. The service automatically implements, reviews, verifies, performs bounded repairs and delivers; client departure only detaches.",
     parameters: Type.Object({}),
     async execute(_id, _input, signal, _update, ctx) {
-      active(ctx);
-      const proposal = state.proposal;
-      if (!proposal)
-        throw new Error("No current plan. Clarify and propose it first.");
-      const expected = generation;
-      const fromInput =
-        permission?.id === proposal.id &&
-        permission.digest === proposal.digest &&
-        Date.now() >= permission.at &&
-        Date.now() - permission.at < 120000;
-      permission = undefined;
-      if (
-        !fromInput &&
-        !(await confirm(
-          ctx,
-          "Implement this plan automatically?",
-          `${readableWorkflowPlan(proposal.plan)}\nProject: ${proposal.cwd}\nNo push or deployment. Keeping the discussion changes nothing.`,
-          "Keep discussing (do not start)",
-          "Start this exact plan",
-        ))
-      )
-        return result(
-          "Not started. Cadence remains enabled for further discussion.",
-        );
-      if (
-        signal?.aborted ||
-        expected !== generation ||
-        state.proposal?.digest !== proposal.digest
-      )
-        throw new ContractError("stale");
-      // The grant is fresh after consent, so reading the plan never expires it.
-      const prepared = await request(ctx, {
-        action: "prepare",
-        proposalId: proposal.id,
-        digest: proposal.digest,
-      });
-      if (
-        prepared.type !== "grant" ||
-        canonicalJson(prepared.proposal.plan) !==
-          canonicalJson(proposal.plan) ||
-        prepared.proposal.cwd !== proposal.cwd
-      )
-        throw new ContractError("stale");
-      const commandId = randomUUID(),
-        before = { runId: state.runId, proposal };
-      let sent = false,
-        started: WorkflowResponse;
-      try {
-        started = await request(
+      return changing(ctx, async (claim) => {
+        active(ctx);
+        const proposal = state.proposal;
+        if (!proposal)
+          throw new Error("No current plan. Clarify and propose it first.");
+        const expected = generation;
+        const fromInput =
+          permission?.id === proposal.id &&
+          permission.digest === proposal.digest &&
+          Date.now() >= permission.at &&
+          Date.now() - permission.at < 120000;
+        permission = undefined;
+        if (
+          !fromInput &&
+          !(await confirm(
+            ctx,
+            "Implement this plan automatically?",
+            `${readableWorkflowPlan(proposal.plan)}\nProject: ${proposal.cwd}\nNo push or deployment. Keeping the discussion changes nothing.`,
+            "Keep discussing (do not start)",
+            "Start this exact plan",
+          ))
+        )
+          return result(
+            "Not started. Cadence remains enabled for further discussion.",
+          );
+        if (
+          signal?.aborted ||
+          expected !== generation ||
+          state.proposal?.digest !== proposal.digest
+        )
+          throw new ContractError("stale");
+        // The grant is fresh after consent, so reading the plan never expires it.
+        const prepared = await request(
           ctx,
           {
-            action: "execute",
+            action: "prepare",
             proposalId: proposal.id,
             digest: proposal.digest,
-            grant: prepared.grant,
           },
-          commandId,
-          () => {
-            // Retain the exact attempted identity before transport; a lost
-            // reply is observed, never replaced with another Start or a
-            // revived approval.
-            state.runId = commandId;
-            state.proposal = null;
-            persist();
-            sent = true;
-          },
+          undefined,
+          undefined,
+          claim,
         );
-      } catch (error) {
-        // A proven refusal had no effect: keep the plan for a fresh approval.
-        if ((!sent || definite(error)) && state.runId === commandId) {
-          state.runId = before.runId;
-          state.proposal = before.proposal;
-          persist();
+        if (
+          prepared.type !== "grant" ||
+          canonicalJson(prepared.proposal.plan) !==
+            canonicalJson(proposal.plan) ||
+          prepared.proposal.cwd !== proposal.cwd
+        )
+          throw new ContractError("stale");
+        const commandId = randomUUID(),
+          before = { runId: state.runId, proposal };
+        let sent = false,
+          started: WorkflowResponse;
+        try {
+          started = await request(
+            ctx,
+            {
+              action: "execute",
+              proposalId: proposal.id,
+              digest: proposal.digest,
+              grant: prepared.grant,
+            },
+            commandId,
+            () => {
+              // Retain the exact attempted identity before transport; a lost
+              // reply is observed, never replaced with another Start or a
+              // revived approval.
+              state.runId = commandId;
+              state.proposal = null;
+              persist();
+              sent = true;
+            },
+            claim,
+          );
+        } catch (error) {
+          // A proven refusal had no effect: keep the plan for a fresh approval.
+          if (
+            generation === claim.generation &&
+            (!sent || definite(error)) &&
+            state.runId === commandId
+          ) {
+            state.runId = before.runId;
+            state.proposal = before.proposal;
+            persist();
+          }
+          throw error;
         }
-        throw error;
-      }
-      if (started.type !== "run") throw new ContractError("invalid");
-      state.runId = started.run.id;
-      state.proposal = null;
-      persist();
-      status("executing");
-      watch(ctx, started.run.id);
-      return result(
-        `Accepted. Implementation, verification and agreed delivery now run under the persistent owner. No further routine approval is needed. ${started.run.id}\nCadence remains enabled. Closing/switching the conversation does not cancel this work.`,
-      );
+        if (started.type !== "run") throw new ContractError("invalid");
+        state.runId = started.run.id;
+        state.proposal = null;
+        persist();
+        status("executing");
+        watch(ctx, started.run.id);
+        return result(
+          `Accepted. Implementation, verification and agreed delivery now run under the persistent owner. No further routine approval is needed. ${started.run.id}\nCadence remains enabled. Closing/switching the conversation does not cancel this work.`,
+        );
+      });
     },
   });
   pi.registerTool({
     name: "cadence_status",
     label: "Observe workflow",
     description:
-      "Read the current retained workflow outcome without replaying any action. With stepId, read that step's retained result, or its subagent transcript with transcript: true.",
+      "Read a retained workflow without replaying any action. Specify runId for earlier runs; otherwise selects the current run. With stepId read its result, or transcript: true for its transcript.",
     parameters: Type.Object({
+      runId: Type.Optional(Type.String()),
       stepId: Type.Optional(Type.String()),
       transcript: Type.Optional(Type.Boolean()),
     }),
     async execute(_id, input, _signal, _update, ctx) {
       active(ctx);
-      if (!state.runId)
+      const id =
+        input.runId === undefined ? state.runId : decodeId(input.runId);
+      if (!id)
         return result(
           "Cadence is enabled; no run yet. Continue clarifying the goal.",
         );
-      const id = state.runId;
       if (input.stepId) {
+        const seen = await observe(ctx, id);
+        if (
+          "absent" in seen ||
+          !seen.run.steps.some((s) => s.id === input.stepId)
+        )
+          throw new Error(
+            `Step ${input.stepId} does not belong to selected run ${id}. Supply the exact runId and stepId from the research result; no other run was searched.`,
+          );
         await connect(ctx, false);
         if (input.transcript) {
           const t = value(
@@ -1158,14 +1269,20 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
       }
       const seen = await observe(ctx, id);
       if ("absent" in seen) {
+        if (id !== state.runId)
+          return result(
+            `Run ${id} is not known to this owner. Current selection was not changed.`,
+          );
         status("ready");
         return result(`${forget(id)}Continue normally.`);
       }
       const run = seen.run;
-      if (["running", "queued"].includes(run.status)) watch(ctx, run.id);
-      if (run.status === "unknown") acknowledgedUnknown = run.id;
+      if (id === state.runId && ["running", "queued"].includes(run.status))
+        watch(ctx, run.id);
+      if (id === state.runId && run.status === "unknown")
+        acknowledgedUnknown = run.id;
       return result(
-        `${summarize(run)}${run.status === "unknown" ? "\nThis explicit observation is recorded: research or a new plan may now continue. A new plan observes the current files; nothing about this run is assumed." : ""}`,
+        `${summarize(run)}${run.status === "unknown" && id === state.runId ? "\nThis explicit observation is recorded: research or a new plan may now continue. A new plan observes the current files; nothing about this run is assumed." : ""}`,
       );
     },
   });
@@ -1177,18 +1294,19 @@ export function registerCadenceMode(pi: ExtensionAPI): void {
     parameters: Type.Object({}),
     async execute(_id, _input, _signal, _update, ctx) {
       active(ctx);
-      if (!state.runId) return result("No active workflow.");
+      const runId = state.runId;
+      if (!runId) return result("No active workflow.");
       if (
         !(await confirm(
           ctx,
           "Cancel current workflow?",
-          "Request Stop and retain actual files/results. This does not reset or undo edits. Cadence mode remains enabled.",
+          `Request Stop for ${runId} and retain actual files/results. This does not reset or undo edits. Cadence mode remains enabled.`,
           "Keep running",
           "Request cancellation",
         ))
       )
         return result("Cancellation not requested.");
-      const r = await request(ctx, { action: "cancel", runId: state.runId });
+      const r = await request(ctx, { action: "cancel", runId });
       if (r.type !== "run") throw new ContractError("invalid");
       watch(ctx, r.run.id);
       return result(

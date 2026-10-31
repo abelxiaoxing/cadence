@@ -1,6 +1,8 @@
 /** Deterministic workflow inspection, independent of model availability and mode. */
+
 import { type NativeViews, pretty, value } from "./native-history.ts";
 import type { WorkbenchResult } from "./service/contracts/workbench.ts";
+import { workflowDiagnostics } from "./service/contracts/workflow.ts";
 import type { ServiceClient } from "./service-client.ts";
 import { ContractError } from "./service-contract.ts";
 
@@ -22,7 +24,7 @@ export async function workflowDetails(
       throw new ContractError("invalid");
     const run = view.response.run;
     await ui.show(
-      `${run.goal}\n${run.id} • ${run.status} / ${run.phase}\n${run.notice}\nMerged commit: ${run.mergedCommit ?? "none"}\nAutomatic Agent review is not human review. Step summaries are previews; select a step for its retained result.\n${pretty(run.steps)}`,
+      `${run.goal}\n${run.id} • ${run.status} / ${run.phase}\n${run.notice}\n${workflowDiagnostics(run)}\nMerged commit: ${run.mergedCommit ?? "none"}\nAutomatic Agent review is not human review. Step summaries are previews; select a step for its retained result.\n${pretty(run.steps)}`,
     );
     const labels = run.steps.map(
       (s, i) => `${i + 1}. ${s.kind} • ${s.id} • ${s.status}`,

@@ -163,3 +163,10 @@ The right panel defaults to files; its History details inspector remains bound t
 Historical child links bind exact scope and watermark.
 Bounded history and Back never silently rebase; running conversations offer an explicit new-activity update, and source limitations/progress stay visible even when complete-record metadata is folded.
 Cancel uses the independent active roster (including the fallback strip when workspace discovery fails); navigation, project selection and hiding panels never cancel or authorize execution.
+
+Native research/plan/start claim their shared conversation state synchronously before attachment or model awaits; a concurrent mutation in that generation refuses before dispatch, while status and explicit Cancel remain available.
+Each mutation carries its own claim through dispatch and response handling; navigation retires its admission authority without canceling its original, blocking a new generation or letting an old finally release a newer claim.
+Research replies carry exact run/step identities.
+`cadence_status` accepts an explicit `runId` for retained results/transcripts without changing the current selection or acknowledging a different current unknown run.
+Cancel pins the displayed run identity before its confirmation dialog.
+Session changes invalidate in-flight dispatch/response handling; no command is replayed.

@@ -164,6 +164,18 @@ it("browser-only persistent Cadence: clarification, exact approval, lost reply, 
         exact: true,
       })
       .waitFor();
+    await page
+      .getByText("Owner timing and runtime", { exact: true })
+      .first()
+      .click();
+    const diagnostics = await page
+      .locator(".workflow-card pre.workflow-detail")
+      .first()
+      .innerText();
+    assert(diagnostics.includes("Owner: Cadence"));
+    assert(diagnostics.includes("checkout acquired:"));
+    assert(diagnostics.includes("worker SDK"));
+    assert(diagnostics.includes("service-host.mjs"));
     assert.equal(sendAttempts, 2);
     assert.equal(new Set(sendIds).size, 2);
     await page.unroute("**/api/v1/workbench/command");

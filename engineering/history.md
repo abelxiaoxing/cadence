@@ -93,3 +93,12 @@ The cursor is an exclusive ID boundary, not an immutable snapshot: concurrent ne
 Unreadable run entries remain visibly unavailable; unsafe directory entries refuse, and listing never repairs or removes records.
 Step results and subagent transcripts are selected by exact run/step identity, independent of model availability.
 Workflow history has full retained detail lookup, not the legacy task engine's exact-search/export protocol.
+
+New workflow observations retain owner acceptance, checkout acquisition and settlement times, plus worker preparation, native spawn, stop request, direct-child close and original settlement.
+Process lifecycle callbacks update memory only; normal capture/result settlement persists these observations under the original owner lifetime, never ahead of stop signals.
+Unconfirmed native settlement stays unknown; a late close cannot update the settled observation or release its fence.
+Owner version/source fingerprint is embedded by the service builder, not inferred from the extension or a subsequently replaced package manifest; PID, epoch, entry, platform and Node identify the process.
+Worker READY reports its imported public SDK version and observed worker-source hash.
+These are diagnostic observations, not execution authority or an atomic proof against package replacement.
+Missing observations are labelled unrecorded, never reconstructed from a parent session's batched tool-result times or filesystem mtimes.
+Reads do not migrate retained records.

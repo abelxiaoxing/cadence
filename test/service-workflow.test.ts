@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type {
   WorkflowProposal,
   WorkflowRequest,
@@ -13,8 +13,20 @@ import { canonicalJson } from "../src/worker-public.mjs";
 import { acceptingFixture } from "./helpers/accepting-fixture.ts";
 import { plan } from "./helpers/workflow-plan.ts";
 
-async function setup(initializeGit = true) {
-  const f = await acceptingFixture("generated");
+afterEach(() => vi.unstubAllEnvs());
+async function setup(
+  initializeGit = true,
+  mode: "source" | "generated" = "generated",
+) {
+  const f = await acceptingFixture(
+    mode,
+    mode === "source"
+      ? (env) => {
+          for (const [key, value] of Object.entries(env))
+            vi.stubEnv(key, value);
+        }
+      : undefined,
+  );
   try {
     const git = (...args: string[]) =>
       execFileSync("git", args, {
@@ -603,6 +615,182 @@ it("workspace labels redact owner access material without selecting a model or c
     const models = await f.client.models();
     expect(models.kind === "ok" && models.value.selected).toBeNull();
     expect(f.contacts()).toBe(0);
+  } finally {
+    await f.close();
+  }
+}, 20000);
+
+it("generated research reports real queue, spawn, closure and runtime observations independently of client batching", async () => {
+  const { f, command, wait, model } = await setup(false);
+  try {
+    f.mode("pending");
+    const first = await command({
+      action: "research",
+      goal: "Hold checkout",
+      questions: ["a", "b"],
+      model,
+    });
+    if (first.type !== "run") throw Error("run");
+    await vi.waitFor(() => expect(f.held()).toBe(2), { timeout: 5000 });
+    const second = await command({
+      action: "research",
+      goal: "Queued",
+      questions: ["c"],
+      model,
+      roots: [f.root],
+    });
+    if (second.type !== "run") throw Error("run");
+    const queued = await f.client.workbenchRead({
+      kind: "workflow",
+      id: second.run.id,
+    });
+    expect(queued).toMatchObject({
+      kind: "ok",
+      value: {
+        response: {
+          run: {
+            status: "queued",
+            steps: [],
+            diagnostics: { acquiredAt: null },
+          },
+        },
+      },
+    });
+    // Releasing the first original is necessary before the second may contact its provider.
+    f.mode("single");
+    await command({ action: "cancel", runId: first.run.id });
+    const a = await wait(first.run.id),
+      b = await wait(second.run.id);
+    expect(a.status).toBe("canceled");
+    expect(b.status).toBe("completed");
+    expect(b.diagnostics!.acquiredAt!).toBeGreaterThanOrEqual(
+      a.diagnostics!.settledAt!,
+    );
+    expect(b.diagnostics!.owner).toMatchObject({
+      version: JSON.parse(
+        readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+      ).version,
+      platform: process.platform,
+    });
+    expect(b.diagnostics!.owner.build).toMatch(/^[a-f0-9]{64}$/);
+    expect(b.diagnostics!.owner.entry).toMatch(/service-host\.mjs$/);
+    for (const run of [a, b])
+      for (const step of run.steps) {
+        const t = step.timing!;
+        expect(t.createdAt).toBeGreaterThanOrEqual(
+          run.diagnostics!.acquiredAt!,
+        );
+        expect(t.preparedAt!).toBeGreaterThanOrEqual(t.createdAt);
+        expect(t.startedAt!).toBeGreaterThanOrEqual(t.preparedAt!);
+        expect(t.closedAt!).toBeGreaterThanOrEqual(t.startedAt!);
+        expect(t.settledAt!).toBeGreaterThanOrEqual(t.closedAt!);
+        expect(step.runtime!.sdkVersion).toBeTruthy();
+        expect(step.runtime!.workerHash).toBe(
+          createHash("sha256")
+            .update(
+              readFileSync(new URL("../src/sdk-worker.mjs", import.meta.url)),
+            )
+            .digest("hex"),
+        );
+      }
+    expect(a.steps.every((s) => s.timing!.stopReason === "canceled")).toBe(
+      true,
+    );
+    expect(b.steps[0].timing!.stopRequestedAt).toBeNull();
+  } finally {
+    await f.close();
+  }
+}, 20000);
+
+it("timed-out real workers retain exact step results and transcripts after a later run and owner restart", async () => {
+  const { f, command, wait, model } = await setup(false, "source");
+  try {
+    f.mode("pending");
+    const accepted = await command({
+      action: "research",
+      goal: "Actual timeout",
+      questions: ["q1", "q2"],
+      model,
+    });
+    if (accepted.type !== "run") throw Error("run");
+    const run = await wait(accepted.run.id);
+    expect(run.status).toBe("timeout");
+    expect(run.steps).toHaveLength(2);
+    for (const step of run.steps) {
+      expect(step.status).toBe("timeout");
+      expect(step.timing!.stopReason).toBe("timeout");
+      expect(step.text).toContain("total process deadline 15000ms");
+      expect(step.text).toContain("not evidence of a surviving process");
+    }
+    f.mode("single");
+    const next = await command({
+      action: "research",
+      goal: "Later",
+      questions: ["q"],
+      model,
+    });
+    if (next.type !== "run") throw Error("run");
+    expect((await wait(next.run.id)).status).toBe("completed");
+    const restarted = await f.restart();
+    for (const step of run.steps) {
+      const result = await restarted.client.workbenchRead({
+        kind: "workflow-detail",
+        id: run.id,
+        stepId: step.id,
+      });
+      expect(result, JSON.stringify(result)).toMatchObject({
+        kind: "ok",
+        value: { kind: "file", limited: false },
+      });
+      expect(JSON.stringify(result)).toContain("timeout");
+      const transcript = await restarted.client.workbenchRead({
+        kind: "workflow-transcript",
+        id: run.id,
+        stepId: step.id,
+      });
+      expect(transcript).toMatchObject({
+        kind: "ok",
+        value: { runId: run.id, stepId: step.id, turn: { status: "timeout" } },
+      });
+    }
+  } finally {
+    await f.close();
+  }
+}, 30000);
+
+it("real SDK research uses the explicitly selected root and retains partial scan evidence", async () => {
+  const { f, command, wait, model } = await setup(false);
+  try {
+    const selected = join(f.dir, "selected-backups");
+    mkdirSync(selected);
+    writeFileSync(join(selected, "a.txt"), "a");
+    writeFileSync(join(selected, "b.txt"), "b");
+    f.mode("research-scan");
+    const accepted = await command({
+      action: "research",
+      goal: "Inspect the selected backup tree",
+      questions: ["Find text backups"],
+      roots: [selected],
+      model,
+    });
+    if (accepted.type !== "run") throw Error("run");
+    const run = await wait(accepted.run.id);
+    expect(run.status).toBe("completed");
+    expect(run.steps[0].text).toContain("Partial coverage: result limit");
+    expect(run.steps[0].text).not.toContain("existing.txt");
+    expect(
+      f.observations.every(
+        (r) => !r.tools.includes("bash") && !r.tools.includes("write"),
+      ),
+    ).toBe(true);
+    const transcript = await f.client.workbenchRead({
+      kind: "workflow-transcript",
+      id: run.id,
+      stepId: run.steps[0].id,
+    });
+    expect(JSON.stringify(transcript)).toContain(
+      "Partial coverage: result limit",
+    );
   } finally {
     await f.close();
   }

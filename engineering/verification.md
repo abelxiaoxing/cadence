@@ -49,7 +49,7 @@ Removing development tooling must never delete consumer `.cadence` data or priva
 - `workflow-git`, `workbench-send-admission`: staged-versus-worktree scope, actual commit ancestry, and pre-/post-acceptance error classification without erasing uncertain attempts.
 - `service-contract`, `service-model-choice`, `service-auth`: closed DTOs, exact source/choice/current authority, security and compatibility.
 - `checkout-gate`, `service-owner`, `service-recovery`, `service-registry-recovery`: original operations, overlap, Stop, unknown fences and informed recovery.
-- `worker-*`, `lightweight-sdk`, `lightweight-process-diff`: genuine SDK/tool capture, split redaction, no-spill bounds and original native facts.
+- `worker-*`, `lightweight-sdk`, `lightweight-process-diff`, `research-tools`, `research-tools-settlement`, `workflow-lifecycle`: genuine SDK/tool capture, split redaction, no-spill bounds and original native facts.
 - `service-history-*`: durable ordering, cold/no-index/restarted proof/search/export, corruption/torn/quota and expected-byte publication.
 - `history-shell`, `native-client`, `native-history`, `terminal-integration`: readonly entry guards, shared service, Unicode/paging and detach; daily native approval/cancel belongs to `cadence-mode`.
 - `agent-panel`, `agent-panel-model`, `agent-panel-cadence`: panel keys/rendering and readonly owner observation that never starts, cancels or replays work.

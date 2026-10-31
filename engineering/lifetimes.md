@@ -78,6 +78,7 @@ The remaining historical writer and transport coupling is documented in [archite
   Stop publishes one shared attempt, quiesces all admissions, requests stops before awaiting children and joins permitted original continuation/safety writes.
   Already-started publication can finish; new post-Stop ordinary publication cannot start.
 - TERM/KILL recheck lease ownership at each signal boundary.
+  Stop sends TERM and arms KILL/unknown timers before observer or coordinator interruption callbacks; lifecycle observation performs no synchronous journal I/O.
   Native close is authoritative for the direct child, not `exit`, EOF or escaped-descendant closure.
   Unknown process/auth/storage settlement preserves fences; late completion never retroactively repairs an unknown result.
 - Return, navigation, browser disconnect and Pi quit detach accepted work.
@@ -93,3 +94,11 @@ Workbenches never repair missing private state or automatically erase uncertain 
 Registrations from older versions without a hostname additionally require independent same-host attestation; unknown provenance is not recoverable by guessing a PID.
 Service restart never resumes the old queue.
 Uncertain process/auth/storage settlement keeps fences; use documented local informed recovery, not PID-only deletion or automatic cleanup.
+
+Research runs share the exclusive checkout gate; up to two questions within one admitted run execute concurrently and are joined before release.
+Queue time is outside the workflow/process budgets; ongoing tool/model activity never renews a worker's total deadline.
+Readonly investigations use bounded native filesystem tools at explicit roots (project cwd by default), not bash or an unbounded SDK search subprocess.
+They report partial coverage for time, entry, depth, byte/output bounds and omitted files; they do not follow tree symlinks, interpret `.gitignore`, copy sources, or silently drop backup trees.
+Grep is explicitly literal-only.
+The final-report reserve refuses new tool calls without inventing a completed investigation or abandoning outstanding I/O.
+These scope checks are not a filesystem sandbox.

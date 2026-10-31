@@ -531,10 +531,18 @@ export class ConversationWorkflow {
     model: ChoiceVersion,
     signal: AbortSignal,
   ) {
-    let goal: string, questions: string[];
+    let goal: string, questions: string[], roots: string[] | undefined;
     try {
-      const a = closed(args, ["goal", "questions"]);
+      const a = closed(args, [
+        "goal",
+        "questions",
+        ...(Object.hasOwn(args ?? {}, "roots") ? ["roots"] : []),
+      ]);
       goal = text(a.goal, 8192, true);
+      roots =
+        a.roots === undefined
+          ? undefined
+          : list(a.roots, 8, (p) => text(p, 4096, true));
       questions = list(a.questions, 2, (q) => text(q, 8192, true));
       if (!questions.length) throw new ContractError("invalid");
     } catch {
@@ -566,6 +574,7 @@ export class ConversationWorkflow {
         action: "research",
         goal,
         questions,
+        ...(roots ? { roots } : {}),
         model,
       });
     } catch (error) {

@@ -57,7 +57,15 @@ export interface WorkerRequest {
   instructions: string;
   thinkingLevel?: string;
 }
+export type ProcessObservation = {
+  kind: "spawned" | "stop-requested" | "closed";
+  at: number;
+  reason?: string;
+};
 export interface ProcessSpec {
+  /** Synchronous in-memory observation only. Persistence belongs to the caller's
+   * original settlement, never the signal/stop critical path. */
+  onLifecycle?: (event: ProcessObservation) => void;
   command: string;
   args: string[];
   cwd: string;
@@ -173,8 +181,17 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
     let settled = false;
     let nativeClosed = false;
     let launched = false;
+    const observeLifecycle = (event: ProcessObservation) => {
+      if (settled) return;
+      try {
+        spec.onLifecycle?.(event);
+      } catch {
+        stop("failed");
+      }
+    };
     child.once("spawn", () => {
       launched = true;
+      observeLifecycle({ kind: "spawned", at: Date.now() });
     });
     const ingressStop = new AbortController();
     let stopping: RunResult["outcome"] | undefined;
@@ -260,7 +277,7 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
         text: clean(
           outcome === "completed" && spec.protocol
             ? (final ?? "")
-            : `${outcome}${closed ? " (direct child closed; escaped descendants not proven stopped)" : ": stop unconfirmed; coordination lock retained"}`,
+            : `${outcome === "timeout" ? `timeout: total process deadline ${spec.timeoutMs}ms reached (activity does not extend it)` : outcome}${closed ? "; direct child closed; descendant closure was not verified (not evidence of a surviving process)" : "; stop unconfirmed; coordination lock retained"}`,
           16384,
         ),
         output: clean(output),
@@ -295,11 +312,20 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
       // An uninterruptible child is observed to its own close, never signalled.
       if (settled || stopping || spec.uninterruptible) return;
       stopping = outcome;
+      const requestedAt = Date.now();
+      // Signal first, including before coordinator interruption/observation.
+      // Decoder/recorder waiting after native close is not a live PID.
+      if (!nativeClosed) {
+        signalChild("SIGTERM");
+        killTimer = setTimeout(() => signalChild("SIGKILL"), 1000);
+        unknownTimer = setTimeout(() => finish(false, null, null), 3000);
+      }
+      observeLifecycle({
+        kind: "stop-requested",
+        at: requestedAt,
+        reason: outcome,
+      });
       ingressStop.abort();
-      if (nativeClosed) return; // Decoder/recorder waiting is not a live PID.
-      signalChild("SIGTERM");
-      killTimer = setTimeout(() => signalChild("SIGKILL"), 1000);
-      unknownTimer = setTimeout(() => finish(false, null, null), 3000);
     };
     let bridgeCalls = 0;
     let bridgeBusy = false;
@@ -517,6 +543,7 @@ export function runProcess(spec: ProcessSpec): Promise<RunResult> {
     });
     child.on("close", (code, signal) => {
       nativeClosed = true;
+      if (launched) observeLifecycle({ kind: "closed", at: Date.now() });
       clearTimeout(timeout);
       clearTimeout(killTimer);
       clearTimeout(unknownTimer);
@@ -625,10 +652,12 @@ type Envelope = ReturnType<typeof legacyWorkerEnvelope>;
 class AmbientFileAuth extends Error {}
 function encodeEnvelope(
   material: Envelope,
+  timeoutMs: number,
   captured?: {
     ambient: ReturnType<typeof networkSnapshot>;
     scoped: ReturnType<typeof scopedNetwork>;
   },
+  roots: string[] = [material.cwd],
 ) {
   const ambient = captured?.ambient ?? networkSnapshot(process.env);
   const scoped = captured?.scoped ?? scopedNetwork(material);
@@ -652,10 +681,17 @@ function encodeEnvelope(
     ...literals(material.auth.env ?? {}),
     ...selected.redactionLiterals,
   ];
-  const input = JSON.stringify(material);
+  // Same-host monotonic clock, shared by parent and child. Freeze before
+  // serialization/spawn so SDK bootstrap can only consume, never renew, it.
+  const investigation = {
+    roots,
+    timeoutMs,
+    deadlineMs: Number(process.hrtime.bigint() / 1_000_000n) + timeoutMs,
+  };
+  const input = JSON.stringify({ ...material, investigation });
   if (!sameNetwork(scoped, scopedNetwork(JSON.parse(input)), false))
     throw new Error("network");
-  return { material, ambient, scoped, selected, secrets, input };
+  return { material, investigation, ambient, scoped, selected, secrets, input };
 }
 function launchEncoded(
   encoded: ReturnType<typeof encodeEnvelope>,
@@ -663,6 +699,7 @@ function launchEncoded(
   timeoutMs: number,
   extra: Pick<
     ProcessSpec,
+    | "onLifecycle"
     | "onProgress"
     | "recording"
     | "onNative"
@@ -715,7 +752,7 @@ export function runWorker(
   try {
     const ambient = networkSnapshot(process.env);
     const scoped = scopedNetwork(request);
-    const encoded = encodeEnvelope(legacyWorkerEnvelope(request), {
+    const encoded = encodeEnvelope(legacyWorkerEnvelope(request), timeoutMs, {
       ambient,
       scoped,
     });
@@ -787,10 +824,13 @@ export function preparedWorker(
             (material) => {
               if (JSON.stringify(material.request) !== JSON.stringify(expected))
                 throw new Error("Prepared request changed");
-              encoded = encodeEnvelope({
-                ...material,
-                model: { ...material.model },
-              });
+              encoded = encodeEnvelope(
+                {
+                  ...material,
+                  model: { ...material.model },
+                },
+                timeoutMs,
+              );
               // All sink callbacks/reservations precede W1's final source,
               // size and cancellation recheck. The use callback only launches.
               recorder = new WorkerRecording(
@@ -865,8 +905,15 @@ export function launchConversation(
   let encoded: ReturnType<typeof encodeEnvelope> | undefined;
   return prepared.consume(
     (material) => {
-      encoded = encodeEnvelope({ ...material, model: { ...material.model } });
-      encoded.input = JSON.stringify({ ...encoded.material, conversation });
+      encoded = encodeEnvelope(
+        { ...material, model: { ...material.model } },
+        options.timeoutMs,
+      );
+      encoded.input = JSON.stringify({
+        ...encoded.material,
+        investigation: encoded.investigation,
+        conversation,
+      });
       return encoded.input;
     },
     (input) => {
@@ -905,6 +952,8 @@ export function launchWorkflowWorker(
   signal: AbortSignal,
   options: {
     timeoutMs: number;
+    roots?: string[];
+    onLifecycle?: ProcessSpec["onLifecycle"];
     ownerSecrets: readonly string[];
     maySignal(): boolean;
     onNative(native: NativeSettlement, selectedMessageId?: string): void;
@@ -914,11 +963,16 @@ export function launchWorkflowWorker(
   let encoded: ReturnType<typeof encodeEnvelope> | undefined;
   return prepared.consume(
     (material) => {
-      encoded = encodeEnvelope({
-        ...material,
-        cwd,
-        model: { ...material.model },
-      });
+      encoded = encodeEnvelope(
+        {
+          ...material,
+          cwd,
+          model: { ...material.model },
+        },
+        options.timeoutMs,
+        undefined,
+        options.roots ?? [cwd],
+      );
       return encoded.input;
     },
     (input) => {
@@ -928,6 +982,7 @@ export function launchWorkflowWorker(
       return launchEncoded(encoded, signal, options.timeoutMs, {
         secrets,
         maySignal: options.maySignal,
+        onLifecycle: options.onLifecycle,
         onNative: (native, capture) =>
           options.onNative(native, capture?.selected?.messageId),
         onFrame: (frame) => options.onFrame(frame, secrets),
