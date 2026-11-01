@@ -192,6 +192,7 @@ export const zh = {
   "This turn has no complete continuation context. Start a new conversation; retained messages are preserved.":
     "此轮没有完整的续聊上下文。请新建对话，已记录的消息会保留。",
   Subagents: "子代理",
+  "{active} active · {total} total": "{active} 个进行中 · 共 {total} 个",
   "Subagent roster unavailable": "暂时无法观察子代理列表",
   "Cadence subagents appear here when a task runs.":
     "Cadence 任务运行时，子代理会显示在这里。",

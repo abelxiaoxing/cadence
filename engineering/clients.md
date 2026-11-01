@@ -47,12 +47,22 @@ A retained `edit` call shows its call and result without Pi's diff preview, whic
 Producers emit `subagent:start {id,label,kind,startedAt}`, `subagent:message {id,message,streaming?}`, `subagent:activity {id,activity,tokensIn?,tokensOut?}`, `subagent:stats {id,tokensIn,tokensOut?}` and `subagent:end {id,status,endedAt,error?}` with status `done`, `error` or `cancelled`; `startedAt: null` marks an unobserved start.
 A message has the main session's message shape; `streaming: true` marks a snapshot that the next message replaces.
 The panel emits `subagent:view {id}` (`id: null` when none) so a producer loads only the shown agent's messages.
-Nothing is mounted until the first agent arrives (`CADENCE_AGENT_PANEL=always` keeps `● main` visible).
-Then a launched/finished block sits above the input and one row per agent below it: at most six recently active rows plus `+K more`.
-With an empty input, ↓ moves focus to the rows; ↑/↓ or Ctrl+P/N select, Enter shows that agent's transcript in place of the main view, PgUp/PgDn, Ctrl+U/D and Home/End scroll it, and Esc returns to the main view and then to the input.
+Nothing shows while no agent runs.
+Agents whose start was observed form a batch: the first one opens it, and later starts join it until it closes.
+A start with `startedAt: null` joins no batch, so after a restart already finished children neither reopen the live view nor repeat a card.
+While a batch is open, one block above the input shows a spinner header naming a shared kind (`2 Research agents running · 1 done`), then rows for its running, failed and cancelled members; a cleanly finished member is only counted, and rows past six fold into `+K more`.
+Row text leads with the label unless the producer's activity already does.
+Once every member ended, the block shows the card it is about to become for `SETTLE_MS` (1.5s); a start in that time joins the same batch.
+Then the block is removed and the card is appended to the session as a display-only `cadence-agent-batch` entry, which is not part of the model's context and renders again on resume.
+A collapsed card is one line when every member finished cleanly and otherwise also lists the failed and cancelled ones; Pi's tool-output expansion (Ctrl+O) lists every member with its final text and elapsed time.
+A card holds only display text (kind, row text, status, elapsed), at most 64 members, and anything malformed in a session file renders nothing.
+A batch that settled is carded in the session it ran in, even on departure; one still running carries over to the next session, and one that ended while no session showed it gets no card.
+`CADENCE_AGENT_PANEL=always` keeps the last batch in the block, without a card, until the next batch begins.
+With an empty input, ↓ opens a list below the input of this session's agents, at most 24 ended ones beyond the open batch and six rows at once plus `+K more`; ↑/↓ or Ctrl+P/N select, Enter shows that agent's transcript in place of the main view, PgUp/PgDn, Ctrl+U/D and Home/End scroll it, Esc returns to the list, and Esc or ↑ past the first row returns to the input and hides the list.
 Every other input key, including Enter, Shift+Tab and Ctrl+J, stays Pi's; each agent view remembers its scroll position.
-The panel never starts, cancels or keeps an agent or Pi alive, and keeps nothing across restarts.
-For manual checks, `pi -e ./src/index.ts -e ./scripts/agent-panel-demo.ts` adds `/agents-demo [count]`, which plays fake agents (the second fails) and runs nothing.
+A new session drops the previous one's ended agents.
+The panel never starts, cancels or keeps an agent or Pi alive; across restarts only the cards remain.
+For manual checks, `pi -e ./src/index.ts -e ./scripts/agent-panel-demo.ts` adds `/agents-demo [count]`, which plays a batch of fake agents (the second fails), then a fake review agent with its own card, and runs nothing.
 
 ## Browser
 
@@ -97,6 +107,7 @@ The WebUI provides task/run/assignment navigation, long retained messages and to
 Desktop panes and phone drawers retain cancellation and keyboard controls.
 Its chrome: a compact topbar with view tabs and icon actions, a sectioned task sidebar, pill inspector tabs, transcript/tool cards and a bottom statusbar; phones wrap the topbar into an action row and an icon tab row.
 The left sidebar provides New conversation alongside running/retained conversations and an on-demand Workflow history listing; a separate lower-left dock observes Cadence subagents — workflow research/implementation/review workers and legacy task children — and opens their retained transcripts in the main area.
+The dock is only as tall as its rows, up to its default height, until a drag sets one; its heading count leads the total with the queued or running agents (`2 active · 5 total`).
 It is not a subagent engine.
 The right sidebar defaults to readonly files, bounded text previews and path-only references; retained content/check/change/review evidence occupies its History details tab.
 The lower-right folder button contains recent projects, browses directories on the service host and explicitly opens another independent project owner.

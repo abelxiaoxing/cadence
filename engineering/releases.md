@@ -364,3 +364,16 @@ A separate `bun pm pack --destination /home/mirako/.vxonnqlzw/bun-pack` passed; 
 Regression evidence covers exact retained timeout results after later work/restart, actual SDK root selection, native generation changes during pending requests, signal-before-observer ordering, memory-only lifecycle capture with storage-failure fences, and bootstrap-consuming research budgets.
 The SDK/provider fixtures are isolated loopback observations; native Windows/WSL NTFS, macOS, paid-provider and power-loss qualification were not executed.
 Existing test budgets, approval boundaries and unknown fences were not weakened; no consumer data migration, boot-service installation or Git push was performed by verification.
+
+## Release 2.0.25 acceptance snapshot
+
+Native: the background agent panel groups observed starts into a batch shown above the input; 1.5s after the whole batch settles it leaves a display-only `cadence-agent-batch` card in the transcript (Ctrl+O expands it, it re-renders on resume and is not model context), and the list below the input appears only after ↓.
+`CADENCE_AGENT_PANEL=always` keeps the last batch in place and writes no card.
+WebUI: the Subagents dock is only as tall as its rows up to its former fixed height until a drag sets one, and its heading leads the total with the queued or running count.
+Full `verify` passed on its first attempt: 1853 root/native tests in 85 files (27 platform skips on Linux), 141 web tests in 13 files, seven real-browser tests in six files and the 150-member real-pack audit.
+During development a 5s registry-oversize case in `service-owner.test.ts` once timed out under host load (load average about 9) and passed alone (103/103); no deadline was changed.
+A separate `bun pm pack --destination <private-disk-temp>` archive had 150 members; SHA-256 `6aa386ac1ee3f9f6923b66ac4a54caa9454306c28a5b93aa25d3d96151e4f6b6`, SHA-1 `9f46ed086d2624a6c85a97095260731eeb332d66`.
+Observed environment: Linux, official Node 22.22.1, Bun 1.3.14, installed public Pi/SDK 0.84.3 and existing Chrome for Testing (Playwright chromium-1243).
+The native panel was also driven in a real Pi 0.84.3 terminal (live batch, failure, card, follow-up batch, Ctrl+O, ↓ list, transcript view and `--continue`); the dock's heights were measured against the built stylesheet in Chromium.
+Pi 1.4.0 was checked only for the same entry-renderer and widget APIs, not run.
+Commit, merge to `main`, push and npm publication were explicitly authorized; no consumer installation/service change, dependency/browser download or enlarged time budget occurred; the `ci/windows` workflow was not run.

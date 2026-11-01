@@ -113,6 +113,46 @@ describe("subagent store", () => {
     ]);
   });
 
+  it("groups observed starts into a batch until it is closed", () => {
+    const { s } = store();
+    expect(s.batch()).toEqual([]);
+    expect(s.settled()).toBe(false);
+    s.apply(E.start, { id: "a" });
+    // A start never observed (first seen settled) joins no batch.
+    s.apply(E.start, { id: "old", startedAt: null });
+    s.apply(E.start, { id: "b", startedAt: 900 });
+    expect(s.batch().map((a) => a.id)).toEqual(["a", "b"]);
+    s.apply(E.end, { id: "a", status: "done" });
+    s.apply(E.end, { id: "old", status: "done" });
+    expect(s.settled()).toBe(false);
+    s.apply(E.end, { id: "b", status: "cancelled" });
+    expect(s.settled()).toBe(true);
+    expect(s.closeBatch().map((a) => a.id)).toEqual(["a", "b"]);
+    expect(s.batch()).toEqual([]);
+    expect(s.settled()).toBe(false);
+    s.apply(E.start, { id: "c" });
+    expect(s.batch().map((a) => a.id)).toEqual(["c"]);
+    expect(s.size).toBe(4);
+  });
+
+  it("prunes the oldest ended agents outside the open batch", () => {
+    const { s } = store();
+    for (const id of ["a", "b", "c"]) {
+      s.apply(E.start, { id });
+      s.apply(E.end, { id, status: "done" });
+    }
+    s.closeBatch();
+    s.apply(E.start, { id: "open" });
+    s.apply(E.end, { id: "open", status: "done" });
+    s.apply(E.start, { id: "running" });
+    const changed = vi.fn();
+    s.subscribe(changed);
+    expect(s.prune(1, ["a"])).toEqual(["b"]);
+    expect(s.ordered().map((a) => a.id)).toEqual(["a", "c", "open", "running"]);
+    expect(s.prune(0)).toEqual(["a", "c"]);
+    expect(changed).not.toHaveBeenCalled();
+  });
+
   it("bounds retained messages and counts the omitted ones", () => {
     const { s } = store();
     s.apply(E.start, { id: "a" });

@@ -1,6 +1,11 @@
 /** Background-agent panel for Pi's TUI. Observation only: it subscribes to
  * the `subagent:*` events on Pi's shared extension bus and renders them; it
- * never starts, cancels or keeps an agent or the Pi process alive. */
+ * never starts, cancels or keeps an agent or the Pi process alive.
+ *
+ * Nothing shows while no agent runs. A batch of agents is live above the
+ * input; once all of them ended it collapses into a card in the transcript
+ * (a display-only session entry) and the live view goes away. The list below
+ * the input appears only while it is being used. */
 import {
   AssistantMessageComponent,
   type ExtensionAPI,
@@ -24,7 +29,14 @@ import {
   truncateToWidth,
 } from "@earendil-works/pi-tui";
 import {
+  type AgentCard,
+  CARD_ENTRY,
+  cardLines,
+  cardOf,
+  decodeCard,
   factsText,
+  liveLines,
+  MAX_ENDED,
   type Paint,
   type PanelAction,
   PanelFocus,
@@ -35,19 +47,23 @@ import {
   type SubagentState,
   SubagentStore,
   statusSymbol,
-  summaryLines,
 } from "./agent-panel-model.ts";
 
 export interface AgentPanelOptions {
   /** Agent rows shown at once; more collapse into `+K more`. */
   maxRows?: number;
-  /** Keep `● main` visible with no agents (CADENCE_AGENT_PANEL=always). */
-  showEmpty?: boolean;
+  /** Keep a finished batch live instead of collapsing it into a card
+   * (CADENCE_AGENT_PANEL=always). */
+  keep?: boolean;
   now?: () => number;
 }
-const PANEL = "cadence-agents",
-  SUMMARY = "cadence-agents-summary",
+const LIVE = "cadence-agents",
+  LIST = "cadence-agents-list",
   SPIN_MS = 100;
+/** A batch whose agents all ended stays live this long before it collapses
+ * into its card, so the outcome is seen and a start that follows at once
+ * (the next workflow step) joins the same batch. */
+export const SETTLE_MS = 1500;
 
 /** Rows kept for Pi's footer/status lines while an agent view is shown. */
 const RESERVED = 5;
@@ -86,13 +102,31 @@ export function registerAgentPanel(
     pi.events.on(channel, (data) => {
       store.apply(channel, data);
     });
+  // Pi renders the card where it was appended and again on resume; Ctrl+O
+  // (Pi's tool-output expansion) lists every member.
+  pi.registerEntryRenderer(CARD_ENTRY, (entry, { expanded }, theme) => {
+    const card = decodeCard(entry.data);
+    if (!card) return undefined;
+    const paint = themePaint(theme);
+    return {
+      render: (width) =>
+        cardLines(card, expanded, Math.max(1, width - 1), paint).map(
+          (line) => ` ${line}`,
+        ),
+      invalidate() {},
+    };
+  });
   let detach: (() => void) | undefined;
   pi.on("session_start", (_event, ctx) => {
     detach?.();
     detach =
       ctx.mode === "tui" && ctx.hasUI
-        ? attachPanel(ctx, store, options, (id) =>
-            pi.events.emit(SUBAGENT_VIEW, { id }),
+        ? attachPanel(
+            ctx,
+            store,
+            options,
+            (id) => pi.events.emit(SUBAGENT_VIEW, { id }),
+            (card) => pi.appendEntry(CARD_ENTRY, card),
           )
         : undefined;
   });
@@ -107,19 +141,28 @@ function attachPanel(
   store: SubagentStore,
   options: AgentPanelOptions,
   announce: (id: string | null) => void,
+  commit: (card: AgentCard) => void,
 ): () => void {
   const now = options.now ?? Date.now;
   const maxRows = Math.max(1, options.maxRows ?? 6);
-  const showEmpty =
-    options.showEmpty ?? process.env.CADENCE_AGENT_PANEL === "always";
-  const focus = new PanelFocus(store);
+  const keep = options.keep ?? process.env.CADENCE_AGENT_PANEL === "always";
+  const focus = new PanelFocus(store, maxRows);
+  // A batch that ended while no session showed it has no card to give, and a
+  // new session lists only its own agents; ones still running carry over.
+  if (store.settled()) store.closeBatch();
+  store.prune(0);
   let tui: TUI | undefined,
     paint: Paint = (_role, text) => text,
     frame = 0,
     spinner: ReturnType<typeof setInterval> | undefined,
+    settling: ReturnType<typeof setTimeout> | undefined,
     view: { component: Component; done: () => void } | undefined,
-    // Widgets mount with the first agent, so ordinary sessions show nothing.
-    mounted = false,
+    // Mounted widgets: the batch above the input while one is live, and the
+    // list's slot below it while any agent is kept for review.
+    live = false,
+    list = false,
+    // The last batch, kept live after it ended (CADENCE_AGENT_PANEL=always).
+    kept: SubagentState[] = [],
     // The agent last announced on `subagent:view`, so producers load only it.
     announced: string | undefined;
   const announceView = () => {
@@ -132,10 +175,84 @@ function attachPanel(
     clearInterval(spinner);
     spinner = undefined;
   };
+  const liveAgents = () => {
+    const open = store.batch();
+    return open.length ? open : kept;
+  };
+  const widget =
+    (lines: (width: number) => string[]) => (t: TUI, theme: Theme) => {
+      tui = t;
+      paint = themePaint(theme);
+      return { render: lines, invalidate() {} };
+    };
+  const liveWidget = widget((width) =>
+    // The agent view takes this place; a summary above it would be noise.
+    view
+      ? []
+      : liveLines(
+          {
+            agents: liveAgents(),
+            now: now(),
+            frame,
+            maxRows,
+            hint: focus.focus === "input",
+          },
+          width,
+          paint,
+        ),
+  );
+  const listWidget = widget((width) => panelLines(panelFrame(), width, paint));
+  const mount = () => {
+    const showLive = liveAgents().length > 0;
+    // The list renders nothing until used, and Pi gives the slot below the
+    // input no spacing, so it costs no row; mounting it while agents exist
+    // is what lets ↓ see whether Pi's input box has focus.
+    const showList = store.size > 0 || focus.view !== undefined;
+    if (showLive !== live) {
+      live = showLive;
+      ctx.ui.setWidget(LIVE, showLive ? liveWidget : undefined, {
+        placement: "aboveEditor",
+      });
+    }
+    if (showList !== list) {
+      list = showList;
+      ctx.ui.setWidget(LIST, showList ? listWidget : undefined, {
+        placement: "belowEditor",
+      });
+    }
+  };
+  /** Close the settled batch: its card goes into the session, the live view
+   * goes away and older ended agents beyond the review bound are dropped. */
+  const close = () => {
+    clearTimeout(settling);
+    settling = undefined;
+    if (!store.settled()) return;
+    const agents = store.closeBatch();
+    if (keep) kept = agents;
+    else
+      try {
+        commit(cardOf(agents));
+      } catch {
+        // A replaced runtime cannot append; the agents stay reviewable.
+      }
+    const dropped = store.prune(MAX_ENDED, [focus.selected, focus.view]);
+    for (const id of dropped) transcripts.delete(id);
+    focus.forget(dropped);
+  };
   // One redraw per spinner frame while anything runs; Pi's differential
   // renderer rewrites only the changed rows.
   const changed = () => {
-    if (!mounted && (store.size > 0 || showEmpty)) mount();
+    if (kept.length && store.batch().length) kept = [];
+    if (!store.settled()) {
+      clearTimeout(settling);
+      settling = undefined;
+    } else if (!settling) {
+      settling = setTimeout(() => {
+        close();
+        changed();
+      }, SETTLE_MS);
+      settling.unref?.();
+    }
     if (store.running() === 0) stopSpinner();
     else if (!spinner) {
       spinner = setInterval(() => {
@@ -144,6 +261,7 @@ function attachPanel(
       }, SPIN_MS);
       spinner.unref?.();
     }
+    mount();
     tui?.requestRender();
   };
   const unsubscribe = store.subscribe(changed);
@@ -157,6 +275,7 @@ function attachPanel(
     if (action === "open") openView();
     else if (action === "close") view?.done();
     announceView();
+    mount();
     tui?.requestRender();
     return action === "pass" ? undefined : { consume: true };
   };
@@ -168,10 +287,12 @@ function attachPanel(
       focus.abandon();
       view = undefined;
       announceView();
+      mount();
     }
     if (focus.focus === "panel" && !editorFocused()) {
       // A dialog took focus: its keys are not the panel's.
-      focus.focus = "input";
+      focus.abandon();
+      mount();
       tui?.requestRender();
       return undefined;
     }
@@ -208,7 +329,6 @@ function attachPanel(
     now: now(),
     frame,
     maxRows,
-    showEmpty,
   });
   const viewLines = (width: number): string[] => {
     const agent = focus.view === undefined ? undefined : store.get(focus.view);
@@ -257,47 +377,20 @@ function attachPanel(
     )}`;
   };
 
-  const mount = () => {
-    mounted = true;
-    ctx.ui.setWidget(
-      SUMMARY,
-      (t, theme) => {
-        tui = t;
-        paint = themePaint(theme);
-        return {
-          // The agent view takes Z1's place; its summary would sit above it.
-          render: (width) =>
-            view ? [] : summaryLines(store.ordered(), width, paint, maxRows),
-          invalidate() {},
-        };
-      },
-      { placement: "aboveEditor" },
-    );
-    ctx.ui.setWidget(
-      PANEL,
-      (t, theme) => {
-        tui = t;
-        paint = themePaint(theme);
-        return {
-          render: (width) => panelLines(panelFrame(), width, paint),
-          invalidate() {},
-        };
-      },
-      { placement: "belowEditor" },
-    );
-  };
   changed();
   return () => {
     unsubscribe();
     unlisten();
     stopSpinner();
+    // A batch that already ended still gets its card in the session it ran
+    // in; one still running carries over to the next session.
+    if (settling) close();
+    clearTimeout(settling);
     if (announced !== undefined) announce(null);
     try {
       view?.done();
-      if (mounted) {
-        ctx.ui.setWidget(SUMMARY, undefined);
-        ctx.ui.setWidget(PANEL, undefined);
-      }
+      if (live) ctx.ui.setWidget(LIVE, undefined);
+      if (list) ctx.ui.setWidget(LIST, undefined);
     } catch {
       // A replaced runtime already cleared its UI.
     }

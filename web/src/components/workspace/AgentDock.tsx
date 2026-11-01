@@ -177,6 +177,9 @@ export function AgentDock({
         Number(!LIVE.includes(b.step.status)),
     );
   const count = merged.length + agents.length;
+  const live =
+    agents.filter(({ step }) => LIVE.includes(step.status)).length +
+    merged.filter((row) => row.run.lifecycle !== "settled").length;
   return (
     <section className={`agent-dock${open ? "" : " collapsed"}`}>
       <button
@@ -188,7 +191,14 @@ export function AgentDock({
         <FiChevronDown />
         <FiCpu />
         <span>{t("Subagents")}</span>
-        <span className="lp-count">{count}</span>
+        <span className={`lp-count${live ? " live" : ""}`}>
+          {live
+            ? t("{active} active · {total} total", {
+                active: live,
+                total: count,
+              })
+            : count}
+        </span>
       </button>
       {open && (
         <div className="agent-dock-body">

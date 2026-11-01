@@ -1,6 +1,7 @@
 /** Dev-only Pi extension, not shipped: `/agents-demo [count]` plays fake
- * background agents on Pi's shared bus for manual acceptance of the panel.
- * It runs nothing; the second agent fails on purpose. Load it beside Cadence:
+ * background agents on Pi's shared bus for manual acceptance of the panel:
+ * one batch (the second agent fails on purpose), then a review agent after
+ * that batch collapsed into its card. It runs nothing. Load it beside Cadence:
  *   pi -e ./src/index.ts -e ./scripts/agent-panel-demo.ts */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -36,6 +37,21 @@ const LABELS = [
   "Analyze cadence architecture",
   "Analyze pi-web-ui architecture",
 ];
+/** Longer than the panel's settle time, so the review gets its own card. */
+const FOLLOW_UP_MS = 3000;
+
+const wait = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    const stop = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", stop);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", stop, { once: true });
+  });
 
 export default function agentPanelDemo(pi: ExtensionAPI): void {
   let abort = new AbortController();
@@ -47,10 +63,18 @@ export default function agentPanelDemo(pi: ExtensionAPI): void {
       if (abort.signal.aborted) abort = new AbortController();
       const count = Math.min(20, Math.max(1, Number.parseInt(args, 10) || 2));
       const run = Date.now().toString(36);
-      for (let n = 0; n < count; n++)
-        void play(pi, `${run}-${n}`, n, abort.signal).catch(() => {});
+      const { signal } = abort;
+      // One batch, then a follow-up agent after it collapsed into its card.
+      void Promise.all(
+        Array.from({ length: count }, (_, n) =>
+          play(pi, `${run}-${n}`, n, "Explore", signal),
+        ),
+      )
+        .then(() => wait(FOLLOW_UP_MS, signal))
+        .then(() => play(pi, `${run}-review`, count, "Review", signal))
+        .catch(() => {});
       ctx.ui.notify(
-        `Started ${count} fake background agents. With an empty input, press ↓ to manage them.`,
+        `Started ${count} fake background agents; a fake review agent follows once they finish. With an empty input, press ↓ to manage them.`,
         "info",
       );
     },
@@ -61,20 +85,10 @@ async function play(
   pi: ExtensionAPI,
   id: string,
   n: number,
+  kind: "Explore" | "Review",
   signal: AbortSignal,
 ): Promise<void> {
-  const sleep = (ms: number) =>
-    new Promise<void>((resolve, reject) => {
-      const stop = () => {
-        clearTimeout(timer);
-        reject(signal.reason);
-      };
-      const timer = setTimeout(() => {
-        signal.removeEventListener("abort", stop);
-        resolve();
-      }, ms);
-      signal.addEventListener("abort", stop, { once: true });
-    });
+  const sleep = (ms: number) => wait(ms, signal);
   const emit = (channel: string, data: object) =>
     pi.events.emit(`subagent:${channel}`, { id, ...data });
   const assistant = (text: string, extra: object[] = []) => ({
@@ -83,18 +97,18 @@ async function play(
     stopReason: extra.length ? "toolUse" : "stop",
     timestamp: Date.now(),
   });
-  const fails = n === 1;
+  const fails = kind === "Explore" && n === 1;
+  const label =
+    kind === "Review"
+      ? "Review the findings"
+      : (LABELS[n] ?? `Survey module ${n + 1}`);
   let tokensIn = 0,
     tokensOut = 0;
-  emit("start", {
-    label: LABELS[n] ?? `Survey module ${n + 1}`,
-    kind: "Explore",
-    startedAt: Date.now(),
-  });
+  emit("start", { label, kind, startedAt: Date.now() });
   emit("message", {
     message: {
       role: "user",
-      content: `${LABELS[n] ?? `Survey module ${n + 1}`}: map entry points, ownership and data flow.`,
+      content: `${label}: map entry points, ownership and data flow.`,
       timestamp: Date.now(),
     },
   });

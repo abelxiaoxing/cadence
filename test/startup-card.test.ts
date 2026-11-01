@@ -70,6 +70,7 @@ function harness(registrar = register) {
       handlers.set(name, [...(handlers.get(name) ?? []), handler]);
     },
     registerTool: vi.fn(),
+    registerEntryRenderer: vi.fn(),
     getActiveTools: () => active,
     setActiveTools: (names: string[]) => {
       active = names;

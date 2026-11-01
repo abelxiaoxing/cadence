@@ -1,5 +1,6 @@
-/** Background-agent panel: Z3 rows, Z1 summary and the Pi widget/bus binding
- * through a fake Pi host. */
+/** Background-agent panel: the live batch above the input, its card in the
+ * transcript, the on-demand list below the input and the Pi widget/bus/entry
+ * binding through a fake Pi host. */
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import {
   Editor,
@@ -8,14 +9,20 @@ import {
 } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import agentPanelDemo from "../scripts/agent-panel-demo.ts";
-import { registerAgentPanel } from "../src/agent-panel.ts";
+import { registerAgentPanel, SETTLE_MS } from "../src/agent-panel.ts";
 import {
+  CARD_ENTRY,
+  cardLines,
+  cardOf,
+  decodeCard,
   SUBAGENT_EVENTS as E,
+  type LiveFrame,
+  liveLines,
+  MAX_ENDED,
   type Paint,
   type PanelFrame,
   panelLines,
   SubagentStore,
-  summaryLines,
 } from "../src/agent-panel-model.ts";
 
 afterEach(() => {
@@ -24,8 +31,11 @@ afterEach(() => {
 /** Plain text; reverse video shows as [brackets]. */
 const paint: Paint = (role, text) => (role === "selected" ? `[${text}]` : text);
 const T0 = 1_000_000;
+/** A row whose facts sit at the right edge of `width`. */
+const row = (left: string, right: string, width: number) =>
+  left + " ".repeat(width - visibleWidth(left) - visibleWidth(right)) + right;
 
-function agents(n: number, at = T0) {
+function agents(n: number, at = T0, kind = "Explore") {
   let now = at;
   const s = new SubagentStore(() => now);
   for (let i = 0; i < n; i++) {
@@ -33,7 +43,7 @@ function agents(n: number, at = T0) {
     s.apply(E.start, {
       id: `a${i}`,
       label: `Analyze part ${i}`,
-      kind: "Explore",
+      kind,
       startedAt: at,
     });
   }
@@ -44,87 +54,188 @@ function agents(n: number, at = T0) {
     },
   };
 }
-const frame = (s: SubagentStore, patch: Partial<PanelFrame> = {}) => ({
+const live = (s: SubagentStore, patch: Partial<LiveFrame> = {}) => ({
+  agents: s.batch(),
+  now: T0 + 283_000,
+  frame: 0,
+  maxRows: 6,
+  hint: true,
+  ...patch,
+});
+const list = (s: SubagentStore, patch: Partial<PanelFrame> = {}) => ({
   agents: s.ordered(),
-  focus: "input" as const,
+  focus: "panel" as const,
   selected: undefined,
   view: undefined,
   now: T0 + 283_000,
   frame: 0,
   maxRows: 6,
-  showEmpty: false,
   ...patch,
 });
 
-describe("Z3 rows", () => {
-  it("lists main and one aligned row per agent", () => {
-    const { s } = agents(2);
+describe("live batch", () => {
+  it("names a shared kind once and lists running then failed members", () => {
+    const { s, at } = agents(4);
     s.apply(E.activity, {
       id: "a0",
       activity: "Inspecting observer.ts polling and sockets",
       tokensIn: 110_900,
     });
-    s.apply(E.stats, { id: "a1", tokensIn: 123_400, tokensOut: 2100 });
-    expect(panelLines(frame(s), 72, paint)).toEqual([
-      "● main",
-      "⠋ Explore  Inspecting observer.ts polling and socke…    4m 43s · ↓110.9k",
-      `⠋ Explore${" ".repeat(41)}4m 43s · ↓123.4k ↑2.1k`,
-    ]);
-  });
-
-  it("hides with no agents unless configured, and marks the selection", () => {
-    const { s } = agents(0);
-    expect(panelLines(frame(s), 40, paint)).toEqual([]);
-    expect(panelLines(frame(s, { showEmpty: true }), 40, paint)).toEqual([
-      "● main",
-    ]);
-    const two = agents(2).s;
-    const lines = panelLines(
-      frame(two, { focus: "panel", selected: "a1" }),
-      40,
-      paint,
-    );
-    expect(lines[0]).toBe(" ● main");
-    expect(lines[1].startsWith(" ⠋ Explore")).toBe(true);
-    // No usage reported: the row ends at its elapsed time, not "↓0".
-    expect(lines[2]).toMatch(/^\[▶⠋ Explore +4m 43s\]$/);
-    expect(visibleWidth(lines[2])).toBe(42);
-  });
-
-  it("shows ended status symbols, final elapsed and the error", () => {
-    const { s, at } = agents(3);
     at(T0 + 252_000);
-    s.apply(E.end, { id: "a0", status: "done" });
-    s.apply(E.end, { id: "a1", status: "error", error: "Rate limited" });
-    s.apply(E.end, { id: "a2", status: "cancelled" });
-    const lines = panelLines(frame(s, { now: T0 + 999_000 }), 60, paint);
-    expect(lines.slice(1).map((l) => l[0])).toEqual(["✔", "✘", "○"]);
-    expect(lines[1]).toMatch(/4m 12s$/);
-    expect(lines[2]).toContain("Rate limited");
+    s.apply(E.end, { id: "a1", status: "done" });
+    s.apply(E.end, { id: "a2", status: "error", error: "Rate limited" });
+    s.apply(E.activity, { id: "a3", activity: "Analyze part 3 · Reading" });
+    expect(liveLines(live(s), 76, paint)).toEqual([
+      "⠋ 2 Explore agents running · 1 done · 1 failed (↓ to manage)",
+      row(
+        "  ├ ⠋ Analyze part 0 · Inspecting observer.ts polling a…",
+        "4m 43s · ↓110.9k",
+        76,
+      ),
+      row("  ├ ⠋ Analyze part 3 · Reading", "4m 43s", 76),
+      row("  └ ✘ Analyze part 2 · Rate limited", "4m 12s", 76),
+    ]);
+    // The hint is only for the input box; a cleanly finished member is counted.
+    expect(liveLines(live(s, { hint: false }), 76, paint)[0]).toBe(
+      "⠋ 2 Explore agents running · 1 done · 1 failed",
+    );
   });
 
-  it("keeps the most recently active rows plus the selection, with +K more", () => {
+  it("shows a kind column for mixed kinds and folds rows past maxRows", () => {
+    const { s } = agents(3);
+    s.apply(E.start, { id: "r", label: "Review", kind: "Review" });
+    const lines = liveLines(live(s, { maxRows: 2 }), 60, paint);
+    expect(lines[0]).toBe("⠋ 4 agents running (↓ to manage)");
+    expect(lines[1]).toMatch(/^ {2}├ ⠋ Explore {2}Analyze part 0 +4m 43s$/);
+    expect(lines.slice(2)).toEqual([
+      expect.stringMatching(/^ {2}├ ⠋ Explore {2}Analyze part 1/),
+      "  └ … +2 more",
+    ]);
+  });
+
+  it("shows the card it will become once every member ended", () => {
+    const { s, at } = agents(2);
+    at(T0 + 134_000);
+    s.apply(E.end, { id: "a0", status: "done" });
+    s.apply(E.end, { id: "a1", status: "done" });
+    const settled = liveLines(live(s), 80, paint);
+    expect(settled).toEqual(["✔ 2 Explore agents finished · 2m 14s"]);
+    expect(cardLines(cardOf(s.batch()), false, 80, paint, false)).toEqual(
+      settled,
+    );
+    expect(liveLines(live(new SubagentStore()), 80, paint)).toEqual([]);
+  });
+});
+
+describe("card", () => {
+  const finished = () => {
+    const { s, at } = agents(3);
+    s.apply(E.activity, { id: "a0", activity: "Reading README.md" });
+    at(T0 + 31_000);
+    s.apply(E.end, { id: "a0", status: "done" });
+    at(T0 + 48_000);
+    s.apply(E.end, { id: "a1", status: "error", error: "Rate limited" });
+    at(T0 + 62_000);
+    s.apply(E.end, { id: "a2", status: "cancelled" });
+    return cardOf(s.batch());
+  };
+
+  it("is one line when every member finished cleanly, all members when expanded", () => {
+    const { s, at } = agents(2);
+    at(T0 + 62_000);
+    s.apply(E.end, { id: "a0", status: "done" });
+    s.apply(E.end, { id: "a1", status: "done" });
+    const card = cardOf(s.batch());
+    expect(cardLines(card, false, 80, paint)).toEqual([
+      "✔ 2 Explore agents finished · 1m 2s (ctrl+o to expand)",
+    ]);
+    expect(cardLines(card, true, 60, paint)).toEqual([
+      "✔ 2 Explore agents finished · 1m 2s",
+      row("  ├ ✔ Analyze part 0", "1m 2s", 60),
+      row("  └ ✔ Analyze part 1", "1m 2s", 60),
+    ]);
+  });
+
+  it("lists failed and cancelled members collapsed, with outcome counts", () => {
+    const card = finished();
+    expect(card.agents.map((a) => a.text)).toEqual([
+      "Analyze part 0 · Reading README.md",
+      "Analyze part 1 · Rate limited",
+      "Analyze part 2",
+    ]);
+    expect(cardLines(card, false, 80, paint)).toEqual([
+      // The expand hint gives way when it does not fit.
+      "✘ 3 Explore agents finished · 1 done · 1 failed · 1 cancelled · 1m 2s",
+      row("  ├ ✘ Analyze part 1 · Rate limited", "48s", 80),
+      row("  └ ○ Analyze part 2", "1m 2s", 80),
+    ]);
+    expect(cardLines(card, true, 80, paint)).toHaveLength(4);
+    const cancelled = { ...card, agents: [card.agents[0], card.agents[2]] };
+    expect(cardLines(cancelled, false, 80, paint)[0]).toMatch(
+      /^○ 2 Explore agents finished · 1 done · 1 cancelled/,
+    );
+    expect(
+      cardLines({ ...card, omitted: 2 }, true, 80, paint).slice(-1),
+    ).toEqual(["  └ … +2 more"]);
+  });
+
+  it("round-trips through the session and renders nothing for malformed data", () => {
+    const card = finished();
+    expect(decodeCard(JSON.parse(JSON.stringify(card)))).toEqual(card);
+    for (const bad of [
+      null,
+      [],
+      {},
+      { ...card, agents: "x" },
+      { ...card, omitted: -1 },
+      { ...card, elapsed: "1s" },
+      { ...card, agents: [], omitted: 0 },
+      { ...card, agents: [{ ...card.agents[0], status: "running" }] },
+      { ...card, agents: [{ ...card.agents[0], kind: "" }] },
+      {
+        ...card,
+        agents: [{ ...card.agents[0], elapsed: Number.POSITIVE_INFINITY }],
+      },
+    ])
+      expect(decodeCard(bad)).toBeUndefined();
+    // Terminal controls from an edited file are flattened, not rendered.
+    expect(
+      decodeCard({
+        ...card,
+        agents: [{ ...card.agents[0], text: "\x1b[2Jx\ny" }],
+      })?.agents[0].text,
+    ).toBe("[2Jx y");
+  });
+});
+
+describe("list below the input", () => {
+  it("shows only while used, marks the selection and folds old rows", () => {
     const { s, at } = agents(5);
+    expect(panelLines(list(s, { focus: "input" }), 50, paint)).toEqual([]);
     at(T0 + 100);
     s.apply(E.activity, { id: "a0", activity: "busy" });
-    const lines = panelLines(frame(s, { maxRows: 2 }), 50, paint);
-    expect(lines[1]).toBe("  +3 more");
-    expect(lines.slice(2).map((l) => l.includes("busy"))).toEqual([
-      true,
-      false,
-    ]);
-    expect(lines).toHaveLength(4);
-    const pinned = panelLines(
-      frame(s, { maxRows: 2, focus: "panel", selected: "a2" }),
+    const lines = panelLines(
+      list(s, { maxRows: 2, selected: "a3" }),
       50,
       paint,
     );
-    expect(pinned).toHaveLength(4);
-    expect(pinned[3]).toMatch(/^\[▶/);
+    expect(lines[0]).toBe("  +3 more");
+    expect(lines[1]).toMatch(/^ ⠋ Explore {2}Analyze part 0 · busy/);
+    expect(lines[2]).toMatch(/^\[▶⠋ Explore {2}Analyze part 3 +4m 43s\]$/);
+    expect(visibleWidth(lines[2])).toBe(52);
+    expect(lines[3]).toBe(" ↑↓ select · Enter open · Esc back to input");
+    // While an agent view is open the rows stay, without the key hint.
+    expect(
+      panelLines(
+        list(s, { maxRows: 2, view: "a3", selected: "a3" }),
+        50,
+        paint,
+      ),
+    ).toHaveLength(3);
   });
 
   it("never exceeds the width for long text, wide glyphs and any size", () => {
-    const { s } = agents(2);
+    const { s, at } = agents(2);
     s.apply(E.start, {
       id: "w",
       label: "宽",
@@ -132,46 +243,25 @@ describe("Z3 rows", () => {
     });
     s.apply(E.activity, { id: "w", activity: "读取文件".repeat(40) });
     s.apply(E.stats, { id: "w", tokensIn: 9_999_999, tokensOut: 1_200_000 });
+    const running = liveLines(live(s), 80, paint);
+    at(T0 + 9_000);
+    s.apply(E.end, { id: "a0", status: "error", error: "失败".repeat(50) });
+    s.apply(E.end, { id: "a1", status: "done" });
+    s.apply(E.end, { id: "w", status: "cancelled" });
+    const card = cardOf(s.batch());
+    expect(running.length).toBe(4);
     for (let width = 1; width <= 130; width++)
-      for (const f of [frame(s), frame(s, { focus: "panel", selected: "w" })])
-        for (const line of [
-          ...panelLines(f, width, paint),
-          ...summaryLines(s.ordered(), width, paint, 6),
-        ])
-          expect(visibleWidth(line)).toBeLessThanOrEqual(width + 2);
-  });
-});
-
-describe("Z1 summary", () => {
-  it("shows launched/waiting while running, then the outcome counts", () => {
-    const { s, at } = agents(2);
-    expect(summaryLines(s.ordered(), 80, paint, 6)).toEqual([
-      "● 2 background agents launched (↓ to manage)",
-      "  ├ Analyze part 0",
-      "  └ Analyze part 1",
-      "* Waiting for 2 background agents to finish",
-    ]);
-    at(T0 + 5000);
-    s.apply(E.end, { id: "a0", status: "done" });
-    expect(summaryLines(s.ordered(), 80, paint, 6).at(-1)).toBe(
-      "* Waiting for 1 background agent to finish",
-    );
-    s.apply(E.end, { id: "a1", status: "error" });
-    expect(summaryLines(s.ordered(), 200, paint, 6)).toEqual([
-      "✔ 2 background agents finished (ok=1, failed=1) — select a row below and press Enter to review",
-    ]);
-    const many = agents(9).s;
-    expect(summaryLines(many.ordered(), 80, paint, 6).slice(-2)).toEqual([
-      "  └ … +3 more",
-      "* Waiting for 9 background agents to finish",
-    ]);
-    // A new running agent is never hidden behind finished ones.
-    const old = agents(8).s;
-    for (let i = 0; i < 7; i++)
-      old.apply(E.end, { id: `a${i}`, status: "done" });
-    const lines = summaryLines(old.ordered(), 80, paint, 6);
-    expect(lines[1]).toBe("  ├ Analyze part 7");
-    expect(lines.at(-2)).toBe("  └ … +2 more");
+      // The test paint shows reverse video as two brackets.
+      for (const line of [
+        ...liveLines(live(s), width, paint),
+        ...cardLines(card, true, width, paint),
+        ...cardLines(card, false, width, paint),
+        ...panelLines(list(s), width, paint),
+        ...panelLines(list(s, { selected: "w" }), width, paint),
+      ])
+        expect(visibleWidth(line)).toBeLessThanOrEqual(
+          width + (line.startsWith("[") ? 2 : 0),
+        );
   });
 });
 
@@ -179,7 +269,12 @@ type Rendered = {
   render(width: number): string[];
   handleInput?(data: string): void;
 };
-function host(options: { rows?: number } = {}) {
+type Renderer = (
+  entry: { customType: string; data: unknown },
+  options: { expanded: boolean },
+  theme: unknown,
+) => Rendered | undefined;
+function host(options: { rows?: number; keep?: boolean } = {}) {
   const bus = new Map<string, Set<(data: unknown) => void>>();
   const handlers = new Map<
     string,
@@ -189,6 +284,8 @@ function host(options: { rows?: number } = {}) {
     string,
     { component: Rendered; placement?: string }
   >();
+  const renderers = new Map<string, Renderer>();
+  const entries: { customType: string; data: unknown }[] = [];
   let clock = T0,
     text = "",
     overlay = false,
@@ -224,6 +321,13 @@ function host(options: { rows?: number } = {}) {
     on(event: string, fn: (event: unknown, ctx: unknown) => void) {
       handlers.set(event, [...(handlers.get(event) ?? []), fn]);
     },
+    registerEntryRenderer(customType: string, renderer: Renderer) {
+      renderers.set(customType, renderer);
+    },
+    appendEntry: vi.fn((customType: string, data: unknown) => {
+      // Pi stores entries as JSON.
+      entries.push({ customType, data: JSON.parse(JSON.stringify(data)) });
+    }),
   };
   const ctx = {
     mode: "tui",
@@ -264,7 +368,7 @@ function host(options: { rows?: number } = {}) {
       ),
     },
   };
-  registerAgentPanel(pi as any, { now: () => clock });
+  registerAgentPanel(pi as any, { now: () => clock, keep: options.keep });
   /** Terminal input: listener first, then the focused component. */
   const key = (data: string) => {
     const result = listener?.(data);
@@ -277,6 +381,7 @@ function host(options: { rows?: number } = {}) {
     tui,
     ctx,
     widgets,
+    entries,
     editor,
     key,
     emit(event: string) {
@@ -303,10 +408,17 @@ function host(options: { rows?: number } = {}) {
     },
     slot: () => slot,
     view: (width = 60) => (slot === editor ? undefined : slot.render(width)),
-    panel: (width = 60) =>
+    live: (width = 60) =>
       widgets.get("cadence-agents")?.component.render(width),
-    summary: (width = 60) =>
-      widgets.get("cadence-agents-summary")?.component.render(width),
+    list: (width = 60) =>
+      widgets.get("cadence-agents-list")?.component.render(width),
+    /** The `n`th card as Pi would render it in the transcript. */
+    card(n: number, expanded = false, width = 80) {
+      const entry = entries[n];
+      return renderers
+        .get(entry.customType)?.(entry, { expanded }, theme)
+        ?.render(width);
+    },
     flush: () => new Promise((resolve) => setImmediate(resolve)),
   };
 }
@@ -324,51 +436,150 @@ function withTwo() {
 }
 
 describe("Pi binding", () => {
-  it("places the summary above and the panel below the editor, TUI only", () => {
+  it("shows a batch above the input only while it runs, then leaves its card in the transcript", () => {
+    vi.useFakeTimers();
     const h = host();
     h.ctx.mode = "rpc";
     h.emit("session_start");
+    h.pi.events.emit(E.start, { id: "x", startedAt: T0 });
     expect(h.widgets.size).toBe(0);
+    h.pi.events.emit(E.end, { id: "x", status: "done", endedAt: T0 });
+    vi.advanceTimersByTime(SETTLE_MS);
     h.ctx.mode = "tui";
     h.emit("session_start");
-    // Nothing is mounted until an agent appears.
+    // Nothing is mounted until an agent runs.
     expect(h.widgets.size).toBe(0);
-    h.pi.events.emit(E.start, { id: "a" });
-    expect(h.widgets.get("cadence-agents")?.placement).toBe("belowEditor");
-    expect(h.widgets.get("cadence-agents-summary")?.placement).toBe(
-      "aboveEditor",
-    );
-    h.emit("session_shutdown");
-    expect(h.widgets.size).toBe(0);
-    // A session that starts after agents exist mounts at once.
-    h.emit("session_start");
-    expect(h.panel()).toHaveLength(2);
-  });
-
-  it("shows bus agents at once and animates only while one runs", () => {
-    vi.useFakeTimers();
-    const h = host();
-    h.emit("session_start");
-    // Agents started before the session attached are still observed.
     h.pi.events.emit(E.start, { id: "a", label: "A", kind: "Explore" });
     h.pi.events.emit(E.start, { id: "b", label: "B", kind: "Explore" });
-    expect(h.panel()).toHaveLength(3);
-    expect(h.summary()?.[0]).toContain("2 background agents launched");
-    const first = h.panel()![1];
+    expect(h.widgets.get("cadence-agents")?.placement).toBe("aboveEditor");
+    expect(h.live()).toEqual([
+      "⠋ 2 Explore agents running (↓ to manage)",
+      row("  ├ ⠋ A", "0s", 60),
+      row("  └ ⠋ B", "0s", 60),
+    ]);
+    // The list below the input takes no row until it is used.
+    expect(h.list()).toEqual([]);
+    // The spinner animates while one runs.
+    const first = h.live()![0];
     h.tui.requestRender.mockClear();
     h.at(T0 + 1000);
     vi.advanceTimersByTime(100);
     expect(h.tui.requestRender).toHaveBeenCalledTimes(1);
-    expect(h.panel()![1]).not.toBe(first);
-    expect(h.panel()![1]).toMatch(/ 1s$/);
+    expect(h.live()![0]).not.toBe(first);
+    h.at(T0 + 64_000);
     h.pi.events.emit(E.end, { id: "a", status: "done" });
-    h.pi.events.emit(E.end, { id: "b", status: "error" });
-    h.tui.requestRender.mockClear();
-    vi.advanceTimersByTime(1000);
-    expect(h.tui.requestRender).not.toHaveBeenCalled();
-    expect(h.summary()).toEqual([
-      expect.stringContaining("2 background agents finished (ok=1, failed=1)"),
+    h.pi.events.emit(E.end, { id: "b", status: "error", error: "boom" });
+    // Settled: the text it will keep, briefly, then the card replaces it.
+    expect(h.live()).toEqual([
+      "✘ 2 Explore agents finished · 1 done · 1 failed · 1m 4s",
+      row("  └ ✘ B · boom", "1m 4s", 60),
     ]);
+    h.tui.requestRender.mockClear();
+    vi.advanceTimersByTime(SETTLE_MS - 1);
+    expect(h.tui.requestRender).not.toHaveBeenCalled();
+    expect(h.entries).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(h.live()).toBeUndefined();
+    expect(h.list()).toEqual([]);
+    expect(h.entries.map((e) => e.customType)).toEqual([CARD_ENTRY]);
+    expect(h.card(0)).toEqual([
+      " ✘ 2 Explore agents finished · 1 done · 1 failed · 1m 4s (ctrl+o to expand)",
+      ` ${row("  └ ✘ B · boom", "1m 4s", 79)}`,
+    ]);
+    expect(h.card(0, true)).toHaveLength(3);
+    // Nothing keeps rendering once the batch collapsed.
+    h.tui.requestRender.mockClear();
+    vi.advanceTimersByTime(10_000);
+    expect(h.tui.requestRender).not.toHaveBeenCalled();
+    h.emit("session_shutdown");
+    expect(h.widgets.size).toBe(0);
+  });
+
+  it("joins a start during the settle time to the batch; a later start opens a new one", () => {
+    vi.useFakeTimers();
+    const h = host();
+    h.emit("session_start");
+    h.pi.events.emit(E.start, { id: "a", label: "A", kind: "Research" });
+    h.pi.events.emit(E.end, { id: "a", status: "done" });
+    vi.advanceTimersByTime(SETTLE_MS - 100);
+    h.pi.events.emit(E.start, { id: "b", label: "B", kind: "Review" });
+    vi.advanceTimersByTime(SETTLE_MS * 3);
+    expect(h.entries).toEqual([]);
+    expect(h.live()![0]).toMatch(
+      /^. 1 agent running · 1 done \(↓ to manage\)$/,
+    );
+    h.pi.events.emit(E.end, { id: "b", status: "done" });
+    vi.advanceTimersByTime(SETTLE_MS);
+    h.pi.events.emit(E.start, { id: "c", label: "C", kind: "Review" });
+    h.pi.events.emit(E.end, { id: "c", status: "done" });
+    vi.advanceTimersByTime(SETTLE_MS);
+    expect(h.entries.map((e) => (e.data as any).agents.length)).toEqual([2, 1]);
+    expect(h.card(1)![0]).toMatch(/^ ✔ 1 Review agent finished · 0s/);
+  });
+
+  it("puts agents first seen settled in no batch and no card, but lists them", () => {
+    vi.useFakeTimers();
+    const h = host();
+    h.emit("session_start");
+    h.pi.events.emit(E.start, { id: "old", label: "Old", startedAt: null });
+    h.pi.events.emit(E.end, { id: "old", status: "done" });
+    vi.advanceTimersByTime(SETTLE_MS * 2);
+    expect(h.live()).toBeUndefined();
+    expect(h.entries).toEqual([]);
+    expect(h.key(DOWN)).toBe("consumed");
+    expect(h.list()![0]).toMatch(/^\[▶✔ agent {4}Old +— *\]$/);
+  });
+
+  it("writes a settled batch's card before leaving its session; running agents carry over", () => {
+    vi.useFakeTimers();
+    const h = host();
+    h.emit("session_start");
+    h.pi.events.emit(E.start, { id: "a", label: "A", kind: "Explore" });
+    h.pi.events.emit(E.start, { id: "b", label: "B", kind: "Explore" });
+    h.pi.events.emit(E.end, { id: "a", status: "done" });
+    h.emit("session_shutdown");
+    expect(h.entries).toEqual([]);
+    expect(h.widgets.size).toBe(0);
+    // The next session shows the batch that still runs, with its ended member.
+    h.emit("session_start");
+    expect(h.live()![0]).toBe(
+      "⠋ 1 Explore agent running · 1 done (↓ to manage)",
+    );
+    h.pi.events.emit(E.end, { id: "b", status: "done" });
+    h.emit("session_shutdown");
+    expect(h.entries.map((e) => (e.data as any).agents.length)).toEqual([2]);
+    // Ended agents belong to the session they ran in.
+    h.emit("session_start");
+    expect(h.key(DOWN)).toBe("editor");
+    vi.advanceTimersByTime(SETTLE_MS);
+    expect(h.entries).toHaveLength(1);
+  });
+
+  it("keeps at most MAX_ENDED ended agents for review", () => {
+    vi.useFakeTimers();
+    const h = host();
+    h.emit("session_start");
+    for (let i = 0; i < MAX_ENDED + 6; i++) {
+      h.pi.events.emit(E.start, { id: `a${i}`, label: `A${i}` });
+      h.pi.events.emit(E.end, { id: `a${i}`, status: "done" });
+    }
+    vi.advanceTimersByTime(SETTLE_MS);
+    expect((h.entries[0].data as any).agents).toHaveLength(MAX_ENDED + 6);
+    h.key(DOWN);
+    expect(h.list()![0]).toBe(`  +${MAX_ENDED - 6} more`);
+  });
+
+  it("keeps a finished batch live instead of writing a card with CADENCE_AGENT_PANEL=always", () => {
+    vi.useFakeTimers();
+    const h = host({ keep: true });
+    h.emit("session_start");
+    h.pi.events.emit(E.start, { id: "a", label: "A", kind: "Explore" });
+    h.pi.events.emit(E.end, { id: "a", status: "done" });
+    vi.advanceTimersByTime(SETTLE_MS * 2);
+    expect(h.entries).toEqual([]);
+    expect(h.live()).toEqual(["✔ 1 Explore agent finished · 0s"]);
+    h.pi.events.emit(E.start, { id: "b", label: "B", kind: "Review" });
+    expect(h.live()![0]).toBe("⠋ 1 Review agent running (↓ to manage)");
   });
 });
 
@@ -391,7 +602,7 @@ describe("focus model", () => {
       "\x1b[5~", // page up
     ])
       expect(h.key(data)).toBe("editor");
-    // ↓ only enters the panel from an empty, focused input box with agents.
+    // ↓ only moves down from an empty, focused input box with agents.
     h.type("draft");
     expect(h.key(DOWN)).toBe("editor");
     h.type("");
@@ -404,57 +615,61 @@ describe("focus model", () => {
     const empty = host();
     empty.emit("session_start");
     expect(empty.key(DOWN)).toBe("editor");
-    expect(h.panel()![1].startsWith("⠋")).toBe(true);
+    expect(h.list()).toEqual([]);
   });
 
-  it("moves the selection in F_panel and returns with Esc or ↑ past main", () => {
+  it("↓ opens the list below the input; ↑ past the first row or Esc closes it", () => {
     const h = withTwo();
     expect(h.key(DOWN)).toBe("consumed");
-    expect(h.panel()![1]).toMatch(/^\[▶⠋ Explore/);
+    expect(h.widgets.get("cadence-agents-list")?.placement).toBe("belowEditor");
+    expect(h.list()![0]).toMatch(/^\[▶⠋ Explore {2}Agent A/);
+    // The live hint is for the input box only.
+    expect(h.live()![0]).toBe("⠋ 2 Explore agents running");
     h.key(DOWN);
-    expect(h.panel()![2]).toMatch(/^\[▶/);
+    expect(h.list()![1]).toMatch(/^\[▶/);
     h.key(DOWN);
-    expect(h.panel()![2]).toMatch(/^\[▶/);
+    expect(h.list()![1]).toMatch(/^\[▶/);
     h.key("\x10"); // ctrl+p
-    h.key(UP);
-    expect(h.panel()![0]).toMatch(/^\[▶● main/);
-    // Esc is the panel's, never Pi's interrupt.
-    expect(h.key(ESC)).toBe("consumed");
-    expect(h.panel()![0]).toBe("● main");
-    h.key(DOWN);
-    h.key(UP);
+    expect(h.list()![0]).toMatch(/^\[▶/);
     expect(h.key(UP)).toBe("consumed");
-    expect(h.panel()![0]).toBe("● main");
+    expect(h.list()).toEqual([]);
+    expect(h.live()![0]).toContain("(↓ to manage)");
+    h.key(DOWN);
+    // Esc is the list's, never Pi's interrupt.
+    expect(h.key(ESC)).toBe("consumed");
+    expect(h.list()).toEqual([]);
     expect(h.key("x")).toBe("editor");
   });
 
-  it("in F_panel, Ctrl+D/U cannot exit or edit, and other keys return to the input", () => {
+  it("in the list, Ctrl+D/U cannot exit or edit, and other keys return to the input", () => {
     const h = withTwo();
     h.key(DOWN);
     expect(h.key("\x04")).toBe("consumed");
     expect(h.key("\x15")).toBe("consumed");
     expect(h.key("\x1b[5~")).toBe("editor"); // main transcript scrolls itself
     expect(h.key(CTRL_C)).toBe("editor");
-    expect(h.panel()![0]).toBe("● main");
+    expect(h.list()).toEqual([]);
     expect(h.key(DOWN)).toBe("consumed");
     expect(h.key("q")).toBe("editor");
     expect(h.key(DOWN)).toBe("consumed");
     // A dialog that takes focus gets its own keys.
     h.dialog(true);
     expect(h.key(DOWN)).toBe("component");
+    expect(h.list()).toEqual([]);
     h.dialog(false);
     expect(h.key(ENTER)).toBe("editor");
   });
 
-  it("Enter opens the agent view; selection switches it; Esc, Ctrl+C or main return", async () => {
+  it("Enter opens the agent view; selection switches it; Esc or Ctrl+C return", async () => {
     const h = withTwo();
     h.key(DOWN);
     expect(h.key(ENTER)).toBe("consumed");
     expect(h.ctx.ui.custom).toHaveBeenCalledTimes(1);
     expect(h.view()![0]).toContain("→ viewing: Agent A");
     expect(h.view()!.at(-1)).toContain("Esc back to main");
-    expect(h.summary()).toEqual([]);
-    expect(h.panel()![1]).toMatch(/^\[▶/);
+    expect(h.live()).toEqual([]);
+    expect(h.list()).toHaveLength(2);
+    expect(h.list()![0]).toMatch(/^\[▶/);
     h.key(DOWN);
     h.key(ENTER);
     expect(h.view()![0]).toContain("Agent B");
@@ -465,23 +680,16 @@ describe("focus model", () => {
     h.key(ESC);
     await h.flush();
     expect(h.view()).toBeUndefined();
-    expect(h.summary()![0]).toContain("launched");
-    // Focus stays in the panel on the viewed row.
-    expect(h.panel()![2]).toMatch(/^\[▶/);
+    expect(h.live()![0]).toContain("running");
+    // Focus stays in the list on the viewed row.
+    expect(h.list()![1]).toMatch(/^\[▶/);
     h.key(ENTER);
     expect(h.view()![0]).toContain("Agent B");
     h.key(CTRL_C);
     await h.flush();
     expect(h.view()).toBeUndefined();
-    h.key(ENTER);
-    h.key(UP);
-    h.key(UP);
-    h.key(ENTER);
-    await h.flush();
-    expect(h.view()).toBeUndefined();
-    expect(h.panel()![0]).toMatch(/^\[▶● main/);
-    h.key(ENTER);
-    expect(h.panel()![0]).toBe("● main");
+    h.key(ESC);
+    expect(h.list()).toEqual([]);
   });
 
   it("forgets a view Pi displaced, and never takes keys from the restored editor", async () => {
@@ -492,8 +700,27 @@ describe("focus model", () => {
     expect(h.key(ESC)).toBe("component");
     h.restoreEditor();
     expect(h.key("x")).toBe("editor");
-    expect(h.summary()![0]).toContain("launched");
-    expect(h.panel()![0]).toBe("● main");
+    expect(h.live()![0]).toContain("running");
+    expect(h.list()).toEqual([]);
+  });
+
+  it("writes the card of a batch that settles while viewed, keeping the view until Esc", async () => {
+    vi.useFakeTimers();
+    const h = withTwo();
+    h.key(DOWN);
+    h.key(ENTER);
+    h.pi.events.emit(E.end, { id: "a", status: "done" });
+    h.pi.events.emit(E.end, { id: "b", status: "done" });
+    vi.advanceTimersByTime(SETTLE_MS);
+    expect(h.entries).toHaveLength(1);
+    expect(h.view()![0]).toContain("✔ finished");
+    expect(h.list()).toHaveLength(2);
+    h.key(ESC);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.list()).toHaveLength(3);
+    h.key(ESC);
+    expect(h.live()).toBeUndefined();
+    expect(h.list()).toEqual([]);
   });
 });
 
@@ -593,8 +820,8 @@ describe("agent view", () => {
     h.key("\x1b[H");
     expect(plain(h.view())).toMatch(/b-line-0 /);
     expect(h.view()!.join("")).not.toContain("\x1b]133;");
-    // Height fits the terminal above Z3 and the footer.
-    expect(h.view()).toHaveLength(30 - 3 - 5);
+    // Height fits the terminal above the list and the footer.
+    expect(h.view()).toHaveLength(30 - 2 - 5);
   });
 
   it("keeps the view when its agent ends and shows the final facts", () => {
@@ -609,14 +836,15 @@ describe("agent view", () => {
     h.key(DOWN);
     h.key(ENTER);
     expect(plain(h.view())).toContain("✘ failed (4m 12s)");
-    expect(h.summary()).toEqual([]);
+    expect(h.live()).toEqual([]);
   });
 });
 
 describe("demo command", () => {
-  it("plays two fake agents through the bus, one of which fails", async () => {
+  it("plays a batch with one failure, then a review agent with its own card", async () => {
     vi.useFakeTimers();
-    const h = withTwo();
+    const h = host();
+    h.emit("session_start");
     let demo: any;
     const notify = vi.fn();
     agentPanelDemo({
@@ -631,22 +859,26 @@ describe("demo command", () => {
       expect.stringContaining("Started 2 fake background agents"),
       "info",
     );
-    h.at(T0 + 1000);
     await vi.advanceTimersByTimeAsync(1000);
-    const rows = h.panel(100)!;
-    expect(rows).toHaveLength(5);
-    expect(rows.slice(3).every((row) => row.includes("Explore"))).toBe(true);
-    await vi.advanceTimersByTimeAsync(60_000);
-    const done = h.panel(100)!.slice(3);
-    expect(done[0]).toMatch(/^✔ /);
-    expect(done[1]).toMatch(/^✘ .*Provider rate limit/);
-    // Each demo agent left a transcript with tool results.
-    h.key(DOWN);
-    h.key(DOWN);
+    expect(h.live(100)).toHaveLength(3);
+    // Each demo agent leaves a transcript with tool results.
     h.key(DOWN);
     h.key(ENTER);
+    await vi.advanceTimersByTimeAsync(60_000);
     const view = h.view(100)!.join("\n");
     expect(view).toContain("src/native-client.ts");
     expect(view).toContain("composes the shell");
+    h.key(ESC);
+    h.key(ESC);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.entries).toHaveLength(2);
+    expect(h.card(0, false, 100)).toEqual([
+      expect.stringMatching(
+        /^ ✘ 2 Explore agents finished · 1 done · 1 failed · \d+s \(ctrl\+o to expand\)$/,
+      ),
+      expect.stringMatching(/Provider rate limit \(demo failure\)/),
+    ]);
+    expect(h.card(1, false, 100)![0]).toMatch(/^ ✔ 1 Review agent finished/);
+    expect(h.live()).toBeUndefined();
   });
 });

@@ -95,6 +95,7 @@ function host() {
       handlers.set(event, [...(handlers.get(event) ?? []), fn]);
     },
     registerTool() {},
+    registerEntryRenderer() {},
     getActiveTools: () => ["read", "write", "bash"],
     setActiveTools() {},
     registerCommand(name: string, command: any) {
