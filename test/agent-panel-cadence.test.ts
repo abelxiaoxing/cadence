@@ -891,6 +891,7 @@ describe("shipped entrypoint", () => {
       },
       registerCommand: vi.fn(),
       registerTool: vi.fn(),
+      registerEntryRenderer: vi.fn(),
       getActiveTools: () => [],
       setActiveTools() {},
     };
@@ -926,13 +927,14 @@ describe("shipped entrypoint", () => {
       terminal: { rows: 24 },
       hasOverlay: () => false,
     };
-    const panel = widgets.get("cadence-agents")(tui, theme).render(60);
-    expect(panel[0]).toBe("● main");
-    expect(panel[1]).toMatch(/^⠋ Research {2}inspect-api · Running bash +0s$/);
-    expect(panel.every((line: string) => visibleWidth(line) <= 60)).toBe(true);
-    expect(
-      widgets.get("cadence-agents-summary")(tui, theme).render(60)[1],
-    ).toContain("inspect-api");
+    const live = widgets.get("cadence-agents")(tui, theme).render(60);
+    expect(live[0]).toBe("⠋ 1 Research agent running (↓ to manage)");
+    expect(live[1]).toMatch(/^ {2}└ ⠋ inspect-api · Running bash +0s$/);
+    expect(live.every((line: string) => visibleWidth(line) <= 60)).toBe(true);
+    // The list below the input stays empty until ↓ moves focus to it.
+    expect(widgets.get("cadence-agents-list")(tui, theme).render(60)).toEqual(
+      [],
+    );
     for (const fn of handlers.get("session_shutdown") ?? []) await fn({}, ctx);
     expect(feed.detach).toHaveBeenCalled();
   });

@@ -14,8 +14,12 @@ export const SUBAGENT_EVENTS = {
 /** Panel → producers: the agent whose transcript is shown (`id: null` when
  * none), so a producer can load messages for that one agent only. */
 export const SUBAGENT_VIEW = "subagent:view";
+/** Session entry holding one finished batch's card; display only, never part
+ * of the model's context. */
+export const CARD_ENTRY = "cadence-agent-batch";
 
 export type SubagentStatus = "running" | "done" | "error" | "cancelled";
+type Ended = Exclude<SubagentStatus, "running">;
 
 export interface SubagentState {
   id: string;
@@ -45,6 +49,11 @@ export interface SubagentState {
 
 /** Retained messages per agent; older ones are counted, not kept. */
 export const MAX_MESSAGES = 2000;
+/** Ended agents kept for review outside the open batch; older ones are
+ * dropped with their messages once a batch collapses into its card. */
+export const MAX_ENDED = 24;
+/** Agents written into one card; more are counted, not listed. */
+export const MAX_CARD_AGENTS = 64;
 const ENDED = new Set(["done", "error", "cancelled"]);
 
 const record = (v: unknown): Record<string, unknown> | undefined =>
@@ -64,10 +73,18 @@ const count = (v: unknown) =>
     : undefined;
 
 /** Map<id, SubagentState> fed only by bus events. Malformed, unknown-agent,
- * duplicate-start and post-end activity events are ignored. */
+ * duplicate-start and post-end activity events are ignored.
+ *
+ * Agents whose start was observed also form batches: the first such start
+ * while no batch is open opens one, later starts join it, and it stays open
+ * until the panel closes it after every member ended. An agent first seen
+ * with `startedAt: null` ran before anyone looked: it joins no batch, so it
+ * neither reopens the live view nor repeats a card already shown. */
 export class SubagentStore {
   private readonly agents = new Map<string, SubagentState>();
   private readonly listeners = new Set<() => void>();
+  private batchIds: string[] = [];
+  private batchOpen = false;
   constructor(private readonly now: () => number = Date.now) {}
 
   get size(): number {
@@ -84,6 +101,37 @@ export class SubagentStore {
     let n = 0;
     for (const a of this.agents.values()) if (a.status === "running") n++;
     return n;
+  }
+  /** The open batch's agents in start order; empty when none is open. */
+  batch(): SubagentState[] {
+    if (!this.batchOpen) return [];
+    return this.batchIds.flatMap((id) => this.agents.get(id) ?? []);
+  }
+  /** The open batch has agents and none of them still runs. */
+  settled(): boolean {
+    const batch = this.batch();
+    return batch.length > 0 && batch.every((a) => a.status !== "running");
+  }
+  /** Close the open batch and return its agents; the next observed start
+   * opens a new one. */
+  closeBatch(): SubagentState[] {
+    const batch = this.batch();
+    this.batchOpen = false;
+    this.batchIds = [];
+    return batch;
+  }
+  /** Drop ended agents outside the open batch, oldest first, until at most
+   * `keep` remain; `retain` ids stay. Returns the dropped ids. Listeners are
+   * not called: the caller is the panel, which redraws itself. */
+  prune(keep: number, retain: (string | undefined)[] = []): string[] {
+    const open = new Set(this.batchOpen ? this.batchIds : []);
+    const ended = [...this.agents.values()].filter(
+      (a) =>
+        a.status !== "running" && !open.has(a.id) && !retain.includes(a.id),
+    );
+    const drop = ended.slice(0, Math.max(0, ended.length - keep));
+    for (const a of drop) this.agents.delete(a.id);
+    return drop.map((a) => a.id);
   }
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -116,6 +164,13 @@ export class SubagentStore {
         revision: 0,
         activeAt: now,
       });
+      if (o.startedAt !== null) {
+        if (!this.batchOpen) {
+          this.batchOpen = true;
+          this.batchIds = [];
+        }
+        this.batchIds.push(id);
+      }
       return true;
     }
     const agent = this.agents.get(id);
@@ -207,16 +262,13 @@ export type PaintRole =
 export type Paint = (role: PaintRole, text: string) => string;
 
 export const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const SYMBOL: Record<
-  Exclude<SubagentStatus, "running">,
-  [string, PaintRole]
-> = {
+const SYMBOL: Record<Ended, [string, PaintRole]> = {
   done: ["✔", "success"],
   error: ["✘", "error"],
   cancelled: ["○", "muted"],
 };
 export function statusSymbol(
-  agent: SubagentState,
+  agent: Pick<SubagentState, "status">,
   frame: number,
 ): [string, PaintRole] {
   return agent.status === "running"
@@ -235,6 +287,18 @@ export function usage(agent: SubagentState): string {
 export function factsText(agent: SubagentState, now: number): string {
   const used = usage(agent);
   return `${elapsedText(agent, now)}${used ? ` · ${used}` : ""}`;
+}
+/** A row's text: the error of a failed agent, otherwise its activity, led by
+ * the label unless the producer already led with it (`label · …`). */
+export function described(
+  agent: Pick<SubagentState, "label" | "activity" | "status" | "error">,
+): string {
+  const text =
+    agent.status === "error" && agent.error ? agent.error : agent.activity;
+  if (!text) return agent.label;
+  return text === agent.label || text.startsWith(`${agent.label} `)
+    ? text
+    : `${agent.label} · ${text}`;
 }
 
 /** The `max` most recently active agents plus any pinned ones, shown in
@@ -259,18 +323,6 @@ export function visibleAgents(
   return { rows, hidden: agents.length - rows.length };
 }
 
-export interface PanelFrame {
-  agents: SubagentState[];
-  focus: "input" | "panel";
-  /** Selected row: an agent id, or undefined for main. */
-  selected: string | undefined;
-  /** Agent shown in place of the main view, if any. */
-  view: string | undefined;
-  now: number;
-  frame: number;
-  maxRows: number;
-  showEmpty: boolean;
-}
 const s = (n: number) => (n === 1 ? "" : "s");
 const cut = (text: string, width: number) =>
   truncateToWidth(text, Math.max(0, width), "…");
@@ -279,115 +331,287 @@ const cut = (text: string, width: number) =>
 const clip = (plain: string, width: number) =>
   cut(plain, width).replaceAll("\x1b[0m", "");
 
-/** Z3: `● main`, an optional `+K more`, then one row per visible agent:
- * `<status> <kind> <activity…> <elapsed> [· ↓in [↑out]]`. */
+/** One row: `<lead><status> [<kind>  ]<text…>  <facts>`, never wider than
+ * `width`. A selected row is reverse video across the whole width. */
+interface Row {
+  symbol: [string, PaintRole];
+  kind: string;
+  text: string;
+  failed: boolean;
+  facts: string;
+}
+function rowLine(
+  row: Row,
+  lead: string,
+  kindWidth: number,
+  width: number,
+  paint: Paint,
+  selected = false,
+): string {
+  const [symbol, role] = row.symbol;
+  const kind = kindWidth ? clip(row.kind, kindWidth) : "";
+  const kindCell = kindWidth
+    ? `${kind}${" ".repeat(kindWidth - visibleWidth(kind))}  `
+    : "";
+  const head = `${lead}${symbol} ${kindCell}`;
+  const room = width - visibleWidth(head) - visibleWidth(row.facts) - 2;
+  const text = room < 4 ? "" : clip(row.text, room);
+  const gap = " ".repeat(room < 4 ? 1 : room - visibleWidth(text) + 2);
+  if (selected) {
+    const cell = clip(head + text + gap + row.facts, width);
+    return paint("selected", cell + " ".repeat(width - visibleWidth(cell)));
+  }
+  return cut(
+    `${paint("dim", lead)}${paint(role, symbol)} ${kindCell}${
+      row.failed ? paint("error", text) : text
+    }${gap}${paint("dim", row.facts)}`,
+    width,
+  );
+}
+const liveRow = (a: SubagentState, now: number, frame: number): Row => {
+  const used = usage(a);
+  return {
+    symbol: statusSymbol(a, frame),
+    kind: a.kind,
+    text: described(a),
+    failed: a.status === "error",
+    facts: `${elapsedText(a, now).padStart(8)}${used ? ` · ${used}` : ""}`,
+  };
+};
+const kindColumn = (kinds: string[]) =>
+  Math.min(12, Math.max(7, ...kinds.map((k) => visibleWidth(k))));
+/** The kind every agent shares, if any; it then names the batch instead of
+ * repeating on each row. A producer's default `agent` names nothing. */
+const sharedKind = (agents: { kind: string }[]) => {
+  const kinds = new Set(agents.map((a) => a.kind));
+  const [kind] = kinds;
+  return kinds.size === 1 && kind !== "agent" ? kind : undefined;
+};
+/** `text` and a dim `hint` when both fit; otherwise the text alone. */
+const hinted = (text: string, hint: string, width: number, paint: Paint) =>
+  visibleWidth(text) + visibleWidth(hint) <= width
+    ? text + paint("dim", hint)
+    : cut(text, width);
+const noun = (kind: string | undefined, n: number) =>
+  `${kind ? `${kind} ` : ""}agent${s(n)}`;
+/** Tree leads for `n` rows; the last closes the tree unless `+K more` follows. */
+const tree = (n: number, more: number) =>
+  Array.from({ length: n }, (_, i) => (i === n - 1 && !more ? "  └ " : "  ├ "));
+
+/** One finished batch as written into the session: display text only. */
+export interface CardAgent {
+  kind: string;
+  /** The row text ({@link described}) when the batch closed. */
+  text: string;
+  status: Ended;
+  /** Milliseconds, or null when the start was never observed. */
+  elapsed: number | null;
+}
+export interface AgentCard {
+  agents: CardAgent[];
+  /** Members beyond {@link MAX_CARD_AGENTS}, counted, not listed. */
+  omitted: number;
+  /** First observed start to last end, or null when none was timed. */
+  elapsed: number | null;
+}
+export function cardOf(agents: SubagentState[]): AgentCard {
+  const ended = agents.filter(
+    (a): a is SubagentState & { status: Ended } => a.status !== "running",
+  );
+  const timed = ended.filter((a) => !a.untimed);
+  const first = Math.min(...timed.map((a) => a.startedAt));
+  const last = Math.max(...timed.map((a) => a.endedAt ?? a.startedAt));
+  return {
+    agents: ended.slice(0, MAX_CARD_AGENTS).map((a) => ({
+      kind: a.kind,
+      text: described(a),
+      status: a.status,
+      elapsed: a.untimed ? null : elapsedOf(a, a.startedAt),
+    })),
+    omitted: Math.max(0, ended.length - MAX_CARD_AGENTS),
+    elapsed: timed.length ? Math.max(0, last - first) : null,
+  };
+}
+/** A card read back from a session file, which anyone may have edited:
+ * anything malformed renders nothing rather than guessed text. */
+export function decodeCard(data: unknown): AgentCard | undefined {
+  const o = record(data);
+  if (!o || !Array.isArray(o.agents) || o.agents.length > MAX_CARD_AGENTS)
+    return undefined;
+  const ms = (v: unknown) => (v === null ? null : count(v));
+  const agents: CardAgent[] = [];
+  for (const value of o.agents) {
+    const a = record(value);
+    const kind = a && line(a.kind, 32);
+    const text = a && line(a.text, 1024);
+    const elapsed = a && ms(a.elapsed);
+    if (
+      !a ||
+      !kind ||
+      text === undefined ||
+      elapsed === undefined ||
+      !ENDED.has(a.status as string)
+    )
+      return undefined;
+    agents.push({ kind, text, status: a.status as Ended, elapsed });
+  }
+  const omitted = count(o.omitted);
+  const elapsed = ms(o.elapsed);
+  if (omitted === undefined || elapsed === undefined) return undefined;
+  if (agents.length + omitted === 0) return undefined;
+  return { agents, omitted, elapsed };
+}
+
+/** A finished batch: `✔ 3 Research agents finished · 2m 14s`, with outcome
+ * counts when any failed or was cancelled. Collapsed, it lists only those;
+ * expanded, every member with its final text and elapsed time. */
+export function cardLines(
+  card: AgentCard,
+  expanded: boolean,
+  width: number,
+  paint: Paint,
+  hint = true,
+): string[] {
+  const n = card.agents.length + card.omitted;
+  const tally = (status: Ended) =>
+    card.agents.filter((a) => a.status === status).length;
+  const failed = tally("error"),
+    cancelled = tally("cancelled");
+  const [symbol, role] =
+    SYMBOL[failed ? "error" : cancelled ? "cancelled" : "done"];
+  const kind = sharedKind(card.agents);
+  const outcome =
+    failed || cancelled
+      ? ` · ${tally("done")} done${failed ? ` · ${failed} failed` : ""}${
+          cancelled ? ` · ${cancelled} cancelled` : ""
+        }`
+      : "";
+  const took = card.elapsed === null ? "" : ` · ${formatElapsed(card.elapsed)}`;
+  const shown = expanded
+    ? card.agents
+    : card.agents.filter((a) => a.status !== "done");
+  const more = expanded ? card.omitted : 0;
+  const header = hinted(
+    `${paint(role, symbol)} ${n} ${noun(kind, n)} finished${outcome}${took}`,
+    hint && !expanded ? " (ctrl+o to expand)" : "",
+    width,
+    paint,
+  );
+  const kindWidth = kind ? 0 : kindColumn(shown.map((a) => a.kind));
+  const rows = shown.map((a) => ({
+    symbol: SYMBOL[a.status],
+    kind: a.kind,
+    text: a.text,
+    failed: a.status === "error",
+    facts: (a.elapsed === null ? "—" : formatElapsed(a.elapsed)).padStart(8),
+  }));
+  const leads = tree(rows.length, more);
+  const lines = [
+    header,
+    ...rows.map((r, i) => rowLine(r, leads[i], kindWidth, width, paint)),
+  ];
+  if (more) lines.push(cut(`${paint("dim", "  └ ")}… +${more} more`, width));
+  return lines;
+}
+
+export interface LiveFrame {
+  /** The open batch, or a kept one (`CADENCE_AGENT_PANEL=always`). */
+  agents: SubagentState[];
+  now: number;
+  frame: number;
+  maxRows: number;
+  /** Show the `↓ to manage` hint: the input box has focus. */
+  hint: boolean;
+}
+/** Above the input while a batch is open. Running: a spinner header with the
+ * batch's outcome counts, then its running and failed/cancelled members; a
+ * member that finished cleanly is only counted. Settled: the card it is about
+ * to become, so the collapse into the transcript does not change the text. */
+export function liveLines(f: LiveFrame, width: number, paint: Paint): string[] {
+  const { agents } = f;
+  if (agents.length === 0) return [];
+  const running = agents.filter((a) => a.status === "running");
+  if (running.length === 0)
+    return cardLines(cardOf(agents), false, width, paint, false);
+  const kind = sharedKind(agents);
+  const tally = (status: SubagentStatus) =>
+    agents.filter((a) => a.status === status).length;
+  const done = tally("done"),
+    failed = tally("error"),
+    cancelled = tally("cancelled");
+  const counts = `${done ? ` · ${done} done` : ""}${
+    failed ? ` · ${failed} failed` : ""
+  }${cancelled ? ` · ${cancelled} cancelled` : ""}`;
+  const [spin, role] = statusSymbol(running[0], f.frame);
+  const header = hinted(
+    `${paint(role, spin)} ${running.length} ${noun(kind, running.length)} running${counts}`,
+    f.hint ? " (↓ to manage)" : "",
+    width,
+    paint,
+  );
+  const listed = [
+    ...running,
+    ...agents.filter((a) => a.status === "error" || a.status === "cancelled"),
+  ];
+  const rows = listed.slice(0, f.maxRows);
+  const more = listed.length - rows.length;
+  const kindWidth = kind ? 0 : kindColumn(rows.map((a) => a.kind));
+  const leads = tree(rows.length, more);
+  const lines = [
+    header,
+    ...rows.map((a, i) =>
+      rowLine(liveRow(a, f.now, f.frame), leads[i], kindWidth, width, paint),
+    ),
+  ];
+  if (more) lines.push(cut(`${paint("dim", "  └ ")}… +${more} more`, width));
+  return lines;
+}
+
+export interface PanelFrame {
+  agents: SubagentState[];
+  focus: "input" | "panel";
+  /** Selected row: an agent id, or undefined while the input has focus. */
+  selected: string | undefined;
+  /** Agent shown in place of the main view, if any. */
+  view: string | undefined;
+  now: number;
+  frame: number;
+  maxRows: number;
+}
+/** Below the input only while it is being used (focus moved down to it, or
+ * an agent view is open): this Pi session's agents, at most `maxRows` of the
+ * most recently active plus the selection, `+K more`, and a key hint. */
 export function panelLines(
   f: PanelFrame,
   width: number,
   paint: Paint,
 ): string[] {
-  if (f.agents.length === 0 && !f.showEmpty) return [];
-  const marked = f.focus === "panel";
-  const marker = (selected: boolean) => (!marked ? "" : selected ? "▶" : " ");
-  const row = (selected: boolean, plain: string, painted: string) => {
-    if (!selected) return cut(painted, width);
-    const cell = clip(plain, width);
-    return paint("selected", cell + " ".repeat(width - visibleWidth(cell)));
-  };
-  const onMain = f.selected === undefined;
-  const lines = [
-    row(
-      marked && onMain,
-      `${marker(onMain)}● main`,
-      `${marker(onMain)}${paint(f.view === undefined ? "accent" : "dim", "●")} main`,
-    ),
-  ];
+  if (f.agents.length === 0 || (f.focus !== "panel" && f.view === undefined))
+    return [];
   const { rows, hidden } = visibleAgents(f.agents, f.maxRows, [
     f.selected,
     f.view,
   ]);
-  if (hidden > 0)
-    lines.push(
-      cut(`${marker(false)}${paint("dim", `  +${hidden} more`)}`, width),
-    );
-  const kindWidth = Math.min(
-    12,
-    Math.max(7, ...rows.map((a) => visibleWidth(a.kind))),
-  );
+  const lines = hidden ? [cut(paint("dim", `  +${hidden} more`), width)] : [];
+  const kindWidth = kindColumn(rows.map((a) => a.kind));
   for (const a of rows) {
-    const selected = marked && f.selected === a.id;
-    const [symbol, role] = statusSymbol(a, f.frame);
-    const kind = clip(a.kind, kindWidth);
-    const kindCell = kind + " ".repeat(kindWidth - visibleWidth(kind));
-    const used = usage(a);
-    const right = `${elapsedText(a, f.now).padStart(8)}${used ? ` · ${used}` : ""}`;
-    const head = `${marker(selected)}${symbol} ${kindCell}  `;
-    const room = width - visibleWidth(head) - visibleWidth(right) - 2;
-    const failed = a.status === "error" && a.error;
-    const activity = room < 4 ? "" : clip(failed || a.activity, room);
-    const gap = " ".repeat(room < 4 ? 1 : room - visibleWidth(activity) + 2);
+    const selected = f.focus === "panel" && f.selected === a.id;
     lines.push(
-      row(
+      rowLine(
+        liveRow(a, f.now, f.frame),
+        selected ? "▶" : " ",
+        kindWidth,
+        width,
+        paint,
         selected,
-        head + activity + gap + right,
-        `${marker(selected)}${paint(role, symbol)} ${kindCell}  ${
-          failed ? paint("error", activity) : activity
-        }${gap}${paint("dim", right)}`,
       ),
     );
   }
+  if (f.view === undefined)
+    lines.push(
+      cut(paint("dim", " ↑↓ select · Enter open · Esc back to input"), width),
+    );
   return lines;
-}
-
-/** Bottom of Z1: launched/waiting block while any agent runs, then one
- * finished line with the outcome counts. */
-export function summaryLines(
-  agents: SubagentState[],
-  width: number,
-  paint: Paint,
-  maxLabels: number,
-): string[] {
-  if (agents.length === 0) return [];
-  const n = agents.length;
-  const running = agents.filter((a) => a.status === "running").length;
-  if (running === 0) {
-    const count = (status: SubagentStatus) =>
-      agents.filter((a) => a.status === status).length;
-    const cancelled = count("cancelled");
-    const outcome = `ok=${count("done")}, failed=${count("error")}${
-      cancelled ? `, cancelled=${cancelled}` : ""
-    }`;
-    return [
-      cut(
-        `${paint("success", "✔")} ${n} background agent${s(n)} finished (${outcome}) — select a row below and press Enter to review`,
-        width,
-      ),
-    ];
-  }
-  // Running agents first, so a new one is never hidden behind finished ones.
-  const shown = [
-    ...agents.filter((a) => a.status === "running"),
-    ...agents.filter((a) => a.status !== "running"),
-  ].slice(0, maxLabels);
-  const more = n - shown.length;
-  const tree = shown.map((a, i) =>
-    cut(
-      `  ${paint("dim", i === shown.length - 1 && !more ? "└" : "├")} ${a.label}`,
-      width,
-    ),
-  );
-  if (more) tree.push(cut(`  ${paint("dim", "└")} … +${more} more`, width));
-  return [
-    cut(
-      `${paint("accent", "●")} ${n} background agent${s(n)} launched (↓ to manage)`,
-      width,
-    ),
-    ...tree,
-    cut(
-      `${paint("dim", "*")} Waiting for ${running} background agent${s(running)} to finish`,
-      width,
-    ),
-  ];
 }
 
 export type PanelKey =
@@ -414,8 +638,9 @@ export interface Scroll {
 }
 
 /** Focus model. F_input (default) passes every key except ↓ on an idle, empty
- * editor; F_panel moves the Z3 selection; an agent view keeps F_panel and
- * replaces the main view until Esc, Ctrl+C or Enter on main. */
+ * editor, which moves focus down to the agent list; F_panel moves its
+ * selection, and ↑ past the first row or Esc returns to the input. An agent
+ * view keeps F_panel and replaces the main view until Esc or Ctrl+C. */
 export class PanelFocus {
   focus: "input" | "panel" = "input";
   selected: string | undefined;
@@ -423,22 +648,29 @@ export class PanelFocus {
   /** Rows of the last rendered agent view, for paging. */
   page = 10;
   private readonly scrolls = new Map<string, Scroll>();
-  constructor(private readonly store: SubagentStore) {}
+  constructor(
+    private readonly store: SubagentStore,
+    private readonly maxRows = 6,
+  ) {}
 
   key(key: PanelKey, editorIdle: boolean): PanelAction {
     if (this.focus === "input" && this.view === undefined) {
       if (key !== "down" || !editorIdle || this.store.size === 0) return "pass";
       this.focus = "panel";
-      this.selected = this.store.ordered()[0].id;
+      this.selected = visibleAgents(
+        this.store.ordered(),
+        this.maxRows,
+      ).rows[0]?.id;
       return "consume";
     }
-    const rows = [undefined, ...this.store.ordered().map((a) => a.id)];
-    const at = Math.max(0, rows.indexOf(this.selected));
+    const rows = this.store.ordered().map((a) => a.id);
+    // A selection the store dropped falls back to the first row.
+    const at = Math.max(0, rows.indexOf(this.selected ?? ""));
     switch (key) {
       case "up":
       case "previous":
-        // ↑ past main returns to the input, the inverse of ↓.
-        if (at === 0 && this.view === undefined) this.focus = "input";
+        // ↑ past the first row returns to the input, the inverse of ↓.
+        if (at === 0 && this.view === undefined) this.toInput();
         else this.selected = rows[Math.max(0, at - 1)];
         return "consume";
       case "down":
@@ -446,9 +678,9 @@ export class PanelFocus {
         this.selected = rows[Math.min(rows.length - 1, at + 1)];
         return "consume";
       case "enter":
+        this.selected = rows[at];
         if (this.selected === undefined) {
-          if (this.view !== undefined) return this.leave();
-          this.focus = "input";
+          this.toInput();
           return "consume";
         }
         if (this.view === undefined) {
@@ -460,7 +692,7 @@ export class PanelFocus {
       case "escape":
       case "interrupt":
         if (this.view !== undefined) return this.leave();
-        this.focus = "input";
+        this.toInput();
         // Ctrl+C keeps Pi's own clear/interrupt/exit meaning.
         return key === "escape" ? "consume" : "pass";
       case "pageUp":
@@ -477,14 +709,14 @@ export class PanelFocus {
         return key === "halfUp" || key === "halfDown" ? "consume" : "pass";
       default:
         if (this.view !== undefined) return "consume";
-        this.focus = "input";
+        this.toInput();
         return "pass";
     }
   }
   /** Pi replaced the agent view (another dialog took the editor slot). */
   abandon(): void {
     this.view = undefined;
-    this.focus = "input";
+    this.toInput();
   }
   /** Top line for this view, remembered per agent across switches. */
   settle(id: string, total: number, height: number): number {
@@ -497,6 +729,14 @@ export class PanelFocus {
   }
   scrollOf(id: string): Scroll | undefined {
     return this.scrolls.get(id);
+  }
+  /** The store dropped these agents: forget their scroll positions. */
+  forget(ids: string[]): void {
+    for (const id of ids) this.scrolls.delete(id);
+  }
+  private toInput(): void {
+    this.focus = "input";
+    this.selected = undefined;
   }
   private leave(): PanelAction {
     this.view = undefined;

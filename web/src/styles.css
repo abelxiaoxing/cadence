@@ -2205,17 +2205,21 @@ summary:focus-visible,
 .workbench-right > .panel {
   flex: 1;
 }
+/* The dock is as tall as its rows, up to 190px; a drag sets an inline height
+ * (up to 35%) that it then keeps. */
 .agent-dock {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   min-height: 42px;
-  height: 190px;
   max-height: 35%;
   overflow: hidden;
   resize: vertical;
   border-top: 1px solid var(--border);
   background: var(--bg-elev);
+}
+.agent-dock:not([style]) {
+  max-height: min(190px, 35%);
 }
 .agent-dock.collapsed {
   height: auto;
@@ -2233,6 +2237,9 @@ summary:focus-visible,
 }
 .agent-dock-heading .lp-count {
   margin-left: auto;
+}
+.agent-dock-heading .lp-count.live {
+  color: var(--accent-text);
 }
 .agent-dock-body {
   overflow-y: auto;

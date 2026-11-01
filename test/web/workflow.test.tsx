@@ -11,8 +11,13 @@ import {
   cadenceApproval,
   cadenceExit,
 } from "../../web/src/client/workflow-entry";
-import { workflowAgentLabel } from "../../web/src/components/workspace/AgentDock";
+import {
+  AgentDock,
+  workflowAgentLabel,
+} from "../../web/src/components/workspace/AgentDock";
 import { WorkflowPanel } from "../../web/src/components/workspace/WorkflowPanel";
+import { LocaleProvider } from "../../web/src/i18n/locale";
+import type { ActiveRuns, RunProjection } from "../../web/src/types";
 import { plan } from "../helpers/workflow-plan.ts";
 import { transport } from "./fixtures";
 
@@ -156,4 +161,39 @@ it("workflow subagent rows use the readable assignment, not the step's random su
     workflowAgentLabel("implement-a-1b4e28ba-2fa1-11d2-883f-0016d3cca427"),
   ).toBe("implement-a");
   expect(workflowAgentLabel("question-1")).toBe("question-1");
+});
+it("the subagent dock count leads with how many listed agents are still active", () => {
+  const child = (lifecycle: RunProjection["lifecycle"]) =>
+    ({
+      childRunId: randomUUID(),
+      assignmentId: "research-a",
+      lifecycle,
+      outcome: lifecycle === "settled" ? "completed" : null,
+    }) as unknown as RunProjection;
+  const active: ActiveRuns = {
+    storeId: randomUUID(),
+    workspaceId: randomUUID(),
+    epoch: randomUUID(),
+    status: "complete",
+    runs: [],
+  };
+  const dock = (runs: RunProjection[], locale: "en" | "zh" = "en") =>
+    renderToStaticMarkup(
+      <LocaleProvider initial={locale}>
+        <AgentDock
+          client={new ServiceClient(transport())}
+          active={active}
+          taskId={randomUUID()}
+          runs={runs}
+          snapshot="1"
+          onOpen={() => {}}
+        />
+      </LocaleProvider>,
+    );
+  const mixed = [child("queued"), child("running"), child("settled")];
+  expect(dock(mixed)).toContain(
+    '<span class="lp-count live">2 active · 3 total</span>',
+  );
+  expect(dock(mixed, "zh")).toContain("2 个进行中 · 共 3 个");
+  expect(dock([child("settled")])).toContain('<span class="lp-count">1</span>');
 });
